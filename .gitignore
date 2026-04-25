@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+bun.lock
+
+# Local config — copy settings.example.json and customize
+settings.json
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Dolt database — stays local
+data/
+
+# Runtime logs
+logs/
+
+# IDEs and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Pi session state — track extensions, ignore runtime state
+.pi/sessions/
+.pi/agent/
+
+# Compiled output
+dist/
+build/
+*.js
+*.jsx
+*.d.ts
