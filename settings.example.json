@@ -1,8 +1,6 @@
 {
   "defaultProvider": "ollama",
   "defaultModel": "gemma4",
-  "packages": [
-    "npm:@ollama/pi-web-search"
-  ],
+  "packages": [],
   "defaultThinkingLevel": "none"
 }
