@@ -177,4 +177,4 @@ Related work worth knowing about:
 
 ## License
 
-MIT
+MIT — Copyright (c) 2026 Christopher Woods / Bitspace Applied Intelligence LLC
