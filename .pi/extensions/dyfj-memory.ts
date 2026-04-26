@@ -20,7 +20,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { DyfjMcpClient } from "../../src/mcp-client";
+import { DyfjMcpClient, type Phase, type EffortLevel } from "../../src/mcp-client";
 import {
   buildSystemPrompt,
   buildReadMemoryTool,
@@ -36,7 +36,6 @@ import {
   extractThinking,
   normaliseStopReason,
   doltQuery,
-  parseDoltCsv,
 } from "../../src/utils";
 import { BudgetTracker } from "../../src/budget";
 
@@ -74,7 +73,7 @@ async function loadMemoriesViaMcp(): Promise<{ core: Memory[]; index: MemoryInde
     ),
   ]);
 
-  const core: Memory[] = parseDoltCsv(coreRows).map((r) => ({
+  const core: Memory[] = coreRows.map((r) => ({
     memoryId:    r.memory_id,
     slug:        r.slug,
     type:        r.type as Memory["type"],
@@ -83,7 +82,7 @@ async function loadMemoriesViaMcp(): Promise<{ core: Memory[]; index: MemoryInde
     content:     r.content,
   }));
 
-  const index: MemoryIndexEntry[] = parseDoltCsv(indexRows).map((r) => ({
+  const index: MemoryIndexEntry[] = indexRows.map((r) => ({
     slug:        r.slug,
     type:        r.type as MemoryIndexEntry["type"],
     name:        r.name,
@@ -294,6 +293,89 @@ export default function (pi: ExtensionAPI) {
         content: [{ type: "text", text: content }],
         details: { slug: params.slug, found },
       };
+    },
+  });
+
+  // ── update_session tool ──────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "update_session",
+    label: "Update Session",
+    description:
+      "Write a phase transition or progress update to the active Dolt session. " +
+      "Call at every Algorithm phase boundary and after each criterion passes. " +
+      "Use the session_id from your system prompt.",
+    promptSnippet: "Write Algorithm phase transition to Dolt session",
+    parameters: Type.Object({
+      session_id:     Type.String({ description: "Session ID from your system prompt" }),
+      phase:          Type.Union(
+        ["observe","think","plan","build","execute","verify","learn","complete"]
+          .map(p => Type.Literal(p as Phase)),
+        { description: "Current Algorithm phase" }
+      ),
+      progress_done:  Type.Number({ description: "Number of ISC criteria passing" }),
+      progress_total: Type.Number({ description: "Total ISC criteria count" }),
+      content:        Type.Optional(Type.String({ description: "ISC criteria, decisions, and verification notes as markdown" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      if (!mcpClient) {
+        return { content: [{ type: "text", text: "MCP client not connected" }], details: { ok: false } };
+      }
+      const result = await mcpClient.updateSession(
+        params.session_id,
+        params.phase as Phase,
+        params.progress_done,
+        params.progress_total,
+        params.content,
+      );
+      return { content: [{ type: "text", text: result }], details: { ok: true } };
+    },
+  });
+
+  // ── write_reflection tool ────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "write_reflection",
+    label: "Write Reflection",
+    description:
+      "Write end-of-session reflection to Dolt at the Algorithm LEARN phase. " +
+      "Mandatory for Standard+ effort. Feeds aggregate analysis and Algorithm improvement.",
+    promptSnippet: "Write Algorithm LEARN phase reflection to Dolt",
+    parameters: Type.Object({
+      session_slug:         Type.String({ description: "Session slug from the session record" }),
+      effort_level:         Type.Union(
+        ["standard","extended","advanced","deep","comprehensive"]
+          .map(e => Type.Literal(e as EffortLevel)),
+        { description: "Effort tier used for this session" }
+      ),
+      task_description:     Type.String({ description: "8-word task description" }),
+      criteria_count:       Type.Number({ description: "Total ISC criteria" }),
+      criteria_passed:      Type.Number({ description: "Criteria passing at VERIFY" }),
+      criteria_failed:      Type.Number({ description: "Criteria failing at VERIFY" }),
+      within_budget:        Type.Boolean({ description: "Did work finish within effort tier time budget?" }),
+      implied_sentiment:    Type.Optional(Type.Number({ description: "Estimated user satisfaction 1-10 from conversation tone" })),
+      reflection_execution: Type.String({ description: "What to do differently in execution" }),
+      reflection_approach:  Type.String({ description: "What a smarter algorithm would have done" }),
+      reflection_gaps:      Type.String({ description: "Missing capabilities or tools" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      if (!mcpClient) {
+        return { content: [{ type: "text", text: "MCP client not connected" }], details: { ok: false } };
+      }
+      const result = await mcpClient.writeReflection({
+        session_slug:         params.session_slug,
+        effort_level:         params.effort_level as EffortLevel,
+        task_description:     params.task_description,
+        criteria_count:       params.criteria_count,
+        criteria_passed:      params.criteria_passed,
+        criteria_failed:      params.criteria_failed,
+        within_budget:        params.within_budget,
+        implied_sentiment:    params.implied_sentiment,
+        reflection_execution: params.reflection_execution,
+        reflection_approach:  params.reflection_approach,
+        reflection_gaps:      params.reflection_gaps,
+      });
+      return { content: [{ type: "text", text: result }], details: { ok: true } };
     },
   });
 }
