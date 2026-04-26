@@ -29,7 +29,7 @@
 
 import { Type } from "@mariozechner/pi-ai";
 import type { Tool, ToolResultMessage } from "@mariozechner/pi-ai";
-import { doltQuery, parseDoltCsv } from "./utils";
+import { doltQuery } from "./utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -60,11 +60,11 @@ export interface MemoryIndexEntry {
 export async function loadMemoriesByType(types: MemoryType[]): Promise<Memory[]> {
   if (types.length === 0) return [];
   const list = types.map(t => `'${t}'`).join(", ");
-  const csv = await doltQuery(
+  const rows = await doltQuery(
     `SELECT memory_id, slug, type, name, description, content ` +
     `FROM memories WHERE type IN (${list}) ORDER BY type, slug;`
   );
-  return parseDoltCsv(csv).map(rowToMemory);
+  return rows.map(rowToMemory);
 }
 
 /**
@@ -74,11 +74,11 @@ export async function loadMemoriesByType(types: MemoryType[]): Promise<Memory[]>
 export async function loadMemoryIndex(types: MemoryType[]): Promise<MemoryIndexEntry[]> {
   if (types.length === 0) return [];
   const list = types.map(t => `'${t}'`).join(", ");
-  const csv = await doltQuery(
+  const rows = await doltQuery(
     `SELECT slug, type, name, description ` +
     `FROM memories WHERE type IN (${list}) ORDER BY type, slug;`
   );
-  return parseDoltCsv(csv).map(rowToIndexEntry);
+  return rows.map(rowToIndexEntry);
 }
 
 /**
@@ -87,11 +87,10 @@ export async function loadMemoryIndex(types: MemoryType[]): Promise<MemoryIndexE
  */
 export async function getMemoryBySlug(slug: string): Promise<Memory | null> {
   const safe = slug.replace(/'/g, "''");
-  const csv = await doltQuery(
+  const rows = await doltQuery(
     `SELECT memory_id, slug, type, name, description, content ` +
     `FROM memories WHERE slug = '${safe}' LIMIT 1;`
   );
-  const rows = parseDoltCsv(csv);
   return rows.length > 0 ? rowToMemory(rows[0]!) : null;
 }
 

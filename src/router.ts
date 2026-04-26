@@ -23,7 +23,6 @@ import type { AssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { createInterface } from "readline";
 import {
   doltQuery,
-  parseDoltCsv,
   writeModelSelectedEvent,
   generateULID,
   generateTraceId,
@@ -112,7 +111,7 @@ export function clearRegistryCache(): void {
 export async function loadModelRegistry(): Promise<ModelRegistry> {
   if (_registry) return _registry;
 
-  const csv = await doltQuery(
+  const rows = await doltQuery(
     "SELECT slug, display_name, provider, api, base_url, tier, " +
       "context_window, max_output_tokens, " +
       "cost_input, cost_output, cost_cache_read, cost_cache_write, " +
@@ -120,16 +119,15 @@ export async function loadModelRegistry(): Promise<ModelRegistry> {
       "FROM models WHERE active = TRUE ORDER BY tier, slug;"
   );
 
-  _registry = parseRegistryFromCsv(csv);
+  _registry = parseRegistryFromRows(rows);
   return _registry;
 }
 
 /**
- * Parse CSV rows from `dolt sql -r csv` into a ModelRegistry.
+ * Parse Dolt query rows into a ModelRegistry.
  * Exported for unit testing — keeps loadModelRegistry() as a thin I/O wrapper.
  */
-export function parseRegistryFromCsv(csv: string): ModelRegistry {
-  const rows = parseDoltCsv(csv);
+export function parseRegistryFromRows(rows: Record<string, string>[]): ModelRegistry {
   const registry: ModelRegistry = new Map();
 
   for (const row of rows) {

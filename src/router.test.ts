@@ -12,7 +12,7 @@ import {
   checkConsent,
   toPiAiModel,
   getApiKey,
-  parseRegistryFromCsv,
+  parseRegistryFromRows,
   resetSessionConsent,
   getSessionConsent,
   estimateContextTokens,
@@ -350,19 +350,18 @@ describe("getApiKey", () => {
   });
 });
 
-// ── parseRegistryFromCsv ──────────────────────────────────────────────────────
+// ── parseRegistryFromRows ──────────────────────────────────────────────────────
 
-describe("parseRegistryFromCsv", () => {
-  // Build a representative CSV string that mirrors Dolt's actual output format
-  const SAMPLE_CSV = [
-    "slug,display_name,provider,api,base_url,tier,context_window,max_output_tokens,cost_input,cost_output,cost_cache_read,cost_cache_write,reasoning,capabilities",
-    `gemma4,Gemma 4 27B,ollama,openai-completions,http://localhost:11434/v1,0,131072,8192,0.000000,0.000000,0.000000,0.000000,1,"[""text"",""reasoning""]"`,
-    `claude-haiku-4-5,Claude Haiku 4.5,anthropic,anthropic-messages,https://api.anthropic.com,1,200000,64000,1.000000,5.000000,0.100000,1.250000,1,"[""text"",""code"",""vision""]"`,
-    `claude-opus-4-5,Claude Opus 4.5,anthropic,anthropic-messages,https://api.anthropic.com,2,200000,64000,5.000000,25.000000,0.500000,6.250000,1,"[""text"",""code"",""reasoning"",""vision""]"`,
-  ].join("\n");
+describe("parseRegistryFromRows", () => {
+  // Representative rows as mysql2 returns them (Record<string, string>[])
+  const SAMPLE_ROWS: Record<string, string>[] = [
+    { slug: "gemma4", display_name: "Gemma 4 27B", provider: "ollama", api: "openai-completions", base_url: "http://localhost:11434/v1", tier: "0", context_window: "131072", max_output_tokens: "8192", cost_input: "0.000000", cost_output: "0.000000", cost_cache_read: "0.000000", cost_cache_write: "0.000000", reasoning: "1", capabilities: '["text","reasoning"]' },
+    { slug: "claude-haiku-4-5", display_name: "Claude Haiku 4.5", provider: "anthropic", api: "anthropic-messages", base_url: "https://api.anthropic.com", tier: "1", context_window: "200000", max_output_tokens: "64000", cost_input: "1.000000", cost_output: "5.000000", cost_cache_read: "0.100000", cost_cache_write: "1.250000", reasoning: "1", capabilities: '["text","code","vision"]' },
+    { slug: "claude-opus-4-5", display_name: "Claude Opus 4.5", provider: "anthropic", api: "anthropic-messages", base_url: "https://api.anthropic.com", tier: "2", context_window: "200000", max_output_tokens: "64000", cost_input: "5.000000", cost_output: "25.000000", cost_cache_read: "0.500000", cost_cache_write: "6.250000", reasoning: "1", capabilities: '["text","code","reasoning","vision"]' },
+  ];
 
   test("returns a Map keyed by slug", () => {
-    const registry = parseRegistryFromCsv(SAMPLE_CSV);
+    const registry = parseRegistryFromRows(SAMPLE_ROWS);
     expect(registry).toBeInstanceOf(Map);
     expect(registry.has("gemma4")).toBe(true);
     expect(registry.has("claude-haiku-4-5")).toBe(true);
@@ -370,14 +369,14 @@ describe("parseRegistryFromCsv", () => {
   });
 
   test("parses tier as number", () => {
-    const registry = parseRegistryFromCsv(SAMPLE_CSV);
+    const registry = parseRegistryFromRows(SAMPLE_ROWS);
     expect(registry.get("gemma4")!.tier).toBe(0);
     expect(registry.get("claude-haiku-4-5")!.tier).toBe(1);
     expect(registry.get("claude-opus-4-5")!.tier).toBe(2);
   });
 
   test("parses cost values as floats", () => {
-    const registry = parseRegistryFromCsv(SAMPLE_CSV);
+    const registry = parseRegistryFromRows(SAMPLE_ROWS);
     const haiku = registry.get("claude-haiku-4-5")!;
     expect(haiku.costInput).toBe(1.0);
     expect(haiku.costOutput).toBe(5.0);
@@ -386,12 +385,12 @@ describe("parseRegistryFromCsv", () => {
   });
 
   test("parses reasoning as boolean from '1'", () => {
-    const registry = parseRegistryFromCsv(SAMPLE_CSV);
+    const registry = parseRegistryFromRows(SAMPLE_ROWS);
     expect(registry.get("gemma4")!.reasoning).toBe(true);
   });
 
   test("parses capabilities as string array from JSON column", () => {
-    const registry = parseRegistryFromCsv(SAMPLE_CSV);
+    const registry = parseRegistryFromRows(SAMPLE_ROWS);
     const caps = registry.get("gemma4")!.capabilities;
     expect(Array.isArray(caps)).toBe(true);
     expect(caps).toContain("text");
@@ -399,23 +398,22 @@ describe("parseRegistryFromCsv", () => {
   });
 
   test("parses contextWindow and maxTokens as numbers", () => {
-    const registry = parseRegistryFromCsv(SAMPLE_CSV);
+    const registry = parseRegistryFromRows(SAMPLE_ROWS);
     const gemma = registry.get("gemma4")!;
     expect(gemma.contextWindow).toBe(131072);
     expect(gemma.maxTokens).toBe(8192);
   });
 
   test("skips rows with invalid tier values", () => {
-    const csvWithBadTier = [
-      "slug,display_name,provider,api,base_url,tier,context_window,max_output_tokens,cost_input,cost_output,cost_cache_read,cost_cache_write,reasoning,capabilities",
-      'bad-model,Bad,ollama,openai-completions,http://localhost:11434/v1,99,1000,1000,0,0,0,0,0,"[]"',
-    ].join("\n");
-    const registry = parseRegistryFromCsv(csvWithBadTier);
+    const badRows: Record<string, string>[] = [
+      { slug: "bad-model", display_name: "Bad", provider: "ollama", api: "openai-completions", base_url: "http://localhost:11434/v1", tier: "99", context_window: "1000", max_output_tokens: "1000", cost_input: "0", cost_output: "0", cost_cache_read: "0", cost_cache_write: "0", reasoning: "0", capabilities: "[]" },
+    ];
+    const registry = parseRegistryFromRows(badRows);
     expect(registry.has("bad-model")).toBe(false);
   });
 
-  test("returns empty registry for empty CSV", () => {
-    const registry = parseRegistryFromCsv("");
+  test("returns empty registry for empty rows", () => {
+    const registry = parseRegistryFromRows([]);
     expect(registry.size).toBe(0);
   });
 });

@@ -119,46 +119,6 @@ describe("parseCsvRow", () => {
   });
 });
 
-// ─── parseDoltCsv ──────────────────────────────────────────────────────────
-
-describe("parseDoltCsv", () => {
-  test("returns empty array for empty string", () => {
-    expect(parseDoltCsv("")).toEqual([]);
-  });
-
-  test("returns empty array for header-only CSV", () => {
-    expect(parseDoltCsv("slug,tier,active")).toEqual([]);
-  });
-
-  test("parses a single data row into a keyed object", () => {
-    const csv = "slug,tier,active\ngemma4,0,1";
-    expect(parseDoltCsv(csv)).toEqual([{ slug: "gemma4", tier: "0", active: "1" }]);
-  });
-
-  test("parses multiple rows", () => {
-    const csv = "slug,tier\ngemma4,0\nqwen3:32b,0\nclaude-haiku-4-5,1";
-    const rows = parseDoltCsv(csv);
-    expect(rows).toHaveLength(3);
-    expect(rows[0]).toEqual({ slug: "gemma4", tier: "0" });
-    expect(rows[2]).toEqual({ slug: "claude-haiku-4-5", tier: "1" });
-  });
-
-  test("handles quoted JSON field in a row (RFC 4180 double-quote escaping)", () => {
-    // Dolt outputs: gemma4,"[""text"",""reasoning""]"
-    const csv = 'slug,capabilities\ngemma4,"[""text"",""reasoning""]"';
-    const rows = parseDoltCsv(csv);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].slug).toBe("gemma4");
-    // Parser strips outer quotes and unescapes "" → "; result is valid JSON
-    expect(JSON.parse(rows[0].capabilities)).toEqual(["text", "reasoning"]);
-  });
-
-  test("ignores trailing blank lines", () => {
-    const csv = "a,b\n1,2\n\n\n";
-    expect(parseDoltCsv(csv)).toHaveLength(1);
-  });
-});
-
 // ─── parseCSVRows ──────────────────────────────────────────────────────────
 
 describe("parseCSVRows", () => {
@@ -173,22 +133,6 @@ describe("parseCSVRows", () => {
     expect(rows).toHaveLength(2); // header + 1 data row
     expect(rows[1][0]).toBe("user_profile");
     expect(rows[1][1]).toBe("Line one\nLine two\nLine three");
-  });
-
-  test("multiline field does not create extra rows in parseDoltCsv", () => {
-    const csv = `slug,name,content\nuser_profile,Profile,"First line\nSecond line"`;
-    const result = parseDoltCsv(csv);
-    expect(result).toHaveLength(1);
-    expect(result[0].slug).toBe("user_profile");
-    expect(result[0].content).toBe("First line\nSecond line");
-  });
-
-  test("multiple rows each with multiline content", () => {
-    const csv = `slug,content\nrow1,"A\nB"\nrow2,"C\nD"`;
-    const result = parseDoltCsv(csv);
-    expect(result).toHaveLength(2);
-    expect(result[0].content).toBe("A\nB");
-    expect(result[1].content).toBe("C\nD");
   });
 
   test("handles \\r\\n line endings within quoted field", () => {

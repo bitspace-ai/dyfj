@@ -31,7 +31,6 @@ import {
   generateSpanId,
   extractText,
   doltQuery,
-  parseDoltCsv,
   writeEvent,
 } from "./utils";
 import {
@@ -402,11 +401,10 @@ for (const [tier, spend] of Object.entries(finalSummary.byTier)) {
 console.log("\n─".repeat(50));
 console.log("Events for this session:\n");
 
-const csv = await doltQuery(
+const rows = await doltQuery(
   `SELECT event_type, model_id, cost_total, SUBSTRING(content, 1, 60) AS content_preview ` +
   `FROM events WHERE session_id = '${SESSION_ID}' ORDER BY created_at;`
 );
-const rows = parseDoltCsv(csv);
 for (const row of rows) {
   const cost = row.cost_total ? `  $${parseFloat(row.cost_total).toFixed(6)}` : "";
   const model = row.model_id ? `  [${row.model_id}]` : "";

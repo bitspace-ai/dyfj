@@ -59,14 +59,6 @@ export async function doltQuery(sql: string): Promise<Record<string, string>[]> 
 }
 
 /**
- * Backward-compat passthrough — callers that used parseDoltCsv(await doltQuery(...))
- * still work because doltQuery now returns the rows directly.
- */
-export function parseDoltCsv(rows: Record<string, string>[]): Record<string, string>[] {
-  return rows;
-}
-
-/**
  * Split a CSV string into rows of fields, correctly handling:
  *   - Quoted fields containing commas, newlines, or escaped double-quotes ("")
  *   - \r\n and \n line endings
