@@ -7,7 +7,7 @@ This README is the *operating context* for the project. Decisions up front. How-
 ## Repo layout
 
 - `core/` — Rust substrate. Today a compiling placeholder; the first meaningful code is the schema-tracer-bullet binary. Where stabilized components live.
-- `prototype/` — TypeScript on Bun. Real working code (router, memory, budget, MCP server, tests). The active prototyping surface. Not a long-term home for any specific layer; components either move down into `core/` as they stabilize or get retired here. A future GUI layer (Tauri-leaning) is likely also TypeScript, but it will live in its own directory, not in `prototype/`.
+- `prototype/` — TypeScript on Bun. Real working code (router, memory, budget, MCP server, tests). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
 - `schema/` — Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `LICENSE` — MIT.
 
