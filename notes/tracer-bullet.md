@@ -59,7 +59,9 @@ Required by sqlx. Use `#[tokio::main(flavor = "current_thread")]` — a single-s
 
 ### Connection: `DATABASE_URL` environment variable
 
-Standard Rust idiom (sqlx and the broader ecosystem expect this). Default to `mysql://root:dolt@127.0.0.1:3306/dolt` if unset, to match the prototype's hardcoded connection. The default lets the binary run with zero setup if Dolt is already up; the env var lets it work elsewhere.
+Standard Rust idiom (sqlx and the broader ecosystem expect this). Default to `mysql://root@127.0.0.1:3306/dolt` if unset — this matches Dolt's out-of-the-box auth (no-password root) so a fresh `dolt sql-server` works immediately with no extra setup. Users who want a password configure it via `CREATE USER`/`GRANT` and override `DATABASE_URL` accordingly.
+
+(The prototype's hardcoded `root:dolt` reflected an older Dolt auth convention; modern Dolt removed the `--user`/`--password` flags in favor of SQL-managed users. We're not preserving that as the default.)
 
 ### Error handling: `anyhow` in `main.rs`, `thiserror` in `lib.rs`
 

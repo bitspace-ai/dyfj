@@ -1,10 +1,23 @@
-// DYFJ Core — Rust substrate.
-//
-// This binary is intentionally empty. It exists so the crate compiles
-// and the directory is real, not a placeholder. The first meaningful
-// code goes here: a tracer-bullet that writes one event to Dolt and
-// reads it back through the canonical schema.
+// SPIKE: smallest sqlx + Dolt round-trip. Replaced once the tracer
+// bullet's library + integration test land. Throwaway.
 
-fn main() {
-    println!("dyfj-core: substrate placeholder. See ../README.md for what's next.");
+use anyhow::{Context, Result};
+use sqlx::MySqlPool;
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://root@127.0.0.1:3306/dolt".to_string());
+
+    let pool = MySqlPool::connect(&database_url)
+        .await
+        .with_context(|| format!("failed to connect to {database_url}"))?;
+
+    let row: (i64,) = sqlx::query_as("SELECT 1")
+        .fetch_one(&pool)
+        .await
+        .context("SELECT 1 failed")?;
+
+    println!("dolt connection works. SELECT 1 returned {}", row.0);
+    Ok(())
 }
