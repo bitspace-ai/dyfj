@@ -1,0 +1,10 @@
+[package]
+name = "dyfj-core"
+version = "0.0.1"
+edition = "2024"
+description = "DYFJ substrate — Rust core for a sovereign personal AI stack"
+license = "MIT"
+repository = "https://github.com/bitspace-ai/dyfj"
+readme = "README.md"
+
+[dependencies]
