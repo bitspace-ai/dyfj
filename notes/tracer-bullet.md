@@ -59,11 +59,9 @@ Required by sqlx. Use `#[tokio::main(flavor = "current_thread")]` — a single-s
 
 ### Connection: `DATABASE_URL` environment variable, required
 
-Standard Rust idiom (sqlx and the broader ecosystem expect this). The binary requires `DATABASE_URL` to be set; no hardcoded fallback in code. `dotenvy` loads `.env` at startup, so local dev is frictionless once `core/.env` exists.
+Standard Rust idiom; sqlx and the broader ecosystem expect this. The binary requires `DATABASE_URL` to be set — no hardcoded fallback in code. `dotenvy` loads `.env` at startup, so local dev is frictionless once `core/.env` exists. Convention documented in `core/.env.example`.
 
-The dev-time convention is documented in `core/.env.example`: `mysql://root@127.0.0.1:3306/dolt` against a local Dolt sql-server bound to `127.0.0.1` (loopback only). The 127.0.0.1 binding is the actual security boundary — loopback is unreachable from any external interface, including VPN/mesh peers. Any binding wider than localhost must require authentication and a real `DATABASE_URL`; this is called out explicitly in `.env.example`.
-
-Why no default in code: documented credentials in source — even toy ones for localhost — read as careless. Requiring explicit configuration costs one `cp .env.example .env` and signals discipline.
+No default in code: documented credentials in source read as careless. Requiring explicit configuration costs one `cp .env.example .env`.
 
 ### Error handling: `anyhow` in `main.rs`, `thiserror` in `lib.rs`
 

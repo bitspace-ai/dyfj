@@ -134,14 +134,12 @@ bun run start
 
 ```sh
 cd core
-cp .env.example .env       # configure DATABASE_URL for local dev
+cp .env.example .env       # set DATABASE_URL for local dev
 cargo build
 cargo run
 ```
 
-Today the binary is a connection spike — confirms sqlx talks to Dolt and prints `SELECT 1`'s result. The real tracer-bullet code (library + integration test) lands in subsequent commits; see `notes/tracer-bullet.md`.
-
-`DATABASE_URL` is required (no hardcoded default). The example assumes a local Dolt sql-server bound to `127.0.0.1` — loopback is the security boundary. Any wider binding requires real authentication; see `core/.env.example` for the explicit framing.
+Today the binary is a connection spike — confirms sqlx talks to Dolt and prints `SELECT 1`'s result. The tracer-bullet library + integration test land in subsequent commits; see `notes/tracer-bullet.md`.
 
 ### Walk the router tiers
 
