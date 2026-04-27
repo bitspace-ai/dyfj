@@ -1,0 +1,134 @@
+{
+  "db_name": "MySQL",
+  "query": "\n        SELECT\n            event_id, session_id, event_type, created_at,\n            trace_id, span_id, parent_span_id,\n            principal_id, principal_type, action, resource, authz_basis\n        FROM events\n        WHERE event_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_id",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 256
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "session_id",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 256
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type",
+        "type_info": {
+          "type": "String",
+          "flags": "NOT_NULL",
+          "max_size": 56
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": {
+          "type": "Timestamp",
+          "flags": "NOT_NULL",
+          "max_size": 26
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "trace_id",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 256
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "span_id",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 128
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "parent_span_id",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 128
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "principal_id",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 512
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "principal_type",
+        "type_info": {
+          "type": "String",
+          "flags": "NOT_NULL",
+          "max_size": 28
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "action",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 256
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "resource",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 1024
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "authz_basis",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL",
+          "max_size": 1024
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f2316c2c62ec1b5641cf34d90a0b5af1b6c21bde0fb09408c7cbb0d04a742f49"
+}

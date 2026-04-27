@@ -5,6 +5,13 @@
 //! and created_at). Other schema fields — model/provider context,
 //! token usage, content, tool fields, thinking, duration — will be
 //! added as they become relevant; not all events use all fields.
+//!
+//! Queries use `sqlx::query!` / `sqlx::query_as!` macros, which are
+//! checked at compile time against the schema in `.sqlx/` (or against
+//! a live `DATABASE_URL` if the cache is missing). That makes any
+//! drift between the Rust code and the canonical schema a *build*
+//! failure, not a runtime one — the schema-in-data-layer stance
+//! enforced at the language boundary.
 
 use chrono::{DateTime, Utc};
 use sqlx::MySqlPool;
@@ -13,7 +20,7 @@ use crate::error::Result;
 
 /// One row of the `events` table, restricted to the subset of fields
 /// the tracer bullet exercises.
-#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     pub event_id: String,
     pub session_id: String,
@@ -31,7 +38,7 @@ pub struct Event {
 
 /// Insert one event into the `events` table.
 pub async fn write(pool: &MySqlPool, event: &Event) -> Result<()> {
-    sqlx::query(
+    sqlx::query!(
         r#"
         INSERT INTO events (
             event_id, session_id, event_type, created_at,
@@ -40,19 +47,19 @@ pub async fn write(pool: &MySqlPool, event: &Event) -> Result<()> {
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
+        event.event_id,
+        event.session_id,
+        event.event_type,
+        event.created_at,
+        event.trace_id,
+        event.span_id,
+        event.parent_span_id,
+        event.principal_id,
+        event.principal_type,
+        event.action,
+        event.resource,
+        event.authz_basis,
     )
-    .bind(&event.event_id)
-    .bind(&event.session_id)
-    .bind(&event.event_type)
-    .bind(event.created_at)
-    .bind(&event.trace_id)
-    .bind(&event.span_id)
-    .bind(&event.parent_span_id)
-    .bind(&event.principal_id)
-    .bind(&event.principal_type)
-    .bind(&event.action)
-    .bind(&event.resource)
-    .bind(&event.authz_basis)
     .execute(pool)
     .await?;
 
@@ -62,7 +69,7 @@ pub async fn write(pool: &MySqlPool, event: &Event) -> Result<()> {
 /// Look up one event by its primary key. Returns `None` if no row matches —
 /// this is a successful lookup that found nothing, not an error.
 pub async fn read_by_id(pool: &MySqlPool, event_id: &str) -> Result<Option<Event>> {
-    let row = sqlx::query_as::<_, Event>(
+    let row = sqlx::query!(
         r#"
         SELECT
             event_id, session_id, event_type, created_at,
@@ -71,10 +78,23 @@ pub async fn read_by_id(pool: &MySqlPool, event_id: &str) -> Result<Option<Event
         FROM events
         WHERE event_id = ?
         "#,
+        event_id,
     )
-    .bind(event_id)
     .fetch_optional(pool)
     .await?;
 
-    Ok(row)
+    Ok(row.map(|r| Event {
+        event_id: r.event_id,
+        session_id: r.session_id,
+        event_type: r.event_type,
+        created_at: r.created_at,
+        trace_id: r.trace_id,
+        span_id: r.span_id,
+        parent_span_id: r.parent_span_id,
+        principal_id: r.principal_id,
+        principal_type: r.principal_type,
+        action: r.action,
+        resource: r.resource,
+        authz_basis: r.authz_basis,
+    }))
 }
