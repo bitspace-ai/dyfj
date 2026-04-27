@@ -84,7 +84,7 @@ describe("buildSystemPrompt — nudge", () => {
   test("nudge appears before the memory sections (model sees it early)", () => {
     const prompt = buildSystemPrompt(SAMPLE_USER_MEMORIES, SAMPLE_INDEX);
     const nudgePos  = prompt.indexOf("Before starting any task");
-    const aboutPos  = prompt.indexOf("## About Chris");
+    const aboutPos  = prompt.indexOf("## About the User");
     expect(nudgePos).toBeLessThan(aboutPos);
   });
 });
@@ -92,9 +92,9 @@ describe("buildSystemPrompt — nudge", () => {
 // ── buildSystemPrompt — user memories ────────────────────────────────────────
 
 describe("buildSystemPrompt — user memories", () => {
-  test("includes 'About Chris' section", () => {
+  test("includes 'About the User' section", () => {
     const prompt = buildSystemPrompt(SAMPLE_USER_MEMORIES, []);
-    expect(prompt).toContain("## About Chris");
+    expect(prompt).toContain("## About the User");
   });
 
   test("includes each user memory name as a heading", () => {
@@ -109,9 +109,9 @@ describe("buildSystemPrompt — user memories", () => {
     expect(prompt).toContain("Chris is left-handed.");
   });
 
-  test("omits 'About Chris' section when no user memories", () => {
+  test("omits 'About the User' section when no user memories", () => {
     const prompt = buildSystemPrompt([], []);
-    expect(prompt).not.toContain("## About Chris");
+    expect(prompt).not.toContain("## About the User");
   });
 
   test("does not include user memory content in the index table", () => {
@@ -152,7 +152,7 @@ describe("buildSystemPrompt — feedback memories", () => {
   test("user section appears before feedback section", () => {
     const all = [...SAMPLE_USER_MEMORIES, ...SAMPLE_FEEDBACK_MEMORIES];
     const prompt = buildSystemPrompt(all, []);
-    const aboutPos    = prompt.indexOf("## About Chris");
+    const aboutPos    = prompt.indexOf("## About the User");
     const prefsPos    = prompt.indexOf("## Working Preferences");
     expect(aboutPos).toBeLessThan(prefsPos);
   });
@@ -234,62 +234,75 @@ describe("buildSystemPrompt — context index", () => {
 
 // ── buildSystemPrompt — identity injection ───────────────────────────────────
 
-const ROOK_IDENTITY_MEMORY = makeMemory({
-  slug: "user_rook_identity",
-  name: "Rook Identity",
-  content: "You are Rook, the DYFJ workbench AI.",
+const TEST_PREFIX = "user_agent_";
+const TEST_OPTS   = { identitySlugPrefix: TEST_PREFIX };
+
+const AGENT_IDENTITY_MEMORY = makeMemory({
+  slug: "user_agent_identity",
+  name: "Agent Identity",
+  content: "You are the DYFJ workbench AI.",
 });
-const ROOK_VOICE_MEMORY = makeMemory({
-  slug: "user_rook_voice",
-  name: "Rook Voice",
+const AGENT_VOICE_MEMORY = makeMemory({
+  slug: "user_agent_voice",
+  name: "Agent Voice",
   content: "Be direct. Match dry humor.",
 });
-const ROOK_STEERING_MEMORY = makeMemory({
-  slug: "user_rook_steering",
-  name: "Rook Steering Rules",
+const AGENT_STEERING_MEMORY = makeMemory({
+  slug: "user_agent_steering",
+  name: "Agent Steering Rules",
   content: "Check north star before every task.",
 });
-const ROOK_IDENTITY_MEMORIES = [ROOK_IDENTITY_MEMORY, ROOK_VOICE_MEMORY, ROOK_STEERING_MEMORY];
+const AGENT_IDENTITY_MEMORIES = [AGENT_IDENTITY_MEMORY, AGENT_VOICE_MEMORY, AGENT_STEERING_MEMORY];
 
 describe("buildSystemPrompt — identity injection", () => {
-  test("identity memories appear before About Chris section", () => {
-    const prompt = buildSystemPrompt([...ROOK_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], []);
-    const identityPos = prompt.indexOf("You are Rook");
-    const aboutPos    = prompt.indexOf("## About Chris");
+  test("identity memories appear before user context section", () => {
+    const prompt = buildSystemPrompt([...AGENT_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], [], TEST_OPTS);
+    const identityPos = prompt.indexOf("You are the DYFJ");
+    const aboutPos    = prompt.indexOf("## About the User");
     expect(identityPos).toBeGreaterThanOrEqual(0);
     expect(identityPos).toBeLessThan(aboutPos);
   });
 
   test("identity memories appear in canonical order: identity → voice → steering", () => {
-    const prompt = buildSystemPrompt([...ROOK_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], []);
-    const idPos       = prompt.indexOf("You are Rook");
+    const prompt = buildSystemPrompt([...AGENT_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], [], TEST_OPTS);
+    const idPos       = prompt.indexOf("You are the DYFJ");
     const voicePos    = prompt.indexOf("Be direct");
     const steeringPos = prompt.indexOf("Check north star");
     expect(idPos).toBeLessThan(voicePos);
     expect(voicePos).toBeLessThan(steeringPos);
   });
 
-  test("user_rook_* slugs are NOT included in About Chris section", () => {
-    const prompt = buildSystemPrompt([...ROOK_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], []);
-    const aboutStart = prompt.indexOf("## About Chris");
+  test("identity slugs are NOT included in user context section", () => {
+    const prompt = buildSystemPrompt([...AGENT_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], [], TEST_OPTS);
+    const aboutStart = prompt.indexOf("## About the User");
     if (aboutStart === -1) return;
     const aboutSection = prompt.slice(aboutStart);
-    expect(aboutSection).not.toContain("### Rook Identity");
-    expect(aboutSection).not.toContain("### Rook Voice");
+    expect(aboutSection).not.toContain("### Agent Identity");
+    expect(aboutSection).not.toContain("### Agent Voice");
   });
 
   test("empty memories produces empty prompt — identity comes from Dolt", () => {
-    const prompt = buildSystemPrompt([], []);
+    const prompt = buildSystemPrompt([], [], TEST_OPTS);
     expect(prompt.trim()).toBe("");
   });
 
-  test("unknown user_rook_* slugs still appear in identity section", () => {
-    const future = makeMemory({ slug: "user_rook_future", name: "Future Rook Rule", content: "Future rule content." });
-    const prompt = buildSystemPrompt([...ROOK_IDENTITY_MEMORIES, future, ...SAMPLE_USER_MEMORIES], []);
+  test("unknown identity slugs still appear in identity section", () => {
+    const future = makeMemory({ slug: "user_agent_future", name: "Future Rule", content: "Future rule content." });
+    const prompt = buildSystemPrompt([...AGENT_IDENTITY_MEMORIES, future, ...SAMPLE_USER_MEMORIES], [], TEST_OPTS);
     const identityPos = prompt.indexOf("Future rule content.");
-    const aboutPos    = prompt.indexOf("## About Chris");
+    const aboutPos    = prompt.indexOf("## About the User");
     expect(identityPos).toBeGreaterThanOrEqual(0);
     expect(identityPos).toBeLessThan(aboutPos);
+  });
+
+  test("no identitySlugPrefix — all user memories appear in user context section", () => {
+    const prompt = buildSystemPrompt([...AGENT_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], []);
+    // No identity section hoisted above the user section
+    const userSectionPos  = prompt.indexOf("## About the User");
+    const identityContent = prompt.indexOf("You are the DYFJ");
+    expect(userSectionPos).toBeGreaterThanOrEqual(0);
+    // Identity content appears AFTER (inside) the user section, not before it
+    expect(identityContent).toBeGreaterThan(userSectionPos);
   });
 });
 

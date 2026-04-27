@@ -16,7 +16,14 @@ CREATE TABLE IF NOT EXISTS memories (
     -- Slug derived from original filename (e.g. 'user_profile', 'feedback_humor')
     -- Serves as a human-readable stable identifier for upserts
     slug            VARCHAR(128)  NOT NULL UNIQUE,
-    type            ENUM('user','feedback','project','reference') NOT NULL,
+    -- user:        personal identity and preferences — always loaded
+    -- feedback:    learned corrections and working style — always loaded
+    -- environment: runtime environment facts (tool paths, commands, service names)
+    --              always loaded; static rows authored in Dolt, dynamic status
+    --              injected fresh each session by the host extension
+    -- project:     project-specific context — lazy (on-demand via read_memory)
+    -- reference:   reference material — lazy (on-demand via read_memory)
+    type            ENUM('user','feedback','environment','project','reference') NOT NULL,
     name            VARCHAR(256)  NOT NULL,
     description     TEXT          NOT NULL,
 

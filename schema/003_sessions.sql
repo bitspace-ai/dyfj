@@ -1,22 +1,14 @@
 -- DYFJ Workbench — Sessions Schema
--- Replaces: MEMORY/WORK/*/PRD.md + work.json + session-names.json
---
--- A session is a unit of work — what PAI calls an "Algorithm run" or a
--- "native mode task." The structured metadata (phase, effort, progress)
--- enables dashboards and queries. The freeform content (context, criteria,
--- decisions, verification) stays as markdown TEXT because the model reads
--- it as prose and makes its own judgments.
---
--- What this eliminates:
---   - work.json session registry → SELECT * FROM sessions WHERE phase != 'complete'
---   - session-names.json → session_name column
---   - PRD frontmatter parsing → direct column access
---   - Criteria duplication between PRD and work.json → single source in content
+-- A session is a unit of work — an Algorithm run or a native-mode task.
+-- Structured metadata (phase, effort, progress) enables dashboards and
+-- queries. Freeform content (context, criteria, decisions, verification)
+-- stays as markdown TEXT because the model reads it as prose and makes
+-- its own judgments.
 
 CREATE TABLE IF NOT EXISTS sessions (
     -- Identity — use ULID/UUIDv7 for time-sortable inserts
     session_id      VARCHAR(64)   NOT NULL PRIMARY KEY,
-    -- Slug from PRD directory name (e.g. '20260412-143000_dyfj-m22-event-spec-types')
+    -- Slug: time-prefixed identifier (e.g. '20260412-143000_dyfj-event-schema')
     slug            VARCHAR(256)  NOT NULL UNIQUE,
     -- Human-readable 4-word session name (e.g. 'Quiet Morning Schema Design')
     session_name    VARCHAR(128)  NULL,

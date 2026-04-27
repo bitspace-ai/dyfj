@@ -186,7 +186,7 @@ describe("full session context (integration)", () => {
     const prompt = buildSystemPrompt(core, index);
 
     // Should contain key sections
-    expect(prompt).toContain("## About Chris");
+    expect(prompt).toContain("## About the User");
     expect(prompt).toContain("## Working Preferences");
     expect(prompt).toContain("## Context Index");
     expect(prompt).toContain("project_dyfj");

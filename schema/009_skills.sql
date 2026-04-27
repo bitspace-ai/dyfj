@@ -1,5 +1,4 @@
 -- DYFJ Workbench — Skills Schema
--- M2.5 Task 4
 --
 -- A skill is a named reasoning methodology stored as a prompt template.
 -- invoke_skill(slug) via MCP loads the template and returns it to the model,

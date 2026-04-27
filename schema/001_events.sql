@@ -1,5 +1,5 @@
 -- DYFJ Workbench — Canonical Event Schema
--- M2.2: Event spec with OTel correlation and security/auditability as structural requirements.
+-- Design: OTel correlation and security/auditability are structural requirements, not plugins.
 --
 -- Design principles:
 --   1. Schema lives with the data, not in a language. This DDL IS the contract.

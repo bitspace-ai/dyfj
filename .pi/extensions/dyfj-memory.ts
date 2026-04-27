@@ -1,7 +1,7 @@
 /**
  * DYFJ Workbench — pi session extension (MCP-backed)
  *
- * Task 6 (M2.5): all Dolt logic now lives in the dyfj-memory MCP server.
+ * All Dolt logic lives in the dyfj-memory MCP server.
  * This extension is a thin lifecycle bridge — it connects to the MCP server
  * at session_start and routes through it for all memory and session operations.
  *
@@ -65,7 +65,7 @@ async function loadMemoriesViaMcp(): Promise<{ core: Memory[]; index: MemoryInde
   const [coreRows, indexRows] = await Promise.all([
     doltQuery(
       `SELECT memory_id, slug, type, name, description, content ` +
-      `FROM memories WHERE type IN ('user', 'feedback') ORDER BY type, slug;`
+      `FROM memories WHERE type IN ('user', 'feedback', 'environment') ORDER BY type, slug;`
     ),
     doltQuery(
       `SELECT slug, type, name, description ` +
@@ -93,6 +93,70 @@ async function loadMemoriesViaMcp(): Promise<{ core: Memory[]; index: MemoryInde
 }
 
 // ── Extension ─────────────────────────────────────────────────────────────────
+
+// ── Dynamic environment discovery ───────────────────────────────────────────
+//
+// Probes the live environment at session_start and returns a markdown block
+// appended to the system prompt. Complements the static 'environment' memories
+// in Dolt — those carry authored facts (commands, paths, conventions); this
+// carries live state (services up/down, loaded models).
+//
+// Implementation-specific: lives here, not in memory.ts. Discovery probes
+// local tooling and has no place in the framework layer.
+
+async function discoverLiveEnvironment(pi: ExtensionAPI): Promise<string> {
+  const TIMEOUT = 3000;
+  const exec = (cmd: string, args: string[]) =>
+    pi.exec(cmd, args, { timeout: TIMEOUT }).catch(() => ({ code: 1, stdout: "", stderr: "", killed: false }));
+
+  const [doltProc, ollamaProc, doltPath, ollamaPath, bunPath] = await Promise.all([
+    exec("pgrep", ["-x", "dolt"]),
+    exec("pgrep", ["-x", "ollama"]),
+    exec("which", ["dolt"]),
+    exec("which", ["ollama"]),
+    exec("which", ["bun"]),
+  ]);
+
+  const doltRunning   = doltProc.code   === 0;
+  const ollamaRunning = ollamaProc.code === 0;
+
+  const lines: string[] = [
+    "---",
+    "",
+    "## Current Environment Status",
+    "",
+    "**Services:**",
+    `- Dolt sql-server: ${doltRunning   ? "✓ running" : "✗ not running"}`,
+    `- Ollama:          ${ollamaRunning ? "✓ running" : "✗ not running"}`,
+  ];
+
+  if (ollamaRunning) {
+    const list = await exec("ollama", ["list"]);
+    if (list.code === 0) {
+      const models = list.stdout.trim().split("\n").slice(1).filter(Boolean);
+      if (models.length > 0) {
+        lines.push("");
+        lines.push("**Loaded Ollama models:**");
+        for (const line of models) {
+          const name = line.split(/\s+/)[0];
+          if (name) lines.push(`- ${name}`);
+        }
+      }
+    }
+  }
+
+  const paths: string[] = [];
+  if (doltPath.code   === 0) paths.push(`- dolt:   ${doltPath.stdout.trim()}`);
+  if (ollamaPath.code === 0) paths.push(`- ollama: ${ollamaPath.stdout.trim()}`);
+  if (bunPath.code    === 0) paths.push(`- bun:    ${bunPath.stdout.trim()}`);
+  if (paths.length > 0) {
+    lines.push("");
+    lines.push("**Tool paths (verified this session):**");
+    lines.push(...paths);
+  }
+
+  return lines.join("\n");
+}
 
 export default function (pi: ExtensionAPI) {
 
@@ -131,7 +195,7 @@ export default function (pi: ExtensionAPI) {
       content:        `pi session | reason: ${event.reason}`,
     }).catch((err) => ctx.ui.notify(`DYFJ: session_start write failed: ${err}`, "error"));
 
-    // Auto-create a Dolt session record via MCP (Task 5)
+    // Auto-create a Dolt session record via MCP
     if (mcpClient) {
       mcpClient.startSession("pi session", undefined, undefined)
         .then((s) => { doltSessionId = s.session_id; })
@@ -141,7 +205,10 @@ export default function (pi: ExtensionAPI) {
     // Load memories and build system prompt
     ctx.ui.setStatus("dyfj", "Loading memories…");
     try {
-      const { core, index } = await loadMemoriesViaMcp();
+      const [{ core, index }, envStatus] = await Promise.all([
+        loadMemoriesViaMcp(),
+        discoverLiveEnvironment(pi),
+      ]);
       const prompt = buildSystemPrompt(core, index);
 
       // Append session context so model knows its session_id for update_session() calls
@@ -149,7 +216,7 @@ export default function (pi: ExtensionAPI) {
         ? `\n\n---\n\n**Active Session:** \`${doltSessionId}\` — use this ID with \`update_session()\` to track Algorithm progress.\n`
         : "";
 
-      cachedPrompt = prompt + sessionHeader;
+      cachedPrompt = prompt + sessionHeader + "\n\n" + envStatus;
       ctx.ui.setStatus("dyfj", "");
       ctx.ui.notify(
         `Memories: ${core.length} loaded, ${index.length} indexed` +

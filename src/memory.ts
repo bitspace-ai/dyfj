@@ -15,12 +15,12 @@
  * This fixes the 30% miss rate from the MEMORY.md era: SQL guarantees the
  * index is always in context; the model decides what to load from it.
  *
- * Identity injection (Task 2, M2.5):
- *   user_rook_* memories are assembled into a dedicated "Your Identity" section
- *   at the TOP of the system prompt, before About Chris. This makes Rook's
- *   steering rules, voice, and self-identification first in context by design,
- *   not by accident. Order within identity: user_rook_identity → user_rook_voice
- *   → user_rook_steering → any future user_rook_* additions.
+ * Identity injection:
+ *   Agent identity memories (user_<name>_* slugs) are assembled into a dedicated
+ *   "Your Identity" section at the TOP of the system prompt, before user context.
+ *   This puts the agent's steering rules, voice, and self-identification first in
+ *   context by design, not by accident. Order within identity: *_identity →
+ *   *_voice → *_steering → any additional identity slugs.
  *
  * Pure functions (buildSystemPrompt, buildReadMemoryTool) are separated from
  * I/O functions (loadCoreMemories, loadMemoryIndex, executeReadMemory) so
@@ -118,20 +118,36 @@ function rowToIndexEntry(row: Record<string, string>): MemoryIndexEntry {
 
 // ── System prompt builder (pure) ──────────────────────────────────────────────
 
+export interface SystemPromptOptions {
+  /**
+   * Slug prefix for agent identity memories. Memories with this prefix are
+   * assembled into a dedicated top section before user context, ensuring
+   * identity/steering rules are first in context by design.
+   *
+   * Conventionally: "user_<agentname>_" — e.g. "user_myagent_"
+   * Omit or set to "" to disable identity injection.
+   */
+  identitySlugPrefix?: string;
+  /**
+   * Section heading for the main user context block.
+   * Default: "About the User"
+   */
+  userSectionTitle?: string;
+}
+
 /**
  * Assemble the session system prompt from loaded memories and index.
  *
  * Structure:
  *   1. Nudge — instructs the model to call read_memory() before starting work
- *   1. Your Identity — Rook-specific memories (user_rook_* slugs), assembled first
- *   2. About Chris — remaining user memories (full content)
- *   3. Working Preferences — feedback memories (full content)
- *   4. Context Index — project + reference index table (slug / name / description)
+ *   2. Your Identity — agent identity memories (identitySlugPrefix slugs), assembled first
+ *   3. About the User — remaining user memories (full content)
+ *   4. Working Preferences — feedback memories (full content)
+ *   5. Context Index — project + reference index table (slug / name / description)
  *
- * Identity memories (slug prefix 'user_rook_') are split from the Chris user
- * memories and assembled into a dedicated top section so Rook's steering rules,
- * voice, and self-identification are always first in context — identity by design,
- * not by accident of insertion order.
+ * Identity memories are split from user memories and assembled first so the
+ * agent's steering rules, voice, and self-identification are always first in
+ * context — identity by design, not by accident of insertion order.
  *
  * The nudge is omitted when the index is empty (no project/reference memories
  * exist or were requested), since there's nothing to pull.
@@ -139,19 +155,27 @@ function rowToIndexEntry(row: Record<string, string>): MemoryIndexEntry {
 export function buildSystemPrompt(
   coreMemories: Memory[],
   index: MemoryIndexEntry[],
+  options: SystemPromptOptions = {},
 ): string {
-  // Split user memories: Rook identity (user_rook_*) vs About Chris (everything else)
-  const identity = coreMemories.filter(m => m.type === "user" && m.slug.startsWith("user_rook_"));
-  const user     = coreMemories.filter(m => m.type === "user" && !m.slug.startsWith("user_rook_"));
+  const identityPrefix = options.identitySlugPrefix ?? "";
+  const userTitle      = options.userSectionTitle   ?? "About the User";
+
+  // Split user memories: agent identity vs user context
+  const identity = identityPrefix
+    ? coreMemories.filter(m => m.type === "user" && m.slug.startsWith(identityPrefix))
+    : [];
+  const user     = identityPrefix
+    ? coreMemories.filter(m => m.type === "user" && !m.slug.startsWith(identityPrefix))
+    : coreMemories.filter(m => m.type === "user");
   const feedback = coreMemories.filter(m => m.type === "feedback");
   const parts: string[] = [];
 
-  // ── Rook Identity (assembled first — identity by design) ─────────────────
-  // Order matters: identity → role → voice → steering rules
-  const IDENTITY_ORDER = ["user_rook_identity", "user_rook_voice", "user_rook_steering"];
+  // ── Agent Identity (assembled first — identity by design) ─────────────────
+  // Canonical order: identity → voice → steering — remaining by insertion order
+  const IDENTITY_CORE = ["identity", "voice", "steering"].map(s => `${identityPrefix}${s}`);
   const identitySorted = [
-    ...IDENTITY_ORDER.map(slug => identity.find(m => m.slug === slug)).filter((m): m is Memory => m !== undefined),
-    ...identity.filter(m => !IDENTITY_ORDER.includes(m.slug)),
+    ...IDENTITY_CORE.map(slug => identity.find(m => m.slug === slug)).filter((m): m is Memory => m !== undefined),
+    ...identity.filter(m => !IDENTITY_CORE.includes(m.slug)),
   ];
 
   if (identitySorted.length > 0) {
@@ -173,11 +197,11 @@ export function buildSystemPrompt(
     parts.push("");
   }
 
-  // About Chris
+  // User context
   if (user.length > 0) {
     parts.push("---");
     parts.push("");
-    parts.push("## About Chris");
+    parts.push(`## ${userTitle}`);
     parts.push("");
     for (const m of user) {
       parts.push(`### ${m.name}`);
