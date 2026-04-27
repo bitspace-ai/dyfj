@@ -22,8 +22,8 @@ logs/
 .DS_Store
 
 # Pi session state — track extensions, ignore runtime state
-.pi/sessions/
-.pi/agent/
+**/.pi/sessions/
+**/.pi/agent/
 
 # Compiled output
 dist/
@@ -31,3 +31,6 @@ build/
 *.js
 *.jsx
 *.d.ts
+
+# Rust build artifacts (Cargo.lock IS tracked for the binary)
+target/
