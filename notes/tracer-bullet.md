@@ -57,11 +57,13 @@ Runner-up considered: `mysql_async` — simpler, no compile-time check, smaller 
 
 Required by sqlx. Use `#[tokio::main(flavor = "current_thread")]` — a single-shot CLI binary doesn't benefit from work-stealing.
 
-### Connection: `DATABASE_URL` environment variable
+### Connection: `DATABASE_URL` environment variable, required
 
-Standard Rust idiom (sqlx and the broader ecosystem expect this). Default to `mysql://root@127.0.0.1:3306/dolt` if unset — this matches Dolt's out-of-the-box auth (no-password root) so a fresh `dolt sql-server` works immediately with no extra setup. Users who want a password configure it via `CREATE USER`/`GRANT` and override `DATABASE_URL` accordingly.
+Standard Rust idiom (sqlx and the broader ecosystem expect this). The binary requires `DATABASE_URL` to be set; no hardcoded fallback in code. `dotenvy` loads `.env` at startup, so local dev is frictionless once `core/.env` exists.
 
-(The prototype's hardcoded `root:dolt` reflected an older Dolt auth convention; modern Dolt removed the `--user`/`--password` flags in favor of SQL-managed users. We're not preserving that as the default.)
+The dev-time convention is documented in `core/.env.example`: `mysql://root@127.0.0.1:3306/dolt` against a local Dolt sql-server bound to `127.0.0.1` (loopback only). The 127.0.0.1 binding is the actual security boundary — loopback is unreachable from any external interface, including VPN/mesh peers. Any binding wider than localhost must require authentication and a real `DATABASE_URL`; this is called out explicitly in `.env.example`.
+
+Why no default in code: documented credentials in source — even toy ones for localhost — read as careless. Requiring explicit configuration costs one `cp .env.example .env` and signals discipline.
 
 ### Error handling: `anyhow` in `main.rs`, `thiserror` in `lib.rs`
 

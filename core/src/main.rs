@@ -6,8 +6,13 @@ use sqlx::MySqlPool;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root@127.0.0.1:3306/dolt".to_string());
+    // Loads .env if present; succeeds silently otherwise.
+    let _ = dotenvy::dotenv();
+
+    let database_url = std::env::var("DATABASE_URL").context(
+        "DATABASE_URL is not set. For local development, copy core/.env.example to \
+         core/.env (or export DATABASE_URL directly).",
+    )?;
 
     let pool = MySqlPool::connect(&database_url)
         .await
