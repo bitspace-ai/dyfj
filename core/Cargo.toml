@@ -8,3 +8,11 @@ repository = "https://github.com/bitspace-ai/dyfj"
 readme = "README.md"
 
 [dependencies]
+anyhow = "1.0.102"
+chrono = "0.4.44"
+dotenvy = "0.15.7"
+rand = "0.10.1"
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls", "mysql", "chrono", "macros"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.1", features = ["rt", "macros"] }
+ulid = "1.2.1"
