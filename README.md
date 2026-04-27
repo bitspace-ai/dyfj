@@ -2,7 +2,7 @@
 
 A sovereign personal AI stack. Modular, vendor-loose, local-first by default, with cost visibility as a design primitive rather than a billing afterthought. Customer Zero is me.
 
-This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work — as me, or as an agent — read §1 in 60 seconds and you'll know the rules. If you want the why, keep reading past §3. If you want to run it, jump to §4.
+This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work — as me, or as an agent — read §1 in 60 seconds and you'll know the rules. If you want the why, keep reading past §4. If you want to run it, jump to §5.
 
 ## Repo layout
 
@@ -21,10 +21,10 @@ Early and active. The prototype is functional — three-tier model router, Dolt-
 
 Two audiences, one source of truth.
 
-- **An agent picking up work on DYFJ** should be able to read §1–§3 in about 60 seconds and know the rules of engagement: what's decided, what's out of scope, what "done" looks like, and which stances are non-negotiable. Stop reading there unless you need the why.
-- **A human reader (including future-me)** should read the whole document. §5 onward carries the rationale, the goal-traceability matrix, and the publishable opinion seeds — the *why* behind §1–§3.
+- **An agent picking up work on DYFJ** should be able to read §1–§4 in about 60 seconds and know the rules of engagement: what's decided, what's out of scope, what "done" looks like, which stances are non-negotiable, and how the work itself happens. Stop reading there unless you need the why.
+- **A human reader (including future-me)** should read the whole document. §6 onward carries the rationale, the goal-traceability matrix, and the publishable opinion seeds — the *why* behind §1–§4.
 
-If a decision in §1–§3 contradicts prose later in the doc, §1–§3 wins. The decisions block is authoritative; the rationale exists to explain it, not amend it.
+If something in §1–§4 contradicts prose later in the doc, §1–§4 wins. The front matter is authoritative; the rationale exists to explain it, not amend it.
 
 ---
 
@@ -86,7 +86,17 @@ Three interdependent, parallel goals.
 
 ---
 
-## 4. Run it
+## 4. Engineering posture
+
+How the work actually happens, separate from what gets built.
+
+- **Tests land with the code, not after it.** Any commit that adds a function adds a test for it. PRs without tests are not "ready except for tests" — they're not yet ready. Integration tests run against real dependencies (a real Dolt instance, real model APIs in CI when relevant), not mocks. Mocks are reserved for things that don't exist yet (failure modes we haven't observed, third-party services we haven't integrated).
+- **Evals for model-touching code, from when it's introduced.** Anything that calls a model carries eval coverage from the first commit it lives in: comparing across models, catching regressions when prompts change, making model selection a measured decision rather than a gut call. Eval results are part of the work product, not a side artifact.
+- **The bar for "done" includes tests passing.** Not as a CI rubber-stamp, but as a statement of what "I shipped a thing" means. If the test suite doesn't cover what changed, the suite gets extended in the same commit. This is non-negotiable enough to belong here, in writing, rather than in someone's head.
+
+---
+
+## 5. Run it
 
 ### Prerequisites
 
@@ -169,13 +179,13 @@ See `prototype/mcp/README.md` for per-client examples.
 
 ---
 
-## 5. Architecture — tiered primitives
+## 6. Architecture — tiered primitives
 
 The architectural surface, sorted by altitude. §1 already states the *decisions*; this section carries the *boxes on the diagram* and their rationale.
 
 ### 5.1 Layer 0 — stances
 
-The five Layer 0 stances are stated in §1. Each has its own publishable angle (see §7). They are repeated here only when expansion is useful; the canonical statement is in §1.
+The five Layer 0 stances are stated in §1. Each has its own publishable angle (see §8). They are repeated here only when expansion is useful; the canonical statement is in §1.
 
 ### 5.2 Layer 1 — core subsystems
 
@@ -210,7 +220,7 @@ How things actually execute.
 
 ---
 
-## 6. Goal-traceability matrix
+## 7. Goal-traceability matrix
 
 ● = primary serve · ○ = indirect / downstream
 
@@ -240,7 +250,7 @@ The genuine ●●● row (checkpointing) and the ●●-with-public-angle rows 
 
 ---
 
-## 7. Publishable opinion seeds
+## 8. Publishable opinion seeds
 
 Each is a candidate standalone essay, extracted from work-in-flight rather than written cold.
 
@@ -255,7 +265,7 @@ Each is a candidate standalone essay, extracted from work-in-flight rather than 
 
 ---
 
-## 8. Influences (not lineage)
+## 9. Influences (not lineage)
 
 Two systems shaped the *thinking* behind this stack without being inherited from in code or architecture:
 
@@ -266,7 +276,7 @@ Called out so neither shows up downstream as an implied dependency.
 
 ---
 
-## 9. Active commitments
+## 10. Active commitments
 
 Things agreed to but not yet done. Updated as work progresses.
 
@@ -278,7 +288,7 @@ Things agreed to but not yet done. Updated as work progresses.
 
 ---
 
-## 10. Open items
+## 11. Open items
 
 Reserved space for new questions as they accumulate.
 
@@ -286,7 +296,7 @@ Reserved space for new questions as they accumulate.
 
 ---
 
-## 11. Revision history
+## 12. Revision history
 
 - 2026-04-26 — Draft 1 created from the original `dyfj-arch-primitives` brain dump.
 - 2026-04-26 evening — second-pass critique captured as parallel addendum.
@@ -296,3 +306,4 @@ Reserved space for new questions as they accumulate.
 - 2026-04-27 — Restructured the draft into an operating-context document. Decisions block (§1) promoted to the front as authoritative. "Spec" reframed as "operating context" — single source of truth for both future-me and any agent working on the project.
 - 2026-04-27 — Naming convention established: **DYFJ** (umbrella), **DYFJ Project** (this OSS repo, `bitspace-ai/dyfj`), **DYFJ Workbench** (private overlay, `bitspace/dyfj`).
 - 2026-04-27 — Promoted to `README.md` of `bitspace-ai/dyfj` and merged with the prior README's practical `Run it` and `MCP integration` content. Repo restructured: TypeScript prototype moved into `prototype/`; Rust substrate scaffolding added at `core/`; schema/ stays at root as canonical, language-agnostic substrate; AGENTS.md replaced with thin pointer to this file.
+- 2026-04-27 — Added §4 "Engineering posture" between Audience and Run it. Tests + evals are now stated practice, not implicit. Existing §4–§11 renumbered to §5–§12; cross-references updated.
