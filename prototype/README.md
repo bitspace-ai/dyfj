@@ -24,4 +24,6 @@ bun run start
 
 ## Where this is heading
 
-Components in `src/` that prove out and stabilize will get re-implemented in `../core/` (Rust). The TypeScript versions can stay or be retired on a case-by-case basis. There's no global port plan — Rust earns its way in component by component, and TypeScript stays here for prototyping anywhere that velocity matters more than substrate-level correctness. UX layers (browser, DOM, anything that's not a TUI) will likely live in TypeScript indefinitely.
+Components in `src/` that prove out and stabilize will get re-implemented in `../core/` (Rust). The TypeScript versions can stay or be retired on a case-by-case basis. There's no global port plan — Rust earns its way in component by component, and TypeScript stays here for prototyping anywhere that velocity matters more than substrate-level correctness.
+
+A future GUI layer is likely also TypeScript (Tauri-leaning), but it will live in its own top-level directory rather than here. `prototype/` is the prototyping surface, not the catch-all for everything TypeScript.
