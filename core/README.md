@@ -19,14 +19,14 @@ Today that prints a placeholder line. That's accurate; the real work hasn't been
 
 ## What's next
 
-The first meaningful commit here will be a tracer bullet: a single binary that writes one well-formed event into Dolt (per `../schema/001_events.sql`), reads it back, and verifies the round-trip through the canonical schema. That proves the schema-in-data-layer stance is real and gives us a structural foundation to build on.
+The first meaningful commit here is a tracer bullet (see `../notes/tracer-bullet.md`). Library + binary in a single crate: `src/lib.rs` will expose `events::write()` and `events::read_by_id()`; `src/main.rs` will be a thin demo that exercises them end-to-end against `../schema/001_events.sql`. That proves the schema-in-data-layer stance is real and gives the substrate something to build on.
 
-After that, components get pulled into Rust as they stabilize in the prototype — most likely starting with the event/log writer, then memory access, then policy/permission checks. There is no global port plan; each move is a separate decision.
+After that, components get pulled into Rust as they stabilize in the prototype — most likely starting with extending the event/log API, then memory access, then policy/permission checks. There is no global port plan; each move is a separate decision.
 
 ## Layout
 
 - `Cargo.toml` — crate metadata, edition 2024
 - `rust-toolchain.toml` — pins the Rust toolchain channel for reproducibility
-- `src/main.rs` — placeholder binary
+- `src/main.rs` — placeholder binary today; will be the tracer-bullet demo wrapper
 
-`Cargo.lock` is tracked (this is a binary crate; the lockfile is part of the reproducibility story). `target/` is gitignored.
+`Cargo.lock` is tracked because DYFJ Project is source-published — anyone cloning gets a known-good resolved dependency tree. `target/` is gitignored.
