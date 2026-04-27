@@ -1,4 +1,4 @@
--- DYFJ Workbench — Sessions Schema
+-- DYFJ — Sessions Schema
 -- A session is a unit of work — an Algorithm run or a native-mode task.
 -- Structured metadata (phase, effort, progress) enables dashboards and
 -- queries. Freeform content (context, criteria, decisions, verification)

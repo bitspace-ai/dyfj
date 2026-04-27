@@ -1,4 +1,4 @@
--- DYFJ Workbench — Add budget_summary to events ENUM
+-- DYFJ — Add budget_summary to events ENUM
 --
 -- A budget summary is a distinct event type written once per session at
 -- session-end by BudgetTracker.writeSummaryEvent(). It captures the full

@@ -1,4 +1,4 @@
--- DYFJ Workbench — Reflections Schema
+-- DYFJ — Reflections Schema
 -- Replaces: MEMORY/LEARNING/REFLECTIONS/algorithm-reflections.jsonl
 --
 -- Unlike memories and sessions, reflections are genuinely tabular data.

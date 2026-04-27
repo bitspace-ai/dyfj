@@ -1,4 +1,4 @@
--- DYFJ Workbench — Models Registry Schema
+-- DYFJ — Models Registry Schema
 -- Replaces: hardcoded model definitions in TypeScript (index.ts localModel)
 --
 -- Design: Dolt is the source of truth for model specs and routing metadata.

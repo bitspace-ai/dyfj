@@ -1,4 +1,4 @@
--- DYFJ Workbench — Add model_selected to events ENUM
+-- DYFJ — Add model_selected to events ENUM
 --
 -- A routing decision is a distinct operation from a model response.
 -- We need a record of which model was chosen — and which were considered

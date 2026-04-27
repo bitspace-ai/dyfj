@@ -1,4 +1,4 @@
--- DYFJ Workbench — Memories Schema
+-- DYFJ — Memories Schema
 -- Replaces: memory/*.md files + MEMORY.md index
 --
 -- Design: structured metadata as columns, freeform body as TEXT.

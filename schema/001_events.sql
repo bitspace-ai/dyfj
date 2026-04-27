@@ -1,4 +1,4 @@
--- DYFJ Workbench — Canonical Event Schema
+-- DYFJ — Canonical Event Schema
 -- Design: OTel correlation and security/auditability are structural requirements, not plugins.
 --
 -- Design principles:
