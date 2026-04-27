@@ -1,180 +1,297 @@
 # DYFJ
 
-**Vendor-agnostic persistence and routing substrate for personal AI stacks.**
+A sovereign personal AI stack. Modular, vendor-loose, local-first by default, with cost visibility as a design primitive rather than a billing afterthought. Customer Zero is me.
 
-Dolt for memory. Three-tier model routing with consent gates. MCP server that works
-with any coding agent. No proprietary runtime dependency.
+This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work — as me, or as an agent — read §1 in 60 seconds and you'll know the rules. If you want the why, keep reading past §3. If you want to run it, jump to §4.
 
----
+## Repo layout
 
-## The Problem
+- `core/` — Rust substrate. Today a compiling placeholder; the first meaningful code is the schema-tracer-bullet binary. Where stabilized components live.
+- `prototype/` — TypeScript on Bun. Real working code (router, memory, budget, MCP server, tests). The active prototyping surface, and the long-term home of UX layers that aren't a TUI.
+- `schema/` — Dolt DDL. Canonical data model. Language-agnostic source of truth.
+- `LICENSE` — MIT.
 
-Most personal AI setups are built on top of a specific provider's tooling — Claude Code,
-Cursor, Codex. That's fine until it isn't. The skills you build, the sessions you log,
-the context you accumulate: all of it lives inside someone else's walls.
+The split between `core/` and `prototype/` is not a phase boundary. It's a permanent two-tier structure where the Rust line is a moving boundary that advances downward as components stabilize. See Layer 0 stance #3 below.
 
-DYFJ is the layer underneath — persistence and routing that you own, exposed over
-standard protocols, swappable at every seam.
+## Status
 
-## What's In The Box
+Early and active. The prototype is functional — three-tier model router, Dolt-backed memory, MCP server, basic budget tracking. The Rust core is a compiling placeholder waiting on its tracer-bullet commit. Schema is canonical and stable. Building in public; the commit history reflects real decisions, including wrong ones.
 
-### Dolt persistence
+## How to use this document
 
-Every model call, session, memory, and reflection lands in a
-[Dolt](https://github.com/dolthub/dolt) database — SQL with git semantics.
+Two audiences, one source of truth.
 
-That means:
+- **An agent picking up work on DYFJ** should be able to read §1–§3 in about 60 seconds and know the rules of engagement: what's decided, what's out of scope, what "done" looks like, and which stances are non-negotiable. Stop reading there unless you need the why.
+- **A human reader (including future-me)** should read the whole document. §5 onward carries the rationale, the goal-traceability matrix, and the publishable opinion seeds — the *why* behind §1–§3.
 
-- **Time-travel queries** — `AS OF` lets you query data as it existed at any past commit.
-  Replay a session from any checkpoint. Audit what context the model had when it made
-  a decision. Diff two runs of the same task.
-- **Branch and merge** — experimental agent workspaces as branches; merge when done.
-- **Standard SQL** — MySQL 8.0 dialect. Any tool that speaks MySQL works.
-
-The schema has OTel trace/span IDs and identity (`principal_id`, `authz_basis`) as
-structural NOT NULL fields on the `events` table. Not a plugin. Not optional. Every
-telemetry event carries trace and principal context by construction.
-
-### Three-tier model router
-
-```
-Tier 0 — Local (Ollama)        free, sovereign, default
-Tier 1 — API light (Haiku, Flash)   explicit opt-in, session-sticky consent
-Tier 2 — API heavy (Sonnet, Opus)   explicit opt-in, per-call consent + cost estimate
-```
-
-Consent is a first-class concept. The router prompts before spending money and shows
-cost estimates. Tier 1 grants are sticky for a session; Tier 2 prompts every call.
-Local models run without any gate.
-
-### MCP server
-
-`mcp/server.ts` exposes the memory substrate over
-[Model Context Protocol](https://modelcontextprotocol.io) (stdio transport).
-Any agent runtime that speaks MCP can read and write memories, start sessions,
-and write reflections — without knowing anything about Dolt.
-
-Works with Claude Code, Codex CLI, Gemini CLI, Cursor, or anything else that
-supports MCP servers.
-
-### Pi extension
-
-`.pi/extensions/dyfj-memory.ts` wires Dolt memory into
-[pi](https://github.com/badlogic/pi-mono) session context at startup.
-Reference implementation for other runtime integrations.
+If a decision in §1–§3 contradicts prose later in the doc, §1–§3 wins. The decisions block is authoritative; the rationale exists to explain it, not amend it.
 
 ---
 
-## Schema
+## 1. Decisions
 
-DDL at `schema/*.sql`. The schema is the contract — TypeScript types are derived
-consumers, never the definition.
+### Non-goals
 
-| Table | Purpose |
-|-------|---------|
-| `events` | Runtime telemetry — model calls, tool use, cost, errors |
-| `memories` | Durable context — user profile, project state, references |
-| `sessions` | Units of work — metadata + freeform content |
-| `reflections` | End-of-session synthesis — structured for aggregate analysis |
-| `tasks` | Work items |
-| `models` | Model registry — capabilities, tiers, cost rates |
-| `skills` | Available capabilities and descriptions |
+DYFJ is **not**:
+
+- A hosted SaaS.
+- A multi-tenant platform.
+- A model-agnostic abstraction over every provider — only the ones actually in use, with strong defaults.
+- A productized stack for *other people*. Customer Zero is literal. Generalization is a future question, not a Day-1 constraint.
+
+### Layer 0 stances (operative everywhere)
+
+All five are public from Day-1.
+
+1. **Swappable with strong defaults.** Components are modular and replaceable behind stable interop contracts; the system ships with opinionated defaults (Claude for hard reasoning, local for everything else). Optionality, not performative vendor-neutrality.
+2. **Local-first by default; paid inference is explicit escalation.** Inference, memory, and tools default to local execution. Calling out to a hosted model is a deliberate, logged decision — never the default path.
+3. **Rust for the autonomous core; TypeScript for prototyping.** The Rust line is a moving boundary that advances downward as components stabilize — Rust where its compile/build cycle does not interfere with active prototyping.
+4. **Schema lives in the data layer, not in language types.** Data contracts are defined in the durable store (Dolt DDL today). Language bindings are derived consumers, not the source of truth.
+5. **Cost visibility as a default, not an add-on.** Token spend, model selection, and budget posture are surfaced before the work runs and tracked while it runs. Cost is a *design* concern, not a billing concern.
+
+### Goal 1 done-line
+
+> *I am doing most of my daily work from the tool, with cost visibility up front from the beginning, with confidence I'm not ripping through obscene amounts of token burn.*
+
+Working-system criterion. Cost visibility is part of the done-line itself, not a deferrable enhancement.
+
+### Inter-agent contracts — Day-1 posture
+
+- **Event schema carries capability/discovery metadata Day-1.** Locked into the Dolt DDL alongside OTel and security fields. Cheap now; expensive to retrofit.
+- **Runtime registry is interface-only Day-1.** `register()` and `lookup()` exist as a stubbed interface backed by static config. Real registration/leasing service deferred until there are actual consumers.
+
+### Authority and policy
+
+- **Permissions reason about call shape, not the model's justification.** Model-supplied arguments are ignored during permission checks.
+- **Immutable message log is ground truth.** Memory is a derived view; the log is the audit trail.
 
 ---
 
-## Getting Started
+## 2. Goals
+
+Three interdependent, parallel goals.
+
+1. **Sovereign personal AI stack.** A first-class personal AI stack with vendor coupling loosened at the core — any single harness, runtime, or model is one option among several rather than the foundation. Customer Zero is me.
+2. **Bitspace Customer Zero artifact.** The same stack, demonstrated end-to-end on real work, becomes the reference architecture and credibility instrument for Bitspace's boutique AI/automation consultancy.
+3. **Public credibility through working in public.** Without visible thinking, goal 2 has no acquisition channel. Visible thinking is the path. The mode is *learning in public* — veteran builder figures out the new layer, anchored by a 50-year computing arc (TRS-80 1977 → l0pht → 20 years senior at Liberty Mutual → now).
+
+**Framing constraint.** Goal 3 is *necessary*, not *load-bearing*. Goals 1 and 2 progress without an audience; they just generate no inbound. Publishing is the natural artifact of how I already work — currently 80/20 build/publish, expected to slide toward more publish as the substrate stabilizes.
+
+## 3. Audience and operating cadence
+
+- **Primary canonical reader** of this document and most artifacts is future-me.
+- The doc lives in public alongside the code; written for full-context readers, but with no internal-only language or private references that wouldn't survive a stranger reading over my shoulder.
+- **Working agents** (current and future, including any model in any harness) read §1 to operate; they do not need the rationale unless asked to revisit a decision.
+- **Build/publish split:** 80% build / 20% publish today. Publishing is extraction from work-in-flight, not standalone content production.
+
+---
+
+## 4. Run it
 
 ### Prerequisites
 
 - [Bun](https://bun.sh)
 - [Dolt](https://docs.dolthub.com/introduction/installation)
-- [Ollama](https://ollama.com) with at least one model pulled (e.g. `ollama pull gemma4`)
+- [Ollama](https://ollama.com) with at least one model pulled (e.g. `ollama pull gemma3`)
+- *(Optional, for `core/`)* [`rustup`](https://rustup.rs/) — the toolchain pin in `core/rust-toolchain.toml` will install the right Rust automatically when you `cargo build` there.
 
-### Setup
+### Set up the prototype
 
-```bash
+```sh
 git clone https://github.com/bitspace-ai/dyfj
-cd dyfj
+cd dyfj/prototype
 bun install
 cp .env.example .env
 cp settings.example.json settings.json
 ```
 
-Edit `.env` with your values. Edit `settings.json` to set your default model and provider.
+Edit `.env` and `settings.json` for your local config.
 
-### Initialize Dolt
+### Initialize Dolt and apply the schema
 
-```bash
+From the repo root:
+
+```sh
 mkdir -p data/dolt && cd data/dolt
 dolt init
-dolt sql-server &    # runs on localhost:3306 by default
+dolt sql-server &     # localhost:3306 by default
 cd ../..
-```
-
-Apply the schema:
-
-```bash
 for f in schema/*.sql; do
-  dolt --data-dir data/dolt sql < "$f"
+    dolt --data-dir data/dolt sql < "$f"
 done
 ```
 
-### Run
+The `data/` directory is gitignored.
 
-```bash
-bun run src/index.ts
+### Run the prototype
+
+```sh
+cd prototype
+bun run start
 ```
 
-### Test the router
+### Build the core
 
-```bash
+```sh
+cd core
+cargo build
+cargo run
+```
+
+Today this prints a placeholder line. That's accurate; the real work hasn't been written yet.
+
+### Walk the router tiers
+
+```sh
+cd prototype
 bun run examples/router-tour.ts
 ```
 
-Walks through all three tiers, consent flow, and verifies events landed in Dolt.
+Walks all three router tiers (local, API-light, API-heavy), the consent flow, and verifies events landed in Dolt.
 
----
+### MCP integration
 
-## MCP Configuration
-
-Point your agent at the MCP server. Replace `/path/to/bun` with `which bun`.
+The prototype exposes its memory substrate over MCP via `prototype/mcp/server.ts`. Point your agent at it. Replace `/path/to/bun` with `which bun` and `/path/to/dyfj` with the absolute path of your clone.
 
 ```json
 {
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/bun",
-      "args": ["run", "~/.dyfj/mcp/server.ts"]
+      "args": ["run", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
 ```
 
-See `mcp/README.md` for per-client configuration examples.
+See `prototype/mcp/README.md` for per-client examples.
 
 ---
 
-## Design Principles
+## 5. Architecture — tiered primitives
 
-- **Schema in the data layer** — DDL is the contract. No TypeScript-first schema definitions.
-- **Local models by default** — Ollama first. API is explicit escalation.
-- **Non-determinism is the point** — persistence makes artifacts durable; it doesn't constrain model behavior.
-- **No OTel SDK** — trace/span IDs are plain strings. No collector required.
-- **No RBAC engine** — log principal + action + resource. Derive policy from the event log.
+The architectural surface, sorted by altitude. §1 already states the *decisions*; this section carries the *boxes on the diagram* and their rationale.
+
+### 5.1 Layer 0 — stances
+
+The five Layer 0 stances are stated in §1. Each has its own publishable angle (see §7). They are repeated here only when expansion is useful; the canonical statement is in §1.
+
+### 5.2 Layer 1 — core subsystems
+
+Things that exist as boxes on a diagram.
+
+- **Immutable message log.** Append-only record of every turn, tool call, and result. Ground truth from which other views derive. The log is the audit trail; memory is the working set.
+- **Conversation/Agent Loop.** The orchestrator that drives turn → tool call → result → next turn.
+  - Tool call mechanism (typed, validated, observable)
+  - Context engineering pipeline: token counting / auto-compaction, incremental diffs (only changes since last turn), layered prompt composition (system + skills/tools + workspace anchors + retrieved context), retrieval tools (grep, LSP, AST, glob)
+- **Memory abstraction.** First-class subsystem, not a bolt-on. Distinct from the immutable log. Queryable, evictable, scoped, explicitly reasoned about.
+- **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable, versioned, addressable.
+- **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
+- **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per §1: schema carries the metadata Day-1; runtime registry is stubbed Day-1, deferred to real implementation later. Foundation for the Bitspace enterprise-bridge offering.
+
+### 5.3 Layer 2 — cross-cutting concerns
+
+Touch every subsystem.
+
+- **Observability.** OpenTelemetry metadata is mandatory on the event/message schema. Every step (context build → LLM call → tool exec → result injection) gets automatic spans plus full transcript. Sampling controls volume.
+- **Permissions / Policy Engine.** Identity and authz metadata mandatory on the core event schema. Dedicated policy engine intercepts every tool call before execution. Tiered rules (allow / ask / deny) keyed on tool, pattern, or risk. Sandboxing plus explicit human friction for high-risk actions. Per §1: model-supplied arguments are ignored during permission checks.
+- **Cost & Budget Awareness.** First-class. Budgets per session, per task, per user. Cost-aware model routing (default local, escalate explicitly). Hard stops and soft warnings. Already promoted to a Layer 0 stance (§1); the cross-cutting machinery here is what makes the stance real at runtime.
+- **Eval & Regression.** Built-in benchmark harness. Capability tests, regression catches, model-comparison and prompt-comparison runs. Shipping measurement publicly is a credibility moat.
+- **Self-reflection / planning / review loops.** Built-in mechanisms for the agent to critique its own output, decompose subtasks, verify results, and recover from errors.
+
+### 5.4 Layer 3 — runtime mechanisms
+
+How things actually execute.
+
+- **Streaming + interruptability + partial result handling.** Output streams. Users (and other agents) can interrupt mid-stream. Partial results are first-class.
+- **Checkpointing + transactional state.** Every meaningful state transition is checkpointed. Rollback is real, not aspirational. *Almost everyone claims this; almost no one builds it. Building it real is one of the strongest available signals.*
+- **Time / async / scheduled action.** Cron-ness as a primitive: agents can take action on a schedule, watch for change, return async results, and reason about asymmetric time between themselves and the world.
 
 ---
 
-## Status
+## 6. Goal-traceability matrix
 
-Early and active. Core schema and routing are working. MCP server is functional.
-Building in public — commit history reflects real decisions, including wrong ones.
+● = primary serve · ○ = indirect / downstream
 
-Related work worth knowing about:
-- [PAI](https://github.com/danielmiessler/PAI) — Daniel Miessler's personal AI infrastructure. Primary inspiration for the personal-stack concept.
-- [Gas City](https://github.com/gastownhall/gascity) — Dolt-backed agent persistence, informed by Steve Yegge's Gas Town work. Convergent thinking.
+| Primitive | Goal 1 (Sovereign) | Goal 2 (Customer Zero) | Goal 3 (Public) |
+|---|---|---|---|
+| Swappable w/ strong defaults | ● | ○ | ● |
+| Local-first default | ● | ○ | ● |
+| Rust core | ● | ○ | ● |
+| Schema in data layer | ● | ○ | ● |
+| Cost visibility as default | ● | ○ | ● |
+| Immutable message log | ● | ● | ○ |
+| Conversation loop | ● | ○ | ○ |
+| Memory abstraction | ● | ● | ○ |
+| Tool registry / MCP | ● | ○ | ○ |
+| Session persistence | ● | ○ | ○ |
+| Inter-agent contracts | ○ | ● | ● |
+| Observability | ● | ● | ○ |
+| Policy engine | ● | ● | ○ |
+| Cost & budget machinery | ● | ○ | ● |
+| Eval & regression | ○ | ○ | ● |
+| Self-reflection loops | ● | ○ | ○ |
+| Streaming / interrupt | ● | ○ | ○ |
+| Checkpointing | ● | ● | ● |
+| Time / scheduling | ● | ○ | ○ |
+
+The genuine ●●● row (checkpointing) and the ●●-with-public-angle rows (the five Layer 0 stances + cost machinery + inter-agent contracts) carry the publishable angles.
 
 ---
 
-## License
+## 7. Publishable opinion seeds
 
-MIT — Copyright (c) 2026 Christopher Woods / Bitspace Applied Intelligence LLC
+Each is a candidate standalone essay, extracted from work-in-flight rather than written cold.
+
+- *Rust as agent superpower.* Why the strict feedback loop that frustrates humans is adrenaline for agents.
+- *Local-first sovereign AI.* Why default-to-cloud is a category error for personal/organizational stacks.
+- *Cost visibility as a Layer 0 stance.* Why cost has to be a design concern, not a billing concern — and what the $200/day lesson implies for default routing and orchestrator design.
+- *Bilateral capability discovery.* Why agents need lookup-and-leasing-style discovery, not static service registries.
+- *Immutable log vs. memory.* Why conflating them is the most common architectural mistake.
+- *Schema lives in the data layer.* Why making language types the source of truth keeps biting multi-runtime systems.
+- *Eval in public.* What it looks like to ship measurement, not vibes.
+- *Swappable with strong defaults, not vendor-neutral.* Why performative neutrality is a worse stance than honest defaults.
+
+---
+
+## 8. Influences (not lineage)
+
+Two systems shaped the *thinking* behind this stack without being inherited from in code or architecture:
+
+- A pre-existing personal AI stack first showed me what an end-user-owned AI stack could feel like in daily use. DYFJ is not a successor to it and shares no implementation lineage.
+- Sun's Jini introduced the concept of bilateral lookup, leasing, and capability/need matching as a substrate primitive. DYFJ borrows the *shape of the question*, not the protocol.
+
+Called out so neither shows up downstream as an implied dependency.
+
+---
+
+## 9. Active commitments
+
+Things agreed to but not yet done. Updated as work progresses.
+
+- Lock the Day-1 event-schema fields for capability/discovery into the Dolt DDL alongside OTel and security metadata.
+- Stub `register()` / `lookup()` interface in the codebase with static-config backing.
+- Define the cost-visibility surface: per-session running tally, pre-flight estimate on escalation to paid inference, hard/soft budget thresholds.
+- Pick one of the Layer 0 stances and draft the standalone essay — first Goal 3 artifact, pressure-tests the primitive at the same time. Strongest candidates: Rust-for-agents (most contestable, most conversation-generating) or cost-visibility-as-Layer-0 (most underappropriated take in the field).
+- First meaningful Rust commit: schema-tracer-bullet binary in `core/` that writes one event to Dolt and reads it back through `schema/001_events.sql`.
+
+---
+
+## 10. Open items
+
+Reserved space for new questions as they accumulate.
+
+- Whether implementation-specific schema (e.g. tasks-synced-from-an-issue-tracker) should ever live in this canonical schema directory, or always stay in implementation overlays only.
+
+---
+
+## 11. Revision history
+
+- 2026-04-26 — Draft 1 created from the original `dyfj-arch-primitives` brain dump.
+- 2026-04-26 evening — second-pass critique captured as parallel addendum.
+- 2026-04-27 — Draft 2: addendum integrated into body. Non-goals section added; Layer 0 optionality restated as "swappable with strong defaults"; immutable history demoted from Layer 0 to Layer 1 and "schema in data layer" promoted into Layer 0; traceability matrix recalibrated; inter-agent-contract question split into schema-Day-1 and registry-Day-1; publishable seeds expanded.
+- 2026-04-27 — Draft 3: stripped lineage framing — removed direct references to the prior personal AI stack, its harness, and Jini; added Influences (not lineage) section.
+- 2026-04-27 — Open questions closed: audience = future-me-in-public; build/publish 80/20 sliding; event schema carries discovery metadata Day-1; runtime registry stubbed Day-1; Rust scope bounded by prototyping cost (moving boundary); Goal 1 done-line is daily-driver use with cost visibility from the start; all five Layer 0 stances public from Day-1; cost visibility promoted from cross-cutting concern to fifth Layer 0 stance.
+- 2026-04-27 — Restructured the draft into an operating-context document. Decisions block (§1) promoted to the front as authoritative. "Spec" reframed as "operating context" — single source of truth for both future-me and any agent working on the project.
+- 2026-04-27 — Naming convention established: **DYFJ** (umbrella), **DYFJ Project** (this OSS repo, `bitspace-ai/dyfj`), **DYFJ Workbench** (private overlay, `bitspace/dyfj`).
+- 2026-04-27 — Promoted to `README.md` of `bitspace-ai/dyfj` and merged with the prior README's practical `Run it` and `MCP integration` content. Repo restructured: TypeScript prototype moved into `prototype/`; Rust substrate scaffolding added at `core/`; schema/ stays at root as canonical, language-agnostic substrate; AGENTS.md replaced with thin pointer to this file.
