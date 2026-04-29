@@ -108,7 +108,7 @@ The phrase "static-config backing" in README §10 means: until the function sign
 Eventually — possibly never, possibly years from now — the registry might become its own process. Reasons it might:
 
 - Cross-process leasing with heartbeats (provider crashes, lease auto-expires within seconds, not minutes)
-- Federation across nodes (this Mac, Sleipnir, whatever else)
+- Federation across nodes
 - Active matching that proactively binds requires to provides without a consumer asking
 - Subscription-style "notify me when capability X becomes available"
 
