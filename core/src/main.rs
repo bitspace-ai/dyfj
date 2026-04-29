@@ -31,6 +31,11 @@ fn make_session_start_event() -> Event {
         action: "session_start".to_string(),
         resource: "core/src/main.rs".to_string(),
         authz_basis: "demo".to_string(),
+        capability_name: None,
+        capability_version: None,
+        capability_lease_id: None,
+        capability_lease_expires: None,
+        capability_metadata: None,
     }
 }
 

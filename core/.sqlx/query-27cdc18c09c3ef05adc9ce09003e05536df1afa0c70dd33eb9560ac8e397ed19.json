@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "\n        SELECT\n            event_id, session_id, event_type, created_at,\n            trace_id, span_id, parent_span_id,\n            principal_id, principal_type, action, resource, authz_basis\n        FROM events\n        WHERE event_id = ?\n        ",
+  "query": "\n        SELECT\n            event_id, session_id, event_type, created_at,\n            trace_id, span_id, parent_span_id,\n            principal_id, principal_type, action, resource, authz_basis,\n            capability_name, capability_version,\n            capability_lease_id, capability_lease_expires\n        FROM events\n        WHERE event_id = ?\n        ",
   "describe": {
     "columns": [
       {
@@ -27,7 +27,7 @@
         "type_info": {
           "type": "String",
           "flags": "NOT_NULL",
-          "max_size": 56
+          "max_size": 72
         }
       },
       {
@@ -110,6 +110,42 @@
           "flags": "NOT_NULL",
           "max_size": 1024
         }
+      },
+      {
+        "ordinal": 12,
+        "name": "capability_name",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 1020
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "capability_version",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 256
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "capability_lease_id",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "max_size": 104
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "capability_lease_expires",
+        "type_info": {
+          "type": "Timestamp",
+          "flags": "",
+          "max_size": 26
+        }
       }
     ],
     "parameters": {
@@ -127,8 +163,12 @@
       false,
       false,
       false,
-      false
+      false,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "f2316c2c62ec1b5641cf34d90a0b5af1b6c21bde0fb09408c7cbb0d04a742f49"
+  "hash": "27cdc18c09c3ef05adc9ce09003e05536df1afa0c70dd33eb9560ac8e397ed19"
 }

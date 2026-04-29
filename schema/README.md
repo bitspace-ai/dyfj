@@ -18,6 +18,7 @@ Migrations are numbered and applied in order:
 - `007_events_model_selected.sql` — typed view of model-selection events.
 - `008_events_budget_summary.sql` — typed view of budget-summary events.
 - `009_skills.sql` — invokable skills (named, parameterized actions composable into agent loops).
+- `010_events_capability.sql` — bilateral capability/discovery events (provide/require/match/release) and lease-aware lookup fields. Day-1 schema commitment so the runtime registry is derivable from the log later.
 
 (Migration `005_*` is intentionally absent here; it lives in implementation-specific overlays where it belongs, not in the canonical substrate.)
 

@@ -20,6 +20,11 @@ use crate::error::Result;
 
 /// One row of the `events` table, restricted to the subset of fields
 /// the tracer bullet exercises.
+///
+/// `capability_metadata` is intentionally a `String` placeholder — the
+/// underlying column is JSON, but binding it properly will require a
+/// `serde_json` dep + sqlx `json` feature. Until then, the queries below
+/// don't reference this column, and reads always set it to `None`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     pub event_id: String,
@@ -34,6 +39,11 @@ pub struct Event {
     pub action: String,
     pub resource: String,
     pub authz_basis: String,
+    pub capability_name: Option<String>,
+    pub capability_version: Option<String>,
+    pub capability_lease_id: Option<String>,
+    pub capability_lease_expires: Option<DateTime<Utc>>,
+    pub capability_metadata: Option<String>,
 }
 
 /// Insert one event into the `events` table.
@@ -43,9 +53,11 @@ pub async fn write(pool: &MySqlPool, event: &Event) -> Result<()> {
         INSERT INTO events (
             event_id, session_id, event_type, created_at,
             trace_id, span_id, parent_span_id,
-            principal_id, principal_type, action, resource, authz_basis
+            principal_id, principal_type, action, resource, authz_basis,
+            capability_name, capability_version,
+            capability_lease_id, capability_lease_expires
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         event.event_id,
         event.session_id,
@@ -59,6 +71,10 @@ pub async fn write(pool: &MySqlPool, event: &Event) -> Result<()> {
         event.action,
         event.resource,
         event.authz_basis,
+        event.capability_name,
+        event.capability_version,
+        event.capability_lease_id,
+        event.capability_lease_expires,
     )
     .execute(pool)
     .await?;
@@ -74,7 +90,9 @@ pub async fn read_by_id(pool: &MySqlPool, event_id: &str) -> Result<Option<Event
         SELECT
             event_id, session_id, event_type, created_at,
             trace_id, span_id, parent_span_id,
-            principal_id, principal_type, action, resource, authz_basis
+            principal_id, principal_type, action, resource, authz_basis,
+            capability_name, capability_version,
+            capability_lease_id, capability_lease_expires
         FROM events
         WHERE event_id = ?
         "#,
@@ -96,5 +114,10 @@ pub async fn read_by_id(pool: &MySqlPool, event_id: &str) -> Result<Option<Event
         action: r.action,
         resource: r.resource,
         authz_basis: r.authz_basis,
+        capability_name: r.capability_name,
+        capability_version: r.capability_version,
+        capability_lease_id: r.capability_lease_id,
+        capability_lease_expires: r.capability_lease_expires,
+        capability_metadata: None,
     }))
 }
