@@ -122,14 +122,14 @@ This is the deep version of "no service" — even when a registry service eventu
 
 This is the part I noticed independently from the substrate work, and it's worth stopping on, because it's the architectural payoff of getting the substrate right.
 
-PAI skills *are* a progressive-disclosure mechanism. They're declared with YAML frontmatter listing trigger words. The harness loads them only when the user's request matches. Now look at how that maps to capability discovery:
+Agent skills *are* a progressive-disclosure mechanism. They're declared with metadata describing trigger conditions; the harness loads them only when a request matches. Now look at how that maps to capability discovery:
 
 | Skill model | Capability model |
 |---|---|
-| Skill registration (frontmatter declaring triggers) | `capability_provide` event |
-| Skill matching (trigger words match user input) | `lookup()` returning a provider |
+| Skill registration (declaring triggers + metadata) | `capability_provide` event |
+| Skill matching (trigger conditions match user input) | `lookup()` returning a provider |
 | Skill invocation (harness loads + executes) | `capability_match` event |
-| Skill lifetime / `loadAt` semantics | Lease window |
+| Skill lifetime / load semantics | Lease window |
 | The harness's skill matcher | The registry/lookup function |
 
 These are not two different ideas at two different layers. They are the **same idea at different altitudes.** Skills are one *consumer* of the capability/discovery substrate.
@@ -184,7 +184,7 @@ The forcing function is a real consumer. Specifically, when one of these happens
 
 2. An ephemeral UI surface (the post-VT100 pane / DYFJ Workbench surface) needs to register itself so the rest of the system knows it's there. *"I just spawned a slider; future calls to ui.render.slider should route to me."* That's the moment `register()` earns its first call site.
 
-3. A skill consolidation — DYFJ deciding that skills should announce themselves as capabilities rather than be discovered through harness-specific YAML. *"My harness's skills are just one form of capability provider; let's unify."*
+3. A skill consolidation — DYFJ deciding that skills should announce themselves as capabilities rather than be discovered through harness-specific declarations. *"My harness's skills are just one form of capability provider; let's unify."*
 
 Until one of these forces it, building `register()` and `lookup()` is premature. The schema is already in place — that's the cheap-now-expensive-later commitment honored. Behavior comes when behavior is needed.
 
