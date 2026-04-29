@@ -49,7 +49,7 @@ Tier 2 (per-call) shows the same banner every call. No session-grant path exists
 
 **Decisions:**
 - Estimate is a **range**, not a point. Input-only is a lower bound; we publish that explicitly with a plausible-output multiplier rather than letting a low number masquerade as the cost.
-- Session **and** daily headroom are both visible. Daily catches the slow-bleed pattern session-only budgets miss (the $200/day pi lesson — ten sessions at $0.50 each are all "within session budget").
+- Session **and** daily headroom are both visible. Daily catches the slow-bleed pattern session-only budgets miss — ten sessions at $0.50 each are all "within session budget" but aggregate to $5/day.
 - The reason from `model_selected.content` surfaces here. Consent is informed by *why this tier*, not just *what it costs*.
 - **Non-TTY contexts fail closed on Tier ≥ 1.** Without a TTY, no banner can be shown and no consent can be granted; the call is denied. CI, scripts, daemons explicitly opt out of paid inference unless they pre-pass an `--allow-paid` flag at invocation, which writes a `consent_granted` event for audit. Tier 0 always proceeds regardless of TTY.
 

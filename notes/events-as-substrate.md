@@ -55,7 +55,7 @@ Notice what's different: each concern is at a different stage of having actual p
 
 ## Capability discovery, specifically
 
-This is the concern we just shipped schema for, and the one I had the most uncertainty about. Walking it through three times — today, tomorrow, later — makes the picture concrete.
+This is the concern the capability/discovery columns in the schema serve, and the one I had the most uncertainty about. Walking it through three times — today, tomorrow, later — makes the picture concrete.
 
 ### Today (the shape exists; behavior does not)
 
@@ -134,7 +134,7 @@ Agent skills *are* a progressive-disclosure mechanism. They're declared with met
 
 These are not two different ideas at two different layers. They are the **same idea at different altitudes.** Skills are one *consumer* of the capability/discovery substrate.
 
-So is ephemeral software (the dashboards-on-demand from earlier this session). The agent generating a slider is announcing a short-lived capability ("I provide this UI surface"); the user dismissing it is releasing the lease ("the surface is no longer available").
+So is ephemeral software. The agent generating a slider on demand is announcing a short-lived capability ("I provide this UI surface"); the user dismissing it is releasing the lease ("the surface is no longer available").
 
 So is inter-agent matching. Agent A advertises `memory.search.semantic`; agent B requires it; the matcher binds them.
 
@@ -180,9 +180,9 @@ The Jini lineage matters here. Sun's Jini got bilateral capability discovery rig
 
 The forcing function is a real consumer. Specifically, when one of these happens:
 
-1. An agent (Rook, or whatever) is doing real work and reaches for a capability it doesn't have hardcoded knowledge of. *"I want to call memory.search.semantic but I don't know which provider to route to."* That's the moment `lookup()` earns its first call site.
+1. An agent is doing real work and reaches for a capability it doesn't have hardcoded knowledge of. *"I want to call memory.search.semantic but I don't know which provider to route to."* That's the moment `lookup()` earns its first call site.
 
-2. An ephemeral UI surface (the post-VT100 pane / DYFJ Workbench surface) needs to register itself so the rest of the system knows it's there. *"I just spawned a slider; future calls to ui.render.slider should route to me."* That's the moment `register()` earns its first call site.
+2. An ephemeral UI surface needs to register itself so the rest of the system knows it's there. *"I just spawned a slider; future calls to ui.render.slider should route to me."* That's the moment `register()` earns its first call site.
 
 3. A skill consolidation — DYFJ deciding that skills should announce themselves as capabilities rather than be discovered through harness-specific declarations. *"My harness's skills are just one form of capability provider; let's unify."*
 
