@@ -1,6 +1,6 @@
 # DYFJ
 
-A sovereign personal AI stack. Modular, vendor-loose, local-first by default, with cost visibility as a design primitive rather than a billing afterthought. Customer Zero is me.
+A sovereign personal AI stack. Modular, vendor-loose, local-first by default, with cost visibility as a design primitive rather than a billing afterthought. Built for myself, learning in public.
 
 This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work — as me, or as an agent — read §1 in 60 seconds and you'll know the rules. If you want the why, keep reading past §4. If you want to run it, jump to §5.
 
@@ -37,7 +37,7 @@ DYFJ is **not**:
 - A hosted SaaS.
 - A multi-tenant platform.
 - A model-agnostic abstraction over every provider — only the ones actually in use, with strong defaults.
-- A productized stack for *other people*. Customer Zero is literal. Generalization is a future question, not a Day-1 constraint.
+- A productized stack for *other people*. Generalization is a future question, not a Day-1 constraint.
 
 ### Layer 0 stances (operative everywhere)
 
@@ -69,13 +69,12 @@ Working-system criterion. Cost visibility is part of the done-line itself, not a
 
 ## 2. Goals
 
-Three interdependent, parallel goals.
+Two interdependent, parallel goals.
 
-1. **Sovereign personal AI stack.** A first-class personal AI stack with vendor coupling loosened at the core — any single harness, runtime, or model is one option among several rather than the foundation. Customer Zero is me.
-2. **Bitspace Customer Zero artifact.** The same stack, demonstrated end-to-end on real work, becomes the reference architecture and credibility instrument for Bitspace's boutique AI/automation consultancy.
-3. **Public credibility through working in public.** Without visible thinking, goal 2 has no acquisition channel. Visible thinking is the path. The mode is *learning in public* — veteran builder figures out the new layer, anchored by a 50-year computing arc (TRS-80 1977 → l0pht → 20 years senior at Liberty Mutual → now).
+1. **Sovereign personal AI stack.** A first-class personal AI stack with vendor coupling loosened at the core — any single harness, runtime, or model is one option among several rather than the foundation. Built for me, used by me, daily.
+2. **Learning in public.** Veteran builder figures out the new layer with the work itself visible — anchored by a 50-year computing arc (TRS-80 1977 → l0pht → 20 years senior at Liberty Mutual → now). Whether the substrate ever becomes the basis for something built for others is a future question; today it's about the work and the public learning.
 
-**Framing constraint.** Goal 3 is *necessary*, not *load-bearing*. Goals 1 and 2 progress without an audience; they just generate no inbound. Publishing is the natural artifact of how I already work — currently 80/20 build/publish, expected to slide toward more publish as the substrate stabilizes.
+**Framing constraint.** Goal 2 is *necessary*, not *load-bearing*. Goal 1 progresses without an audience; it just generates no inbound. Publishing is the natural artifact of how I already work — currently 80/20 build/publish, expected to slide toward more publish as the substrate stabilizes.
 
 ## 3. Audience and operating cadence
 
@@ -198,7 +197,7 @@ Things that exist as boxes on a diagram.
 - **Memory abstraction.** First-class subsystem, not a bolt-on. Distinct from the immutable log. Queryable, evictable, scoped, explicitly reasoned about.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable, versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
-- **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per §1: schema carries the metadata Day-1; runtime registry is stubbed Day-1, deferred to real implementation later. Foundation for the Bitspace enterprise-bridge offering.
+- **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per §1: schema carries the metadata Day-1; runtime registry is stubbed Day-1, deferred to real implementation later.
 
 ### 5.3 Layer 2 — cross-cutting concerns
 
@@ -224,29 +223,29 @@ How things actually execute.
 
 ● = primary serve · ○ = indirect / downstream
 
-| Primitive | Goal 1 (Sovereign) | Goal 2 (Customer Zero) | Goal 3 (Public) |
-|---|---|---|---|
-| Swappable w/ strong defaults | ● | ○ | ● |
-| Local-first default | ● | ○ | ● |
-| Rust core | ● | ○ | ● |
-| Schema in data layer | ● | ○ | ● |
-| Cost visibility as default | ● | ○ | ● |
-| Immutable message log | ● | ● | ○ |
-| Conversation loop | ● | ○ | ○ |
-| Memory abstraction | ● | ● | ○ |
-| Tool registry / MCP | ● | ○ | ○ |
-| Session persistence | ● | ○ | ○ |
-| Inter-agent contracts | ○ | ● | ● |
-| Observability | ● | ● | ○ |
-| Policy engine | ● | ● | ○ |
-| Cost & budget machinery | ● | ○ | ● |
-| Eval & regression | ○ | ○ | ● |
-| Self-reflection loops | ● | ○ | ○ |
-| Streaming / interrupt | ● | ○ | ○ |
-| Checkpointing | ● | ● | ● |
-| Time / scheduling | ● | ○ | ○ |
+| Primitive | Goal 1 (Sovereign) | Goal 2 (Public) |
+|---|---|---|
+| Swappable w/ strong defaults | ● | ● |
+| Local-first default | ● | ● |
+| Rust core | ● | ● |
+| Schema in data layer | ● | ● |
+| Cost visibility as default | ● | ● |
+| Immutable message log | ● | ○ |
+| Conversation loop | ● | ○ |
+| Memory abstraction | ● | ○ |
+| Tool registry / MCP | ● | ○ |
+| Session persistence | ● | ○ |
+| Inter-agent contracts | ○ | ● |
+| Observability | ● | ○ |
+| Policy engine | ● | ○ |
+| Cost & budget machinery | ● | ● |
+| Eval & regression | ○ | ● |
+| Self-reflection loops | ● | ○ |
+| Streaming / interrupt | ● | ○ |
+| Checkpointing | ● | ● |
+| Time / scheduling | ● | ○ |
 
-The genuine ●●● row (checkpointing) and the ●●-with-public-angle rows (the five Layer 0 stances + cost machinery + inter-agent contracts) carry the publishable angles.
+The ●● rows — the five Layer 0 stances, cost machinery, inter-agent contracts, and checkpointing — carry the publishable angles.
 
 ---
 
@@ -307,3 +306,4 @@ Reserved space for new questions as they accumulate.
 - 2026-04-27 — Naming convention established: **DYFJ** (umbrella), **DYFJ Project** (this OSS repo, `bitspace-ai/dyfj`), **DYFJ Workbench** (private overlay, `bitspace/dyfj`).
 - 2026-04-27 — Promoted to `README.md` of `bitspace-ai/dyfj` and merged with the prior README's practical `Run it` and `MCP integration` content. Repo restructured: TypeScript prototype moved into `prototype/`; Rust substrate scaffolding added at `core/`; schema/ stays at root as canonical, language-agnostic substrate; AGENTS.md replaced with thin pointer to this file.
 - 2026-04-27 — Added §4 "Engineering posture" between Audience and Run it. Tests + evals are now stated practice, not implicit. Existing §4–§11 renumbered to §5–§12; cross-references updated.
+- 2026-04-29 — "Customer Zero" / Bitspace-commercial framing scrubbed. README scoped to a personal learn-in-public project. Goal 2 ("Bitspace Customer Zero artifact") dropped; goals collapsed from three to two; traceability matrix re-keyed; inter-agent contracts no longer pitched as a Bitspace offering. Future commercialization is acknowledged as possible but explicitly not the vibe of this project.
