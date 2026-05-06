@@ -1,7 +1,7 @@
 /**
  * Unit tests for src/memory.ts
  *
- * All tests are pure — no Dolt, no network.
+ * All tests are pure - no Dolt, no network.
  * I/O functions (loadMemoriesByType, loadMemoryIndex, getMemoryBySlug,
  * executeReadMemory) are not tested here; they delegate to doltQuery which
  * shells out to Dolt. The pure functions that compose the session context
@@ -26,7 +26,7 @@ function makeMemory(overrides: Partial<Memory> = {}): Memory {
     type:        "user",
     name:        "User Profile",
     description: "Core user context",
-    content:     "Chris Woods. Principal Engineer. Bitspace LLC.",
+    content:     "Alice Doe. Senior Engineer. Acme Inc.",
     ...overrides,
   };
 }
@@ -36,29 +36,29 @@ function makeIndex(overrides: Partial<MemoryIndexEntry> = {}): MemoryIndexEntry 
     slug:        "project_dyfj",
     type:        "project",
     name:        "DYFJ Workbench",
-    description: "Chris's modular AI platform",
+    description: "User's modular AI platform",
     ...overrides,
   };
 }
 
 const SAMPLE_USER_MEMORIES: Memory[] = [
-  makeMemory({ slug: "user_profile",    name: "User Profile",    content: "Chris is a Principal Engineer." }),
-  makeMemory({ slug: "user_left_handed",name: "Left-Handed",     content: "Chris is left-handed." }),
+  makeMemory({ slug: "user_profile",    name: "User Profile",    content: "Alice is a senior engineer." }),
+  makeMemory({ slug: "user_left_handed",name: "Left-Handed",     content: "Alice is left-handed." }),
 ];
 
 const SAMPLE_FEEDBACK_MEMORIES: Memory[] = [
-  makeMemory({ slug: "feedback_humor",      type: "feedback", name: "Humor",       content: "Chris has dry humor." }),
+  makeMemory({ slug: "feedback_humor",      type: "feedback", name: "Humor",       content: "Alice has dry humor." }),
   makeMemory({ slug: "feedback_local_models",type: "feedback", name: "Local Models", content: "Default to local models." }),
 ];
 
 const SAMPLE_INDEX: MemoryIndexEntry[] = [
-  makeIndex({ slug: "project_dyfj",    name: "DYFJ Workbench",    description: "Chris's AI platform" }),
+  makeIndex({ slug: "project_dyfj",    name: "DYFJ Workbench",    description: "User's AI platform" }),
   makeIndex({ slug: "reference_sleipnir", type: "reference", name: "Sleipnir", description: "Home server specs" }),
 ];
 
-// ── buildSystemPrompt — nudge ─────────────────────────────────────────────────
+// ── buildSystemPrompt - nudge ─────────────────────────────────────────────────
 
-describe("buildSystemPrompt — nudge", () => {
+describe("buildSystemPrompt - nudge", () => {
   test("includes nudge when index is non-empty", () => {
     const prompt = buildSystemPrompt(SAMPLE_USER_MEMORIES, SAMPLE_INDEX);
     expect(prompt).toContain("Before starting any task");
@@ -70,7 +70,7 @@ describe("buildSystemPrompt — nudge", () => {
     expect(prompt).toContain("Context Index");
   });
 
-  test("nudge conveys consequence of skipping — 'working blind'", () => {
+  test("nudge conveys consequence of skipping - 'working blind'", () => {
     const prompt = buildSystemPrompt(SAMPLE_USER_MEMORIES, SAMPLE_INDEX);
     expect(prompt).toContain("working blind");
   });
@@ -89,9 +89,9 @@ describe("buildSystemPrompt — nudge", () => {
   });
 });
 
-// ── buildSystemPrompt — user memories ────────────────────────────────────────
+// ── buildSystemPrompt - user memories ────────────────────────────────────────
 
-describe("buildSystemPrompt — user memories", () => {
+describe("buildSystemPrompt - user memories", () => {
   test("includes 'About the User' section", () => {
     const prompt = buildSystemPrompt(SAMPLE_USER_MEMORIES, []);
     expect(prompt).toContain("## About the User");
@@ -105,8 +105,8 @@ describe("buildSystemPrompt — user memories", () => {
 
   test("includes user memory content verbatim", () => {
     const prompt = buildSystemPrompt(SAMPLE_USER_MEMORIES, []);
-    expect(prompt).toContain("Chris is a Principal Engineer.");
-    expect(prompt).toContain("Chris is left-handed.");
+    expect(prompt).toContain("Alice is a senior engineer.");
+    expect(prompt).toContain("Alice is left-handed.");
   });
 
   test("omits 'About the User' section when no user memories", () => {
@@ -118,15 +118,15 @@ describe("buildSystemPrompt — user memories", () => {
     const prompt = buildSystemPrompt(SAMPLE_USER_MEMORIES, SAMPLE_INDEX);
     // Content should be in prose sections, not duplicated in table rows
     const tableStart = prompt.indexOf("| slug |");
-    if (tableStart === -1) return; // no table — pass
+    if (tableStart === -1) return; // no table - pass
     const tableSection = prompt.slice(tableStart);
-    expect(tableSection).not.toContain("Chris is a Principal Engineer.");
+    expect(tableSection).not.toContain("Alice is a senior engineer.");
   });
 });
 
-// ── buildSystemPrompt — feedback memories ────────────────────────────────────
+// ── buildSystemPrompt - feedback memories ────────────────────────────────────
 
-describe("buildSystemPrompt — feedback memories", () => {
+describe("buildSystemPrompt - feedback memories", () => {
   test("includes 'Working Preferences' section", () => {
     const prompt = buildSystemPrompt(SAMPLE_FEEDBACK_MEMORIES, []);
     expect(prompt).toContain("## Working Preferences");
@@ -140,7 +140,7 @@ describe("buildSystemPrompt — feedback memories", () => {
 
   test("includes feedback memory content verbatim", () => {
     const prompt = buildSystemPrompt(SAMPLE_FEEDBACK_MEMORIES, []);
-    expect(prompt).toContain("Chris has dry humor.");
+    expect(prompt).toContain("Alice has dry humor.");
     expect(prompt).toContain("Default to local models.");
   });
 
@@ -158,9 +158,9 @@ describe("buildSystemPrompt — feedback memories", () => {
   });
 });
 
-// ── buildSystemPrompt — context index ────────────────────────────────────────
+// ── buildSystemPrompt - context index ────────────────────────────────────────
 
-describe("buildSystemPrompt — context index", () => {
+describe("buildSystemPrompt - context index", () => {
   test("includes 'Context Index' section heading", () => {
     const prompt = buildSystemPrompt([], SAMPLE_INDEX);
     expect(prompt).toContain("## Context Index");
@@ -186,7 +186,7 @@ describe("buildSystemPrompt — context index", () => {
   test("includes name and description in index row", () => {
     const prompt = buildSystemPrompt([], SAMPLE_INDEX);
     expect(prompt).toContain("DYFJ Workbench");
-    expect(prompt).toContain("Chris's AI platform");
+    expect(prompt).toContain("User's AI platform");
   });
 
   test("omits index section when index is empty", () => {
@@ -232,7 +232,7 @@ describe("buildSystemPrompt — context index", () => {
   });
 });
 
-// ── buildSystemPrompt — identity injection ───────────────────────────────────
+// ── buildSystemPrompt - identity injection ───────────────────────────────────
 
 const TEST_PREFIX = "user_agent_";
 const TEST_OPTS   = { identitySlugPrefix: TEST_PREFIX };
@@ -254,7 +254,7 @@ const AGENT_STEERING_MEMORY = makeMemory({
 });
 const AGENT_IDENTITY_MEMORIES = [AGENT_IDENTITY_MEMORY, AGENT_VOICE_MEMORY, AGENT_STEERING_MEMORY];
 
-describe("buildSystemPrompt — identity injection", () => {
+describe("buildSystemPrompt - identity injection", () => {
   test("identity memories appear before user context section", () => {
     const prompt = buildSystemPrompt([...AGENT_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], [], TEST_OPTS);
     const identityPos = prompt.indexOf("You are the DYFJ");
@@ -281,7 +281,7 @@ describe("buildSystemPrompt — identity injection", () => {
     expect(aboutSection).not.toContain("### Agent Voice");
   });
 
-  test("empty memories produces empty prompt — identity comes from Dolt", () => {
+  test("empty memories produces empty prompt - identity comes from Dolt", () => {
     const prompt = buildSystemPrompt([], [], TEST_OPTS);
     expect(prompt.trim()).toBe("");
   });
@@ -295,7 +295,7 @@ describe("buildSystemPrompt — identity injection", () => {
     expect(identityPos).toBeLessThan(aboutPos);
   });
 
-  test("no identitySlugPrefix — all user memories appear in user context section", () => {
+  test("no identitySlugPrefix - all user memories appear in user context section", () => {
     const prompt = buildSystemPrompt([...AGENT_IDENTITY_MEMORIES, ...SAMPLE_USER_MEMORIES], []);
     // No identity section hoisted above the user section
     const userSectionPos  = prompt.indexOf("## About the User");
