@@ -8,7 +8,7 @@
  * are fully covered.
  */
 
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import {
   buildSystemPrompt,
   buildReadMemoryTool,

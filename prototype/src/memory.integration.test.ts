@@ -11,7 +11,7 @@
  *   (migrated from stage/ via migrate_stage.ts)
  */
 
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import {
   loadMemoriesByType,
   loadMemoryIndex,

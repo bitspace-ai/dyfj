@@ -7,7 +7,7 @@
  * all the interesting logic and produces a deterministic, inspectable result.
  */
 
-import { test, expect, describe, beforeEach } from "bun:test";
+import { test, expect, describe, beforeEach } from "vitest";
 import {
   BudgetTracker,
   BudgetExceededError,

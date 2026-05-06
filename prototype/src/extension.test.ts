@@ -13,7 +13,7 @@
  *   - The fire-and-forget error handling contract
  */
 
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import { extractText, extractThinking, normaliseStopReason, generateULID, generateTraceId } from "./utils";
 import { BudgetTracker } from "./budget";
 

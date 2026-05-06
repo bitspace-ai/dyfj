@@ -1,8 +1,8 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe } from "vitest";
 import {
   generateULID, generateTraceId, generateSpanId,
   extractText, extractThinking,
-  parseDoltCsv, parseCsvRow, parseCSVRows,
+  parseCsvRow, parseCSVRows,
   normaliseStopReason,
 } from "./utils";
 import type { AssistantMessage } from "@mariozechner/pi-ai";

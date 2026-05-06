@@ -36,7 +36,7 @@
  * deletes demo beads in that workspace; no other state is touched.)
  *
  * Honest integration cost notes:
- *   - bd CLI shell-out via Bun.$ is the production-realistic shape
+ *   - bd CLI shell-out via dax (jsr:@david/dax) is the production-realistic shape
  *   - JSON output mode (`bd show --json`) returns an ARRAY (single-id queries
  *     return a 1-element array); parse accordingly
  *   - Per-operation bd overhead is ~500-800ms (Dolt write + git semantics);
@@ -44,7 +44,8 @@
  *     high-frequency intra-loop coordination
  */
 
-import { $ } from "bun";
+import $ from "jsr:@david/dax@0.42.0";
+import process from "node:process";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -76,20 +77,19 @@ async function bdCreate(args: {
   const parentArg = args.parent ? ["--parent", args.parent] : [];
   const metadataArg = args.metadata ? ["--metadata", JSON.stringify(args.metadata)] : [];
 
-  const proc = await $`bd create --title=${args.title} --description=${args.description} --type=${args.type} ${labelArg} ${parentArg} ${metadataArg}`.quiet();
-  const output = proc.stdout.toString();
+  const output = await $`bd create --title=${args.title} --description=${args.description} --type=${args.type} ${labelArg} ${parentArg} ${metadataArg}`.quiet().text();
   const match = output.match(/Created issue:\s+(\S+)/);
   if (!match) throw new Error(`bd create failed to return ID: ${output}`);
   return match[1];
 }
 
 async function bdShow(id: string): Promise<BdIssue> {
-  const proc = await $`bd show ${id} --json`.quiet().nothrow();
-  if (proc.exitCode !== 0) {
-    throw new Error(`bd show ${id} failed: ${proc.stderr.toString()}`);
+  const result = await $`bd show ${id} --json`.quiet().noThrow().stdout("piped").stderr("piped");
+  if (result.code !== 0) {
+    throw new Error(`bd show ${id} failed: ${result.stderr}`);
   }
   // bd show --json returns an array (for multi-id queries); single-id returns 1 element
-  const parsed = JSON.parse(proc.stdout.toString());
+  const parsed = JSON.parse(result.stdout);
   const issue = Array.isArray(parsed) ? parsed[0] : parsed;
   if (!issue) throw new Error(`bd show ${id} returned no issue`);
   return issue as BdIssue;
@@ -104,7 +104,7 @@ async function bdClose(id: string, reason: string): Promise<void> {
 }
 
 async function bdDelete(id: string): Promise<void> {
-  await $`bd delete ${id} --force`.quiet().nothrow();
+  await $`bd delete ${id} --force`.quiet().noThrow();
 }
 
 // ── Stubbed worker task ───────────────────────────────────────────────────────

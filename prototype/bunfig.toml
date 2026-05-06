@@ -1,3 +1,0 @@
-[test]
-# Integration scripts live in *.run.ts — not picked up by bun test discovery.
-# Run them explicitly: bun run poc/multi_turn.run.ts
