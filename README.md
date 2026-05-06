@@ -93,7 +93,7 @@ How the work actually happens, separate from what gets built.
 
 ### Prerequisites
 
-- [Bun](https://bun.sh)
+- [Deno](https://deno.com) 2.7+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [Ollama](https://ollama.com) with at least one model pulled (e.g. `ollama pull gemma3`)
 - *(Optional, for `core/`)* [`rustup`](https://rustup.rs/) - the toolchain pin in `core/rust-toolchain.toml` will install the right Rust automatically when you `cargo build` there.
@@ -103,10 +103,12 @@ How the work actually happens, separate from what gets built.
 ```sh
 git clone https://github.com/bitspace-ai/dyfj
 cd dyfj/prototype
-bun install
+deno install
 cp .env.example .env
 cp settings.example.json settings.json
 ```
+
+The prototype uses Deno tasks defined in `deno.json`. See `deno task` for the list of entry points.
 
 Edit `.env` and `settings.json` for your local config.
 
@@ -130,7 +132,7 @@ The `data/` directory is gitignored.
 
 ```sh
 cd prototype
-bun run start
+deno task start
 ```
 
 ### Build the core
@@ -148,21 +150,21 @@ Today the binary is a connection spike - confirms sqlx talks to Dolt and prints 
 
 ```sh
 cd prototype
-bun run examples/router-tour.ts
+deno task router-tour
 ```
 
 Walks all three router tiers (local, API-light, API-heavy), the consent flow, and verifies events landed in Dolt.
 
 ### MCP integration
 
-The prototype exposes its memory substrate over MCP via `prototype/mcp/server.ts`. Point your agent at it. Replace `/path/to/bun` with `which bun` and `/path/to/dyfj` with the absolute path of your clone.
+The prototype exposes its memory substrate over MCP via `prototype/mcp/server.ts`. Point your agent at it. Replace `/path/to/deno` with `which deno` and `/path/to/dyfj` with the absolute path of your clone.
 
 ```json
 {
   "mcpServers": {
     "dyfj-memory": {
-      "command": "/path/to/bun",
-      "args": ["run", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "command": "/path/to/deno",
+      "args": ["run", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
