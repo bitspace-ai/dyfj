@@ -2,7 +2,7 @@
 
 Status: design note, pre-implementation.
 Tracks: Active commitment #3 (README §10) — *"Define the cost-visibility surface: per-session running tally, pre-flight estimate on escalation to paid inference, hard/soft budget thresholds."*
-Implementation home: Workbench first (`~/.dyfj/src/budget.ts` and the consent flow it feeds); the Project prototype follows where the design is publishable.
+Implementation home: `prototype/src/budget.ts` and the consent flow it feeds.
 
 ## Why a surface, not just a tracker
 
@@ -183,7 +183,7 @@ Approximate total: ~10h. No piece is required for the next; ship in any order dr
 - README §1 — Layer 0 stance #5 (cost visibility as a default, not an add-on).
 - README §2 — Goal 1 done-line.
 - README §6.3 — Cost & budget machinery as cross-cutting concern.
-- `~/.dyfj/src/budget.ts` — the tracker this surface drives.
-- `~/.dyfj/schema/006_models.sql` — pricing source of truth.
-- `~/.dyfj/schema/008_events_budget_summary.sql` — summary event already in the ENUM.
-- `~/.dyfj/schema/007_events_model_selected.sql` — routing decisions surfaced in the banner.
+- `prototype/src/budget.ts` - the tracker this surface drives.
+- `schema/006_models.sql` - pricing source of truth.
+- `schema/008_events_budget_summary.sql` - summary event already in the ENUM.
+- `schema/007_events_model_selected.sql` - routing decisions surfaced in the banner.

@@ -16,14 +16,14 @@ Exposes DYFJ's Dolt-backed memory substrate to any agent that speaks MCP.
 ## Running
 
 ```bash
-bun run ~/.dyfj/mcp/server.ts
+bun run /path/to/dyfj/mcp/server.ts
 ```
 
 Transport: stdio (standard for CLI agents).
 
 ## Agent Configuration
 
-Replace `~/.dyfj` with your actual install path if different. Find your bun binary with `which bun`.
+Replace `/path/to/dyfj` with your actual install path. Find your bun binary with `which bun`.
 
 ### Claude Code (`~/.claude/settings.json`)
 
@@ -32,7 +32,7 @@ Replace `~/.dyfj` with your actual install path if different. Find your bun bina
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/bun",
-      "args": ["run", "~/.dyfj/mcp/server.ts"]
+      "args": ["run", "/path/to/dyfj/mcp/server.ts"]
     }
   }
 }
@@ -57,7 +57,7 @@ Add to the MCP server list in settings. Same command/args pattern.
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/bun",
-      "args": ["run", "~/.dyfj/mcp/server.ts"]
+      "args": ["run", "/path/to/dyfj/mcp/server.ts"]
     }
   }
 }
@@ -70,7 +70,7 @@ Coding agent (any)
     ↓ MCP (stdio)
 dyfj-memory MCP server
     ↓ mysql2 (TCP → Dolt sql-server)
-~/.dyfj/data/dolt (Dolt database)
+/path/to/dyfj/data/dolt (Dolt database)
 ```
 
 Requires `dolt sql-server` running locally. See repo root README for setup.
