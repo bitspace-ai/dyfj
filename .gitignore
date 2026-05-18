@@ -19,6 +19,7 @@ logs/
 # IDEs and OS
 .idea/
 .vscode/
+.cursor/hooks/state/
 .DS_Store
 
 # Pi session state — track extensions, ignore runtime state
