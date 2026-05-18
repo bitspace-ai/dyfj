@@ -34,3 +34,8 @@ build/
 
 # Rust build artifacts (Cargo.lock IS tracked for the binary)
 target/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
