@@ -46,17 +46,23 @@ import mysql from 'mysql2/promise';
 
 let _pool: any | null = null;
 
+export type SqlParam = string | number | boolean | null;
+
+export function buildDoltPoolOptions(env: Record<string, string | undefined> = process.env): mysql.PoolOptions {
+  return {
+    host: env.DOLT_HOST ?? '127.0.0.1',
+    port: Number(env.DOLT_PORT ?? '3306'),
+    user: env.DOLT_USER ?? 'root',
+    password: env.DOLT_PASSWORD ?? '',
+    database: env.DOLT_DATABASE ?? 'dolt',
+    waitForConnections: true,
+    connectionLimit: 5,
+  };
+}
+
 function getDoltPool(): any {
   if (!_pool) {
-    _pool = mysql.createPool({
-      host: '127.0.0.1',
-      port: 3306,
-      user: 'root',
-      password: 'dolt',
-      database: 'dolt',
-      waitForConnections: true,
-      connectionLimit: 5,
-    });
+    _pool = mysql.createPool(buildDoltPoolOptions());
   }
   return _pool;
 }
@@ -68,8 +74,8 @@ export async function closeDoltPool(): Promise<void> {
 }
 
 /** Execute a SELECT query. Returns rows as plain string-value objects. */
-export async function doltQuery(sql: string): Promise<Record<string, string>[]> {
-  const [rows] = await getDoltPool().execute(sql);
+export async function doltQuery(sql: string, params: SqlParam[] = []): Promise<Record<string, string>[]> {
+  const [rows] = await getDoltPool().execute(sql, params);
   return (rows as mysql.RowDataPacket[]).map(r => {
     const out: Record<string, string> = {};
     for (const k of Object.keys(r)) out[k] = r[k] == null ? '' : String(r[k]);

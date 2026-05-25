@@ -1,14 +1,14 @@
 # Cost-Visibility Surface — Design
 
-Status: design note, pre-implementation.
-Tracks: Active commitment #3 (README §10) — *"Define the cost-visibility surface: per-session running tally, pre-flight estimate on escalation to paid inference, hard/soft budget thresholds."*
+Status: design note, partially implemented.
+Tracks: README §10 near-term commitment for extending the cost-visibility surface beyond the shipped preflight/receipt path.
 Implementation home: `prototype/src/budget.ts` and the consent flow it feeds.
 
 ## Why a surface, not just a tracker
 
 `BudgetTracker` already exists and works: per-tier accumulation, per-call and session limits, `budget_summary` event written at session end, `model_selected` events recording routing decisions, full `tokens_*` and `cost_total` columns on every `model_response`. The ledger is in place.
 
-What's missing is the *surface* — the user-facing behavior that makes cost a design primitive rather than ledger data:
+What's still missing is the full *surface* — the user-facing behavior that makes cost a design primitive rather than ledger data:
 
 - *Before* a paid call: what does the principal see and decide on?
 - *During* a session: what running state is visible without being asked?
@@ -23,9 +23,9 @@ Inventoried so the surface design doesn't restate what's already shipped:
 
 - `events` table — `tokens_input | tokens_output | tokens_cache_read | tokens_cache_write | cost_total` per `model_response`. `budget_summary` event ENUM exists.
 - `models` table — canonical pricing per slug: `cost_input | cost_output | cost_cache_read | cost_cache_write` in USD per MTok, plus `tier`.
-- `BudgetTracker.checkPreCall()` returns `{ allowed, estimatedCost, sessionCostSoFar, sessionLimitUsd, perCallLimitUsd, reason? }` — display-ready numbers, no display layer yet.
-- `BudgetExceededError` halts on per-call or session-limit breach. Caller catches in `index.ts`.
-- Tier semantics: `0` free / no consent · `1` session-grant consent (sticky once given) · `2` per-call consent (every time).
+- `BudgetTracker.checkPreCall()` returns `{ allowed, estimatedCost, sessionCostSoFar, sessionLimitUsd, perCallLimitUsd, reason? }` — the Workbench preflight banner now displays these numbers for Tier 1/2 selections.
+- `BudgetExceededError` halts on per-call or session-limit breach. Workbench catches it and writes an `error` event.
+- Tier semantics: `0` free / no consent · `1` paid escalation · `2` paid escalation. The current Workbench prototype prompts on each paid invocation; sticky session-grant behavior is not implemented.
 - Knobs today: `DYFJ_BUDGET_SESSION_USD` ($1.00), `DYFJ_BUDGET_PER_CALL_USD` ($0.10).
 
 This is the floor. The surface stacks on top.
@@ -34,10 +34,10 @@ This is the floor. The surface stacks on top.
 
 ### 1. Pre-flight escalation banner
 
-Whenever the router selects a Tier ≥ 1 model, the consent flow displays a single banner:
+Whenever model selection chooses a Tier >= 1 model, the consent flow displays a single banner:
 
 ```
-→ Escalating to Claude Haiku 4.5  (Tier 1, session-grant)
+→ Escalating to Claude Haiku 4.5  (Tier 1, paid)
    Reason:    code-shaped task; local Tier 0 declined for context length
    Estimate:  $0.0034 – $0.0180   (input ~3,400 tok; output multiplier 1.5×–5×)
    Session:   $0.0021 of $1.00   (0.2% used)
@@ -45,7 +45,7 @@ Whenever the router selects a Tier ≥ 1 model, the consent flow displays a sing
    Allow this session? [Y/n]
 ```
 
-Tier 2 (per-call) shows the same banner every call. No session-grant path exists for Tier 2 by design.
+Tier 2 shows the same banner. The current prototype prompts on each paid invocation; sticky session grants are a future policy question, not current behavior.
 
 **Decisions:**
 - Estimate is a **range**, not a point. Input-only is a lower bound; we publish that explicitly with a plausible-output multiplier rather than letting a low number masquerade as the cost.
@@ -61,7 +61,7 @@ After each `done` event in a non-Tier-0 session, append a single-line tally:
 $0.0034 this turn · $0.0058 session (0.6% of $1.00) · $0.34 today (6.8% of $5.00)
 ```
 
-For Tier-0-only sessions the tally is suppressed (no spend, no signal). Configurable via `DYFJ_BUDGET_TALLY=on|paid|off` (default `paid`). Once a Tier-1 session-grant is given, the tally **stays visible** for the remainder of the session — it's the receipt of a decision already made, not redundant noise.
+For Tier-0-only sessions the tally is suppressed (no spend, no signal). Configurable via `DYFJ_BUDGET_TALLY=on|paid|off` (default `paid`). Once a session uses paid inference, the tally **stays visible** for the remainder of the session — it's the receipt of a decision already made, not redundant noise.
 
 The tally is the receipt, not the alarm. It's there to make spend continuous-rather-than-discrete in your awareness, so the soft-warning thresholds aren't the first time you learn how the session is going.
 
@@ -135,7 +135,7 @@ Minimum-viable version: read `events` + `models`, print the daily/7-day rollup. 
 
 The same `models` columns that drive the cost surface — `tier`, `cost_input`, `cost_output`, `cost_cache_*`, `capabilities` — are also exactly the shape an agent registry needs for capability-with-budget lookup. A consumer asking *"give me a model where capabilities ⊇ ['code', 'reasoning'] **and** cost_output ≤ $5/MTok **and** active = true"* queries the same table the cost surface reads.
 
-This is a quiet alignment with active commitment #2 (`register()` / `lookup()` interface stub, README §10). The static-config backing for that stub can be the `models` table itself — no new substrate, no parallel registry to keep in sync. When the runtime registry becomes real later, it inherits the schema rather than retrofitting it.
+This is a quiet alignment with the README §10 near-term commitment for a `register()` / `lookup()` interface stub. The static-config backing for that stub can be the `models` table itself — no new substrate, no parallel registry to keep in sync. When the runtime registry becomes real later, it inherits the schema rather than retrofitting it.
 
 The lesson holds beyond models: **cost is a property of any callable thing in DYFJ** — agents, tools, models. As discovery extends to those, the same columns travel. The cost surface and the discovery surface share a substrate, the way audit and observability already share the events log.
 
@@ -155,8 +155,8 @@ No new tables. The events log + models table carry the entire surface.
 
 Smallest-to-largest, each independently shippable. Pick by lived friction, not by list order:
 
-1. **Per-turn tally** — one print line off `BudgetTracker.getSummary()`. No schema change. ~30 min.
-2. **Pre-flight banner** — replace whatever the consent flow prints today with the formatted banner. Pulls reason from the `model_selected` content the router already builds. No schema change. ~1h.
+1. **[open] Per-turn tally** — one print line off `BudgetTracker.getSummary()`. No schema change. ~30 min.
+2. **[done] Pre-flight banner** — replace whatever the consent flow prints today with the formatted banner. Pulls reason from model selection. No schema change.
 3. **Soft warning** — threshold check inside `record()`; emit `budget_warning` event + console line. Schema: ENUM extension. ~1h.
 4. **Daily scope** — daily-spend query; extend `checkPreCall()` to consult it; surface in banner and tally. ~2h.
 5. **Estimate range** — `(low, high)` tuple, multiplier column on `models`, conservative pre-call comparison. Schema: column + migration. ~2h.

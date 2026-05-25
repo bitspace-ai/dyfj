@@ -16,7 +16,7 @@ Exposes DYFJ's Dolt-backed memory substrate to any agent that speaks MCP.
 ## Running
 
 ```bash
-deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_PASSWORD /path/to/dyfj/prototype/mcp/server.ts
+deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE /path/to/dyfj/prototype/mcp/server.ts
 ```
 
 Transport: stdio (standard for CLI agents).
@@ -32,7 +32,7 @@ Replace `/path/to/dyfj` with your actual install path. Find your Deno binary wit
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/deno",
-      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_PASSWORD", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
@@ -57,7 +57,7 @@ Add to the MCP server list in settings. Same command/args pattern.
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/deno",
-      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_PASSWORD", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
@@ -70,7 +70,15 @@ Coding agent (any)
     ↓ MCP (stdio)
 dyfj-memory MCP server
     ↓ mysql2 (TCP → Dolt sql-server)
-/path/to/dyfj/data/dolt (Dolt database)
+local Dolt sql-server (default 127.0.0.1:3306, database `dolt`)
 ```
 
 Requires `dolt sql-server` running locally. See repo root README for setup.
+
+You can inspect the running server without installing `mysql`:
+
+```bash
+dolt --host 127.0.0.1 --port 3306 --no-tls \
+  --user root --password "$DOLT_PASSWORD" --use-db dolt \
+  sql -q "SHOW TABLES;"
+```

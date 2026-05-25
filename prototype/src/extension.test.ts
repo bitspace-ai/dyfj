@@ -1,5 +1,5 @@
 /**
- * Tests for the dyfj-memory pi extension logic
+ * Tests for shared extension-style helper logic.
  *
  * The extension itself is thin wiring — the substantive logic lives in
  * memory.ts (tested in memory.test.ts + memory.integration.test.ts),
@@ -183,9 +183,9 @@ describe("session state reset on session_start", () => {
   });
 });
 
-// ── Budget accumulation across a typical pi session ───────────────────────────
+// ── Budget accumulation across a typical model session ────────────────────────
 
-describe("budget accumulation for a pi session", () => {
+describe("budget accumulation for a model session", () => {
   test("records multiple model responses and accumulates cost", () => {
     const tracker = new BudgetTracker("sess", "trace");
     // Simulate 3 assistant messages in a session

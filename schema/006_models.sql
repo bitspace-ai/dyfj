@@ -1,9 +1,9 @@
 -- DYFJ — Models Registry Schema
--- Replaces: hardcoded model definitions in TypeScript (index.ts localModel)
+-- Replaces hardcoded model definitions in TypeScript.
 --
 -- Design: Dolt is the source of truth for model specs and routing metadata.
--- The TypeScript router reads this table at session startup and caches for the
--- lifetime of the process. Adding, deprecating, or repricing a model is a
+-- The TypeScript provider path reads this table at session startup. Adding,
+-- deprecating, or repricing a model is a
 -- Dolt commit — not a code change.
 --
 -- Note: Uses slug as primary key (vs ULID model_id in the original plan).
@@ -12,8 +12,8 @@
 --
 -- Tier semantics:
 --   0 = Local (Ollama) — always free, no consent required
---   1 = API Light       — session-grant: prompt once, sticky for session
---   2 = API Heavy       — per-call: prompt every time with cost estimate
+--   1 = API Light       — explicit paid escalation
+--   2 = API Heavy       — explicit paid escalation with higher scrutiny
 --
 -- cost_input / cost_output: USD per million tokens.
 -- calculateCost() divides by 1,000,000 before multiplying by token count.
@@ -77,7 +77,7 @@ VALUES
      TRUE, '["text","code","chat"]');
 
 -- ── Tier 1: API Light ─────────────────────────────────────────────────────────
--- Session-grant consent: prompt once, sticky for session duration.
+-- Explicit paid escalation required before inference.
 -- Cost values in USD per MTok.
 
 INSERT INTO models

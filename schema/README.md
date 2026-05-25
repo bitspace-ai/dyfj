@@ -24,15 +24,23 @@ Migrations are numbered and applied in order:
 
 ## Apply the schema
 
-Requires [Dolt](https://www.dolthub.com/) with the SQL server running. From this directory:
+Requires [Dolt](https://www.dolthub.com/). Apply from the Dolt database directory so `dolt sql` targets the working set directly:
 
 ```sh
-for f in *.sql; do
-    dolt sql -q "$(cat "$f")"
+for f in /path/to/dyfj/schema/*.sql; do
+    dolt sql < "$f"
 done
 ```
 
 Order matters because some tables reference others. The numeric prefix encodes the order.
+
+If a local `dolt sql-server` is already running, you can query it with Dolt itself:
+
+```sh
+dolt --host 127.0.0.1 --port 3306 --no-tls \
+  --user root --password "$DOLT_PASSWORD" --use-db dolt \
+  sql -q "SHOW TABLES;"
+```
 
 ## Why Dolt
 

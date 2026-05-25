@@ -15,9 +15,26 @@ deno install
 deno task workbench
 ```
 
+The prototype reads Dolt connection settings from environment variables. For the default local server:
+
+```sh
+export DOLT_HOST=127.0.0.1
+export DOLT_PORT=3306
+export DOLT_USER=root
+export DOLT_PASSWORD=<your-local-dolt-password>
+export DOLT_DATABASE=dolt
+```
+
+Useful checks:
+
+```sh
+deno task test
+deno task verify-workbench-events
+```
+
 ## Layout
 
-- `src/` — Workbench entrypoint, provider path, memory, budget, MCP client, utilities, tests
+- `src/` — Workbench entrypoint, provider path, memory, budget, event verification, MCP client, utilities, tests
 - `mcp/` — MCP server (`server.ts`)
 - `examples/` — runnable Deno demos
 

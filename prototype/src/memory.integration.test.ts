@@ -1,7 +1,7 @@
 /**
  * Integration tests for src/memory.ts — SQL retrieval functions
  *
- * These tests hit the live Dolt database at ~/.dyfj/data/dolt/.
+ * These tests hit the live Dolt sql-server at 127.0.0.1:3306.
  * They verify that the SQL layer correctly loads memories and that
  * executeReadMemory returns the right content for the extension's tool calls.
  *

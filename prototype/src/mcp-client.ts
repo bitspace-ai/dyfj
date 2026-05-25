@@ -5,7 +5,7 @@
  * Exposes typed methods for every tool the server provides so callers
  * never touch raw JSON-RPC.
  *
- * Usage (in the pi extension):
+ * Usage:
  *   const client = new DyfjMcpClient();
  *   await client.connect();
  *   const memories = await client.listMemories();
@@ -13,9 +13,9 @@
  *   await client.disconnect();
  *
  * Why this exists:
- *   The pi extension previously called Dolt SQL directly. With this client,
+ *   Early prototype clients called Dolt SQL directly. With this client,
  *   ALL Dolt logic lives in the MCP server. The extension becomes a thin
- *   lifecycle bridge — swap pi for Codex CLI or Gemini CLI and the same
+ *   lifecycle bridge — swap one harness for Codex CLI or Gemini CLI and the same
  *   server works unchanged. This is the vendor-agnosticism proof.
  */
 
@@ -50,7 +50,7 @@ export interface SessionSummary {
 // ── Client ────────────────────────────────────────────────────────────────────
 
 const SERVER_BIN = process.env.DENO_BIN ?? "deno";
-const DYFJ_ROOT   = process.env.PI_CODING_AGENT_DIR ?? `${process.env.HOME}/.dyfj`;
+const DYFJ_ROOT   = process.env.DYFJ_ROOT ?? `${process.env.HOME}/.dyfj`;
 const SERVER_SCRIPT = `${DYFJ_ROOT}/mcp/server.ts`;
 
 export class DyfjMcpClient {
@@ -69,7 +69,7 @@ export class DyfjMcpClient {
       args: [
         "run",
         "--allow-net=127.0.0.1:3306",
-        "--allow-env=HOME,DOLT_PASSWORD",
+        "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE",
         SERVER_SCRIPT,
       ],
       env: { ...process.env, HOME: process.env.HOME ?? "" } as Record<string, string>,

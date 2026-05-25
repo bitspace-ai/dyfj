@@ -1,9 +1,9 @@
-#!/usr/bin/env -S deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_PASSWORD
+#!/usr/bin/env -S deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE
 /**
  * DYFJ Memory MCP Server
  *
  * Exposes Dolt-backed memory, session tracking, and reflection as MCP tools.
- * Any agent that speaks MCP (Claude Code, pi, Codex CLI, Gemini CLI, Cursor, etc.)
+ * Any agent that speaks MCP (Claude Code, Codex CLI, Gemini CLI, Cursor, etc.)
  * can attach to this server and get the full DYFJ memory substrate for free.
  *
  * Transport: stdio (standard for CLI coding agents)
@@ -28,6 +28,7 @@ import { StdioServerTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/serve
 import { z } from "npm:zod@4.4.3";
 import { ulid } from "npm:ulid@2.4.0";
 import mysql from "npm:mysql2@3.22.3/promise";
+import { buildDoltPoolOptions, type SqlParam } from "./dolt-config";
 
 // ── Dolt connection (TCP → sql-server) ────────────────────────────────────────
 // Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.
@@ -36,22 +37,14 @@ let _pool: mysql.Pool | null = null;
 
 function getPool(): mysql.Pool {
   if (!_pool) {
-    _pool = mysql.createPool({
-      host: "127.0.0.1",
-      port: 3306,
-      user: "root",
-      password: "dolt",
-      database: "dolt",
-      waitForConnections: true,
-      connectionLimit: 5,
-    });
+    _pool = mysql.createPool(buildDoltPoolOptions());
   }
   return _pool;
 }
 
 /** Run a SELECT and return rows as plain objects */
-async function doltQuery(sql: string): Promise<Record<string, string>[]> {
-  const [rows] = await getPool().execute(sql);
+async function doltQuery(sql: string, params: SqlParam[] = []): Promise<Record<string, string>[]> {
+  const [rows] = await getPool().execute(sql, params);
   return (rows as mysql.RowDataPacket[]).map((r) => {
     const out: Record<string, string> = {};
     for (const k of Object.keys(r)) out[k] = r[k] == null ? "" : String(r[k]);
@@ -60,13 +53,8 @@ async function doltQuery(sql: string): Promise<Record<string, string>[]> {
 }
 
 /** Run an INSERT/UPDATE/DELETE */
-async function doltExec(sql: string): Promise<void> {
-  await getPool().execute(sql);
-}
-
-/** Escape a string value for safe SQL interpolation */
-function esc(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/'/g, "''");
+async function doltExec(sql: string, params: SqlParam[] = []): Promise<void> {
+  await getPool().execute(sql, params);
 }
 
 
@@ -88,7 +76,8 @@ server.tool(
   async ({ slug }) => {
     const rows = await doltQuery(
       `SELECT memory_id, slug, type, name, description, content ` +
-        `FROM memories WHERE slug = '${esc(slug)}' LIMIT 1;`
+        `FROM memories WHERE slug = ? LIMIT 1;`,
+      [slug],
     );
     if (rows.length === 0) {
       return {
@@ -126,9 +115,11 @@ server.tool(
       .describe("Filter by memory type (omit for all)"),
   },
   async ({ type }) => {
-    const where = type ? `WHERE type = '${esc(type)}'` : "";
+    const where = type ? "WHERE type = ?" : "";
+    const params = type ? [type] : [];
     const rows = await doltQuery(
-      `SELECT slug, type, name, description FROM memories ${where} ORDER BY type, slug;`
+      `SELECT slug, type, name, description FROM memories ${where} ORDER BY type, slug;`,
+      params,
     );
     if (rows.length === 0) {
       return {
@@ -169,8 +160,9 @@ server.tool(
     const id = ulid();
     await doltExec(
       `INSERT INTO memories (memory_id, slug, type, name, description, content) ` +
-        `VALUES ('${esc(id)}', '${esc(slug)}', '${esc(type)}', '${esc(name)}', '${esc(description)}', '${esc(content)}') ` +
-        `ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), content = VALUES(content), updated_at = CURRENT_TIMESTAMP(6);`
+        `VALUES (?, ?, ?, ?, ?, ?) ` +
+        `ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), content = VALUES(content), updated_at = CURRENT_TIMESTAMP(6);`,
+      [id, slug, type, name, description, content],
     );
     return {
       content: [
@@ -219,13 +211,10 @@ server.tool(
         .slice(0, 40)
         .replace(/-$/, "")}`;
 
-    const nameCol = session_name
-      ? `session_name = '${esc(session_name)}',`
-      : "";
-
     await doltExec(
-      `INSERT INTO sessions (session_id, slug, ${session_name ? "session_name, " : ""}task_description, phase, progress_done, progress_total) ` +
-        `VALUES ('${esc(id)}', '${esc(derivedSlug)}', ${session_name ? `'${esc(session_name)}', ` : ""}'${esc(task_description)}', 'observe', 0, 0);`
+      `INSERT INTO sessions (session_id, slug, session_name, task_description, phase, progress_done, progress_total) ` +
+        `VALUES (?, ?, ?, ?, 'observe', 0, 0);`,
+      [id, derivedSlug, session_name ?? null, task_description],
     );
     return {
       content: [
@@ -276,15 +265,10 @@ server.tool(
       ),
   },
   async ({ session_id, phase, progress_done, progress_total, content }) => {
-    const contentSql = content
-      ? `, content = '${esc(content)}'`
-      : "";
     await doltExec(
-      `UPDATE sessions SET phase = '${esc(phase)}', ` +
-        `progress_done = ${progress_done}, ` +
-        `progress_total = ${progress_total}` +
-        `${contentSql} ` +
-        `WHERE session_id = '${esc(session_id)}';`
+      `UPDATE sessions SET phase = ?, progress_done = ?, progress_total = ?, ` +
+        `content = COALESCE(?, content) WHERE session_id = ?;`,
+      [phase, progress_done, progress_total, content ?? null, session_id],
     );
     return {
       content: [
@@ -351,17 +335,26 @@ server.tool(
     reflection_gaps,
   }) => {
     const id = ulid();
-    const sentimentSql =
-      implied_sentiment != null ? `${implied_sentiment}` : "NULL";
     await doltExec(
       `INSERT INTO reflections ` +
         `(reflection_id, session_slug, effort_level, task_description, ` +
         `criteria_count, criteria_passed, criteria_failed, within_budget, ` +
         `implied_sentiment, reflection_execution, reflection_approach, reflection_gaps) ` +
-        `VALUES (` +
-        `'${esc(id)}', '${esc(session_slug)}', '${esc(effort_level)}', '${esc(task_description)}', ` +
-        `${criteria_count}, ${criteria_passed}, ${criteria_failed}, ${within_budget ? 1 : 0}, ` +
-        `${sentimentSql}, '${esc(reflection_execution)}', '${esc(reflection_approach)}', '${esc(reflection_gaps)}');`
+        `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        id,
+        session_slug,
+        effort_level,
+        task_description,
+        criteria_count,
+        criteria_passed,
+        criteria_failed,
+        within_budget,
+        implied_sentiment ?? null,
+        reflection_execution,
+        reflection_approach,
+        reflection_gaps,
+      ],
     );
     return {
       content: [
@@ -394,11 +387,13 @@ server.tool(
       .describe("Filter by phase (omit for all)"),
   },
   async ({ limit = 10, phase }) => {
-    const where = phase ? `WHERE phase = '${esc(phase)}'` : "";
+    const where = phase ? "WHERE phase = ?" : "";
+    const params: SqlParam[] = phase ? [phase, limit] : [limit];
     const rows = await doltQuery(
       `SELECT session_id, slug, session_name, task_description, phase, ` +
         `progress_done, progress_total, created_at ` +
-        `FROM sessions ${where} ORDER BY created_at DESC LIMIT ${limit};`
+        `FROM sessions ${where} ORDER BY created_at DESC LIMIT ?;`,
+      params,
     );
     if (rows.length === 0) {
       return { content: [{ type: "text", text: "No sessions found." }] };
@@ -432,13 +427,13 @@ server.tool(
         isError: true,
       };
     }
-    const where = session_id
-      ? `WHERE session_id = '${esc(session_id)}'`
-      : `WHERE slug = '${esc(slug!)}'`;
+    const where = session_id ? "WHERE session_id = ?" : "WHERE slug = ?";
+    const params = [session_id ?? slug!];
     const rows = await doltQuery(
       `SELECT session_id, slug, session_name, task_description, effort_level, ` +
         `phase, progress_done, progress_total, mode, content, created_at, updated_at ` +
-        `FROM sessions ${where} LIMIT 1;`
+        `FROM sessions ${where} LIMIT 1;`,
+      params,
     );
     if (rows.length === 0) {
       return {
@@ -477,7 +472,8 @@ server.tool(
   async ({ slug }) => {
     const rows = await doltQuery(
       `SELECT slug, name, description, prompt_template ` +
-        `FROM skills WHERE slug = '${esc(slug)}' LIMIT 1;`
+        `FROM skills WHERE slug = ? LIMIT 1;`,
+      [slug],
     );
     if (rows.length === 0) {
       return {

@@ -1,6 +1,6 @@
 # Tracer Bullet — Schema-as-Source-of-Truth (Rust Core)
 
-Status: design note, pre-implementation.
+Status: implemented tracer-bullet note.
 Location of the work: `core/`. This is the first meaningful Rust commit for DYFJ Project.
 
 ## Goal
@@ -86,19 +86,19 @@ The integration test is the source of truth for "does the tracer bullet work?" T
 `cargo test -- --ignored` passes (with Dolt running and schema applied). `cargo run` prints:
 
 ```
-inserted event: 01HX...
-read back:      01HX...
-match:          ok
+inserting event:    01HX...
+read back:          01HX...
+match:              ok
 ```
 
 Exit code 0. Field-by-field comparison: every required field that went in came back identical, nullable fields that were null stay null, default-populated fields (`created_at`) are populated and reasonable.
 
 On any field mismatch: the test fails with a useful diff (and the binary, which calls the same path, exits non-zero with the same diff to stdout).
 
-## Open questions to resolve before / during coding
+## Resolved during implementation
 
-- **`.sqlx` cache vs. live `DATABASE_URL` at compile time.** sqlx's compile-time query check requires either a live `DATABASE_URL` during `cargo build` OR a pre-prepared `.sqlx/` cache committed to the repo. The cache is the more portable choice for a public repo — someone cloning without Dolt running can still `cargo build`. Verify the `cargo sqlx prepare` workflow before locking it in. If cache turns out to be friction, fall back to live-DB compile mode and document the requirement.
-- **Schema header label drift.** `schema/001_events.sql` opens with "DYFJ Workbench — Canonical Event Schema" — a stale label from the pre-rename era. One-line fix; separate commit; not blocking this work.
+- **`.sqlx` cache vs. live `DATABASE_URL` at compile time.** The repo carries a `.sqlx/` cache so a fresh clone can compile without a live Dolt server. Live-Dolt checks remain available through ignored integration tests.
+- **Schema header label drift.** `schema/001_events.sql` now carries the project-level event schema label.
 
 ## What this seeds for next
 

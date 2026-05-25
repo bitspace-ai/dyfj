@@ -72,10 +72,11 @@ export interface ToolResultMessage {
  */
 export async function loadMemoriesByType(types: MemoryType[]): Promise<Memory[]> {
   if (types.length === 0) return [];
-  const list = types.map(t => `'${t}'`).join(", ");
+  const placeholders = types.map(() => "?").join(", ");
   const rows = await doltQuery(
     `SELECT memory_id, slug, type, name, description, content ` +
-    `FROM memories WHERE type IN (${list}) ORDER BY type, slug;`
+    `FROM memories WHERE type IN (${placeholders}) ORDER BY type, slug;`,
+    types,
   );
   return rows.map(rowToMemory);
 }
@@ -86,10 +87,11 @@ export async function loadMemoriesByType(types: MemoryType[]): Promise<Memory[]>
  */
 export async function loadMemoryIndex(types: MemoryType[]): Promise<MemoryIndexEntry[]> {
   if (types.length === 0) return [];
-  const list = types.map(t => `'${t}'`).join(", ");
+  const placeholders = types.map(() => "?").join(", ");
   const rows = await doltQuery(
     `SELECT slug, type, name, description ` +
-    `FROM memories WHERE type IN (${list}) ORDER BY type, slug;`
+    `FROM memories WHERE type IN (${placeholders}) ORDER BY type, slug;`,
+    types,
   );
   return rows.map(rowToIndexEntry);
 }
@@ -99,10 +101,10 @@ export async function loadMemoryIndex(types: MemoryType[]): Promise<MemoryIndexE
  * Called at tool-execution time when the model invokes read_memory().
  */
 export async function getMemoryBySlug(slug: string): Promise<Memory | null> {
-  const safe = slug.replace(/'/g, "''");
   const rows = await doltQuery(
     `SELECT memory_id, slug, type, name, description, content ` +
-    `FROM memories WHERE slug = '${safe}' LIMIT 1;`
+    `FROM memories WHERE slug = ? LIMIT 1;`,
+    [slug],
   );
   return rows.length > 0 ? rowToMemory(rows[0]!) : null;
 }

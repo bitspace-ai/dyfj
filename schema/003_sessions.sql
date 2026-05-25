@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     slug            VARCHAR(256)  NOT NULL UNIQUE,
     -- Human-readable 4-word session name (e.g. 'Quiet Morning Schema Design')
     session_name    VARCHAR(128)  NULL,
-    -- External session ID from the harness (Claude Code UUID, pi session ID, etc.)
+    -- External session ID from the harness (Claude Code UUID, Codex thread ID, etc.)
     -- Nullable because the workbench will generate its own session IDs
     external_id     VARCHAR(128)  NULL,
 

@@ -45,7 +45,7 @@ Same table. Different lenses. Different indexes carry the queries each lens need
 | **Observability** | `trace_id`, `span_id`, `parent_span_id`, `created_at`, `duration_ms` | Distributed traces, span tree visualizations, latency profiles | Schema present, populated by callers, no exporter built |
 | **Auditability** | `principal_id`, `principal_type`, `action`, `resource`, `authz_basis` | "Who did what when on what authority" | Schema present, populated by callers, no audit UI built |
 | **Capability discovery** | `event_type IN (capability_*)`, `capability_name`, `capability_version`, `capability_lease_id`, `capability_lease_expires`, `capability_metadata` | "Who currently provides X / who needs X / what's bound to what" | Schema present, no producer + no consumer yet |
-| **Cost & budget** | `model_id`, `provider`, `tokens_*`, `cost_total` | Per-session/per-principal/per-model spend rollups, budget thresholds | Partial — schema present, prototype router populates, no consolidated surface |
+| **Cost & budget** | `model_id`, `provider`, `tokens_*`, `cost_total` | Per-session/per-principal/per-model spend rollups, budget thresholds | Partial — schema present, Workbench provider path populates core events, no consolidated surface |
 
 Notice what's the same in every row of this table: *schema in the data layer, populated by producers, projected by consumers, no separate store*.
 
@@ -75,7 +75,7 @@ This is the correct state of the world. Day-1 schema is committed because it's e
 
 ### Tomorrow (a thin `register()` / `lookup()` stub)
 
-The next architectural commit named in README §10 is two Rust functions:
+The next architectural commitment named in README §10 is two functions:
 
 ```rust
 pub async fn register(pool: &MySqlPool, capability: CapabilityAdvertisement) -> Result<()>;
@@ -152,13 +152,13 @@ Different fields get populated by different producers, at different points in th
 Populated by an instrumentation layer when each operation begins. Today, the caller of `events::write` passes them by hand. Future: a `SpanContext` object threads through the agent loop, and `events::write` reads the current context automatically.
 
 **Identity / authz fields (`principal_id`, `principal_type`, `action`, `resource`, `authz_basis`):**
-Populated by whoever's calling `events::write`. Today these are just strings the caller passes ("rook", "agent", "advertise", "memory.search.semantic", "test"). Future: a policy engine intercepts every operation, makes an allow/ask/deny decision, and `authz_basis` records WHY it was permitted ("policy:allow-local-fs", "user_consent:session-123", "capability_grant:lease-01HX...").
+Populated by whoever's calling `events::write`. Today these are just strings the caller passes ("test-agent", "agent", "advertise", "memory.search.semantic", "test"). Future: a policy engine intercepts every operation, makes an allow/ask/deny decision, and `authz_basis` records WHY it was permitted ("policy:allow-local-fs", "user_consent:session-123", "capability_grant:lease-01HX...").
 
 **Capability fields:**
 Populated by the producer announcing or requesting capability state. Today, only the integration test calls these. Tomorrow, `register()` is the canonical entry point — agents call it on startup or when their state changes; the function writes the right `capability_provide` row with sensible defaults. Later still, the matcher writes `capability_match` rows when it binds requires to provides.
 
 **Cost fields (`tokens_*`, `cost_total`):**
-Populated by whoever ran the model call — typically the cost-aware router, which knows the spend at the moment of the call. Already partially populated by the prototype's router for `model_response` and `model_selected` events.
+Populated by whoever ran the model call — today, the Workbench provider path, which knows the spend at the moment of the call. Already partially populated by the prototype for `model_response` and `model_selected` events.
 
 Every field has a producer. Every field has a consumer. Producers don't have to know about consumers; consumers don't have to know about producers. They meet at the table.
 
@@ -209,7 +209,7 @@ It's also why the daily-driver discipline matters. By actually using DYFJ end-to
 
 - README §1 — the Layer 0 stances, especially "schema lives in the data layer" and "swappable with strong defaults."
 - README §6 (Architecture — tiered primitives) — Layer 1 names "Inter-Agent Contracts & Capability Discovery" as a subsystem; this design note is the elaboration.
-- README §10 — Active commitments, including the deferred `register()` / `lookup()` stub.
+- README §10 — Near-term commitments, including the deferred `register()` / `lookup()` stub.
 - `schema/001_events.sql` — the canonical event row.
 - `schema/010_events_capability.sql` — the capability/discovery columns and the four event-type extensions.
 - `notes/tracer-bullet.md` — the previous design note (substrate plumbing through Rust).

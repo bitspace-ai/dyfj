@@ -51,6 +51,7 @@ ALTER TABLE events
       'session_start',
       'session_end',
       'model_selected',
+      'budget_summary',
       'capability_provide',
       'capability_require',
       'capability_match',

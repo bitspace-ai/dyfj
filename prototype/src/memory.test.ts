@@ -4,7 +4,7 @@
  * All tests are pure - no Dolt, no network.
  * I/O functions (loadMemoriesByType, loadMemoryIndex, getMemoryBySlug,
  * executeReadMemory) are not tested here; they delegate to doltQuery which
- * shells out to Dolt. The pure functions that compose the session context
+ * talks to Dolt sql-server. The pure functions that compose the session context
  * are fully covered.
  */
 

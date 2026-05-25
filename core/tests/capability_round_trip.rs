@@ -37,7 +37,7 @@ fn make_capability_provide_event() -> Event {
         trace_id,
         span_id,
         parent_span_id: None,
-        principal_id: "rook".to_string(),
+        principal_id: "test-agent".to_string(),
         principal_type: "agent".to_string(),
         action: "advertise".to_string(),
         resource: "memory.search.semantic".to_string(),

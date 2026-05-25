@@ -1,12 +1,12 @@
 # DYFJ
 
-A sovereign personal AI stack. Modular, vendor-loose, local-first by default, with cost visibility as a design primitive rather than a billing afterthought.
+A sovereign AI automation substrate. Modular, vendor-loose, local-first by default, with cost visibility as a design primitive rather than a billing afterthought.
 
 This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
 ## Repo layout
 
-- `core/` - Rust substrate. Today a compiling placeholder; the first meaningful code is the schema-tracer-bullet binary. Where stabilized components live.
+- `core/` - Rust substrate. Contains the first schema tracer bullet: a small event read/write library plus a demo binary that round-trips an event through Dolt. Where stabilized components live.
 - `prototype/` - TypeScript on Deno. Real working code (memory, budget, MCP server, tests, and the Workbench tracer bullet). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `LICENSE` - MIT.
@@ -15,14 +15,14 @@ The split between `core/` and `prototype/` is not a phase boundary. It's a perma
 
 ## Status
 
-Early and active. The prototype is functional - Workbench entrypoint, local-first provider path, Dolt-backed memory, MCP server, basic budget tracking. The Rust core is a compiling placeholder waiting on its tracer-bullet commit. Schema is canonical and stable. Building in public; the commit history reflects real decisions, including wrong ones.
+Early and active. The prototype is functional - Workbench entrypoint, local-first provider path, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable. Building in public; the commit history reflects real decisions, including wrong ones.
 
 ## How to use this document
 
 Two audiences, one source of truth.
 
 - **An agent picking up work on DYFJ** should be able to read Section 1–Section 4 in about 60 seconds and know the rules of engagement: what's decided, what's out of scope, what "done" looks like, which stances are non-negotiable, and how the work itself happens. Stop reading there unless you need the why.
-- **A human reader (including future-me)** should read the whole document. Section 6 onward carries the rationale, the goal-traceability matrix, and the publishable opinion seeds - the *why* behind Section 1–Section 4.
+- **A human reader (including future maintainers)** should read the whole document. Section 6 onward carries the rationale, the goal-traceability matrix, and the publishable opinion seeds - the *why* behind Section 1–Section 4.
 
 If something in Section 1–Section 4 contradicts prose later in the doc, Section 1–Section 4 wins. The front matter is authoritative; the rationale exists to explain it, not amend it.
 
@@ -37,7 +37,7 @@ DYFJ is **not**:
 - A hosted SaaS.
 - A multi-tenant platform.
 - A model-agnostic abstraction over every provider - only the ones actually in use, with strong defaults.
-- A productized stack for *other people*. Generalization is a future question, not a Day-1 constraint.
+- A hosted, self-serve system. Generalization is a future question, not a Day-1 constraint.
 
 ### Layer 0 stances (operative everywhere)
 
@@ -69,11 +69,11 @@ Working-system criterion. Cost visibility is part of the done-line itself, not a
 
 ## 2. Goal
 
-A first-class personal AI stack with vendor coupling loosened at the core - any single harness, runtime, or model is one option among several rather than the foundation.
+A first-class AI workbench and automation substrate with vendor coupling loosened at the core - any single harness, runtime, or model is one option among several rather than the foundation.
 
 ## 3. Audience and operating cadence
 
-- **Primary canonical reader** of this document and most artifacts is future-me.
+- **Primary canonical reader** of this document and most artifacts is the project maintainer.
 - The doc lives in public alongside the code; written for full-context readers, but with no internal-only language or private references that wouldn't survive a stranger reading over my shoulder.
 - **Working agents** (current and future, including any model in any harness) read Section 1 to operate; they do not need the rationale unless asked to revisit a decision.
 
@@ -110,20 +110,29 @@ cp settings.example.json settings.json
 
 The prototype uses Deno tasks defined in `deno.json`. See `deno task` for the list of entry points.
 
-Edit `.env` and `settings.json` for your local config.
+Edit `.env` and `settings.json` for your local config. The prototype reads Dolt connection settings from environment variables; for the default local SQL server, export:
+
+```sh
+export DOLT_HOST=127.0.0.1
+export DOLT_PORT=3306
+export DOLT_USER=root
+export DOLT_PASSWORD=<your-local-dolt-password>
+export DOLT_DATABASE=dolt
+```
 
 ### Initialize Dolt and apply the schema
 
 From the repo root:
 
 ```sh
-mkdir -p data/dolt && cd data/dolt
+mkdir -p data/dolt
+cd data/dolt
 dolt init
-dolt sql-server &     # localhost:3306 by default
-cd ../..
-for f in schema/*.sql; do
-    dolt --data-dir data/dolt sql < "$f"
+for f in ../../schema/*.sql; do
+    dolt sql < "$f"
 done
+dolt sql-server --host 127.0.0.1 --port 3306 &
+cd ../..
 ```
 
 The `data/` directory is gitignored.
@@ -135,6 +144,21 @@ cd prototype
 deno task start
 ```
 
+Useful validation tasks:
+
+```sh
+deno task test
+deno task verify-workbench-events
+```
+
+To inspect the running Dolt SQL server without installing `mysql`, use Dolt as the client:
+
+```sh
+dolt --host 127.0.0.1 --port 3306 --no-tls \
+  --user root --password "$DOLT_PASSWORD" --use-db dolt \
+  sql -q "SELECT event_type, session_id, trace_id FROM events ORDER BY created_at DESC LIMIT 5;"
+```
+
 ### Build the core
 
 ```sh
@@ -144,7 +168,17 @@ cargo build
 cargo run
 ```
 
-Today the binary is a connection spike - confirms sqlx talks to Dolt and prints `SELECT 1`'s result. The tracer-bullet library + integration test land in subsequent commits; see `notes/tracer-bullet.md`.
+Today the binary is the Rust schema tracer bullet: it inserts a `session_start` event through `dyfj_core::events::write()`, reads it back with `events::read_by_id()`, and verifies equality. The ignored integration tests exercise the same path when a live Dolt server is available:
+
+```sh
+cargo test -- --ignored
+```
+
+For a DB-free Rust compile/test pass using the committed `.sqlx/` cache:
+
+```sh
+SQLX_OFFLINE=true cargo test
+```
 
 ### MCP integration
 
@@ -155,7 +189,7 @@ The prototype exposes its memory substrate over MCP via `prototype/mcp/server.ts
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/deno",
-      "args": ["run", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
@@ -208,7 +242,7 @@ How things actually execute.
 
 ## 7. How the primitives serve the goal
 
-Every Layer 0 stance, every Layer 1 subsystem, and every Layer 2 cross-cutting concern named above exists to make the personal AI stack vendor-loose, locally-defaultable, and cost-aware. The five Layer 0 stances carry the most concentrated weight - they're public from Day-1 because they have the highest leverage on whether the substrate works.
+Every Layer 0 stance, every Layer 1 subsystem, and every Layer 2 cross-cutting concern named above exists to make the automation substrate vendor-loose, locally-defaultable, and cost-aware. The five Layer 0 stances carry the most concentrated weight - they're public from Day-1 because they have the highest leverage on whether the substrate works.
 
 ---
 
@@ -222,21 +256,21 @@ A handful of the stances above carry enough weight to merit dedicated treatment 
 
 Two systems shaped the *thinking* behind this stack without being inherited from in code or architecture:
 
-- A pre-existing personal AI stack first showed me what an end-user-owned AI stack could feel like in daily use. DYFJ is not a successor to it and shares no implementation lineage.
+- A pre-existing end-user-owned AI stack first showed me what a locally-owned AI stack could feel like in daily use. DYFJ is not a successor to it and shares no implementation lineage.
 - Sun's Jini introduced the concept of bilateral lookup, leasing, and capability/need matching as a substrate primitive. DYFJ borrows the *shape of the question*, not the protocol.
 
 Called out so neither shows up downstream as an implied dependency.
 
 ---
 
-## 10. Active commitments
+## 10. Near-term commitments
 
-Things agreed to but not yet done. Updated as work progresses.
+Things agreed to but not yet fully done. Updated as work progresses.
 
-- Lock the Day-1 event-schema fields for capability/discovery into the Dolt DDL alongside OTel and security metadata.
 - Stub `register()` / `lookup()` interface in the codebase with static-config backing.
-- Define the cost-visibility surface: per-session running tally, pre-flight estimate on escalation to paid inference, hard/soft budget thresholds.
-- First meaningful Rust commit: schema-tracer-bullet binary in `core/` that writes one event to Dolt and reads it back through `schema/001_events.sql`.
+- Finish the Workbench MVP loop: per-turn paid-session tally and any remaining event checks needed for tool-call paths once tools are wired into the loop.
+- Continue the cost-visibility surface beyond the shipped preflight/receipt path: running tally, soft/hard budget UX, and later daily-scope budget projection.
+- Grow the Rust core only where components have stabilized enough to earn the boundary; the first schema tracer bullet is shipped.
 
 ---
 
@@ -256,3 +290,5 @@ Reserved space for new questions as they accumulate.
 - 2026-04-27 - Restructured into an operating-context document; Decisions block (Section 1) authoritative.
 - 2026-04-27 - Repo structured: TypeScript prototype in `prototype/`; Rust substrate at `core/`; schema/ at root as canonical, language-agnostic source of truth.
 - 2026-04-27 - Section 4 Engineering posture added - tests + evals as stated practice.
+- 2026-05-25 - Runtime clarified as Deno; Workbench tracer bullet owns `deno task start`; legacy router path retired; paid preflight, receipts, and event-sequence verification added.
+- 2026-05-25 - Rust core tracer bullet shipped: `dyfj_core::events::{write, read_by_id}` plus demo and ignored live-Dolt integration tests.
