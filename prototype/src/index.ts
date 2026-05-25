@@ -11,10 +11,10 @@
  *   4. Write session_end + budget_summary events to Dolt
  *
  * Usage:
- *   bun run src/index.ts                          # default routing (gemma4)
- *   bun run src/index.ts --hint code              # route to qwen3:32b
- *   bun run src/index.ts --model claude-haiku-4-5 # explicit model (prompts for consent)
- *   bun run src/index.ts --prompt "your question"
+ *   deno task start                          # default routing (gemma4)
+ *   deno task start --hint code              # route to qwen3:32b
+ *   deno task start --model claude-haiku-4-5 # explicit model (prompts for consent)
+ *   deno task start --prompt "your question"
  */
 
 import type { Context, AssistantMessage, ToolCall } from "@mariozechner/pi-ai";

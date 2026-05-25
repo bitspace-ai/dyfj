@@ -19,8 +19,9 @@
  *   server works unchanged. This is the vendor-agnosticism proof.
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from "npm:@modelcontextprotocol/sdk@1.29.0/client";
+import { StdioClientTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/client/stdio";
+import process from "node:process";
 
 // ── Types (mirroring tool inputs/outputs) ─────────────────────────────────────
 
@@ -48,7 +49,7 @@ export interface SessionSummary {
 
 // ── Client ────────────────────────────────────────────────────────────────────
 
-const SERVER_BIN = process.env.BUN_BIN ?? "bun";
+const SERVER_BIN = process.env.DENO_BIN ?? "deno";
 const DYFJ_ROOT   = process.env.PI_CODING_AGENT_DIR ?? `${process.env.HOME}/.dyfj`;
 const SERVER_SCRIPT = `${DYFJ_ROOT}/mcp/server.ts`;
 
@@ -65,7 +66,12 @@ export class DyfjMcpClient {
     if (this.connected) return;
     this.transport = new StdioClientTransport({
       command: SERVER_BIN,
-      args: ["run", SERVER_SCRIPT],
+      args: [
+        "run",
+        "--allow-net=127.0.0.1:3306",
+        "--allow-env=HOME,DOLT_PASSWORD",
+        SERVER_SCRIPT,
+      ],
       env: { ...process.env, HOME: process.env.HOME ?? "" } as Record<string, string>,
     });
     await this.client.connect(this.transport);

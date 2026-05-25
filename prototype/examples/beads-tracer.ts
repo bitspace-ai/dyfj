@@ -30,7 +30,7 @@
  *   - Policy enforcement (no routing decisions made)
  *
  * Run with:
- *   BEADS_DIR=/path/to/.beads bun run examples/beads-tracer.ts
+ *   BEADS_DIR=/path/to/.beads deno task beads-tracer
  *
  * (BEADS_DIR points at an existing Beads workspace. The tracer creates and
  * deletes demo beads in that workspace; no other state is touched.)

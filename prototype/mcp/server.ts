@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_PASSWORD
 /**
  * DYFJ Memory MCP Server
  *
@@ -23,11 +23,11 @@
  * calls this server instead of doing SQL directly.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import { ulid } from "ulid";
-import mysql from "mysql2/promise";
+import { McpServer } from "npm:@modelcontextprotocol/sdk@1.29.0/server/mcp";
+import { StdioServerTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/server/stdio";
+import { z } from "npm:zod@4.4.3";
+import { ulid } from "npm:ulid@2.4.0";
+import mysql from "npm:mysql2@3.22.3/promise";
 
 // ── Dolt connection (TCP → sql-server) ────────────────────────────────────────
 // Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.

@@ -1,4 +1,4 @@
-# DYFJ Prototype (TypeScript on Bun)
+# DYFJ Prototype (TypeScript on Deno)
 
 This is the TypeScript prototype layer of DYFJ. It's where I work out the shape of components before any of them earn their way down to the Rust core.
 
@@ -8,19 +8,18 @@ If you want to understand DYFJ's stance on why prototype-and-substrate coexist i
 
 ## Run it
 
-You'll need [Bun](https://bun.sh).
+You'll need [Deno](https://deno.com) 2.7+.
 
 ```sh
-bun install
-bun run start
+deno install
+deno task workbench
 ```
 
 ## Layout
 
 - `src/` — router, memory, budget, MCP client, utilities, tests
 - `mcp/` — MCP server (`server.ts`)
-- `examples/` — runnable demos (e.g. `router-tour.ts`)
-- `.pi/extensions/` — pi-mono extensions registered into the harness when used from this directory
+- `examples/` — runnable Deno demos
 
 ## Where this is heading
 

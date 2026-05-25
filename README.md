@@ -7,7 +7,7 @@ This README is the *operating context* for the project. Decisions up front. How-
 ## Repo layout
 
 - `core/` - Rust substrate. Today a compiling placeholder; the first meaningful code is the schema-tracer-bullet binary. Where stabilized components live.
-- `prototype/` - TypeScript on Bun. Real working code (router, memory, budget, MCP server, tests). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
+- `prototype/` - TypeScript on Deno. Real working code (memory, budget, MCP server, tests, and the Workbench tracer bullet). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `LICENSE` - MIT.
 
@@ -145,15 +145,6 @@ cargo run
 ```
 
 Today the binary is a connection spike - confirms sqlx talks to Dolt and prints `SELECT 1`'s result. The tracer-bullet library + integration test land in subsequent commits; see `notes/tracer-bullet.md`.
-
-### Walk the router tiers
-
-```sh
-cd prototype
-deno task router-tour
-```
-
-Walks all three router tiers (local, API-light, API-heavy), the consent flow, and verifies events landed in Dolt.
 
 ### MCP integration
 

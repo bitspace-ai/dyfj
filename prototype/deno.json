@@ -1,9 +1,8 @@
 {
   "tasks": {
     "test": "deno run --allow-all npm:vitest run",
-    "start": "deno run --allow-all src/index.ts",
-    "router-tour": "deno run --allow-all examples/router-tour.ts",
-    "beads-tracer": "deno run --allow-all examples/beads-tracer.ts",
+    "start": "deno run --allow-all --sloppy-imports src/index.ts",
+    "beads-tracer": "deno run --allow-all --sloppy-imports examples/beads-tracer.ts",
     "smoke": "deno run --allow-all /tmp/dyfj-deno-smoke-test.ts"
   },
   "imports": {

@@ -16,14 +16,14 @@ Exposes DYFJ's Dolt-backed memory substrate to any agent that speaks MCP.
 ## Running
 
 ```bash
-bun run /path/to/dyfj/mcp/server.ts
+deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_PASSWORD /path/to/dyfj/prototype/mcp/server.ts
 ```
 
 Transport: stdio (standard for CLI agents).
 
 ## Agent Configuration
 
-Replace `/path/to/dyfj` with your actual install path. Find your bun binary with `which bun`.
+Replace `/path/to/dyfj` with your actual install path. Find your Deno binary with `which deno`.
 
 ### Claude Code (`~/.claude/settings.json`)
 
@@ -31,8 +31,8 @@ Replace `/path/to/dyfj` with your actual install path. Find your bun binary with
 {
   "mcpServers": {
     "dyfj-memory": {
-      "command": "/path/to/bun",
-      "args": ["run", "/path/to/dyfj/mcp/server.ts"]
+      "command": "/path/to/deno",
+      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_PASSWORD", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
@@ -56,8 +56,8 @@ Add to the MCP server list in settings. Same command/args pattern.
 {
   "mcpServers": {
     "dyfj-memory": {
-      "command": "/path/to/bun",
-      "args": ["run", "/path/to/dyfj/mcp/server.ts"]
+      "command": "/path/to/deno",
+      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_PASSWORD", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }

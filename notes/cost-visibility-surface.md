@@ -90,7 +90,7 @@ Y or a typed amount continues with a written `budget_extended` event (auditabili
 
 ### 5. Multi-scope budgets
 
-Today: session-only. Add **daily** scope as the next concrete bound — a single cap that survives `bun run` invocations.
+Today: session-only. Add **daily** scope as the next concrete bound — a single cap that survives `deno task` invocations.
 
 Implementation: a query against `events` filtered by `principal_id` and `created_at >= TODAY()` summing `cost_total`. No new table — the events log already has everything needed.
 
@@ -100,7 +100,7 @@ DYFJ_BUDGET_DAILY_USD     (default $5.00)
 
 `checkPreCall()` extends to consult both session and daily ledgers; whichever is tighter governs.
 
-**Multi-process race protection (best-effort, not a lock).** Two concurrent `bun run` invocations can each pass a daily-headroom check at 99% used and both proceed, doubling the overrun. Cheap mitigation rather than a heavyweight lock: before any Tier ≥ 1 call, check whether *another* active session exists (events-log query — `session_start` rows without a matching `session_end` within the last hour) **and** daily spend is ≥ 75% of cap. If both, prompt the principal explicitly to confirm the call is intentional. Below 75%, the worst-case race overrun is bounded; above it, asking once is cheap insurance. Single-prompt-per-session — once acknowledged, sticky for that session. False positives (an unrelated DYFJ session in another shell) are intentional: they correctly surface "you have two sessions in flight; sure?" rather than mask coordination cost.
+**Multi-process race protection (best-effort, not a lock).** Two concurrent `deno task` invocations can each pass a daily-headroom check at 99% used and both proceed, doubling the overrun. Cheap mitigation rather than a heavyweight lock: before any Tier ≥ 1 call, check whether *another* active session exists (events-log query — `session_start` rows without a matching `session_end` within the last hour) **and** daily spend is ≥ 75% of cap. If both, prompt the principal explicitly to confirm the call is intentional. Below 75%, the worst-case race overrun is bounded; above it, asking once is cheap insurance. Single-prompt-per-session — once acknowledged, sticky for that session. False positives (an unrelated DYFJ session in another shell) are intentional: they correctly surface "you have two sessions in flight; sure?" rather than mask coordination cost.
 
 Task-scope and principal-scope budgets are deferred. They become real when there are multiple tasks-in-flight or multiple principals — neither is true today, and designing them now would be speculative.
 
@@ -120,7 +120,7 @@ The pre-call check uses **`high`** for both per-call and session-headroom compar
 A read-only inspector that surfaces current state without invoking a model:
 
 ```
-$ bun run budget
+$ deno task budget
 DYFJ Budget — 2026-04-29 17:43
   Session:    not active
   Today:      $0.34 of $5.00     (6.8% used, 7 sessions)
@@ -161,7 +161,7 @@ Smallest-to-largest, each independently shippable. Pick by lived friction, not b
 4. **Daily scope** — daily-spend query; extend `checkPreCall()` to consult it; surface in banner and tally. ~2h.
 5. **Estimate range** — `(low, high)` tuple, multiplier column on `models`, conservative pre-call comparison. Schema: column + migration. ~2h.
 6. **Overrun rescue** — interactive boundary prompt; `budget_extended` event. Schema: ENUM extension (already added in step 3 if bundled). ~1h.
-7. **`bun run budget`** — read-only inspector against events + models. ~2h.
+7. **`deno task budget`** — read-only inspector against events + models. ~2h.
 
 Approximate total: ~10h. No piece is required for the next; ship in any order driven by what you actually feel in daily use.
 
@@ -175,7 +175,7 @@ Approximate total: ~10h. No piece is required for the next; ship in any order dr
 ## Open questions
 
 - **`consent_*` event payload completeness.** When a `consent_granted` or `consent_declined` event is written, what goes in `content` — just the decision, or the full displayed banner including the estimate range, headroom snapshot, and routing reason? Argument for full banner: audit completeness and after-the-fact reconstruction of *what the principal saw when they decided*. Argument against: log-size growth on consent-heavy sessions. Lean: full banner; storage is cheap, audit clarity is not.
-- **`bun run budget` as an MCP tool.** Should the inspector also be exposed as an MCP server tool so other agents can ask *"how much have I spent today?"* without invoking a model? Same data, two surfaces. Probably yes once a second consumer exists; not yet.
+- **`deno task budget` as an MCP tool.** Should the inspector also be exposed as an MCP server tool so other agents can ask *"how much have I spent today?"* without invoking a model? Same data, two surfaces. Probably yes once a second consumer exists; not yet.
 - **Daily cap timezone behavior.** "Today" anchored to `created_at >= TODAY()` in Dolt server time. Travel and DST will produce surprises. Defer until it bites; document assumption when shipping.
 
 ## See also

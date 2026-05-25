@@ -5,7 +5,7 @@
  * They verify that the SQL layer correctly loads memories and that
  * executeReadMemory returns the right content for the extension's tool calls.
  *
- * Run with: bun test src/memory.integration.test.ts
+ * Run with: deno task test src/memory.integration.test.ts
  *
  * Prerequisites: Dolt running with seeded memories table
  *   (migrated from stage/ via migrate_stage.ts)

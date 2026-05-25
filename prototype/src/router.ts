@@ -20,7 +20,7 @@
 import { stream } from "@mariozechner/pi-ai";
 import type { Api, Context, Model } from "@mariozechner/pi-ai";
 import type { AssistantMessageEventStream } from "@mariozechner/pi-ai";
-import { createInterface } from "readline";
+import { createInterface } from "node:readline";
 import {
   doltQuery,
   writeModelSelectedEvent,
