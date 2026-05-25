@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildBudgetTallyLine,
   buildPaidEscalationPreflightBanner,
   buildWorkbenchReceipt,
   formatMoney,
   maybeBuildPaidEscalationPreflightBanner,
+  shouldPrintBudgetTally,
+  type BudgetTallyInput,
   type PaidEscalationPreflightInput,
   type WorkbenchReceiptInput,
 } from "./workbench";
@@ -30,6 +33,22 @@ const BASE_PREFLIGHT: PaidEscalationPreflightInput = {
   sessionCostSoFarUsd: 0.05,
   sessionLimitUsd: 1,
   perCallLimitUsd: 0.1,
+};
+
+const BASE_TALLY: BudgetTallyInput = {
+  turn: {
+    tokensInput: 300,
+    tokensOutput: 120,
+    costUsd: 0.0123456,
+    tier: 1,
+  },
+  session: {
+    totalCostUsd: 0.0345678,
+    totalTokensInput: 1300,
+    totalTokensOutput: 620,
+    paidCalls: 2,
+    sessionLimitUsd: 1,
+  },
 };
 
 describe("formatMoney", () => {
@@ -92,5 +111,34 @@ describe("buildPaidEscalationPreflightBanner", () => {
       tier: 0,
       estimatedCostUsd: 0,
     })).toBeNull();
+  });
+});
+
+describe("buildBudgetTallyLine", () => {
+  test("shows turn and session cost and token totals", () => {
+    const tally = buildBudgetTallyLine(BASE_TALLY);
+
+    expect(tally).toBe(
+      "Budget tally: $0.012346 this turn (300 in, 120 out) · " +
+      "$0.034568 session (1300 in, 620 out, 3.5% of $1.000000)"
+    );
+  });
+});
+
+describe("shouldPrintBudgetTally", () => {
+  test("default paid mode stays quiet before paid usage", () => {
+    expect(shouldPrintBudgetTally("paid", { ...BASE_TALLY.session, paidCalls: 0 })).toBe(false);
+  });
+
+  test("default paid mode prints after paid usage", () => {
+    expect(shouldPrintBudgetTally("paid", BASE_TALLY.session)).toBe(true);
+  });
+
+  test("on mode prints even without paid usage", () => {
+    expect(shouldPrintBudgetTally("on", { ...BASE_TALLY.session, paidCalls: 0 })).toBe(true);
+  });
+
+  test("off mode always stays quiet", () => {
+    expect(shouldPrintBudgetTally("off", BASE_TALLY.session)).toBe(false);
   });
 });

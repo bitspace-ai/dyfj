@@ -15,6 +15,7 @@ data/
 
 # Runtime logs
 logs/
+.vitest-tmp/
 
 # IDEs and OS
 .idea/

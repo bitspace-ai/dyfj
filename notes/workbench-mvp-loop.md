@@ -56,7 +56,7 @@ The loop is CLI-shaped first. A richer visual work surface can project from the 
 3. [done] Add `deno task workbench`.
 4. [done] Add a tested session receipt formatter.
 5. [done] Replace the current paid consent line with the fuller preflight banner from `notes/cost-visibility-surface.md`.
-6. [open] Add the per-turn paid-session tally.
+6. [done] Add the per-turn paid-session tally.
 7. [done] Add an integration check that verifies the expected event sequence in Dolt.
 
 ## Legacy `index.ts`

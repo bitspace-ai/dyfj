@@ -26,6 +26,24 @@ export interface PaidEscalationPreflightInput {
   perCallLimitUsd: number;
 }
 
+export type BudgetTallyMode = "on" | "paid" | "off";
+
+export interface BudgetTallyInput {
+  turn: {
+    tokensInput: number;
+    tokensOutput: number;
+    costUsd: number;
+    tier: 0 | 1 | 2;
+  };
+  session: {
+    totalCostUsd: number;
+    totalTokensInput: number;
+    totalTokensOutput: number;
+    paidCalls: number;
+    sessionLimitUsd: number;
+  };
+}
+
 export class ConsentDeclinedError extends Error {
   constructor() {
     super("Paid inference consent declined");
@@ -67,6 +85,34 @@ export function buildPaidEscalationPreflightBanner(input: PaidEscalationPrefligh
 export function maybeBuildPaidEscalationPreflightBanner(input: PaidEscalationPreflightInput): string | null {
   if (input.tier === 0) return null;
   return buildPaidEscalationPreflightBanner(input);
+}
+
+export function parseBudgetTallyMode(value: string | undefined): BudgetTallyMode {
+  if (value === "on" || value === "off" || value === "paid") return value;
+  return "paid";
+}
+
+export function shouldPrintBudgetTally(
+  mode: BudgetTallyMode,
+  session: { paidCalls: number },
+): boolean {
+  if (mode === "off") return false;
+  if (mode === "on") return true;
+  return session.paidCalls > 0;
+}
+
+export function buildBudgetTallyLine(input: BudgetTallyInput): string {
+  const percentUsed = input.session.sessionLimitUsd > 0
+    ? (input.session.totalCostUsd / input.session.sessionLimitUsd) * 100
+    : 0;
+  return [
+    "Budget tally:",
+    `${formatMoney(input.turn.costUsd)} this turn (${input.turn.tokensInput} in, ${input.turn.tokensOutput} out)`,
+    "·",
+    `${formatMoney(input.session.totalCostUsd)} session ` +
+      `(${input.session.totalTokensInput} in, ${input.session.totalTokensOutput} out, ` +
+      `${percentUsed.toFixed(1)}% of ${formatMoney(input.session.sessionLimitUsd)})`,
+  ].join(" ");
 }
 
 function getArg(args: string[], flag: string): string | undefined {
@@ -219,6 +265,28 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
 
     spanId = generateSpanId();
     budget.record(turn.usage, turn.model.tier);
+    const summary = budget.getSummary();
+    const paidCalls = (summary.byTier["1"]?.calls ?? 0) + (summary.byTier["2"]?.calls ?? 0);
+    if (shouldPrintBudgetTally(parseBudgetTallyMode(process.env.DYFJ_BUDGET_TALLY), {
+      paidCalls,
+    })) {
+      console.log("");
+      console.log(buildBudgetTallyLine({
+        turn: {
+          tokensInput: turn.usage.input,
+          tokensOutput: turn.usage.output,
+          costUsd: turn.usage.cost.total,
+          tier: turn.model.tier,
+        },
+        session: {
+          totalCostUsd: summary.totalCostUsd,
+          totalTokensInput: summary.totalTokensInput,
+          totalTokensOutput: summary.totalTokensOutput,
+          paidCalls,
+          sessionLimitUsd: summary.config.sessionLimitUsd,
+        },
+      }));
+    }
 
     await writeEvent({
       event_id: generateULID(),

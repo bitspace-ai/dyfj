@@ -24,6 +24,7 @@ Inventoried so the surface design doesn't restate what's already shipped:
 - `events` table — `tokens_input | tokens_output | tokens_cache_read | tokens_cache_write | cost_total` per `model_response`. `budget_summary` event ENUM exists.
 - `models` table — canonical pricing per slug: `cost_input | cost_output | cost_cache_read | cost_cache_write` in USD per MTok, plus `tier`.
 - `BudgetTracker.checkPreCall()` returns `{ allowed, estimatedCost, sessionCostSoFar, sessionLimitUsd, perCallLimitUsd, reason? }` — the Workbench preflight banner now displays these numbers for Tier 1/2 selections.
+- `DYFJ_BUDGET_TALLY=on|paid|off` controls the post-turn tally. Default `paid` keeps Tier-0-only sessions quiet and prints the running tally after paid inference has occurred.
 - `BudgetExceededError` halts on per-call or session-limit breach. Workbench catches it and writes an `error` event.
 - Tier semantics: `0` free / no consent · `1` paid escalation · `2` paid escalation. The current Workbench prototype prompts on each paid invocation; sticky session-grant behavior is not implemented.
 - Knobs today: `DYFJ_BUDGET_SESSION_USD` ($1.00), `DYFJ_BUDGET_PER_CALL_USD` ($0.10).
@@ -61,7 +62,7 @@ After each `done` event in a non-Tier-0 session, append a single-line tally:
 $0.0034 this turn · $0.0058 session (0.6% of $1.00) · $0.34 today (6.8% of $5.00)
 ```
 
-For Tier-0-only sessions the tally is suppressed (no spend, no signal). Configurable via `DYFJ_BUDGET_TALLY=on|paid|off` (default `paid`). Once a session uses paid inference, the tally **stays visible** for the remainder of the session — it's the receipt of a decision already made, not redundant noise.
+For Tier-0-only sessions the tally is suppressed (no spend, no signal). Configurable via `DYFJ_BUDGET_TALLY=on|paid|off` (default `paid`). Once a session uses paid inference, the tally **stays visible** for the remainder of the session — it's the receipt of a decision already made, not redundant noise. The current Workbench prototype prints the tally after each completed paid turn.
 
 The tally is the receipt, not the alarm. It's there to make spend continuous-rather-than-discrete in your awareness, so the soft-warning thresholds aren't the first time you learn how the session is going.
 
@@ -155,7 +156,7 @@ No new tables. The events log + models table carry the entire surface.
 
 Smallest-to-largest, each independently shippable. Pick by lived friction, not by list order:
 
-1. **[open] Per-turn tally** — one print line off `BudgetTracker.getSummary()`. No schema change. ~30 min.
+1. **[done] Per-turn tally** — one print line off `BudgetTracker.getSummary()`. No schema change.
 2. **[done] Pre-flight banner** — replace whatever the consent flow prints today with the formatted banner. Pulls reason from model selection. No schema change.
 3. **Soft warning** — threshold check inside `record()`; emit `budget_warning` event + console line. Schema: ENUM extension. ~1h.
 4. **Daily scope** — daily-spend query; extend `checkPreCall()` to consult it; surface in banner and tally. ~2h.
