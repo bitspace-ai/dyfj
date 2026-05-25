@@ -92,6 +92,7 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
     generateTraceId,
     generateSpanId,
     writeEvent,
+    writeModelSelectedEvent,
     closeDoltPool,
   } = await import("./utils");
   const {
@@ -147,12 +148,18 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
   const systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
   let spanId: string | null = null;
   let selectedForReceipt: { displayName: string; slug: string; tier: 0 | 1 | 2 } | null = null;
+  let selectedForEvents: { slug: string; provider: string; api: string } | null = null;
   let routingReason = "not_selected";
 
   try {
     const models = await loadWorkbenchModels();
     const selection = selectWorkbenchModel(models, routingOptions);
     const selected = selection.selected;
+    selectedForEvents = {
+      slug: selected.slug,
+      provider: selected.provider,
+      api: selected.api,
+    };
     const estimatedInputTokens = estimateTextTokens(`${systemPrompt}\n${cliPrompt}`);
     const preCall = budget.checkPreCall(selected.tier, selected.costInput, estimatedInputTokens);
 
@@ -181,6 +188,17 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
     if (preflightBanner !== null) {
       await confirmPaidEscalation(preflightBanner);
     }
+
+    await writeModelSelectedEvent({
+      selected: selected.slug,
+      considered: selection.considered,
+      reason: selection.reason,
+      sessionId,
+      traceId,
+      provider: selected.provider,
+      api: selected.api,
+      durationMs: Date.now() - sessionStart,
+    });
 
     const turn = await runWorkbenchTurn({
       systemPrompt,
@@ -230,8 +248,44 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
     if (name === "ConsentDeclinedError") {
       console.log("\nConsent declined - no model call made.");
     } else if (name === "BudgetExceededError") {
+      await writeEvent({
+        event_id: generateULID(),
+        session_id: sessionId,
+        event_type: "error",
+        trace_id: traceId,
+        span_id: generateSpanId(),
+        principal_id: principalId,
+        principal_type: "agent",
+        action: "invoke",
+        resource: selectedForEvents?.slug ?? "workbench_model",
+        authz_basis: "policy:local-default",
+        model_id: selectedForEvents?.slug ?? null,
+        provider: selectedForEvents?.provider ?? null,
+        api: selectedForEvents?.api ?? null,
+        content: (err as Error).message,
+        stop_reason: "error",
+        duration_ms: Date.now() - sessionStart,
+      });
       console.log(`\nBudget exceeded: ${(err as Error).message}`);
     } else {
+      await writeEvent({
+        event_id: generateULID(),
+        session_id: sessionId,
+        event_type: "error",
+        trace_id: traceId,
+        span_id: generateSpanId(),
+        principal_id: principalId,
+        principal_type: "agent",
+        action: "invoke",
+        resource: selectedForEvents?.slug ?? "workbench_model",
+        authz_basis: "policy:local-default",
+        model_id: selectedForEvents?.slug ?? null,
+        provider: selectedForEvents?.provider ?? null,
+        api: selectedForEvents?.api ?? null,
+        content: (err as Error)?.message ?? String(err),
+        stop_reason: "error",
+        duration_ms: Date.now() - sessionStart,
+      });
       console.error("\nUnexpected error:", err);
     }
   } finally {

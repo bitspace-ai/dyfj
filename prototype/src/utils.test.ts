@@ -4,6 +4,7 @@ import {
   extractText, extractThinking,
   parseCsvRow, parseCSVRows,
   normaliseStopReason,
+  buildModelSelectedEventPayload,
 } from "./utils";
 import type { MessageContent } from "./utils";
 
@@ -168,5 +169,45 @@ describe("normaliseStopReason", () => {
   });
   test("returns null for undefined input", () => {
     expect(normaliseStopReason(undefined)).toBeNull();
+  });
+});
+
+describe("buildModelSelectedEventPayload", () => {
+  test("builds a model_selected event with routing metadata", () => {
+    const payload = buildModelSelectedEventPayload({
+      selected: "gemma4",
+      considered: ["gemma4", "qwen3:32b"],
+      reason: "default",
+      sessionId: "01TESTSESSION00000000000000",
+      traceId: "0123456789abcdef0123456789abcdef",
+      provider: "ollama",
+      api: "openai-completions",
+      eventId: "01TESTEVENT0000000000000000",
+      spanId: "0123456789abcdef",
+      principalId: "test-principal",
+      durationMs: 12,
+    });
+
+    expect(payload).toMatchObject({
+      event_id: "01TESTEVENT0000000000000000",
+      session_id: "01TESTSESSION00000000000000",
+      event_type: "model_selected",
+      trace_id: "0123456789abcdef0123456789abcdef",
+      span_id: "0123456789abcdef",
+      principal_id: "test-principal",
+      principal_type: "human",
+      action: "select",
+      resource: "gemma4",
+      authz_basis: "routing_heuristic",
+      model_id: "gemma4",
+      provider: "ollama",
+      api: "openai-completions",
+      duration_ms: 12,
+    });
+    expect(JSON.parse(payload.content as string)).toEqual({
+      selected: "gemma4",
+      considered: ["gemma4", "qwen3:32b"],
+      reason: "default",
+    });
   });
 });

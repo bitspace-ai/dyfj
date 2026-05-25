@@ -4,6 +4,7 @@
     "start": "deno run --allow-all --sloppy-imports src/workbench.ts",
     "workbench": "deno run --allow-all --sloppy-imports src/workbench.ts",
     "beads-tracer": "deno run --allow-all --sloppy-imports examples/beads-tracer.ts",
+    "verify-workbench-events": "deno run --allow-all --sloppy-imports examples/verify-workbench-events.ts",
     "smoke": "deno run --allow-all /tmp/dyfj-deno-smoke-test.ts"
   },
   "imports": {

@@ -196,25 +196,45 @@ export async function writeModelSelectedEvent(params: {
   reason: string;
   sessionId: string;
   traceId: string;
+  provider?: string;
+  api?: string;
   durationMs?: number;
 }): Promise<void> {
-  await writeEvent({
-    event_id:       generateULID(),
+  await writeEvent(buildModelSelectedEventPayload(params));
+}
+
+export function buildModelSelectedEventPayload(params: {
+  selected: string;
+  considered: string[];
+  reason: string;
+  sessionId: string;
+  traceId: string;
+  provider?: string;
+  api?: string;
+  durationMs?: number;
+  eventId?: string;
+  spanId?: string;
+  principalId?: string;
+}): Record<string, unknown> {
+  return {
+    event_id:       params.eventId ?? generateULID(),
     session_id:     params.sessionId,
     event_type:     'model_selected',
     trace_id:       params.traceId,
-    span_id:        generateSpanId(),
-    principal_id:   process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ?? 'user',
+    span_id:        params.spanId ?? generateSpanId(),
+    principal_id:   params.principalId ?? process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ?? 'user',
     principal_type: 'human',
     action:         'select',
     resource:       params.selected,
     authz_basis:    'routing_heuristic',
     model_id:       params.selected,
+    provider:       params.provider ?? null,
+    api:            params.api ?? null,
     content:        JSON.stringify({
       selected:   params.selected,
       considered: params.considered,
       reason:     params.reason,
     }),
     duration_ms:    params.durationMs ?? null,
-  });
+  };
 }
