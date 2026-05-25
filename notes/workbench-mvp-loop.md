@@ -61,7 +61,7 @@ The loop is CLI-shaped first. A richer visual work surface can project from the 
 
 ## Legacy `index.ts`
 
-`prototype/src/index.ts` was removed with the pi-ai router legacy. `deno task start` and `deno task workbench` now both point at the Workbench entrypoint.
+`prototype/src/index.ts` was removed with the legacy router path. `deno task start` and `deno task workbench` now both point at the Workbench entrypoint.
 
 ## First beads
 

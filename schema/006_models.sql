@@ -15,14 +15,14 @@
 --   1 = API Light       — session-grant: prompt once, sticky for session
 --   2 = API Heavy       — per-call: prompt every time with cost estimate
 --
--- cost_input / cost_output: USD per million tokens (matches pi-ai Model.cost unit)
+-- cost_input / cost_output: USD per million tokens.
 -- calculateCost() divides by 1,000,000 before multiplying by token count.
 
 CREATE TABLE IF NOT EXISTS models (
     slug              VARCHAR(128)   NOT NULL PRIMARY KEY,
     display_name      VARCHAR(256)   NOT NULL,
     provider          VARCHAR(64)    NOT NULL,  -- 'ollama' | 'anthropic' | 'google' | 'openai'
-    api               VARCHAR(64)    NOT NULL,  -- pi-ai Api discriminant
+    api               VARCHAR(64)    NOT NULL,  -- provider API surface
     base_url          VARCHAR(512)   NULL,
     tier              TINYINT UNSIGNED NOT NULL, -- 0, 1, 2
     context_window    INT UNSIGNED   NOT NULL,
@@ -78,7 +78,7 @@ VALUES
 
 -- ── Tier 1: API Light ─────────────────────────────────────────────────────────
 -- Session-grant consent: prompt once, sticky for session duration.
--- Cost values from pi-ai generated models (USD per MTok).
+-- Cost values in USD per MTok.
 
 INSERT INTO models
     (slug, display_name, provider, api, base_url, tier,
@@ -86,7 +86,7 @@ INSERT INTO models
      cost_input, cost_output, cost_cache_read, cost_cache_write,
      reasoning, capabilities)
 VALUES
-    -- Anthropic: $1/$5 per MTok in/out (from pi-ai models.generated.js)
+    -- Anthropic: $1/$5 per MTok in/out
     ('claude-haiku-4-5', 'Claude Haiku 4.5', 'anthropic', 'anthropic-messages',
      'https://api.anthropic.com', 1,
      200000, 64000,

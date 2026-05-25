@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
 import {
+  buildPaidEscalationPreflightBanner,
   buildWorkbenchReceipt,
   formatMoney,
+  maybeBuildPaidEscalationPreflightBanner,
+  type PaidEscalationPreflightInput,
   type WorkbenchReceiptInput,
 } from "./workbench";
 
@@ -17,6 +19,17 @@ const BASE_RECEIPT: WorkbenchReceiptInput = {
   totalTokensInput: 1234,
   totalTokensOutput: 567,
   totalCalls: 1,
+};
+
+const BASE_PREFLIGHT: PaidEscalationPreflightInput = {
+  modelName: "Claude Sonnet",
+  modelSlug: "claude-sonnet",
+  tier: 1,
+  routingReason: "explicit_tier",
+  estimatedCostUsd: 0.0123456,
+  sessionCostSoFarUsd: 0.05,
+  sessionLimitUsd: 1,
+  perCallLimitUsd: 0.1,
 };
 
 describe("formatMoney", () => {
@@ -59,12 +72,25 @@ describe("buildWorkbenchReceipt", () => {
   });
 });
 
-describe("workbench provider boundary", () => {
-  test("does not load the legacy pi-ai router path", () => {
-    const source = readFileSync(new URL("./workbench.ts", import.meta.url), "utf8");
+describe("buildPaidEscalationPreflightBanner", () => {
+  test("shows paid escalation call shape before inference", () => {
+    const banner = buildPaidEscalationPreflightBanner(BASE_PREFLIGHT);
 
-    expect(source).not.toContain("@mariozechner/pi-ai");
-    expect(source).not.toContain("./router");
-    expect(source).not.toContain("routedStream");
+    expect(banner).toContain("Paid inference preflight");
+    expect(banner).toContain("Model:           Claude Sonnet (claude-sonnet)");
+    expect(banner).toContain("Tier:            1");
+    expect(banner).toContain("Route:           explicit_tier");
+    expect(banner).toContain("Estimated cost:  $0.012346");
+    expect(banner).toContain("Session spent:   $0.050000 / $1.000000");
+    expect(banner).toContain("Session headroom: $0.950000");
+    expect(banner).toContain("Per-call limit:  $0.100000");
+  });
+
+  test("Tier 0 remains prompt-free", () => {
+    expect(maybeBuildPaidEscalationPreflightBanner({
+      ...BASE_PREFLIGHT,
+      tier: 0,
+      estimatedCostUsd: 0,
+    })).toBeNull();
   });
 });

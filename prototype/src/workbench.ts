@@ -1,5 +1,6 @@
 import type { WorkbenchRoutingOptions } from "./provider";
 import process from "node:process";
+import { createInterface } from "node:readline/promises";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;
@@ -12,6 +13,24 @@ export interface WorkbenchReceiptInput {
   totalTokensInput: number;
   totalTokensOutput: number;
   totalCalls: number;
+}
+
+export interface PaidEscalationPreflightInput {
+  modelName: string;
+  modelSlug: string;
+  tier: 0 | 1 | 2;
+  routingReason: string;
+  estimatedCostUsd: number;
+  sessionCostSoFarUsd: number;
+  sessionLimitUsd: number;
+  perCallLimitUsd: number;
+}
+
+export class ConsentDeclinedError extends Error {
+  constructor() {
+    super("Paid inference consent declined");
+    this.name = "ConsentDeclinedError";
+  }
 }
 
 export function formatMoney(value: number): string {
@@ -31,9 +50,40 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
   ].join("\n");
 }
 
+export function buildPaidEscalationPreflightBanner(input: PaidEscalationPreflightInput): string {
+  const sessionHeadroom = Math.max(0, input.sessionLimitUsd - input.sessionCostSoFarUsd);
+  return [
+    "Paid inference preflight",
+    `Model:           ${input.modelName} (${input.modelSlug})`,
+    `Tier:            ${input.tier}`,
+    `Route:           ${input.routingReason}`,
+    `Estimated cost:  ${formatMoney(input.estimatedCostUsd)}`,
+    `Session spent:   ${formatMoney(input.sessionCostSoFarUsd)} / ${formatMoney(input.sessionLimitUsd)}`,
+    `Session headroom: ${formatMoney(sessionHeadroom)}`,
+    `Per-call limit:  ${formatMoney(input.perCallLimitUsd)}`,
+  ].join("\n");
+}
+
+export function maybeBuildPaidEscalationPreflightBanner(input: PaidEscalationPreflightInput): string | null {
+  if (input.tier === 0) return null;
+  return buildPaidEscalationPreflightBanner(input);
+}
+
 function getArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   return idx !== -1 ? args[idx + 1] : undefined;
+}
+
+async function confirmPaidEscalation(banner: string): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`${banner}\nContinue with paid inference? Type yes to run: `);
+    if (answer.trim().toLowerCase() !== "yes") {
+      throw new ConsentDeclinedError();
+    }
+  } finally {
+    rl.close();
+  }
 }
 
 export async function runWorkbench(args = process.argv.slice(2)): Promise<void> {
@@ -44,8 +94,13 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
     writeEvent,
     closeDoltPool,
   } = await import("./utils");
-  const { runWorkbenchTurn } = await import("./provider");
-  const { BudgetTracker } = await import("./budget");
+  const {
+    estimateTextTokens,
+    loadWorkbenchModels,
+    runWorkbenchTurn,
+    selectWorkbenchModel,
+  } = await import("./provider");
+  const { BudgetExceededError, BudgetTracker } = await import("./budget");
   const {
     loadMemoriesByType,
     loadMemoryIndex,
@@ -95,6 +150,38 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
   let routingReason = "not_selected";
 
   try {
+    const models = await loadWorkbenchModels();
+    const selection = selectWorkbenchModel(models, routingOptions);
+    const selected = selection.selected;
+    const estimatedInputTokens = estimateTextTokens(`${systemPrompt}\n${cliPrompt}`);
+    const preCall = budget.checkPreCall(selected.tier, selected.costInput, estimatedInputTokens);
+
+    if (!preCall.allowed) {
+      const limit = preCall.reason === "per_call_limit"
+        ? preCall.perCallLimitUsd
+        : preCall.sessionLimitUsd;
+      throw new BudgetExceededError(
+        preCall.reason ?? "session_limit",
+        preCall.estimatedCost,
+        limit,
+        preCall.sessionCostSoFar,
+      );
+    }
+
+    const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
+      modelName: selected.displayName,
+      modelSlug: selected.slug,
+      tier: selected.tier,
+      routingReason: selection.reason,
+      estimatedCostUsd: preCall.estimatedCost,
+      sessionCostSoFarUsd: preCall.sessionCostSoFar,
+      sessionLimitUsd: preCall.sessionLimitUsd,
+      perCallLimitUsd: preCall.perCallLimitUsd,
+    });
+    if (preflightBanner !== null) {
+      await confirmPaidEscalation(preflightBanner);
+    }
+
     const turn = await runWorkbenchTurn({
       systemPrompt,
       prompt: cliPrompt,
