@@ -9,7 +9,7 @@
  * Design:
  *   - BudgetTracker is instantiated once per session by the caller
  *   - record()    called after each done event with the message's usage
- *   - checkPreCall() called inside routedStream() before starting a Tier 1/2 stream
+ *   - checkPreCall() called before starting a Tier 1/2 model call
  *   - buildSummaryEventPayload() is a pure function — testable without Dolt
  *   - writeSummaryEvent() calls writeEvent(); call once at session end
  *
@@ -23,6 +23,7 @@
  */
 
 import { writeEvent, generateULID, generateSpanId } from "./utils";
+import process from "node:process";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -108,7 +109,7 @@ export class BudgetTracker {
    * Record actual usage from a completed model call.
    * Call this after each `done` event in the stream loop.
    *
-   * @param usage  AssistantMessage.usage from pi-ai
+   * @param usage  Model usage returned by the provider
    * @param tier   The tier of the model that produced this response (0 | 1 | 2)
    */
   record(

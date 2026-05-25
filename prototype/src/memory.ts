@@ -27,8 +27,6 @@
  * they can be unit tested without Dolt.
  */
 
-import { Type } from "@mariozechner/pi-ai";
-import type { Tool, ToolResultMessage } from "@mariozechner/pi-ai";
 import { doltQuery } from "./utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -49,6 +47,21 @@ export interface MemoryIndexEntry {
   type:        MemoryType;
   name:        string;
   description: string;
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface ToolResultMessage {
+  role: "toolResult";
+  toolCallId: string;
+  toolName: string;
+  content: Array<{ type: "text"; text: string }>;
+  isError: boolean;
+  timestamp: number;
 }
 
 // ── SQL retrieval (I/O) ───────────────────────────────────────────────────────
@@ -253,20 +266,25 @@ export function buildSystemPrompt(
 
 // ── read_memory tool (pure) ───────────────────────────────────────────────────
 
-/** Build the pi-ai Tool definition for read_memory. */
-export function buildReadMemoryTool(): Tool {
+/** Build a runtime-neutral tool definition for read_memory. */
+export function buildReadMemoryTool(): ToolDefinition {
   return {
     name: "read_memory",
     description:
       "Load the full content of a project or reference memory from the knowledge base. " +
       "Call this before starting work to pull relevant context. " +
       "Available slugs are listed in the Context Index in your system prompt.",
-    parameters: Type.Object({
-      slug: Type.String({
-        description:
-          "The memory slug to retrieve, e.g. 'project_dyfj' or 'reference_1password_cli'",
-      }),
-    }),
+    parameters: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description:
+            "The memory slug to retrieve, e.g. 'project_dyfj' or 'reference_1password_cli'",
+        },
+      },
+      required: ["slug"],
+    },
   };
 }
 

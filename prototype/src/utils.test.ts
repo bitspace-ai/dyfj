@@ -5,7 +5,7 @@ import {
   parseCsvRow, parseCSVRows,
   normaliseStopReason,
 } from "./utils";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import type { MessageContent } from "./utils";
 
 test("generateULID returns a valid ULID", () => {
   const id = generateULID();
@@ -33,7 +33,7 @@ test("generateSpanId returns a 16-char hex string", () => {
 });
 
 test("extractText correctly extracts and concatenates text content", () => {
-  const content: AssistantMessage['content'] = [
+  const content: MessageContent[] = [
     { type: "text", text: "Hello" },
     { type: "thinking", thinking: "Thinking deep thoughts" },
     { type: "text", text: " World!" },
@@ -42,7 +42,7 @@ test("extractText correctly extracts and concatenates text content", () => {
 });
 
 test("extractText returns null if no text content is present", () => {
-  const content: AssistantMessage['content'] = [
+  const content: MessageContent[] = [
     { type: "thinking", thinking: "Thinking deep thoughts" },
     { type: "toolCall", id: "tool_call_1", name: "consoleLog", arguments: {} },
   ];
@@ -50,12 +50,12 @@ test("extractText returns null if no text content is present", () => {
 });
 
 test("extractText returns null for an empty content array", () => {
-  const content: AssistantMessage['content'] = [];
+  const content: MessageContent[] = [];
   expect(extractText(content)).toBeNull();
 });
 
 test("extractThinking correctly extracts and concatenates thinking content", () => {
-  const content: AssistantMessage['content'] = [
+  const content: MessageContent[] = [
     { type: "text", text: "Hello" },
     { type: "thinking", thinking: "Thinking deep thoughts. " },
     { type: "thinking", thinking: "More thoughts." },
@@ -64,7 +64,7 @@ test("extractThinking correctly extracts and concatenates thinking content", () 
 });
 
 test("extractThinking returns null if no thinking content is present", () => {
-  const content: AssistantMessage['content'] = [
+  const content: MessageContent[] = [
     { type: "text", text: "Hello" },
     { type: "toolCall", id: "tool_call_2", name: "consoleLog", arguments: {} },
   ];
@@ -72,7 +72,7 @@ test("extractThinking returns null if no thinking content is present", () => {
 });
 
 test("extractThinking returns null for an empty content array", () => {
-  const content: AssistantMessage['content'] = [];
+  const content: MessageContent[] = [];
   expect(extractThinking(content)).toBeNull();
 });
 
@@ -151,7 +151,7 @@ describe("parseCSVRows", () => {
 // ─── normaliseStopReason ──────────────────────────────────────────────────
 
 describe("normaliseStopReason", () => {
-  test("maps 'toolUse' (pi-ai) to 'tool_use' (Dolt ENUM)", () => {
+  test("maps 'toolUse' to 'tool_use' (Dolt ENUM)", () => {
     expect(normaliseStopReason("toolUse")).toBe("tool_use");
   });
   test("passes through 'stop' unchanged", () => {

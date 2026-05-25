@@ -15,7 +15,7 @@ The split between `core/` and `prototype/` is not a phase boundary. It's a perma
 
 ## Status
 
-Early and active. The prototype is functional - three-tier model router, Dolt-backed memory, MCP server, basic budget tracking. The Rust core is a compiling placeholder waiting on its tracer-bullet commit. Schema is canonical and stable. Building in public; the commit history reflects real decisions, including wrong ones.
+Early and active. The prototype is functional - Workbench entrypoint, local-first provider path, Dolt-backed memory, MCP server, basic budget tracking. The Rust core is a compiling placeholder waiting on its tracer-bullet commit. Schema is canonical and stable. Building in public; the commit history reflects real decisions, including wrong ones.
 
 ## How to use this document
 

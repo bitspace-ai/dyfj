@@ -1,5 +1,10 @@
 import { ulid } from 'ulid';
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import process from "node:process";
+
+export type MessageContent =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string }
+  | { type: string; [key: string]: unknown };
 
 export function generateULID(): string {
   return ulid();
@@ -15,14 +20,22 @@ export function generateSpanId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
-export function extractText(content: AssistantMessage['content']): string | null {
-  const texts = content.filter(c => c.type === 'text').map(c => c.text);
+export function extractText(content: MessageContent[]): string | null {
+  const texts = content.filter(isTextContent).map(c => c.text);
   return texts.length > 0 ? texts.join('') : null;
 }
 
-export function extractThinking(content: AssistantMessage['content']): string | null {
-  const thoughts = content.filter(c => c.type === 'thinking').map(c => c.thinking);
+export function extractThinking(content: MessageContent[]): string | null {
+  const thoughts = content.filter(isThinkingContent).map(c => c.thinking);
   return thoughts.length > 0 ? thoughts.join('') : null;
+}
+
+function isTextContent(content: MessageContent): content is { type: "text"; text: string } {
+  return content.type === "text" && typeof content.text === "string";
+}
+
+function isThinkingContent(content: MessageContent): content is { type: "thinking"; thinking: string } {
+  return content.type === "thinking" && typeof content.thinking === "string";
 }
 
 // ─── Dolt infrastructure (TCP → sql-server) ─────────────────────────────────
@@ -31,9 +44,9 @@ export function extractThinking(content: AssistantMessage['content']): string | 
 
 import mysql from 'mysql2/promise';
 
-let _pool: mysql.Pool | null = null;
+let _pool: any | null = null;
 
-function getDoltPool(): mysql.Pool {
+function getDoltPool(): any {
   if (!_pool) {
     _pool = mysql.createPool({
       host: '127.0.0.1',
@@ -46,6 +59,12 @@ function getDoltPool(): mysql.Pool {
     });
   }
   return _pool;
+}
+
+export async function closeDoltPool(): Promise<void> {
+  if (!_pool) return;
+  await _pool.end();
+  _pool = null;
 }
 
 /** Execute a SELECT query. Returns rows as plain string-value objects. */
@@ -147,8 +166,8 @@ export function parseCsvRow(line: string): string[] {
 }
 
 /**
- * Normalise a pi-ai StopReason (camelCase) to the Dolt events ENUM (snake_case).
- * pi-ai uses 'toolUse'; the DDL ENUM uses 'tool_use'.
+ * Normalise model stop reasons to the Dolt events ENUM.
+ * Some providers use 'toolUse'; the DDL ENUM uses 'tool_use'.
  */
 export function normaliseStopReason(reason: string | null | undefined): string | null {
   if (reason == null) return null;

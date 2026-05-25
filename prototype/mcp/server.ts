@@ -19,8 +19,8 @@
  * Architecture:
  *   Coding agent (any) → MCP → this server → Dolt CLI → Dolt database
  *
- * The pi extension (src/index.ts) will eventually thin down to a shim that
- * calls this server instead of doing SQL directly.
+ * Workbench and external agents use this server instead of embedding memory
+ * SQL directly in each client.
  */
 
 import { McpServer } from "npm:@modelcontextprotocol/sdk@1.29.0/server/mcp";

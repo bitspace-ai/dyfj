@@ -1,5 +1,5 @@
-import type { AssistantMessage, Context, ToolCall } from "@mariozechner/pi-ai";
-import type { RoutingOptions } from "./router";
+import type { WorkbenchRoutingOptions } from "./provider";
+import process from "node:process";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;
@@ -41,20 +41,15 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
     generateULID,
     generateTraceId,
     generateSpanId,
-    extractText,
-    extractThinking,
     writeEvent,
-    normaliseStopReason,
+    closeDoltPool,
   } = await import("./utils");
-  const { routedStream } = await import("./router");
+  const { runWorkbenchTurn } = await import("./provider");
   const { BudgetTracker } = await import("./budget");
   const {
     loadMemoriesByType,
     loadMemoryIndex,
     buildSystemPrompt,
-    buildReadMemoryTool,
-    executeReadMemory,
-    buildToolResult,
   } = await import("./memory");
 
   const cliModel = getArg(args, "--model");
@@ -62,7 +57,7 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
   const cliHint = getArg(args, "--hint") as "code" | "chat" | "reasoning" | undefined;
   const cliPrompt = getArg(args, "--prompt") ?? "What is the next useful DYFJ workbench step?";
 
-  const routingOptions: RoutingOptions = {
+  const routingOptions: WorkbenchRoutingOptions = {
     modelId: cliModel,
     hint: cliHint,
     tier: cliTier === undefined ? undefined : Number(cliTier) as 0 | 1 | 2,
@@ -94,151 +89,55 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
   const memoryIndex = await loadMemoryIndex(["project", "reference"]);
   console.log(`Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries\n`);
 
-  const context: Context = {
-    systemPrompt: buildSystemPrompt(coreMemories, memoryIndex),
-    messages: [
-      {
-        role: "user",
-        content: [{ type: "text", text: cliPrompt }],
-        timestamp: Date.now(),
-      },
-    ],
-    tools: [buildReadMemoryTool()],
-  };
-
-  const maxToolTurns = 5;
+  const systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
   let spanId: string | null = null;
   let selectedForReceipt: { displayName: string; slug: string; tier: 0 | 1 | 2 } | null = null;
   let routingReason = "not_selected";
 
   try {
-    for (let turn = 1; turn <= maxToolTurns; turn++) {
-      const { stream, selectedModel, selection } = await routedStream(
-        context,
-        routingOptions,
-        sessionId,
-        traceId,
-        undefined,
-        budget,
-      );
+    const turn = await runWorkbenchTurn({
+      systemPrompt,
+      prompt: cliPrompt,
+      routing: routingOptions,
+    });
 
-      selectedForReceipt = {
-        displayName: selectedModel.displayName,
-        slug: selectedModel.slug,
-        tier: selectedModel.tier,
-      };
-      routingReason = selection.reason;
+    selectedForReceipt = {
+      displayName: turn.model.displayName,
+      slug: turn.model.slug,
+      tier: turn.model.tier,
+    };
+    routingReason = turn.selection.reason;
 
-      if (turn === 1) {
-        console.log(`Model:  ${selectedModel.displayName} (tier ${selectedModel.tier})`);
-        console.log(`Route:  ${selection.reason}\n`);
-      }
+    console.log(`Model:  ${turn.model.displayName} (tier ${turn.model.tier})`);
+    console.log(`Route:  ${turn.selection.reason}\n`);
+    console.log(turn.text);
 
-      spanId = generateSpanId();
-      let assistantMessage: AssistantMessage | null = null;
+    spanId = generateSpanId();
+    budget.record(turn.usage, turn.model.tier);
 
-      for await (const event of stream) {
-        if (event.type === "text_delta") {
-          process.stdout.write(event.delta);
-        }
-
-        if (event.type === "done") {
-          if (turn === 1) process.stdout.write("\n");
-          assistantMessage = event.message;
-          budget.record(event.message.usage, selectedModel.tier);
-
-          await writeEvent({
-            event_id: generateULID(),
-            session_id: sessionId,
-            event_type: "model_response",
-            trace_id: traceId,
-            span_id: spanId,
-            principal_id: principalId,
-            principal_type: "agent",
-            action: "invoke",
-            resource: event.message.model,
-            authz_basis: "user_consent",
-            model_id: event.message.model,
-            provider: event.message.provider,
-            api: event.message.api,
-            tokens_input: event.message.usage.input,
-            tokens_output: event.message.usage.output,
-            tokens_cache_read: event.message.usage.cacheRead,
-            tokens_cache_write: event.message.usage.cacheWrite,
-            cost_total: event.message.usage.cost.total,
-            content: extractText(event.message.content),
-            stop_reason: normaliseStopReason(event.message.stopReason),
-            thinking: extractThinking(event.message.content),
-            duration_ms: Date.now() - sessionStart,
-          });
-        }
-
-        if (event.type === "error") {
-          console.error("\nModel error:", event.error.errorMessage ?? "unknown");
-          await writeEvent({
-            event_id: generateULID(),
-            session_id: sessionId,
-            event_type: "error",
-            trace_id: traceId,
-            span_id: spanId,
-            principal_id: principalId,
-            principal_type: "agent",
-            action: "invoke",
-            resource: event.error.model ?? "unknown",
-            authz_basis: "user_consent",
-            model_id: event.error.model,
-            provider: event.error.provider,
-            api: event.error.api,
-            content: event.error.errorMessage,
-            stop_reason: event.error.stopReason,
-            duration_ms: Date.now() - sessionStart,
-          });
-          break;
-        }
-      }
-
-      if (!assistantMessage) break;
-
-      const toolCalls = assistantMessage.content.filter(
-        (c): c is ToolCall => c.type === "toolCall",
-      );
-      if (toolCalls.length === 0) break;
-
-      const toolResults = [];
-      for (const tc of toolCalls) {
-        if (tc.name !== "read_memory") continue;
-
-        const slug = tc.arguments.slug as string;
-        const result = await executeReadMemory(slug);
-        const found = !result.startsWith("Memory not found");
-
-        console.log(`read_memory("${slug}") - ${found ? "loaded" : "not found"}`);
-
-        await writeEvent({
-          event_id: generateULID(),
-          session_id: sessionId,
-          event_type: "tool_call",
-          trace_id: traceId,
-          span_id: generateSpanId(),
-          parent_span_id: spanId,
-          principal_id: principalId,
-          principal_type: "agent",
-          action: "tool_call",
-          resource: `memory:${slug}`,
-          authz_basis: "implicit",
-          tool_name: tc.name,
-          tool_call_id: tc.id,
-          tool_arguments: JSON.stringify(tc.arguments),
-          tool_result: result.slice(0, 500),
-          tool_is_error: !found,
-        });
-
-        toolResults.push(buildToolResult(tc.id, tc.name, result, !found));
-      }
-
-      if (toolResults.length === 0) break;
-      context.messages.push(assistantMessage, ...toolResults);
-    }
+    await writeEvent({
+      event_id: generateULID(),
+      session_id: sessionId,
+      event_type: "model_response",
+      trace_id: traceId,
+      span_id: spanId,
+      principal_id: principalId,
+      principal_type: "agent",
+      action: "invoke",
+      resource: turn.model.slug,
+      authz_basis: "policy:local-default",
+      model_id: turn.model.slug,
+      provider: turn.model.provider,
+      api: turn.model.api,
+      tokens_input: turn.usage.input,
+      tokens_output: turn.usage.output,
+      tokens_cache_read: turn.usage.cacheRead,
+      tokens_cache_write: turn.usage.cacheWrite,
+      cost_total: turn.usage.cost.total,
+      content: turn.text,
+      stop_reason: turn.stopReason,
+      duration_ms: Date.now() - sessionStart,
+    });
   } catch (err: unknown) {
     const name = (err as Error)?.name ?? "Error";
     if (name === "ConsentDeclinedError") {
@@ -279,6 +178,7 @@ export async function runWorkbench(args = process.argv.slice(2)): Promise<void> 
       totalTokensOutput: summary.totalTokensOutput,
       totalCalls: summary.totalCalls,
     }));
+    await closeDoltPool();
   }
 }
 

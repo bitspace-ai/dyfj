@@ -52,7 +52,7 @@ The loop is CLI-shaped first. A richer visual work surface can project from the 
 ## Implementation sequence
 
 1. Add `prototype/src/workbench.ts` as the new Workbench entrypoint.
-2. Keep `prototype/src/index.ts` as the legacy prototype demo while the Workbench path proves itself.
+2. Retire the legacy `prototype/src/index.ts` demo once the Workbench path owns `deno task start`.
 3. Add `deno task workbench`.
 4. Add a tested session receipt formatter.
 5. Replace the current paid consent line with the fuller preflight banner from `notes/cost-visibility-surface.md`.
@@ -61,12 +61,7 @@ The loop is CLI-shaped first. A richer visual work surface can project from the 
 
 ## Legacy `index.ts`
 
-`prototype/src/index.ts` remains the compatibility/demo entrypoint for now. Once the Workbench loop is validated, either:
-
-- make `index.ts` a thin wrapper around `workbench.ts`; or
-- move the legacy flow to `prototype/examples/agent-loop-demo.ts` and make `index.ts` the default Workbench command.
-
-The first implementation should avoid mixing these concerns so the diff stays inspectable.
+`prototype/src/index.ts` was removed with the pi-ai router legacy. `deno task start` and `deno task workbench` now both point at the Workbench entrypoint.
 
 ## First beads
 
@@ -77,4 +72,4 @@ The first implementation should avoid mixing these concerns so the diff stays in
 
 ## Open questions
 
-- Should `deno task start` eventually become `deno task workbench`, or should `start` remain a legacy prototype demo until the Workbench loop has the event-sequence integration check?
+- What is the smallest hosted-provider path that preserves explicit paid escalation without reintroducing a generic provider framework?

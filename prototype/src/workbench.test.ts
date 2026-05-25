@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   buildWorkbenchReceipt,
   formatMoney,
@@ -55,5 +56,15 @@ describe("buildWorkbenchReceipt", () => {
     expect(receipt).toContain("Cost:    $0.012346");
     expect(receipt).toContain("Tokens:  3000 in, 1200 out");
     expect(receipt).toContain("Calls:   2");
+  });
+});
+
+describe("workbench provider boundary", () => {
+  test("does not load the legacy pi-ai router path", () => {
+    const source = readFileSync(new URL("./workbench.ts", import.meta.url), "utf8");
+
+    expect(source).not.toContain("@mariozechner/pi-ai");
+    expect(source).not.toContain("./router");
+    expect(source).not.toContain("routedStream");
   });
 });
