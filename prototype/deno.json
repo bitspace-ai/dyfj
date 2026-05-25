@@ -2,6 +2,7 @@
   "tasks": {
     "test": "deno run --allow-all npm:vitest run",
     "start": "deno run --allow-all --sloppy-imports src/index.ts",
+    "workbench": "deno run --allow-all --sloppy-imports src/workbench.ts",
     "beads-tracer": "deno run --allow-all --sloppy-imports examples/beads-tracer.ts",
     "smoke": "deno run --allow-all /tmp/dyfj-deno-smoke-test.ts"
   },
