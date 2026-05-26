@@ -1,6 +1,6 @@
 {
   "defaultProvider": "ollama",
-  "defaultModel": "gemma4",
+  "defaultModel": "gemma4:e2b",
   "packages": [],
   "defaultThinkingLevel": "none"
 }

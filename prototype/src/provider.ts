@@ -36,6 +36,14 @@ export interface WorkbenchTurnResult {
     cacheWrite: number;
   };
   stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
+  timings: WorkbenchCallTimings;
+}
+
+export interface WorkbenchCallTimings {
+  responseHeadersMs: number;
+  timeToFirstTokenMs?: number;
+  generationMs?: number;
+  totalMs: number;
 }
 
 export class WorkbenchModelNotFoundError extends Error {
@@ -54,7 +62,19 @@ export class HostedInferenceRequiresProviderError extends Error {
 
 export type FetchLike = typeof fetch;
 
-export function parseModelRegistryRows(rows: Record<string, string>[]): WorkbenchModel[] {
+export interface OpenAIChatStreamEvent {
+  done: boolean;
+  textDelta?: string;
+  finishReason?: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
+}
+
+export function parseModelRegistryRows(
+  rows: Record<string, string>[],
+): WorkbenchModel[] {
   return rows.map((row) => {
     const tier = Number(row.tier);
     if (tier !== 0 && tier !== 1 && tier !== 2) {
@@ -98,6 +118,32 @@ export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
   return parseModelRegistryRows(rows);
 }
 
+export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
+  return [
+    {
+      slug: "gemma4:e2b",
+      displayName: "Gemma 4 E2B",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "reasoning"],
+    },
+  ];
+}
+
+export function withDefaultLocalWorkbenchModels(
+  models: WorkbenchModel[],
+): WorkbenchModel[] {
+  const defaultModels = defaultLocalWorkbenchModels()
+    .filter((model) =>
+      !models.some((existing) => existing.slug === model.slug)
+    );
+  return [...defaultModels, ...models];
+}
+
 export function selectWorkbenchModel(
   models: WorkbenchModel[],
   options: WorkbenchRoutingOptions,
@@ -110,7 +156,9 @@ export function selectWorkbenchModel(
 
   if (options.tier !== undefined) {
     const selected = models.find((model) => model.tier === options.tier);
-    if (!selected) throw new WorkbenchModelNotFoundError(`tier:${options.tier}`);
+    if (!selected) {
+      throw new WorkbenchModelNotFoundError(`tier:${options.tier}`);
+    }
     return { selected, considered: [], reason: "explicit_tier" };
   }
 
@@ -118,19 +166,23 @@ export function selectWorkbenchModel(
   const considered = localModels.map((model) => model.slug);
 
   if (options.hint === "code") {
-    const selected =
-      localModels.find((model) => model.capabilities.includes("code")) ??
+    const selected = localModels.find((model) =>
+      model.capabilities.includes("code")
+    ) ??
+      localModels.find((model) => model.slug === "gemma4:e2b") ??
       localModels.find((model) => model.slug === "gemma4") ??
       localModels[0];
     if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
     return {
       selected,
       considered,
-      reason: selected.capabilities.includes("code") ? "hint_code" : "hint_code_fallback_local",
+      reason: selected.capabilities.includes("code")
+        ? "hint_code"
+        : "hint_code_fallback_local",
     };
   }
 
-  const selected =
+  const selected = localModels.find((model) => model.slug === "gemma4:e2b") ??
     localModels.find((model) => model.slug === "gemma4") ??
     localModels[0];
   if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
@@ -141,10 +193,15 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function buildOpenAIChatRequest(model: string, systemPrompt: string, prompt: string) {
+export function buildOpenAIChatRequest(
+  model: string,
+  systemPrompt: string,
+  prompt: string,
+  stream = false,
+) {
   return {
     model,
-    stream: false,
+    stream,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: prompt },
@@ -156,9 +213,12 @@ export async function runWorkbenchTurn(params: {
   systemPrompt: string;
   prompt: string;
   routing: WorkbenchRoutingOptions;
+  models?: WorkbenchModel[];
+  onTextDelta?: (delta: string) => void;
+  now?: () => number;
   fetchFn?: FetchLike;
 }): Promise<WorkbenchTurnResult> {
-  const models = await loadWorkbenchModels();
+  const models = params.models ?? await loadWorkbenchModels();
   const selection = selectWorkbenchModel(models, params.routing);
   const model = selection.selected;
 
@@ -167,25 +227,44 @@ export async function runWorkbenchTurn(params: {
   }
 
   const fetchFn = params.fetchFn ?? fetch;
-  const response = await fetchFn(`${model.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(buildOpenAIChatRequest(model.slug, params.systemPrompt, params.prompt)),
-  });
+  const now = params.now ?? performance.now.bind(performance);
+  const stream = params.onTextDelta !== undefined;
+  const requestStarted = now();
+  const response = await fetchFn(
+    `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        buildOpenAIChatRequest(
+          model.slug,
+          params.systemPrompt,
+          params.prompt,
+          stream,
+        ),
+      ),
+    },
+  );
+  const headersReceived = now();
 
   if (!response.ok) {
     throw new Error(`Local model request failed: HTTP ${response.status}`);
   }
 
-  const json = await response.json() as {
-    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
-  const text = json.choices?.[0]?.message?.content ?? "";
-  const input = json.usage?.prompt_tokens ?? estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
-  const output = json.usage?.completion_tokens ?? estimateTextTokens(text);
-  const costTotal =
-    (input / 1_000_000) * model.costInput +
+  const result = stream
+    ? await readOpenAIChatStream(
+      response,
+      params.onTextDelta!,
+      now,
+      requestStarted,
+      headersReceived,
+    )
+    : await readOpenAIChatJson(response, now, requestStarted, headersReceived);
+  const text = result.text;
+  const input = result.usage?.prompt_tokens ??
+    estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
+  const output = result.usage?.completion_tokens ?? estimateTextTokens(text);
+  const costTotal = (input / 1_000_000) * model.costInput +
     (output / 1_000_000) * model.costOutput;
 
   return {
@@ -199,11 +278,146 @@ export async function runWorkbenchTurn(params: {
       cacheRead: 0,
       cacheWrite: 0,
     },
-    stopReason: normaliseFinishReason(json.choices?.[0]?.finish_reason),
+    stopReason: normaliseFinishReason(result.finishReason),
+    timings: result.timings,
   };
 }
 
-function normaliseFinishReason(reason: string | undefined): WorkbenchTurnResult["stopReason"] {
+export function parseOpenAIChatStreamLine(
+  line: string,
+): OpenAIChatStreamEvent | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || !trimmed.startsWith("data:")) return null;
+
+  const data = trimmed.slice("data:".length).trim();
+  if (data === "[DONE]") return { done: true };
+
+  const json = JSON.parse(data) as {
+    choices?: Array<{
+      delta?: { content?: string };
+      message?: { content?: string };
+      finish_reason?: string;
+    }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+    };
+  };
+  const choice = json.choices?.[0];
+  return {
+    done: false,
+    textDelta: choice?.delta?.content ?? choice?.message?.content ?? undefined,
+    finishReason: choice?.finish_reason ?? undefined,
+    usage: json.usage,
+  };
+}
+
+async function readOpenAIChatJson(
+  response: Response,
+  now: () => number,
+  requestStarted: number,
+  headersReceived: number,
+): Promise<{
+  text: string;
+  finishReason?: string;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  timings: WorkbenchCallTimings;
+}> {
+  const json = await response.json() as {
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  const completed = now();
+  return {
+    text: json.choices?.[0]?.message?.content ?? "",
+    finishReason: json.choices?.[0]?.finish_reason,
+    usage: json.usage,
+    timings: {
+      responseHeadersMs: Math.round(headersReceived - requestStarted),
+      totalMs: Math.round(completed - requestStarted),
+    },
+  };
+}
+
+async function readOpenAIChatStream(
+  response: Response,
+  onTextDelta: (delta: string) => void,
+  now: () => number,
+  requestStarted: number,
+  headersReceived: number,
+): Promise<{
+  text: string;
+  finishReason?: string;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  timings: WorkbenchCallTimings;
+}> {
+  if (!response.body) {
+    throw new Error("Streaming model response did not include a response body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let finishReason: string | undefined;
+  let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  let firstTokenAt: number | undefined;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const event = parseOpenAIChatStreamLine(line);
+      if (!event) continue;
+      if (event.done) continue;
+      if (event.textDelta) {
+        firstTokenAt ??= now();
+        text += event.textDelta;
+        onTextDelta(event.textDelta);
+      }
+      if (event.finishReason) finishReason = event.finishReason;
+      if (event.usage) usage = event.usage;
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim().length > 0) {
+    const event = parseOpenAIChatStreamLine(buffer);
+    if (event && !event.done) {
+      if (event.textDelta) {
+        firstTokenAt ??= now();
+        text += event.textDelta;
+        onTextDelta(event.textDelta);
+      }
+      if (event.finishReason) finishReason = event.finishReason;
+      if (event.usage) usage = event.usage;
+    }
+  }
+
+  const completed = now();
+  return {
+    text,
+    finishReason,
+    usage,
+    timings: {
+      responseHeadersMs: Math.round(headersReceived - requestStarted),
+      timeToFirstTokenMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(firstTokenAt - requestStarted),
+      generationMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(completed - firstTokenAt),
+      totalMs: Math.round(completed - requestStarted),
+    },
+  };
+}
+
+function normaliseFinishReason(
+  reason: string | undefined,
+): WorkbenchTurnResult["stopReason"] {
   if (reason === "length") return "length";
   if (reason === "tool_calls") return "tool_use";
   if (reason === "error") return "error";

@@ -1,16 +1,20 @@
 import { describe, expect, test } from "vitest";
 import {
   buildOpenAIChatRequest,
+  defaultLocalWorkbenchModels,
   estimateTextTokens,
   parseModelRegistryRows,
+  parseOpenAIChatStreamLine,
+  runWorkbenchTurn,
   selectWorkbenchModel,
+  withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
 } from "./provider";
 
 const models: WorkbenchModel[] = [
   {
-    slug: "gemma4",
-    displayName: "Gemma 4 27B",
+    slug: "gemma4:e2b",
+    displayName: "Gemma 4 E2B",
     provider: "ollama",
     api: "openai-completions",
     baseUrl: "http://localhost:11434/v1",
@@ -76,10 +80,10 @@ describe("parseModelRegistryRows", () => {
 });
 
 describe("selectWorkbenchModel", () => {
-  test("defaults to the local gemma4 model", () => {
+  test("defaults to the local gemma4:e2b model", () => {
     const selection = selectWorkbenchModel(models, {});
 
-    expect(selection.selected.slug).toBe("gemma4");
+    expect(selection.selected.slug).toBe("gemma4:e2b");
     expect(selection.reason).toBe("default");
   });
 
@@ -93,6 +97,43 @@ describe("selectWorkbenchModel", () => {
   test("unknown explicit model fails before inference", () => {
     expect(() => selectWorkbenchModel(models, { modelId: "missing" }))
       .toThrow("Model not found: missing");
+  });
+});
+
+describe("defaultLocalWorkbenchModels", () => {
+  test("provides a zero-cost Tier 0 fallback model", () => {
+    const defaults = defaultLocalWorkbenchModels();
+
+    expect(defaults[0]).toMatchObject({
+      slug: "gemma4:e2b",
+      provider: "ollama",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+    });
+  });
+});
+
+describe("withDefaultLocalWorkbenchModels", () => {
+  test("overlays the measured local default when the registry lacks it", () => {
+    const merged = withDefaultLocalWorkbenchModels([{
+      ...models[0],
+      slug: "gemma4",
+      displayName: "Gemma 4 latest",
+    }]);
+
+    expect(merged.map((model) => model.slug).slice(0, 2)).toEqual([
+      "gemma4:e2b",
+      "gemma4",
+    ]);
+  });
+
+  test("does not duplicate the default when the registry already has it", () => {
+    const merged = withDefaultLocalWorkbenchModels(models);
+
+    expect(merged.filter((model) => model.slug === "gemma4:e2b")).toHaveLength(
+      1,
+    );
   });
 });
 
@@ -113,6 +154,79 @@ describe("buildOpenAIChatRequest", () => {
         { role: "system", content: "system" },
         { role: "user", content: "hello" },
       ],
+    });
+  });
+
+  test("can request an OpenAI-compatible streaming response", () => {
+    const body = buildOpenAIChatRequest("gemma4", "system", "hello", true);
+
+    expect(body.stream).toBe(true);
+  });
+});
+
+describe("parseOpenAIChatStreamLine", () => {
+  test("extracts text deltas and finish reason from SSE data lines", () => {
+    const event = parseOpenAIChatStreamLine(
+      'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}',
+    );
+
+    expect(event).toEqual({
+      done: false,
+      textDelta: "hello",
+      finishReason: "stop",
+      usage: undefined,
+    });
+  });
+
+  test("recognizes stream completion sentinel", () => {
+    expect(parseOpenAIChatStreamLine("data: [DONE]")).toEqual({ done: true });
+  });
+
+  test("ignores blank and non-data lines", () => {
+    expect(parseOpenAIChatStreamLine("")).toBeNull();
+    expect(parseOpenAIChatStreamLine("event: message")).toBeNull();
+  });
+});
+
+describe("runWorkbenchTurn streaming", () => {
+  test("prints deltas as they arrive and returns accumulated text", async () => {
+    const deltas: string[] = [];
+    const nowValues = [0, 10, 15, 20];
+    const responseBody = [
+      'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}\n\n',
+      "data: [DONE]\n\n",
+    ].join("");
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: (delta) => deltas.push(delta),
+      now: () => nowValues.shift() ?? 20,
+      fetchFn: async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(responseBody));
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(deltas).toEqual(["hello", " world"]);
+    expect(result.text).toBe("hello world");
+    expect(result.usage.input).toBe(10);
+    expect(result.usage.output).toBe(2);
+    expect(result.stopReason).toBe("stop");
+    expect(result.timings).toEqual({
+      responseHeadersMs: 10,
+      timeToFirstTokenMs: 15,
+      generationMs: 5,
+      totalMs: 20,
     });
   });
 });

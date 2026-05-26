@@ -1,0 +1,7 @@
+{
+  "tasks": {
+    "workbench": "deno task --cwd prototype workbench",
+    "test": "deno task --cwd prototype test",
+    "verify-workbench-events": "deno task --cwd prototype verify-workbench-events"
+  }
+}
