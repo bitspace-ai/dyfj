@@ -94,7 +94,9 @@ export function buildContextSourceLines(sources: ContextSource[]): string[] {
 export function parseReadyIssueIds(output: string): string[] {
   const ids: string[] = [];
   for (const line of output.split("\n")) {
-    const match = line.match(/^\s*[○◐●✓❄]\s+([a-z]+-[a-z0-9]+(?:\.\d+)?)\b/);
+    const match = line.match(
+      /^\s*[○◐●✓❄]\s+([a-z]+-[a-z0-9]+(?:\.\d+)*)\b/,
+    );
     if (match?.[1]) ids.push(match[1]);
   }
   return ids;

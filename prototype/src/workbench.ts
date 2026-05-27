@@ -10,6 +10,8 @@ export interface WorkbenchReceiptInput {
   traceId: string;
   modelName: string;
   modelSlug: string;
+  provider?: string;
+  api?: string;
   tier: 0 | 1 | 2;
   routingReason: string;
   totalCostUsd: number;
@@ -22,6 +24,9 @@ export interface WorkbenchReceiptInput {
   contextSources?: string[];
   paidInferenceUsed?: boolean;
   estimatedCostUsd?: number;
+  workletId?: string;
+  totalElapsedMs?: number;
+  validation?: WorkbenchValidationSummary;
 }
 
 export interface PaidEscalationPreflightInput {
@@ -38,10 +43,36 @@ export interface PaidEscalationPreflightInput {
 export type BudgetTallyMode = "on" | "paid" | "off";
 
 export interface WorkbenchInvocation {
-  mode: "ask" | "turn";
+  mode: "ask" | "next-work" | "turn";
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
 }
+
+export interface WorkbenchValidationSummary {
+  ok: boolean;
+  errors: string[];
+}
+
+export interface NextWorkBriefInput {
+  workletId: string;
+  contextProfile: AskContextProfile;
+  prompt: string;
+}
+
+export interface NextWorkResult {
+  worklet_id: string;
+  context_profile: AskContextProfile;
+  recommendation: string;
+  rationale: string;
+  evidence: string[];
+  risks: string[];
+  next_commands: string[];
+  confidence: "low" | "medium" | "high";
+}
+
+export type NextWorkValidationResult =
+  | { ok: true; value: NextWorkResult; errors: [] }
+  | { ok: false; value?: undefined; errors: string[] };
 
 export interface BudgetTallyInput {
   turn: {
@@ -77,11 +108,126 @@ export function formatMoney(value: number): string {
   return `$${value.toFixed(6)}`;
 }
 
+export function buildNextWorkBrief(input: NextWorkBriefInput): string {
+  return [
+    "Next-work worklet brief",
+    `worklet_id: ${input.workletId}`,
+    `context_profile: ${input.contextProfile}`,
+    `operator_prompt: ${input.prompt}`,
+    "",
+    "Return strict JSON only. Do not wrap it in Markdown. Do not include prose before or after the JSON.",
+    "Use only the supplied repo-local context. Do not infer from private operator, cockpit, or cross-repo strategy context.",
+    "",
+    "Required JSON shape:",
+    "{",
+    '  "worklet_id": "next-work.v0",',
+    '  "context_profile": "beads-first",',
+    '  "recommendation": "one concrete next work item",',
+    '  "rationale": "why this is next from the supplied context",',
+    '  "evidence": ["specific context source or bead evidence"],',
+    '  "risks": ["what could make this recommendation wrong"],',
+    '  "next_commands": ["small commands the operator can run"],',
+    '  "confidence": "low|medium|high"',
+    "}",
+  ].join("\n");
+}
+
+export function validateNextWorkJson(text: string): NextWorkValidationResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, errors: ["model output was not strict JSON"] };
+  }
+
+  if (!isRecord(parsed)) {
+    return { ok: false, errors: ["model output JSON was not an object"] };
+  }
+
+  const errors: string[] = [];
+  for (
+    const field of [
+      "worklet_id",
+      "context_profile",
+      "recommendation",
+      "rationale",
+      "evidence",
+      "risks",
+      "next_commands",
+      "confidence",
+    ]
+  ) {
+    if (!(field in parsed)) errors.push(`missing required field: ${field}`);
+  }
+
+  if (
+    "context_profile" in parsed &&
+    parsed.context_profile !== "beads-first" &&
+    parsed.context_profile !== "full"
+  ) {
+    errors.push("context_profile must be beads-first or full");
+  }
+  for (const field of ["worklet_id", "recommendation", "rationale"] as const) {
+    if (field in parsed && typeof parsed[field] !== "string") {
+      errors.push(`${field} must be a string`);
+    }
+  }
+  for (const field of ["evidence", "risks", "next_commands"] as const) {
+    if (field in parsed && !isStringArray(parsed[field])) {
+      errors.push(`${field} must be an array of strings`);
+    }
+  }
+  if (
+    "confidence" in parsed &&
+    parsed.confidence !== "low" &&
+    parsed.confidence !== "medium" &&
+    parsed.confidence !== "high"
+  ) {
+    errors.push("confidence must be low, medium, or high");
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  return {
+    ok: true,
+    value: {
+      worklet_id: parsed.worklet_id as string,
+      context_profile: parsed.context_profile as AskContextProfile,
+      recommendation: parsed.recommendation as string,
+      rationale: parsed.rationale as string,
+      evidence: parsed.evidence as string[],
+      risks: parsed.risks as string[],
+      next_commands: parsed.next_commands as string[],
+      confidence: parsed.confidence as "low" | "medium" | "high",
+    },
+    errors: [],
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) &&
+    value.every((item) => typeof item === "string");
+}
+
 export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
   const lines = [
     "Workbench receipt",
     `Session: ${input.sessionId}`,
     `Trace:   ${input.traceId}`,
+  ];
+  if (input.workletId) {
+    lines.push(`Worklet: ${input.workletId}`);
+  }
+  if (input.provider || input.api) {
+    lines.push(
+      `Provider: ${input.provider ?? "unknown"} / ${input.api ?? "unknown"}`,
+    );
+  }
+  lines.push(
     `Model:   ${input.modelName} (${input.modelSlug}, tier ${input.tier})`,
     `Route:   ${input.routingReason}`,
     `Paid inference used: ${input.paidInferenceUsed ? "yes" : "no"}`,
@@ -89,7 +235,16 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     `Actual cost:    ${formatMoney(input.totalCostUsd)}`,
     `Tokens:  ${input.totalTokensInput} in, ${input.totalTokensOutput} out`,
     `Calls:   ${input.totalCalls}`,
-  ];
+  );
+  if (input.totalElapsedMs !== undefined) {
+    lines.push(`Total elapsed: ${input.totalElapsedMs}ms`);
+  }
+  if (input.validation) {
+    lines.push(`Validation: ${input.validation.ok ? "passed" : "failed"}`);
+    for (const error of input.validation.errors) {
+      lines.push(`- ${error}`);
+    }
+  }
   if (input.timings) {
     lines.push(formatTimingLine(input.timings));
   }
@@ -193,6 +348,60 @@ export function buildBudgetTallyLine(input: BudgetTallyInput): string {
   ].join(" ");
 }
 
+function routeReasonForMode(
+  reason: string,
+  tier: 0 | 1 | 2,
+  isNextWork: boolean,
+): string {
+  if (isNextWork && tier === 0 && reason === "default") {
+    return "default_local_next_work";
+  }
+  return reason;
+}
+
+export function isNextWorkMode(mode: WorkbenchInvocation["mode"]): boolean {
+  return mode === "next-work";
+}
+
+function printNextWorkResult(
+  result: NextWorkValidationResult,
+  rawText: string,
+): void {
+  if (!result.ok) {
+    console.log("Next-work validation failed");
+    for (const error of result.errors) {
+      console.log(`- ${error}`);
+    }
+    console.log("");
+    console.log("Raw model output:");
+    console.log(rawText);
+    return;
+  }
+
+  console.log("Next work");
+  console.log(`Recommendation: ${result.value.recommendation}`);
+  console.log(`Rationale: ${result.value.rationale}`);
+  console.log(`Confidence: ${result.value.confidence}`);
+  if (result.value.evidence.length > 0) {
+    console.log("Evidence:");
+    for (const item of result.value.evidence) {
+      console.log(`- ${item}`);
+    }
+  }
+  if (result.value.risks.length > 0) {
+    console.log("Risks:");
+    for (const item of result.value.risks) {
+      console.log(`- ${item}`);
+    }
+  }
+  if (result.value.next_commands.length > 0) {
+    console.log("Next commands:");
+    for (const command of result.value.next_commands) {
+      console.log(`- ${command}`);
+    }
+  }
+}
+
 function getArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   return idx !== -1 ? args[idx + 1] : undefined;
@@ -222,12 +431,14 @@ export function resolveWorkbenchInvocation(
   args: string[],
   env: Record<string, string | undefined> = process.env,
 ): WorkbenchInvocation {
-  const mode = args[0] === "ask" ? "ask" : "turn";
-  const effectiveArgs = mode === "ask" ? args.slice(1) : args;
+  const mode = args[0] === "ask" || args[0] === "next-work" ? args[0] : "turn";
+  const effectiveArgs = mode === "ask" || mode === "next-work"
+    ? args.slice(1)
+    : args;
   const cliModel = getArg(effectiveArgs, "--model");
   const cliTier = getArg(effectiveArgs, "--tier");
   const cliHint = getArg(effectiveArgs, "--hint");
-  const prompt = mode === "ask"
+  const prompt = mode === "ask" || mode === "next-work"
     ? firstPositional(effectiveArgs) ?? "what should I work on next here?"
     : getArg(effectiveArgs, "--prompt") ??
       "What is the next useful DYFJ workbench step?";
@@ -319,7 +530,11 @@ export async function runWorkbench(
   const budget = new BudgetTracker(sessionId, traceId);
   const principalId = process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ??
     "user";
-  const bestEffortEvents = mode === "ask";
+  const isNextWork = isNextWorkMode(mode);
+  const usesRepoAskContext = mode === "ask" || isNextWork;
+  const bestEffortEvents = usesRepoAskContext;
+  const workletId = isNextWork ? "next-work.v0" : undefined;
+  let modelPrompt = cliPrompt;
 
   console.log("DYFJ Workbench\n");
 
@@ -339,7 +554,13 @@ export async function runWorkbench(
 
   let spanId: string | null = null;
   let selectedForReceipt:
-    | { displayName: string; slug: string; tier: 0 | 1 | 2 }
+    | {
+      displayName: string;
+      slug: string;
+      tier: 0 | 1 | 2;
+      provider?: string;
+      api?: string;
+    }
     | null = null;
   let selectedForEvents:
     | { slug: string; provider: string; api: string }
@@ -350,10 +571,11 @@ export async function runWorkbench(
   let callTimings: WorkbenchCallTimings | undefined;
   let contextBudget: PackedContextSummary | undefined;
   let contextProfile: AskContextProfile | undefined;
+  let validation: WorkbenchValidationSummary | undefined;
 
   try {
     let systemPrompt: string;
-    if (mode === "ask") {
+    if (usesRepoAskContext) {
       console.log("Loading repo-local context...");
       const repoContext = await loadAskRepoContext();
       contextSourceLines = buildContextSourceLines(repoContext.sources);
@@ -385,6 +607,13 @@ export async function runWorkbench(
         }), bestEffortEvents);
 
       systemPrompt = buildAskSystemPrompt(repoContext);
+      if (isNextWork) {
+        modelPrompt = buildNextWorkBrief({
+          workletId: workletId!,
+          contextProfile,
+          prompt: cliPrompt,
+        });
+      }
     } else {
       console.log("Loading context...");
       const coreMemories = await loadMemoriesByType(["user", "feedback"]);
@@ -398,11 +627,11 @@ export async function runWorkbench(
     let models;
     try {
       models = await loadWorkbenchModels();
-      if (mode === "ask") {
+      if (usesRepoAskContext) {
         models = withDefaultLocalWorkbenchModels(models);
       }
     } catch (err) {
-      if (mode !== "ask") throw err;
+      if (!usesRepoAskContext) throw err;
       const message = (err as Error)?.message ?? String(err);
       console.warn(
         `Model registry unavailable; using static local Tier 0 default: ${message}`,
@@ -415,15 +644,21 @@ export async function runWorkbench(
       displayName: selected.displayName,
       slug: selected.slug,
       tier: selected.tier,
+      provider: selected.provider,
+      api: selected.api,
     };
-    routingReason = selection.reason;
+    routingReason = routeReasonForMode(
+      selection.reason,
+      selected.tier,
+      isNextWork,
+    );
     selectedForEvents = {
       slug: selected.slug,
       provider: selected.provider,
       api: selected.api,
     };
     const estimatedInputTokens = estimateTextTokens(
-      `${systemPrompt}\n${cliPrompt}`,
+      `${systemPrompt}\n${modelPrompt}`,
     );
     const preCall = budget.checkPreCall(
       selected.tier,
@@ -448,7 +683,7 @@ export async function runWorkbench(
       modelName: selected.displayName,
       modelSlug: selected.slug,
       tier: selected.tier,
-      routingReason: selection.reason,
+      routingReason,
       estimatedCostUsd: preCall.estimatedCost,
       sessionCostSoFarUsd: preCall.sessionCostSoFar,
       sessionLimitUsd: preCall.sessionLimitUsd,
@@ -462,7 +697,7 @@ export async function runWorkbench(
       writeModelSelectedEvent({
         selected: selected.slug,
         considered: selection.considered,
-        reason: selection.reason,
+        reason: routingReason,
         sessionId,
         traceId,
         provider: selected.provider,
@@ -471,19 +706,24 @@ export async function runWorkbench(
       }), bestEffortEvents);
 
     console.log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
-    console.log(`Route:  ${selection.reason}\n`);
+    console.log(`Route:  ${routingReason}\n`);
     let streamedText = false;
     const turn = await runWorkbenchTurn({
       systemPrompt,
-      prompt: cliPrompt,
+      prompt: modelPrompt,
       routing: routingOptions,
       models,
-      onTextDelta: (delta) => {
+      jsonObject: isNextWork,
+      onTextDelta: isNextWork ? undefined : (delta) => {
         streamedText = true;
         process.stdout.write(delta);
       },
     });
-    if (streamedText) {
+    if (isNextWork) {
+      const result = validateNextWorkJson(turn.text);
+      validation = { ok: result.ok, errors: result.errors };
+      printNextWorkResult(result, turn.text);
+    } else if (streamedText) {
       console.log("");
     } else {
       console.log(turn.text);
@@ -493,8 +733,14 @@ export async function runWorkbench(
       displayName: turn.model.displayName,
       slug: turn.model.slug,
       tier: turn.model.tier,
+      provider: turn.model.provider,
+      api: turn.model.api,
     };
-    routingReason = turn.selection.reason;
+    routingReason = routeReasonForMode(
+      turn.selection.reason,
+      turn.model.tier,
+      isNextWork,
+    );
     callTimings = turn.timings;
 
     spanId = generateSpanId();
@@ -548,7 +794,13 @@ export async function runWorkbench(
         tokens_cache_read: turn.usage.cacheRead,
         tokens_cache_write: turn.usage.cacheWrite,
         cost_total: turn.usage.cost.total,
-        content: turn.text,
+        content: isNextWork
+          ? JSON.stringify({
+            worklet_id: workletId,
+            validation,
+            raw: turn.text,
+          })
+          : turn.text,
         stop_reason: turn.stopReason,
         duration_ms: turn.timings.totalMs,
       }), bestEffortEvents);
@@ -628,6 +880,8 @@ export async function runWorkbench(
       traceId,
       modelName: selectedForReceipt?.displayName ?? "none",
       modelSlug: selectedForReceipt?.slug ?? "none",
+      provider: selectedForReceipt?.provider,
+      api: selectedForReceipt?.api,
       tier: selectedForReceipt?.tier ?? 0,
       routingReason,
       totalCostUsd: summary.totalCostUsd,
@@ -641,6 +895,9 @@ export async function runWorkbench(
       paidInferenceUsed: ((summary.byTier["1"]?.calls ?? 0) +
         (summary.byTier["2"]?.calls ?? 0)) > 0,
       estimatedCostUsd,
+      workletId,
+      totalElapsedMs: Date.now() - sessionStart,
+      validation,
     }));
     await closeDoltPool();
   }

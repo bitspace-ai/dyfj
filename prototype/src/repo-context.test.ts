@@ -93,13 +93,14 @@ describe("buildAskSystemPrompt", () => {
 describe("parseReadyIssueIds", () => {
   test("extracts ready Beads issue ids in display order", () => {
     const ids = parseReadyIssueIds([
+      "○ dyfj-2fl.8.2 ● P1 Build next-work model routing experiment",
       "○ dyfj-2fl.7 ● P1 Build first usable DYFJ companion command",
       "○ dyfj-2fl ● P1 Design Workbench MVP",
       "",
-      "Ready: 2 issues with no active blockers",
+      "Ready: 3 issues with no active blockers",
     ].join("\n"));
 
-    expect(ids).toEqual(["dyfj-2fl.7", "dyfj-2fl"]);
+    expect(ids).toEqual(["dyfj-2fl.8.2", "dyfj-2fl.7", "dyfj-2fl"]);
   });
 });
 

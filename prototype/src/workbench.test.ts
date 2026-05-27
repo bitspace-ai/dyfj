@@ -3,14 +3,17 @@ import {
   assertPaidEscalationCanPrompt,
   type BudgetTallyInput,
   buildBudgetTallyLine,
+  buildNextWorkBrief,
   buildPaidEscalationPreflightBanner,
   buildWorkbenchReceipt,
   formatMoney,
+  isNextWorkMode,
   maybeBuildPaidEscalationPreflightBanner,
   type PaidEscalationPreflightInput,
   PaidInferenceRequiresTtyError,
   resolveWorkbenchInvocation,
   shouldPrintBudgetTally,
+  validateNextWorkJson,
   type WorkbenchReceiptInput,
 } from "./workbench";
 
@@ -49,6 +52,8 @@ const BASE_RECEIPT: WorkbenchReceiptInput = {
   ],
   paidInferenceUsed: false,
   estimatedCostUsd: 0,
+  workletId: "next-work.v0",
+  validation: { ok: true, errors: [] },
 };
 
 const BASE_PREFLIGHT: PaidEscalationPreflightInput = {
@@ -145,6 +150,94 @@ describe("buildWorkbenchReceipt", () => {
     expect(receipt).toContain("Estimated cost: $0.000000");
     expect(receipt).toContain("Actual cost:    $0.000000");
   });
+
+  test("includes next-work experiment routing and validation fields", () => {
+    const receipt = buildWorkbenchReceipt({
+      ...BASE_RECEIPT,
+      routingReason: "default_local_next_work",
+      validation: {
+        ok: false,
+        errors: ["missing required field: rationale"],
+      },
+    });
+
+    expect(receipt).toContain("Worklet: next-work.v0");
+    expect(receipt).toContain("Route:   default_local_next_work");
+    expect(receipt).toContain("Validation: failed");
+    expect(receipt).toContain("- missing required field: rationale");
+  });
+});
+
+describe("buildNextWorkBrief", () => {
+  test("requests strict JSON for the next-work worklet without private context", () => {
+    const brief = buildNextWorkBrief({
+      workletId: "next-work.v0",
+      contextProfile: "beads-first",
+      prompt: "what should I work on next here?",
+    });
+
+    expect(brief).toContain("worklet_id: next-work.v0");
+    expect(brief).toContain("context_profile: beads-first");
+    expect(brief).toContain("Return strict JSON only");
+    expect(brief).toContain('"recommendation"');
+    expect(brief).toContain('"confidence"');
+    expect(brief).not.toContain("dyfj-home");
+  });
+});
+
+describe("validateNextWorkJson", () => {
+  test("accepts a complete strict JSON next-work result", () => {
+    const result = validateNextWorkJson(JSON.stringify({
+      worklet_id: "next-work.v0",
+      context_profile: "beads-first",
+      recommendation: "Work dyfj-2fl.8.2 next.",
+      rationale: "It is the ready routing experiment slice.",
+      evidence: ["bd show dyfj-2fl.8.2"],
+      risks: ["Local model output may drift."],
+      next_commands: ["deno task test"],
+      confidence: "medium",
+    }));
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        worklet_id: "next-work.v0",
+        context_profile: "beads-first",
+        recommendation: "Work dyfj-2fl.8.2 next.",
+        rationale: "It is the ready routing experiment slice.",
+        evidence: ["bd show dyfj-2fl.8.2"],
+        risks: ["Local model output may drift."],
+        next_commands: ["deno task test"],
+        confidence: "medium",
+      },
+      errors: [],
+    });
+  });
+
+  test("rejects prose or incomplete JSON before trusting the model result", () => {
+    expect(validateNextWorkJson("Work on the routing bead next."))
+      .toMatchObject({
+        ok: false,
+        errors: ["model output was not strict JSON"],
+      });
+
+    const incomplete = validateNextWorkJson(JSON.stringify({
+      worklet_id: "next-work.v0",
+      context_profile: "beads-first",
+      recommendation: "Work dyfj-2fl.8.2 next.",
+    }));
+
+    expect(incomplete).toMatchObject({
+      ok: false,
+      errors: [
+        "missing required field: rationale",
+        "missing required field: evidence",
+        "missing required field: risks",
+        "missing required field: next_commands",
+        "missing required field: confidence",
+      ],
+    });
+  });
 });
 
 describe("buildPaidEscalationPreflightBanner", () => {
@@ -182,6 +275,21 @@ describe("assertPaidEscalationCanPrompt", () => {
 });
 
 describe("resolveWorkbenchInvocation", () => {
+  test("keeps generic ask separate from the measured next-work worklet", () => {
+    expect(isNextWorkMode("ask")).toBe(false);
+    expect(isNextWorkMode("next-work")).toBe(true);
+  });
+
+  test("treats next-work as the measured local-first worklet path", () => {
+    const invocation = resolveWorkbenchInvocation(["next-work"], {});
+
+    expect(invocation).toEqual({
+      mode: "next-work",
+      prompt: "what should I work on next here?",
+      routingOptions: {},
+    });
+  });
+
   test("loads routing defaults from environment", () => {
     const invocation = resolveWorkbenchInvocation(["ask", "next?"], {
       DYFJ_WORKBENCH_MODEL: "qwen3:32b",

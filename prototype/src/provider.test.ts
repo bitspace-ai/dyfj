@@ -162,6 +162,16 @@ describe("buildOpenAIChatRequest", () => {
 
     expect(body.stream).toBe(true);
   });
+
+  test("can require strict JSON object output", () => {
+    const body = buildOpenAIChatRequest("gemma4", "system", "hello", false, {
+      jsonObject: true,
+    });
+
+    expect(body).toMatchObject({
+      response_format: { type: "json_object" },
+    });
+  });
 });
 
 describe("parseOpenAIChatStreamLine", () => {

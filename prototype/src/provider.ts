@@ -198,8 +198,14 @@ export function buildOpenAIChatRequest(
   systemPrompt: string,
   prompt: string,
   stream = false,
+  options: { jsonObject?: boolean } = {},
 ) {
-  return {
+  const body: {
+    model: string;
+    stream: boolean;
+    messages: Array<{ role: "system" | "user"; content: string }>;
+    response_format?: { type: "json_object" };
+  } = {
     model,
     stream,
     messages: [
@@ -207,6 +213,10 @@ export function buildOpenAIChatRequest(
       { role: "user", content: prompt },
     ],
   };
+  if (options.jsonObject) {
+    body.response_format = { type: "json_object" };
+  }
+  return body;
 }
 
 export async function runWorkbenchTurn(params: {
@@ -215,6 +225,7 @@ export async function runWorkbenchTurn(params: {
   routing: WorkbenchRoutingOptions;
   models?: WorkbenchModel[];
   onTextDelta?: (delta: string) => void;
+  jsonObject?: boolean;
   now?: () => number;
   fetchFn?: FetchLike;
 }): Promise<WorkbenchTurnResult> {
@@ -241,6 +252,7 @@ export async function runWorkbenchTurn(params: {
           params.systemPrompt,
           params.prompt,
           stream,
+          { jsonObject: params.jsonObject },
         ),
       ),
     },
