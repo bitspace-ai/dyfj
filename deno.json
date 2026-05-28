@@ -3,6 +3,7 @@
     "workbench": "deno task --cwd prototype workbench",
     "context-size-response": "deno task --cwd prototype context-size-response",
     "model-response-modes": "deno task --cwd prototype model-response-modes",
+    "structured-output": "deno task --cwd prototype structured-output",
     "test": "deno task --cwd prototype test",
     "verify-workbench-events": "deno task --cwd prototype verify-workbench-events"
   }
