@@ -273,6 +273,9 @@ export function formatTimingLine(timings: WorkbenchCallTimings): string {
   if (timings.generationMs !== undefined) {
     parts.push(`generation ${timings.generationMs}ms`);
   }
+  if (timings.timePerOutputTokenMs !== undefined) {
+    parts.push(`TPOT ${timings.timePerOutputTokenMs}ms/token`);
+  }
   parts.push(`total ${timings.totalMs}ms`);
   return `Timings: ${parts.join(", ")}`;
 }

@@ -43,6 +43,7 @@ const BASE_RECEIPT: WorkbenchReceiptInput = {
     responseHeadersMs: 10,
     timeToFirstTokenMs: 42,
     generationMs: 8,
+    timePerOutputTokenMs: 2,
     totalMs: 50,
   },
   contextSources: [
@@ -126,7 +127,7 @@ describe("buildWorkbenchReceipt", () => {
     const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
     expect(receipt).toContain(
-      "Timings: headers 10ms, TTFT 42ms, generation 8ms, total 50ms",
+      "Timings: headers 10ms, TTFT 42ms, generation 8ms, TPOT 2ms/token, total 50ms",
     );
   });
 

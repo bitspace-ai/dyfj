@@ -43,6 +43,7 @@ export interface WorkbenchCallTimings {
   responseHeadersMs: number;
   timeToFirstTokenMs?: number;
   generationMs?: number;
+  timePerOutputTokenMs?: number;
   totalMs: number;
 }
 
@@ -276,6 +277,7 @@ export async function runWorkbenchTurn(params: {
   const input = result.usage?.prompt_tokens ??
     estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
   const output = result.usage?.completion_tokens ?? estimateTextTokens(text);
+  const timings = withTimePerOutputToken(result.timings, output);
   const costTotal = (input / 1_000_000) * model.costInput +
     (output / 1_000_000) * model.costOutput;
 
@@ -291,8 +293,27 @@ export async function runWorkbenchTurn(params: {
       cacheWrite: 0,
     },
     stopReason: normaliseFinishReason(result.finishReason),
-    timings: result.timings,
+    timings,
   };
+}
+
+export function withTimePerOutputToken(
+  timings: WorkbenchCallTimings,
+  outputTokens: number,
+): WorkbenchCallTimings {
+  if (outputTokens <= 0) return timings;
+
+  if (timings.generationMs !== undefined) {
+    if (outputTokens <= 1) return timings;
+    return {
+      ...timings,
+      timePerOutputTokenMs: Math.round(
+        timings.generationMs / (outputTokens - 1),
+      ),
+    };
+  }
+
+  return timings;
 }
 
 export function parseOpenAIChatStreamLine(

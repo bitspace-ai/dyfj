@@ -4,6 +4,7 @@
     "context-size-response": "deno task --cwd prototype context-size-response",
     "model-response-modes": "deno task --cwd prototype model-response-modes",
     "structured-output": "deno task --cwd prototype structured-output",
+    "structured-output-streaming": "deno task --cwd prototype structured-output-streaming",
     "test": "deno task --cwd prototype test",
     "verify-workbench-events": "deno task --cwd prototype verify-workbench-events"
   }

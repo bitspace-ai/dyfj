@@ -8,6 +8,7 @@ import {
   runWorkbenchTurn,
   selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
+  withTimePerOutputToken,
   type WorkbenchModel,
 } from "./provider";
 
@@ -236,7 +237,30 @@ describe("runWorkbenchTurn streaming", () => {
       responseHeadersMs: 10,
       timeToFirstTokenMs: 15,
       generationMs: 5,
+      timePerOutputTokenMs: 5,
       totalMs: 20,
     });
+  });
+});
+
+describe("withTimePerOutputToken", () => {
+  test("uses post-first-token generation time for streaming TPOT", () => {
+    expect(
+      withTimePerOutputToken({
+        responseHeadersMs: 10,
+        timeToFirstTokenMs: 40,
+        generationMs: 60,
+        totalMs: 100,
+      }, 4).timePerOutputTokenMs,
+    ).toBe(20);
+  });
+
+  test("does not label total latency as TPOT without streaming timing", () => {
+    expect(
+      withTimePerOutputToken({
+        responseHeadersMs: 10,
+        totalMs: 80,
+      }, 4).timePerOutputTokenMs,
+    ).toBeUndefined();
   });
 });

@@ -6,6 +6,7 @@
     "context-size-response": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/context-size-response.ts",
     "model-response-modes": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/model-response-modes.ts",
     "structured-output": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output.ts",
+    "structured-output-streaming": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output-streaming.ts",
     "beads-tracer": "deno run -P=beads --sloppy-imports examples/beads-tracer.ts",
     "verify-workbench-events": "deno run -P=verify-workbench-events --env-file=.env --sloppy-imports examples/verify-workbench-events.ts",
     "smoke": "deno run examples/deno-smoke-test.ts"
