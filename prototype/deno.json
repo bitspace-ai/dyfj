@@ -1,14 +1,90 @@
 {
   "tasks": {
-    "test": "TMPDIR=.vitest-tmp deno run --env-file=.env --allow-env --allow-read=.. --allow-write=. --allow-net=127.0.0.1:3306,localhost --allow-run=node_modules/.deno/esbuild@0.27.7/node_modules/esbuild/bin/esbuild,node_modules/.deno/@esbuild+darwin-arm64@0.27.7/node_modules/@esbuild/darwin-arm64/bin/esbuild --allow-ffi=node_modules --allow-sys=cpus,systemMemoryInfo npm:vitest run --root . --pool=threads",
-    "start": "deno run --env-file=.env --allow-read=.. --allow-run=bd --allow-net=127.0.0.1:3306,127.0.0.1:11434,localhost:11434 --allow-env=USER,DYFJ_PRINCIPAL_ID,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_WORKBENCH_CONTEXT_PROFILE,DYFJ_WORKBENCH_CONTEXT_TOKENS,DYFJ_BUDGET_SESSION_USD,DYFJ_BUDGET_PER_CALL_USD,DYFJ_BUDGET_TALLY,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE --sloppy-imports src/workbench.ts",
-    "workbench": "deno run --env-file=.env --allow-read=.. --allow-run=bd --allow-net=127.0.0.1:3306,127.0.0.1:11434,localhost:11434 --allow-env=USER,DYFJ_PRINCIPAL_ID,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_WORKBENCH_CONTEXT_PROFILE,DYFJ_WORKBENCH_CONTEXT_TOKENS,DYFJ_BUDGET_SESSION_USD,DYFJ_BUDGET_PER_CALL_USD,DYFJ_BUDGET_TALLY,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE --sloppy-imports src/workbench.ts",
-    "context-size-response": "deno run --env-file=.env --allow-net=127.0.0.1:11434,localhost:11434 --allow-env=DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_BASE_URL --sloppy-imports examples/context-size-response.ts",
-    "model-response-modes": "deno run --env-file=.env --allow-net=127.0.0.1:11434,localhost:11434 --allow-env=DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_BASE_URL --sloppy-imports examples/model-response-modes.ts",
-    "structured-output": "deno run --env-file=.env --allow-net=127.0.0.1:11434,localhost:11434 --allow-env=DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_BASE_URL --sloppy-imports examples/structured-output.ts",
-    "beads-tracer": "deno run --allow-run=bd --allow-env=BEADS_DIR,PATH,HOME --sloppy-imports examples/beads-tracer.ts",
-    "verify-workbench-events": "deno run --env-file=.env --allow-net=127.0.0.1:3306,127.0.0.1:11434,localhost:11434 --allow-env=USER,DYFJ_PRINCIPAL_ID,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_WORKBENCH_CONTEXT_PROFILE,DYFJ_WORKBENCH_CONTEXT_TOKENS,DYFJ_BUDGET_SESSION_USD,DYFJ_BUDGET_PER_CALL_USD,DYFJ_BUDGET_TALLY,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE --sloppy-imports examples/verify-workbench-events.ts",
+    "test": "TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest run --root . --pool=threads",
+    "start": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
+    "workbench": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
+    "context-size-response": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/context-size-response.ts",
+    "model-response-modes": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/model-response-modes.ts",
+    "structured-output": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output.ts",
+    "beads-tracer": "deno run -P=beads --sloppy-imports examples/beads-tracer.ts",
+    "verify-workbench-events": "deno run -P=verify-workbench-events --env-file=.env --sloppy-imports examples/verify-workbench-events.ts",
     "smoke": "deno run examples/deno-smoke-test.ts"
+  },
+  "permissions": {
+    "test": {
+      "env": true,
+      "read": ["..", "../.."],
+      "write": ["."],
+      "net": ["127.0.0.1:3306", "localhost"],
+      "run": [
+        "node_modules/.deno/esbuild@0.27.7/node_modules/esbuild/bin/esbuild",
+        "node_modules/.deno/@esbuild+darwin-arm64@0.27.7/node_modules/@esbuild/darwin-arm64/bin/esbuild"
+      ],
+      "ffi": ["node_modules"],
+      "sys": ["cpus", "systemMemoryInfo", "networkInterfaces", "uid"]
+    },
+    "workbench": {
+      "env": [
+        "USER",
+        "DYFJ_PRINCIPAL_ID",
+        "DYFJ_WORKBENCH_MODEL",
+        "DYFJ_WORKBENCH_HINT",
+        "DYFJ_WORKBENCH_TIER",
+        "DYFJ_WORKBENCH_CONTEXT_PROFILE",
+        "DYFJ_WORKBENCH_CONTEXT_TOKENS",
+        "DYFJ_BUDGET_SESSION_USD",
+        "DYFJ_BUDGET_PER_CALL_USD",
+        "DYFJ_BUDGET_TALLY",
+        "DOLT_HOST",
+        "DOLT_PORT",
+        "DOLT_USER",
+        "DOLT_PASSWORD",
+        "DOLT_DATABASE",
+        "NODE_DEBUG_NATIVE",
+        "NODE_DISABLE_COMPILE_CACHE",
+        "NODE_COMPILE_CACHE_PORTABLE",
+        "NODE_COMPILE_CACHE"
+      ],
+      "read": [".."],
+      "net": [
+        "127.0.0.1:3306",
+        "127.0.0.1:11434",
+        "localhost:11434"
+      ],
+      "run": ["bd"]
+    },
+    "local-model-diagnostic": {
+      "env": ["DYFJ_WORKBENCH_MODEL", "DYFJ_WORKBENCH_BASE_URL"],
+      "net": ["127.0.0.1:11434", "localhost:11434"]
+    },
+    "beads": {
+      "env": ["BEADS_DIR", "PATH", "HOME"],
+      "run": ["bd"]
+    },
+    "verify-workbench-events": {
+      "env": [
+        "USER",
+        "DYFJ_PRINCIPAL_ID",
+        "DYFJ_WORKBENCH_MODEL",
+        "DYFJ_WORKBENCH_HINT",
+        "DYFJ_WORKBENCH_TIER",
+        "DYFJ_WORKBENCH_CONTEXT_PROFILE",
+        "DYFJ_WORKBENCH_CONTEXT_TOKENS",
+        "DYFJ_BUDGET_SESSION_USD",
+        "DYFJ_BUDGET_PER_CALL_USD",
+        "DYFJ_BUDGET_TALLY",
+        "DOLT_HOST",
+        "DOLT_PORT",
+        "DOLT_USER",
+        "DOLT_PASSWORD",
+        "DOLT_DATABASE"
+      ],
+      "net": [
+        "127.0.0.1:3306",
+        "127.0.0.1:11434",
+        "localhost:11434"
+      ]
+    }
   },
   "imports": {
     "$dax": "jsr:@david/dax@0.42.0"
