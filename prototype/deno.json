@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest run --root . --pool=threads",
+    "test": "TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.4 run --root . --pool=threads",
     "start": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "context-size-response": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/context-size-response.ts",
@@ -88,8 +88,11 @@
     }
   },
   "imports": {
-    "$dax": "jsr:@david/dax@0.42.0"
+    "$dax": "jsr:@david/dax@0.42.0",
+    "mysql2/promise": "npm:mysql2@3.22.3/promise",
+    "ulid": "npm:ulid@2.4.0"
   },
+  "nodeModulesDir": "auto",
   "compilerOptions": {
     "lib": ["ESNext", "DOM", "deno.ns", "deno.unstable"],
     "strict": true
