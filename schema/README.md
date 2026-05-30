@@ -19,6 +19,7 @@ Migrations are numbered and applied in order:
 - `008_events_budget_summary.sql` — typed view of budget-summary events.
 - `009_skills.sql` — invokable skills (named, parameterized actions composable into agent loops).
 - `010_events_capability.sql` — bilateral capability/discovery events (provide/require/match/release) and lease-aware lookup fields. Day-1 schema commitment so the runtime registry is derivable from the log later.
+- `011_events_authn.sql` — authentication metadata for the acting principal on event rows. Adds primitive authn fields for status, mechanism, issuer/session references, assertion times, and evidence pointers; credential material remains out of scope.
 
 (Migration `005_*` is intentionally absent here; it lives in implementation-specific overlays where it belongs, not in the canonical substrate.)
 
@@ -41,6 +42,16 @@ dolt --host 127.0.0.1 --port 3306 --no-tls \
   --user root --password "$DOLT_PASSWORD" --use-db dolt \
   sql -q "SHOW TABLES;"
 ```
+
+## Validate the schema
+
+Run the canonical DDL against a fresh disposable Dolt repository:
+
+```sh
+deno task validate-schema
+```
+
+The command applies `schema/*.sql` in lexical order, fails on invalid DDL or ordering errors, and confirms the `events` table exists. It does not connect to or mutate any long-running local Dolt SQL server.
 
 ## Why Dolt
 
