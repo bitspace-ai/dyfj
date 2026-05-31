@@ -148,6 +148,8 @@ Useful validation tasks:
 
 ```sh
 deno task test
+deno task test:schema
+deno task validate-schema
 deno task verify-workbench-events
 ```
 
@@ -268,8 +270,8 @@ Called out so neither shows up downstream as an implied dependency.
 Things agreed to but not yet fully done. Updated as work progresses.
 
 - Stub `register()` / `lookup()` interface in the codebase with static-config backing.
-- Finish the Workbench MVP loop: per-turn paid-session tally and any remaining event checks needed for tool-call paths once tools are wired into the loop.
-- Continue the cost-visibility surface beyond the shipped preflight/receipt path: running tally, soft/hard budget UX, and later daily-scope budget projection.
+- Finish the Workbench MVP loop: any remaining event checks needed for tool-call paths once tools are wired into the loop.
+- Continue the cost-visibility surface beyond the shipped preflight/receipt path: soft/hard budget UX and later daily-scope budget projection.
 - Grow the Rust core only where components have stabilized enough to earn the boundary; the first schema tracer bullet is shipped.
 
 ---
@@ -292,3 +294,4 @@ Reserved space for new questions as they accumulate.
 - 2026-04-27 - Section 4 Engineering posture added - tests + evals as stated practice.
 - 2026-05-25 - Runtime clarified as Deno; Workbench tracer bullet owns `deno task start`; legacy router path retired; paid preflight, receipts, and event-sequence verification added.
 - 2026-05-25 - Rust core tracer bullet shipped: `dyfj_core::events::{write, read_by_id}` plus demo and ignored live-Dolt integration tests.
+- 2026-05-30 - Event authn metadata shipped as `schema/011_events_authn.sql`; repo-native schema validation added with `deno task validate-schema` and `deno task test:schema`.
