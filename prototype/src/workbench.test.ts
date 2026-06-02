@@ -5,9 +5,13 @@ import {
   buildBudgetTallyLine,
   buildNextWorkBrief,
   buildPaidEscalationPreflightBanner,
+  buildToolResultFollowUpPrompt,
   buildWorkbenchReceipt,
+  buildWorkbenchShellBanner,
   formatMoney,
   isNextWorkMode,
+  isWorkbenchShellExitCommand,
+  isWorkbenchShellSessionCommand,
   maybeBuildPaidEscalationPreflightBanner,
   type PaidEscalationPreflightInput,
   PaidInferenceRequiresTtyError,
@@ -186,6 +190,39 @@ describe("buildNextWorkBrief", () => {
   });
 });
 
+describe("buildToolResultFollowUpPrompt", () => {
+  test("preserves the original prompt and appends command results", () => {
+    const prompt = buildToolResultFollowUpPrompt("summarize this", [
+      {
+        commandId: "memory.read",
+        callId: "call-memory",
+        isError: false,
+        result: "# Project DYFJ\n\nPublic repo context",
+      },
+    ]);
+
+    expect(prompt).toContain("Original prompt:");
+    expect(prompt).toContain("summarize this");
+    expect(prompt).toContain("Tool results:");
+    expect(prompt).toContain("memory.read call-memory ok");
+    expect(prompt).toContain("# Project DYFJ");
+  });
+
+  test("includes denied command results as errors", () => {
+    const prompt = buildToolResultFollowUpPrompt("read memory", [
+      {
+        commandId: "memory.read",
+        callId: "call-memory",
+        isError: true,
+        result: "slug does not match required pattern",
+      },
+    ]);
+
+    expect(prompt).toContain("memory.read call-memory error");
+    expect(prompt).toContain("slug does not match required pattern");
+  });
+});
+
 describe("validateNextWorkJson", () => {
   test("accepts a complete strict JSON next-work result", () => {
     const result = validateNextWorkJson(JSON.stringify({
@@ -291,6 +328,16 @@ describe("resolveWorkbenchInvocation", () => {
     });
   });
 
+  test("treats shell as an interactive harness mode", () => {
+    const invocation = resolveWorkbenchInvocation(["shell"], {});
+
+    expect(invocation).toEqual({
+      mode: "shell",
+      prompt: "",
+      routingOptions: {},
+    });
+  });
+
   test("loads routing defaults from environment", () => {
     const invocation = resolveWorkbenchInvocation(["ask", "next?"], {
       DYFJ_WORKBENCH_MODEL: "qwen3:32b",
@@ -333,6 +380,28 @@ describe("resolveWorkbenchInvocation", () => {
       hint: "reasoning",
       tier: 0,
     });
+  });
+});
+
+describe("workbench shell helpers", () => {
+  test("recognizes explicit shell exit commands", () => {
+    expect(isWorkbenchShellExitCommand(":quit")).toBe(true);
+    expect(isWorkbenchShellExitCommand(":q")).toBe(true);
+    expect(isWorkbenchShellExitCommand("exit")).toBe(true);
+    expect(isWorkbenchShellExitCommand("read project memory")).toBe(false);
+  });
+
+  test("recognizes the shell session pointer command", () => {
+    expect(isWorkbenchShellSessionCommand(":session")).toBe(true);
+    expect(isWorkbenchShellSessionCommand("session")).toBe(false);
+  });
+
+  test("shows the barebones shell commands in the banner", () => {
+    const banner = buildWorkbenchShellBanner();
+
+    expect(banner).toContain("DYFJ Workbench Shell");
+    expect(banner).toContain(":session");
+    expect(banner).toContain(":quit");
   });
 });
 

@@ -43,9 +43,15 @@ export interface PaidEscalationPreflightInput {
 export type BudgetTallyMode = "on" | "paid" | "off";
 
 export interface WorkbenchInvocation {
-  mode: "ask" | "next-work" | "turn";
+  mode: "ask" | "next-work" | "turn" | "shell";
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
+}
+
+export interface WorkbenchRunResult {
+  sessionId: string;
+  traceId: string;
+  receipt: string;
 }
 
 export interface WorkbenchValidationSummary {
@@ -90,6 +96,13 @@ export interface BudgetTallyInput {
   };
 }
 
+export interface ToolResultSummary {
+  commandId: string;
+  callId: string;
+  isError: boolean;
+  result: string;
+}
+
 export class ConsentDeclinedError extends Error {
   constructor() {
     super("Paid inference consent declined");
@@ -130,6 +143,38 @@ export function buildNextWorkBrief(input: NextWorkBriefInput): string {
     '  "confidence": "low|medium|high"',
     "}",
   ].join("\n");
+}
+
+export function buildToolResultFollowUpPrompt(
+  originalPrompt: string,
+  toolResults: ToolResultSummary[],
+): string {
+  const lines = [
+    "Original prompt:",
+    originalPrompt,
+    "",
+    "Tool results:",
+  ];
+  for (const result of toolResults) {
+    lines.push(
+      `- ${result.commandId} ${result.callId} ${
+        result.isError ? "error" : "ok"
+      }`,
+    );
+    lines.push(result.result);
+  }
+  lines.push("");
+  lines.push("Use the tool results above to answer the original prompt.");
+  return lines.join("\n");
+}
+
+function commandResultText(
+  result: { isError: boolean; reason?: string; result?: unknown },
+): string {
+  if (result.isError) return result.reason ?? "command failed";
+  return typeof result.result === "string"
+    ? result.result
+    : JSON.stringify(result.result);
 }
 
 export function validateNextWorkJson(text: string): NextWorkValidationResult {
@@ -366,6 +411,24 @@ export function isNextWorkMode(mode: WorkbenchInvocation["mode"]): boolean {
   return mode === "next-work";
 }
 
+export function isWorkbenchShellExitCommand(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === ":quit" || normalized === ":q" ||
+    normalized === "exit";
+}
+
+export function isWorkbenchShellSessionCommand(value: string): boolean {
+  return value.trim().toLowerCase() === ":session";
+}
+
+export function buildWorkbenchShellBanner(): string {
+  return [
+    "DYFJ Workbench Shell",
+    "Enter a prompt to run one Workbench turn.",
+    ":session shows the last session pointer; :quit exits.",
+  ].join("\n");
+}
+
 function printNextWorkResult(
   result: NextWorkValidationResult,
   rawText: string,
@@ -434,14 +497,20 @@ export function resolveWorkbenchInvocation(
   args: string[],
   env: Record<string, string | undefined> = process.env,
 ): WorkbenchInvocation {
-  const mode = args[0] === "ask" || args[0] === "next-work" ? args[0] : "turn";
-  const effectiveArgs = mode === "ask" || mode === "next-work"
+  const mode =
+    args[0] === "ask" || args[0] === "next-work" || args[0] === "shell"
+      ? args[0]
+      : "turn";
+  const effectiveArgs = mode === "ask" || mode === "next-work" ||
+      mode === "shell"
     ? args.slice(1)
     : args;
   const cliModel = getArg(effectiveArgs, "--model");
   const cliTier = getArg(effectiveArgs, "--tier");
   const cliHint = getArg(effectiveArgs, "--hint");
-  const prompt = mode === "ask" || mode === "next-work"
+  const prompt = mode === "shell"
+    ? ""
+    : mode === "ask" || mode === "next-work"
     ? firstPositional(effectiveArgs) ?? "what should I work on next here?"
     : getArg(effectiveArgs, "--prompt") ??
       "What is the next useful DYFJ workbench step?";
@@ -493,9 +562,46 @@ async function writeMaybe(
   }
 }
 
+async function runWorkbenchShell(baseArgs: string[]): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let lastSession: WorkbenchRunResult | null = null;
+  console.log(buildWorkbenchShellBanner());
+  try {
+    while (true) {
+      const answer = await rl.question("\nworkbench> ");
+      const prompt = answer.trim();
+      if (prompt.length === 0) continue;
+      if (isWorkbenchShellExitCommand(prompt)) {
+        console.log("bye");
+        return;
+      }
+      if (isWorkbenchShellSessionCommand(prompt)) {
+        if (lastSession === null) {
+          console.log("No session yet.");
+        } else {
+          console.log(`Session: ${lastSession.sessionId}`);
+          console.log(`Trace:   ${lastSession.traceId}`);
+        }
+        continue;
+      }
+
+      const result = await runWorkbench([...baseArgs, "--prompt", prompt]);
+      if (result) lastSession = result;
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 export async function runWorkbench(
   args = process.argv.slice(2),
-): Promise<void> {
+): Promise<WorkbenchRunResult | void> {
+  const invocation = resolveWorkbenchInvocation(args);
+  if (invocation.mode === "shell") {
+    await runWorkbenchShell(args.slice(1));
+    return;
+  }
+
   const {
     generateULID,
     generateTraceId,
@@ -523,11 +629,25 @@ export async function runWorkbench(
     loadMemoryIndex,
     buildSystemPrompt,
   } = await import("./memory");
+  const {
+    createCommandRegistry,
+    invokeCommandWithEvent,
+    registerCoreCommands,
+  } = await import("./commands");
+  const {
+    buildWorkbenchSessionContent,
+    buildWorkbenchSessionSlug,
+    createWorkbenchSession,
+    updateWorkbenchSession,
+  } = await import("./sessions");
 
-  const { mode, prompt: cliPrompt, routingOptions } =
-    resolveWorkbenchInvocation(args);
+  const { mode, prompt: cliPrompt, routingOptions } = invocation;
+  const commandRegistry = createCommandRegistry();
+  registerCoreCommands(commandRegistry);
+  const commandTools = mode === "turn" ? commandRegistry.projectTools() : [];
 
   const sessionId = generateULID();
+  const sessionSlug = buildWorkbenchSessionSlug(sessionId);
   const traceId = generateTraceId();
   const sessionStart = Date.now();
   const budget = new BudgetTracker(sessionId, traceId);
@@ -627,6 +747,19 @@ export async function runWorkbench(
       systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
     }
 
+    await writeMaybe(() =>
+      createWorkbenchSession({
+        sessionId,
+        slug: sessionSlug,
+        taskDescription: cliPrompt,
+        content: buildWorkbenchSessionContent({
+          mode,
+          prompt: cliPrompt,
+          traceId,
+          contextSources: contextSourceLines,
+        }),
+      }), bestEffortEvents);
+
     let models;
     try {
       models = await loadWorkbenchModels();
@@ -711,17 +844,62 @@ export async function runWorkbench(
     console.log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
     console.log(`Route:  ${routingReason}\n`);
     let streamedText = false;
-    const turn = await runWorkbenchTurn({
+    let turn = await runWorkbenchTurn({
       systemPrompt,
       prompt: modelPrompt,
       routing: routingOptions,
       models,
       jsonObject: isNextWork,
-      onTextDelta: isNextWork ? undefined : (delta) => {
-        streamedText = true;
-        process.stdout.write(delta);
-      },
+      tools: commandTools,
+      onTextDelta: isNextWork || commandTools.length > 0
+        ? undefined
+        : (delta) => {
+          streamedText = true;
+          process.stdout.write(delta);
+        },
     });
+    if (!isNextWork && turn.toolCalls && turn.toolCalls.length > 0) {
+      console.log(`Running ${turn.toolCalls.length} tool call(s)...`);
+      const toolResults: ToolResultSummary[] = [];
+      for (const toolCall of turn.toolCalls) {
+        const commandResult = await invokeCommandWithEvent(commandRegistry, {
+          commandId: toolCall.name,
+          callId: toolCall.id,
+          caller: {
+            principalId: "workbench",
+            principalType: "agent",
+          },
+          arguments: toolCall.arguments,
+        }, {
+          sessionId,
+          traceId,
+          writeEvent: (event) =>
+            writeMaybe(() => writeEvent(event), bestEffortEvents),
+        });
+        toolResults.push({
+          commandId: toolCall.name,
+          callId: toolCall.id,
+          isError: commandResult.isError,
+          result: commandResultText(commandResult),
+        });
+      }
+
+      const followUpPrompt = buildToolResultFollowUpPrompt(
+        modelPrompt,
+        toolResults,
+      );
+      streamedText = false;
+      turn = await runWorkbenchTurn({
+        systemPrompt,
+        prompt: followUpPrompt,
+        routing: routingOptions,
+        models,
+        onTextDelta: (delta) => {
+          streamedText = true;
+          process.stdout.write(delta);
+        },
+      });
+    }
     if (isNextWork) {
       const result = validateNextWorkJson(turn.text);
       validation = { ok: result.ok, errors: result.errors };
@@ -877,8 +1055,7 @@ export async function runWorkbench(
     await writeMaybe(() => budget.writeSummaryEvent(), bestEffortEvents);
 
     const summary = budget.getSummary();
-    console.log("");
-    console.log(buildWorkbenchReceipt({
+    const receipt = buildWorkbenchReceipt({
       sessionId,
       traceId,
       modelName: selectedForReceipt?.displayName ?? "none",
@@ -901,8 +1078,22 @@ export async function runWorkbench(
       workletId,
       totalElapsedMs: Date.now() - sessionStart,
       validation,
-    }));
+    });
+    await writeMaybe(() =>
+      updateWorkbenchSession({
+        sessionId,
+        content: buildWorkbenchSessionContent({
+          mode,
+          prompt: cliPrompt,
+          traceId,
+          contextSources: contextSourceLines,
+          receipt,
+        }),
+      }), bestEffortEvents);
+    console.log("");
+    console.log(receipt);
     await closeDoltPool();
+    return { sessionId, traceId, receipt };
   }
 }
 

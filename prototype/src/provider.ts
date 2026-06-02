@@ -28,6 +28,7 @@ export interface WorkbenchTurnResult {
   text: string;
   model: WorkbenchModel;
   selection: WorkbenchSelection;
+  toolCalls?: WorkbenchToolCall[];
   usage: {
     input: number;
     output: number;
@@ -37,6 +38,18 @@ export interface WorkbenchTurnResult {
   };
   stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
   timings: WorkbenchCallTimings;
+}
+
+export interface WorkbenchToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface WorkbenchToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
 }
 
 export interface WorkbenchCallTimings {
@@ -199,13 +212,18 @@ export function buildOpenAIChatRequest(
   systemPrompt: string,
   prompt: string,
   stream = false,
-  options: { jsonObject?: boolean } = {},
+  options: { jsonObject?: boolean; tools?: WorkbenchToolDefinition[] } = {},
 ) {
   const body: {
     model: string;
     stream: boolean;
     messages: Array<{ role: "system" | "user"; content: string }>;
     response_format?: { type: "json_object" };
+    tools?: Array<{
+      type: "function";
+      function: WorkbenchToolDefinition;
+    }>;
+    tool_choice?: "auto";
   } = {
     model,
     stream,
@@ -217,6 +235,13 @@ export function buildOpenAIChatRequest(
   if (options.jsonObject) {
     body.response_format = { type: "json_object" };
   }
+  if (options.tools && options.tools.length > 0) {
+    body.tools = options.tools.map((tool) => ({
+      type: "function",
+      function: tool,
+    }));
+    body.tool_choice = "auto";
+  }
   return body;
 }
 
@@ -227,6 +252,7 @@ export async function runWorkbenchTurn(params: {
   models?: WorkbenchModel[];
   onTextDelta?: (delta: string) => void;
   jsonObject?: boolean;
+  tools?: WorkbenchToolDefinition[];
   now?: () => number;
   fetchFn?: FetchLike;
 }): Promise<WorkbenchTurnResult> {
@@ -253,7 +279,7 @@ export async function runWorkbenchTurn(params: {
           params.systemPrompt,
           params.prompt,
           stream,
-          { jsonObject: params.jsonObject },
+          { jsonObject: params.jsonObject, tools: params.tools },
         ),
       ),
     },
@@ -293,6 +319,7 @@ export async function runWorkbenchTurn(params: {
       cacheWrite: 0,
     },
     stopReason: normaliseFinishReason(result.finishReason),
+    toolCalls: result.toolCalls,
     timings,
   };
 }
@@ -354,22 +381,72 @@ async function readOpenAIChatJson(
   text: string;
   finishReason?: string;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+  toolCalls?: WorkbenchToolCall[];
   timings: WorkbenchCallTimings;
 }> {
   const json = await response.json() as {
-    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    choices?: Array<{
+      message?: {
+        content?: string;
+        tool_calls?: Array<{
+          id?: string;
+          type?: string;
+          function?: {
+            name?: string;
+            arguments?: string;
+          };
+        }>;
+      };
+      finish_reason?: string;
+    }>;
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
   const completed = now();
+  const choice = json.choices?.[0];
   return {
-    text: json.choices?.[0]?.message?.content ?? "",
-    finishReason: json.choices?.[0]?.finish_reason,
+    text: choice?.message?.content ?? "",
+    finishReason: choice?.finish_reason,
     usage: json.usage,
+    toolCalls: parseOpenAIToolCalls(choice?.message?.tool_calls),
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       totalMs: Math.round(completed - requestStarted),
     },
   };
+}
+
+function parseOpenAIToolCalls(
+  toolCalls:
+    | Array<{
+      id?: string;
+      type?: string;
+      function?: { name?: string; arguments?: string };
+    }>
+    | undefined,
+): WorkbenchToolCall[] | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  return toolCalls.map((toolCall, idx) => ({
+    id: toolCall.id ?? `tool-call-${idx + 1}`,
+    name: toolCall.function?.name ?? "",
+    arguments: parseToolArguments(toolCall.function?.arguments),
+  }));
+}
+
+function parseToolArguments(
+  value: string | undefined,
+): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    if (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
 }
 
 async function readOpenAIChatStream(

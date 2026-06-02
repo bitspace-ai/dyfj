@@ -92,6 +92,13 @@ export async function doltQuery(
   });
 }
 
+export async function doltExec(
+  sql: string,
+  params: SqlParam[] = [],
+): Promise<void> {
+  await getDoltPool().execute(sql, params);
+}
+
 /**
  * Split a CSV string into rows of fields, correctly handling:
  *   - Quoted fields containing commas, newlines, or escaped double-quotes ("")

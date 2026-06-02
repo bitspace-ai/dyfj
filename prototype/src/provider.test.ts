@@ -173,6 +173,42 @@ describe("buildOpenAIChatRequest", () => {
       response_format: { type: "json_object" },
     });
   });
+
+  test("can project commands as OpenAI-compatible tools", () => {
+    const body = buildOpenAIChatRequest("gemma4", "system", "hello", false, {
+      tools: [
+        {
+          name: "memory.read",
+          description: "Load one Dolt-backed memory by slug.",
+          parameters: {
+            type: "object",
+            required: ["slug"],
+            properties: { slug: { type: "string" } },
+            additionalProperties: false,
+          },
+        },
+      ],
+    });
+
+    expect(body).toMatchObject({
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "memory.read",
+            description: "Load one Dolt-backed memory by slug.",
+            parameters: {
+              type: "object",
+              required: ["slug"],
+              properties: { slug: { type: "string" } },
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+      tool_choice: "auto",
+    });
+  });
 });
 
 describe("parseOpenAIChatStreamLine", () => {
@@ -240,6 +276,61 @@ describe("runWorkbenchTurn streaming", () => {
       timePerOutputTokenMs: 5,
       totalMs: 20,
     });
+  });
+});
+
+describe("runWorkbenchTurn tool calls", () => {
+  test("returns requested model tool calls without executing them", async () => {
+    const body = JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: "",
+            tool_calls: [
+              {
+                id: "call-memory",
+                type: "function",
+                function: {
+                  name: "memory.read",
+                  arguments: '{"slug":"project_dyfj"}',
+                },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+      usage: { prompt_tokens: 20, completion_tokens: 1 },
+    });
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read memory",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [
+        {
+          name: "memory.read",
+          description: "Load one Dolt-backed memory by slug.",
+          parameters: {
+            type: "object",
+            required: ["slug"],
+            properties: { slug: { type: "string" } },
+            additionalProperties: false,
+          },
+        },
+      ],
+      fetchFn: async () => new Response(body, { status: 200 }),
+    });
+
+    expect(result.stopReason).toBe("tool_use");
+    expect(result.toolCalls).toEqual([
+      {
+        id: "call-memory",
+        name: "memory.read",
+        arguments: { slug: "project_dyfj" },
+      },
+    ]);
   });
 });
 
