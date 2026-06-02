@@ -42,3 +42,7 @@ target/
 .dolt/
 *.db
 .beads-credential-key
+
+# Antigravity CLI artifacts
+.antigravitycli/
+

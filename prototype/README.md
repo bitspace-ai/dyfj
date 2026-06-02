@@ -2,7 +2,7 @@
 
 This is the TypeScript prototype layer of DYFJ. It's where I work out the shape of components before any of them earn their way down to the Rust core.
 
-The code here is real and works — Workbench entrypoint, memory, budget, provider routing, MCP server, tests. It uses DYFJ-owned Deno code for the prototype runtime and Dolt for persistence. It's not throwaway scaffolding. But it's also not the substrate. The substrate lives in `../core/` and grows downward as components stabilize.
+The code here is real and works — Workbench entrypoint and shell, memory, command registry, policy gate, provider routing, budget tracking, session persistence, MCP server, and tests. It uses DYFJ-owned Deno code for the prototype runtime and Dolt for persistence. It's not throwaway scaffolding. But it's also not the substrate. The substrate lives in `../core/` and grows downward as components stabilize.
 
 If you want to understand DYFJ's stance on why prototype-and-substrate coexist in the same repo, read the project README at the repo root, especially the Layer 0 stance on Rust as a moving boundary.
 
@@ -14,6 +14,14 @@ You'll need [Deno](https://deno.com) 2.7+.
 deno install
 deno task workbench
 ```
+
+For the barebones operator loop:
+
+```sh
+deno task workbench shell
+```
+
+Inside the shell, enter a prompt to run one Workbench turn. `:session` prints the last session/trace pointer, and `:quit`, `:q`, or `exit` quits cleanly.
 
 The prototype reads Dolt connection settings from environment variables. For the default local server:
 
@@ -30,11 +38,13 @@ Useful checks:
 ```sh
 deno task test
 deno task verify-workbench-events
+(cd .. && deno task test:schema)
+(cd .. && deno task validate-schema)
 ```
 
 ## Layout
 
-- `src/` — Workbench entrypoint, provider path, memory, budget, event verification, MCP client, utilities, tests
+- `src/` — Workbench entrypoint and shell, command registry, provider path, memory, budget, session persistence, event verification, MCP client, utilities, tests
 - `mcp/` — MCP server (`server.ts`)
 - `examples/` — runnable Deno demos
 
