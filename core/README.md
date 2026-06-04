@@ -29,9 +29,7 @@ SQLX_OFFLINE=true cargo test
 
 ## What's next
 
-The first meaningful commit here has landed (see `../notes/tracer-bullet.md`). The next Rust work should extend from a real stabilized need: additional event types, batched writes, query helpers, memory access, or policy/permission checks. There is no global port plan; each move is a separate decision.
-
-After that, components get pulled into Rust as they stabilize in the prototype — most likely starting with extending the event/log API, then memory access, then policy/permission checks. There is no global port plan; each move is a separate decision.
+The first meaningful commit here has landed (see `../notes/tracer-bullet.md`). Future Rust work should extend from stabilized needs in the prototype, most likely additional event types, batched writes, query helpers, memory access, or policy/permission checks. There is no global port plan; each move is a separate decision.
 
 ## Layout
 

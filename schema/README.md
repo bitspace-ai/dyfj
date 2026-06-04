@@ -4,7 +4,7 @@ Canonical data model for DYFJ, expressed as Dolt DDL.
 
 ## Why DDL is the source of truth
 
-A core stance of DYFJ is that data contracts live in the data layer, not in language types. TypeScript and Rust bindings derived from these tables are *consumers*, not authoritative. If you want to understand why, see the project README's Layer 0 stance on schema-in-data-layer.
+Event and memory contracts live in Dolt DDL. TypeScript and Rust bindings are consumers of that schema, not sources of truth. If you want to understand why, see the project README's Layer 0 stance on data-layer schema.
 
 ## Files
 

@@ -107,7 +107,7 @@ export function buildAskSystemPrompt(context: LoadedRepoContext): string {
     "You are the repo-local DYFJ companion for this public open-source repository.",
     "Answer the practical next-work question from the context below.",
     "Keep the answer terse, concrete, and repo-local.",
-    "Do not use private dyfj-home context or cross-repo prioritization.",
+    "Do not use private operator context or cross-repo prioritization.",
     "Prefer Beads state over speculation. If the ready queue is clear, say so.",
     `Context budget: ${context.budget.usedTokens}/${context.budget.totalTokens} estimated tokens ` +
     `(${context.budget.headroomTokens} reserved headroom).`,

@@ -1,6 +1,6 @@
 # DYFJ
 
-A sovereign AI automation substrate. Modular, vendor-loose, local-first by default, with cost visibility as a design primitive rather than a billing afterthought.
+A local-first AI workbench and automation framework for operator sovereignty. Modular, vendor-loose, and explicit about model cost before work runs.
 
 This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
@@ -15,14 +15,14 @@ The split between `core/` and `prototype/` is not a phase boundary. It's a perma
 
 ## Status
 
-Early and active. The prototype is functional - Workbench entrypoint, local-first provider path, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable. Building in public; the commit history reflects real decisions, including wrong ones.
+Early and active. The prototype is functional - Workbench entrypoint, local-first provider path, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
 
 ## How to use this document
 
 Two audiences, one source of truth.
 
-- **An agent picking up work on DYFJ** should be able to read Section 1–Section 4 in about 60 seconds and know the rules of engagement: what's decided, what's out of scope, what "done" looks like, which stances are non-negotiable, and how the work itself happens. Stop reading there unless you need the why.
-- **A human reader (including future maintainers)** should read the whole document. Section 6 onward carries the rationale, the goal-traceability matrix, and the publishable opinion seeds - the *why* behind Section 1–Section 4.
+- **An agent picking up work on DYFJ** should be able to read Section 1–Section 4 in about 60 seconds and know the operating rules: what's decided, what's out of scope, what "done" looks like, which constraints are settled, and how the work itself happens. Stop reading there unless you need the why.
+- **A human reader (including future maintainers)** should read the whole document. Section 6 onward carries the rationale and goal-traceability notes - the *why* behind Section 1–Section 4.
 
 If something in Section 1–Section 4 contradicts prose later in the doc, Section 1–Section 4 wins. The front matter is authoritative; the rationale exists to explain it, not amend it.
 
@@ -41,12 +41,12 @@ DYFJ is **not**:
 
 ### Layer 0 stances (operative everywhere)
 
-All five are public from Day-1.
+All five apply from Day-1.
 
 1. **Swappable with strong defaults.** Components are modular and replaceable behind stable interop contracts. The system ships with strong local defaults; paid escalation is configurable per principal - no provider holds a privileged position in the architecture. Optionality, not performative vendor-neutrality.
 2. **Local-first by default; paid inference is explicit escalation.** Inference, memory, and tools default to local execution. Calling out to a hosted model is a deliberate, logged decision - never the default path.
 3. **Rust for the autonomous core; TypeScript for prototyping.** The Rust line is a moving boundary that advances downward as components stabilize - Rust where its compile/build cycle does not interfere with active prototyping.
-4. **Schema lives in the data layer, not in language types.** Data contracts are defined in the durable store (Dolt DDL today). Language bindings are derived consumers, not the source of truth.
+4. **Data-layer schema is canonical.** Event and memory contracts live in Dolt DDL. TypeScript and Rust types are consumers of that schema, not sources of truth.
 5. **Cost visibility as a default, not an add-on.** Token spend, model selection, and budget posture are surfaced before the work runs and tracked while it runs. Cost is a *design* concern, not a billing concern.
 
 ### Goal done-line
@@ -74,7 +74,7 @@ A first-class AI workbench and automation substrate with vendor coupling loosene
 ## 3. Audience and operating cadence
 
 - **Primary canonical reader** of this document and most artifacts is the project maintainer.
-- The doc lives in public alongside the code; written for full-context readers, but with no internal-only language or private references that wouldn't survive a stranger reading over my shoulder.
+- This document is written as repo-local operating context, with no internal-only language or private references that would not belong in the repository.
 - **Working agents** (current and future, including any model in any harness) read Section 1 to operate; they do not need the rationale unless asked to revisit a decision.
 
 ---
@@ -85,7 +85,7 @@ How the work actually happens, separate from what gets built.
 
 - **Tests land with the code, not after it.** Any commit that adds a function adds a test for it. PRs without tests are not "ready except for tests" - they're not yet ready. Integration tests run against real dependencies (a real Dolt instance, real model APIs in CI when relevant), not mocks. Mocks are reserved for things that don't exist yet (failure modes we haven't observed, third-party services we haven't integrated).
 - **Evals for model-touching code, from when it's introduced.** Anything that calls a model carries eval coverage from the first commit it lives in: comparing across models, catching regressions when prompts change, making model selection a measured decision rather than a gut call. Eval results are part of the work product, not a side artifact.
-- **The bar for "done" includes tests passing.** Not as a CI rubber-stamp, but as a statement of what "I shipped a thing" means. If the test suite doesn't cover what changed, the suite gets extended in the same commit. This is non-negotiable enough to belong here, in writing, rather than in someone's head.
+- **The bar for "done" includes tests passing.** Not as a CI rubber-stamp, but as a statement of what "I shipped a thing" means. If the test suite does not cover what changed, extend it in the same commit.
 
 ---
 
@@ -229,28 +229,28 @@ Touch every subsystem.
 - **Observability.** OpenTelemetry metadata is mandatory on the event/message schema. Every step (context build → LLM call → tool exec → result injection) gets automatic spans plus full transcript. Sampling controls volume.
 - **Permissions / Policy Engine.** Identity and authz metadata mandatory on the core event schema. Dedicated policy engine intercepts every tool call before execution. Tiered rules (allow / ask / deny) keyed on tool, pattern, or risk. Sandboxing plus explicit human friction for high-risk actions. Per Section 1: model-supplied arguments are ignored during permission checks.
 - **Cost & Budget Awareness.** First-class. Budgets per session, per task, per user. Cost-aware model routing (default local, escalate explicitly). Hard stops and soft warnings. Already promoted to a Layer 0 stance (Section 1); the cross-cutting machinery here is what makes the stance real at runtime.
-- **Eval & Regression.** Built-in benchmark harness. Capability tests, regression catches, model-comparison and prompt-comparison runs. Shipping measurement publicly is a credibility moat.
+- **Eval & Regression.** Built-in benchmark harness. Capability tests, regression catches, model-comparison and prompt-comparison runs. Measurement is part of the work product, not a side artifact.
 - **Self-reflection / planning / review loops.** Built-in mechanisms for the agent to critique its own output, decompose subtasks, verify results, and recover from errors.
 
 ### 5.4 Layer 3 - runtime mechanisms
 
 How things actually execute.
 
-- **Streaming + interruptability + partial result handling.** Output streams. Users (and other agents) can interrupt mid-stream. Partial results are first-class.
-- **Checkpointing + transactional state.** Every meaningful state transition is checkpointed. Rollback is real, not aspirational. *Almost everyone claims this; almost no one builds it. Building it real is one of the strongest available signals.*
+- **Streaming + interruptability + partial result handling.** Output streams. Users (and other agents) can interrupt mid-stream. Partial results are represented explicitly and can be resumed, inspected, or discarded.
+- **Checkpointing + transactional state.** Every meaningful state transition is checkpointed. Rollback is real, not aspirational.
 - **Time / async / scheduled action.** Cron-ness as a primitive: agents can take action on a schedule, watch for change, return async results, and reason about asymmetric time between themselves and the world.
 
 ---
 
 ## 7. How the primitives serve the goal
 
-Every Layer 0 stance, every Layer 1 subsystem, and every Layer 2 cross-cutting concern named above exists to make the automation substrate vendor-loose, locally-defaultable, and cost-aware. The five Layer 0 stances carry the most concentrated weight - they're public from Day-1 because they have the highest leverage on whether the substrate works.
+Every Layer 0 stance, every Layer 1 subsystem, and every Layer 2 cross-cutting concern named above exists to make the automation substrate vendor-loose, locally-defaultable, and cost-aware. The five Layer 0 stances carry the most concentrated weight because they have the highest leverage on whether the substrate works.
 
 ---
 
 ## 8. Topics worth longer treatment
 
-A handful of the stances above carry enough weight to merit dedicated treatment when the time is right: Rust as a substrate for agent code, local-first as a category claim rather than a deployment choice, cost visibility as a Layer 0 stance rather than a billing afterthought, the immutable-log-vs.-memory distinction, and schema-in-the-data-layer as a multi-runtime invariant. Naming them here so the work doesn't re-derive the framing every time one of them surfaces.
+Topics worth separate notes: Rust boundary, local-first defaults, cost visibility, immutable log vs. memory, and schema/data-layer ownership.
 
 ---
 

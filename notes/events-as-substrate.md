@@ -6,11 +6,11 @@ Design note. *How DYFJ's cross-cutting concerns — observability, auth/authz, c
 
 ## The frame
 
-DYFJ's `events` table is not a logging table. It is the **shared substrate** that every cross-cutting concern projects onto. There is one append-only log, and every concern — telemetry, auditability, discovery, budget — is a *lens* over that log, not a separate store with separate writers and readers.
+DYFJ's `events` table is not a logging table. It is the shared substrate that every cross-cutting concern projects onto. There is one append-only log, and every concern — telemetry, auditability, discovery, budget — is a view over that log, not a separate store with separate writers and readers.
 
-This is the deepest architectural commitment in DYFJ. Once you see it, the schema stops feeling like "we keep adding metadata fields" and starts feeling like "every column is a perspective from which the same action can be queried."
+This is the main architectural commitment: cross-cutting concerns share one event log rather than separate stores.
 
-The Layer 0 stance "schema lives in the data layer" is what makes this work: there is exactly one canonical event shape, defined in DDL, and every concern that wants a view writes/reads the same rows. No concern owns its own store. No concern owns its own write path. The log is the integration point.
+The Layer 0 stance "data-layer schema is canonical" is what makes this work: there is exactly one canonical event shape, defined in DDL, and every concern that wants a view writes/reads the same rows. No concern owns its own store. No concern owns its own write path. The log is the integration point.
 
 ---
 
@@ -69,7 +69,7 @@ Plus five typed columns: `capability_name`, `capability_version`, `capability_le
 
 The Rust library (`events::write` / `events::read_by_id`) reads and writes these fields. The integration test (`capability_round_trip.rs`) proves they survive a Dolt round-trip.
 
-That's it. Nothing announces. Nothing discovers. No matcher. No registry process. The capability_provide row from the test is sitting in Dolt right now, expired, unread. **Today, the substrate is shape, not behavior.**
+That's it. Nothing announces. Nothing discovers. No matcher. No registry process. The capability_provide row from the test is sitting in Dolt right now, expired, unread. Today this is schema shape only, not runtime behavior.
 
 This is the correct state of the world. Day-1 schema is committed because it's expensive to retrofit. Behavior is not committed because it's cheap to add when there's a real consumer.
 
@@ -120,8 +120,6 @@ This is the deep version of "no service" — even when a registry service eventu
 
 ## Skills, ephemeral UIs, and agents are all the same primitive
 
-This is the part I noticed independently from the substrate work, and it's worth stopping on, because it's the architectural payoff of getting the substrate right.
-
 Agent skills *are* a progressive-disclosure mechanism. They're declared with metadata describing trigger conditions; the harness loads them only when a request matches. Now look at how that maps to capability discovery:
 
 | Skill model | Capability model |
@@ -132,13 +130,13 @@ Agent skills *are* a progressive-disclosure mechanism. They're declared with met
 | Skill lifetime / load semantics | Lease window |
 | The harness's skill matcher | The registry/lookup function |
 
-These are not two different ideas at two different layers. They are the **same idea at different altitudes.** Skills are one *consumer* of the capability/discovery substrate.
+Skills are one consumer of the capability/discovery substrate.
 
 So is ephemeral software. The agent generating a slider on demand is announcing a short-lived capability ("I provide this UI surface"); the user dismissing it is releasing the lease ("the surface is no longer available").
 
 So is inter-agent matching. Agent A advertises `memory.search.semantic`; agent B requires it; the matcher binds them.
 
-The substrate doesn't care who the consumer is. `principal_type` is `'human' | 'agent' | 'service'` — generic by design. The capability vocabulary is dotted-hierarchy strings — also generic. A skill announcing itself, an agent advertising tool calls, an ephemeral UI registering its slider: **all the same shape.**
+The substrate doesn't care who the consumer is. `principal_type` is `'human' | 'agent' | 'service'` — generic by design. The capability vocabulary is dotted-hierarchy strings — also generic. A skill announcing itself, an agent advertising tool calls, and an ephemeral UI registering its slider use the same event shape.
 
 This is what "swappable with strong defaults" means in operative terms. The substrate is one thing. The consumers are many things. New consumers don't require new substrate; they just write and read the same log.
 
@@ -170,7 +168,7 @@ The anti-pattern is treating each cross-cutting concern as a service that needs 
 
 DYFJ rejects this for one reason: **the events table is already the integration point.** Every concern is describing the same actions from a different angle. If you give each concern its own store, you have to integrate them. If they all share one store, integration is the schema.
 
-This is also why `register()` and `lookup()` are deferred until there's a consumer. A registry built without consumers is a registry built on guesses. The shape we'd lock in — sync vs. async, push vs. pull, eager vs. lazy match — would all be guesswork. The right forcing function is a real agent, doing real work, hitting a real "I need to discover X" moment. Then the API designs itself.
+This is also why `register()` and `lookup()` are deferred until there's a consumer. A registry built without consumers is a registry built on guesses. The shape we'd lock in — sync vs. async, push vs. pull, eager vs. lazy match — would all be guesswork. The right forcing function is a real agent, doing real work, hitting a real "I need to discover X" moment. Then the API can be shaped by observed use.
 
 The Jini lineage matters here. Sun's Jini got bilateral capability discovery right thirty years ago: lookup, leasing, capability/need matching as substrate primitives. DYFJ borrows the *shape of the question* (per the README's Influences section), not the protocol. The shape is: one substrate, many participants, all reads and writes go through it. Not many services with their own state.
 
@@ -201,13 +199,13 @@ Holding this frame changes how you reason about new requirements:
 
 This is the unification. Every downstream architectural question becomes "what's the projection?" not "what's the new service?"
 
-It's also why the daily-driver discipline matters. By actually using DYFJ end-to-end, you'll bump into real "I need to know X about my work" moments. Each one becomes a query, not a feature. The substrate doesn't change. The lenses accumulate.
+It's also why the daily-driver discipline matters. By using DYFJ end-to-end, real "I need to know X about my work" moments can become queries over the event log instead of new services.
 
 ---
 
 ## See also
 
-- README §1 — the Layer 0 stances, especially "schema lives in the data layer" and "swappable with strong defaults."
+- README §1 — the Layer 0 stances, especially "data-layer schema is canonical" and "swappable with strong defaults."
 - README §6 (Architecture — tiered primitives) — Layer 1 names "Inter-Agent Contracts & Capability Discovery" as a subsystem; this design note is the elaboration.
 - README §10 — Near-term commitments, including the deferred `register()` / `lookup()` stub.
 - `schema/001_events.sql` — the canonical event row.

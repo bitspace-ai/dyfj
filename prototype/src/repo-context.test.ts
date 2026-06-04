@@ -50,7 +50,6 @@ describe("buildContextSourceLines", () => {
       "README.md Section 1 <README.md#section-1>",
       "bd ready <bd ready>",
     ]);
-    expect(lines.join("\n")).not.toContain("dyfj-home");
   });
 });
 
@@ -84,7 +83,7 @@ describe("buildAskSystemPrompt", () => {
     const prompt = buildAskSystemPrompt(context);
 
     expect(prompt).toContain("repo-local DYFJ companion");
-    expect(prompt).toContain("Do not use private dyfj-home context");
+    expect(prompt).toContain("Do not use private operator context");
     expect(prompt).toContain("dyfj-2fl.7 Build first usable command");
     expect(prompt).toContain("Context sources used");
   });

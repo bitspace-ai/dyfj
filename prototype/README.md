@@ -1,8 +1,8 @@
 # DYFJ Prototype (TypeScript on Deno)
 
-This is the TypeScript prototype layer of DYFJ. It's where I work out the shape of components before any of them earn their way down to the Rust core.
+This is the TypeScript prototype layer of DYFJ.
 
-The code here is real and works — Workbench entrypoint and shell, memory, command registry, policy gate, provider routing, budget tracking, session persistence, MCP server, and tests. It uses DYFJ-owned Deno code for the prototype runtime and Dolt for persistence. It's not throwaway scaffolding. But it's also not the substrate. The substrate lives in `../core/` and grows downward as components stabilize.
+This layer contains working prototype code for Workbench, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
 
 If you want to understand DYFJ's stance on why prototype-and-substrate coexist in the same repo, read the project README at the repo root, especially the Layer 0 stance on Rust as a moving boundary.
 

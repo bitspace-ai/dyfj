@@ -186,7 +186,6 @@ describe("buildNextWorkBrief", () => {
     expect(brief).toContain("Return strict JSON only");
     expect(brief).toContain('"recommendation"');
     expect(brief).toContain('"confidence"');
-    expect(brief).not.toContain("dyfj-home");
   });
 });
 

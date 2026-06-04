@@ -5,7 +5,7 @@ Location of the work: `core/`. This is the first meaningful Rust commit for DYFJ
 
 ## Goal
 
-Prove the Layer 0 stance "schema lives in the data layer, not in language types" end-to-end in Rust: write one well-formed event into Dolt against the canonical `schema/001_events.sql`, read it back, verify round-trip equality. If this works, we have the substrate foundation for everything downstream — Rust code reading and writing events into the same Dolt database the prototype uses, no language-side schema definition, no type-level source of truth.
+Prove the Layer 0 stance "data-layer schema is canonical" end-to-end in Rust: write one well-formed event into Dolt against the canonical `schema/001_events.sql`, read it back, verify round-trip equality. If this works, Rust code can read and write events into the same Dolt database the prototype uses, with no language-side schema definition and no type-level source of truth.
 
 ## Scope
 
@@ -76,7 +76,7 @@ Schema specifies time-sortable IDs (ULID/UUIDv7) for Dolt prolly-tree insert per
 Tests land with the code, not after it. Three layers:
 
 - **Unit tests** in `src/lib.rs` via `#[cfg(test)] mod tests` — anything that can be tested without a live database (event-struct construction, parameter validation, ID generation). Fast; no network; runs in CI by default.
-- **Integration test** at `tests/schema_round_trip.rs` — *this is the tracer bullet's actual proof.* Connects to a live Dolt, calls `events::write()`, calls `events::read_by_id()`, asserts field-by-field equality. Marked `#[ignore]` by default so `cargo test` stays fast in environments without Dolt; explicitly run with `cargo test -- --ignored` or in CI with Dolt provisioned.
+- **Integration test** at `tests/schema_round_trip.rs` — connects to a live Dolt, calls `events::write()`, calls `events::read_by_id()`, and asserts field-by-field equality. Marked `#[ignore]` by default so `cargo test` stays fast in environments without Dolt; explicitly run with `cargo test -- --ignored` or in CI with Dolt provisioned.
 - **Demo binary** at `src/main.rs` — exercises the same code path as the integration test, but human-readable (prints what happened). Useful for "kick the tires after a refactor" without needing to read test output.
 
 The integration test is the source of truth for "does the tracer bullet work?" The binary is a UI on top of it. If the binary works but the test doesn't, something is wrong with the test setup; if the test works but the binary doesn't, something is wrong with the binary's I/O — not with the substrate logic.
@@ -102,5 +102,4 @@ On any field mismatch: the test fails with a useful diff (and the binary, which 
 
 ## What this seeds for next
 
-- **The first blog post.** "I wrote a 200-line Rust tracer bullet for my AI stack" — captures the Layer 0 stance in working code, with the `.sqlx`-cache choice and any surprises as the actual content.
 - **The second meaningful Rust commit.** *Extend* the library — additional event types beyond `session_start`, batched writes, query helpers, or the first error-recovery code path. Whatever the next pain point is when Workbench (or any future consumer) actually starts using `dyfj-core`. The library exists from this commit; subsequent commits grow it.
