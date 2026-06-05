@@ -1,0 +1,91 @@
+direction: right
+
+user: {
+  label: "User"
+
+  operator: {
+    label: "Operator"
+    shape: rectangle
+  }
+}
+
+veneers: {
+  label: "Veneers"
+
+  cli: {
+    label: "CLI / Shell\nrenders text + receipt"
+    shape: rectangle
+  }
+
+  http: {
+    label: "Local HTTP\nHTML + JSON"
+    shape: rectangle
+  }
+}
+
+runtime_core: {
+  label: "Workbench Runtime"
+
+  runtime: {
+    label: "runWorkbenchRuntime()\none turn"
+    shape: rectangle
+  }
+
+  repo_context: {
+    label: "Repo Context\nREADME, notes, Beads view"
+    shape: document
+  }
+
+  model_router: {
+    label: "Provider Path\nroute + request"
+    shape: rectangle
+  }
+
+  commands: {
+    label: "Command Registry\npolicy + tool execution"
+    shape: rectangle
+  }
+
+  result: {
+    label: "Runtime Result\nsession, trace, model, route,\ncost, tokens, receipt"
+    shape: document
+  }
+}
+
+inference: {
+  label: "Inference Dependencies"
+
+  local_model: {
+    label: "Ollama\nlocal Tier 0"
+    shape: rectangle
+  }
+
+  hosted_model: {
+    label: "Hosted Model APIs\npaid escalation"
+    shape: rectangle
+  }
+}
+
+storage: {
+  label: "Storage"
+
+  dolt: {
+    label: "Dolt\nEvents, sessions,\nmemories, budgets"
+    shape: cylinder
+  }
+}
+
+user.operator -> veneers.cli: "prompt / shell input"
+user.operator -> veneers.http: "browser or JSON request"
+
+veneers.cli -> runtime_core.runtime: "WorkbenchRuntimeInput\nreturns text + receipt"
+veneers.http -> runtime_core.runtime: "WorkbenchRuntimeInput\nreturns JSON"
+
+runtime_core.runtime -> runtime_core.repo_context: "load workspace context"
+runtime_core.runtime -> runtime_core.model_router: "run model turn\nreturns text, usage, tool calls"
+runtime_core.runtime -> runtime_core.commands: "invoke requested tool\nreturns result"
+runtime_core.runtime -> storage.dolt: "session/model/budget/events"
+runtime_core.commands -> storage.dolt: "memory read + tool_call event"
+runtime_core.model_router -> inference.local_model: "default local inference"
+runtime_core.model_router -> inference.hosted_model: "explicit paid escalation"
+runtime_core.runtime -> runtime_core.result: "structured WorkbenchRuntimeResult"

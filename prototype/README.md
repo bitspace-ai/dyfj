@@ -2,7 +2,7 @@
 
 This is the TypeScript prototype layer of DYFJ.
 
-This layer contains working prototype code for Workbench, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
+This layer contains working prototype code for Workbench CLI/shell, local HTTP, shared runtime execution, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
 
 If you want to understand DYFJ's stance on why prototype-and-substrate coexist in the same repo, read the project README at the repo root, especially the Layer 0 stance on Rust as a moving boundary.
 
@@ -23,6 +23,14 @@ deno task workbench shell
 
 Inside the shell, enter a prompt to run one Workbench turn. `:session` prints the last session/trace pointer, and `:quit`, `:q`, or `exit` quits cleanly.
 
+For the local HTTP veneer:
+
+```sh
+deno task workbench-http
+```
+
+The HTTP task listens on `http://127.0.0.1:8787/` by default. `GET /` returns a minimal HTML surface; `POST /api/turn` accepts JSON and calls the same single-turn runtime used by the CLI veneer.
+
 The prototype reads Dolt connection settings from environment variables. For the default local server:
 
 ```sh
@@ -42,11 +50,31 @@ deno task verify-workbench-events
 (cd .. && deno task validate-schema)
 ```
 
+For Workbench failures that look like "the model never responds", check Ollama generation directly before debugging DYFJ:
+
+```sh
+curl -sS http://127.0.0.1:11434/api/generate \
+  -H 'content-type: application/json' \
+  -d '{"model":"gemma4:e2b","prompt":"pong","stream":false,"options":{"num_predict":1}}'
+```
+
+The response must include generated text. Health/list endpoints such as `/api/version`, `/api/tags`, and `/api/ps` do not prove the model runner can load.
+
+## Experimental tracers
+
+The Beads tracer is a small prototype demo for parent/child task decomposition, worker completion, gated recombination, and cleanup:
+
+```sh
+BEADS_DIR=/path/to/.beads deno task beads-tracer
+```
+
+It creates and deletes demo beads in the target Beads workspace.
+
 ## Layout
 
-- `src/` — Workbench entrypoint and shell, command registry, provider path, memory, budget, session persistence, event verification, MCP client, utilities, tests
+- `src/` — Workbench entrypoint, shell, local HTTP veneer, shared runtime boundary, command registry, provider path, memory, budget, session persistence, event verification, MCP client, utilities, tests
 - `mcp/` — MCP server (`server.ts`)
-- `examples/` — runnable Deno demos
+- `examples/` — runnable Deno demos and tracers
 
 ## Where this is heading
 

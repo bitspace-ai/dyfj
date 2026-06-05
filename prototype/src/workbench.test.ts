@@ -7,6 +7,7 @@ import {
   buildPaidEscalationPreflightBanner,
   buildToolResultFollowUpPrompt,
   buildWorkbenchReceipt,
+  buildWorkbenchRuntimeInput,
   buildWorkbenchShellBanner,
   formatMoney,
   isNextWorkMode,
@@ -379,6 +380,32 @@ describe("resolveWorkbenchInvocation", () => {
       hint: "reasoning",
       tier: 0,
     });
+  });
+});
+
+describe("buildWorkbenchRuntimeInput", () => {
+  test("maps non-shell invocations into a shared runtime input", () => {
+    const input = buildWorkbenchRuntimeInput({
+      mode: "turn",
+      prompt: "summarize the repo",
+      routingOptions: { modelId: "gemma4:e2b", tier: 0 },
+    });
+
+    expect(input).toEqual({
+      mode: "turn",
+      prompt: "summarize the repo",
+      routingOptions: { modelId: "gemma4:e2b", tier: 0 },
+    });
+  });
+
+  test("keeps shell mode outside the single-turn runtime boundary", () => {
+    const input = buildWorkbenchRuntimeInput({
+      mode: "shell",
+      prompt: "",
+      routingOptions: {},
+    });
+
+    expect(input).toBeNull();
   });
 });
 

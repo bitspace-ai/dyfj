@@ -7,7 +7,7 @@ This README is the *operating context* for the project. Decisions up front. How-
 ## Repo layout
 
 - `core/` - Rust substrate. Contains the first schema tracer bullet: a small event read/write library plus a demo binary that round-trips an event through Dolt. Where stabilized components live.
-- `prototype/` - TypeScript on Deno. Real working code (memory, budget, MCP server, tests, and the Workbench tracer bullet). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
+- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI/shell, local HTTP veneer, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `LICENSE` - MIT.
 
@@ -15,7 +15,7 @@ The split between `core/` and `prototype/` is not a phase boundary. It's a perma
 
 ## Status
 
-Early and active. The prototype is functional - Workbench entrypoint, local-first provider path, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+Early and active. The prototype is functional - Workbench CLI/shell, local HTTP veneer, shared single-turn runtime boundary, local-first provider path, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
 
 ## How to use this document
 
@@ -84,6 +84,7 @@ A first-class AI workbench and automation substrate with vendor coupling loosene
 How the work actually happens, separate from what gets built.
 
 - **Tests land with the code, not after it.** Any commit that adds a function adds a test for it. PRs without tests are not "ready except for tests" - they're not yet ready. Integration tests run against real dependencies (a real Dolt instance, real model APIs in CI when relevant), not mocks. Mocks are reserved for things that don't exist yet (failure modes we haven't observed, third-party services we haven't integrated).
+- **Model integration tests validate generation, not just service health.** Ollama `/api/version`, `/api/tags`, and `/api/ps` only prove the server process is answering. Workbench integration checks that depend on local inference must exercise a real `/api/generate` or OpenAI-compatible chat completion with a small `num_predict`/token cap so missing runner binaries, broken model loading, and backend packaging failures are caught before the Workbench path is blamed.
 - **Evals for model-touching code, from when it's introduced.** Anything that calls a model carries eval coverage from the first commit it lives in: comparing across models, catching regressions when prompts change, making model selection a measured decision rather than a gut call. Eval results are part of the work product, not a side artifact.
 - **The bar for "done" includes tests passing.** Not as a CI rubber-stamp, but as a statement of what "I shipped a thing" means. If the test suite does not cover what changed, extend it in the same commit.
 
@@ -140,9 +141,22 @@ The `data/` directory is gitignored.
 ### Run the prototype
 
 ```sh
-cd prototype
-deno task start
+deno task workbench
 ```
+
+For the interactive shell:
+
+```sh
+deno task workbench shell
+```
+
+For the local HTTP veneer:
+
+```sh
+deno task workbench-http
+```
+
+The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests.
 
 Useful validation tasks:
 
@@ -152,6 +166,16 @@ deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events
 ```
+
+Before treating a Workbench model failure as a DYFJ problem, validate that Ollama can actually generate, not just report health:
+
+```sh
+curl -sS http://127.0.0.1:11434/api/generate \
+  -H 'content-type: application/json' \
+  -d '{"model":"gemma4:e2b","prompt":"pong","stream":false,"options":{"num_predict":1}}'
+```
+
+This should return generated text. `/api/version`, `/api/tags`, and `/api/ps` are useful diagnostics, but they do not prove the model runner can load.
 
 To inspect the running Dolt SQL server without installing `mysql`, use Dolt as the client:
 
@@ -205,11 +229,11 @@ See `prototype/mcp/README.md` for per-client examples.
 
 The architectural surface, sorted by altitude. Section 1 already states the *decisions*; this section carries the *boxes on the diagram* and their rationale.
 
-### 5.1 Layer 0 - stances
+### 6.1 Layer 0 - stances
 
 The five Layer 0 stances are stated in Section 1. They are repeated here only when expansion is useful; the canonical statement is in Section 1.
 
-### 5.2 Layer 1 - core subsystems
+### 6.2 Layer 1 - core subsystems
 
 Things that exist as boxes on a diagram.
 
@@ -218,11 +242,12 @@ Things that exist as boxes on a diagram.
   - Tool call mechanism (typed, validated, observable)
   - Context engineering pipeline: token counting / auto-compaction, incremental diffs (only changes since last turn), layered prompt composition (system + skills/tools + workspace anchors + retrieved context), retrieval tools (grep, LSP, AST, glob)
 - **Memory abstraction.** First-class subsystem, not a bolt-on. Distinct from the immutable log. Queryable, evictable, scoped, explicitly reasoned about.
+- **Workbench runtime boundary.** Shared single-turn runtime invoked by CLI/shell and local HTTP veneers. Presentation layers pass inputs and render results; the runtime owns model routing, command/tool execution, session/event writes, budget tracking, and receipt facts.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable, versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
 - **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per Section 1: schema carries the metadata Day-1; runtime registry is stubbed Day-1, deferred to real implementation later.
 
-### 5.3 Layer 2 - cross-cutting concerns
+### 6.3 Layer 2 - cross-cutting concerns
 
 Touch every subsystem.
 
@@ -232,7 +257,7 @@ Touch every subsystem.
 - **Eval & Regression.** Built-in benchmark harness. Capability tests, regression catches, model-comparison and prompt-comparison runs. Measurement is part of the work product, not a side artifact.
 - **Self-reflection / planning / review loops.** Built-in mechanisms for the agent to critique its own output, decompose subtasks, verify results, and recover from errors.
 
-### 5.4 Layer 3 - runtime mechanisms
+### 6.4 Layer 3 - runtime mechanisms
 
 How things actually execute.
 
@@ -269,8 +294,8 @@ Called out so neither shows up downstream as an implied dependency.
 
 Things agreed to but not yet fully done. Updated as work progresses.
 
-- Stub `register()` / `lookup()` interface in the codebase with static-config backing.
-- Finish the Workbench MVP loop: any remaining event checks needed for tool-call paths once tools are wired into the loop.
+- Extend the current static command registry toward the deferred `register()` / `lookup()` runtime shape when real consumers need it.
+- Extend Workbench veneer validation beyond the current CLI/shell and local HTTP smoke paths as the surface grows.
 - Continue the cost-visibility surface beyond the shipped preflight/receipt path: soft/hard budget UX and later daily-scope budget projection.
 - Grow the Rust core only where components have stabilized enough to earn the boundary; the first schema tracer bullet is shipped.
 
@@ -292,6 +317,7 @@ Reserved space for new questions as they accumulate.
 - 2026-04-27 - Restructured into an operating-context document; Decisions block (Section 1) authoritative.
 - 2026-04-27 - Repo structured: TypeScript prototype in `prototype/`; Rust substrate at `core/`; schema/ at root as canonical, language-agnostic source of truth.
 - 2026-04-27 - Section 4 Engineering posture added - tests + evals as stated practice.
-- 2026-05-25 - Runtime clarified as Deno; Workbench tracer bullet owns `deno task start`; legacy router path retired; paid preflight, receipts, and event-sequence verification added.
+- 2026-05-25 - Runtime clarified as Deno; Workbench tracer bullet owns the Deno task entrypoint; legacy router path retired; paid preflight, receipts, and event-sequence verification added.
 - 2026-05-25 - Rust core tracer bullet shipped: `dyfj_core::events::{write, read_by_id}` plus demo and ignored live-Dolt integration tests.
 - 2026-05-30 - Event authn metadata shipped as `schema/011_events_authn.sql`; repo-native schema validation added with `deno task validate-schema` and `deno task test:schema`.
+- 2026-06-04 - Workbench runtime split into a shared single-turn boundary with CLI/shell and local HTTP veneers; C4/D2 runtime diagrams added.

@@ -48,11 +48,48 @@ export interface WorkbenchInvocation {
   routingOptions: WorkbenchRoutingOptions;
 }
 
-export interface WorkbenchRunResult {
+export interface WorkbenchRuntimeInput {
+  mode: Exclude<WorkbenchInvocation["mode"], "shell">;
+  prompt: string;
+  routingOptions: WorkbenchRoutingOptions;
+  onTextDelta?: (delta: string) => void;
+  confirmPaidEscalation?: (banner: string) => Promise<void>;
+}
+
+export interface WorkbenchRuntimeResult {
   sessionId: string;
   traceId: string;
+  text: string;
   receipt: string;
+  model: {
+    displayName: string;
+    slug: string;
+    provider?: string;
+    api?: string;
+    tier: 0 | 1 | 2;
+  };
+  route: {
+    reason: string;
+  };
+  cost: {
+    estimatedUsd: number;
+    totalUsd: number;
+    paidInferenceUsed: boolean;
+  };
+  tokens: {
+    input: number;
+    output: number;
+    totalCalls: number;
+  };
+  context: {
+    profile?: AskContextProfile;
+    sources: string[];
+    budget?: PackedContextSummary;
+  };
+  validation?: WorkbenchValidationSummary;
 }
+
+export type WorkbenchRunResult = WorkbenchRuntimeResult;
 
 export interface WorkbenchValidationSummary {
   ok: boolean;
@@ -526,6 +563,17 @@ export function resolveWorkbenchInvocation(
   };
 }
 
+export function buildWorkbenchRuntimeInput(
+  invocation: WorkbenchInvocation,
+): WorkbenchRuntimeInput | null {
+  if (invocation.mode === "shell") return null;
+  return {
+    mode: invocation.mode,
+    prompt: invocation.prompt,
+    routingOptions: invocation.routingOptions,
+  };
+}
+
 export function assertPaidEscalationCanPrompt(
   isTty: boolean | undefined,
 ): void {
@@ -602,6 +650,20 @@ export async function runWorkbench(
     return;
   }
 
+  const runtimeInput = buildWorkbenchRuntimeInput(invocation);
+  if (runtimeInput === null) return;
+  return await runWorkbenchRuntime({
+    ...runtimeInput,
+    onTextDelta: (delta) => {
+      process.stdout.write(delta);
+    },
+    confirmPaidEscalation,
+  });
+}
+
+export async function runWorkbenchRuntime(
+  runtimeInput: WorkbenchRuntimeInput,
+): Promise<WorkbenchRuntimeResult> {
   const {
     generateULID,
     generateTraceId,
@@ -641,7 +703,7 @@ export async function runWorkbench(
     updateWorkbenchSession,
   } = await import("./sessions");
 
-  const { mode, prompt: cliPrompt, routingOptions } = invocation;
+  const { mode, prompt: cliPrompt, routingOptions } = runtimeInput;
   const commandRegistry = createCommandRegistry();
   registerCoreCommands(commandRegistry);
   const commandTools = mode === "turn" ? commandRegistry.projectTools() : [];
@@ -695,6 +757,7 @@ export async function runWorkbench(
   let contextBudget: PackedContextSummary | undefined;
   let contextProfile: AskContextProfile | undefined;
   let validation: WorkbenchValidationSummary | undefined;
+  let finalText = "";
 
   try {
     let systemPrompt: string;
@@ -826,7 +889,9 @@ export async function runWorkbench(
       perCallLimitUsd: preCall.perCallLimitUsd,
     });
     if (preflightBanner !== null) {
-      await confirmPaidEscalation(preflightBanner);
+      await (runtimeInput.confirmPaidEscalation ?? confirmPaidEscalation)(
+        preflightBanner,
+      );
     }
 
     await writeMaybe(() =>
@@ -853,9 +918,11 @@ export async function runWorkbench(
       tools: commandTools,
       onTextDelta: isNextWork || commandTools.length > 0
         ? undefined
+        : runtimeInput.onTextDelta === undefined
+        ? undefined
         : (delta) => {
           streamedText = true;
-          process.stdout.write(delta);
+          runtimeInput.onTextDelta?.(delta);
         },
     });
     if (!isNextWork && turn.toolCalls && turn.toolCalls.length > 0) {
@@ -894,10 +961,12 @@ export async function runWorkbench(
         prompt: followUpPrompt,
         routing: routingOptions,
         models,
-        onTextDelta: (delta) => {
-          streamedText = true;
-          process.stdout.write(delta);
-        },
+        onTextDelta: runtimeInput.onTextDelta === undefined
+          ? undefined
+          : (delta) => {
+            streamedText = true;
+            runtimeInput.onTextDelta?.(delta);
+          },
       });
     }
     if (isNextWork) {
@@ -909,6 +978,7 @@ export async function runWorkbench(
     } else {
       console.log(turn.text);
     }
+    finalText = turn.text;
 
     selectedForReceipt = {
       displayName: turn.model.displayName,
@@ -1055,6 +1125,8 @@ export async function runWorkbench(
     await writeMaybe(() => budget.writeSummaryEvent(), bestEffortEvents);
 
     const summary = budget.getSummary();
+    const paidInferenceUsed = ((summary.byTier["1"]?.calls ?? 0) +
+      (summary.byTier["2"]?.calls ?? 0)) > 0;
     const receipt = buildWorkbenchReceipt({
       sessionId,
       traceId,
@@ -1072,8 +1144,7 @@ export async function runWorkbench(
       contextProfile,
       timings: callTimings,
       contextSources: contextSourceLines,
-      paidInferenceUsed: ((summary.byTier["1"]?.calls ?? 0) +
-        (summary.byTier["2"]?.calls ?? 0)) > 0,
+      paidInferenceUsed,
       estimatedCostUsd,
       workletId,
       totalElapsedMs: Date.now() - sessionStart,
@@ -1093,7 +1164,38 @@ export async function runWorkbench(
     console.log("");
     console.log(receipt);
     await closeDoltPool();
-    return { sessionId, traceId, receipt };
+    return {
+      sessionId,
+      traceId,
+      text: finalText,
+      receipt,
+      model: {
+        displayName: selectedForReceipt?.displayName ?? "none",
+        slug: selectedForReceipt?.slug ?? "none",
+        provider: selectedForReceipt?.provider,
+        api: selectedForReceipt?.api,
+        tier: selectedForReceipt?.tier ?? 0,
+      },
+      route: {
+        reason: routingReason,
+      },
+      cost: {
+        estimatedUsd: estimatedCostUsd,
+        totalUsd: summary.totalCostUsd,
+        paidInferenceUsed,
+      },
+      tokens: {
+        input: summary.totalTokensInput,
+        output: summary.totalTokensOutput,
+        totalCalls: summary.totalCalls,
+      },
+      context: {
+        profile: contextProfile,
+        sources: contextSourceLines,
+        budget: contextBudget,
+      },
+      validation,
+    };
   }
 }
 
