@@ -50,6 +50,12 @@ INSERT INTO models
      cost_input, cost_output, cost_cache_read, cost_cache_write,
      reasoning, capabilities)
 VALUES
+    ('laguna-xs.2', 'Laguna XS.2', 'ollama', 'openai-completions',
+     'http://localhost:11434/v1', 0,
+     131072, 8192,
+     0, 0, 0, 0,
+     TRUE, '["text","code","reasoning","long-context"]'),
+
     ('gemma4', 'Gemma 4 27B', 'ollama', 'openai-completions',
      'http://localhost:11434/v1', 0,
      131072, 8192,

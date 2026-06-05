@@ -14,6 +14,17 @@ import {
 
 const models: WorkbenchModel[] = [
   {
+    slug: "laguna-xs.2",
+    displayName: "Laguna XS.2",
+    provider: "ollama",
+    api: "openai-completions",
+    baseUrl: "http://localhost:11434/v1",
+    tier: 0,
+    costInput: 0,
+    costOutput: 0,
+    capabilities: ["text", "code", "reasoning"],
+  },
+  {
     slug: "gemma4:e2b",
     displayName: "Gemma 4 E2B",
     provider: "ollama",
@@ -81,10 +92,10 @@ describe("parseModelRegistryRows", () => {
 });
 
 describe("selectWorkbenchModel", () => {
-  test("defaults to the local gemma4:e2b model", () => {
+  test("defaults to the local laguna-xs.2 model", () => {
     const selection = selectWorkbenchModel(models, {});
 
-    expect(selection.selected.slug).toBe("gemma4:e2b");
+    expect(selection.selected.slug).toBe("laguna-xs.2");
     expect(selection.reason).toBe("default");
   });
 
@@ -106,7 +117,7 @@ describe("defaultLocalWorkbenchModels", () => {
     const defaults = defaultLocalWorkbenchModels();
 
     expect(defaults[0]).toMatchObject({
-      slug: "gemma4:e2b",
+      slug: "laguna-xs.2",
       provider: "ollama",
       tier: 0,
       costInput: 0,
@@ -124,7 +135,7 @@ describe("withDefaultLocalWorkbenchModels", () => {
     }]);
 
     expect(merged.map((model) => model.slug).slice(0, 2)).toEqual([
-      "gemma4:e2b",
+      "laguna-xs.2",
       "gemma4",
     ]);
   });
@@ -132,7 +143,7 @@ describe("withDefaultLocalWorkbenchModels", () => {
   test("does not duplicate the default when the registry already has it", () => {
     const merged = withDefaultLocalWorkbenchModels(models);
 
-    expect(merged.filter((model) => model.slug === "gemma4:e2b")).toHaveLength(
+    expect(merged.filter((model) => model.slug === "laguna-xs.2")).toHaveLength(
       1,
     );
   });

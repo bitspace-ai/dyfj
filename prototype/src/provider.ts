@@ -135,8 +135,8 @@ export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   return [
     {
-      slug: "gemma4:e2b",
-      displayName: "Gemma 4 E2B",
+      slug: "laguna-xs.2",
+      displayName: "Laguna XS.2",
       provider: "ollama",
       api: "openai-completions",
       baseUrl: "http://localhost:11434/v1",
@@ -196,7 +196,8 @@ export function selectWorkbenchModel(
     };
   }
 
-  const selected = localModels.find((model) => model.slug === "gemma4:e2b") ??
+  const selected = localModels.find((model) => model.slug === "laguna-xs.2") ??
+    localModels.find((model) => model.slug === "gemma4:e2b") ??
     localModels.find((model) => model.slug === "gemma4") ??
     localModels[0];
   if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
