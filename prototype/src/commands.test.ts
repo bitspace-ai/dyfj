@@ -236,6 +236,45 @@ describe("registerCoreCommands", () => {
       result: "# Memory\n\nproject_dyfj",
     });
   });
+
+  test("narrows memory.read slug schema to advertised context-index slugs", () => {
+    const registry = createCommandRegistry();
+
+    registerCoreCommands(registry, {
+      allowedMemorySlugs: ["project_dyfj", "reference_1password_cli"],
+      readMemory: async (slug) => `# ${slug}`,
+    });
+
+    const slugSchema = registry.projectTools()[0]!.parameters.properties!.slug!;
+    expect(slugSchema.pattern).toBe(
+      "^(project_dyfj|reference_1password_cli)$",
+    );
+  });
+
+  test("denies syntactically valid but unadvertised memory slugs", async () => {
+    let executed = false;
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, {
+      allowedMemorySlugs: ["project_dyfj"],
+      readMemory: async () => {
+        executed = true;
+        return "should not happen";
+      },
+    });
+
+    const result = await invokeCommand(
+      registry,
+      call({ slug: "prod-secrets" }),
+    );
+
+    expect(result).toMatchObject({
+      decision: "deny",
+      authzBasis: "policy:deny:invalid-arguments",
+      isError: true,
+      reason: "slug does not match required pattern",
+    });
+    expect(executed).toBe(false);
+  });
 });
 
 describe("buildCommandToolCallEventPayload", () => {

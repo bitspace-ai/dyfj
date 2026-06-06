@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   assertPaidEscalationCanPrompt,
   type BudgetTallyInput,
@@ -17,10 +17,160 @@ import {
   type PaidEscalationPreflightInput,
   PaidInferenceRequiresTtyError,
   resolveWorkbenchInvocation,
+  runWorkbenchRuntime,
   shouldPrintBudgetTally,
   validateNextWorkJson,
   type WorkbenchReceiptInput,
 } from "./workbench";
+
+const runtimeMocks = vi.hoisted(() => {
+  const model = {
+    slug: "laguna-xs.2",
+    displayName: "Laguna XS.2",
+    provider: "ollama",
+    api: "openai-completions",
+    baseUrl: "http://localhost:11434/v1",
+    tier: 0 as const,
+    costInput: 0,
+    costOutput: 0,
+    capabilities: ["text", "reasoning"],
+  };
+  return {
+    ulid: 0,
+    writtenEvents: [] as Record<string, unknown>[],
+    sessions: [] as Record<string, unknown>[],
+    sessionUpdates: [] as Record<string, unknown>[],
+    model,
+    runWorkbenchTurn: vi.fn(),
+  };
+});
+
+vi.mock("./utils", () => ({
+  generateULID: () => `01TEST${String(++runtimeMocks.ulid).padStart(20, "0")}`,
+  generateTraceId: () => "0123456789abcdef0123456789abcdef",
+  generateSpanId: () => "0123456789abcdef",
+  writeEvent: async (event: Record<string, unknown>) => {
+    runtimeMocks.writtenEvents.push(event);
+  },
+  writeModelSelectedEvent: async (params: Record<string, unknown>) => {
+    runtimeMocks.writtenEvents.push({
+      event_type: "model_selected",
+      session_id: params.sessionId,
+      trace_id: params.traceId,
+      model_id: params.selected,
+      provider: params.provider,
+      api: params.api,
+    });
+  },
+  closeDoltPool: async () => {},
+}));
+
+vi.mock("./provider", () => {
+  const estimateExport = "estimateText" + "To" + "kens";
+  return {
+    defaultLocalWorkbenchModels: () => [runtimeMocks.model],
+    [estimateExport]: (text: string) => Math.ceil(text.length / 4),
+    loadWorkbenchModels: async () => [runtimeMocks.model],
+    runWorkbenchTurn: runtimeMocks.runWorkbenchTurn,
+    selectWorkbenchModel: () => ({
+      selected: runtimeMocks.model,
+      considered: [runtimeMocks.model.slug],
+      reason: "default",
+    }),
+    withDefaultLocalWorkbenchModels: (models: unknown[]) => models,
+  };
+});
+
+vi.mock("./repo-context", () => ({
+  buildAskSystemPrompt: () => "repo system prompt",
+  buildContextSourceLines: () => ["README.md Section 1 <README.md#section-1>"],
+  loadAskRepoContext: async () => ({
+    sources: [{
+      kind: "file",
+      label: "README.md Section 1",
+      path: "README.md#section-1",
+    }],
+    sections: [],
+    budget: {},
+    profile: "beads-first",
+  }),
+}));
+
+vi.mock("./memory", () => ({
+  buildSystemPrompt: () => "memory system prompt",
+  loadMemoriesByType: async () => [{
+    memoryId: "mem-user",
+    slug: "user-context",
+    type: "user",
+    name: "User Context",
+    description: "test",
+    content: "test",
+  }],
+  loadMemoryIndex: async () => [{
+    slug: "project-context",
+    type: "project",
+    name: "Project Context",
+    description: "test",
+  }],
+}));
+
+vi.mock("./commands", () => ({
+  createCommandRegistry: () => ({
+    register: () => {},
+    lookup: () => undefined,
+    list: () => [],
+    projectTools: () => [],
+  }),
+  invokeCommandWithEvent: async () => ({
+    decision: "allow",
+    isError: false,
+    result: "ok",
+  }),
+  registerCoreCommands: () => {},
+}));
+
+vi.mock("./sessions", () => ({
+  buildWorkbenchSessionContent: (input: Record<string, unknown>) =>
+    JSON.stringify(input),
+  buildWorkbenchSessionSlug: (sessionId: string) =>
+    `workbench-${sessionId.toLowerCase()}`,
+  createWorkbenchSession: async (input: Record<string, unknown>) => {
+    runtimeMocks.sessions.push(input);
+  },
+  updateWorkbenchSession: async (input: Record<string, unknown>) => {
+    runtimeMocks.sessionUpdates.push(input);
+  },
+}));
+
+beforeEach(() => {
+  runtimeMocks.ulid = 0;
+  runtimeMocks.writtenEvents.length = 0;
+  runtimeMocks.sessions.length = 0;
+  runtimeMocks.sessionUpdates.length = 0;
+  runtimeMocks.runWorkbenchTurn.mockReset();
+  runtimeMocks.runWorkbenchTurn.mockResolvedValue({
+    text: "runtime response",
+    model: runtimeMocks.model,
+    selection: {
+      selected: runtimeMocks.model,
+      considered: [runtimeMocks.model.slug],
+      reason: "default",
+    },
+    usage: {
+      input: 42,
+      output: 7,
+      cost: { total: 0 },
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    stopReason: "stop",
+    timings: {
+      responseHeadersMs: 3,
+      generationMs: 9,
+      totalMs: 12,
+    },
+  });
+});
 
 const BASE_RECEIPT: WorkbenchReceiptInput = {
   sessionId: "01TESTSESSION00000000000000",
@@ -406,6 +556,130 @@ describe("buildWorkbenchRuntimeInput", () => {
     });
 
     expect(input).toBeNull();
+  });
+});
+
+describe("runWorkbenchRuntime observer events", () => {
+  test("emits the runtime spine event sequence without leaking full prompt or response text", async () => {
+    const events: unknown[] = [];
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "summarize this sensitive prompt body",
+      routingOptions: {},
+      onRuntimeEvent: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(result.text).toBe("runtime response");
+    expect(events.map((event) => (event as { type: string }).type)).toEqual([
+      "sessionStart",
+      "inputReceived",
+      "contextBuilt",
+      "modelSelected",
+      "beforeProviderRequest",
+      "afterProviderResponse",
+      "turnCompleted",
+    ]);
+    expect(events).toEqual([
+      {
+        type: "sessionStart",
+        sessionId: "01TEST00000000000000000001",
+        traceId: "0123456789abcdef0123456789abcdef",
+        mode: "turn",
+      },
+      {
+        type: "inputReceived",
+        sessionId: "01TEST00000000000000000001",
+        promptLength: 36,
+      },
+      {
+        type: "contextBuilt",
+        sessionId: "01TEST00000000000000000001",
+        sourceCount: 2,
+      },
+      {
+        type: "modelSelected",
+        sessionId: "01TEST00000000000000000001",
+        modelSlug: "laguna-xs.2",
+        tier: 0,
+        reason: "default",
+      },
+      {
+        type: "beforeProviderRequest",
+        sessionId: "01TEST00000000000000000001",
+        modelSlug: "laguna-xs.2",
+        estimatedInputCount: expect.any(Number),
+      },
+      {
+        type: "afterProviderResponse",
+        sessionId: "01TEST00000000000000000001",
+        modelSlug: "laguna-xs.2",
+        inputCount: 42,
+        outputCount: 7,
+        totalMs: 12,
+      },
+      {
+        type: "turnCompleted",
+        sessionId: "01TEST00000000000000000001",
+        traceId: "0123456789abcdef0123456789abcdef",
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain(
+      "summarize this sensitive prompt body",
+    );
+    expect(JSON.stringify(events)).not.toContain("runtime response");
+  });
+
+  test("emits turnFailed when the provider request fails", async () => {
+    runtimeMocks.runWorkbenchTurn.mockRejectedValueOnce(
+      new Error("local model unavailable"),
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const events: unknown[] = [];
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "summarize",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      expect(result.text).toBe("");
+      expect(events.at(-1)).toEqual({
+        type: "turnFailed",
+        sessionId: "01TEST00000000000000000001",
+        traceId: "0123456789abcdef0123456789abcdef",
+        errorName: "Error",
+        errorMessage: "local model unavailable",
+      });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("treats observer failures as best-effort and preserves the turn result", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "summarize",
+        routingOptions: {},
+        onRuntimeEvent: () => {
+          throw new Error("observer sink down");
+        },
+      });
+
+      expect(result.text).toBe("runtime response");
+      expect(warn).toHaveBeenCalledWith(
+        "Runtime observer skipped: observer sink down",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

@@ -98,6 +98,7 @@ export type CommandInvocationResult<TResult = unknown> =
 
 export interface CoreCommandDependencies {
   readMemory?: (slug: string) => Promise<string> | string;
+  allowedMemorySlugs?: readonly string[];
 }
 
 export interface CommandEventContext {
@@ -229,6 +230,7 @@ export function buildMemoryReadCommand(
   deps: CoreCommandDependencies = {},
 ): CommandDefinition<string> {
   const readMemory = deps.readMemory ?? executeReadMemory;
+  const slugPattern = buildMemorySlugPattern(deps.allowedMemorySlugs);
   return {
     id: "memory.read",
     title: "Read Memory",
@@ -239,7 +241,7 @@ export function buildMemoryReadCommand(
       properties: {
         slug: {
           type: "string",
-          pattern: "^[a-z0-9][a-z0-9_-]*$",
+          pattern: slugPattern,
         },
       },
       additionalProperties: false,
@@ -254,6 +256,16 @@ export function buildMemoryReadCommand(
     },
     executor: async (call) => readMemory(String(call.arguments.slug)),
   };
+}
+
+function buildMemorySlugPattern(allowedSlugs?: readonly string[]): string {
+  if (allowedSlugs === undefined) return "^[a-z0-9][a-z0-9_-]*$";
+  if (allowedSlugs.length === 0) return "a^";
+  return `^(${allowedSlugs.map(escapeRegex).join("|")})$`;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
 export function registerCoreCommands(

@@ -53,8 +53,48 @@ export interface WorkbenchRuntimeInput {
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
   onTextDelta?: (delta: string) => void;
+  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   confirmPaidEscalation?: (banner: string) => Promise<void>;
 }
+
+export type WorkbenchRuntimeEvent =
+  | { type: "sessionStart"; sessionId: string; traceId: string; mode: string }
+  | { type: "inputReceived"; sessionId: string; promptLength: number }
+  | {
+    type: "contextBuilt";
+    sessionId: string;
+    sourceCount: number;
+    profile?: unknown;
+  }
+  | {
+    type: "modelSelected";
+    sessionId: string;
+    modelSlug: string;
+    tier: 0 | 1 | 2;
+    reason: string;
+  }
+  | {
+    type: "beforeProviderRequest";
+    sessionId: string;
+    modelSlug: string;
+    estimatedInputCount: number;
+  }
+  | {
+    type: "afterProviderResponse";
+    sessionId: string;
+    modelSlug: string;
+    inputCount: number;
+    outputCount: number;
+    totalMs?: number;
+  }
+  | { type: "turnCompleted"; sessionId: string; traceId: string }
+  | {
+    type: "turnFailed";
+    sessionId: string;
+    traceId: string;
+    errorName?: string;
+    errorMessage: string;
+  };
 
 export interface WorkbenchRuntimeResult {
   sessionId: string;
@@ -610,6 +650,23 @@ async function writeMaybe(
   }
 }
 
+async function emitRuntimeEvent(
+  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  event: WorkbenchRuntimeEvent,
+): Promise<void> {
+  if (!handler) return;
+  try {
+    await handler(event);
+  } catch (err) {
+    const message = (err as Error)?.message ?? String(err);
+    console.warn(`Runtime observer skipped: ${message}`);
+  }
+}
+
+function estimateRuntimeInputCount(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
 async function runWorkbenchShell(baseArgs: string[]): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   let lastSession: WorkbenchRunResult | null = null;
@@ -705,8 +762,7 @@ export async function runWorkbenchRuntime(
 
   const { mode, prompt: cliPrompt, routingOptions } = runtimeInput;
   const commandRegistry = createCommandRegistry();
-  registerCoreCommands(commandRegistry);
-  const commandTools = mode === "turn" ? commandRegistry.projectTools() : [];
+  let commandTools: ReturnType<typeof commandRegistry.projectTools> = [];
 
   const sessionId = generateULID();
   const sessionSlug = buildWorkbenchSessionSlug(sessionId);
@@ -722,6 +778,18 @@ export async function runWorkbenchRuntime(
   let modelPrompt = cliPrompt;
 
   console.log("DYFJ Workbench\n");
+
+  await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+    type: "sessionStart",
+    sessionId,
+    traceId,
+    mode,
+  });
+  await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+    type: "inputReceived",
+    sessionId,
+    promptLength: cliPrompt.length,
+  });
 
   await writeMaybe(() =>
     writeEvent({
@@ -800,6 +868,12 @@ export async function runWorkbenchRuntime(
           prompt: cliPrompt,
         });
       }
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "contextBuilt",
+        sessionId,
+        sourceCount: repoContext.sources.length,
+        profile: repoContext.profile,
+      });
     } else {
       console.log("Loading context...");
       const coreMemories = await loadMemoriesByType(["user", "feedback"]);
@@ -807,7 +881,16 @@ export async function runWorkbenchRuntime(
       console.log(
         `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries\n`,
       );
+      registerCoreCommands(commandRegistry, {
+        allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
+      });
+      commandTools = commandRegistry.projectTools();
       systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "contextBuilt",
+        sessionId,
+        sourceCount: coreMemories.length + memoryIndex.length,
+      });
     }
 
     await writeMaybe(() =>
@@ -905,11 +988,39 @@ export async function runWorkbenchRuntime(
         api: selected.api,
         durationMs: Date.now() - sessionStart,
       }), bestEffortEvents);
+    await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+      type: "modelSelected",
+      sessionId,
+      modelSlug: selected.slug,
+      tier: selected.tier,
+      reason: routingReason,
+    });
 
     console.log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
     console.log(`Route:  ${routingReason}\n`);
+    const runObservedTurn = async (
+      params: Parameters<typeof runWorkbenchTurn>[0],
+      request: { modelSlug: string; estimatedInputCount: number },
+    ) => {
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "beforeProviderRequest",
+        sessionId,
+        modelSlug: request.modelSlug,
+        estimatedInputCount: request.estimatedInputCount,
+      });
+      const turn = await runWorkbenchTurn(params);
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "afterProviderResponse",
+        sessionId,
+        modelSlug: turn.model.slug,
+        inputCount: turn.usage.input,
+        outputCount: turn.usage.output,
+        totalMs: turn.timings.totalMs,
+      });
+      return turn;
+    };
     let streamedText = false;
-    let turn = await runWorkbenchTurn({
+    let turn = await runObservedTurn({
       systemPrompt,
       prompt: modelPrompt,
       routing: routingOptions,
@@ -924,6 +1035,11 @@ export async function runWorkbenchRuntime(
           streamedText = true;
           runtimeInput.onTextDelta?.(delta);
         },
+    }, {
+      modelSlug: selected.slug,
+      estimatedInputCount: estimateRuntimeInputCount(
+        `${systemPrompt}\n${modelPrompt}`,
+      ),
     });
     if (!isNextWork && turn.toolCalls && turn.toolCalls.length > 0) {
       console.log(`Running ${turn.toolCalls.length} tool call(s)...`);
@@ -955,8 +1071,11 @@ export async function runWorkbenchRuntime(
         modelPrompt,
         toolResults,
       );
+      const followUpInputCount = estimateRuntimeInputCount(
+        `${systemPrompt}\n${followUpPrompt}`,
+      );
       streamedText = false;
-      turn = await runWorkbenchTurn({
+      turn = await runObservedTurn({
         systemPrompt,
         prompt: followUpPrompt,
         routing: routingOptions,
@@ -967,6 +1086,9 @@ export async function runWorkbenchRuntime(
             streamedText = true;
             runtimeInput.onTextDelta?.(delta);
           },
+      }, {
+        modelSlug: selected.slug,
+        estimatedInputCount: followUpInputCount,
       });
     }
     if (isNextWork) {
@@ -1055,8 +1177,20 @@ export async function runWorkbenchRuntime(
         stop_reason: turn.stopReason,
         duration_ms: turn.timings.totalMs,
       }), bestEffortEvents);
+    await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+      type: "turnCompleted",
+      sessionId,
+      traceId,
+    });
   } catch (err: unknown) {
     const name = (err as Error)?.name ?? "Error";
+    await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+      type: "turnFailed",
+      sessionId,
+      traceId,
+      errorName: name,
+      errorMessage: (err as Error)?.message ?? String(err),
+    });
     if (name === "ConsentDeclinedError") {
       console.log("\nConsent declined - no model call made.");
     } else if (name === "PaidInferenceRequiresTtyError") {
