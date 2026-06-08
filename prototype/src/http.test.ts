@@ -41,7 +41,7 @@ function runtimeResult(overrides: Partial<WorkbenchRuntimeResult> = {}) {
 describe("createWorkbenchHttpHandler", () => {
   test("serves a minimal human-readable Workbench surface", async () => {
     const handler = createWorkbenchHttpHandler({
-      runRuntime: async () => runtimeResult(),
+      runRuntime: () => Promise.resolve(runtimeResult()),
     });
 
     const response = await handler(new Request("http://localhost/"));
@@ -51,6 +51,8 @@ describe("createWorkbenchHttpHandler", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(html).toContain("DYFJ Workbench");
     expect(html).toContain("/api/turn");
+    expect(html).toContain("Timeline");
+    expect(html).toContain("Inspector");
   });
 
   test("runs a JSON turn through the injected runtime", async () => {
@@ -58,6 +60,19 @@ describe("createWorkbenchHttpHandler", () => {
     const handler = createWorkbenchHttpHandler({
       runRuntime: async (input) => {
         calls.push(input);
+        await input.onRuntimeEvent?.({
+          type: "sessionStart",
+          sessionId: "01HTTPSESSION00000000000000",
+          traceId: "0123456789abcdef0123456789abcdef",
+          mode: "turn",
+        });
+        await input.onRuntimeEvent?.({
+          type: "modelSelected",
+          sessionId: "01HTTPSESSION00000000000000",
+          modelSlug: "gemma4:e2b",
+          tier: 0,
+          reason: "default",
+        });
         return runtimeResult();
       },
     });
@@ -80,6 +95,7 @@ describe("createWorkbenchHttpHandler", () => {
       mode: "turn",
       prompt: "summarize the repo",
       routingOptions: { modelId: "gemma4:e2b", tier: 0 },
+      onRuntimeEvent: expect.any(Function),
       confirmPaidEscalation: expect.any(Function),
     }]);
     expect(body).toMatchObject({
@@ -91,6 +107,44 @@ describe("createWorkbenchHttpHandler", () => {
       cost: { totalUsd: 0, paidInferenceUsed: false },
       tokens: { input: 10, output: 4, totalCalls: 1 },
       receipt: "Workbench receipt\nSession: 01HTTPSESSION00000000000000",
+      events: [
+        {
+          type: "sessionStart",
+          sessionId: "01HTTPSESSION00000000000000",
+          traceId: "0123456789abcdef0123456789abcdef",
+          mode: "turn",
+        },
+        {
+          type: "modelSelected",
+          sessionId: "01HTTPSESSION00000000000000",
+          modelSlug: "gemma4:e2b",
+          tier: 0,
+          reason: "default",
+        },
+      ],
+    });
+  });
+
+  test("fails closed when the runtime asks HTTP for paid inference consent", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        await input.confirmPaidEscalation?.("paid model selected");
+        return runtimeResult();
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "use paid inference" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({
+      error: "paid inference requires an explicit CLI consent flow",
     });
   });
 });
