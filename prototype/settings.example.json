@@ -1,6 +1,6 @@
 {
-  "defaultProvider": "ollama",
-  "defaultModel": "gemma4:e2b",
+  "defaultProvider": "mlx-lm",
+  "defaultModel": "mlx-community/Qwen3.5-4B-8bit",
   "packages": [],
   "defaultThinkingLevel": "none"
 }

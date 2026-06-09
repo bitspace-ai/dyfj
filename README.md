@@ -96,7 +96,7 @@ How the work actually happens, separate from what gets built.
 
 - [Deno](https://deno.com) 2.7+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
-- [Ollama](https://ollama.com) with at least one model pulled (e.g. `ollama pull gemma3`)
+- [MLX-LM](https://github.com/ml-explore/mlx-lm) for the Apple silicon local default, or [Ollama](https://ollama.com) as a supported local fallback
 - *(Optional, for `core/`)* [`rustup`](https://rustup.rs/) - the toolchain pin in `core/rust-toolchain.toml` will install the right Rust automatically when you `cargo build` there.
 
 ### Set up the prototype
@@ -120,6 +120,17 @@ export DOLT_USER=root
 export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
+
+For the Apple silicon local default, run an OpenAI-compatible MLX-LM Server:
+
+```sh
+mlx_lm.server \
+  --model mlx-community/Qwen3.5-4B-8bit \
+  --host 127.0.0.1 \
+  --port 18080
+```
+
+Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the Ollama fallback explicitly.
 
 ### Initialize Dolt and apply the schema
 
@@ -167,7 +178,15 @@ deno task validate-schema
 deno task verify-workbench-events
 ```
 
-Before treating a Workbench model failure as a DYFJ problem, validate that Ollama can actually generate, not just report health:
+Before treating a Workbench model failure as a DYFJ problem, validate that the selected local provider can actually generate, not just report health. For MLX-LM Server:
+
+```sh
+curl -sS http://127.0.0.1:18080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"mlx-community/Qwen3.5-4B-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+```
+
+For Ollama:
 
 ```sh
 curl -sS http://127.0.0.1:11434/api/generate \

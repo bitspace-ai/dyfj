@@ -15,6 +15,17 @@ deno install
 deno task workbench
 ```
 
+The Apple silicon local default expects an OpenAI-compatible MLX-LM Server:
+
+```sh
+mlx_lm.server \
+  --model mlx-community/Qwen3.5-4B-8bit \
+  --host 127.0.0.1 \
+  --port 18080
+```
+
+Workbench uses `http://127.0.0.1:18080/v1` for that MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the fallback explicitly.
+
 For the barebones operator loop:
 
 ```sh
@@ -50,7 +61,15 @@ deno task verify-workbench-events
 (cd .. && deno task validate-schema)
 ```
 
-For Workbench failures that look like "the model never responds", check Ollama generation directly before debugging DYFJ:
+For Workbench failures that look like "the model never responds", check the selected local provider directly before debugging DYFJ. For MLX-LM Server:
+
+```sh
+curl -sS http://127.0.0.1:18080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"mlx-community/Qwen3.5-4B-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+```
+
+For Ollama:
 
 ```sh
 curl -sS http://127.0.0.1:11434/api/generate \
@@ -58,7 +77,7 @@ curl -sS http://127.0.0.1:11434/api/generate \
   -d '{"model":"gemma4:e2b","prompt":"pong","stream":false,"options":{"num_predict":1}}'
 ```
 
-The response must include generated text. Health/list endpoints such as `/api/version`, `/api/tags`, and `/api/ps` do not prove the model runner can load.
+The response must include generated text. Health/list endpoints such as Ollama `/api/version`, `/api/tags`, and `/api/ps` do not prove the model runner can load.
 
 ## Experimental tracers
 

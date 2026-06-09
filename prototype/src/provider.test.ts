@@ -92,11 +92,29 @@ describe("parseModelRegistryRows", () => {
 });
 
 describe("selectWorkbenchModel", () => {
-  test("defaults to the local laguna-xs.2 model", () => {
+  test("defaults to the local MLX Qwen model when available", () => {
+    const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
+
+    expect(selection.selected.slug).toBe("mlx-community/Qwen3.5-4B-8bit");
+    expect(selection.selected.provider).toBe("mlx-lm");
+    expect(selection.reason).toBe("default");
+  });
+
+  test("falls back to Ollama when MLX Qwen is not available", () => {
     const selection = selectWorkbenchModel(models, {});
 
     expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.selected.provider).toBe("ollama");
     expect(selection.reason).toBe("default");
+  });
+
+  test("explicit model selection can select the MLX Qwen model", () => {
+    const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {
+      modelId: "mlx-community/Qwen3.5-4B-8bit",
+    });
+
+    expect(selection.selected.provider).toBe("mlx-lm");
+    expect(selection.reason).toBe("explicit_model_id");
   });
 
   test("explicit tier selects the first model in that tier", () => {
@@ -113,15 +131,36 @@ describe("selectWorkbenchModel", () => {
 });
 
 describe("defaultLocalWorkbenchModels", () => {
-  test("provides a zero-cost Tier 0 fallback model", () => {
+  test("provides a zero-cost Tier 0 MLX local default", () => {
     const defaults = defaultLocalWorkbenchModels();
 
     expect(defaults[0]).toMatchObject({
+      slug: "mlx-community/Qwen3.5-4B-8bit",
+      provider: "mlx-lm",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:18080/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: expect.arrayContaining(["text", "code"]),
+    });
+  });
+
+  test("keeps Ollama as a zero-cost Tier 0 fallback model", () => {
+    const defaults = defaultLocalWorkbenchModels();
+
+    expect(defaults[1]).toMatchObject({
       slug: "laguna-xs.2",
       provider: "ollama",
       tier: 0,
       costInput: 0,
       costOutput: 0,
+      capabilities: expect.arrayContaining([
+        "text",
+        "code",
+        "reasoning",
+        "long-context",
+      ]),
     });
   });
 });
@@ -135,8 +174,8 @@ describe("withDefaultLocalWorkbenchModels", () => {
     }]);
 
     expect(merged.map((model) => model.slug).slice(0, 2)).toEqual([
+      "mlx-community/Qwen3.5-4B-8bit",
       "laguna-xs.2",
-      "gemma4",
     ]);
   });
 
@@ -247,6 +286,37 @@ describe("parseOpenAIChatStreamLine", () => {
 });
 
 describe("runWorkbenchTurn streaming", () => {
+  test("uses an OpenAI-compatible MLX local provider", async () => {
+    let requestUrl = "";
+    let requestModel = "";
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "mlx-community/Qwen3.5-4B-8bit" },
+      models: defaultLocalWorkbenchModels(),
+      fetchFn: async (input, init) => {
+        requestUrl = String(input);
+        requestModel = JSON.parse(String(init?.body)).model;
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from mlx" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 10, completion_tokens: 3 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe("http://127.0.0.1:18080/v1/chat/completions");
+    expect(requestModel).toBe("mlx-community/Qwen3.5-4B-8bit");
+    expect(result.model.provider).toBe("mlx-lm");
+    expect(result.text).toBe("hello from mlx");
+  });
+
   test("prints deltas as they arrive and returns accumulated text", async () => {
     const deltas: string[] = [];
     const nowValues = [0, 10, 15, 20];

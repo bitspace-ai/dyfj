@@ -76,6 +76,8 @@ export class HostedInferenceRequiresProviderError extends Error {
 
 export type FetchLike = typeof fetch;
 
+const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
+
 export interface OpenAIChatStreamEvent {
   done: boolean;
   textDelta?: string;
@@ -135,6 +137,17 @@ export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   return [
     {
+      slug: "mlx-community/Qwen3.5-4B-8bit",
+      displayName: "Qwen3.5 4B MLX",
+      provider: "mlx-lm",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:18080/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning"],
+    },
+    {
       slug: "laguna-xs.2",
       displayName: "Laguna XS.2",
       provider: "ollama",
@@ -143,7 +156,7 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      capabilities: ["text", "reasoning"],
+      capabilities: ["text", "code", "reasoning", "long-context"],
     },
   ];
 }
@@ -196,10 +209,14 @@ export function selectWorkbenchModel(
     };
   }
 
-  const selected = localModels.find((model) => model.slug === "laguna-xs.2") ??
-    localModels.find((model) => model.slug === "gemma4:e2b") ??
-    localModels.find((model) => model.slug === "gemma4") ??
-    localModels[0];
+  const selected =
+    localModels.find((model) =>
+      model.slug === "mlx-community/Qwen3.5-4B-8bit"
+    ) ??
+      localModels.find((model) => model.slug === "laguna-xs.2") ??
+      localModels.find((model) => model.slug === "gemma4:e2b") ??
+      localModels.find((model) => model.slug === "gemma4") ??
+      localModels[0];
   if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
   return { selected, considered, reason: "default" };
 }
@@ -261,7 +278,7 @@ export async function runWorkbenchTurn(params: {
   const selection = selectWorkbenchModel(models, params.routing);
   const model = selection.selected;
 
-  if (model.provider !== "ollama") {
+  if (!openAICompatibleLocalProviders.has(model.provider)) {
     throw new HostedInferenceRequiresProviderError(model.slug);
   }
 
