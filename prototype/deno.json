@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.4 run --root . --pool=threads",
+    "test": "TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.6 run --root . --pool=threads",
     "start": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench-http": "deno run -P=workbench-http --env-file=.env --sloppy-imports src/http.ts",
@@ -50,6 +50,8 @@
       "read": [".."],
       "net": [
         "127.0.0.1:3306",
+        "127.0.0.1:18080",
+        "localhost:18080",
         "127.0.0.1:11434",
         "localhost:11434"
       ],
@@ -83,6 +85,8 @@
       "net": [
         "127.0.0.1:8787",
         "127.0.0.1:3306",
+        "127.0.0.1:18080",
+        "localhost:18080",
         "127.0.0.1:11434",
         "localhost:11434"
       ],
@@ -90,7 +94,12 @@
     },
     "local-model-diagnostic": {
       "env": ["DYFJ_WORKBENCH_MODEL", "DYFJ_WORKBENCH_BASE_URL"],
-      "net": ["127.0.0.1:11434", "localhost:11434"]
+      "net": [
+        "127.0.0.1:18080",
+        "localhost:18080",
+        "127.0.0.1:11434",
+        "localhost:11434"
+      ]
     },
     "beads": {
       "env": ["BEADS_DIR", "PATH", "HOME"],
@@ -116,6 +125,8 @@
       ],
       "net": [
         "127.0.0.1:3306",
+        "127.0.0.1:18080",
+        "localhost:18080",
         "127.0.0.1:11434",
         "localhost:11434"
       ]

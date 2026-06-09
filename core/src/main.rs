@@ -48,9 +48,12 @@ async fn main() -> Result<()> {
          core/.env (or export DATABASE_URL directly).",
     )?;
 
-    let pool = MySqlPool::connect(&database_url)
-        .await
-        .with_context(|| format!("failed to connect to {database_url}"))?;
+    let pool = MySqlPool::connect(&database_url).await.with_context(|| {
+        format!(
+            "failed to connect to {}",
+            redact_database_url(&database_url)
+        )
+    })?;
 
     let event = make_session_start_event();
     println!("inserting event:    {}", event.event_id);
@@ -71,4 +74,50 @@ async fn main() -> Result<()> {
     println!("match:              ok");
 
     Ok(())
+}
+
+fn redact_database_url(database_url: &str) -> String {
+    let Some(scheme_end) = database_url.find("://") else {
+        return database_url.to_string();
+    };
+    let userinfo_start = scheme_end + 3;
+    let Some(at_offset) = database_url[userinfo_start..].find('@') else {
+        return database_url.to_string();
+    };
+    let at_index = userinfo_start + at_offset;
+    format!(
+        "{}<redacted>@{}",
+        &database_url[..userinfo_start],
+        &database_url[at_index + 1..]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_database_url;
+
+    #[test]
+    fn redacts_database_url_userinfo() {
+        let database_url = [
+            "mysql://",
+            "scan_user",
+            ":",
+            "sample_value",
+            "@127.0.0.1:3306/dyfj",
+        ]
+        .join("");
+
+        assert_eq!(
+            redact_database_url(&database_url),
+            "mysql://<redacted>@127.0.0.1:3306/dyfj"
+        );
+    }
+
+    #[test]
+    fn leaves_plain_database_url_unchanged() {
+        assert_eq!(
+            redact_database_url("mysql://127.0.0.1:3306/dyfj"),
+            "mysql://127.0.0.1:3306/dyfj"
+        );
+    }
 }

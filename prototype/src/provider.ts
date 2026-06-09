@@ -74,9 +74,22 @@ export class HostedInferenceRequiresProviderError extends Error {
   }
 }
 
+export class WorkbenchLocalProviderBaseUrlError extends Error {
+  constructor(public readonly slug: string, public readonly baseUrl: string) {
+    super(`Local provider baseUrl is not loopback-only for ${slug}`);
+    this.name = "WorkbenchLocalProviderBaseUrlError";
+  }
+}
+
 export type FetchLike = typeof fetch;
 
 const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
+const allowedLocalProviderHosts = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+]);
 
 export interface OpenAIChatStreamEvent {
   done: boolean;
@@ -281,6 +294,9 @@ export async function runWorkbenchTurn(params: {
   if (!openAICompatibleLocalProviders.has(model.provider)) {
     throw new HostedInferenceRequiresProviderError(model.slug);
   }
+  if (!isAllowedLocalProviderBaseUrl(model.baseUrl)) {
+    throw new WorkbenchLocalProviderBaseUrlError(model.slug, model.baseUrl);
+  }
 
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? performance.now.bind(performance);
@@ -340,6 +356,17 @@ export async function runWorkbenchTurn(params: {
     toolCalls: result.toolCalls,
     timings,
   };
+}
+
+function isAllowedLocalProviderBaseUrl(baseUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:") return false;
+  return allowedLocalProviderHosts.has(parsed.hostname.toLowerCase());
 }
 
 export function withTimePerOutputToken(

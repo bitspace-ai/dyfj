@@ -125,6 +125,57 @@ describe("createWorkbenchHttpHandler", () => {
     });
   });
 
+  test("rejects cross-origin turn requests before runtime dispatch", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "origin": "https://attacker.example",
+        },
+        body: JSON.stringify({ prompt: "drive local workbench" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toEqual({
+      error: "cross-origin workbench turn requests are not allowed",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects non-JSON turn requests before runtime dispatch", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ prompt: "drive local workbench" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toEqual({ error: "content-type must be application/json" });
+    expect(calls).toEqual([]);
+  });
+
   test("fails closed when the runtime asks HTTP for paid inference consent", async () => {
     const handler = createWorkbenchHttpHandler({
       runRuntime: async (input) => {

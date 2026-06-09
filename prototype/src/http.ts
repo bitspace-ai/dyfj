@@ -30,10 +30,71 @@ export function createWorkbenchHttpHandler(
       return htmlResponse(renderWorkbenchIndex());
     }
     if (request.method === "POST" && url.pathname === "/api/turn") {
+      const intentError = validateWorkbenchTurnIntent(request, url);
+      if (intentError !== undefined) {
+        return jsonResponse({ error: intentError }, 403);
+      }
       return await handleJsonTurn(request, runRuntime);
     }
     return jsonResponse({ error: "not found" }, 404);
   };
+}
+
+function validateWorkbenchTurnIntent(
+  request: Request,
+  url: URL,
+): string | undefined {
+  if (!isLoopbackHost(url.hostname)) {
+    return "workbench HTTP API only accepts loopback hosts";
+  }
+
+  const host = request.headers.get("host");
+  if (host !== null && !isLoopbackHost(parseHostHeader(host))) {
+    return "workbench HTTP API only accepts loopback hosts";
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (contentType !== "application/json") {
+    return "content-type must be application/json";
+  }
+
+  const secFetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
+  if (secFetchSite === "cross-site") {
+    return "cross-site workbench turn requests are not allowed";
+  }
+
+  const origin = request.headers.get("origin");
+  if (origin !== null) {
+    let originUrl: URL;
+    try {
+      originUrl = new URL(origin);
+    } catch {
+      return "invalid request origin";
+    }
+    if (!isLoopbackHost(originUrl.hostname)) {
+      return "cross-origin workbench turn requests are not allowed";
+    }
+  }
+
+  return undefined;
+}
+
+function parseHostHeader(host: string): string {
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end === -1 ? host : host.slice(1, end);
+  }
+  return host.split(":")[0] ?? host;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]";
 }
 
 async function handleJsonTurn(

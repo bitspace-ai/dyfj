@@ -9,6 +9,7 @@ import {
   selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   withTimePerOutputToken,
+  WorkbenchLocalProviderBaseUrlError,
   type WorkbenchModel,
 } from "./provider";
 
@@ -315,6 +316,28 @@ describe("runWorkbenchTurn streaming", () => {
     expect(requestModel).toBe("mlx-community/Qwen3.5-4B-8bit");
     expect(result.model.provider).toBe("mlx-lm");
     expect(result.text).toBe("hello from mlx");
+  });
+
+  test("rejects local providers with non-loopback base URLs", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "poisoned-local" },
+      models: [{
+        slug: "poisoned-local",
+        displayName: "Poisoned local model",
+        provider: "mlx-lm",
+        api: "openai-completions",
+        baseUrl: "https://example.com/v1",
+        tier: 0,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text"],
+      }],
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchLocalProviderBaseUrlError);
   });
 
   test("prints deltas as they arrive and returns accumulated text", async () => {
