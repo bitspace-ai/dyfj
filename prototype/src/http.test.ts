@@ -97,6 +97,13 @@ describe("createWorkbenchHttpHandler", () => {
       mode: "turn",
       prompt: "summarize the repo",
       routingOptions: { modelId: "gemma4:e2b", tier: 0 },
+      authContext: {
+        transport: "loopback",
+        authnStatus: "unauthenticated",
+        authnMechanism: "local_user",
+        authnIssuerRef: "local_os",
+        authzBasis: "policy:loopback-local",
+      },
       onRuntimeEvent: expect.any(Function),
       confirmPaidEscalation: expect.any(Function),
     }]);
@@ -150,7 +157,7 @@ describe("createWorkbenchHttpHandler", () => {
 
     expect(response.status).toBe(403);
     expect(body).toEqual({
-      error: "cross-origin workbench turn requests are not allowed",
+      error: "cross-origin workbench requests are not allowed",
     });
     expect(calls).toEqual([]);
   });
@@ -268,5 +275,155 @@ describe("GET /api/models", () => {
       }),
     );
     expect(response.status).toBe(403);
+  });
+});
+
+describe("remote bearer auth", () => {
+  const apiKey = "test-workbench-key-0123456789abcdef";
+  const remoteHost = "100.64.0.7";
+
+  function authedHandler(calls: WorkbenchRuntimeInput[] = []) {
+    return createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+      loadModels: () => Promise.resolve([]),
+      auth: { apiKey, allowedHosts: [remoteHost] },
+    });
+  }
+
+  function turnRequest(
+    host: string,
+    headers: Record<string, string> = {},
+  ): Request {
+    return new Request(`http://${host}:8787/api/turn`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ prompt: "remote turn" }),
+    });
+  }
+
+  test("rejects remote requests without a bearer", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(turnRequest(remoteHost));
+    expect(response.status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects remote requests with a wrong bearer", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest(remoteHost, { authorization: "Bearer wrong-key" }),
+    );
+    expect(response.status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  test("accepts remote requests with the configured bearer", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest(remoteHost, { authorization: `Bearer ${apiKey}` }),
+    );
+    expect(response.status).toBe(200);
+    expect(calls[0]?.authContext).toEqual({
+      transport: "remote",
+      authnStatus: "authenticated",
+      authnMechanism: "api_key",
+      authnIssuerRef: "workbench_api_key",
+      authzBasis: "capability:workbench-api-key",
+    });
+  });
+
+  test("rejects unknown non-loopback hosts even with the bearer", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest("workbench.example.com", {
+        authorization: `Bearer ${apiKey}`,
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(calls).toEqual([]);
+  });
+
+  test("fails closed on remote hosts when no key is configured", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+      auth: { allowedHosts: [remoteHost] },
+    });
+    const response = await handler(
+      turnRequest(remoteHost, { authorization: `Bearer ${apiKey}` }),
+    );
+    expect(response.status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects a wrong bearer even on loopback", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest("127.0.0.1", { authorization: "Bearer wrong-key" }),
+    );
+    expect(response.status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  test("records api_key authn for a valid bearer on loopback", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest("127.0.0.1", { authorization: `Bearer ${apiKey}` }),
+    );
+    expect(response.status).toBe(200);
+    expect(calls[0]?.authContext).toMatchObject({
+      transport: "loopback",
+      authnStatus: "authenticated",
+      authnMechanism: "api_key",
+    });
+  });
+
+  test("allows same-host remote origins and rejects foreign origins", async () => {
+    const handler = authedHandler();
+    const sameHost = await handler(
+      turnRequest(remoteHost, {
+        authorization: `Bearer ${apiKey}`,
+        origin: `http://${remoteHost}:8787`,
+      }),
+    );
+    expect(sameHost.status).toBe(200);
+
+    const foreign = await handler(
+      turnRequest(remoteHost, {
+        authorization: `Bearer ${apiKey}`,
+        origin: "https://evil.example.com",
+      }),
+    );
+    expect(foreign.status).toBe(403);
+  });
+
+  test("guards /api/models with the same bearer policy", async () => {
+    const handler = authedHandler();
+    const unauthenticated = await handler(
+      new Request(`http://${remoteHost}:8787/api/models`),
+    );
+    expect(unauthenticated.status).toBe(401);
+
+    const authenticated = await handler(
+      new Request(`http://${remoteHost}:8787/api/models`, {
+        headers: { authorization: `Bearer ${apiKey}` },
+      }),
+    );
+    expect(authenticated.status).toBe(200);
+  });
+
+  test("serves the static shell on an allowed remote host without a bearer", async () => {
+    const handler = authedHandler();
+    const response = await handler(
+      new Request(`http://${remoteHost}:8787/`),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("DYFJ Workbench");
   });
 });

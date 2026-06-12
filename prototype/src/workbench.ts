@@ -50,10 +50,24 @@ export interface WorkbenchInvocation {
   routingOptions: WorkbenchRoutingOptions;
 }
 
+/**
+ * How the caller of a runtime turn was identified and why the call was
+ * permitted. Populated by transport layers (HTTP bearer auth); absent for
+ * direct CLI invocation, which is authenticated by the local OS session.
+ */
+export interface WorkbenchAuthContext {
+  transport: "loopback" | "remote";
+  authnStatus: "authenticated" | "unauthenticated";
+  authnMechanism: "local_user" | "api_key";
+  authnIssuerRef: string;
+  authzBasis: string;
+}
+
 export interface WorkbenchRuntimeInput {
   mode: Exclude<WorkbenchInvocation["mode"], "shell">;
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
+  authContext?: WorkbenchAuthContext;
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   confirmPaidEscalation?: (banner: string) => Promise<void>;
@@ -778,6 +792,20 @@ export async function runWorkbenchRuntime(
   const budget = new BudgetTracker(sessionId, traceId);
   const principalId = process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ??
     "user";
+  // Direct CLI invocation is authenticated by the local OS session; transport
+  // layers (HTTP bearer auth) override this with the caller's real context.
+  const authContext: WorkbenchAuthContext = runtimeInput.authContext ?? {
+    transport: "loopback",
+    authnStatus: "authenticated",
+    authnMechanism: "local_user",
+    authnIssuerRef: "local_os",
+    authzBasis: "user_consent",
+  };
+  const authnEventFields = {
+    authn_status: authContext.authnStatus,
+    authn_mechanism: authContext.authnMechanism,
+    authn_issuer_ref: authContext.authnIssuerRef,
+  };
   const isNextWork = isNextWorkMode(mode);
   const usesRepoAskContext = mode === "ask" || isNextWork;
   const bestEffortEvents = usesRepoAskContext;
@@ -809,7 +837,8 @@ export async function runWorkbenchRuntime(
       principal_type: "human",
       action: "start",
       resource: "workbench_session",
-      authz_basis: "user_consent",
+      authz_basis: authContext.authzBasis,
+      ...authnEventFields,
     }), bestEffortEvents);
 
   let spanId: string | null = null;
@@ -858,6 +887,7 @@ export async function runWorkbenchRuntime(
           action: "read",
           resource: "repo_context",
           authz_basis: "policy:repo-local-public",
+          ...authnEventFields,
           tool_name: "repo_context.load",
           tool_call_id: generateULID(),
           tool_arguments: JSON.stringify({ mode, sources: contextSourceLines }),
@@ -996,6 +1026,7 @@ export async function runWorkbenchRuntime(
         provider: selected.provider,
         api: selected.api,
         durationMs: Date.now() - sessionStart,
+        authnFields: authnEventFields,
       }), bestEffortEvents);
     await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
       type: "modelSelected",
@@ -1178,6 +1209,7 @@ export async function runWorkbenchRuntime(
         tokens_cache_read: turn.usage.cacheRead,
         tokens_cache_write: turn.usage.cacheWrite,
         cost_total: turn.usage.cost.total,
+        ...authnEventFields,
         content: isNextWork
           ? JSON.stringify({
             worklet_id: workletId,
@@ -1224,6 +1256,7 @@ export async function runWorkbenchRuntime(
           model_id: selectedForEvents?.slug ?? null,
           provider: selectedForEvents?.provider ?? null,
           api: selectedForEvents?.api ?? null,
+          ...authnEventFields,
           content: (err as Error).message,
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
@@ -1245,6 +1278,7 @@ export async function runWorkbenchRuntime(
           model_id: selectedForEvents?.slug ?? null,
           provider: selectedForEvents?.provider ?? null,
           api: selectedForEvents?.api ?? null,
+          ...authnEventFields,
           content: (err as Error)?.message ?? String(err),
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
@@ -1263,7 +1297,8 @@ export async function runWorkbenchRuntime(
         principal_type: "human",
         action: "end",
         resource: "workbench_session",
-        authz_basis: "user_consent",
+        authz_basis: authContext.authzBasis,
+        ...authnEventFields,
         duration_ms: Date.now() - sessionStart,
       }), bestEffortEvents);
 

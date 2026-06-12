@@ -1,5 +1,6 @@
 import {
   runWorkbenchRuntime,
+  type WorkbenchAuthContext,
   type WorkbenchRuntimeEvent,
   type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
@@ -16,9 +17,17 @@ export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
 ) => Promise<WorkbenchRuntimeResult>;
 
+export interface WorkbenchHttpAuthOptions {
+  /** Bearer key required for non-loopback requests. Never logged. */
+  apiKey?: string;
+  /** Non-loopback hostnames (overlay-network IP/FQDN) permitted to reach the API. */
+  allowedHosts?: string[];
+}
+
 export interface WorkbenchHttpHandlerOptions {
   runRuntime?: WorkbenchHttpRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
+  auth?: WorkbenchHttpAuthOptions;
 }
 
 async function loadPickerModels(): Promise<WorkbenchModel[]> {
@@ -42,88 +51,125 @@ export function createWorkbenchHttpHandler(
 ): (request: Request) => Promise<Response> {
   const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
   const loadModels = options.loadModels ?? loadPickerModels;
+  const auth = options.auth ?? {};
   return async (request) => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/") {
+      // Static shell only: no session or event data is embedded in the page,
+      // so it is served on any bound interface without a bearer.
+      const hostError = validateRequestHost(request, url, auth);
+      if (hostError !== undefined) {
+        return jsonResponse({ error: hostError }, 403);
+      }
       return htmlResponse(renderWorkbenchIndex());
     }
     if (request.method === "GET" && url.pathname === "/api/models") {
-      const readError = validateWorkbenchReadIntent(request, url);
-      if (readError !== undefined) {
-        return jsonResponse({ error: readError }, 403);
+      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      if ("error" in resolved) {
+        return jsonResponse({ error: resolved.error }, resolved.status);
       }
       return jsonResponse({ models: await loadModels() });
     }
     if (request.method === "POST" && url.pathname === "/api/turn") {
-      const intentError = validateWorkbenchTurnIntent(request, url);
-      if (intentError !== undefined) {
-        return jsonResponse({ error: intentError }, 403);
+      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      if ("error" in resolved) {
+        return jsonResponse({ error: resolved.error }, resolved.status);
       }
-      return await handleJsonTurn(request, runRuntime);
+      const contentType = request.headers.get("content-type")?.split(";")[0]
+        .trim()
+        .toLowerCase();
+      if (contentType !== "application/json") {
+        return jsonResponse(
+          { error: "content-type must be application/json" },
+          403,
+        );
+      }
+      return await handleJsonTurn(request, runRuntime, resolved);
     }
     return jsonResponse({ error: "not found" }, 404);
   };
 }
 
-function validateWorkbenchTurnIntent(
+/**
+ * Resolve transport + authentication for an API request.
+ *
+ * Posture:
+ *   - Loopback requests work without a bearer (local dev path). A presented
+ *     bearer is still verified; a wrong one is rejected rather than ignored.
+ *   - Non-loopback requests are accepted only when the hostname is explicitly
+ *     allowed AND a bearer key is configured AND the request presents it.
+ *   - No key configured means no non-loopback access. Fail closed.
+ */
+async function resolveWorkbenchAuth(
   request: Request,
   url: URL,
+  auth: WorkbenchHttpAuthOptions,
+): Promise<WorkbenchAuthContext | { error: string; status: number }> {
+  const hostError = validateRequestHost(request, url, auth);
+  if (hostError !== undefined) {
+    return { error: hostError, status: 403 };
+  }
+
+  const originError = validateRequestOrigin(request, auth);
+  if (originError !== undefined) {
+    return { error: originError, status: 403 };
+  }
+
+  const isLoopback = isLoopbackHost(url.hostname);
+  const bearer = parseBearerToken(request.headers.get("authorization"));
+
+  if (bearer !== undefined) {
+    if (auth.apiKey === undefined || auth.apiKey.length === 0) {
+      return { error: "bearer auth is not configured", status: 401 };
+    }
+    if (!(await bearerMatches(bearer, auth.apiKey))) {
+      return { error: "invalid bearer credentials", status: 401 };
+    }
+    return {
+      transport: isLoopback ? "loopback" : "remote",
+      authnStatus: "authenticated",
+      authnMechanism: "api_key",
+      authnIssuerRef: "workbench_api_key",
+      authzBasis: "capability:workbench-api-key",
+    };
+  }
+
+  if (!isLoopback) {
+    return { error: "non-loopback requests require bearer auth", status: 401 };
+  }
+
+  return {
+    transport: "loopback",
+    authnStatus: "unauthenticated",
+    authnMechanism: "local_user",
+    authnIssuerRef: "local_os",
+    authzBasis: "policy:loopback-local",
+  };
+}
+
+function validateRequestHost(
+  request: Request,
+  url: URL,
+  auth: WorkbenchHttpAuthOptions,
 ): string | undefined {
-  if (!isLoopbackHost(url.hostname)) {
-    return "workbench HTTP API only accepts loopback hosts";
+  if (!isAllowedHost(url.hostname, auth)) {
+    return "workbench HTTP API only accepts loopback or allowed remote hosts";
   }
-
   const host = request.headers.get("host");
-  if (host !== null && !isLoopbackHost(parseHostHeader(host))) {
-    return "workbench HTTP API only accepts loopback hosts";
+  if (host !== null && !isAllowedHost(parseHostHeader(host), auth)) {
+    return "workbench HTTP API only accepts loopback or allowed remote hosts";
   }
-
-  const contentType = request.headers.get("content-type")?.split(";")[0]
-    .trim()
-    .toLowerCase();
-  if (contentType !== "application/json") {
-    return "content-type must be application/json";
-  }
-
-  const secFetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
-  if (secFetchSite === "cross-site") {
-    return "cross-site workbench turn requests are not allowed";
-  }
-
-  const origin = request.headers.get("origin");
-  if (origin !== null) {
-    let originUrl: URL;
-    try {
-      originUrl = new URL(origin);
-    } catch {
-      return "invalid request origin";
-    }
-    if (!isLoopbackHost(originUrl.hostname)) {
-      return "cross-origin workbench turn requests are not allowed";
-    }
-  }
-
   return undefined;
 }
 
-function validateWorkbenchReadIntent(
+function validateRequestOrigin(
   request: Request,
-  url: URL,
+  auth: WorkbenchHttpAuthOptions,
 ): string | undefined {
-  if (!isLoopbackHost(url.hostname)) {
-    return "workbench HTTP API only accepts loopback hosts";
-  }
-
-  const host = request.headers.get("host");
-  if (host !== null && !isLoopbackHost(parseHostHeader(host))) {
-    return "workbench HTTP API only accepts loopback hosts";
-  }
-
   const secFetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
   if (secFetchSite === "cross-site") {
     return "cross-site workbench requests are not allowed";
   }
-
   const origin = request.headers.get("origin");
   if (origin !== null) {
     let originUrl: URL;
@@ -132,12 +178,49 @@ function validateWorkbenchReadIntent(
     } catch {
       return "invalid request origin";
     }
-    if (!isLoopbackHost(originUrl.hostname)) {
+    if (!isAllowedHost(originUrl.hostname, auth)) {
       return "cross-origin workbench requests are not allowed";
     }
   }
-
   return undefined;
+}
+
+function isAllowedHost(
+  hostname: string,
+  auth: WorkbenchHttpAuthOptions,
+): boolean {
+  if (isLoopbackHost(hostname)) return true;
+  const normalized = hostname.toLowerCase();
+  return (auth.allowedHosts ?? []).some((allowed) =>
+    allowed.toLowerCase() === normalized
+  );
+}
+
+function parseBearerToken(header: string | null): string | undefined {
+  if (header === null) return undefined;
+  const match = header.match(/^Bearer\s+(\S+)$/i);
+  return match?.[1];
+}
+
+/**
+ * Compare a presented bearer against the configured key without a
+ * length-dependent early exit: both values are hashed to fixed-size
+ * digests and compared byte-for-byte.
+ */
+async function bearerMatches(
+  provided: string,
+  expected: string,
+): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const bytesA = new Uint8Array(a);
+  const bytesB = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < bytesA.length; i++) diff |= bytesA[i] ^ bytesB[i];
+  return diff === 0;
 }
 
 function parseHostHeader(host: string): string {
@@ -159,6 +242,7 @@ function isLoopbackHost(hostname: string): boolean {
 async function handleJsonTurn(
   request: Request,
   runRuntime: WorkbenchHttpRuntime,
+  authContext: WorkbenchAuthContext,
 ): Promise<Response> {
   let body: TurnRequestBody;
   try {
@@ -176,6 +260,7 @@ async function handleJsonTurn(
     const events: WorkbenchRuntimeEvent[] = [];
     const result = await runRuntime({
       ...runtimeInput,
+      authContext,
       onRuntimeEvent: (event) => {
         events.push(event);
       },
@@ -536,6 +621,17 @@ function renderWorkbenchIndex(): string {
         word-break: break-word;
       }
 
+      .key-bar {
+        display: grid;
+        gap: 10px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 10px;
+      }
+
+      .key-bar[hidden] {
+        display: none;
+      }
+
       .error {
         display: none;
         border: 1px solid #efb5ad;
@@ -598,6 +694,13 @@ function renderWorkbenchIndex(): string {
       <main>
         <section class="lane" aria-label="Conversation">
           <form class="panel" id="turn-form">
+            <div id="key-bar" class="key-bar" hidden>
+              <label for="api-key">API key (remote access)</label>
+              <div class="controls" style="grid-template-columns: 1fr auto;">
+                <input id="api-key" type="password" autocomplete="off">
+                <button id="save-key" type="button">Save key</button>
+              </div>
+            </div>
             <label for="prompt">Prompt</label>
             <textarea id="prompt" name="prompt" required autocomplete="off" spellcheck="true"></textarea>
             <div class="controls">
@@ -678,6 +781,41 @@ function renderWorkbenchIndex(): string {
       let events = [];
       let selectedEventIndex = -1;
 
+      const keyBar = document.querySelector("#key-bar");
+      const keyInput = document.querySelector("#api-key");
+      const saveKeyButton = document.querySelector("#save-key");
+      const KEY_STORAGE = "dyfj-workbench-api-key";
+      const isLoopback = ["localhost", "127.0.0.1", "[::1]"]
+        .includes(location.hostname);
+
+      function storedApiKey() {
+        try {
+          return localStorage.getItem(KEY_STORAGE) ?? "";
+        } catch {
+          return "";
+        }
+      }
+
+      function showKeyBar() {
+        keyBar.hidden = false;
+      }
+
+      saveKeyButton.addEventListener("click", () => {
+        try {
+          localStorage.setItem(KEY_STORAGE, keyInput.value.trim());
+        } catch {
+          showError("could not persist the API key in this browser");
+          return;
+        }
+        keyInput.value = "";
+        keyBar.hidden = true;
+        clearError();
+      });
+
+      if (!isLoopback && storedApiKey() === "") {
+        showKeyBar();
+      }
+
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         clearError();
@@ -699,13 +837,17 @@ function renderWorkbenchIndex(): string {
         };
 
         try {
+          const headers = { "content-type": "application/json" };
+          const apiKey = storedApiKey();
+          if (apiKey !== "") headers["authorization"] = "Bearer " + apiKey;
           const response = await fetch("/api/turn", {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers,
             body: JSON.stringify(body),
           });
           const payload = await response.json();
           if (!response.ok) {
+            if (response.status === 401) showKeyBar();
             throw new Error(payload.error ?? "request failed");
           }
           renderTurn(payload);
@@ -836,6 +978,44 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 if (import.meta.main) {
   const port = Number(Deno.env.get("DYFJ_WORKBENCH_HTTP_PORT") ?? "8787");
-  const hostname = Deno.env.get("DYFJ_WORKBENCH_HTTP_HOST") ?? "127.0.0.1";
-  Deno.serve({ hostname, port }, createWorkbenchHttpHandler());
+  const hostnames = (Deno.env.get("DYFJ_WORKBENCH_HTTP_HOST") ?? "127.0.0.1")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const apiKey = Deno.env.get("DYFJ_WORKBENCH_API_KEY");
+  const nonLoopback = hostnames.filter((name) => !isLoopbackHost(name));
+  const allowedHosts = [
+    ...nonLoopback,
+    ...(Deno.env.get("DYFJ_WORKBENCH_ALLOWED_HOSTS") ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  ];
+
+  if (nonLoopback.length > 0 && (apiKey === undefined || apiKey.length === 0)) {
+    console.error(
+      "Refusing to bind non-loopback interfaces without DYFJ_WORKBENCH_API_KEY set.",
+    );
+    Deno.exit(1);
+  }
+
+  const handler = createWorkbenchHttpHandler({
+    auth: { apiKey, allowedHosts },
+  });
+  let bound = 0;
+  for (const hostname of hostnames) {
+    try {
+      Deno.serve({ hostname, port }, handler);
+      bound += 1;
+    } catch (err) {
+      // A down overlay-network interface must not take the loopback server with it.
+      console.error(
+        `Could not bind ${hostname}:${port}: ${(err as Error).message}`,
+      );
+    }
+  }
+  if (bound === 0) {
+    console.error("No interfaces bound; exiting.");
+    Deno.exit(1);
+  }
 }

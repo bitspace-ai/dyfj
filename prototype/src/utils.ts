@@ -227,6 +227,7 @@ export async function writeModelSelectedEvent(params: {
   provider?: string;
   api?: string;
   durationMs?: number;
+  authnFields?: Record<string, unknown>;
 }): Promise<void> {
   await writeEvent(buildModelSelectedEventPayload(params));
 }
@@ -243,6 +244,7 @@ export function buildModelSelectedEventPayload(params: {
   eventId?: string;
   spanId?: string;
   principalId?: string;
+  authnFields?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
     event_id: params.eventId ?? generateULID(),
@@ -259,6 +261,7 @@ export function buildModelSelectedEventPayload(params: {
     model_id: params.selected,
     provider: params.provider ?? null,
     api: params.api ?? null,
+    ...params.authnFields,
     content: JSON.stringify({
       selected: params.selected,
       considered: params.considered,
