@@ -183,7 +183,7 @@ For the local HTTP veneer:
 deno task workbench-http
 ```
 
-The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests and `GET /api/models` for the model registry (active registry rows plus the local defaults).
+The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests (pass a `sessionId` to resume a conversation), `GET /api/models` for the model registry (active registry rows plus the local defaults), and a session surface: `GET /api/sessions` (grouped by project), `POST /api/sessions`, and `GET /api/sessions/{id}/events` with an optional `asOf` Dolt time-travel parameter.
 
 #### Remote access (optional, authenticated)
 

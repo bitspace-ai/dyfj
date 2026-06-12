@@ -6,6 +6,15 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ## [Unreleased]
 
+### Added
+
+- Session REST surface for the cockpit: `GET /api/sessions` (grouped by project), `POST /api/sessions` (create bound to a project), and `GET /api/sessions/{id}/events` with an optional `asOf` Dolt time-travel read. Sessions gain a `project` column (`schema/013_sessions_project.sql`).
+- Multi-turn conversations: `POST /api/turn` accepts a `sessionId` to resume — events append to the session and a compact transcript is rebuilt from prior `session_start`/`model_response` events so the model carries the conversation. The operator prompt now rides on `session_start` events to make transcripts reconstructable from Dolt alone.
+
+### Changed
+
+- `AS OF` reads resolve against Dolt commit history: events newer than the latest Dolt commit are not yet visible to time-travel queries. A periodic event-commit cadence is future work for the inspector.
+
 ## [2026-06-12]
 
 ### Added

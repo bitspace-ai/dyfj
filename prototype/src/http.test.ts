@@ -427,3 +427,166 @@ describe("remote bearer auth", () => {
     expect(await response.text()).toContain("DYFJ Workbench");
   });
 });
+
+describe("session REST surface", () => {
+  const sessionId = "01ABCDEF0123456789ABCDEF01";
+  const sampleEvent = {
+    eventId: "01EVENT",
+    eventType: "session_start",
+    traceId: "trace",
+    principalId: "chris",
+    modelId: null,
+    provider: null,
+    content: "earlier prompt",
+    stopReason: null,
+    tokensInput: null,
+    tokensOutput: null,
+    costTotal: null,
+    createdAt: "2026-06-12 10:00:00",
+  };
+
+  test("lists sessions grouped by project", async () => {
+    const calls: Array<{ project?: string }> = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      listSessions: (options) => {
+        calls.push(options);
+        return Promise.resolve([{
+          project: "dyfj",
+          sessions: [],
+        }]);
+      },
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/sessions?project=dyfj"),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      projects: [{ project: "dyfj", sessions: [] }],
+    });
+    expect(calls).toEqual([{ project: "dyfj" }]);
+  });
+
+  test("creates a project-bound session", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      createSession: (input) =>
+        Promise.resolve({
+          sessionId,
+          slug: "workbench-x",
+          project: input.project ?? null,
+        }),
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: "dyfj" }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ sessionId, project: "dyfj" });
+  });
+
+  test("fetches session events with an asOf passthrough", async () => {
+    const calls: Array<{ sessionId: string; asOf?: string }> = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      fetchSessionEvents: (input) => {
+        calls.push(input);
+        return Promise.resolve([sampleEvent]);
+      },
+    });
+    const response = await handler(
+      new Request(
+        `http://127.0.0.1:8787/api/sessions/${sessionId}/events?asOf=2026-06-12 10:00:00`,
+      ),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.events).toHaveLength(1);
+    expect(calls).toEqual([{ sessionId, asOf: "2026-06-12 10:00:00" }]);
+  });
+
+  test("rejects malformed session ids and asOf values", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      fetchSessionEvents: () => Promise.resolve([]),
+    });
+    const badId = await handler(
+      new Request("http://127.0.0.1:8787/api/sessions/not-a-ulid/events"),
+    );
+    expect(badId.status).toBe(400);
+    const badAsOf = await handler(
+      new Request(
+        `http://127.0.0.1:8787/api/sessions/${sessionId}/events?asOf=yesterday`,
+      ),
+    );
+    expect(badAsOf.status).toBe(400);
+  });
+
+  test("guards session endpoints with the bearer policy", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      listSessions: () => Promise.resolve([]),
+      auth: { apiKey: "k", allowedHosts: ["100.64.0.7"] },
+    });
+    const response = await handler(
+      new Request("http://100.64.0.7:8787/api/sessions"),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  test("resumes a session on /api/turn with rebuilt conversation context", async () => {
+    const runtimeCalls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: (input) => {
+        runtimeCalls.push(input);
+        return Promise.resolve(runtimeResult());
+      },
+      fetchSessionEvents: () =>
+        Promise.resolve([
+          sampleEvent,
+          {
+            ...sampleEvent,
+            eventType: "model_response",
+            content: "earlier answer",
+          },
+        ]),
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "continue", sessionId }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(runtimeCalls[0].sessionId).toBe(sessionId);
+    expect(runtimeCalls[0].conversationContext).toContain(
+      "Operator: earlier prompt",
+    );
+    expect(runtimeCalls[0].conversationContext).toContain(
+      "Assistant: earlier answer",
+    );
+  });
+
+  test("rejects a malformed sessionId on /api/turn", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: (input) => {
+        calls.push(input);
+        return Promise.resolve(runtimeResult());
+      },
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "continue", sessionId: "nope" }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(calls).toEqual([]);
+  });
+});

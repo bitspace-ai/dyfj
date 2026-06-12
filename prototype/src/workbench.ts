@@ -68,6 +68,17 @@ export interface WorkbenchRuntimeInput {
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
   authContext?: WorkbenchAuthContext;
+  /**
+   * Resume an existing session: events append to this id and the session
+   * row is updated rather than created. Omit for a fresh session.
+   */
+  sessionId?: string;
+  /**
+   * Compact transcript of earlier turns in the session, assembled by the
+   * caller (e.g. from session_start/model_response events). Prepended to
+   * the model prompt so resumed conversations carry their history.
+   */
+  conversationContext?: string;
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   confirmPaidEscalation?: (banner: string) => Promise<void>;
@@ -785,7 +796,8 @@ export async function runWorkbenchRuntime(
   const commandRegistry = createCommandRegistry();
   let commandTools: ReturnType<typeof commandRegistry.projectTools> = [];
 
-  const sessionId = generateULID();
+  const resumingSession = runtimeInput.sessionId !== undefined;
+  const sessionId = runtimeInput.sessionId ?? generateULID();
   const sessionSlug = buildWorkbenchSessionSlug(sessionId);
   const traceId = generateTraceId();
   const sessionStart = Date.now();
@@ -810,7 +822,9 @@ export async function runWorkbenchRuntime(
   const usesRepoAskContext = mode === "ask" || isNextWork;
   const bestEffortEvents = usesRepoAskContext;
   const workletId = isNextWork ? "next-work.v0" : undefined;
-  let modelPrompt = cliPrompt;
+  let modelPrompt = runtimeInput.conversationContext !== undefined
+    ? `${runtimeInput.conversationContext}\n\nCurrent message:\n${cliPrompt}`
+    : cliPrompt;
 
   console.log("DYFJ Workbench\n");
 
@@ -839,6 +853,9 @@ export async function runWorkbenchRuntime(
       resource: "workbench_session",
       authz_basis: authContext.authzBasis,
       ...authnEventFields,
+      // The operator's prompt rides on session_start so a conversation
+      // transcript can be rebuilt from events alone (resume, inspector).
+      content: cliPrompt,
     }), bestEffortEvents);
 
   let spanId: string | null = null;
@@ -932,18 +949,20 @@ export async function runWorkbenchRuntime(
       });
     }
 
-    await writeMaybe(() =>
-      createWorkbenchSession({
-        sessionId,
-        slug: sessionSlug,
-        taskDescription: cliPrompt,
-        content: buildWorkbenchSessionContent({
-          mode,
-          prompt: cliPrompt,
-          traceId,
-          contextSources: contextSourceLines,
-        }),
-      }), bestEffortEvents);
+    if (!resumingSession) {
+      await writeMaybe(() =>
+        createWorkbenchSession({
+          sessionId,
+          slug: sessionSlug,
+          taskDescription: cliPrompt,
+          content: buildWorkbenchSessionContent({
+            mode,
+            prompt: cliPrompt,
+            traceId,
+            contextSources: contextSourceLines,
+          }),
+        }), bestEffortEvents);
+    }
 
     let models;
     try {

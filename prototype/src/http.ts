@@ -12,6 +12,15 @@ import {
   type WorkbenchModel,
   type WorkbenchRoutingOptions,
 } from "./provider";
+import {
+  buildConversationContext,
+  createProjectWorkbenchSession,
+  fetchWorkbenchSessionEvents,
+  isValidAsOfTimestamp,
+  listWorkbenchSessions,
+  type WorkbenchProjectSessions,
+  type WorkbenchSessionEvent,
+} from "./sessions";
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -28,7 +37,20 @@ export interface WorkbenchHttpHandlerOptions {
   runRuntime?: WorkbenchHttpRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
   auth?: WorkbenchHttpAuthOptions;
+  listSessions?: (options: {
+    project?: string;
+  }) => Promise<WorkbenchProjectSessions[]>;
+  createSession?: (input: {
+    project?: string;
+    taskDescription?: string;
+  }) => Promise<{ sessionId: string; slug: string; project: string | null }>;
+  fetchSessionEvents?: (input: {
+    sessionId: string;
+    asOf?: string;
+  }) => Promise<WorkbenchSessionEvent[]>;
 }
+
+const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
 
 async function loadPickerModels(): Promise<WorkbenchModel[]> {
   try {
@@ -44,6 +66,7 @@ interface TurnRequestBody {
   prompt?: unknown;
   mode?: unknown;
   routingOptions?: unknown;
+  sessionId?: unknown;
 }
 
 export function createWorkbenchHttpHandler(
@@ -51,6 +74,11 @@ export function createWorkbenchHttpHandler(
 ): (request: Request) => Promise<Response> {
   const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
   const loadModels = options.loadModels ?? loadPickerModels;
+  const listSessions = options.listSessions ?? listWorkbenchSessions;
+  const createSession = options.createSession ??
+    createProjectWorkbenchSession;
+  const fetchSessionEvents = options.fetchSessionEvents ??
+    fetchWorkbenchSessionEvents;
   const auth = options.auth ?? {};
   return async (request) => {
     const url = new URL(request.url);
@@ -70,6 +98,74 @@ export function createWorkbenchHttpHandler(
       }
       return jsonResponse({ models: await loadModels() });
     }
+    if (request.method === "GET" && url.pathname === "/api/sessions") {
+      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      if ("error" in resolved) {
+        return jsonResponse({ error: resolved.error }, resolved.status);
+      }
+      const project = url.searchParams.get("project") ?? undefined;
+      try {
+        return jsonResponse({ projects: await listSessions({ project }) });
+      } catch (err) {
+        return jsonResponse({ error: (err as Error).message }, 500);
+      }
+    }
+    if (request.method === "POST" && url.pathname === "/api/sessions") {
+      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      if ("error" in resolved) {
+        return jsonResponse({ error: resolved.error }, resolved.status);
+      }
+      let body: { project?: unknown; taskDescription?: unknown };
+      try {
+        body = await request.json() as typeof body;
+      } catch {
+        return jsonResponse({ error: "request body must be JSON" }, 400);
+      }
+      if (body.project !== undefined && typeof body.project !== "string") {
+        return jsonResponse({ error: "project must be a string" }, 400);
+      }
+      if (
+        body.taskDescription !== undefined &&
+        typeof body.taskDescription !== "string"
+      ) {
+        return jsonResponse({ error: "taskDescription must be a string" }, 400);
+      }
+      try {
+        const created = await createSession({
+          project: body.project,
+          taskDescription: body.taskDescription,
+        });
+        return jsonResponse(created, 201);
+      } catch (err) {
+        return jsonResponse({ error: (err as Error).message }, 500);
+      }
+    }
+    const eventsMatch = url.pathname.match(
+      /^\/api\/sessions\/([^/]+)\/events$/,
+    );
+    if (request.method === "GET" && eventsMatch !== null) {
+      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      if ("error" in resolved) {
+        return jsonResponse({ error: resolved.error }, resolved.status);
+      }
+      const sessionId = eventsMatch[1];
+      if (!SESSION_ID_SHAPE.test(sessionId)) {
+        return jsonResponse({ error: "invalid session id" }, 400);
+      }
+      const asOf = url.searchParams.get("asOf") ?? undefined;
+      if (asOf !== undefined && !isValidAsOfTimestamp(asOf)) {
+        return jsonResponse(
+          { error: "asOf must be a timestamp like 2026-06-12 10:00:00" },
+          400,
+        );
+      }
+      try {
+        const events = await fetchSessionEvents({ sessionId, asOf });
+        return jsonResponse({ sessionId, asOf: asOf ?? null, events });
+      } catch (err) {
+        return jsonResponse({ error: (err as Error).message }, 500);
+      }
+    }
     if (request.method === "POST" && url.pathname === "/api/turn") {
       const resolved = await resolveWorkbenchAuth(request, url, auth);
       if ("error" in resolved) {
@@ -84,7 +180,12 @@ export function createWorkbenchHttpHandler(
           403,
         );
       }
-      return await handleJsonTurn(request, runRuntime, resolved);
+      return await handleJsonTurn(
+        request,
+        runRuntime,
+        resolved,
+        fetchSessionEvents,
+      );
     }
     return jsonResponse({ error: "not found" }, 404);
   };
@@ -243,6 +344,9 @@ async function handleJsonTurn(
   request: Request,
   runRuntime: WorkbenchHttpRuntime,
   authContext: WorkbenchAuthContext,
+  fetchSessionEvents: NonNullable<
+    WorkbenchHttpHandlerOptions["fetchSessionEvents"]
+  >,
 ): Promise<Response> {
   let body: TurnRequestBody;
   try {
@@ -256,10 +360,37 @@ async function handleJsonTurn(
     return jsonResponse({ error: runtimeInput.error }, 400);
   }
 
+  // Resume: rebuild a compact transcript from the session's prior events so
+  // the model carries the conversation, and append this turn to the same id.
+  let resume: Pick<
+    WorkbenchRuntimeInput,
+    "sessionId" | "conversationContext"
+  > = {};
+  if (body.sessionId !== undefined) {
+    if (
+      typeof body.sessionId !== "string" ||
+      !SESSION_ID_SHAPE.test(body.sessionId)
+    ) {
+      return jsonResponse({ error: "invalid session id" }, 400);
+    }
+    try {
+      const priorEvents = await fetchSessionEvents({
+        sessionId: body.sessionId,
+      });
+      resume = {
+        sessionId: body.sessionId,
+        conversationContext: buildConversationContext(priorEvents),
+      };
+    } catch (err) {
+      return jsonResponse({ error: (err as Error).message }, 500);
+    }
+  }
+
   try {
     const events: WorkbenchRuntimeEvent[] = [];
     const result = await runRuntime({
       ...runtimeInput,
+      ...resume,
       authContext,
       onRuntimeEvent: (event) => {
         events.push(event);
