@@ -16,18 +16,21 @@ export type CommandEffect =
   | "call.model.paid"
   | "emit.event";
 
-export interface JsonSchemaObject {
+// Type aliases (not interfaces) so these stay assignable to
+// Record<string, unknown> tool-parameter contracts: TypeScript gives
+// aliases an implicit index signature that interfaces do not get.
+export type JsonSchemaObject = {
   type: "object";
   required?: string[];
   properties?: Record<string, JsonSchemaProperty>;
   additionalProperties?: boolean;
-}
+};
 
-export interface JsonSchemaProperty {
+export type JsonSchemaProperty = {
   type: "string" | "number" | "boolean" | "object" | "array";
   pattern?: string;
   description?: string;
-}
+};
 
 export interface PermissionEnvelope {
   effects: CommandEffect[];
@@ -211,7 +214,8 @@ export async function invokeCommand<TResult = unknown>(
       decision: policy.decision,
       authzBasis: policy.authzBasis,
       isError: true,
-      reason: policy.reason,
+      // "ask" results may omit a reason; the outcome contract requires one.
+      reason: policy.reason ?? "command requires operator approval",
     };
   }
 

@@ -125,24 +125,29 @@ export function validateStructuredOutput(
   }
 
   const errors: string[] = [];
-  if (typeof parsed.answer !== "string") {
+  const answer = parsed.answer;
+  const confidence = parsed.confidence;
+  if (typeof answer !== "string") {
     errors.push("answer must be a string");
   }
   if (
-    parsed.confidence !== "low" &&
-    parsed.confidence !== "medium" &&
-    parsed.confidence !== "high"
+    confidence !== "low" &&
+    confidence !== "medium" &&
+    confidence !== "high"
   ) {
     errors.push("confidence must be low, medium, or high");
   }
-  if (errors.length > 0) return { ok: false, errors };
+  // Re-state the guards so control flow narrows the types for the return.
+  if (
+    typeof answer !== "string" ||
+    (confidence !== "low" && confidence !== "medium" && confidence !== "high")
+  ) {
+    return { ok: false, errors };
+  }
 
   return {
     ok: true,
-    value: {
-      answer: parsed.answer,
-      confidence: parsed.confidence,
-    },
+    value: { answer, confidence },
     errors: [],
   };
 }

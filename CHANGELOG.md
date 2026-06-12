@@ -8,8 +8,14 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
+- `deno task check`: strict typecheck of the non-test import graph (entrypoints `src/http.ts`, `src/workbench.ts`, `mcp/server.ts`). `deno task test` now runs it first, closing the gap where vitest's esbuild transpilation let type errors accumulate unenforced.
+
 - Session REST surface for the cockpit: `GET /api/sessions` (grouped by project), `POST /api/sessions` (create bound to a project), and `GET /api/sessions/{id}/events` with an optional `asOf` Dolt time-travel read. Sessions gain a `project` column (`schema/013_sessions_project.sql`).
 - Multi-turn conversations: `POST /api/turn` accepts a `sessionId` to resume — events append to the session and a compact transcript is rebuilt from prior `session_start`/`model_response` events so the model carries the conversation. The operator prompt now rides on `session_start` events to make transcripts reconstructable from Dolt alone.
+
+### Fixed
+
+- Three latent strict-mode type errors: command policy "ask" outcomes now default a reason instead of passing `undefined` into a required field; the streaming chat reader declares the (always-absent) `toolCalls` field so both reader paths share one shape; JSON-schema tool types became type aliases so they satisfy `Record<string, unknown>` tool-parameter contracts; structured-output validation now narrows types instead of asserting past the checker.
 
 ### Changed
 

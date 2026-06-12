@@ -1,6 +1,7 @@
 {
   "tasks": {
-    "test": "TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.6 run --root . --pool=threads",
+    "check": "deno check --sloppy-imports src/http.ts src/workbench.ts mcp/server.ts",
+    "test": "deno task check && TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.6 run --root . --pool=threads",
     "start": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench-http": "deno run -P=workbench-http --env-file=.env --sloppy-imports src/http.ts",

@@ -206,7 +206,8 @@ Project the key from your secret manager at process start, as with provider keys
 Useful validation tasks:
 
 ```sh
-deno task test
+deno task test            # runs deno task check first
+deno task check           # strict typecheck of the non-test import graph
 deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events

@@ -957,6 +957,9 @@ async function readOpenAIChatStream(
   text: string;
   finishReason?: string;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+  // Streaming turns never carry tool calls (the runtime disables streaming
+  // when tools are projected); declared so both readers share one shape.
+  toolCalls?: WorkbenchToolCall[];
   timings: WorkbenchCallTimings;
 }> {
   if (!response.body) {
