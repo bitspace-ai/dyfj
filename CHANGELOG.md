@@ -1,0 +1,97 @@
+# Changelog
+
+Notable changes to DYFJ. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+DYFJ is an actively developed prototype with no release tags yet, so entries are dated rather than versioned. Document-level revisions of the operating-context README are tracked separately in its Revision history section.
+
+## [Unreleased]
+
+## [2026-06-12]
+
+### Added
+
+- Multi-interface bind for the Workbench HTTP server: `DYFJ_WORKBENCH_HTTP_HOST` accepts a comma-separated host list, and a failed bind on one interface no longer takes the others down.
+- Bearer-key authentication for non-loopback requests via `DYFJ_WORKBENCH_API_KEY` and `DYFJ_WORKBENCH_ALLOWED_HOSTS`. Loopback remains the keyless local-dev path; a presented bearer is always verified, even on loopback.
+- Runtime events now populate the authn metadata columns from `schema/011_events_authn.sql` (`authn_status`, `authn_mechanism`, `authn_issuer_ref`) plus a transport-derived `authz_basis`, threaded through the new `WorkbenchAuthContext`.
+- API-key entry bar in the minimal HTML surface for remote access; the key persists in browser `localStorage` and the bar reappears on a 401.
+
+### Security
+
+- The HTTP server fails closed: non-loopback binds are refused entirely when no API key is configured, and unknown hostnames are rejected regardless of credentials.
+
+## [2026-06-11]
+
+### Added
+
+- Native Anthropic Messages provider adapter behind the paid-escalation path: prompt caching with a stable system-prefix cache block, cache-aware cost accounting (reads at 0.1x input, 5-minute-TTL writes at 1.25x), and SSE streaming.
+- `GET /api/models` registry endpoint serving active registry rows plus the local defaults, for model pickers.
+- Model registry refresh (`schema/012_models_2026_06_refresh.sql`): MLX Qwen3.5 4B local default at tier 0; Claude Sonnet 4.6 (tier 1), Claude Opus 4.8 and Claude Fable 5 (tier 2) with per-model cache economics. The stale Opus 4.5 row is deactivated.
+- Session receipts and runtime results now carry prompt-cache token telemetry (`cacheRead`/`cacheWrite`).
+
+### Fixed
+
+- DYFJ command ids (for example `memory.read`) are mapped onto the Anthropic tool-name wire format and back, instead of failing the request with an HTTP 400.
+- Explicit tier requests honor the local preference chain (MLX first, then Ollama fallbacks) instead of taking the first registry row.
+
+### Changed
+
+- README, prototype README, and `.env.example` brought current with the hosted provider path and `op run`-style key projection.
+
+## [2026-06-09]
+
+### Changed
+
+- MLX-LM (Qwen3.5 4B on Apple silicon) became the local provider default; Ollama remains the supported fallback.
+
+### Security
+
+- Hardened Workbench local HTTP boundaries: loopback host/origin/content-type intent checks on turn and read endpoints.
+
+## [2026-06-08]
+
+### Added
+
+- Expanded Workbench HTTP surface beyond the initial smoke path.
+
+## [2026-06-05]
+
+### Changed
+
+- Defaulted Workbench to Laguna XS.2 (superseded 2026-06-09 by the MLX default).
+
+### Security
+
+- Hardened Workbench memory boundaries.
+
+## [2026-06-04]
+
+### Changed
+
+- Workbench runtime split into a shared single-turn boundary with CLI/shell and local HTTP veneers; presentation layers pass inputs and render results while the runtime owns routing, execution, persistence, budget, and receipts. C4/D2 runtime diagrams added.
+
+## [2026-06-01]
+
+### Added
+
+- Barebones Workbench harness shell (`deno task workbench shell`).
+- Solo operator context kit example.
+
+## [2026-05-30]
+
+### Added
+
+- Authn metadata columns on the events table (`schema/011_events_authn.sql`).
+- Repo-native schema validation: `deno task validate-schema` and `deno task test:schema`.
+
+## [2026-05-25] through [2026-05-28]
+
+### Added
+
+- Workbench MVP arc: budget tally and per-call/session limits, paid-escalation preflight with interactive consent, session receipts, event-sequence verification, model routing MVP, repo-local `ask` command, and a model-literacy diagnostics suite (response modes, context-size response, structured output, streaming TPOT).
+- Deno permission sets for prototype tasks.
+
+## [2026-04-26] through [2026-04-27]
+
+### Added
+
+- Initial operating-context README with Layer 0 stances, repo structure (`prototype/` TypeScript on Deno, `core/` Rust substrate, `schema/` canonical Dolt DDL), and MIT license.

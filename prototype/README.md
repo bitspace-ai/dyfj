@@ -44,6 +44,8 @@ deno task workbench-http
 
 The HTTP task listens on `http://127.0.0.1:8787/` by default. `GET /` returns a minimal HTML surface; `POST /api/turn` accepts JSON and calls the same single-turn runtime used by the CLI veneer; `GET /api/models` returns the model registry for pickers.
 
+Loopback needs no credentials. To serve additional interfaces (a private overlay network, for example), set `DYFJ_WORKBENCH_HTTP_HOST` to a comma-separated host list and provide a bearer key in `DYFJ_WORKBENCH_API_KEY` - non-loopback requests must present it as `Authorization: Bearer <key>`, and the server refuses non-loopback binds without it. `DYFJ_WORKBENCH_ALLOWED_HOSTS` allows extra non-loopback hostnames beyond the bind list. Authenticated requests are recorded on the event log with `authn_mechanism = api_key`. Project the key at process start (for example `op run`), as with provider keys; see the root README's "Remote access" section for the full posture.
+
 The prototype reads Dolt connection settings from environment variables. For the default local server:
 
 ```sh

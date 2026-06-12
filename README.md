@@ -9,13 +9,16 @@ This README is the *operating context* for the project. Decisions up front. How-
 - `core/` - Rust substrate. Contains the first schema tracer bullet: a small event read/write library plus a demo binary that round-trips an event through Dolt. Where stabilized components live.
 - `prototype/` - TypeScript on Deno. Real working code (Workbench CLI/shell, local HTTP veneer, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
+- `CHANGELOG.md` - dated change tracking in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 - `LICENSE` - MIT.
 
 The split between `core/` and `prototype/` is not a phase boundary. It's a permanent two-tier structure where the Rust line is a moving boundary that advances downward as components stabilize. See Layer 0 stance #3 below.
 
 ## Status
 
-Early and active. The prototype is functional - Workbench CLI/shell, local HTTP veneer, shared single-turn runtime boundary, local-first provider path with a first hosted provider (Anthropic) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+Early and active. The prototype is functional - Workbench CLI/shell, HTTP veneer (loopback by default, with optional authenticated remote interfaces), shared single-turn runtime boundary, local-first provider path with a first hosted provider (Anthropic) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+
+Dated change tracking lives in [CHANGELOG.md](CHANGELOG.md).
 
 ## How to use this document
 
@@ -182,6 +185,24 @@ deno task workbench-http
 
 The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests and `GET /api/models` for the model registry (active registry rows plus the local defaults).
 
+#### Remote access (optional, authenticated)
+
+Loopback is the default and needs no credentials. To reach the veneer from another machine - say, over a private overlay network such as WireGuard, Tailscale, or NetBird - bind additional interfaces and require a bearer key:
+
+```sh
+DYFJ_WORKBENCH_HTTP_HOST=127.0.0.1,<remote-interface-ip> \
+DYFJ_WORKBENCH_API_KEY="op://<vault>/<item>/credential" \
+  op run -- deno task workbench-http
+```
+
+- `DYFJ_WORKBENCH_HTTP_HOST` takes a comma-separated host list; each bound interface that is not loopback requires every request to present `Authorization: Bearer <key>`.
+- `DYFJ_WORKBENCH_ALLOWED_HOSTS` optionally allows extra non-loopback hostnames (an overlay-network FQDN, for example) beyond the bind list.
+- The server fails closed: non-loopback binds are refused when no API key is configured, unknown hostnames are rejected regardless of credentials, and a wrong bearer is rejected even on loopback.
+- Requests arriving with a valid bearer are recorded on the event log with `authn_mechanism = api_key`; keyless loopback requests record the local-policy basis. Identity is audit data, not an afterthought - see `schema/011_events_authn.sql`.
+- The HTML surface prompts for the key on first remote use and keeps it in browser `localStorage`.
+
+Project the key from your secret manager at process start, as with provider keys. Do not put it in `.env`, and do not expose these ports publicly - this is an authenticated private-network posture, not an internet-facing one.
+
 Useful validation tasks:
 
 ```sh
@@ -343,6 +364,8 @@ Reserved space for new questions as they accumulate.
 
 ## 12. Revision history
 
+Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 - 2026-04-26 - Draft 1 from initial brain dump.
 - 2026-04-27 - Draft 2: Non-goals added; Layer 0 stances stabilized at five; "schema in data layer" promoted into Layer 0; cost visibility promoted from cross-cutting concern to Layer 0 stance.
 - 2026-04-27 - Draft 3: lineage framing stripped; Influences section added.
@@ -353,3 +376,4 @@ Reserved space for new questions as they accumulate.
 - 2026-05-25 - Rust core tracer bullet shipped: `dyfj_core::events::{write, read_by_id}` plus demo and ignored live-Dolt integration tests.
 - 2026-05-30 - Event authn metadata shipped as `schema/011_events_authn.sql`; repo-native schema validation added with `deno task validate-schema` and `deno task test:schema`.
 - 2026-06-04 - Workbench runtime split into a shared single-turn boundary with CLI/shell and local HTTP veneers; C4/D2 runtime diagrams added.
+- 2026-06-12 - Remote-access posture documented (authenticated non-loopback interfaces); change tracking split out into CHANGELOG.md, leaving this section to document revisions.
