@@ -37,6 +37,7 @@
         "DYFJ_BUDGET_SESSION_USD",
         "DYFJ_BUDGET_PER_CALL_USD",
         "DYFJ_BUDGET_TALLY",
+        "ANTHROPIC_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -53,7 +54,8 @@
         "127.0.0.1:18080",
         "localhost:18080",
         "127.0.0.1:11434",
-        "localhost:11434"
+        "localhost:11434",
+        "api.anthropic.com:443"
       ],
       "run": ["bd"]
     },
@@ -71,6 +73,7 @@
         "DYFJ_BUDGET_SESSION_USD",
         "DYFJ_BUDGET_PER_CALL_USD",
         "DYFJ_BUDGET_TALLY",
+        "ANTHROPIC_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -88,7 +91,8 @@
         "127.0.0.1:18080",
         "localhost:18080",
         "127.0.0.1:11434",
-        "localhost:11434"
+        "localhost:11434",
+        "api.anthropic.com:443"
       ],
       "run": ["bd"]
     },

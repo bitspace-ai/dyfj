@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildAnthropicMessagesRequest,
   buildOpenAIChatRequest,
+  HostedProviderCredentialMissingError,
+  parseAnthropicStreamLine,
   defaultLocalWorkbenchModels,
   estimateTextTokens,
   parseModelRegistryRows,
@@ -9,6 +12,7 @@ import {
   selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   withTimePerOutputToken,
+  WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   type WorkbenchModel,
 } from "./provider";
@@ -457,5 +461,168 @@ describe("withTimePerOutputToken", () => {
         totalMs: 80,
       }, 4).timePerOutputTokenMs,
     ).toBeUndefined();
+  });
+});
+
+describe("anthropic provider adapter", () => {
+  const anthropicModel = models.find((m) => m.provider === "anthropic")!;
+
+  test("buildAnthropicMessagesRequest puts cache_control on the stable system block", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "You are the workbench.",
+      "Say hi.",
+      false,
+      { jsonObject: true },
+    );
+    expect(body.system[0]).toMatchObject({
+      text: "You are the workbench.",
+      cache_control: { type: "ephemeral" },
+    });
+    expect(body.system[1].cache_control).toBeUndefined();
+    expect(body.max_tokens).toBeGreaterThan(0);
+    expect(body.messages).toEqual([{ role: "user", content: "Say hi." }]);
+  });
+
+  test("buildAnthropicMessagesRequest maps tools to input_schema shape", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "sys",
+      "prompt",
+      false,
+      {
+        tools: [{
+          name: "memory.read",
+          description: "Read a memory",
+          parameters: { type: "object", properties: {} },
+        }],
+      },
+    );
+    expect(body.tools).toEqual([{
+      name: "memory.read",
+      description: "Read a memory",
+      input_schema: { type: "object", properties: {} },
+    }]);
+  });
+
+  test("parseAnthropicStreamLine extracts deltas, usage, and stop reason", () => {
+    expect(
+      parseAnthropicStreamLine(
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":12,"cache_read_input_tokens":4000,"cache_creation_input_tokens":100}}}',
+      ),
+    ).toMatchObject({ inputTokens: 12, cacheReadTokens: 4000, cacheWriteTokens: 100 });
+    expect(
+      parseAnthropicStreamLine(
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hel"}}',
+      ),
+    ).toMatchObject({ textDelta: "Hel" });
+    expect(
+      parseAnthropicStreamLine(
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}',
+      ),
+    ).toMatchObject({ stopReason: "end_turn", outputTokens: 9 });
+    expect(
+      parseAnthropicStreamLine('data: {"type":"message_stop"}'),
+    ).toMatchObject({ done: true });
+    expect(parseAnthropicStreamLine("event: message_start")).toBeNull();
+  });
+
+  test("non-streaming turn returns text, tool calls, cache-aware cost", async () => {
+    const fetchFn = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("https://api.anthropic.com/v1/messages");
+      const headers = init?.headers as Record<string, string>;
+      expect(headers["x-api-key"]).toBe("test-key-not-real");
+      expect(headers["anthropic-version"]).toBeTruthy();
+      return new Response(
+        JSON.stringify({
+          content: [
+            { type: "text", text: "Hello from Claude." },
+            { type: "tool_use", id: "toolu_1", name: "memory.read", input: { slug: "x" } },
+          ],
+          stop_reason: "tool_use",
+          usage: {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_input_tokens: 1_000_000,
+            cache_creation_input_tokens: 1_000_000,
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      fetchFn,
+      getEnv: (name) => name === "ANTHROPIC_API_KEY" ? "test-key-not-real" : undefined,
+    });
+
+    expect(result.text).toBe("Hello from Claude.");
+    expect(result.stopReason).toBe("tool_use");
+    expect(result.toolCalls).toEqual([
+      { id: "toolu_1", name: "memory.read", arguments: { slug: "x" } },
+    ]);
+    expect(result.usage.cacheRead).toBe(1_000_000);
+    expect(result.usage.cacheWrite).toBe(1_000_000);
+    // 1M of each at costInput=1/costOutput=5: 1 + 0.1 + 1.25 + 5 = 7.35
+    expect(result.usage.cost.total).toBeCloseTo(7.35, 5);
+  });
+
+  test("streaming turn accumulates deltas and usage", async () => {
+    const sse = [
+      'data: {"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hel"}}',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"lo"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+      'data: {"type":"message_stop"}',
+      "",
+    ].join("\n");
+    const fetchFn = (async () =>
+      new Response(sse, { status: 200 })) as unknown as typeof fetch;
+
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      fetchFn,
+      onTextDelta: (d) => deltas.push(d),
+      getEnv: () => "test-key-not-real",
+    });
+
+    expect(deltas.join("")).toBe("Hello");
+    expect(result.text).toBe("Hello");
+    expect(result.stopReason).toBe("stop");
+    expect(result.usage.input).toBe(10);
+    expect(result.usage.output).toBe(2);
+  });
+
+  test("fails closed when the credential is not projected", async () => {
+    await expect(
+      runWorkbenchTurn({
+        systemPrompt: "sys",
+        prompt: "hi",
+        routing: { modelId: anthropicModel.slug },
+        models,
+        getEnv: () => undefined,
+      }),
+    ).rejects.toThrow(HostedProviderCredentialMissingError);
+  });
+
+  test("rejects non-https hosted base URLs", async () => {
+    const insecure = { ...anthropicModel, slug: "insecure", baseUrl: "http://api.anthropic.com" };
+    await expect(
+      runWorkbenchTurn({
+        systemPrompt: "sys",
+        prompt: "hi",
+        routing: { modelId: "insecure" },
+        models: [...models, insecure],
+        getEnv: () => "test-key-not-real",
+      }),
+    ).rejects.toThrow(WorkbenchHostedProviderBaseUrlError);
   });
 });

@@ -74,6 +74,24 @@ export class HostedInferenceRequiresProviderError extends Error {
   }
 }
 
+export class HostedProviderCredentialMissingError extends Error {
+  constructor(public readonly slug: string, public readonly envVar: string) {
+    super(
+      `Hosted provider credential missing for ${slug}: ` +
+        `${envVar} is not present in the process environment. ` +
+        `Project it narrowly (e.g. op run --env-file=...) at process start.`,
+    );
+    this.name = "HostedProviderCredentialMissingError";
+  }
+}
+
+export class WorkbenchHostedProviderBaseUrlError extends Error {
+  constructor(public readonly slug: string, public readonly baseUrl: string) {
+    super(`Hosted provider baseUrl must be https for ${slug}: ${baseUrl}`);
+    this.name = "WorkbenchHostedProviderBaseUrlError";
+  }
+}
+
 export class WorkbenchLocalProviderBaseUrlError extends Error {
   constructor(public readonly slug: string, public readonly baseUrl: string) {
     super(`Local provider baseUrl is not loopback-only for ${slug}`);
@@ -84,12 +102,21 @@ export class WorkbenchLocalProviderBaseUrlError extends Error {
 export type FetchLike = typeof fetch;
 
 const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
+const anthropicProviders = new Set(["anthropic"]);
 const allowedLocalProviderHosts = new Set([
   "localhost",
   "127.0.0.1",
   "::1",
   "[::1]",
 ]);
+
+const ANTHROPIC_API_VERSION = "2023-06-01";
+const ANTHROPIC_DEFAULT_MAX_TOKENS = 16000;
+const ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY";
+// Cache pricing multipliers relative to base input price: reads ~0.1x,
+// 5-minute-TTL writes 1.25x.
+const ANTHROPIC_CACHE_READ_COST_MULTIPLIER = 0.1;
+const ANTHROPIC_CACHE_WRITE_COST_MULTIPLIER = 1.25;
 
 export interface OpenAIChatStreamEvent {
   done: boolean;
@@ -276,7 +303,7 @@ export function buildOpenAIChatRequest(
   return body;
 }
 
-export async function runWorkbenchTurn(params: {
+export interface WorkbenchTurnParams {
   systemPrompt: string;
   prompt: string;
   routing: WorkbenchRoutingOptions;
@@ -286,10 +313,19 @@ export async function runWorkbenchTurn(params: {
   tools?: WorkbenchToolDefinition[];
   now?: () => number;
   fetchFn?: FetchLike;
-}): Promise<WorkbenchTurnResult> {
+  getEnv?: (name: string) => string | undefined;
+}
+
+export async function runWorkbenchTurn(
+  params: WorkbenchTurnParams,
+): Promise<WorkbenchTurnResult> {
   const models = params.models ?? await loadWorkbenchModels();
   const selection = selectWorkbenchModel(models, params.routing);
   const model = selection.selected;
+
+  if (anthropicProviders.has(model.provider)) {
+    return await runAnthropicMessagesTurn(params, model, selection);
+  }
 
   if (!openAICompatibleLocalProviders.has(model.provider)) {
     throw new HostedInferenceRequiresProviderError(model.slug);
@@ -367,6 +403,378 @@ function isAllowedLocalProviderBaseUrl(baseUrl: string): boolean {
   }
   if (parsed.protocol !== "http:") return false;
   return allowedLocalProviderHosts.has(parsed.hostname.toLowerCase());
+}
+
+function isAllowedHostedProviderBaseUrl(baseUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === "https:";
+}
+
+export interface AnthropicStreamEvent {
+  done: boolean;
+  textDelta?: string;
+  stopReason?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
+export function buildAnthropicMessagesRequest(
+  model: string,
+  systemPrompt: string,
+  prompt: string,
+  stream = false,
+  options: { jsonObject?: boolean; tools?: WorkbenchToolDefinition[] } = {},
+) {
+  // The stable system prompt is the cache prefix: cache_control on the first
+  // block, volatile additions in later blocks, so repeated turns read the
+  // prefix at cache pricing instead of re-paying full input price.
+  const system: Array<{
+    type: "text";
+    text: string;
+    cache_control?: { type: "ephemeral" };
+  }> = [
+    {
+      type: "text",
+      text: systemPrompt,
+      cache_control: { type: "ephemeral" },
+    },
+  ];
+  if (options.jsonObject) {
+    system.push({
+      type: "text",
+      text: "Respond with a single valid JSON object and nothing else.",
+    });
+  }
+
+  const body: {
+    model: string;
+    max_tokens: number;
+    stream: boolean;
+    system: typeof system;
+    messages: Array<{ role: "user"; content: string }>;
+    tools?: Array<{
+      name: string;
+      description: string;
+      input_schema: Record<string, unknown>;
+    }>;
+  } = {
+    model,
+    max_tokens: ANTHROPIC_DEFAULT_MAX_TOKENS,
+    stream,
+    system,
+    messages: [{ role: "user", content: prompt }],
+  };
+  if (options.tools && options.tools.length > 0) {
+    body.tools = options.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.parameters,
+    }));
+  }
+  return body;
+}
+
+export function parseAnthropicStreamLine(
+  line: string,
+): AnthropicStreamEvent | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || !trimmed.startsWith("data:")) return null;
+
+  const json = JSON.parse(trimmed.slice("data:".length).trim()) as {
+    type?: string;
+    message?: {
+      usage?: {
+        input_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+    };
+    delta?: { type?: string; text?: string; stop_reason?: string };
+    usage?: { output_tokens?: number };
+  };
+
+  switch (json.type) {
+    case "message_start":
+      return {
+        done: false,
+        inputTokens: json.message?.usage?.input_tokens,
+        cacheReadTokens: json.message?.usage?.cache_read_input_tokens,
+        cacheWriteTokens: json.message?.usage?.cache_creation_input_tokens,
+      };
+    case "content_block_delta":
+      return json.delta?.type === "text_delta"
+        ? { done: false, textDelta: json.delta.text }
+        : { done: false };
+    case "message_delta":
+      return {
+        done: false,
+        stopReason: json.delta?.stop_reason,
+        outputTokens: json.usage?.output_tokens,
+      };
+    case "message_stop":
+      return { done: true };
+    default:
+      return null;
+  }
+}
+
+function normaliseAnthropicStopReason(
+  reason: string | undefined,
+): WorkbenchTurnResult["stopReason"] {
+  if (reason === "max_tokens") return "length";
+  if (reason === "tool_use") return "tool_use";
+  if (reason === "refusal") return "error";
+  return "stop";
+}
+
+async function runAnthropicMessagesTurn(
+  params: WorkbenchTurnParams,
+  model: WorkbenchModel,
+  selection: WorkbenchSelection,
+): Promise<WorkbenchTurnResult> {
+  if (!isAllowedHostedProviderBaseUrl(model.baseUrl)) {
+    throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
+  }
+  const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
+  const apiKey = getEnv(ANTHROPIC_API_KEY_ENV_VAR);
+  if (!apiKey) {
+    throw new HostedProviderCredentialMissingError(
+      model.slug,
+      ANTHROPIC_API_KEY_ENV_VAR,
+    );
+  }
+
+  const fetchFn = params.fetchFn ?? fetch;
+  const now = params.now ?? performance.now.bind(performance);
+  const stream = params.onTextDelta !== undefined;
+  const requestStarted = now();
+  const response = await fetchFn(
+    `${model.baseUrl.replace(/\/$/, "")}/v1/messages`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": ANTHROPIC_API_VERSION,
+      },
+      body: JSON.stringify(
+        buildAnthropicMessagesRequest(
+          model.slug,
+          params.systemPrompt,
+          params.prompt,
+          stream,
+          { jsonObject: params.jsonObject, tools: params.tools },
+        ),
+      ),
+    },
+  );
+  const headersReceived = now();
+
+  if (!response.ok) {
+    throw new Error(
+      `Anthropic request failed for ${model.slug}: HTTP ${response.status}`,
+    );
+  }
+
+  const result = stream
+    ? await readAnthropicMessagesStream(
+      response,
+      params.onTextDelta!,
+      now,
+      requestStarted,
+      headersReceived,
+    )
+    : await readAnthropicMessagesJson(
+      response,
+      now,
+      requestStarted,
+      headersReceived,
+    );
+
+  const input = result.inputTokens ??
+    estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
+  const output = result.outputTokens ?? estimateTextTokens(result.text);
+  const cacheRead = result.cacheReadTokens ?? 0;
+  const cacheWrite = result.cacheWriteTokens ?? 0;
+  const timings = withTimePerOutputToken(result.timings, output);
+  // input_tokens excludes cache traffic; total prompt = input + read + write.
+  const costTotal = (input / 1_000_000) * model.costInput +
+    (cacheRead / 1_000_000) * model.costInput *
+      ANTHROPIC_CACHE_READ_COST_MULTIPLIER +
+    (cacheWrite / 1_000_000) * model.costInput *
+      ANTHROPIC_CACHE_WRITE_COST_MULTIPLIER +
+    (output / 1_000_000) * model.costOutput;
+
+  return {
+    text: result.text,
+    model,
+    selection,
+    usage: {
+      input,
+      output,
+      cost: { total: costTotal },
+      cacheRead,
+      cacheWrite,
+    },
+    stopReason: normaliseAnthropicStopReason(result.stopReason),
+    toolCalls: result.toolCalls,
+    timings,
+  };
+}
+
+async function readAnthropicMessagesJson(
+  response: Response,
+  now: () => number,
+  requestStarted: number,
+  headersReceived: number,
+): Promise<{
+  text: string;
+  stopReason?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  toolCalls?: WorkbenchToolCall[];
+  timings: WorkbenchCallTimings;
+}> {
+  const json = await response.json() as {
+    content?: Array<{
+      type?: string;
+      text?: string;
+      id?: string;
+      name?: string;
+      input?: Record<string, unknown>;
+    }>;
+    stop_reason?: string;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+  };
+  const completed = now();
+
+  let text = "";
+  const toolCalls: WorkbenchToolCall[] = [];
+  for (const block of json.content ?? []) {
+    if (block.type === "text" && block.text) text += block.text;
+    if (block.type === "tool_use") {
+      toolCalls.push({
+        id: block.id ?? `tool-call-${toolCalls.length + 1}`,
+        name: block.name ?? "",
+        arguments: block.input ?? {},
+      });
+    }
+  }
+
+  return {
+    text,
+    stopReason: json.stop_reason,
+    inputTokens: json.usage?.input_tokens,
+    outputTokens: json.usage?.output_tokens,
+    cacheReadTokens: json.usage?.cache_read_input_tokens,
+    cacheWriteTokens: json.usage?.cache_creation_input_tokens,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    timings: {
+      responseHeadersMs: Math.round(headersReceived - requestStarted),
+      totalMs: Math.round(completed - requestStarted),
+    },
+  };
+}
+
+async function readAnthropicMessagesStream(
+  response: Response,
+  onTextDelta: (delta: string) => void,
+  now: () => number,
+  requestStarted: number,
+  headersReceived: number,
+): Promise<{
+  text: string;
+  stopReason?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  toolCalls?: WorkbenchToolCall[];
+  timings: WorkbenchCallTimings;
+}> {
+  if (!response.body) {
+    throw new Error("Streaming model response did not include a response body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let stopReason: string | undefined;
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let cacheReadTokens: number | undefined;
+  let cacheWriteTokens: number | undefined;
+  let firstTokenAt: number | undefined;
+
+  const applyEvent = (event: AnthropicStreamEvent) => {
+    if (event.textDelta) {
+      firstTokenAt ??= now();
+      text += event.textDelta;
+      onTextDelta(event.textDelta);
+    }
+    if (event.stopReason) stopReason = event.stopReason;
+    if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
+    if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
+    if (event.cacheReadTokens !== undefined) {
+      cacheReadTokens = event.cacheReadTokens;
+    }
+    if (event.cacheWriteTokens !== undefined) {
+      cacheWriteTokens = event.cacheWriteTokens;
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const event = parseAnthropicStreamLine(line);
+      if (event && !event.done) applyEvent(event);
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim().length > 0) {
+    const event = parseAnthropicStreamLine(buffer);
+    if (event && !event.done) applyEvent(event);
+  }
+
+  const completed = now();
+  return {
+    text,
+    stopReason,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    timings: {
+      responseHeadersMs: Math.round(headersReceived - requestStarted),
+      timeToFirstTokenMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(firstTokenAt - requestStarted),
+      generationMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(completed - firstTokenAt),
+      totalMs: Math.round(completed - requestStarted),
+    },
+  };
 }
 
 export function withTimePerOutputToken(

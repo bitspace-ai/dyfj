@@ -17,6 +17,8 @@ export interface WorkbenchReceiptInput {
   totalCostUsd: number;
   totalTokensInput: number;
   totalTokensOutput: number;
+  totalCacheReadTokens?: number;
+  totalCacheWriteTokens?: number;
   totalCalls: number;
   contextBudget?: PackedContextSummary;
   contextProfile?: AskContextProfile;
@@ -119,6 +121,8 @@ export interface WorkbenchRuntimeResult {
   tokens: {
     input: number;
     output: number;
+    cacheRead: number;
+    cacheWrite: number;
     totalCalls: number;
   };
   context: {
@@ -356,6 +360,9 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     `Estimated cost: ${formatMoney(input.estimatedCostUsd ?? 0)}`,
     `Actual cost:    ${formatMoney(input.totalCostUsd)}`,
     `Tokens:  ${input.totalTokensInput} in, ${input.totalTokensOutput} out`,
+    `Cache:   ${input.totalCacheReadTokens ?? 0} read, ${
+      input.totalCacheWriteTokens ?? 0
+    } written`,
     `Calls:   ${input.totalCalls}`,
   );
   if (input.totalElapsedMs !== undefined) {
@@ -820,6 +827,8 @@ export async function runWorkbenchRuntime(
     | null = null;
   let routingReason = "not_selected";
   let estimatedCostUsd = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
   let contextSourceLines: string[] = [];
   let callTimings: WorkbenchCallTimings | undefined;
   let contextBudget: PackedContextSummary | undefined;
@@ -1009,6 +1018,8 @@ export async function runWorkbenchRuntime(
         estimatedInputCount: request.estimatedInputCount,
       });
       const turn = await runWorkbenchTurn(params);
+      cacheReadTokens += turn.usage.cacheRead;
+      cacheWriteTokens += turn.usage.cacheWrite;
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "afterProviderResponse",
         sessionId,
@@ -1273,6 +1284,8 @@ export async function runWorkbenchRuntime(
       totalCostUsd: summary.totalCostUsd,
       totalTokensInput: summary.totalTokensInput,
       totalTokensOutput: summary.totalTokensOutput,
+      totalCacheReadTokens: cacheReadTokens,
+      totalCacheWriteTokens: cacheWriteTokens,
       totalCalls: summary.totalCalls,
       contextBudget,
       contextProfile,
@@ -1321,6 +1334,8 @@ export async function runWorkbenchRuntime(
       tokens: {
         input: summary.totalTokensInput,
         output: summary.totalTokensOutput,
+        cacheRead: cacheReadTokens,
+        cacheWrite: cacheWriteTokens,
         totalCalls: summary.totalCalls,
       },
       context: {
