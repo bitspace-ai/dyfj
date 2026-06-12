@@ -29,6 +29,8 @@ function runtimeResult(overrides: Partial<WorkbenchRuntimeResult> = {}) {
     tokens: {
       input: 10,
       output: 4,
+      cacheRead: 0,
+      cacheWrite: 0,
       totalCalls: 1,
     },
     context: {
@@ -197,5 +199,74 @@ describe("createWorkbenchHttpHandler", () => {
     expect(body).toEqual({
       error: "paid inference requires an explicit CLI consent flow",
     });
+  });
+});
+
+describe("GET /api/models", () => {
+  const pickerModels = [
+    {
+      slug: "mlx-community/Qwen3.5-4B-8bit",
+      displayName: "Qwen3.5 4B MLX",
+      provider: "mlx-lm",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:18080/v1",
+      tier: 0 as const,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning"],
+    },
+    {
+      slug: "claude-opus-4-8",
+      displayName: "Claude Opus 4.8",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      tier: 2 as const,
+      costInput: 5,
+      costOutput: 25,
+      capabilities: ["text", "code", "reasoning"],
+    },
+  ];
+
+  test("returns the registry for the picker", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      loadModels: () => Promise.resolve(pickerModels),
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/models"),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.models).toHaveLength(2);
+    expect(body.models[1]).toMatchObject({
+      slug: "claude-opus-4-8",
+      tier: 2,
+      costInput: 5,
+    });
+  });
+
+  test("rejects non-loopback hosts", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      loadModels: () => Promise.resolve(pickerModels),
+    });
+    const response = await handler(
+      new Request("http://workbench.example.com:8787/api/models"),
+    );
+    expect(response.status).toBe(403);
+  });
+
+  test("rejects cross-origin reads", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      loadModels: () => Promise.resolve(pickerModels),
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/models", {
+        headers: { origin: "https://evil.example.com" },
+      }),
+    );
+    expect(response.status).toBe(403);
   });
 });

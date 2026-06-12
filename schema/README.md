@@ -20,6 +20,7 @@ Migrations are numbered and applied in order:
 - `009_skills.sql` — invokable skills (named, parameterized actions composable into agent loops).
 - `010_events_capability.sql` — bilateral capability/discovery events (provide/require/match/release) and lease-aware lookup fields. Day-1 schema commitment so the runtime registry is derivable from the log later.
 - `011_events_authn.sql` — authentication metadata for the acting principal on event rows. Adds primitive authn fields for status, mechanism, issuer/session references, assertion times, and evidence pointers; credential material remains out of scope.
+- `012_models_2026_06_refresh.sql` — registry refresh: current Anthropic lineup with cache economics, the MLX local default, Opus 4.5 deprecated.
 
 (Migration `005_*` is intentionally absent here; it lives in implementation-specific overlays where it belongs, not in the canonical substrate.)
 

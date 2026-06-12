@@ -4,7 +4,13 @@ import {
   type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
 } from "./workbench";
-import type { WorkbenchRoutingOptions } from "./provider";
+import {
+  defaultLocalWorkbenchModels,
+  loadWorkbenchModels,
+  withDefaultLocalWorkbenchModels,
+  type WorkbenchModel,
+  type WorkbenchRoutingOptions,
+} from "./provider";
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -12,6 +18,17 @@ export type WorkbenchHttpRuntime = (
 
 export interface WorkbenchHttpHandlerOptions {
   runRuntime?: WorkbenchHttpRuntime;
+  loadModels?: () => Promise<WorkbenchModel[]>;
+}
+
+async function loadPickerModels(): Promise<WorkbenchModel[]> {
+  try {
+    return withDefaultLocalWorkbenchModels(await loadWorkbenchModels());
+  } catch {
+    // Registry unavailable: degrade to the local defaults so the picker
+    // keeps the local-first posture instead of returning an empty list.
+    return defaultLocalWorkbenchModels();
+  }
 }
 
 interface TurnRequestBody {
@@ -24,10 +41,18 @@ export function createWorkbenchHttpHandler(
   options: WorkbenchHttpHandlerOptions = {},
 ): (request: Request) => Promise<Response> {
   const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
+  const loadModels = options.loadModels ?? loadPickerModels;
   return async (request) => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/") {
       return htmlResponse(renderWorkbenchIndex());
+    }
+    if (request.method === "GET" && url.pathname === "/api/models") {
+      const readError = validateWorkbenchReadIntent(request, url);
+      if (readError !== undefined) {
+        return jsonResponse({ error: readError }, 403);
+      }
+      return jsonResponse({ models: await loadModels() });
     }
     if (request.method === "POST" && url.pathname === "/api/turn") {
       const intentError = validateWorkbenchTurnIntent(request, url);
@@ -75,6 +100,40 @@ function validateWorkbenchTurnIntent(
     }
     if (!isLoopbackHost(originUrl.hostname)) {
       return "cross-origin workbench turn requests are not allowed";
+    }
+  }
+
+  return undefined;
+}
+
+function validateWorkbenchReadIntent(
+  request: Request,
+  url: URL,
+): string | undefined {
+  if (!isLoopbackHost(url.hostname)) {
+    return "workbench HTTP API only accepts loopback hosts";
+  }
+
+  const host = request.headers.get("host");
+  if (host !== null && !isLoopbackHost(parseHostHeader(host))) {
+    return "workbench HTTP API only accepts loopback hosts";
+  }
+
+  const secFetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
+  if (secFetchSite === "cross-site") {
+    return "cross-site workbench requests are not allowed";
+  }
+
+  const origin = request.headers.get("origin");
+  if (origin !== null) {
+    let originUrl: URL;
+    try {
+      originUrl = new URL(origin);
+    } catch {
+      return "invalid request origin";
+    }
+    if (!isLoopbackHost(originUrl.hostname)) {
+      return "cross-origin workbench requests are not allowed";
     }
   }
 
