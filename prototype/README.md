@@ -26,6 +26,8 @@ mlx_lm.server \
 
 Workbench uses `http://127.0.0.1:18080/v1` for that MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the fallback explicitly.
 
+Hosted inference is explicit escalation: select a hosted model by slug (for example `--model claude-haiku-4-5`), pass the budget preflight and consent prompt, and the turn is receipted with cost and prompt-cache telemetry. The Anthropic provider reads `ANTHROPIC_API_KEY` from the process environment and fails closed without it - project the key at process start (for example `op run`), never an ambient export.
+
 For the barebones operator loop:
 
 ```sh
@@ -40,7 +42,7 @@ For the local HTTP veneer:
 deno task workbench-http
 ```
 
-The HTTP task listens on `http://127.0.0.1:8787/` by default. `GET /` returns a minimal HTML surface; `POST /api/turn` accepts JSON and calls the same single-turn runtime used by the CLI veneer.
+The HTTP task listens on `http://127.0.0.1:8787/` by default. `GET /` returns a minimal HTML surface; `POST /api/turn` accepts JSON and calls the same single-turn runtime used by the CLI veneer; `GET /api/models` returns the model registry for pickers.
 
 The prototype reads Dolt connection settings from environment variables. For the default local server:
 

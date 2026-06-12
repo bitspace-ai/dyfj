@@ -15,7 +15,7 @@ The split between `core/` and `prototype/` is not a phase boundary. It's a perma
 
 ## Status
 
-Early and active. The prototype is functional - Workbench CLI/shell, local HTTP veneer, shared single-turn runtime boundary, local-first provider path, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+Early and active. The prototype is functional - Workbench CLI/shell, local HTTP veneer, shared single-turn runtime boundary, local-first provider path with a first hosted provider (Anthropic) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, and event-sequence verification. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
 
 ## How to use this document
 
@@ -132,6 +132,19 @@ mlx_lm.server \
 
 Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the Ollama fallback explicitly.
 
+### Hosted inference (explicit escalation)
+
+Hosted models are never the default path. Selecting one (for example `--model claude-haiku-4-5`) goes through the budget preflight and an interactive consent prompt before any tokens are spent, and the call is receipted with cost and prompt-cache telemetry.
+
+The Anthropic provider reads `ANTHROPIC_API_KEY` from the process environment and fails closed when it is absent. Project the key at process start from your secret manager rather than exporting it ambiently or committing it to `.env`:
+
+```sh
+ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
+  op run -- deno task workbench --model claude-haiku-4-5 --prompt "..."
+```
+
+Which models exist, what they cost, and which tier they sit in is registry data, not code - see `schema/006_models.sql` and `schema/012_models_2026_06_refresh.sql`. Repricing or adding a model is a Dolt commit.
+
 ### Initialize Dolt and apply the schema
 
 From the repo root:
@@ -167,7 +180,7 @@ For the local HTTP veneer:
 deno task workbench-http
 ```
 
-The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests.
+The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests and `GET /api/models` for the model registry (active registry rows plus the local defaults).
 
 Useful validation tasks:
 
