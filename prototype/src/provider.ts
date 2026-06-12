@@ -425,6 +425,20 @@ export interface AnthropicStreamEvent {
   cacheWriteTokens?: number;
 }
 
+// Anthropic tool names must match ^[a-zA-Z0-9_-]{1,64}$. DYFJ command ids
+// use dots (memory.read), so the adapter maps names onto the wire and back.
+export function anthropicToolWireNames(
+  tools: WorkbenchToolDefinition[],
+): Array<{ wire: string; tool: WorkbenchToolDefinition }> {
+  const used = new Set<string>();
+  return tools.map((tool) => {
+    let wire = tool.name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+    while (used.has(wire)) wire = `${wire.slice(0, 60)}_${used.size}`;
+    used.add(wire);
+    return { wire, tool };
+  });
+}
+
 export function buildAnthropicMessagesRequest(
   model: string,
   systemPrompt: string,
@@ -472,11 +486,13 @@ export function buildAnthropicMessagesRequest(
     messages: [{ role: "user", content: prompt }],
   };
   if (options.tools && options.tools.length > 0) {
-    body.tools = options.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      input_schema: tool.parameters,
-    }));
+    body.tools = anthropicToolWireNames(options.tools).map(
+      ({ wire, tool }) => ({
+        name: wire,
+        description: tool.description,
+        input_schema: tool.parameters,
+      }),
+    );
   }
   return body;
 }
@@ -578,8 +594,10 @@ async function runAnthropicMessagesTurn(
   const headersReceived = now();
 
   if (!response.ok) {
+    const detail = await response.text().catch(() => "");
     throw new Error(
-      `Anthropic request failed for ${model.slug}: HTTP ${response.status}`,
+      `Anthropic request failed for ${model.slug}: HTTP ${response.status}` +
+        (detail ? ` ${detail.slice(0, 300)}` : ""),
     );
   }
 
@@ -597,6 +615,20 @@ async function runAnthropicMessagesTurn(
       requestStarted,
       headersReceived,
     );
+
+  // Map wire tool names back to the registry names the runtime dispatches on.
+  let toolCalls = result.toolCalls;
+  if (toolCalls && params.tools) {
+    const originalByWire = new Map(
+      anthropicToolWireNames(params.tools).map((
+        { wire, tool },
+      ) => [wire, tool.name]),
+    );
+    toolCalls = toolCalls.map((call) => ({
+      ...call,
+      name: originalByWire.get(call.name) ?? call.name,
+    }));
+  }
 
   const input = result.inputTokens ??
     estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
@@ -624,7 +656,7 @@ async function runAnthropicMessagesTurn(
       cacheWrite,
     },
     stopReason: normaliseAnthropicStopReason(result.stopReason),
-    toolCalls: result.toolCalls,
+    toolCalls,
     timings,
   };
 }

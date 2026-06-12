@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  anthropicToolWireNames,
   buildAnthropicMessagesRequest,
   buildOpenAIChatRequest,
   HostedProviderCredentialMissingError,
@@ -499,7 +500,7 @@ describe("anthropic provider adapter", () => {
       },
     );
     expect(body.tools).toEqual([{
-      name: "memory.read",
+      name: "memory_read",
       description: "Read a memory",
       input_schema: { type: "object", properties: {} },
     }]);
@@ -624,5 +625,76 @@ describe("anthropic provider adapter", () => {
         getEnv: () => "test-key-not-real",
       }),
     ).rejects.toThrow(WorkbenchHostedProviderBaseUrlError);
+  });
+});
+
+describe("anthropic tool wire names", () => {
+  const anthropicModel = models.find((m) => m.provider === "anthropic")!;
+
+  test("sanitizes dotted command ids and avoids collisions", () => {
+    const mapped = anthropicToolWireNames([
+      { name: "memory.read", description: "a", parameters: {} },
+      { name: "memory_read", description: "b", parameters: {} },
+    ]);
+    expect(mapped[0].wire).toBe("memory_read");
+    expect(mapped[1].wire).not.toBe(mapped[0].wire);
+    expect(mapped[1].wire).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+  });
+
+  test("round-trips registry names through the wire", async () => {
+    let sentBody = "";
+    const fetchFn = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      sentBody = String(init?.body);
+      return new Response(
+        JSON.stringify({
+          content: [{
+            type: "tool_use",
+            id: "toolu_1",
+            name: "memory_read",
+            input: { slug: "x" },
+          }],
+          stop_reason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      tools: [{
+        name: "memory.read",
+        description: "Read a memory",
+        parameters: { type: "object", properties: {} },
+      }],
+      fetchFn,
+      getEnv: () => "test-key-not-real",
+    });
+
+    expect(JSON.parse(sentBody).tools[0].name).toBe("memory_read");
+    expect(result.toolCalls?.[0].name).toBe("memory.read");
+  });
+
+  test("error surfaces the provider response body", async () => {
+    const fetchFn = (async () =>
+      new Response(
+        JSON.stringify({
+          error: { message: "tools.0.name: should match pattern" },
+        }),
+        { status: 400 },
+      )) as unknown as typeof fetch;
+    await expect(
+      runWorkbenchTurn({
+        systemPrompt: "sys",
+        prompt: "hi",
+        routing: { modelId: anthropicModel.slug },
+        models,
+        fetchFn,
+        getEnv: () => "test-key-not-real",
+      }),
+    ).rejects.toThrow(/HTTP 400.*should match pattern/);
   });
 });
