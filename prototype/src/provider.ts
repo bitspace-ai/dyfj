@@ -222,11 +222,16 @@ export function selectWorkbenchModel(
   }
 
   if (options.tier !== undefined) {
-    const selected = models.find((model) => model.tier === options.tier);
+    const tierModels = models.filter((model) => model.tier === options.tier);
+    const selected = preferredModelFrom(tierModels);
     if (!selected) {
       throw new WorkbenchModelNotFoundError(`tier:${options.tier}`);
     }
-    return { selected, considered: [], reason: "explicit_tier" };
+    return {
+      selected,
+      considered: tierModels.map((model) => model.slug),
+      reason: "explicit_tier",
+    };
   }
 
   const localModels = models.filter((model) => model.tier === 0);
@@ -249,16 +254,24 @@ export function selectWorkbenchModel(
     };
   }
 
-  const selected =
-    localModels.find((model) =>
-      model.slug === "mlx-community/Qwen3.5-4B-8bit"
-    ) ??
-      localModels.find((model) => model.slug === "laguna-xs.2") ??
-      localModels.find((model) => model.slug === "gemma4:e2b") ??
-      localModels.find((model) => model.slug === "gemma4") ??
-      localModels[0];
+  const selected = preferredModelFrom(localModels);
   if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
   return { selected, considered, reason: "default" };
+}
+
+// One preference chain for any "pick from this set" selection, so explicit
+// tier requests honor the same local ordering (MLX first) as the default
+// route instead of falling back to list order.
+function preferredModelFrom(
+  candidates: WorkbenchModel[],
+): WorkbenchModel | undefined {
+  return candidates.find((model) =>
+    model.slug === "mlx-community/Qwen3.5-4B-8bit"
+  ) ??
+    candidates.find((model) => model.slug === "laguna-xs.2") ??
+    candidates.find((model) => model.slug === "gemma4:e2b") ??
+    candidates.find((model) => model.slug === "gemma4") ??
+    candidates[0];
 }
 
 export function estimateTextTokens(text: string): number {

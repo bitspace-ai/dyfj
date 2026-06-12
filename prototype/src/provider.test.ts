@@ -123,7 +123,7 @@ describe("selectWorkbenchModel", () => {
     expect(selection.reason).toBe("explicit_model_id");
   });
 
-  test("explicit tier selects the first model in that tier", () => {
+  test("explicit tier applies the local preference chain", () => {
     const selection = selectWorkbenchModel(models, { tier: 1 });
 
     expect(selection.selected.slug).toBe("claude-haiku-4-5");
@@ -696,5 +696,41 @@ describe("anthropic tool wire names", () => {
         getEnv: () => "test-key-not-real",
       }),
     ).rejects.toThrow(/HTTP 400.*should match pattern/);
+  });
+});
+
+describe("explicit tier preference", () => {
+  test("tier 0 honors the MLX-first chain over list order", () => {
+    const tierZero: WorkbenchModel[] = [
+      {
+        slug: "laguna-xs.2",
+        displayName: "Laguna XS.2",
+        provider: "ollama",
+        api: "openai-completions",
+        baseUrl: "http://localhost:11434/v1",
+        tier: 0,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text"],
+      },
+      {
+        slug: "mlx-community/Qwen3.5-4B-8bit",
+        displayName: "Qwen3.5 4B MLX",
+        provider: "mlx-lm",
+        api: "openai-completions",
+        baseUrl: "http://127.0.0.1:18080/v1",
+        tier: 0,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text", "code", "reasoning"],
+      },
+    ];
+    const selection = selectWorkbenchModel(tierZero, { tier: 0 });
+    expect(selection.selected.slug).toBe("mlx-community/Qwen3.5-4B-8bit");
+    expect(selection.reason).toBe("explicit_tier");
+    expect(selection.considered).toEqual([
+      "laguna-xs.2",
+      "mlx-community/Qwen3.5-4B-8bit",
+    ]);
   });
 });
