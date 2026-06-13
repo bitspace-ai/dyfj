@@ -16,15 +16,30 @@
   "permissions": {
     "test": {
       "env": true,
-      "read": ["..", "../.."],
-      "write": ["."],
-      "net": ["127.0.0.1:3306", "localhost"],
+      "read": [
+        "..",
+        "../.."
+      ],
+      "write": [
+        "."
+      ],
+      "net": [
+        "127.0.0.1:3306",
+        "localhost"
+      ],
       "run": [
         "node_modules/.deno/esbuild@0.27.7/node_modules/esbuild/bin/esbuild",
         "node_modules/.deno/@esbuild+darwin-arm64@0.27.7/node_modules/@esbuild/darwin-arm64/bin/esbuild"
       ],
-      "ffi": ["node_modules"],
-      "sys": ["cpus", "systemMemoryInfo", "networkInterfaces", "uid"]
+      "ffi": [
+        "node_modules"
+      ],
+      "sys": [
+        "cpus",
+        "systemMemoryInfo",
+        "networkInterfaces",
+        "uid"
+      ]
     },
     "workbench": {
       "env": [
@@ -39,6 +54,7 @@
         "DYFJ_BUDGET_PER_CALL_USD",
         "DYFJ_BUDGET_TALLY",
         "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -49,16 +65,21 @@
         "NODE_COMPILE_CACHE_PORTABLE",
         "NODE_COMPILE_CACHE"
       ],
-      "read": [".."],
+      "read": [
+        ".."
+      ],
       "net": [
         "127.0.0.1:3306",
         "127.0.0.1:18080",
         "localhost:18080",
         "127.0.0.1:11434",
         "localhost:11434",
-        "api.anthropic.com:443"
+        "api.anthropic.com:443",
+        "api.openai.com:443"
       ],
-      "run": ["bd"]
+      "run": [
+        "bd"
+      ]
     },
     "workbench-http": {
       "env": [
@@ -77,6 +98,7 @@
         "DYFJ_BUDGET_PER_CALL_USD",
         "DYFJ_BUDGET_TALLY",
         "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -87,7 +109,9 @@
         "NODE_COMPILE_CACHE_PORTABLE",
         "NODE_COMPILE_CACHE"
       ],
-      "read": [".."],
+      "read": [
+        ".."
+      ],
       "net": [
         "127.0.0.1:8787",
         "127.0.0.1:3306",
@@ -95,12 +119,18 @@
         "localhost:18080",
         "127.0.0.1:11434",
         "localhost:11434",
-        "api.anthropic.com:443"
+        "api.anthropic.com:443",
+        "api.openai.com:443"
       ],
-      "run": ["bd"]
+      "run": [
+        "bd"
+      ]
     },
     "local-model-diagnostic": {
-      "env": ["DYFJ_WORKBENCH_MODEL", "DYFJ_WORKBENCH_BASE_URL"],
+      "env": [
+        "DYFJ_WORKBENCH_MODEL",
+        "DYFJ_WORKBENCH_BASE_URL"
+      ],
       "net": [
         "127.0.0.1:18080",
         "localhost:18080",
@@ -109,8 +139,14 @@
       ]
     },
     "beads": {
-      "env": ["BEADS_DIR", "PATH", "HOME"],
-      "run": ["bd"]
+      "env": [
+        "BEADS_DIR",
+        "PATH",
+        "HOME"
+      ],
+      "run": [
+        "bd"
+      ]
     },
     "verify-workbench-events": {
       "env": [
@@ -146,7 +182,12 @@
   },
   "nodeModulesDir": "auto",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM", "deno.ns", "deno.unstable"],
+    "lib": [
+      "ESNext",
+      "DOM",
+      "deno.ns",
+      "deno.unstable"
+    ],
     "strict": true
   }
 }

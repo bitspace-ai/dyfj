@@ -3,10 +3,10 @@ import {
   anthropicToolWireNames,
   buildAnthropicMessagesRequest,
   buildOpenAIChatRequest,
-  HostedProviderCredentialMissingError,
-  parseAnthropicStreamLine,
   defaultLocalWorkbenchModels,
   estimateTextTokens,
+  HostedProviderCredentialMissingError,
+  parseAnthropicStreamLine,
   parseModelRegistryRows,
   parseOpenAIChatStreamLine,
   runWorkbenchTurn,
@@ -388,6 +388,84 @@ describe("runWorkbenchTurn streaming", () => {
   });
 });
 
+describe("runWorkbenchTurn hosted OpenAI", () => {
+  const gptModel: WorkbenchModel = {
+    slug: "gpt-test",
+    displayName: "GPT test",
+    provider: "openai",
+    api: "openai-completions",
+    baseUrl: "https://api.openai.com/v1",
+    tier: 2,
+    costInput: 5,
+    costOutput: 30,
+    capabilities: ["text", "code", "reasoning"],
+  };
+
+  test("calls the OpenAI platform with a bearer key and meters cost", async () => {
+    let requestUrl = "";
+    let authHeader: string | null = null;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-test" },
+      models: [gptModel],
+      getEnv: (name) => name === "OPENAI_API_KEY" ? "sk-test-key" : undefined,
+      fetchFn: async (input, init) => {
+        requestUrl = String(input);
+        authHeader = new Headers(init?.headers).get("authorization");
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from gpt" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe("https://api.openai.com/v1/chat/completions");
+    expect(authHeader).toBe("Bearer sk-test-key");
+    expect(result.model.provider).toBe("openai");
+    expect(result.text).toBe("hello from gpt");
+    // 1M input * $5 + 1M output * $30, per-MTok rates.
+    expect(result.usage.cost.total).toBeCloseTo(35, 5);
+  });
+
+  test("fails closed when OPENAI_API_KEY is absent", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-test" },
+      models: [gptModel],
+      getEnv: () => undefined,
+      fetchFn: async () => {
+        throw new Error("fetch should not be called without a key");
+      },
+    })).rejects.toBeInstanceOf(HostedProviderCredentialMissingError);
+  });
+
+  test("rejects a non-https hosted base URL before inference", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-poisoned" },
+      models: [{
+        ...gptModel,
+        slug: "gpt-poisoned",
+        baseUrl: "http://api.openai.com/v1",
+      }],
+      getEnv: () => "sk-test-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+});
+
 describe("runWorkbenchTurn tool calls", () => {
   test("returns requested model tool calls without executing them", async () => {
     const body = JSON.stringify({
@@ -511,7 +589,11 @@ describe("anthropic provider adapter", () => {
       parseAnthropicStreamLine(
         'data: {"type":"message_start","message":{"usage":{"input_tokens":12,"cache_read_input_tokens":4000,"cache_creation_input_tokens":100}}}',
       ),
-    ).toMatchObject({ inputTokens: 12, cacheReadTokens: 4000, cacheWriteTokens: 100 });
+    ).toMatchObject({
+      inputTokens: 12,
+      cacheReadTokens: 4000,
+      cacheWriteTokens: 100,
+    });
     expect(
       parseAnthropicStreamLine(
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hel"}}',
@@ -538,7 +620,12 @@ describe("anthropic provider adapter", () => {
         JSON.stringify({
           content: [
             { type: "text", text: "Hello from Claude." },
-            { type: "tool_use", id: "toolu_1", name: "memory.read", input: { slug: "x" } },
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "memory.read",
+              input: { slug: "x" },
+            },
           ],
           stop_reason: "tool_use",
           usage: {
@@ -558,7 +645,8 @@ describe("anthropic provider adapter", () => {
       routing: { modelId: anthropicModel.slug },
       models,
       fetchFn,
-      getEnv: (name) => name === "ANTHROPIC_API_KEY" ? "test-key-not-real" : undefined,
+      getEnv: (name) =>
+        name === "ANTHROPIC_API_KEY" ? "test-key-not-real" : undefined,
     });
 
     expect(result.text).toBe("Hello from Claude.");
@@ -581,8 +669,9 @@ describe("anthropic provider adapter", () => {
       'data: {"type":"message_stop"}',
       "",
     ].join("\n");
-    const fetchFn = (async () =>
-      new Response(sse, { status: 200 })) as unknown as typeof fetch;
+    const fetchFn =
+      (async () =>
+        new Response(sse, { status: 200 })) as unknown as typeof fetch;
 
     const deltas: string[] = [];
     const result = await runWorkbenchTurn({
@@ -615,7 +704,11 @@ describe("anthropic provider adapter", () => {
   });
 
   test("rejects non-https hosted base URLs", async () => {
-    const insecure = { ...anthropicModel, slug: "insecure", baseUrl: "http://api.anthropic.com" };
+    const insecure = {
+      ...anthropicModel,
+      slug: "insecure",
+      baseUrl: "http://api.anthropic.com",
+    };
     await expect(
       runWorkbenchTurn({
         systemPrompt: "sys",

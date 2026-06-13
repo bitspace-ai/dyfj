@@ -102,7 +102,9 @@ export class WorkbenchLocalProviderBaseUrlError extends Error {
 export type FetchLike = typeof fetch;
 
 const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
+const openAIHostedProviders = new Set(["openai"]);
 const anthropicProviders = new Set(["anthropic"]);
+const OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const allowedLocalProviderHosts = new Set([
   "localhost",
   "127.0.0.1",
@@ -340,13 +342,45 @@ export async function runWorkbenchTurn(
     return await runAnthropicMessagesTurn(params, model, selection);
   }
 
+  if (openAIHostedProviders.has(model.provider)) {
+    // Hosted OpenAI reuses the OpenAI-compatible wire path; it differs from
+    // the local path only by requiring an https base URL and a bearer key.
+    if (!isAllowedHostedProviderBaseUrl(model.baseUrl)) {
+      throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
+    }
+    const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
+    const apiKey = getEnv(OPENAI_API_KEY_ENV_VAR);
+    if (!apiKey) {
+      throw new HostedProviderCredentialMissingError(
+        model.slug,
+        OPENAI_API_KEY_ENV_VAR,
+      );
+    }
+    return await executeOpenAICompatibleTurn(params, model, selection, {
+      authHeader: `Bearer ${apiKey}`,
+    });
+  }
+
   if (!openAICompatibleLocalProviders.has(model.provider)) {
     throw new HostedInferenceRequiresProviderError(model.slug);
   }
   if (!isAllowedLocalProviderBaseUrl(model.baseUrl)) {
     throw new WorkbenchLocalProviderBaseUrlError(model.slug, model.baseUrl);
   }
+  return await executeOpenAICompatibleTurn(params, model, selection, {});
+}
 
+/**
+ * Execute one OpenAI-compatible chat/completions turn. Shared by the local
+ * provider path (no auth) and the hosted OpenAI path (bearer key). The caller
+ * has already validated the base URL and provider.
+ */
+async function executeOpenAICompatibleTurn(
+  params: WorkbenchTurnParams,
+  model: WorkbenchModel,
+  selection: WorkbenchSelection,
+  opts: { authHeader?: string },
+): Promise<WorkbenchTurnResult> {
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? performance.now.bind(performance);
   const stream = params.onTextDelta !== undefined;
@@ -355,7 +389,10 @@ export async function runWorkbenchTurn(
     `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(opts.authHeader ? { authorization: opts.authHeader } : {}),
+      },
       body: JSON.stringify(
         buildOpenAIChatRequest(
           model.slug,
@@ -370,7 +407,11 @@ export async function runWorkbenchTurn(
   const headersReceived = now();
 
   if (!response.ok) {
-    throw new Error(`Local model request failed: HTTP ${response.status}`);
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Model request failed for ${model.slug}: HTTP ${response.status}` +
+        (detail ? ` ${detail.slice(0, 300)}` : ""),
+    );
   }
 
   const result = stream
