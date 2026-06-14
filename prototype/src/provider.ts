@@ -104,7 +104,10 @@ export type FetchLike = typeof fetch;
 const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
 const openAIHostedProviders = new Set(["openai"]);
 const anthropicProviders = new Set(["anthropic"]);
+const googleProviders = new Set(["google"]);
 const OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY";
+const GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY";
+const GEMINI_DEFAULT_MAX_TOKENS = 8192;
 const allowedLocalProviderHosts = new Set([
   "localhost",
   "127.0.0.1",
@@ -340,6 +343,10 @@ export async function runWorkbenchTurn(
 
   if (anthropicProviders.has(model.provider)) {
     return await runAnthropicMessagesTurn(params, model, selection);
+  }
+
+  if (googleProviders.has(model.provider)) {
+    return await runGoogleGenerativeAITurn(params, model, selection);
   }
 
   if (openAIHostedProviders.has(model.provider)) {
@@ -850,6 +857,271 @@ async function readAnthropicMessagesStream(
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    timings: {
+      responseHeadersMs: Math.round(headersReceived - requestStarted),
+      timeToFirstTokenMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(firstTokenAt - requestStarted),
+      generationMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(completed - firstTokenAt),
+      totalMs: Math.round(completed - requestStarted),
+    },
+  };
+}
+
+// ─── Google Generative AI (Gemini) adapter ───────────────────────────────────
+// Gemini's wire format is its own: model in the URL path, x-goog-api-key
+// header, contents/systemInstruction/generationConfig request, and
+// candidates[].content.parts[].text + usageMetadata response. Tool calling
+// uses a different shape and is deferred; Gemini turns are text/JSON only.
+
+export interface GeminiStreamEvent {
+  done: boolean;
+  textDelta?: string;
+  stopReason?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+export function buildGeminiRequest(
+  systemPrompt: string,
+  prompt: string,
+  options: { jsonObject?: boolean } = {},
+) {
+  const body: {
+    systemInstruction: { parts: Array<{ text: string }> };
+    contents: Array<{ role: string; parts: Array<{ text: string }> }>;
+    generationConfig: { maxOutputTokens: number; responseMimeType?: string };
+  } = {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: GEMINI_DEFAULT_MAX_TOKENS },
+  };
+  if (options.jsonObject) {
+    body.generationConfig.responseMimeType = "application/json";
+  }
+  return body;
+}
+
+export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || !trimmed.startsWith("data:")) return null;
+
+  const json = JSON.parse(trimmed.slice("data:".length).trim()) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+    };
+  };
+  const candidate = json.candidates?.[0];
+  const textDelta = (candidate?.content?.parts ?? [])
+    .map((part) => part.text ?? "")
+    .join("") || undefined;
+  return {
+    done: false,
+    textDelta,
+    stopReason: candidate?.finishReason,
+    inputTokens: json.usageMetadata?.promptTokenCount,
+    outputTokens: json.usageMetadata?.candidatesTokenCount,
+  };
+}
+
+function normaliseGeminiStopReason(
+  reason: string | undefined,
+): WorkbenchTurnResult["stopReason"] {
+  if (reason === "MAX_TOKENS") return "length";
+  if (reason === "STOP" || reason === undefined) return "stop";
+  // SAFETY, RECITATION, PROHIBITED_CONTENT, OTHER, etc.
+  return "error";
+}
+
+async function runGoogleGenerativeAITurn(
+  params: WorkbenchTurnParams,
+  model: WorkbenchModel,
+  selection: WorkbenchSelection,
+): Promise<WorkbenchTurnResult> {
+  if (!isAllowedHostedProviderBaseUrl(model.baseUrl)) {
+    throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
+  }
+  const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
+  const apiKey = getEnv(GEMINI_API_KEY_ENV_VAR);
+  if (!apiKey) {
+    throw new HostedProviderCredentialMissingError(
+      model.slug,
+      GEMINI_API_KEY_ENV_VAR,
+    );
+  }
+
+  const fetchFn = params.fetchFn ?? fetch;
+  const now = params.now ?? performance.now.bind(performance);
+  const stream = params.onTextDelta !== undefined;
+  const base = model.baseUrl.replace(/\/$/, "");
+  const endpoint = stream
+    ? `${base}/v1beta/models/${model.slug}:streamGenerateContent?alt=sse`
+    : `${base}/v1beta/models/${model.slug}:generateContent`;
+  const requestStarted = now();
+  const response = await fetchFn(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify(
+      buildGeminiRequest(params.systemPrompt, params.prompt, {
+        jsonObject: params.jsonObject,
+      }),
+    ),
+  });
+  const headersReceived = now();
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Gemini request failed for ${model.slug}: HTTP ${response.status}` +
+        (detail ? ` ${detail.slice(0, 300)}` : ""),
+    );
+  }
+
+  const result = stream
+    ? await readGeminiStream(
+      response,
+      params.onTextDelta!,
+      now,
+      requestStarted,
+      headersReceived,
+    )
+    : await readGeminiJson(response, now, requestStarted, headersReceived);
+
+  const input = result.inputTokens ??
+    estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
+  const output = result.outputTokens ?? estimateTextTokens(result.text);
+  const timings = withTimePerOutputToken(result.timings, output);
+  const costTotal = (input / 1_000_000) * model.costInput +
+    (output / 1_000_000) * model.costOutput;
+
+  return {
+    text: result.text,
+    model,
+    selection,
+    usage: {
+      input,
+      output,
+      cost: { total: costTotal },
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    stopReason: normaliseGeminiStopReason(result.stopReason),
+    toolCalls: undefined,
+    timings,
+  };
+}
+
+async function readGeminiJson(
+  response: Response,
+  now: () => number,
+  requestStarted: number,
+  headersReceived: number,
+): Promise<{
+  text: string;
+  stopReason?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  timings: WorkbenchCallTimings;
+}> {
+  const json = await response.json() as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+    };
+  };
+  const completed = now();
+  const candidate = json.candidates?.[0];
+  const text = (candidate?.content?.parts ?? [])
+    .map((part) => part.text ?? "")
+    .join("");
+
+  return {
+    text,
+    stopReason: candidate?.finishReason,
+    inputTokens: json.usageMetadata?.promptTokenCount,
+    outputTokens: json.usageMetadata?.candidatesTokenCount,
+    timings: {
+      responseHeadersMs: Math.round(headersReceived - requestStarted),
+      totalMs: Math.round(completed - requestStarted),
+    },
+  };
+}
+
+async function readGeminiStream(
+  response: Response,
+  onTextDelta: (delta: string) => void,
+  now: () => number,
+  requestStarted: number,
+  headersReceived: number,
+): Promise<{
+  text: string;
+  stopReason?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  timings: WorkbenchCallTimings;
+}> {
+  if (!response.body) {
+    throw new Error("Streaming model response did not include a response body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let stopReason: string | undefined;
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let firstTokenAt: number | undefined;
+
+  const applyEvent = (event: GeminiStreamEvent) => {
+    if (event.textDelta) {
+      firstTokenAt ??= now();
+      text += event.textDelta;
+      onTextDelta(event.textDelta);
+    }
+    if (event.stopReason) stopReason = event.stopReason;
+    if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
+    if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const event = parseGeminiStreamLine(line);
+      if (event && !event.done) applyEvent(event);
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim().length > 0) {
+    const event = parseGeminiStreamLine(buffer);
+    if (event && !event.done) applyEvent(event);
+  }
+
+  const completed = now();
+  return {
+    text,
+    stopReason,
+    inputTokens,
+    outputTokens,
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       timeToFirstTokenMs: firstTokenAt === undefined

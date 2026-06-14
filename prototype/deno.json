@@ -55,6 +55,7 @@
         "DYFJ_BUDGET_TALLY",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -75,7 +76,8 @@
         "127.0.0.1:11434",
         "localhost:11434",
         "api.anthropic.com:443",
-        "api.openai.com:443"
+        "api.openai.com:443",
+        "generativelanguage.googleapis.com:443"
       ],
       "run": [
         "bd"
@@ -99,6 +101,7 @@
         "DYFJ_BUDGET_TALLY",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -120,7 +123,8 @@
         "127.0.0.1:11434",
         "localhost:11434",
         "api.anthropic.com:443",
-        "api.openai.com:443"
+        "api.openai.com:443",
+        "generativelanguage.googleapis.com:443"
       ],
       "run": [
         "bd"

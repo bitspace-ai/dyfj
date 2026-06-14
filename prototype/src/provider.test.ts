@@ -2,11 +2,13 @@ import { describe, expect, test } from "vitest";
 import {
   anthropicToolWireNames,
   buildAnthropicMessagesRequest,
+  buildGeminiRequest,
   buildOpenAIChatRequest,
   defaultLocalWorkbenchModels,
   estimateTextTokens,
   HostedProviderCredentialMissingError,
   parseAnthropicStreamLine,
+  parseGeminiStreamLine,
   parseModelRegistryRows,
   parseOpenAIChatStreamLine,
   runWorkbenchTurn,
@@ -459,6 +461,128 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
         baseUrl: "http://api.openai.com/v1",
       }],
       getEnv: () => "sk-test-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+});
+
+describe("buildGeminiRequest", () => {
+  test("puts the system prompt in systemInstruction and the user turn in contents", () => {
+    const body = buildGeminiRequest("You are the workbench.", "Say hi.");
+    expect(body.systemInstruction).toEqual({
+      parts: [{ text: "You are the workbench." }],
+    });
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "Say hi." }] },
+    ]);
+    expect(body.generationConfig.maxOutputTokens).toBeGreaterThan(0);
+    expect(body.generationConfig.responseMimeType).toBeUndefined();
+  });
+
+  test("requests a JSON mime type for strict JSON output", () => {
+    const body = buildGeminiRequest("sys", "prompt", { jsonObject: true });
+    expect(body.generationConfig.responseMimeType).toBe("application/json");
+  });
+});
+
+describe("parseGeminiStreamLine", () => {
+  test("extracts text and usage from an SSE data line", () => {
+    const event = parseGeminiStreamLine(
+      'data: {"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":2}}',
+    );
+    expect(event).toEqual({
+      done: false,
+      textDelta: "hi",
+      stopReason: "STOP",
+      inputTokens: 7,
+      outputTokens: 2,
+    });
+  });
+
+  test("ignores blank and non-data lines", () => {
+    expect(parseGeminiStreamLine("")).toBeNull();
+    expect(parseGeminiStreamLine("event: message")).toBeNull();
+  });
+});
+
+describe("runWorkbenchTurn Google Gemini", () => {
+  const geminiModel: WorkbenchModel = {
+    slug: "gemini-test",
+    displayName: "Gemini test",
+    provider: "google",
+    api: "google-generative-ai",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    tier: 2,
+    costInput: 2,
+    costOutput: 12,
+    capabilities: ["text", "code", "reasoning"],
+  };
+
+  test("calls generateContent with the key header and meters cost", async () => {
+    let requestUrl = "";
+    let keyHeader: string | null = null;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      getEnv: (name) => name === "GEMINI_API_KEY" ? "gem-test-key" : undefined,
+      fetchFn: async (input, init) => {
+        requestUrl = String(input);
+        keyHeader = new Headers(init?.headers).get("x-goog-api-key");
+        return new Response(
+          JSON.stringify({
+            candidates: [{
+              content: { parts: [{ text: "hello from gemini" }] },
+              finishReason: "STOP",
+            }],
+            usageMetadata: {
+              promptTokenCount: 1_000_000,
+              candidatesTokenCount: 1_000_000,
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
+    );
+    expect(keyHeader).toBe("gem-test-key");
+    expect(result.model.provider).toBe("google");
+    expect(result.text).toBe("hello from gemini");
+    // 1M input * $2 + 1M output * $12, per-MTok rates.
+    expect(result.usage.cost.total).toBeCloseTo(14, 5);
+  });
+
+  test("fails closed when GEMINI_API_KEY is absent", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      getEnv: () => undefined,
+      fetchFn: async () => {
+        throw new Error("fetch should not be called without a key");
+      },
+    })).rejects.toBeInstanceOf(HostedProviderCredentialMissingError);
+  });
+
+  test("rejects a non-https base URL before inference", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-poisoned" },
+      models: [{
+        ...geminiModel,
+        slug: "gemini-poisoned",
+        baseUrl: "http://generativelanguage.googleapis.com",
+      }],
+      getEnv: () => "gem-test-key",
       fetchFn: async () => {
         throw new Error("fetch should not be called");
       },
