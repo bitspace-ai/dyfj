@@ -80,10 +80,14 @@ describe("buildAskSystemPrompt", () => {
       ],
     };
 
-    const prompt = buildAskSystemPrompt(context);
+    const prompt = buildAskSystemPrompt(
+      "You are the test companion. Help with anything.",
+      context,
+    );
 
-    expect(prompt).toContain("repo-local DYFJ companion");
-    expect(prompt).toContain("Do not use private operator context");
+    // The persona is the injected base prompt; the builder composes it with
+    // the live repo/Beads context (no hardcoded persona of its own).
+    expect(prompt).toContain("You are the test companion. Help with anything.");
     expect(prompt).toContain("dyfj-2fl.7 Build first usable command");
     expect(prompt).toContain("Context sources used");
   });

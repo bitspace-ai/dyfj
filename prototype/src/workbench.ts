@@ -775,6 +775,7 @@ export async function runWorkbenchRuntime(
     buildContextSourceLines,
     loadAskRepoContext,
   } = await import("./repo-context");
+  const { loadCompanionBasePrompt } = await import("./prompts");
   const {
     loadMemoriesByType,
     loadMemoryIndex,
@@ -916,7 +917,8 @@ export async function runWorkbenchRuntime(
           duration_ms: Date.now() - sessionStart,
         }), bestEffortEvents);
 
-      systemPrompt = buildAskSystemPrompt(repoContext);
+      const companionBasePrompt = await loadCompanionBasePrompt();
+      systemPrompt = buildAskSystemPrompt(companionBasePrompt, repoContext);
       if (isNextWork) {
         modelPrompt = buildNextWorkBrief({
           workletId: workletId!,

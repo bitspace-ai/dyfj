@@ -102,13 +102,16 @@ export function parseReadyIssueIds(output: string): string[] {
   return ids;
 }
 
-export function buildAskSystemPrompt(context: LoadedRepoContext): string {
+// basePrompt is the authored companion persona, loaded from the prompts table
+// (see prompts.ts / schema/017). This builder composes it with the live,
+// untrusted repo/Beads context below — the persona is no longer hardcoded here.
+export function buildAskSystemPrompt(
+  basePrompt: string,
+  context: LoadedRepoContext,
+): string {
   const parts = [
-    "You are the repo-local DYFJ companion for this public open-source repository.",
-    "Answer the practical next-work question from the context below.",
-    "Keep the answer terse, concrete, and repo-local.",
-    "Do not use private operator context or cross-repo prioritization.",
-    "Prefer Beads state over speculation. If the ready queue is clear, say so.",
+    basePrompt.trim(),
+    "",
     `Context budget: ${context.budget.usedTokens}/${context.budget.totalTokens} estimated tokens ` +
     `(${context.budget.headroomTokens} reserved headroom).`,
     "",

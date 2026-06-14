@@ -81,6 +81,11 @@ vi.mock("./provider", () => {
   };
 });
 
+vi.mock("./prompts", () => ({
+  loadCompanionBasePrompt: async () => "companion base prompt",
+  DEFAULT_COMPANION_PROMPT: "companion base prompt",
+}));
+
 vi.mock("./repo-context", () => ({
   buildAskSystemPrompt: () => "repo system prompt",
   buildContextSourceLines: () => ["README.md Section 1 <README.md#section-1>"],
