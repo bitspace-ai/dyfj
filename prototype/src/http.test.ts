@@ -40,6 +40,14 @@ function runtimeResult(overrides: Partial<WorkbenchRuntimeResult> = {}) {
   } satisfies WorkbenchRuntimeResult;
 }
 
+function parseSseFrames(raw: string): Array<Record<string, unknown>> {
+  return raw
+    .split("\n\n")
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith("data: "))
+    .map((block) => JSON.parse(block.slice("data: ".length)));
+}
+
 describe("createWorkbenchHttpHandler", () => {
   test("serves a minimal human-readable Workbench surface", async () => {
     const handler = createWorkbenchHttpHandler({
@@ -134,6 +142,89 @@ describe("createWorkbenchHttpHandler", () => {
     });
   });
 
+  test("streams a turn as SSE when the client accepts text/event-stream", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        await input.onRuntimeEvent?.({
+          type: "modelSelected",
+          sessionId: "01HTTPSESSION00000000000000",
+          modelSlug: "gemma4:e2b",
+          tier: 0,
+          reason: "default",
+        });
+        input.onTextDelta?.("Workbench ");
+        input.onTextDelta?.("says hello.");
+        return runtimeResult();
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "text/event-stream",
+        },
+        body: JSON.stringify({
+          prompt: "hello",
+          mode: "turn",
+          routingOptions: {},
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    // The streaming path wires onTextDelta; the buffered path does not.
+    expect(calls[0]?.onTextDelta).toEqual(expect.any(Function));
+
+    const frames = parseSseFrames(await response.text());
+    expect(frames).toContainEqual({ t: "delta", text: "Workbench " });
+    expect(frames).toContainEqual({ t: "delta", text: "says hello." });
+    expect(frames).toContainEqual({
+      t: "event",
+      event: {
+        type: "modelSelected",
+        sessionId: "01HTTPSESSION00000000000000",
+        modelSlug: "gemma4:e2b",
+        tier: 0,
+        reason: "default",
+      },
+    });
+    const done = frames.find((frame) => frame.t === "done");
+    expect(done?.result).toMatchObject({
+      sessionId: "01HTTPSESSION00000000000000",
+      text: "Workbench says hello.",
+      model: { slug: "gemma4:e2b", tier: 0 },
+    });
+    // The terminal done frame is last.
+    expect(frames[frames.length - 1]).toMatchObject({ t: "done" });
+  });
+
+  test("streaming path reports request-shape errors as JSON before the stream opens", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+    });
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "text/event-stream",
+        },
+        body: JSON.stringify({ prompt: "" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await response.json()).toEqual({
+      error: "prompt must be a non-empty string",
+    });
+  });
+
   test("rejects cross-origin turn requests before runtime dispatch", async () => {
     const calls: WorkbenchRuntimeInput[] = [];
     const handler = createWorkbenchHttpHandler({
@@ -157,6 +248,37 @@ describe("createWorkbenchHttpHandler", () => {
 
     expect(response.status).toBe(403);
     expect(body).toEqual({
+      error: "cross-origin workbench requests are not allowed",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects a cross-origin SSE turn before stream negotiation", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "text/event-stream",
+          "origin": "https://attacker.example",
+        },
+        body: JSON.stringify({ prompt: "drive local workbench" }),
+      }),
+    );
+
+    // The shared origin gate runs before the Accept header is consulted: the
+    // response is a JSON 403, not an event-stream, and the runtime is untouched.
+    expect(response.status).toBe(403);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await response.json()).toEqual({
       error: "cross-origin workbench requests are not allowed",
     });
     expect(calls).toEqual([]);
@@ -317,6 +439,18 @@ describe("remote bearer auth", () => {
       turnRequest(remoteHost, { authorization: "Bearer wrong-key" }),
     );
     expect(response.status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  test("rejects an unauthenticated remote SSE turn before stream negotiation", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest(remoteHost, { accept: "text/event-stream" }),
+    );
+    // Bearer auth runs before stream negotiation: a JSON 401, no event-stream,
+    // and the runtime is never reached.
+    expect(response.status).toBe(401);
+    expect(response.headers.get("content-type")).toContain("application/json");
     expect(calls).toEqual([]);
   });
 

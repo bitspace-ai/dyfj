@@ -180,12 +180,21 @@ export function createWorkbenchHttpHandler(
           403,
         );
       }
-      return await handleJsonTurn(
-        request,
-        runRuntime,
-        resolved,
-        fetchSessionEvents,
-      );
+      const wantsStream = request.headers.get("accept")
+        ?.toLowerCase().includes("text/event-stream") ?? false;
+      return wantsStream
+        ? await handleStreamingTurn(
+          request,
+          runRuntime,
+          resolved,
+          fetchSessionEvents,
+        )
+        : await handleJsonTurn(
+          request,
+          runRuntime,
+          resolved,
+          fetchSessionEvents,
+        );
     }
     return jsonResponse({ error: "not found" }, 404);
   };
@@ -340,24 +349,36 @@ function isLoopbackHost(hostname: string): boolean {
     normalized === "[::1]";
 }
 
-async function handleJsonTurn(
+const PAID_ESCALATION_OVER_HTTP =
+  "paid inference requires an explicit CLI consent flow";
+
+/**
+ * Parse and validate a turn request body into runtime input plus optional
+ * resume context. Shared by the buffered and streaming turn handlers so both
+ * apply identical validation, session-id checks, and transcript rebuilding.
+ */
+async function resolveTurnRequest(
   request: Request,
-  runRuntime: WorkbenchHttpRuntime,
-  authContext: WorkbenchAuthContext,
   fetchSessionEvents: NonNullable<
     WorkbenchHttpHandlerOptions["fetchSessionEvents"]
   >,
-): Promise<Response> {
+): Promise<
+  | {
+    runtimeInput: WorkbenchRuntimeInput;
+    resume: Pick<WorkbenchRuntimeInput, "sessionId" | "conversationContext">;
+  }
+  | { error: string; status: number }
+> {
   let body: TurnRequestBody;
   try {
     body = await request.json() as TurnRequestBody;
   } catch {
-    return jsonResponse({ error: "request body must be JSON" }, 400);
+    return { error: "request body must be JSON", status: 400 };
   }
 
   const runtimeInput = buildRuntimeInputFromJson(body);
   if ("error" in runtimeInput) {
-    return jsonResponse({ error: runtimeInput.error }, 400);
+    return { error: runtimeInput.error, status: 400 };
   }
 
   // Resume: rebuild a compact transcript from the session's prior events so
@@ -371,7 +392,7 @@ async function handleJsonTurn(
       typeof body.sessionId !== "string" ||
       !SESSION_ID_SHAPE.test(body.sessionId)
     ) {
-      return jsonResponse({ error: "invalid session id" }, 400);
+      return { error: "invalid session id", status: 400 };
     }
     try {
       const priorEvents = await fetchSessionEvents({
@@ -382,9 +403,26 @@ async function handleJsonTurn(
         conversationContext: buildConversationContext(priorEvents),
       };
     } catch (err) {
-      return jsonResponse({ error: (err as Error).message }, 500);
+      return { error: (err as Error).message, status: 500 };
     }
   }
+
+  return { runtimeInput, resume };
+}
+
+async function handleJsonTurn(
+  request: Request,
+  runRuntime: WorkbenchHttpRuntime,
+  authContext: WorkbenchAuthContext,
+  fetchSessionEvents: NonNullable<
+    WorkbenchHttpHandlerOptions["fetchSessionEvents"]
+  >,
+): Promise<Response> {
+  const resolved = await resolveTurnRequest(request, fetchSessionEvents);
+  if ("error" in resolved) {
+    return jsonResponse({ error: resolved.error }, resolved.status);
+  }
+  const { runtimeInput, resume } = resolved;
 
   try {
     const events: WorkbenchRuntimeEvent[] = [];
@@ -396,9 +434,7 @@ async function handleJsonTurn(
         events.push(event);
       },
       confirmPaidEscalation: () =>
-        Promise.reject(
-          new Error("paid inference requires an explicit CLI consent flow"),
-        ),
+        Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
     });
     return jsonResponse({ ...result, events });
   } catch (err) {
@@ -406,6 +442,70 @@ async function handleJsonTurn(
       error: (err as Error)?.message ?? String(err),
     }, 500);
   }
+}
+
+/**
+ * Stream a turn as Server-Sent Events. Negotiated via `Accept:
+ * text/event-stream`; the buffered JSON path stays the default so existing
+ * clients are unaffected. Each frame is `data: <json>\n\n` with a `t`
+ * discriminator:
+ *   { t: "delta", text }      incremental model text
+ *   { t: "event", event }     a WorkbenchRuntimeEvent lifecycle record
+ *   { t: "done",  result }    terminal success — full WorkbenchRuntimeResult
+ *   { t: "error", message }   terminal failure
+ */
+async function handleStreamingTurn(
+  request: Request,
+  runRuntime: WorkbenchHttpRuntime,
+  authContext: WorkbenchAuthContext,
+  fetchSessionEvents: NonNullable<
+    WorkbenchHttpHandlerOptions["fetchSessionEvents"]
+  >,
+): Promise<Response> {
+  const resolved = await resolveTurnRequest(request, fetchSessionEvents);
+  if ("error" in resolved) {
+    // Request-shape errors occur before the stream opens, so report them as a
+    // plain JSON error response rather than an SSE error frame.
+    return jsonResponse({ error: resolved.error }, resolved.status);
+  }
+  const { runtimeInput, resume } = resolved;
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (frame: unknown): void =>
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+        );
+      try {
+        const result = await runRuntime({
+          ...runtimeInput,
+          ...resume,
+          authContext,
+          onTextDelta: (delta) => send({ t: "delta", text: delta }),
+          onRuntimeEvent: (event) => {
+            send({ t: "event", event });
+          },
+          confirmPaidEscalation: () =>
+            Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
+        });
+        send({ t: "done", result });
+      } catch (err) {
+        send({ t: "error", message: (err as Error)?.message ?? String(err) });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      "connection": "keep-alive",
+    },
+  });
 }
 
 function buildRuntimeInputFromJson(
