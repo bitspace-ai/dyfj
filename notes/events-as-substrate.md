@@ -46,7 +46,7 @@ Same table. Different lenses. Different indexes carry the queries each lens need
 |---|---|---|---|
 | **Observability** | `trace_id`, `span_id`, `parent_span_id`, `created_at`, `duration_ms` | Distributed traces, span tree visualizations, latency profiles | Schema present, populated by callers, no exporter built |
 | **Auditability** | `principal_id`, `principal_type`, `action`, `resource`, `authz_basis` | "Who did what when on what authority" | Schema present, populated by callers, no audit UI built |
-| **Capability discovery** | `event_type IN (capability_*)`, `capability_name`, `capability_version`, `capability_lease_id`, `capability_lease_expires`, `capability_metadata` | "Who currently provides X / who needs X / what's bound to what" | Schema present, no producer + no consumer yet |
+| **Capability discovery** | `event_type IN (capability_*)` + 5 `capability_*` columns (**removed in `018`**) | "Who currently provides X / who needs X / what's bound to what" | **Removed in `018`** — was schema-only, never wired to a producer or consumer |
 | **Cost & budget** | `model_id`, `provider`, `tokens_*`, `cost_total` | Per-session/per-principal/per-model spend rollups, budget thresholds | Partial — schema present, Workbench provider path populates core events, no consolidated surface |
 
 Notice what's the same in every row of this table: *schema in the data layer, populated by producers, projected by consumers, no separate store*.
@@ -59,6 +59,8 @@ Notice what's different: each concern is at a different stage of having actual p
 
 This is the concern the capability/discovery columns in the schema serve, and the one I had the most uncertainty about. Walking it through three times — today, tomorrow, later — makes the picture concrete.
 
+> The `capability_*` columns and event types described in this section were removed in `schema/018_drop_vestigial.sql` (2026-06-14): they shipped schema-only and never gained a producer or consumer. The walkthrough below is preserved as the *intended shape* for if/when capability discovery is actually built and the schema is re-added as a clean migration — read its present tense as describing that design, not the current schema.
+
 ### Today (the shape exists; behavior does not)
 
 The schema supports four event types:
@@ -69,7 +71,7 @@ The schema supports four event types:
 
 Plus five typed columns: `capability_name`, `capability_version`, `capability_lease_id`, `capability_lease_expires`, `capability_metadata`.
 
-The Rust library (`events::write` / `events::read_by_id`) reads and writes these fields. The integration test (`capability_round_trip.rs`) proves they survive a Dolt round-trip.
+(In the original tracer bullet, the Rust core's `events::write` / `events::read_by_id` bound these fields and a `capability_round_trip.rs` integration test proved they survived a Dolt round-trip — all removed in `018`.)
 
 That's it. Nothing announces. Nothing discovers. No matcher. No registry process. The capability_provide row from the test is sitting in Dolt right now, expired, unread. Today this is schema shape only, not runtime behavior.
 
@@ -211,7 +213,7 @@ It's also why the daily-driver discipline matters. By using DYFJ end-to-end, rea
 - README §6 (Architecture — tiered primitives) — Layer 1 names "Inter-Agent Contracts & Capability Discovery" as a subsystem; this design note is the elaboration.
 - README §10 — Near-term commitments, including the deferred `register()` / `lookup()` stub.
 - `schema/001_events.sql` — the canonical event row.
-- `schema/010_events_capability.sql` — the capability/discovery columns and the four event-type extensions.
+- `schema/010_events_capability.sql` — the capability/discovery columns and the four event-type extensions (reverted by `schema/018_drop_vestigial.sql`).
 - `notes/tracer-bullet.md` — the previous design note (substrate plumbing through Rust).
 - `core/src/events.rs` — the producer side of the API.
-- `core/tests/capability_round_trip.rs` — the proof that the capability fields survive a Dolt round-trip.
+- `schema/018_drop_vestigial.sql` — removed the capability columns and the `capability_round_trip.rs` test as unbuilt.
