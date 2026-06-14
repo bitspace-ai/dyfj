@@ -27,7 +27,6 @@ import process from "node:process";
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";
 export type Phase = "observe" | "think" | "plan" | "build" | "execute" | "verify" | "learn" | "complete";
-export type EffortLevel = "standard" | "extended" | "advanced" | "deep" | "comprehensive";
 
 export interface MemoryIndexEntry {
   slug: string;
@@ -158,31 +157,5 @@ export class DyfjMcpClient {
       ...(session_id ? { session_id } : {}),
       ...(slug ? { slug } : {}),
     });
-  }
-
-  async writeReflection(params: {
-    session_slug: string;
-    effort_level: EffortLevel;
-    task_description: string;
-    criteria_count: number;
-    criteria_passed: number;
-    criteria_failed: number;
-    within_budget: boolean;
-    implied_sentiment?: number;
-    reflection_execution: string;
-    reflection_approach: string;
-    reflection_gaps: string;
-  }): Promise<string> {
-    return this.call("write_reflection", params);
-  }
-
-  // ── Skill tools ─────────────────────────────────────────────────────────────
-
-  async invokeSkill(slug: string): Promise<string> {
-    return this.call("invoke_skill", { slug });
-  }
-
-  async listSkills(): Promise<string> {
-    return this.call("list_skills", {});
   }
 }

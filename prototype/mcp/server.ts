@@ -2,7 +2,7 @@
 /**
  * DYFJ Memory MCP Server
  *
- * Exposes Dolt-backed memory, session tracking, and reflection as MCP tools.
+ * Exposes Dolt-backed memory and session tracking as MCP tools.
  * Any agent that speaks MCP (Claude Code, Codex CLI, Gemini CLI, Cursor, etc.)
  * can attach to this server and get the full DYFJ memory substrate for free.
  *
@@ -14,7 +14,8 @@
  *   list_memories(type?)                      — index of all memories
  *   start_session(task_description, slug?)    — create a session row, return session_id
  *   update_session(session_id, phase, progress_done, progress_total, content?) — write phase transition
- *   write_reflection(session_slug, ...)       — end-of-session synthesis
+ *   list_sessions(limit?, phase?)             — recent sessions
+ *   get_session(session_id?, slug?)           — load a prior session
  *
  * Architecture:
  *   Coding agent (any) → MCP → this server → Dolt CLI → Dolt database
@@ -281,92 +282,6 @@ server.tool(
   }
 );
 
-// ── Tool: write_reflection ────────────────────────────────────────────────────
-
-server.tool(
-  "write_reflection",
-  "Write an end-of-session reflection to Dolt. " +
-    "Captures what went well, what to do differently, and capability gaps identified.",
-  {
-    session_slug: z
-      .string()
-      .describe("Slug of the completed session (from start_session)"),
-    effort_level: z
-      .enum(["standard", "extended", "advanced", "deep", "comprehensive"])
-      .describe("Effort tier used for this session"),
-    task_description: z
-      .string()
-      .max(256)
-      .describe("One-line task description (may duplicate session record)"),
-    criteria_count: z.number().int().min(0).describe("Total ISC criteria"),
-    criteria_passed: z.number().int().min(0).describe("Criteria that passed"),
-    criteria_failed: z.number().int().min(0).describe("Criteria that failed"),
-    within_budget: z
-      .boolean()
-      .describe("Did this session complete within the effort tier's time budget?"),
-    implied_sentiment: z
-      .number()
-      .int()
-      .min(1)
-      .max(10)
-      .optional()
-      .describe("1-10 estimate of user satisfaction from conversation tone"),
-    reflection_execution: z
-      .string()
-      .describe("What should I have done differently in execution?"),
-    reflection_approach: z
-      .string()
-      .describe("What would a smarter algorithm have done?"),
-    reflection_gaps: z
-      .string()
-      .describe("What capabilities were missing from this session?"),
-  },
-  async ({
-    session_slug,
-    effort_level,
-    task_description,
-    criteria_count,
-    criteria_passed,
-    criteria_failed,
-    within_budget,
-    implied_sentiment,
-    reflection_execution,
-    reflection_approach,
-    reflection_gaps,
-  }) => {
-    const id = ulid();
-    await doltExec(
-      `INSERT INTO reflections ` +
-        `(reflection_id, session_slug, effort_level, task_description, ` +
-        `criteria_count, criteria_passed, criteria_failed, within_budget, ` +
-        `implied_sentiment, reflection_execution, reflection_approach, reflection_gaps) ` +
-        `VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      [
-        id,
-        session_slug,
-        effort_level,
-        task_description,
-        criteria_count,
-        criteria_passed,
-        criteria_failed,
-        within_budget,
-        implied_sentiment ?? null,
-        reflection_execution,
-        reflection_approach,
-        reflection_gaps,
-      ],
-    );
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Reflection written for session '${session_slug}'. Pass rate: ${criteria_passed}/${criteria_count}.`,
-        },
-      ],
-    };
-  }
-);
-
 // ── Tool: list_sessions ──────────────────────────────────────────────────────────
 
 server.tool(
@@ -454,76 +369,6 @@ server.tool(
       s.content ? `## Session Content\n\n${s.content}` : "*(no content yet)*",
     ].filter(Boolean).join("\n");
     return { content: [{ type: "text", text: header }] };
-  }
-);
-
-// ── Tool: invoke_skill ──────────────────────────────────────────────────────────
-
-server.tool(
-  "invoke_skill",
-  "Load and return a skill's prompt template from the DYFJ skills table. " +
-    "The returned template describes how to execute the skill — follow it. " +
-    "Call list_skills() first if you need to discover available slugs.",
-  {
-    slug: z
-      .string()
-      .describe("Skill slug, e.g. 'first_principles', 'research', 'council'"),
-  },
-  async ({ slug }) => {
-    const rows = await doltQuery(
-      `SELECT slug, name, description, prompt_template ` +
-        `FROM skills WHERE slug = ? LIMIT 1;`,
-      [slug],
-    );
-    if (rows.length === 0) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Skill not found: '${slug}'. Call list_skills() to see available skills.`,
-          },
-        ],
-        isError: true,
-      };
-    }
-    const s = rows[0]!;
-    return {
-      content: [
-        {
-          type: "text",
-          text: `# Invoking skill: ${s.name}\n\n${(s.prompt_template ?? "").trim()}`,
-        },
-      ],
-    };
-  }
-);
-
-// ── Tool: list_skills ─────────────────────────────────────────────────────────
-
-server.tool(
-  "list_skills",
-  "List all available skills in the DYFJ skills table. Returns slug, name, and description.",
-  {},
-  async () => {
-    const rows = await doltQuery(
-      `SELECT slug, name, description FROM skills ORDER BY slug;`
-    );
-    if (rows.length === 0) {
-      return {
-        content: [{ type: "text", text: "No skills found." }],
-      };
-    }
-    const lines = [
-      "| slug | name | description |",
-      "|------|------|-------------|",
-      ...rows.map((r) => {
-        const desc = r.description?.replace(/\n/g, " ").replace(/\|/g, "\\|").slice(0, 100) ?? "";
-        return `| ${r.slug} | ${r.name} | ${desc} |`;
-      }),
-    ];
-    return {
-      content: [{ type: "text", text: lines.join("\n") }],
-    };
   }
 );
 

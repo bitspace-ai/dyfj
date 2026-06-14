@@ -3,6 +3,8 @@
 Status: design note.
 Tracks: `dyfj-2fl.6` - Design DYFJ command/tool primitive.
 
+> **Note (2026-06-14):** the `capability_*` events referenced below as a future representation of command registration were removed in `schema/018_drop_vestigial.sql` (unbuilt — no producer or consumer). The forward-looking framing still holds; the capability schema would be re-added as a clean migration when there are real consumers.
+
 ## Frame
 
 Workbench needs one callable primitive that can be invoked from two places:

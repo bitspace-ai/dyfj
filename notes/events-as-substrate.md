@@ -2,6 +2,8 @@
 
 Design note. *How DYFJ's cross-cutting concerns — observability, auth/authz, capability discovery, cost — share one append-only log instead of getting their own services.*
 
+> **Update (2026-06-14):** the capability/discovery columns and `capability_*` event types this note describes were removed in `schema/018_drop_vestigial.sql` — they shipped with no producer or consumer (the Rust `capability_round_trip` test was their only exerciser). The *design* below still stands as the intended shape if/when capability discovery is built; treat the concrete schema specifics (columns present, round-trip proof) as deferred, to be re-added as a clean migration when there are real consumers.
+
 ---
 
 ## The frame

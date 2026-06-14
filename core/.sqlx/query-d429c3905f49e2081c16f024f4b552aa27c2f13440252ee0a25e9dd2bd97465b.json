@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "\n        INSERT INTO events (\n            event_id, session_id, event_type, created_at,\n            trace_id, span_id, parent_span_id,\n            principal_id, principal_type, action, resource, authz_basis\n        )\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "d429c3905f49e2081c16f024f4b552aa27c2f13440252ee0a25e9dd2bd97465b"
+}

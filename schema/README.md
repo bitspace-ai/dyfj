@@ -13,14 +13,20 @@ Migrations are numbered and applied in order:
 - `001_events.sql` — append-only runtime telemetry. Every model call, tool invocation, error. OTel correlation fields and security/audit fields are structural, not optional.
 - `002_memories.sql` — durable context (user profile, feedback, environment, project, reference). Structured metadata + freeform `TEXT` content for model interpretation.
 - `003_sessions.sql` — units of work, with structured metadata for queries and freeform markdown for the model.
-- `004_reflections.sql` — distilled lessons from completed sessions.
+- `004_reflections.sql` — distilled lessons from completed sessions. **Dropped by `018` (vestigial — unused by the runtime, superseded in spirit by work-shaped-evals).**
 - `006_models.sql` — registry of available models (local and remote), capabilities, costs.
-- `007_events_model_selected.sql` — typed view of model-selection events.
-- `008_events_budget_summary.sql` — typed view of budget-summary events.
-- `009_skills.sql` — invokable skills (named, parameterized actions composable into agent loops).
-- `010_events_capability.sql` — bilateral capability/discovery events (provide/require/match/release) and lease-aware lookup fields. Day-1 schema commitment so the runtime registry is derivable from the log later.
+- `007_events_model_selected.sql` — adds the `model_selected` event type (routing decisions, including rejected candidates).
+- `008_events_budget_summary.sql` — adds the `budget_summary` event type (one cost/token ledger row per session).
+- `009_skills.sql` — invokable skills as Dolt-stored prompt templates. **Dropped by `018` (vestigial — unused by the runtime, redundant with `017_prompts`).**
+- `010_events_capability.sql` — bilateral capability/discovery events (provide/require/match/release) and lease-aware lookup fields. **Reverted by `018` (a Day-1 registry bet emitted by nothing; re-add as a clean migration when the routing-registry work is real).**
 - `011_events_authn.sql` — authentication metadata for the acting principal on event rows. Adds primitive authn fields for status, mechanism, issuer/session references, assertion times, and evidence pointers; credential material remains out of scope.
 - `012_models_2026_06_refresh.sql` — registry refresh: current Anthropic lineup with cache economics, the MLX local default, Opus 4.5 deprecated.
+- `013_sessions_project.sql` — adds the `project` column to `sessions` so Workbench sessions group by project.
+- `014_models_openai_2026_06.sql` — hosted OpenAI (GPT) rows; deactivates the adapterless Gemini rows.
+- `015_models_gemini_2026_06.sql` — current Gemini rows behind the native adapter.
+- `016_models_local_coder_default.sql` — local default moves to the capable open-weights coder model (Qwen3-Coder-30B-A3B) on high-memory Apple Silicon; deactivates the prior small local default.
+- `017_prompts.sql` — authored, versioned system prompts (trusted config), kept separate from the untrusted memory layer.
+- `018_drop_vestigial.sql` — schema reconciliation: drops `reflections` and `skills`, and removes the unused capability/discovery event scaffolding from `010`.
 
 (Migration `005_*` is intentionally absent here; it lives in implementation-specific overlays where it belongs, not in the canonical substrate.)
 

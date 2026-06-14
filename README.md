@@ -60,7 +60,7 @@ Working-system criterion. Cost visibility is part of the done-line itself, not a
 
 ### Inter-agent contracts - Day-1 posture
 
-- **Event schema carries capability/discovery metadata Day-1.** Locked into the Dolt DDL alongside OTel and security fields. Cheap now; expensive to retrofit.
+- **Event schema is the inter-agent contract.** A capability/discovery column set was a Day-1 bet locked into the DDL, but it shipped with no producer or consumer and was removed in `schema/018_drop_vestigial.sql`; re-add it as a clean migration when the registry has real consumers. OTel and security fields remain structural.
 - **Runtime registry is interface-only Day-1.** `register()` and `lookup()` exist as a stubbed interface backed by static config. Real registration/leasing service deferred until there are actual consumers.
 
 ### Authority and policy
