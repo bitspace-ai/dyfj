@@ -182,15 +182,15 @@ export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   return [
     {
-      slug: "mlx-community/Qwen3.5-4B-8bit",
-      displayName: "Qwen3.5 4B MLX",
+      slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+      displayName: "Qwen3-Coder 30B MLX",
       provider: "mlx-lm",
       api: "openai-completions",
       baseUrl: "http://127.0.0.1:18080/v1",
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      capabilities: ["text", "code", "reasoning"],
+      capabilities: ["text", "code", "reasoning", "long-context"],
     },
     {
       slug: "laguna-xs.2",
@@ -271,7 +271,7 @@ function preferredModelFrom(
   candidates: WorkbenchModel[],
 ): WorkbenchModel | undefined {
   return candidates.find((model) =>
-    model.slug === "mlx-community/Qwen3.5-4B-8bit"
+    model.slug === "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit"
   ) ??
     candidates.find((model) => model.slug === "laguna-xs.2") ??
     candidates.find((model) => model.slug === "gemma4:e2b") ??

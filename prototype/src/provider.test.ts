@@ -103,7 +103,7 @@ describe("selectWorkbenchModel", () => {
   test("defaults to the local MLX Qwen model when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
 
-    expect(selection.selected.slug).toBe("mlx-community/Qwen3.5-4B-8bit");
+    expect(selection.selected.slug).toBe("mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit");
     expect(selection.selected.provider).toBe("mlx-lm");
     expect(selection.reason).toBe("default");
   });
@@ -118,7 +118,7 @@ describe("selectWorkbenchModel", () => {
 
   test("explicit model selection can select the MLX Qwen model", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {
-      modelId: "mlx-community/Qwen3.5-4B-8bit",
+      modelId: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
     });
 
     expect(selection.selected.provider).toBe("mlx-lm");
@@ -143,7 +143,7 @@ describe("defaultLocalWorkbenchModels", () => {
     const defaults = defaultLocalWorkbenchModels();
 
     expect(defaults[0]).toMatchObject({
-      slug: "mlx-community/Qwen3.5-4B-8bit",
+      slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
       provider: "mlx-lm",
       api: "openai-completions",
       baseUrl: "http://127.0.0.1:18080/v1",
@@ -182,7 +182,7 @@ describe("withDefaultLocalWorkbenchModels", () => {
     }]);
 
     expect(merged.map((model) => model.slug).slice(0, 2)).toEqual([
-      "mlx-community/Qwen3.5-4B-8bit",
+      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
       "laguna-xs.2",
     ]);
   });
@@ -301,7 +301,7 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
       prompt: "hello",
-      routing: { modelId: "mlx-community/Qwen3.5-4B-8bit" },
+      routing: { modelId: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit" },
       models: defaultLocalWorkbenchModels(),
       fetchFn: async (input, init) => {
         requestUrl = String(input);
@@ -320,7 +320,7 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     expect(requestUrl).toBe("http://127.0.0.1:18080/v1/chat/completions");
-    expect(requestModel).toBe("mlx-community/Qwen3.5-4B-8bit");
+    expect(requestModel).toBe("mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit");
     expect(result.model.provider).toBe("mlx-lm");
     expect(result.text).toBe("hello from mlx");
   });
@@ -931,8 +931,8 @@ describe("explicit tier preference", () => {
         capabilities: ["text"],
       },
       {
-        slug: "mlx-community/Qwen3.5-4B-8bit",
-        displayName: "Qwen3.5 4B MLX",
+        slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+        displayName: "Qwen3-Coder 30B MLX",
         provider: "mlx-lm",
         api: "openai-completions",
         baseUrl: "http://127.0.0.1:18080/v1",
@@ -943,11 +943,11 @@ describe("explicit tier preference", () => {
       },
     ];
     const selection = selectWorkbenchModel(tierZero, { tier: 0 });
-    expect(selection.selected.slug).toBe("mlx-community/Qwen3.5-4B-8bit");
+    expect(selection.selected.slug).toBe("mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit");
     expect(selection.reason).toBe("explicit_tier");
     expect(selection.considered).toEqual([
       "laguna-xs.2",
-      "mlx-community/Qwen3.5-4B-8bit",
+      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
     ]);
   });
 });
