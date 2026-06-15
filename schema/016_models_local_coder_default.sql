@@ -4,8 +4,8 @@
 -- Replace it with Qwen3-Coder-30B-A3B-Instruct (8-bit): a Mixture-of-Experts
 -- coder, 30B total / ~3B active per token, so it is capable AND fast on Apple
 -- Silicon (~32GB resident, with ample headroom on a high-memory machine).
--- This is the "owned-local-large" sovereign-capable tier — capable open
--- weights running on owned hardware. Ollama (laguna/gemma) remains the
+-- This is the "owned-local-large" tier — capable open weights you run
+-- yourself on owned hardware. Ollama (laguna/gemma) remains the
 -- fast-small local floor on its own endpoint.
 --
 -- The MLX-LM server loads one model per endpoint, so the old 4B row is

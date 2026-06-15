@@ -1,6 +1,6 @@
 # DYFJ
 
-A local-first AI workbench and automation framework for operator sovereignty. Modular, vendor-loose, and explicit about model cost before work runs.
+A local-first AI workbench and automation framework built for optionality — you choose where each task runs, local or hosted, with cost visible before work runs. Modular, vendor-loose, and explicit about model cost.
 
 This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
