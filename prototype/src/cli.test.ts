@@ -17,7 +17,7 @@ import {
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
-  return { serverUrl: "http://localhost:8787", color: false, ...overrides };
+  return { serverUrl: "http://localhost:8787", mode: "turn", color: false, ...overrides };
 }
 
 function result(overrides: Partial<TurnResult> = {}): TurnResult {
@@ -272,6 +272,21 @@ describe("parseArgs", () => {
   test("--help asks for help", () => {
     expect(parseArgs(["--help"]).command).toBe("help");
   });
+  test("--mode sets the context mode", () => {
+    expect(parseArgs(["--mode", "ask", "exec", "x"]).overrides.mode).toBe("ask");
+  });
+  test("rejects an invalid mode", () => {
+    expect(parseArgs(["--mode", "wat", "exec", "x"]).error).toContain("mode");
+  });
+  test("'ask' is a one-shot ask-mode exec", () => {
+    const p = parseArgs(["ask", "what", "is", "this", "repo"]);
+    expect(p.command).toBe("exec");
+    expect(p.prompt).toBe("what is this repo");
+    expect(p.overrides.mode).toBe("ask");
+  });
+  test("'ask' requires a prompt", () => {
+    expect(parseArgs(["ask"]).error).toContain("ask requires a prompt");
+  });
 });
 
 describe("resolveConfig", () => {
@@ -295,6 +310,10 @@ describe("resolveConfig", () => {
     expect(c.serverUrl).toBe("http://127.0.0.1:8787");
     expect(c.color).toBe(true);
   });
+  test("mode defaults to turn and honors the override", () => {
+    expect(resolveConfig({}, { get: () => undefined }).mode).toBe("turn");
+    expect(resolveConfig({ mode: "ask" }, { get: () => undefined }).mode).toBe("ask");
+  });
 });
 
 describe("buildTurnBody", () => {
@@ -307,6 +326,9 @@ describe("buildTurnBody", () => {
       routingOptions: { modelId: "m", tier: 1 },
       sessionId: "SESS",
     });
+  });
+  test("carries the config mode into the request body", () => {
+    expect(buildTurnBody("x", cfg({ mode: "ask" })).mode).toBe("ask");
   });
 });
 

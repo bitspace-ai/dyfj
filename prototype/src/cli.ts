@@ -60,6 +60,8 @@ export interface TurnRequest {
 export interface CliConfig {
   serverUrl: string;
   key?: string;
+  /** Context mode: "turn" = companion + memory; "ask"/"next-work" = repo context. */
+  mode: "turn" | "ask" | "next-work";
   model?: string;
   tier?: 0 | 1 | 2;
   hint?: "code" | "chat" | "reasoning";
@@ -100,7 +102,7 @@ export function buildTurnBody(
   if (config.tier !== undefined) routingOptions.tier = config.tier;
   if (config.hint !== undefined) routingOptions.hint = config.hint;
 
-  const body: TurnRequest = { prompt, mode: "turn" };
+  const body: TurnRequest = { prompt, mode: config.mode };
   if (Object.keys(routingOptions).length > 0) body.routingOptions = routingOptions;
   if (sessionId !== undefined) body.sessionId = sessionId;
   return body;
@@ -286,6 +288,7 @@ interface ParsedArgs {
 const VALUE_FLAGS = new Set([
   "--server",
   "--key",
+  "--mode",
   "--model",
   "--tier",
   "--hint",
@@ -315,7 +318,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (arg === "--model") overrides.model = value;
       else if (arg === "--session") overrides.sessionId = value;
       else if (arg === "-p" || arg === "--print") printPrompt = value;
-      else if (arg === "--tier") {
+      else if (arg === "--mode") {
+        if (value !== "turn" && value !== "ask" && value !== "next-work") {
+          return error("--mode must be turn, ask, or next-work");
+        }
+        overrides.mode = value;
+      } else if (arg === "--tier") {
         const tier = Number(value);
         if (tier !== 0 && tier !== 1 && tier !== 2) {
           return error("--tier must be 0, 1, or 2");
@@ -346,6 +354,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     return { command: "exec", prompt, json, overrides };
   }
+  // `dyfj ask "<prompt>"` — sugar for a one-shot repo-context (ask-mode) turn.
+  if (positional[0] === "ask") {
+    const prompt = positional.slice(1).join(" ").trim();
+    if (prompt.length === 0) {
+      return { command: "exec", json, overrides, error: "ask requires a prompt" };
+    }
+    return { command: "exec", prompt, json, overrides: { ...overrides, mode: "ask" } };
+  }
   if (positional.length > 0) {
     return error(`unknown command: ${positional[0]}`);
   }
@@ -372,6 +388,7 @@ export function resolveConfig(
   return {
     serverUrl: overrides.serverUrl ?? env.get("DYFJ_SERVER_URL") ?? DEFAULT_SERVER,
     key: overrides.key ?? env.get("DYFJ_WORKBENCH_API_KEY"),
+    mode: overrides.mode ?? "turn",
     model: overrides.model ?? env.get("DYFJ_WORKBENCH_MODEL"),
     tier: overrides.tier ?? tier,
     hint: overrides.hint ?? hint,
@@ -385,9 +402,11 @@ const HELP = `dyfj — Workbench daily-driver client
 Usage:
   dyfj                      interactive REPL (multi-turn, streaming)
   dyfj exec "<prompt>"      one-shot turn
+  dyfj ask "<prompt>"       one-shot repo-context question (ask mode)
   dyfj -p "<prompt>"        one-shot turn (alias)
 
 Options:
+  --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
   --server <url>   runtime server (default ${DEFAULT_SERVER}, env DYFJ_SERVER_URL)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
