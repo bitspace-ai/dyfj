@@ -113,6 +113,56 @@ describe("evaluateCommandPolicy", () => {
     expect(result.decision).toBe("allow");
   });
 
+  test("auto-allows a read-only filesystem command", () => {
+    const readFile = readCommand({
+      id: "read_file",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: { path: { type: "string" } },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["read.filesystem", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["file:read"],
+        network: "none",
+        filesystem: "read",
+        cost: "none",
+      },
+    });
+    const result = evaluateCommandPolicy(
+      readFile,
+      call({ path: "src/cli.ts" }, { commandId: "read_file" }),
+    );
+    expect(result.decision).toBe("allow");
+  });
+
+  test("does NOT auto-allow a write-filesystem command (falls to ask)", () => {
+    const writeFile = readCommand({
+      id: "write_file",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: { path: { type: "string" } },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["write.filesystem", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["file:write"],
+        network: "none",
+        filesystem: "write",
+        cost: "none",
+      },
+    });
+    const result = evaluateCommandPolicy(
+      writeFile,
+      call({ path: "x" }, { commandId: "write_file" }),
+    );
+    expect(result.decision).toBe("ask");
+  });
+
   test("denies malformed command arguments before execution", () => {
     const result = evaluateCommandPolicy(
       readCommand(),
@@ -159,6 +209,35 @@ describe("evaluateCommandPolicy", () => {
       authzBasis: "policy:deny:invalid-arguments",
       reason: "unexpected argument: rationale",
     });
+  });
+});
+
+describe("registerCoreCommands", () => {
+  test("registers only memory.read without a workspace root", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, {});
+    expect(registry.list().map((c) => c.id)).toEqual(["memory.read"]);
+  });
+
+  test("registers the read-only file tools when a workspace root is set", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    expect(registry.list().map((c) => c.id).sort()).toEqual([
+      "list_files",
+      "memory.read",
+      "read_file",
+    ]);
+  });
+
+  test("the registered file tools are read-only (auto-allowed)", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    const readFile = registry.lookup("read_file")!;
+    const result = evaluateCommandPolicy(
+      readFile,
+      call({ path: "deno.json" }, { commandId: "read_file" }),
+    );
+    expect(result.decision).toBe("allow");
   });
 });
 

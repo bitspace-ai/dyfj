@@ -46,6 +46,7 @@
     "workbench": {
       "env": [
         "USER",
+        "DYFJ_ROOT",
         "DYFJ_PRINCIPAL_ID",
         "DYFJ_WORKBENCH_MODEL",
         "DYFJ_WORKBENCH_HINT",
@@ -88,6 +89,7 @@
     "workbench-http": {
       "env": [
         "USER",
+        "DYFJ_ROOT",
         "DYFJ_PRINCIPAL_ID",
         "DYFJ_WORKBENCH_MODEL",
         "DYFJ_WORKBENCH_HINT",

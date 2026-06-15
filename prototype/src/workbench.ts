@@ -948,6 +948,8 @@ export async function runWorkbenchRuntime(
       );
       registerCoreCommands(commandRegistry, {
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
+        // Read-only workspace file tools, scoped to the project root.
+        workspaceRoot: Deno.env.get("DYFJ_ROOT") ?? Deno.cwd(),
       });
       commandTools = commandRegistry.projectTools();
       systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);

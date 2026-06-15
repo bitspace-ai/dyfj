@@ -1,4 +1,5 @@
 import { executeReadMemory } from "./memory";
+import { executeListFiles, executeReadFile } from "./file-tools";
 import {
   generateSpanId,
   generateULID,
@@ -102,6 +103,8 @@ export type CommandInvocationResult<TResult = unknown> =
 export interface CoreCommandDependencies {
   readMemory?: (slug: string) => Promise<string> | string;
   allowedMemorySlugs?: readonly string[];
+  /** When set, register the read-only workspace file tools rooted here. */
+  workspaceRoot?: string;
 }
 
 export interface CommandEventContext {
@@ -167,10 +170,14 @@ export function evaluateCommandPolicy(
 
   if (
     command.permission.defaultDecision === "allow" &&
-    command.permission.filesystem === "none" &&
+    (command.permission.filesystem === "none" ||
+      command.permission.filesystem === "read") &&
     command.permission.cost === "none" &&
     command.permission.network !== "external"
   ) {
+    // Read-only local access (memory reads, workspace file reads) needs no
+    // approval. Write filesystem, paid cost, and external network still fall
+    // through to "ask"/"deny" until the Slice B safety model gates them.
     return {
       decision: "allow",
       authzBasis: "policy:allow:read-only-local",
@@ -272,11 +279,79 @@ function escapeRegex(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
+export function buildReadFileCommand(root: string): CommandDefinition<string> {
+  return {
+    id: "read_file",
+    title: "Read File",
+    description:
+      "Read a UTF-8 text file from the workspace, by path relative to the " +
+      "workspace root. Read-only.",
+    inputSchema: {
+      type: "object",
+      required: ["path"],
+      properties: {
+        path: {
+          type: "string",
+          description: "File path relative to the workspace root.",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      effects: ["read.filesystem", "emit.event"],
+      defaultDecision: "allow",
+      resources: ["file:read"],
+      network: "none",
+      filesystem: "read",
+      cost: "none",
+    },
+    executor: (call) => executeReadFile(root, String(call.arguments.path)),
+  };
+}
+
+export function buildListFilesCommand(root: string): CommandDefinition<string> {
+  return {
+    id: "list_files",
+    title: "List Files",
+    description:
+      "List the entries of a workspace directory, by path relative to the " +
+      "workspace root (omit for the root). Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "Directory path relative to the workspace root; defaults to the root.",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      effects: ["read.filesystem", "emit.event"],
+      defaultDecision: "allow",
+      resources: ["file:read"],
+      network: "none",
+      filesystem: "read",
+      cost: "none",
+    },
+    executor: (call) =>
+      executeListFiles(
+        root,
+        call.arguments.path === undefined ? "." : String(call.arguments.path),
+      ),
+  };
+}
+
 export function registerCoreCommands(
   registry: CommandRegistry,
   deps: CoreCommandDependencies = {},
 ): void {
   registry.register(buildMemoryReadCommand(deps));
+  if (deps.workspaceRoot !== undefined) {
+    registry.register(buildReadFileCommand(deps.workspaceRoot));
+    registry.register(buildListFilesCommand(deps.workspaceRoot));
+  }
 }
 
 export function buildCommandToolCallEventPayload(
