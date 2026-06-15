@@ -15,6 +15,8 @@ import {
   buildToolResult,
   escapeUntrustedMemoryContent,
   formatUntrustedMemoryRecord,
+  MEMORY_VISIBILITY_ALL,
+  memoryClearanceFor,
   UNTRUSTED_MEMORY_INSTRUCTIONS,
   type Memory,
   type MemoryIndexEntry,
@@ -58,6 +60,28 @@ const SAMPLE_INDEX: MemoryIndexEntry[] = [
   makeIndex({ slug: "project_dyfj",    name: "DYFJ Workbench",    description: "User's AI platform" }),
   makeIndex({ slug: "reference_sleipnir", type: "reference", name: "Sleipnir", description: "Home server specs" }),
 ];
+
+// ── memoryClearanceFor (privacy-class scoping) ────────────────────────────────
+
+describe("memoryClearanceFor", () => {
+  test("loopback (local operator) is cleared for every visibility class", () => {
+    expect(memoryClearanceFor("loopback")).toEqual([...MEMORY_VISIBILITY_ALL]);
+  });
+
+  test("loopback clearance includes the private class", () => {
+    expect(memoryClearanceFor("loopback")).toContain("private");
+  });
+
+  test("remote consumers get only client-safe + public (no private corpus)", () => {
+    expect(memoryClearanceFor("remote")).toEqual(["client_safe", "public"]);
+  });
+
+  test("remote clearance excludes private and agent-shareable", () => {
+    const remote = memoryClearanceFor("remote");
+    expect(remote).not.toContain("private");
+    expect(remote).not.toContain("shareable");
+  });
+});
 
 // ── buildSystemPrompt - nudge ─────────────────────────────────────────────────
 

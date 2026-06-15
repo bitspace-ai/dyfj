@@ -33,6 +33,37 @@ import { doltQuery } from "./utils";
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";
 
+/**
+ * Privacy class of a memory row (AGENTS.md taxonomy). Governs which consumers
+ * receive the row at injection time. Stored in the `memories.visibility` column
+ * (schema/019); existing rows default to 'private'.
+ */
+export type MemoryVisibility = "private" | "shareable" | "client_safe" | "public";
+
+/** Full clearance: a local operator sees every class. */
+export const MEMORY_VISIBILITY_ALL: readonly MemoryVisibility[] = [
+  "private",
+  "shareable",
+  "client_safe",
+  "public",
+];
+
+/**
+ * Visibility classes a consumer is cleared to receive, by transport. The
+ * loopback/in-process operator (Chris at the machine) sees everything; any
+ * non-loopback consumer — remote or shared, even with the bearer key, since the
+ * shared bearer does not prove identity — is limited to client-safe + public
+ * until per-principal identity exists (dfj-1dv.12). Safe by default: an
+ * unrecognised transport gets the most restrictive set.
+ */
+export function memoryClearanceFor(
+  transport: "loopback" | "remote",
+): MemoryVisibility[] {
+  return transport === "loopback"
+    ? [...MEMORY_VISIBILITY_ALL]
+    : ["client_safe", "public"];
+}
+
 export interface Memory {
   memoryId:    string;
   slug:        string;
@@ -78,13 +109,18 @@ export const UNTRUSTED_MEMORY_INSTRUCTIONS = [
  * Load full memory rows for the given types.
  * user + feedback: always called at session start (full content guaranteed in context).
  */
-export async function loadMemoriesByType(types: MemoryType[]): Promise<Memory[]> {
-  if (types.length === 0) return [];
-  const placeholders = types.map(() => "?").join(", ");
+export async function loadMemoriesByType(
+  types: MemoryType[],
+  allowedVisibility: readonly MemoryVisibility[],
+): Promise<Memory[]> {
+  if (types.length === 0 || allowedVisibility.length === 0) return [];
+  const typePlaceholders = types.map(() => "?").join(", ");
+  const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
   const rows = await doltQuery(
     `SELECT memory_id, slug, type, name, description, content ` +
-    `FROM memories WHERE type IN (${placeholders}) ORDER BY type, slug;`,
-    types,
+    `FROM memories WHERE type IN (${typePlaceholders}) ` +
+    `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
+    [...types, ...allowedVisibility],
   );
   return rows.map(rowToMemory);
 }
@@ -93,13 +129,18 @@ export async function loadMemoriesByType(types: MemoryType[]): Promise<Memory[]>
  * Load index entries (no content) for the given types.
  * project + reference: loaded as a lightweight index; LLM pulls full content on demand.
  */
-export async function loadMemoryIndex(types: MemoryType[]): Promise<MemoryIndexEntry[]> {
-  if (types.length === 0) return [];
-  const placeholders = types.map(() => "?").join(", ");
+export async function loadMemoryIndex(
+  types: MemoryType[],
+  allowedVisibility: readonly MemoryVisibility[],
+): Promise<MemoryIndexEntry[]> {
+  if (types.length === 0 || allowedVisibility.length === 0) return [];
+  const typePlaceholders = types.map(() => "?").join(", ");
+  const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
   const rows = await doltQuery(
     `SELECT slug, type, name, description ` +
-    `FROM memories WHERE type IN (${placeholders}) ORDER BY type, slug;`,
-    types,
+    `FROM memories WHERE type IN (${typePlaceholders}) ` +
+    `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
+    [...types, ...allowedVisibility],
   );
   return rows.map(rowToIndexEntry);
 }

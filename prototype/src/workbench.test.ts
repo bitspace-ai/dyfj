@@ -117,6 +117,7 @@ vi.mock("./memory", () => ({
     name: "Project Context",
     description: "test",
   }],
+  memoryClearanceFor: () => ["private", "shareable", "client_safe", "public"],
 }));
 
 vi.mock("./commands", () => ({

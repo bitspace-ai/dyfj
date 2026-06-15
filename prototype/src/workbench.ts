@@ -780,6 +780,7 @@ export async function runWorkbenchRuntime(
     loadMemoriesByType,
     loadMemoryIndex,
     buildSystemPrompt,
+    memoryClearanceFor,
   } = await import("./memory");
   const {
     createCommandRegistry,
@@ -934,10 +935,16 @@ export async function runWorkbenchRuntime(
       });
     } else {
       console.log("Loading context...");
-      const coreMemories = await loadMemoriesByType(["user", "feedback"]);
-      const memoryIndex = await loadMemoryIndex(["project", "reference"]);
+      // Scope memory injection to what this consumer is cleared to see. A
+      // loopback/in-process operator gets the full corpus; a non-loopback
+      // consumer gets only client-safe + public, so the personal corpus never
+      // leaks to a remote or shared surface.
+      const clearance = memoryClearanceFor(authContext.transport);
+      const coreMemories = await loadMemoriesByType(["user", "feedback"], clearance);
+      const memoryIndex = await loadMemoryIndex(["project", "reference"], clearance);
       console.log(
-        `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries\n`,
+        `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
+          `(${authContext.transport} clearance)\n`,
       );
       registerCoreCommands(commandRegistry, {
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
