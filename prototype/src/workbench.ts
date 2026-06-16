@@ -775,6 +775,7 @@ export async function runWorkbenchRuntime(
     defaultLocalWorkbenchModels,
     estimateTextTokens,
     loadWorkbenchModels,
+    modelStreamsToolCalls,
     runWorkbenchTurn,
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
@@ -1132,6 +1133,17 @@ export async function runWorkbenchRuntime(
       return turn;
     };
     let streamedText = false;
+    // The OpenAI-compatible wire path streams text AND captures tool calls from
+    // the same SSE stream, so tool-offering calls can stream live there; the
+    // Anthropic/Google readers cannot, so tool-offering calls stay buffered for
+    // them (tool calls are then captured from the buffered JSON instead).
+    const streamsToolCalls = modelStreamsToolCalls(selected);
+    const liveDelta = runtimeInput.onTextDelta === undefined
+      ? undefined
+      : (delta: string) => {
+        streamedText = true;
+        runtimeInput.onTextDelta?.(delta);
+      };
     let turn = await runObservedTurn({
       systemPrompt,
       prompt: modelPrompt,
@@ -1139,27 +1151,29 @@ export async function runWorkbenchRuntime(
       models,
       jsonObject: isNextWork,
       tools: commandTools,
-      onTextDelta: isNextWork || commandTools.length > 0
+      // Stream when not producing JSON and either no tools are offered or the
+      // provider can stream tool calls — this also restores live token
+      // streaming for ordinary companion replies (tools registered, none used).
+      onTextDelta: isNextWork
         ? undefined
-        : runtimeInput.onTextDelta === undefined
-        ? undefined
-        : (delta) => {
-          streamedText = true;
-          runtimeInput.onTextDelta?.(delta);
-        },
+        : (commandTools.length === 0 || streamsToolCalls)
+        ? liveDelta
+        : undefined,
     }, {
       modelSlug: selected.slug,
       estimatedInputCount: estimateRuntimeInputCount(
         `${systemPrompt}\n${modelPrompt}`,
       ),
     });
-    // Agent loop: iterate model<->tools until the model stops requesting tools
-    // or the step cap is hit. Tool-gathering calls run buffered (the streaming
-    // readers do not parse tool-call deltas yet — see dfj-1dv.37), so momentum
-    // is surfaced via the per-step log and the tool_call events that
-    // invokeCommandWithEvent emits. On the final permitted step tools are
-    // dropped to force a concluding answer, which streams.
+    // Agent loop: iterate model<->tools until the model stops requesting tools,
+    // repeats itself, or hits the step cap. On the OpenAI-compatible path each
+    // gather step streams live (text deltas + captured tool calls); elsewhere
+    // gather steps buffer and only the forced conclusion streams. Momentum is
+    // also surfaced via the per-step log and the tool_call events. Tools are
+    // dropped to force a concluding answer at the cap or when the model thrashes
+    // (a whole step of calls it already made this turn).
     const accumulatedResults: ToolResultSummary[] = [];
+    const seenToolCalls = new Set<string>();
     let toolSteps = 0;
     while (
       !isNextWork &&
@@ -1171,6 +1185,11 @@ export async function runWorkbenchRuntime(
       console.log(
         `Step ${toolSteps}: running ${turn.toolCalls.length} tool call(s)...`,
       );
+      const stepSignatures = turn.toolCalls.map(
+        (toolCall) => `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`,
+      );
+      const allRepeats = stepSignatures.every((sig) => seenToolCalls.has(sig));
+      for (const sig of stepSignatures) seenToolCalls.add(sig);
       for (const toolCall of turn.toolCalls) {
         const commandResult = await invokeCommandWithEvent(commandRegistry, {
           commandId: toolCall.name,
@@ -1195,15 +1214,18 @@ export async function runWorkbenchRuntime(
       }
 
       const atCap = toolSteps >= MAX_TOOL_STEPS;
-      if (atCap) {
+      const forceConclude = atCap || allRepeats;
+      if (forceConclude) {
         console.log(
-          `Reached the ${MAX_TOOL_STEPS}-step tool limit; forcing a concluding answer.`,
+          atCap
+            ? `Reached the ${MAX_TOOL_STEPS}-step tool limit; forcing a concluding answer.`
+            : "Model repeated prior tool calls; forcing a concluding answer.",
         );
       }
       const followUpPrompt = buildToolResultFollowUpPrompt(
         modelPrompt,
         accumulatedResults,
-        !atCap,
+        !forceConclude,
       );
       const followUpInputCount = estimateRuntimeInputCount(
         `${systemPrompt}\n${followUpPrompt}`,
@@ -1214,13 +1236,10 @@ export async function runWorkbenchRuntime(
         prompt: followUpPrompt,
         routing: routingOptions,
         models,
-        tools: atCap ? undefined : commandTools,
-        onTextDelta: atCap && runtimeInput.onTextDelta !== undefined
-          ? (delta) => {
-            streamedText = true;
-            runtimeInput.onTextDelta?.(delta);
-          }
-          : undefined,
+        tools: forceConclude ? undefined : commandTools,
+        // Stream the gather step when the provider streams tool calls, and
+        // always stream the forced no-tools conclusion.
+        onTextDelta: streamsToolCalls || forceConclude ? liveDelta : undefined,
       }, {
         modelSlug: selected.slug,
         estimatedInputCount: followUpInputCount,

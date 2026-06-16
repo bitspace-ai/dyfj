@@ -123,9 +123,17 @@ const ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY";
 const ANTHROPIC_CACHE_READ_COST_MULTIPLIER = 0.1;
 const ANTHROPIC_CACHE_WRITE_COST_MULTIPLIER = 1.25;
 
+export interface OpenAIToolCallDelta {
+  index: number;
+  id?: string;
+  name?: string;
+  argumentsFragment?: string;
+}
+
 export interface OpenAIChatStreamEvent {
   done: boolean;
   textDelta?: string;
+  toolCallDeltas?: OpenAIToolCallDelta[];
   finishReason?: string;
   usage?: {
     prompt_tokens?: number;
@@ -332,6 +340,18 @@ export interface WorkbenchTurnParams {
   now?: () => number;
   fetchFn?: FetchLike;
   getEnv?: (name: string) => string | undefined;
+}
+
+/**
+ * Whether a streamed turn for this model can also carry tool calls. Only the
+ * OpenAI-compatible wire path parses tool calls out of the SSE stream
+ * (readOpenAIChatStream); the Anthropic and Google streaming readers do not, so
+ * a streamed tool-bearing turn there would silently drop the calls. The runtime
+ * uses this to decide whether to stream a tool-offering call or buffer it.
+ */
+export function modelStreamsToolCalls(model: WorkbenchModel): boolean {
+  return openAIHostedProviders.has(model.provider) ||
+    openAICompatibleLocalProviders.has(model.provider);
 }
 
 export async function runWorkbenchTurn(
@@ -1165,7 +1185,15 @@ export function parseOpenAIChatStreamLine(
 
   const json = JSON.parse(data) as {
     choices?: Array<{
-      delta?: { content?: string };
+      delta?: {
+        content?: string;
+        tool_calls?: Array<{
+          index?: number;
+          id?: string;
+          type?: string;
+          function?: { name?: string; arguments?: string };
+        }>;
+      };
       message?: { content?: string };
       finish_reason?: string;
     }>;
@@ -1175,9 +1203,19 @@ export function parseOpenAIChatStreamLine(
     };
   };
   const choice = json.choices?.[0];
+  const rawToolCalls = choice?.delta?.tool_calls;
+  const toolCallDeltas = rawToolCalls && rawToolCalls.length > 0
+    ? rawToolCalls.map((tc, i) => ({
+      index: tc.index ?? i,
+      id: tc.id,
+      name: tc.function?.name,
+      argumentsFragment: tc.function?.arguments,
+    }))
+    : undefined;
   return {
     done: false,
     textDelta: choice?.delta?.content ?? choice?.message?.content ?? undefined,
+    toolCallDeltas,
     finishReason: choice?.finish_reason ?? undefined,
     usage: json.usage,
   };
@@ -1270,8 +1308,9 @@ async function readOpenAIChatStream(
   text: string;
   finishReason?: string;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
-  // Streaming turns never carry tool calls (the runtime disables streaming
-  // when tools are projected); declared so both readers share one shape.
+  // The OpenAI-compatible stream carries tool calls as indexed deltas, which
+  // this reader accumulates — so a streamed turn can both stream text and
+  // request tools (unlike the Anthropic/Google streaming readers).
   toolCalls?: WorkbenchToolCall[];
   timings: WorkbenchCallTimings;
 }> {
@@ -1287,6 +1326,31 @@ async function readOpenAIChatStream(
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
   let firstTokenAt: number | undefined;
 
+  // Tool calls arrive as deltas keyed by index; id/name land in the first
+  // fragment for that index and arguments stream as string fragments (MLX sends
+  // the whole call in one delta, hosted OpenAI fragments it — both accumulate).
+  const toolAcc = new Map<
+    number,
+    { id?: string; name?: string; args: string }
+  >();
+
+  const applyEvent = (event: OpenAIChatStreamEvent) => {
+    if (event.textDelta) {
+      firstTokenAt ??= now();
+      text += event.textDelta;
+      onTextDelta(event.textDelta);
+    }
+    for (const delta of event.toolCallDeltas ?? []) {
+      const acc = toolAcc.get(delta.index) ?? { args: "" };
+      if (delta.id) acc.id = delta.id;
+      if (delta.name) acc.name = delta.name;
+      if (delta.argumentsFragment) acc.args += delta.argumentsFragment;
+      toolAcc.set(delta.index, acc);
+    }
+    if (event.finishReason) finishReason = event.finishReason;
+    if (event.usage) usage = event.usage;
+  };
+
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -1295,36 +1359,29 @@ async function readOpenAIChatStream(
     buffer = lines.pop() ?? "";
     for (const line of lines) {
       const event = parseOpenAIChatStreamLine(line);
-      if (!event) continue;
-      if (event.done) continue;
-      if (event.textDelta) {
-        firstTokenAt ??= now();
-        text += event.textDelta;
-        onTextDelta(event.textDelta);
-      }
-      if (event.finishReason) finishReason = event.finishReason;
-      if (event.usage) usage = event.usage;
+      if (event && !event.done) applyEvent(event);
     }
   }
 
   buffer += decoder.decode();
   if (buffer.trim().length > 0) {
     const event = parseOpenAIChatStreamLine(buffer);
-    if (event && !event.done) {
-      if (event.textDelta) {
-        firstTokenAt ??= now();
-        text += event.textDelta;
-        onTextDelta(event.textDelta);
-      }
-      if (event.finishReason) finishReason = event.finishReason;
-      if (event.usage) usage = event.usage;
-    }
+    if (event && !event.done) applyEvent(event);
   }
+
+  const toolCalls: WorkbenchToolCall[] = [...toolAcc.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([index, acc]) => ({
+      id: acc.id ?? `tool-call-${index + 1}`,
+      name: acc.name ?? "",
+      arguments: parseToolArguments(acc.args),
+    }));
 
   const completed = now();
   return {
     text,
     finishReason,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     usage,
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),

@@ -72,6 +72,7 @@ vi.mock("./provider", () => {
     defaultLocalWorkbenchModels: () => [runtimeMocks.model],
     [estimateExport]: (text: string) => Math.ceil(text.length / 4),
     loadWorkbenchModels: async () => [runtimeMocks.model],
+    modelStreamsToolCalls: () => true,
     runWorkbenchTurn: runtimeMocks.runWorkbenchTurn,
     selectWorkbenchModel: () => ({
       selected: runtimeMocks.model,
@@ -727,6 +728,45 @@ describe("runWorkbenchRuntime observer events", () => {
       // an earlier gather call still offered tools (so the model could continue)
       const firstFollowUp = runtimeMocks.runWorkbenchTurn.mock.calls[1][0];
       expect(Array.isArray(firstFollowUp.tools)).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("agent loop forces a conclusion when the model repeats prior tool calls", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      stopReason: "tool_use",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    const repeat = {
+      ...base,
+      text: "",
+      toolCalls: [{ id: "c", name: "list_files", arguments: { path: "." } }],
+    };
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce(repeat) // step 0
+      .mockResolvedValueOnce(repeat) // step 1 gather — identical call
+      .mockResolvedValueOnce({ ...base, text: "done", stopReason: "stop" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+      });
+      expect(result.text).toBe("done");
+      // step 0 + one gather + the forced conclusion — not the full step cap
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(3);
+      // the repeat was detected (step 2) and tools dropped to force a conclusion
+      const forcedCall = runtimeMocks.runWorkbenchTurn.mock.calls[2][0];
+      expect(forcedCall.tools).toBeUndefined();
     } finally {
       log.mockRestore();
     }

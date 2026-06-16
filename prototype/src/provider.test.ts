@@ -287,6 +287,20 @@ describe("parseOpenAIChatStreamLine", () => {
     expect(parseOpenAIChatStreamLine("data: [DONE]")).toEqual({ done: true });
   });
 
+  test("extracts streamed tool-call deltas", () => {
+    const event = parseOpenAIChatStreamLine(
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"list_files","arguments":"{\\"path\\":\\".\\"}"}}]}}]}',
+    );
+    expect(event?.toolCallDeltas).toEqual([
+      {
+        index: 0,
+        id: "call-1",
+        name: "list_files",
+        argumentsFragment: '{"path":"."}',
+      },
+    ]);
+  });
+
   test("ignores blank and non-data lines", () => {
     expect(parseOpenAIChatStreamLine("")).toBeNull();
     expect(parseOpenAIChatStreamLine("event: message")).toBeNull();
@@ -387,6 +401,95 @@ describe("runWorkbenchTurn streaming", () => {
       timePerOutputTokenMs: 5,
       totalMs: 20,
     });
+  });
+
+  const sseStream = (chunks: unknown[]) => {
+    const body = chunks
+      .map((c) => `data: ${JSON.stringify(c)}\n\n`)
+      .join("") + "data: [DONE]\n\n";
+    return async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+  };
+
+  test("captures tool calls from the SSE stream (MLX shape, whole call in one delta)", async () => {
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list the files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              role: "assistant",
+              tool_calls: [{
+                index: 0,
+                id: "tc-1",
+                type: "function",
+                function: { name: "list_files", arguments: '{"path":"."}' },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ]),
+    });
+
+    expect(result.toolCalls).toEqual([
+      { id: "tc-1", name: "list_files", arguments: { path: "." } },
+    ]);
+    expect(result.stopReason).toBe("tool_use");
+    expect(deltas).toEqual([]); // a tool-call turn streamed no text
+  });
+
+  test("accumulates fragmented tool-call arguments by index (hosted OpenAI shape)", async () => {
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read a file",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "tc-2",
+                type: "function",
+                function: { name: "read_file" },
+              }],
+            },
+          }],
+        },
+        {
+          choices: [{
+            delta: { tool_calls: [{ index: 0, function: { arguments: '{"path":' } }] },
+          }],
+        },
+        {
+          choices: [{
+            delta: { tool_calls: [{ index: 0, function: { arguments: '"a.ts"}' } }] },
+            finish_reason: "tool_calls",
+          }],
+        },
+      ]),
+    });
+
+    expect(result.toolCalls).toEqual([
+      { id: "tc-2", name: "read_file", arguments: { path: "a.ts" } },
+    ]);
   });
 });
 
