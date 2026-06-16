@@ -732,6 +732,99 @@ describe("runWorkbenchRuntime observer events", () => {
     }
   });
 
+  test("budgets and records every provider call so the receipt aggregates the whole turn", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      stopReason: "tool_use",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    const toolTurn = (id: string) => ({
+      ...base,
+      text: "",
+      toolCalls: [{ id, name: "list_files", arguments: {} }],
+    });
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce(toolTurn("c1"))
+      .mockResolvedValueOnce(toolTurn("c2"))
+      .mockResolvedValueOnce({ ...base, text: "done", stopReason: "stop" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+      });
+      // Three provider calls, each 10 in / 2 out -> aggregated, not just the last.
+      expect(result.tokens.input).toBe(30);
+      expect(result.tokens.output).toBe(6);
+      expect(result.tokens.totalCalls).toBe(3);
+      const modelResponse = runtimeMocks.writtenEvents.find(
+        (e) => e.event_type === "model_response",
+      );
+      expect(modelResponse?.tokens_input).toBe(30);
+      expect(modelResponse?.tokens_output).toBe(6);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("rejects an over-budget follow-up call before invoking the provider (tier 1)", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    const prevSession = process.env.DYFJ_BUDGET_SESSION_USD;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 0; // estimate 0; the session limit catches accumulated recorded cost
+    process.env.DYFJ_BUDGET_SESSION_USD = "0.02";
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const events: unknown[] = [];
+    try {
+      const base = {
+        model: runtimeMocks.model,
+        selection: {
+          selected: runtimeMocks.model,
+          considered: [runtimeMocks.model.slug],
+          reason: "default",
+        },
+        usage: { input: 10, output: 2, cost: { total: 0.03 }, cacheRead: 0, cacheWrite: 0 },
+        stopReason: "tool_use",
+        timings: { responseHeadersMs: 1, totalMs: 2 },
+      };
+      // Always wants another tool step; the loop must stop on budget, not the cap.
+      runtimeMocks.runWorkbenchTurn.mockResolvedValue({
+        ...base,
+        text: "",
+        toolCalls: [{ id: "c", name: "list_files", arguments: {} }],
+      });
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        confirmPaidEscalation: async () => {},
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      expect(result.text).toBe("");
+      expect((events.at(-1) as { type: string }).type).toBe("turnFailed");
+      expect((events.at(-1) as { errorName: string }).errorName).toBe(
+        "BudgetExceededError",
+      );
+      // Step 0 spent $0.03 (over the $0.02 session limit); the first follow-up
+      // is rejected before a second provider call — well short of MAX_TOOL_STEPS.
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      if (prevSession === undefined) delete process.env.DYFJ_BUDGET_SESSION_USD;
+      else process.env.DYFJ_BUDGET_SESSION_USD = prevSession;
+      log.mockRestore();
+    }
+  });
+
   test("emits turnFailed when the provider request fails", async () => {
     runtimeMocks.runWorkbenchTurn.mockRejectedValueOnce(
       new Error("local model unavailable"),

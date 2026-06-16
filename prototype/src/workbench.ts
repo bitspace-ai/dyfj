@@ -887,6 +887,11 @@ export async function runWorkbenchRuntime(
   let estimatedCostUsd = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
+  // Per-turn aggregates across every provider call the agent loop makes, so
+  // receipts/events count the whole turn, not just the final call.
+  let turnInputTokens = 0;
+  let turnOutputTokens = 0;
+  let turnCostUsd = 0;
   let contextSourceLines: string[] = [];
   let callTimings: WorkbenchCallTimings | undefined;
   let contextBudget: PackedContextSummary | undefined;
@@ -1082,6 +1087,27 @@ export async function runWorkbenchRuntime(
       params: Parameters<typeof runWorkbenchTurn>[0],
       request: { modelSlug: string; estimatedInputCount: number },
     ) => {
+      // Budget-gate and record EVERY provider call: the agent loop can make
+      // several calls in one turn, so per-call and session limits must be
+      // enforced before each one and usage recorded after each one (paid
+      // consent is still granted once per turn above; per-call + session
+      // limits and MAX_TOOL_STEPS bound loop spend).
+      const callPre = budget.checkPreCall(
+        selected.tier,
+        selected.costInput,
+        request.estimatedInputCount,
+      );
+      if (!callPre.allowed) {
+        const limit = callPre.reason === "per_call_limit"
+          ? callPre.perCallLimitUsd
+          : callPre.sessionLimitUsd;
+        throw new BudgetExceededError(
+          callPre.reason ?? "session_limit",
+          callPre.estimatedCost,
+          limit,
+          callPre.sessionCostSoFar,
+        );
+      }
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "beforeProviderRequest",
         sessionId,
@@ -1091,6 +1117,10 @@ export async function runWorkbenchRuntime(
       const turn = await runWorkbenchTurn(params);
       cacheReadTokens += turn.usage.cacheRead;
       cacheWriteTokens += turn.usage.cacheWrite;
+      turnInputTokens += turn.usage.input;
+      turnOutputTokens += turn.usage.output;
+      turnCostUsd += turn.usage.cost.total;
+      budget.record(turn.usage, turn.model.tier);
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "afterProviderResponse",
         sessionId,
@@ -1222,7 +1252,8 @@ export async function runWorkbenchRuntime(
     callTimings = turn.timings;
 
     spanId = generateSpanId();
-    budget.record(turn.usage, turn.model.tier);
+    // Per-call budget.record() now happens inside runObservedTurn, so the
+    // session summary already aggregates every call in this (and prior) turns.
     const summary = budget.getSummary();
     const paidCalls = (summary.byTier["1"]?.calls ?? 0) +
       (summary.byTier["2"]?.calls ?? 0);
@@ -1237,9 +1268,9 @@ export async function runWorkbenchRuntime(
       console.log("");
       console.log(buildBudgetTallyLine({
         turn: {
-          tokensInput: turn.usage.input,
-          tokensOutput: turn.usage.output,
-          costUsd: turn.usage.cost.total,
+          tokensInput: turnInputTokens,
+          tokensOutput: turnOutputTokens,
+          costUsd: turnCostUsd,
           tier: turn.model.tier,
         },
         session: {
@@ -1267,11 +1298,14 @@ export async function runWorkbenchRuntime(
         model_id: turn.model.slug,
         provider: turn.model.provider,
         api: turn.model.api,
-        tokens_input: turn.usage.input,
-        tokens_output: turn.usage.output,
-        tokens_cache_read: turn.usage.cacheRead,
-        tokens_cache_write: turn.usage.cacheWrite,
-        cost_total: turn.usage.cost.total,
+        // Aggregate across every provider call in this turn (the agent loop may
+        // make several) so the audit event counts the whole turn, not just the
+        // final call.
+        tokens_input: turnInputTokens,
+        tokens_output: turnOutputTokens,
+        tokens_cache_read: cacheReadTokens,
+        tokens_cache_write: cacheWriteTokens,
+        cost_total: turnCostUsd,
         ...authnEventFields,
         content: isNextWork
           ? JSON.stringify({
