@@ -13,6 +13,7 @@ import {
   isNextWorkMode,
   isWorkbenchShellExitCommand,
   isWorkbenchShellSessionCommand,
+  MAX_TOOL_STEPS,
   maybeBuildPaidEscalationPreflightBanner,
   type PaidEscalationPreflightInput,
   PaidInferenceRequiresTtyError,
@@ -377,6 +378,24 @@ describe("buildToolResultFollowUpPrompt", () => {
     expect(prompt).toContain("memory.read call-memory error");
     expect(prompt).toContain("slug does not match required pattern");
   });
+
+  test("default closing instruction asks the model to answer now", () => {
+    const prompt = buildToolResultFollowUpPrompt("summarize", [
+      { commandId: "list_files", callId: "c1", isError: false, result: "a.ts" },
+    ]);
+    expect(prompt).toContain("answer the original prompt");
+    expect(prompt).not.toContain("call additional tools");
+  });
+
+  test("allowMoreTools invites another tool step (multi-step loop)", () => {
+    const prompt = buildToolResultFollowUpPrompt(
+      "explore the repo",
+      [{ commandId: "list_files", callId: "c1", isError: false, result: "a.ts" }],
+      true,
+    );
+    expect(prompt).toContain("call additional tools");
+    expect(prompt).toContain("otherwise, answer the original prompt");
+  });
 });
 
 describe("validateNextWorkJson", () => {
@@ -636,6 +655,81 @@ describe("runWorkbenchRuntime observer events", () => {
       "summarize this sensitive prompt body",
     );
     expect(JSON.stringify(events)).not.toContain("runtime response");
+  });
+
+  test("agent loop iterates model<->tools until the model stops requesting tools", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      stopReason: "tool_use",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    const toolTurn = (id: string) => ({
+      ...base,
+      text: "",
+      toolCalls: [{ id, name: "list_files", arguments: { path: "." } }],
+    });
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce(toolTurn("c1"))
+      .mockResolvedValueOnce(toolTurn("c2"))
+      .mockResolvedValueOnce({ ...base, text: "done exploring", stopReason: "stop" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore the repo",
+        routingOptions: {},
+      });
+      expect(result.text).toBe("done exploring");
+      // step 0 (initial) + two follow-up gather calls = three model calls
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(3);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("agent loop stops at MAX_TOOL_STEPS and forces a no-tools concluding answer", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      stopReason: "tool_use",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    // The model never stops requesting tools; the loop must bound it.
+    runtimeMocks.runWorkbenchTurn.mockResolvedValue({
+      ...base,
+      text: "forced conclusion",
+      toolCalls: [{ id: "c", name: "list_files", arguments: {} }],
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "loop without stopping",
+        routingOptions: {},
+      });
+      expect(result.text).toBe("forced conclusion");
+      // step 0 + MAX_TOOL_STEPS gather calls, then the loop exits
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1 + MAX_TOOL_STEPS);
+      // the final forced call dropped tools to make the model conclude
+      const lastCall = runtimeMocks.runWorkbenchTurn.mock.calls.at(-1)![0];
+      expect(lastCall.tools).toBeUndefined();
+      // an earlier gather call still offered tools (so the model could continue)
+      const firstFollowUp = runtimeMocks.runWorkbenchTurn.mock.calls[1][0];
+      expect(Array.isArray(firstFollowUp.tools)).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test("emits turnFailed when the provider request fails", async () => {

@@ -251,9 +251,15 @@ export function buildNextWorkBrief(input: NextWorkBriefInput): string {
   ].join("\n");
 }
 
+// Upper bound on model<->tool iterations in a single turn. Bounds cost and
+// guarantees termination if a model keeps requesting tools; on the final
+// permitted step the runtime drops tools to force a concluding answer.
+export const MAX_TOOL_STEPS = 8;
+
 export function buildToolResultFollowUpPrompt(
   originalPrompt: string,
   toolResults: ToolResultSummary[],
+  allowMoreTools = false,
 ): string {
   const lines = [
     "Original prompt:",
@@ -270,7 +276,11 @@ export function buildToolResultFollowUpPrompt(
     lines.push(result.result);
   }
   lines.push("");
-  lines.push("Use the tool results above to answer the original prompt.");
+  lines.push(
+    allowMoreTools
+      ? "Use the tool results above. You have already run the calls listed; do not repeat a call you have already made. If you genuinely need more information, call additional tools; otherwise, answer the original prompt now."
+      : "Use the tool results above to answer the original prompt.",
+  );
   return lines.join("\n");
 }
 
@@ -1113,9 +1123,24 @@ export async function runWorkbenchRuntime(
         `${systemPrompt}\n${modelPrompt}`,
       ),
     });
-    if (!isNextWork && turn.toolCalls && turn.toolCalls.length > 0) {
-      console.log(`Running ${turn.toolCalls.length} tool call(s)...`);
-      const toolResults: ToolResultSummary[] = [];
+    // Agent loop: iterate model<->tools until the model stops requesting tools
+    // or the step cap is hit. Tool-gathering calls run buffered (the streaming
+    // readers do not parse tool-call deltas yet — see dfj-1dv.37), so momentum
+    // is surfaced via the per-step log and the tool_call events that
+    // invokeCommandWithEvent emits. On the final permitted step tools are
+    // dropped to force a concluding answer, which streams.
+    const accumulatedResults: ToolResultSummary[] = [];
+    let toolSteps = 0;
+    while (
+      !isNextWork &&
+      turn.toolCalls &&
+      turn.toolCalls.length > 0 &&
+      toolSteps < MAX_TOOL_STEPS
+    ) {
+      toolSteps++;
+      console.log(
+        `Step ${toolSteps}: running ${turn.toolCalls.length} tool call(s)...`,
+      );
       for (const toolCall of turn.toolCalls) {
         const commandResult = await invokeCommandWithEvent(commandRegistry, {
           commandId: toolCall.name,
@@ -1131,7 +1156,7 @@ export async function runWorkbenchRuntime(
           writeEvent: (event) =>
             writeMaybe(() => writeEvent(event), bestEffortEvents),
         });
-        toolResults.push({
+        accumulatedResults.push({
           commandId: toolCall.name,
           callId: toolCall.id,
           isError: commandResult.isError,
@@ -1139,9 +1164,16 @@ export async function runWorkbenchRuntime(
         });
       }
 
+      const atCap = toolSteps >= MAX_TOOL_STEPS;
+      if (atCap) {
+        console.log(
+          `Reached the ${MAX_TOOL_STEPS}-step tool limit; forcing a concluding answer.`,
+        );
+      }
       const followUpPrompt = buildToolResultFollowUpPrompt(
         modelPrompt,
-        toolResults,
+        accumulatedResults,
+        !atCap,
       );
       const followUpInputCount = estimateRuntimeInputCount(
         `${systemPrompt}\n${followUpPrompt}`,
@@ -1152,12 +1184,13 @@ export async function runWorkbenchRuntime(
         prompt: followUpPrompt,
         routing: routingOptions,
         models,
-        onTextDelta: runtimeInput.onTextDelta === undefined
-          ? undefined
-          : (delta) => {
+        tools: atCap ? undefined : commandTools,
+        onTextDelta: atCap && runtimeInput.onTextDelta !== undefined
+          ? (delta) => {
             streamedText = true;
             runtimeInput.onTextDelta?.(delta);
-          },
+          }
+          : undefined,
       }, {
         modelSlug: selected.slug,
         estimatedInputCount: followUpInputCount,
