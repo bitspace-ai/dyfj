@@ -26,6 +26,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- `dyfj` REPL exits cleanly on Ctrl-D (EOF). Readline emits `close` on EOF but never settles the pending `question` promise, so the REPL's `await` hung and Deno reported a never-resolved top-level await instead of exiting; `readLineOrNull` now races the question against `close` and resolves null, breaking the loop. `/exit` was unaffected.
 - Three latent strict-mode type errors: command policy "ask" outcomes now default a reason instead of passing `undefined` into a required field; the streaming chat reader declares the (always-absent) `toolCalls` field so both reader paths share one shape; JSON-schema tool types became type aliases so they satisfy `Record<string, unknown>` tool-parameter contracts; structured-output validation now narrows types instead of asserting past the checker.
 
 ### Changed

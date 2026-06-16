@@ -7,12 +7,48 @@ import {
   friendlyError,
   type Io,
   parseArgs,
+  readLineOrNull,
   resolveConfig,
   runExec,
   runRepl,
   streamTurn,
   type TurnResult,
 } from "./cli";
+
+describe("readLineOrNull", () => {
+  test("resolves the answered line", async () => {
+    const rl = {
+      question: () => Promise.resolve("hello"),
+      once: () => {},
+      off: () => {},
+    };
+    expect(await readLineOrNull(rl, "> ")).toBe("hello");
+  });
+
+  test("resolves null when the interface closes before answering (Ctrl-D)", async () => {
+    let closeHandler: () => void = () => {};
+    const rl = {
+      // Never settles — mirrors readline's dropped question promise on EOF.
+      question: () => new Promise<string>(() => {}),
+      once: (_event: "close", handler: () => void) => {
+        closeHandler = handler;
+      },
+      off: () => {},
+    };
+    const pending = readLineOrNull(rl, "> ");
+    closeHandler();
+    expect(await pending).toBeNull();
+  });
+
+  test("resolves null when the question rejects", async () => {
+    const rl = {
+      question: () => Promise.reject(new Error("boom")),
+      once: () => {},
+      off: () => {},
+    };
+    expect(await readLineOrNull(rl, "> ")).toBeNull();
+  });
+});
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

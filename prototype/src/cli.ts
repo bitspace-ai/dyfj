@@ -416,6 +416,38 @@ Options:
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
+interface QuestionReadline {
+  question(prompt: string): Promise<string>;
+  once(event: "close", listener: () => void): unknown;
+  off(event: "close", listener: () => void): unknown;
+}
+
+/**
+ * Read one line, resolving null on EOF. On Ctrl-D readline emits "close" but the
+ * pending `question` promise never settles, so race it against "close" —
+ * otherwise the REPL's await hangs and Deno reports a never-resolved top-level
+ * await instead of exiting cleanly.
+ */
+export function readLineOrNull(
+  rl: QuestionReadline,
+  prompt: string,
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    const onClose = () => resolve(null);
+    rl.once("close", onClose);
+    rl.question(prompt).then(
+      (answer) => {
+        rl.off("close", onClose);
+        resolve(answer);
+      },
+      () => {
+        rl.off("close", onClose);
+        resolve(null);
+      },
+    );
+  });
+}
+
 function realIo(): Io {
   const encoder = new TextEncoder();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -424,13 +456,7 @@ function realIo(): Io {
       Deno.stdout.writeSync(encoder.encode(text));
     },
     err: (line) => console.error(line),
-    readLine: async (prompt) => {
-      try {
-        return await rl.question(prompt);
-      } catch {
-        return null;
-      }
-    },
+    readLine: (prompt) => readLineOrNull(rl, prompt),
     close: () => rl.close(),
   };
 }
