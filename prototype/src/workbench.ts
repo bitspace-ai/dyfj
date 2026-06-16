@@ -284,6 +284,26 @@ export function buildToolResultFollowUpPrompt(
   return lines.join("\n");
 }
 
+/**
+ * Grounding appended to the companion system prompt when read-only file tools
+ * are registered. Tells the model the tools are root-scoped and paths are
+ * relative, so it explores with the tools instead of guessing stale paths from
+ * the loaded personal corpus. Deliberately does NOT name the absolute workspace
+ * root — that would leak host/user path metadata into model-visible text (and to
+ * a hosted provider on escalation); the model only needs root-relative paths.
+ */
+export function buildWorkspaceGrounding(): string {
+  return [
+    "",
+    "",
+    `Workspace: you have read-only file tools (list_files, read_file) scoped to ` +
+    `the project's workspace root. All paths are relative to that root and ` +
+    `cannot escape it. When asked about files, directories, or the project ` +
+    `itself, use these tools instead of guessing from memory — start with ` +
+    `list_files on \`.\` to see what is actually here.`,
+  ].join("\n");
+}
+
 function commandResultText(
   result: { isError: boolean; reason?: string; result?: unknown },
 ): string {
@@ -962,13 +982,17 @@ export async function runWorkbenchRuntime(
         `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
           `(${authContext.transport} clearance)\n`,
       );
+      const workspaceRoot = Deno.env.get("DYFJ_ROOT") ?? Deno.cwd();
       registerCoreCommands(commandRegistry, {
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
         // Read-only workspace file tools, scoped to the project root.
-        workspaceRoot: Deno.env.get("DYFJ_ROOT") ?? Deno.cwd(),
+        workspaceRoot,
       });
       commandTools = commandRegistry.projectTools();
       systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
+      if (commandTools.length > 0) {
+        systemPrompt += buildWorkspaceGrounding();
+      }
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "contextBuilt",
         sessionId,

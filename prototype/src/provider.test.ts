@@ -6,6 +6,7 @@ import {
   buildOpenAIChatRequest,
   defaultLocalWorkbenchModels,
   estimateTextTokens,
+  extractTextToolCalls,
   HostedProviderCredentialMissingError,
   parseAnthropicStreamLine,
   parseGeminiStreamLine,
@@ -307,6 +308,39 @@ describe("parseOpenAIChatStreamLine", () => {
   });
 });
 
+describe("extractTextToolCalls", () => {
+  test("recovers a leaked Qwen3-Coder tool call and strips the markup", () => {
+    const text =
+      "I'll check.\n<function=list_files>\n<parameter=path>\n.\n</parameter>\n</function>\n</tool_call>";
+    const { toolCalls, cleaned } = extractTextToolCalls(text);
+    expect(toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+    expect(cleaned).toBe("I'll check.");
+  });
+
+  test("recovers multiple calls and coerces parameter values", () => {
+    const text =
+      "<function=read_file><parameter=path>schema/019.sql</parameter><parameter=max>120</parameter></function>" +
+      "<function=list_files><parameter=path>.</parameter></function>";
+    const { toolCalls } = extractTextToolCalls(text);
+    expect(toolCalls).toEqual([
+      {
+        id: "text-tool-1",
+        name: "read_file",
+        arguments: { path: "schema/019.sql", max: 120 },
+      },
+      { id: "text-tool-2", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("leaves normal text untouched when there is no tool markup", () => {
+    const { toolCalls, cleaned } = extractTextToolCalls("just a normal answer");
+    expect(toolCalls).toEqual([]);
+    expect(cleaned).toBe("just a normal answer");
+  });
+});
+
 describe("runWorkbenchTurn streaming", () => {
   test("uses an OpenAI-compatible MLX local provider", async () => {
     let requestUrl = "";
@@ -490,6 +524,62 @@ describe("runWorkbenchTurn streaming", () => {
     expect(result.toolCalls).toEqual([
       { id: "tc-2", name: "read_file", arguments: { path: "a.ts" } },
     ]);
+  });
+
+  test("recovers a leaked tool call from a streamed turn and suppresses the markup", async () => {
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        { choices: [{ delta: { content: "I'll check. " } }] },
+        {
+          choices: [{
+            delta: {
+              content: "<function=list_files><parameter=path>.</parameter></function>",
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+    // The narration streamed; the tool-call markup was suppressed.
+    expect(deltas.join("")).toBe("I'll check. ");
+  });
+
+  test("recovers a leaked tool call from a buffered (non-streamed) turn", async () => {
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{
+              message: {
+                content:
+                  "<function=list_files><parameter=path>.</parameter></function></tool_call>",
+              },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 5, completion_tokens: 10 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+    expect(result.stopReason).toBe("tool_use");
   });
 });
 

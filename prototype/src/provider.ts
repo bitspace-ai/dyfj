@@ -450,7 +450,19 @@ async function executeOpenAICompatibleTurn(
       headersReceived,
     )
     : await readOpenAIChatJson(response, now, requestStarted, headersReceived);
-  const text = result.text;
+  let text = result.text;
+  let toolCalls = result.toolCalls;
+  let finishReason = result.finishReason;
+  // Some servers (mlx_lm + Qwen3-Coder) leak tool calls as text instead of
+  // parsing them; recover them so the agent loop still fires.
+  if (!toolCalls || toolCalls.length === 0) {
+    const recovered = extractTextToolCalls(text);
+    if (recovered.toolCalls.length > 0) {
+      toolCalls = recovered.toolCalls;
+      text = recovered.cleaned;
+      finishReason = "tool_calls";
+    }
+  }
   const input = result.usage?.prompt_tokens ??
     estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
   const output = result.usage?.completion_tokens ?? estimateTextTokens(text);
@@ -469,8 +481,8 @@ async function executeOpenAICompatibleTurn(
       cacheRead: 0,
       cacheWrite: 0,
     },
-    stopReason: normaliseFinishReason(result.finishReason),
-    toolCalls: result.toolCalls,
+    stopReason: normaliseFinishReason(finishReason),
+    toolCalls,
     timings,
   };
 }
@@ -1298,6 +1310,55 @@ function parseToolArguments(
   return {};
 }
 
+const TEXT_FUNCTION_RE = /<function=([^>\s]+)\s*>([\s\S]*?)<\/function>/g;
+const TEXT_PARAM_RE = /<parameter=([^>\s]+)\s*>([\s\S]*?)<\/parameter>/g;
+const TEXT_TOOLCALL_TAG_RE = /<\/?tool_call>/g;
+
+function coerceParamValue(raw: string): unknown {
+  if (raw === "") return "";
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Recover tool calls that a model emitted as text instead of structured
+ * tool_calls. Qwen3-Coder (via mlx_lm) frequently leaks its native XML dialect
+ * into the content — `<function=NAME><parameter=KEY>VALUE</parameter>…</function>`,
+ * optionally wrapped in `<tool_call>` — which the inference server does not
+ * parse. This extracts those calls so the agent loop still fires, and returns
+ * the text with the markup stripped. Server-agnostic: only triggers when the
+ * structured tool_calls are absent and the markup is present.
+ */
+export function extractTextToolCalls(
+  text: string,
+): { toolCalls: WorkbenchToolCall[]; cleaned: string } {
+  const toolCalls: WorkbenchToolCall[] = [];
+  const fn = new RegExp(TEXT_FUNCTION_RE);
+  let match: RegExpExecArray | null;
+  while ((match = fn.exec(text)) !== null) {
+    const args: Record<string, unknown> = {};
+    const params = new RegExp(TEXT_PARAM_RE);
+    let p: RegExpExecArray | null;
+    while ((p = params.exec(match[2])) !== null) {
+      args[p[1]] = coerceParamValue(p[2].trim());
+    }
+    toolCalls.push({
+      id: `text-tool-${toolCalls.length + 1}`,
+      name: match[1],
+      arguments: args,
+    });
+  }
+  if (toolCalls.length === 0) return { toolCalls, cleaned: text };
+  const cleaned = text
+    .replace(new RegExp(TEXT_FUNCTION_RE), "")
+    .replace(TEXT_TOOLCALL_TAG_RE, "")
+    .trim();
+  return { toolCalls, cleaned };
+}
+
 async function readOpenAIChatStream(
   response: Response,
   onTextDelta: (delta: string) => void,
@@ -1325,6 +1386,10 @@ async function readOpenAIChatStream(
   let finishReason: string | undefined;
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
   let firstTokenAt: number | undefined;
+  // Once a model leaks tool-call markup into the text (Qwen3-Coder via mlx_lm),
+  // stop forwarding deltas to the user — the markup is recovered into structured
+  // tool calls by extractTextToolCalls, so showing the raw XML would be noise.
+  let suppressing = false;
 
   // Tool calls arrive as deltas keyed by index; id/name land in the first
   // fragment for that index and arguments stream as string fragments (MLX sends
@@ -1337,8 +1402,19 @@ async function readOpenAIChatStream(
   const applyEvent = (event: OpenAIChatStreamEvent) => {
     if (event.textDelta) {
       firstTokenAt ??= now();
+      const prevLen = text.length;
       text += event.textDelta;
-      onTextDelta(event.textDelta);
+      if (!suppressing) {
+        const markup = text.search(/<tool_call>|<function=/);
+        if (markup === -1) {
+          onTextDelta(event.textDelta);
+        } else {
+          // Forward only the part of this delta before the markup begins.
+          const forwardLen = markup - prevLen;
+          if (forwardLen > 0) onTextDelta(event.textDelta.slice(0, forwardLen));
+          suppressing = true;
+        }
+      }
     }
     for (const delta of event.toolCallDeltas ?? []) {
       const acc = toolAcc.get(delta.index) ?? { args: "" };

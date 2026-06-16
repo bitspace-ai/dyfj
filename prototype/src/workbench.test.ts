@@ -7,6 +7,7 @@ import {
   buildPaidEscalationPreflightBanner,
   buildToolResultFollowUpPrompt,
   buildWorkbenchReceipt,
+  buildWorkspaceGrounding,
   buildWorkbenchRuntimeInput,
   buildWorkbenchShellBanner,
   formatMoney,
@@ -396,6 +397,18 @@ describe("buildToolResultFollowUpPrompt", () => {
     );
     expect(prompt).toContain("call additional tools");
     expect(prompt).toContain("otherwise, answer the original prompt");
+  });
+});
+
+describe("buildWorkspaceGrounding", () => {
+  test("steers the model to the tools without leaking the absolute host path", () => {
+    const grounding = buildWorkspaceGrounding();
+    expect(grounding).toContain("list_files");
+    expect(grounding).toContain("relative to that root");
+    expect(grounding).toMatch(/instead of guessing/i);
+    // Must not embed an absolute host path (public source + hosted egress).
+    expect(grounding).not.toMatch(/\/Users\//);
+    expect(grounding).not.toMatch(/\/home\//);
   });
 });
 
