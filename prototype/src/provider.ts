@@ -52,6 +52,24 @@ export interface WorkbenchToolCall {
   arguments: Record<string, unknown>;
 }
 
+/**
+ * One turn in a multi-step agent-loop transcript. The system prompt is NOT
+ * carried here — it stays in WorkbenchTurnParams.systemPrompt and each adapter
+ * places it where its wire format wants it (a `system` message for OpenAI, the
+ * top-level `system` field for Anthropic). `messages` is the user/assistant/tool
+ * history that grows as the loop iterates, so the model sees its own prior
+ * tool-call intentions and the matching results — not a flattened summary string
+ * that drops its reasoning trail and invites confabulation.
+ *
+ * `tool` messages carry `toolCallId`, which MUST match the `id` of a tool call in
+ * the immediately preceding `assistant` message — that link is how the wire
+ * formats pair a result to the call that produced it.
+ */
+export type WorkbenchMessage =
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: WorkbenchToolCall[] }
+  | { role: "tool"; toolCallId: string; name: string; content: string };
+
 export interface WorkbenchCallTimings {
   responseHeadersMs: number;
   timeToFirstTokenMs?: number;
@@ -291,17 +309,103 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+/**
+ * Text used for the fallback input-token estimate when the provider does not
+ * report prompt_tokens. Covers the full conversation (system + history, or the
+ * seed prompt when there is no history) so multi-step turns are not undercounted.
+ */
+function estimateParamsInputText(params: WorkbenchTurnParams): string {
+  const history = params.messages && params.messages.length > 0
+    ? params.messages
+      .map((m) =>
+        m.role === "assistant"
+          ? m.content + (m.toolCalls ? JSON.stringify(m.toolCalls) : "")
+          : m.content
+      )
+      .join("\n")
+    : params.prompt;
+  return `${params.systemPrompt}\n${history}`;
+}
+
+/** Map registry tool name -> sanitized wire name for assistant tool_calls. */
+function wireNameLookup(
+  tools: WorkbenchToolDefinition[] | undefined,
+): (name: string) => string {
+  if (!tools || tools.length === 0) return (name) => name;
+  const byName = new Map(
+    toolWireNames(tools).map(({ wire, tool }) => [tool.name, wire]),
+  );
+  return (name) => byName.get(name) ?? name;
+}
+
+type OpenAIWireMessage = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_call_id?: string;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+};
+
+/**
+ * Build the OpenAI `messages` array: system prefix, then either the structured
+ * history (assistant tool_calls + tool results, names sanitized to the same wire
+ * form we offered) or the single seed user prompt when no history is supplied.
+ */
+function toOpenAIWireMessages(
+  systemPrompt: string,
+  prompt: string,
+  messages: WorkbenchMessage[] | undefined,
+  tools: WorkbenchToolDefinition[] | undefined,
+): OpenAIWireMessage[] {
+  const wire: OpenAIWireMessage[] = [
+    { role: "system", content: systemPrompt },
+  ];
+  if (!messages || messages.length === 0) {
+    wire.push({ role: "user", content: prompt });
+    return wire;
+  }
+  const wireName = wireNameLookup(tools);
+  for (const m of messages) {
+    if (m.role === "user") {
+      wire.push({ role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      const out: OpenAIWireMessage = { role: "assistant", content: m.content };
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        out.tool_calls = m.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function",
+          function: {
+            name: wireName(tc.name),
+            arguments: JSON.stringify(tc.arguments ?? {}),
+          },
+        }));
+      }
+      wire.push(out);
+    } else {
+      wire.push({ role: "tool", tool_call_id: m.toolCallId, content: m.content });
+    }
+  }
+  return wire;
+}
+
 export function buildOpenAIChatRequest(
   model: string,
   systemPrompt: string,
   prompt: string,
   stream = false,
-  options: { jsonObject?: boolean; tools?: WorkbenchToolDefinition[] } = {},
+  options: {
+    jsonObject?: boolean;
+    tools?: WorkbenchToolDefinition[];
+    messages?: WorkbenchMessage[];
+  } = {},
 ) {
   const body: {
     model: string;
     stream: boolean;
-    messages: Array<{ role: "system" | "user"; content: string }>;
+    messages: OpenAIWireMessage[];
     response_format?: { type: "json_object" };
     tools?: Array<{
       type: "function";
@@ -311,10 +415,12 @@ export function buildOpenAIChatRequest(
   } = {
     model,
     stream,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: prompt },
-    ],
+    messages: toOpenAIWireMessages(
+      systemPrompt,
+      prompt,
+      options.messages,
+      options.tools,
+    ),
   };
   if (options.jsonObject) {
     body.response_format = { type: "json_object" };
@@ -334,6 +440,15 @@ export function buildOpenAIChatRequest(
 export interface WorkbenchTurnParams {
   systemPrompt: string;
   prompt: string;
+  /**
+   * Multi-step conversation history (user/assistant/tool), excluding the system
+   * prompt. When present and non-empty it supersedes `prompt` as the conversation
+   * the model sees; `prompt` remains the first-turn seed and the fallback for
+   * adapters without history mapping (Google, which never emits tool calls and so
+   * never loops). Adapters that loop (OpenAI-compatible, Anthropic) build their
+   * wire request from this.
+   */
+  messages?: WorkbenchMessage[];
   routing: WorkbenchRoutingOptions;
   models?: WorkbenchModel[];
   onTextDelta?: (delta: string) => void;
@@ -428,7 +543,11 @@ async function executeOpenAICompatibleTurn(
           params.systemPrompt,
           params.prompt,
           stream,
-          { jsonObject: params.jsonObject, tools: params.tools },
+          {
+            jsonObject: params.jsonObject,
+            tools: params.tools,
+            messages: params.messages,
+          },
         ),
       ),
     },
@@ -476,7 +595,7 @@ async function executeOpenAICompatibleTurn(
     }));
   }
   const input = result.usage?.prompt_tokens ??
-    estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
+    estimateTextTokens(estimateParamsInputText(params));
   const output = result.usage?.completion_tokens ?? estimateTextTokens(text);
   const timings = withTimePerOutputToken(result.timings, output);
   const costTotal = (input / 1_000_000) * model.costInput +
@@ -552,12 +671,80 @@ export function toolWireNames(
   });
 }
 
+type AnthropicContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; tool_use_id: string; content: string };
+
+type AnthropicWireMessage = {
+  role: "user" | "assistant";
+  content: string | AnthropicContentBlock[];
+};
+
+/**
+ * Map the agent-loop history to Anthropic's message shape: assistant turns carry
+ * `tool_use` blocks (names sanitized to the wire form we offered), and tool
+ * results become `tool_result` blocks in a following user turn. Consecutive tool
+ * results are merged into a single user turn, which is how Anthropic expects a
+ * batch of results for one assistant turn's tool calls.
+ */
+function toAnthropicWireMessages(
+  prompt: string,
+  messages: WorkbenchMessage[] | undefined,
+  tools: WorkbenchToolDefinition[] | undefined,
+): AnthropicWireMessage[] {
+  if (!messages || messages.length === 0) {
+    return [{ role: "user", content: prompt }];
+  }
+  const wireName = wireNameLookup(tools);
+  const wire: AnthropicWireMessage[] = [];
+  for (const m of messages) {
+    if (m.role === "user") {
+      wire.push({ role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      const blocks: AnthropicContentBlock[] = [];
+      if (m.content && m.content.trim().length > 0) {
+        blocks.push({ type: "text", text: m.content });
+      }
+      for (const tc of m.toolCalls ?? []) {
+        blocks.push({
+          type: "tool_use",
+          id: tc.id,
+          name: wireName(tc.name),
+          input: tc.arguments ?? {},
+        });
+      }
+      wire.push({ role: "assistant", content: blocks });
+    } else {
+      const block: AnthropicContentBlock = {
+        type: "tool_result",
+        tool_use_id: m.toolCallId,
+        content: m.content,
+      };
+      const last = wire[wire.length - 1];
+      if (
+        last && last.role === "user" && Array.isArray(last.content) &&
+        last.content[0]?.type === "tool_result"
+      ) {
+        last.content.push(block);
+      } else {
+        wire.push({ role: "user", content: [block] });
+      }
+    }
+  }
+  return wire;
+}
+
 export function buildAnthropicMessagesRequest(
   model: string,
   systemPrompt: string,
   prompt: string,
   stream = false,
-  options: { jsonObject?: boolean; tools?: WorkbenchToolDefinition[] } = {},
+  options: {
+    jsonObject?: boolean;
+    tools?: WorkbenchToolDefinition[];
+    messages?: WorkbenchMessage[];
+  } = {},
 ) {
   // The stable system prompt is the cache prefix: cache_control on the first
   // block, volatile additions in later blocks, so repeated turns read the
@@ -585,7 +772,7 @@ export function buildAnthropicMessagesRequest(
     max_tokens: number;
     stream: boolean;
     system: typeof system;
-    messages: Array<{ role: "user"; content: string }>;
+    messages: AnthropicWireMessage[];
     tools?: Array<{
       name: string;
       description: string;
@@ -596,7 +783,7 @@ export function buildAnthropicMessagesRequest(
     max_tokens: ANTHROPIC_DEFAULT_MAX_TOKENS,
     stream,
     system,
-    messages: [{ role: "user", content: prompt }],
+    messages: toAnthropicWireMessages(prompt, options.messages, options.tools),
   };
   if (options.tools && options.tools.length > 0) {
     body.tools = toolWireNames(options.tools).map(
@@ -699,7 +886,11 @@ async function runAnthropicMessagesTurn(
           params.systemPrompt,
           params.prompt,
           stream,
-          { jsonObject: params.jsonObject, tools: params.tools },
+          {
+            jsonObject: params.jsonObject,
+            tools: params.tools,
+            messages: params.messages,
+          },
         ),
       ),
     },
@@ -744,7 +935,7 @@ async function runAnthropicMessagesTurn(
   }
 
   const input = result.inputTokens ??
-    estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
+    estimateTextTokens(estimateParamsInputText(params));
   const output = result.outputTokens ?? estimateTextTokens(result.text);
   const cacheRead = result.cacheReadTokens ?? 0;
   const cacheWrite = result.cacheWriteTokens ?? 0;
@@ -1050,7 +1241,7 @@ async function runGoogleGenerativeAITurn(
     : await readGeminiJson(response, now, requestStarted, headersReceived);
 
   const input = result.inputTokens ??
-    estimateTextTokens(`${params.systemPrompt}\n${params.prompt}`);
+    estimateTextTokens(estimateParamsInputText(params));
   const output = result.outputTokens ?? estimateTextTokens(result.text);
   const timings = withTimePerOutputToken(result.timings, output);
   const costTotal = (input / 1_000_000) * model.costInput +

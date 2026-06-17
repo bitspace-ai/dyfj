@@ -269,6 +269,52 @@ describe("buildOpenAIChatRequest", () => {
       tool_choice: "auto",
     });
   });
+
+  test("maps a multi-step transcript to system + user/assistant/tool wire messages", () => {
+    const tools = [
+      {
+        name: "memory.read",
+        description: "Load one Dolt-backed memory by slug.",
+        parameters: { type: "object", properties: { slug: { type: "string" } } },
+      },
+    ];
+    const body = buildOpenAIChatRequest("gemma4", "system", "seed", false, {
+      tools,
+      messages: [
+        { role: "user", content: "what is this repo?" },
+        {
+          role: "assistant",
+          content: "Reading memory.",
+          toolCalls: [
+            { id: "call-1", name: "memory.read", arguments: { slug: "project_dyfj" } },
+          ],
+        },
+        { role: "tool", toolCallId: "call-1", name: "memory.read", content: "# DYFJ" },
+      ],
+    });
+
+    expect(body.messages[0]).toEqual({ role: "system", content: "system" });
+    expect(body.messages[1]).toEqual({ role: "user", content: "what is this repo?" });
+    // Assistant turn carries the tool-call intentions; dotted name sanitized to
+    // the same wire form offered in `tools`, arguments serialized to a string.
+    expect(body.messages[2]).toEqual({
+      role: "assistant",
+      content: "Reading memory.",
+      tool_calls: [
+        {
+          id: "call-1",
+          type: "function",
+          function: { name: "memory_read", arguments: JSON.stringify({ slug: "project_dyfj" }) },
+        },
+      ],
+    });
+    // Tool result links back to the call by id (the seed `prompt` is ignored).
+    expect(body.messages[3]).toEqual({
+      role: "tool",
+      tool_call_id: "call-1",
+      content: "# DYFJ",
+    });
+  });
 });
 
 describe("parseOpenAIChatStreamLine", () => {
@@ -942,6 +988,58 @@ describe("anthropic provider adapter", () => {
       description: "Read a memory",
       input_schema: { type: "object", properties: {} },
     }]);
+  });
+
+  test("buildAnthropicMessagesRequest maps a transcript to tool_use/tool_result blocks", () => {
+    const tools = [{
+      name: "memory.read",
+      description: "Read a memory",
+      parameters: { type: "object", properties: {} },
+    }];
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "sys",
+      "seed",
+      false,
+      {
+        tools,
+        messages: [
+          { role: "user", content: "what is this repo?" },
+          {
+            role: "assistant",
+            content: "Reading memory.",
+            toolCalls: [
+              { id: "tu-1", name: "memory.read", arguments: { slug: "a" } },
+              { id: "tu-2", name: "memory.read", arguments: { slug: "b" } },
+            ],
+          },
+          { role: "tool", toolCallId: "tu-1", name: "memory.read", content: "A" },
+          { role: "tool", toolCallId: "tu-2", name: "memory.read", content: "B" },
+        ],
+      },
+    );
+
+    // System stays top-level; the seed `prompt` is not used when history exists.
+    expect(body.system[0]).toMatchObject({ text: "sys" });
+    expect(body.messages[0]).toEqual({ role: "user", content: "what is this repo?" });
+    // Assistant turn: text block + one tool_use block per call (name sanitized).
+    expect(body.messages[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "Reading memory." },
+        { type: "tool_use", id: "tu-1", name: "memory_read", input: { slug: "a" } },
+        { type: "tool_use", id: "tu-2", name: "memory_read", input: { slug: "b" } },
+      ],
+    });
+    // Consecutive tool results merge into ONE following user turn (Anthropic shape).
+    expect(body.messages[2]).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "tu-1", content: "A" },
+        { type: "tool_result", tool_use_id: "tu-2", content: "B" },
+      ],
+    });
+    expect(body.messages).toHaveLength(3);
   });
 
   test("parseAnthropicStreamLine extracts deltas, usage, and stop reason", () => {

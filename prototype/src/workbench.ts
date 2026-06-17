@@ -1,5 +1,6 @@
 import type { WorkbenchRoutingOptions } from "./provider";
 import type { WorkbenchCallTimings } from "./provider";
+import type { WorkbenchMessage, WorkbenchToolCall } from "./provider";
 import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import process from "node:process";
@@ -256,32 +257,46 @@ export function buildNextWorkBrief(input: NextWorkBriefInput): string {
 // permitted step the runtime drops tools to force a concluding answer.
 export const MAX_TOOL_STEPS = 8;
 
-export function buildToolResultFollowUpPrompt(
-  originalPrompt: string,
-  toolResults: ToolResultSummary[],
-  allowMoreTools = false,
-): string {
-  const lines = [
-    "Original prompt:",
-    originalPrompt,
-    "",
-    "Tool results:",
+/**
+ * Turn one agent-loop step into transcript messages: the assistant turn that
+ * requested the tools (its text plus the tool-call intentions) followed by one
+ * `tool` message per result, each linked back to its call by id. Appending these
+ * to the running history is what lets the next step see the model's own prior
+ * reasoning and the matching results — instead of a flattened summary string
+ * that drops the trail and invites confabulation.
+ */
+export function toolStepToMessages(
+  assistantText: string,
+  toolCalls: WorkbenchToolCall[] | undefined,
+  stepResults: ToolResultSummary[],
+): WorkbenchMessage[] {
+  const messages: WorkbenchMessage[] = [
+    { role: "assistant", content: assistantText, toolCalls },
   ];
-  for (const result of toolResults) {
-    lines.push(
-      `- ${result.commandId} ${result.callId} ${
-        result.isError ? "error" : "ok"
-      }`,
-    );
-    lines.push(result.result);
+  for (const result of stepResults) {
+    messages.push({
+      role: "tool",
+      toolCallId: result.callId,
+      name: result.commandId,
+      content: result.result,
+    });
   }
-  lines.push("");
-  lines.push(
-    allowMoreTools
-      ? "Use the tool results above. You have already run the calls listed; do not repeat a call you have already made. If you genuinely need more information, call additional tools; otherwise, answer the original prompt now."
-      : "Use the tool results above to answer the original prompt.",
-  );
-  return lines.join("\n");
+  return messages;
+}
+
+/** Concatenated text of a transcript, for the fallback input-token estimate. */
+function transcriptEstimateText(
+  systemPrompt: string,
+  messages: WorkbenchMessage[],
+): string {
+  const body = messages
+    .map((m) =>
+      m.role === "assistant"
+        ? m.content + (m.toolCalls ? JSON.stringify(m.toolCalls) : "")
+        : m.content
+    )
+    .join("\n");
+  return `${systemPrompt}\n${body}`;
 }
 
 /**
@@ -1196,7 +1211,15 @@ export async function runWorkbenchRuntime(
     // also surfaced via the per-step log and the tool_call events. Tools are
     // dropped to force a concluding answer at the cap or when the model thrashes
     // (a whole step of calls it already made this turn).
-    const accumulatedResults: ToolResultSummary[] = [];
+    // The growing conversation transcript: the model's own prior assistant
+    // turns (with their tool-call intentions) and the matching tool results are
+    // appended each step and replayed on the next call, so multi-step turns stay
+    // coherent instead of seeing a flattened "prompt + accumulated results"
+    // string. Seeded with the original user prompt; the first turn above ran on
+    // `prompt` alone, which is the equivalent single-message history.
+    const messages: WorkbenchMessage[] = [
+      { role: "user", content: modelPrompt },
+    ];
     const seenToolCalls = new Set<string>();
     let toolSteps = 0;
     while (
@@ -1214,7 +1237,9 @@ export async function runWorkbenchRuntime(
       );
       const allRepeats = stepSignatures.every((sig) => seenToolCalls.has(sig));
       for (const sig of stepSignatures) seenToolCalls.add(sig);
-      for (const toolCall of turn.toolCalls) {
+      const requestedToolCalls = turn.toolCalls;
+      const stepResults: ToolResultSummary[] = [];
+      for (const toolCall of requestedToolCalls) {
         const commandResult = await invokeCommandWithEvent(commandRegistry, {
           commandId: toolCall.name,
           callId: toolCall.id,
@@ -1229,7 +1254,7 @@ export async function runWorkbenchRuntime(
           writeEvent: (event) =>
             writeMaybe(() => writeEvent(event), bestEffortEvents),
         });
-        accumulatedResults.push({
+        stepResults.push({
           commandId: toolCall.name,
           callId: toolCall.id,
           isError: commandResult.isError,
@@ -1246,18 +1271,28 @@ export async function runWorkbenchRuntime(
             : "Model repeated prior tool calls; forcing a concluding answer.",
         );
       }
-      const followUpPrompt = buildToolResultFollowUpPrompt(
-        modelPrompt,
-        accumulatedResults,
-        !forceConclude,
+      // Append this step to the transcript: the assistant turn that requested
+      // the tools (text + tool-call intentions) and one tool message per result.
+      messages.push(
+        ...toolStepToMessages(turn.text, requestedToolCalls, stepResults),
       );
+      // When forcing a conclusion (step cap or thrash), drop tools and nudge a
+      // final answer; otherwise the model continues naturally from the results.
+      if (forceConclude) {
+        messages.push({
+          role: "user",
+          content:
+            "Use the tool results above to answer the original prompt now. Do not call any more tools.",
+        });
+      }
       const followUpInputCount = estimateRuntimeInputCount(
-        `${systemPrompt}\n${followUpPrompt}`,
+        transcriptEstimateText(systemPrompt, messages),
       );
       streamedText = false;
       turn = await runObservedTurn({
         systemPrompt,
-        prompt: followUpPrompt,
+        prompt: modelPrompt,
+        messages,
         routing: routingOptions,
         models,
         tools: forceConclude ? undefined : commandTools,

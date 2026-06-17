@@ -5,7 +5,6 @@ import {
   buildBudgetTallyLine,
   buildNextWorkBrief,
   buildPaidEscalationPreflightBanner,
-  buildToolResultFollowUpPrompt,
   buildWorkbenchReceipt,
   buildWorkspaceGrounding,
   buildWorkbenchRuntimeInput,
@@ -21,6 +20,7 @@ import {
   resolveWorkbenchInvocation,
   runWorkbenchRuntime,
   shouldPrintBudgetTally,
+  toolStepToMessages,
   validateNextWorkJson,
   type WorkbenchReceiptInput,
 } from "./workbench";
@@ -349,54 +349,64 @@ describe("buildNextWorkBrief", () => {
   });
 });
 
-describe("buildToolResultFollowUpPrompt", () => {
-  test("preserves the original prompt and appends command results", () => {
-    const prompt = buildToolResultFollowUpPrompt("summarize this", [
-      {
-        commandId: "memory.read",
-        callId: "call-memory",
-        isError: false,
-        result: "# Project DYFJ\n\nPublic repo context",
-      },
-    ]);
-
-    expect(prompt).toContain("Original prompt:");
-    expect(prompt).toContain("summarize this");
-    expect(prompt).toContain("Tool results:");
-    expect(prompt).toContain("memory.read call-memory ok");
-    expect(prompt).toContain("# Project DYFJ");
-  });
-
-  test("includes denied command results as errors", () => {
-    const prompt = buildToolResultFollowUpPrompt("read memory", [
-      {
-        commandId: "memory.read",
-        callId: "call-memory",
-        isError: true,
-        result: "slug does not match required pattern",
-      },
-    ]);
-
-    expect(prompt).toContain("memory.read call-memory error");
-    expect(prompt).toContain("slug does not match required pattern");
-  });
-
-  test("default closing instruction asks the model to answer now", () => {
-    const prompt = buildToolResultFollowUpPrompt("summarize", [
-      { commandId: "list_files", callId: "c1", isError: false, result: "a.ts" },
-    ]);
-    expect(prompt).toContain("answer the original prompt");
-    expect(prompt).not.toContain("call additional tools");
-  });
-
-  test("allowMoreTools invites another tool step (multi-step loop)", () => {
-    const prompt = buildToolResultFollowUpPrompt(
-      "explore the repo",
-      [{ commandId: "list_files", callId: "c1", isError: false, result: "a.ts" }],
-      true,
+describe("toolStepToMessages", () => {
+  test("emits the assistant tool-call turn followed by linked tool results", () => {
+    const toolCalls = [
+      { id: "call-memory", name: "memory.read", arguments: { slug: "project_dyfj" } },
+    ];
+    const messages = toolStepToMessages(
+      "Let me read the project memory.",
+      toolCalls,
+      [
+        {
+          commandId: "memory.read",
+          callId: "call-memory",
+          isError: false,
+          result: "# Project DYFJ\n\nPublic repo context",
+        },
+      ],
     );
-    expect(prompt).toContain("call additional tools");
-    expect(prompt).toContain("otherwise, answer the original prompt");
+
+    expect(messages).toHaveLength(2);
+    // The assistant turn carries the model's own text + its tool-call intentions.
+    expect(messages[0]).toMatchObject({
+      role: "assistant",
+      content: "Let me read the project memory.",
+      toolCalls,
+    });
+    // The tool result is linked back to the call by id (toolCallId === call id).
+    expect(messages[1]).toMatchObject({
+      role: "tool",
+      toolCallId: "call-memory",
+      name: "memory.read",
+      content: "# Project DYFJ\n\nPublic repo context",
+    });
+  });
+
+  test("emits one tool message per result, preserving order and errors", () => {
+    const messages = toolStepToMessages(
+      "",
+      [
+        { id: "c1", name: "list_files", arguments: { path: "." } },
+        { id: "c2", name: "memory.read", arguments: { slug: "missing" } },
+      ],
+      [
+        { commandId: "list_files", callId: "c1", isError: false, result: "a.ts" },
+        {
+          commandId: "memory.read",
+          callId: "c2",
+          isError: true,
+          result: "slug does not match required pattern",
+        },
+      ],
+    );
+
+    expect(messages.map((m) => m.role)).toEqual(["assistant", "tool", "tool"]);
+    expect(messages[1]).toMatchObject({ toolCallId: "c1", content: "a.ts" });
+    expect(messages[2]).toMatchObject({
+      toolCallId: "c2",
+      content: "slug does not match required pattern",
+    });
   });
 });
 
