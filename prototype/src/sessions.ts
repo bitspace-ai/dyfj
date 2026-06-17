@@ -1,4 +1,5 @@
 import { doltExec, doltQuery, generateULID, type SqlParam } from "./utils";
+import type { WorkbenchMessage } from "./provider";
 
 export type SessionExec = (sql: string, params: SqlParam[]) => Promise<void>;
 export type SessionQuery = (
@@ -261,33 +262,33 @@ export async function fetchWorkbenchSessionEvents(input: {
 }
 
 /**
- * Rebuild a compact conversation transcript from session events for resume.
- * Prompts live on session_start events; responses on model_response events.
+ * Rebuild prior session turns as real conversation messages for resume, so the
+ * model sees structured user/assistant turns instead of a flattened "Conversation
+ * so far:" string. Prompts live on session_start events (operator → user turns);
+ * responses on model_response events (→ assistant turns). Returns the most recent
+ * `maxTurns` exchanges; whole turns are kept (no mid-turn truncation). The caller
+ * appends the current user message and seeds the agent loop with the result.
+ *
+ * NOTE: prior tool calls/results are not yet persisted as resumable events, so
+ * they are not replayed here — only the operator/assistant text turns. That is
+ * still strictly better than the old string blob, which dropped them too.
  */
-export function buildConversationContext(
+export function buildConversationMessages(
   events: WorkbenchSessionEvent[],
-  options: { maxTurns?: number; maxChars?: number } = {},
-): string | undefined {
+  options: { maxTurns?: number } = {},
+): WorkbenchMessage[] {
   const maxTurns = options.maxTurns ?? 10;
-  const maxChars = options.maxChars ?? 8000;
-  const turns: string[] = [];
+  const messages: WorkbenchMessage[] = [];
   for (const event of events) {
     if (event.content === null) continue;
     if (event.eventType === "session_start") {
-      turns.push(`Operator: ${event.content}`);
+      messages.push({ role: "user", content: event.content });
     } else if (event.eventType === "model_response") {
-      turns.push(`Assistant: ${event.content}`);
+      messages.push({ role: "assistant", content: event.content });
     }
   }
-  if (turns.length === 0) return undefined;
-  const recent = turns.slice(-maxTurns * 2);
-  let transcript = recent.join("\n\n");
-  if (transcript.length > maxChars) {
-    transcript = transcript.slice(transcript.length - maxChars);
-  }
-  return [
-    "Conversation so far (earlier turns in this session):",
-    "",
-    transcript,
-  ].join("\n");
+  // Keep the most recent maxTurns exchanges (a user+assistant pair per turn).
+  return messages.length > maxTurns * 2
+    ? messages.slice(messages.length - maxTurns * 2)
+    : messages;
 }

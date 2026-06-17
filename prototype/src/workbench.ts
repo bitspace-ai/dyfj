@@ -75,11 +75,13 @@ export interface WorkbenchRuntimeInput {
    */
   sessionId?: string;
   /**
-   * Compact transcript of earlier turns in the session, assembled by the
-   * caller (e.g. from session_start/model_response events). Prepended to
-   * the model prompt so resumed conversations carry their history.
+   * Earlier turns in the session as real conversation messages, assembled by
+   * the caller (e.g. from session_start/model_response events). Seeded into the
+   * agent loop ahead of the current user message so resumed conversations carry
+   * their history as structured user/assistant turns — not a flattened string.
+   * Companion turn mode only; ignored for one-shot ask/next-work modes.
    */
-  conversationContext?: string;
+  conversationMessages?: WorkbenchMessage[];
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   confirmPaidEscalation?: (banner: string) => Promise<void>;
@@ -870,9 +872,10 @@ export async function runWorkbenchRuntime(
   const usesRepoAskContext = mode === "ask" || isNextWork;
   const bestEffortEvents = usesRepoAskContext;
   const workletId = isNextWork ? "next-work.v0" : undefined;
-  let modelPrompt = runtimeInput.conversationContext !== undefined
-    ? `${runtimeInput.conversationContext}\n\nCurrent message:\n${cliPrompt}`
-    : cliPrompt;
+  // Prior conversation now rides in the transcript as real messages (see the
+  // seed below), so the prompt is just the current message — no flattened
+  // "Conversation so far:" prepend.
+  let modelPrompt = cliPrompt;
 
   console.log("DYFJ Workbench\n");
 
@@ -1183,9 +1186,18 @@ export async function runWorkbenchRuntime(
         streamedText = true;
         runtimeInput.onTextDelta?.(delta);
       };
+    // Seed the conversation transcript: prior turns (companion mode only;
+    // one-shot ask/next-work carry no history) followed by the current user
+    // message. This is passed to the FIRST turn so resumed conversations carry
+    // their history as structured messages, and the agent loop appends to it.
+    const messages: WorkbenchMessage[] = [
+      ...(!usesRepoAskContext ? runtimeInput.conversationMessages ?? [] : []),
+      { role: "user", content: modelPrompt },
+    ];
     let turn = await runObservedTurn({
       systemPrompt,
       prompt: modelPrompt,
+      messages,
       routing: routingOptions,
       models,
       jsonObject: isNextWork,
@@ -1201,7 +1213,7 @@ export async function runWorkbenchRuntime(
     }, {
       modelSlug: selected.slug,
       estimatedInputCount: estimateRuntimeInputCount(
-        `${systemPrompt}\n${modelPrompt}`,
+        transcriptEstimateText(systemPrompt, messages),
       ),
     });
     // Agent loop: iterate model<->tools until the model stops requesting tools,
@@ -1211,15 +1223,11 @@ export async function runWorkbenchRuntime(
     // also surfaced via the per-step log and the tool_call events. Tools are
     // dropped to force a concluding answer at the cap or when the model thrashes
     // (a whole step of calls it already made this turn).
-    // The growing conversation transcript: the model's own prior assistant
-    // turns (with their tool-call intentions) and the matching tool results are
-    // appended each step and replayed on the next call, so multi-step turns stay
-    // coherent instead of seeing a flattened "prompt + accumulated results"
-    // string. Seeded with the original user prompt; the first turn above ran on
-    // `prompt` alone, which is the equivalent single-message history.
-    const messages: WorkbenchMessage[] = [
-      { role: "user", content: modelPrompt },
-    ];
+    // `messages` (seeded above with prior conversation + the current user
+    // message, and passed to the first turn) now grows as the loop iterates:
+    // the model's own assistant turns (with tool-call intentions) and the
+    // matching tool results are appended each step and replayed on the next
+    // call, so multi-step turns stay coherent.
     const seenToolCalls = new Set<string>();
     let toolSteps = 0;
     while (

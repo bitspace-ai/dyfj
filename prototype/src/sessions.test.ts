@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  buildConversationContext,
+  buildConversationMessages,
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
   createProjectWorkbenchSession,
@@ -241,7 +241,7 @@ describe("fetchWorkbenchSessionEvents", () => {
   });
 });
 
-describe("buildConversationContext", () => {
+describe("buildConversationMessages", () => {
   const event = (
     eventType: string,
     content: string | null,
@@ -260,33 +260,32 @@ describe("buildConversationContext", () => {
     createdAt: "2026-06-12 10:00:00",
   });
 
-  test("pairs prompts and responses into a transcript", () => {
-    const transcript = buildConversationContext([
+  test("maps prompts to user turns and responses to assistant turns", () => {
+    const messages = buildConversationMessages([
       event("session_start", "What is DYFJ?"),
       event("model_response", "A local-first workbench."),
       event("session_end", null),
     ]);
-    expect(transcript).toContain("Conversation so far");
-    expect(transcript).toContain("Operator: What is DYFJ?");
-    expect(transcript).toContain("Assistant: A local-first workbench.");
+    expect(messages).toEqual([
+      { role: "user", content: "What is DYFJ?" },
+      { role: "assistant", content: "A local-first workbench." },
+    ]);
   });
 
-  test("returns undefined for sessions with no transcript content", () => {
-    expect(buildConversationContext([event("session_end", null)]))
-      .toBeUndefined();
+  test("returns an empty array for sessions with no transcript content", () => {
+    expect(buildConversationMessages([event("session_end", null)])).toEqual([]);
   });
 
-  test("caps the transcript length", () => {
+  test("keeps only the most recent maxTurns exchanges, whole turns intact", () => {
     const events = Array.from({ length: 50 }, (_, i) => [
-      event("session_start", `prompt ${i} ${"x".repeat(400)}`),
-      event("model_response", `response ${i} ${"y".repeat(400)}`),
+      event("session_start", `prompt ${i}`),
+      event("model_response", `response ${i}`),
     ]).flat();
-    const transcript = buildConversationContext(events, {
-      maxTurns: 3,
-      maxChars: 1500,
-    });
-    expect(transcript!.length).toBeLessThan(1700);
-    expect(transcript).toContain("response 49");
-    expect(transcript).not.toContain("prompt 0 ");
+    const messages = buildConversationMessages(events, { maxTurns: 3 });
+    // 3 turns => 6 messages, and they are the most recent ones (no truncation).
+    expect(messages).toHaveLength(6);
+    expect(messages[0]).toEqual({ role: "user", content: "prompt 47" });
+    expect(messages.at(-1)).toEqual({ role: "assistant", content: "response 49" });
+    expect(messages.some((m) => m.content === "prompt 0")).toBe(false);
   });
 });

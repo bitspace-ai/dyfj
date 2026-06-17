@@ -13,7 +13,7 @@ import {
   type WorkbenchRoutingOptions,
 } from "./provider";
 import {
-  buildConversationContext,
+  buildConversationMessages,
   createProjectWorkbenchSession,
   fetchWorkbenchSessionEvents,
   isValidAsOfTimestamp,
@@ -365,7 +365,7 @@ async function resolveTurnRequest(
 ): Promise<
   | {
     runtimeInput: WorkbenchRuntimeInput;
-    resume: Pick<WorkbenchRuntimeInput, "sessionId" | "conversationContext">;
+    resume: Pick<WorkbenchRuntimeInput, "sessionId" | "conversationMessages">;
   }
   | { error: string; status: number }
 > {
@@ -381,11 +381,12 @@ async function resolveTurnRequest(
     return { error: runtimeInput.error, status: 400 };
   }
 
-  // Resume: rebuild a compact transcript from the session's prior events so
-  // the model carries the conversation, and append this turn to the same id.
+  // Resume: rebuild prior turns as real conversation messages from the
+  // session's events so the model carries the conversation, and append this
+  // turn to the same id.
   let resume: Pick<
     WorkbenchRuntimeInput,
-    "sessionId" | "conversationContext"
+    "sessionId" | "conversationMessages"
   > = {};
   if (body.sessionId !== undefined) {
     if (
@@ -400,7 +401,7 @@ async function resolveTurnRequest(
       });
       resume = {
         sessionId: body.sessionId,
-        conversationContext: buildConversationContext(priorEvents),
+        conversationMessages: buildConversationMessages(priorEvents),
       };
     } catch (err) {
       return { error: (err as Error).message, status: 500 };

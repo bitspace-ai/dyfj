@@ -671,7 +671,7 @@ describe("session REST surface", () => {
     expect(response.status).toBe(401);
   });
 
-  test("resumes a session on /api/turn with rebuilt conversation context", async () => {
+  test("resumes a session on /api/turn with rebuilt conversation messages", async () => {
     const runtimeCalls: WorkbenchRuntimeInput[] = [];
     const handler = createWorkbenchHttpHandler({
       runRuntime: (input) => {
@@ -697,12 +697,10 @@ describe("session REST surface", () => {
     );
     expect(response.status).toBe(200);
     expect(runtimeCalls[0].sessionId).toBe(sessionId);
-    expect(runtimeCalls[0].conversationContext).toContain(
-      "Operator: earlier prompt",
-    );
-    expect(runtimeCalls[0].conversationContext).toContain(
-      "Assistant: earlier answer",
-    );
+    expect(runtimeCalls[0].conversationMessages).toEqual([
+      { role: "user", content: "earlier prompt" },
+      { role: "assistant", content: "earlier answer" },
+    ]);
   });
 
   test("rejects a malformed sessionId on /api/turn", async () => {
