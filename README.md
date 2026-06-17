@@ -16,7 +16,7 @@ The split between `core/` and `prototype/` is not a phase boundary. It's a perma
 
 ## Status
 
-Early and active. The prototype is functional - Workbench CLI/shell, HTTP veneer (loopback by default, with optional authenticated remote interfaces), shared single-turn runtime boundary, local-first provider path with a first hosted provider (Anthropic) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+Early and active. The prototype is functional - Workbench CLI/shell plus a thin `dyfj` CLI client over the REST seam, HTTP veneer (loopback by default, with optional authenticated remote interfaces), SSE streaming on the turn path, shared single-turn runtime boundary, a multi-step agent loop (iterating model↔tools with read-only workspace file tools), local-first provider path with hosted providers (Anthropic, OpenAI, and Google Gemini) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory with privacy-class scoping, system prompts persisted in a Dolt prompts table, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
 
 Dated change tracking lives in [CHANGELOG.md](CHANGELOG.md).
 
@@ -128,7 +128,7 @@ For the Apple silicon local default, run an OpenAI-compatible MLX-LM Server:
 
 ```sh
 mlx_lm.server \
-  --model mlx-community/Qwen3.5-4B-8bit \
+  --model mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit \
   --host 127.0.0.1 \
   --port 18080
 ```
@@ -139,14 +139,14 @@ Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama r
 
 Hosted models are never the default path. Selecting one (for example `--model claude-haiku-4-5`) goes through the budget preflight and an interactive consent prompt before any tokens are spent, and the call is receipted with cost and prompt-cache telemetry.
 
-The Anthropic provider reads `ANTHROPIC_API_KEY` from the process environment and fails closed when it is absent. Project the key at process start from your secret manager rather than exporting it ambiently or committing it to `.env`:
+Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), and Google Gemini (`GEMINI_API_KEY`). Project the key at process start from your secret manager rather than exporting it ambiently or committing it to `.env`:
 
 ```sh
 ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
   op run -- deno task workbench --model claude-haiku-4-5 --prompt "..."
 ```
 
-Which models exist, what they cost, and which tier they sit in is registry data, not code - see `schema/006_models.sql` and `schema/012_models_2026_06_refresh.sql`. Repricing or adding a model is a Dolt commit.
+Which models exist, what they cost, and which tier they sit in is registry data, not code - see `schema/006_models.sql`, `schema/012_models_2026_06_refresh.sql`, and the per-provider rows in `schema/014` (OpenAI), `schema/015` (Gemini), and `schema/016` (local coder default). Repricing or adding a model is a Dolt commit.
 
 ### Initialize Dolt and apply the schema
 
@@ -218,7 +218,7 @@ Before treating a Workbench model failure as a DYFJ problem, validate that the s
 ```sh
 curl -sS http://127.0.0.1:18080/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"mlx-community/Qwen3.5-4B-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+  -d '{"model":"mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
 For Ollama:
@@ -378,3 +378,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-05-30 - Event authn metadata shipped as `schema/011_events_authn.sql`; repo-native schema validation added with `deno task validate-schema` and `deno task test:schema`.
 - 2026-06-04 - Workbench runtime split into a shared single-turn boundary with CLI/shell and local HTTP veneers; C4/D2 runtime diagrams added.
 - 2026-06-12 - Remote-access posture documented (authenticated non-loopback interfaces); change tracking split out into CHANGELOG.md, leaving this section to document revisions.
+- 2026-06-16 - Freshness pass: tagline reframed to optionality; Status updated for the `dyfj` CLI client, SSE streaming, the multi-step agent loop with read-only file tools, three hosted providers (Anthropic/OpenAI/Gemini), memory privacy-class scoping, and the prompts table; local default corrected to Qwen3-Coder-30B-A3B (the 4B was retired in `schema/016`); hosted-inference section generalized across providers.

@@ -19,14 +19,14 @@ The Apple silicon local default expects an OpenAI-compatible MLX-LM Server:
 
 ```sh
 mlx_lm.server \
-  --model mlx-community/Qwen3.5-4B-8bit \
+  --model mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit \
   --host 127.0.0.1 \
   --port 18080
 ```
 
 Workbench uses `http://127.0.0.1:18080/v1` for that MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the fallback explicitly.
 
-Hosted inference is explicit escalation: select a hosted model by slug (for example `--model claude-haiku-4-5`), pass the budget preflight and consent prompt, and the turn is receipted with cost and prompt-cache telemetry. The Anthropic provider reads `ANTHROPIC_API_KEY` from the process environment and fails closed without it - project the key at process start (for example `op run`), never an ambient export.
+Hosted inference is explicit escalation: select a hosted model by slug (for example `--model claude-haiku-4-5`), pass the budget preflight and consent prompt, and the turn is receipted with cost and prompt-cache telemetry. Each hosted provider reads its key from the process environment and fails closed without it - Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), Google Gemini (`GEMINI_API_KEY`); project the key at process start (for example `op run`), never an ambient export.
 
 For the barebones operator loop:
 
@@ -70,7 +70,7 @@ For Workbench failures that look like "the model never responds", check the sele
 ```sh
 curl -sS http://127.0.0.1:18080/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"mlx-community/Qwen3.5-4B-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+  -d '{"model":"mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
 For Ollama:
