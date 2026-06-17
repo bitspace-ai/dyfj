@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  anthropicToolWireNames,
+  toolWireNames,
   buildAnthropicMessagesRequest,
   buildGeminiRequest,
   buildOpenAIChatRequest,
@@ -254,7 +254,8 @@ describe("buildOpenAIChatRequest", () => {
         {
           type: "function",
           function: {
-            name: "memory.read",
+            // Dotted command id sanitized to OpenAI's ^[a-zA-Z0-9_-]+$ pattern.
+            name: "memory_read",
             description: "Load one Dolt-backed memory by slug.",
             parameters: {
               type: "object",
@@ -523,6 +524,48 @@ describe("runWorkbenchTurn streaming", () => {
 
     expect(result.toolCalls).toEqual([
       { id: "tc-2", name: "read_file", arguments: { path: "a.ts" } },
+    ]);
+  });
+
+  test("sanitizes dotted tool names on the wire and maps the response back", async () => {
+    let sentBody: { tools?: Array<{ function: { name: string } }> } = {};
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "load a memory",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "memory.read",
+        description: "Load one memory by slug.",
+        parameters: { type: "object", properties: { slug: { type: "string" } } },
+      }],
+      fetchFn: async (_input, init) => {
+        sentBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: {
+                content: "",
+                tool_calls: [{
+                  id: "c1",
+                  type: "function",
+                  function: { name: "memory_read", arguments: '{"slug":"x"}' },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+            usage: { prompt_tokens: 5, completion_tokens: 3 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    // Request carried the sanitized name (OpenAI rejects the dotted form)...
+    expect(sentBody.tools?.[0].function.name).toBe("memory_read");
+    // ...and the response mapped back to the registry name for dispatch.
+    expect(result.toolCalls).toEqual([
+      { id: "c1", name: "memory.read", arguments: { slug: "x" } },
     ]);
   });
 
@@ -1038,11 +1081,11 @@ describe("anthropic provider adapter", () => {
   });
 });
 
-describe("anthropic tool wire names", () => {
+describe("tool wire names", () => {
   const anthropicModel = models.find((m) => m.provider === "anthropic")!;
 
   test("sanitizes dotted command ids and avoids collisions", () => {
-    const mapped = anthropicToolWireNames([
+    const mapped = toolWireNames([
       { name: "memory.read", description: "a", parameters: {} },
       { name: "memory_read", description: "b", parameters: {} },
     ]);
