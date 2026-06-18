@@ -10,6 +10,7 @@
 
 import { test, expect, describe } from "vitest";
 import {
+  buildMemoryContextSourceLines,
   buildSystemPrompt,
   buildReadMemoryTool,
   buildToolResult,
@@ -80,6 +81,38 @@ describe("memoryClearanceFor", () => {
     const remote = memoryClearanceFor("remote");
     expect(remote).not.toContain("private");
     expect(remote).not.toContain("shareable");
+  });
+});
+
+describe("buildMemoryContextSourceLines", () => {
+  test("emits Label <path> lines: memory: for core, memory-index: for index", () => {
+    const core: Memory[] = [
+      {
+        memoryId: "1",
+        slug: "user_profile",
+        type: "user",
+        name: "User Profile",
+        description: "",
+        content: "…",
+      },
+    ];
+    const index: MemoryIndexEntry[] = [
+      { slug: "project_dyfj", type: "project", name: "DYFJ", description: "" },
+    ];
+    expect(buildMemoryContextSourceLines(core, index)).toEqual([
+      "User Profile <memory:user_profile>",
+      "DYFJ <memory-index:project_dyfj>",
+    ]);
+  });
+
+  test("falls back to slug when a memory has no name, and is empty for no memory", () => {
+    const core: Memory[] = [
+      { memoryId: "1", slug: "feedback_x", type: "feedback", name: "", description: "", content: "" },
+    ];
+    expect(buildMemoryContextSourceLines(core, [])).toEqual([
+      "feedback_x <memory:feedback_x>",
+    ]);
+    expect(buildMemoryContextSourceLines([], [])).toEqual([]);
   });
 });
 

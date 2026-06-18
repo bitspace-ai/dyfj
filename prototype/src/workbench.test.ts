@@ -107,6 +107,10 @@ vi.mock("./repo-context", () => ({
 
 vi.mock("./memory", () => ({
   buildSystemPrompt: () => "memory system prompt",
+  buildMemoryContextSourceLines: (
+    core: Array<{ slug: string }>,
+    index: Array<{ slug: string }>,
+  ) => [...core, ...index].map((m) => `mem <memory:${m.slug}>`),
   loadMemoriesByType: async () => [{
     memoryId: "mem-user",
     slug: "user-context",

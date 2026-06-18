@@ -244,6 +244,29 @@ export interface SystemPromptOptions {
  * The nudge is omitted when the index is empty (no project/reference memories
  * exist or were requested), since there's nothing to pull.
  */
+/**
+ * Source lines for the memory layer that turn mode injects, in the same
+ * "Label <path>" shape as buildContextSourceLines (repo-context) so receipts and
+ * the inspector can show what a turn actually loaded. Core memories (full content
+ * injected) use a `memory:` path; index entries (titles only, pulled on demand
+ * via read_memory) use `memory-index:` so the two are distinguishable in an audit.
+ * Without this, turn-mode context.sources is empty even though ~tens-of-K tokens
+ * of memory/personal context were loaded.
+ */
+export function buildMemoryContextSourceLines(
+  coreMemories: Memory[],
+  index: MemoryIndexEntry[],
+): string[] {
+  const lines: string[] = [];
+  for (const m of coreMemories) {
+    lines.push(`${m.name || m.slug} <memory:${m.slug}>`);
+  }
+  for (const entry of index) {
+    lines.push(`${entry.name || entry.slug} <memory-index:${entry.slug}>`);
+  }
+  return lines;
+}
+
 export function buildSystemPrompt(
   coreMemories: Memory[],
   index: MemoryIndexEntry[],

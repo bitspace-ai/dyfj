@@ -848,6 +848,7 @@ export async function runWorkbenchRuntime(
   } = await import("./repo-context");
   const { loadCompanionBasePrompt } = await import("./prompts");
   const {
+    buildMemoryContextSourceLines,
     loadMemoriesByType,
     loadMemoryIndex,
     buildSystemPrompt,
@@ -1044,6 +1045,9 @@ export async function runWorkbenchRuntime(
       const clearance = memoryClearanceFor(authContext.transport);
       const coreMemories = await loadMemoriesByType(["user", "feedback"], clearance);
       const memoryIndex = await loadMemoryIndex(["project", "reference"], clearance);
+      // Record the memory layer as context sources so turn-mode receipts and the
+      // inspector reflect what was loaded (previously [] — the bug this fixes).
+      contextSourceLines = buildMemoryContextSourceLines(coreMemories, memoryIndex);
       console.log(
         `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
           `(${authContext.transport} clearance)\n`,
