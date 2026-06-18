@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildConversationMessages,
   buildWorkbenchSessionContent,
+  fetchWorkbenchSessionWorkspace,
   buildWorkbenchSessionSlug,
   createProjectWorkbenchSession,
   createWorkbenchSession,
@@ -54,6 +55,7 @@ describe("createWorkbenchSession", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].sql).toContain("INSERT INTO sessions");
+    expect(calls[0].sql).toContain("workspace");
     expect(calls[0].params).toEqual([
       "01TESTSESSION00000000000000",
       "workbench-01testsession00000000000000",
@@ -61,8 +63,49 @@ describe("createWorkbenchSession", () => {
       "What next?",
       "execute",
       "interactive",
+      null, // workspace unbound
       "initial content",
     ]);
+  });
+
+  test("persists the workspace when bound", async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    await createWorkbenchSession({
+      sessionId: "01TESTSESSION00000000000000",
+      slug: "workbench-01testsession00000000000000",
+      taskDescription: "What next?",
+      content: "initial content",
+      workspace: "/workspace/example-project",
+      exec: async (sql, params) => {
+        calls.push({ sql, params });
+      },
+    });
+    expect(calls[0].params[6]).toBe("/workspace/example-project");
+  });
+});
+
+describe("fetchWorkbenchSessionWorkspace", () => {
+  test("returns the persisted workspace for a session", async () => {
+    const ws = await fetchWorkbenchSessionWorkspace({
+      sessionId: "01TESTSESSION00000000000000",
+      query: async () => [{ workspace: "/workspace/example-project" }],
+    });
+    expect(ws).toBe("/workspace/example-project");
+  });
+
+  test("returns null when the session has no workspace or does not exist", async () => {
+    expect(
+      await fetchWorkbenchSessionWorkspace({
+        sessionId: "x",
+        query: async () => [{ workspace: "" }],
+      }),
+    ).toBeNull();
+    expect(
+      await fetchWorkbenchSessionWorkspace({
+        sessionId: "x",
+        query: async () => [],
+      }),
+    ).toBeNull();
   });
 });
 

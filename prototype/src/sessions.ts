@@ -20,6 +20,8 @@ export interface CreateWorkbenchSessionInput {
   slug: string;
   taskDescription: string;
   content: string;
+  /** Directory the file tools are scoped to for this session. Null when unbound. */
+  workspace?: string;
   exec?: SessionExec;
 }
 
@@ -68,8 +70,8 @@ export async function createWorkbenchSession(
   const exec = input.exec ?? doltExec;
   await exec(
     "INSERT INTO sessions " +
-      "(session_id, slug, session_name, task_description, phase, mode, content) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?);",
+      "(session_id, slug, session_name, task_description, phase, mode, workspace, content) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
     [
       input.sessionId,
       input.slug,
@@ -77,9 +79,27 @@ export async function createWorkbenchSession(
       truncateTaskDescription(input.taskDescription),
       "execute",
       "interactive",
+      input.workspace ?? null,
       input.content,
     ],
   );
+}
+
+/**
+ * Read the persisted workspace root for a session, or null if the session has
+ * none (or does not exist). Used on resume so the file tools stay bound to the
+ * directory the session was created in, without the client re-sending its cwd.
+ */
+export async function fetchWorkbenchSessionWorkspace(
+  input: { sessionId: string; query?: SessionQuery },
+): Promise<string | null> {
+  const query = input.query ?? doltQuery;
+  const rows = await query(
+    "SELECT workspace FROM sessions WHERE session_id = ? LIMIT 1;",
+    [input.sessionId],
+  );
+  const value = rows[0]?.workspace;
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 export async function updateWorkbenchSession(

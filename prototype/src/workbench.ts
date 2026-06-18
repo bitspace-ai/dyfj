@@ -70,6 +70,13 @@ export interface WorkbenchRuntimeInput {
   routingOptions: WorkbenchRoutingOptions;
   authContext?: WorkbenchAuthContext;
   /**
+   * Client-requested workspace root for the read-only file tools (e.g. the
+   * directory the `dyfj` CLI was invoked in). Honored only for a loopback
+   * operator — see workspaceRootForTransport. Absent => the server default
+   * (DYFJ_ROOT or the server's cwd).
+   */
+  workspaceRoot?: string;
+  /**
    * Resume an existing session: events append to this id and the session
    * row is updated rather than created. Omit for a fresh session.
    */
@@ -284,6 +291,22 @@ export function toolStepToMessages(
     });
   }
   return messages;
+}
+
+/**
+ * Decide whether to honor a client-requested workspace root for the read-only
+ * file tools. Only a loopback operator — who already has full local file access,
+ * since the server runs as them — may steer the root to their own working
+ * directory. A remote or shared consumer (even with the bearer key) is pinned to
+ * the server default, so a crafted `workspace` can never aim the file tools at
+ * arbitrary host paths. Returns the requested root for a loopback caller (or
+ * undefined when none was sent), and undefined for any non-loopback transport.
+ */
+export function workspaceRootForTransport(
+  requested: string | undefined,
+  transport: WorkbenchAuthContext["transport"],
+): string | undefined {
+  return transport === "loopback" ? requested : undefined;
 }
 
 /** Concatenated text of a transcript, for the fallback input-token estimate. */
@@ -839,6 +862,7 @@ export async function runWorkbenchRuntime(
     buildWorkbenchSessionContent,
     buildWorkbenchSessionSlug,
     createWorkbenchSession,
+    fetchWorkbenchSessionWorkspace,
     updateWorkbenchSession,
   } = await import("./sessions");
 
@@ -868,6 +892,30 @@ export async function runWorkbenchRuntime(
     authn_mechanism: authContext.authnMechanism,
     authn_issuer_ref: authContext.authnIssuerRef,
   };
+
+  // Resolve the workspace root once for this turn. The file tools follow the
+  // operator: the `dyfj` client sends its cwd only when CREATING a session; it
+  // is persisted on the session row and read back here on resume, so the client
+  // never re-sends cwd every turn. A loopback operator may steer the root (they
+  // already have full local file access); remote/shared callers are pinned to
+  // the server default so a crafted workspace can never aim the file tools at
+  // arbitrary host paths. `honoredWorkspace` is the gated request (a string when
+  // a loopback caller bound a root, undefined otherwise): it is both persisted
+  // at creation and canonicalized into the actual root where the tools mount.
+  const fallbackRoot = Deno.env.get("DYFJ_ROOT") ?? Deno.cwd();
+  let requestedWorkspace = runtimeInput.workspaceRoot;
+  if (resumingSession && requestedWorkspace === undefined) {
+    try {
+      requestedWorkspace =
+        (await fetchWorkbenchSessionWorkspace({ sessionId })) ?? undefined;
+    } catch {
+      // Session row unreadable — fall back to the default root.
+    }
+  }
+  const honoredWorkspace = workspaceRootForTransport(
+    requestedWorkspace,
+    authContext.transport,
+  );
   const isNextWork = isNextWorkMode(mode);
   const usesRepoAskContext = mode === "ask" || isNextWork;
   const bestEffortEvents = usesRepoAskContext;
@@ -1000,10 +1048,27 @@ export async function runWorkbenchRuntime(
         `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
           `(${authContext.transport} clearance)\n`,
       );
-      const workspaceRoot = Deno.env.get("DYFJ_ROOT") ?? Deno.cwd();
+      // Mount the file tools at the resolved workspace (see honoredWorkspace
+      // above): canonicalize the honored root and verify it is a real directory,
+      // else fall back to the server default. Containment within the root is
+      // enforced per call by the file tools regardless of which root wins here.
+      let workspaceRoot = fallbackRoot;
+      if (honoredWorkspace) {
+        try {
+          const real = await Deno.realPath(honoredWorkspace);
+          if ((await Deno.stat(real)).isDirectory) {
+            workspaceRoot = real;
+          } else {
+            console.log("Requested workspace is not a directory; using default.");
+          }
+        } catch {
+          console.log("Requested workspace not accessible; using default.");
+        }
+      }
+      console.log(`Workspace: ${workspaceRoot}\n`);
       registerCoreCommands(commandRegistry, {
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
-        // Read-only workspace file tools, scoped to the project root.
+        // Read-only workspace file tools, scoped to the resolved root.
         workspaceRoot,
       });
       commandTools = commandRegistry.projectTools();
@@ -1024,6 +1089,9 @@ export async function runWorkbenchRuntime(
           sessionId,
           slug: sessionSlug,
           taskDescription: cliPrompt,
+          // Bind the session to its workspace (honored only for loopback);
+          // resumes read it back instead of the client re-sending cwd.
+          workspace: honoredWorkspace,
           content: buildWorkbenchSessionContent({
             mode,
             prompt: cliPrompt,

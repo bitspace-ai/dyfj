@@ -23,6 +23,7 @@ import {
   toolStepToMessages,
   validateNextWorkJson,
   type WorkbenchReceiptInput,
+  workspaceRootForTransport,
 } from "./workbench";
 
 const runtimeMocks = vi.hoisted(() => {
@@ -146,6 +147,7 @@ vi.mock("./sessions", () => ({
   createWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessions.push(input);
   },
+  fetchWorkbenchSessionWorkspace: async () => null,
   updateWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessionUpdates.push(input);
   },
@@ -407,6 +409,23 @@ describe("toolStepToMessages", () => {
       toolCallId: "c2",
       content: "slug does not match required pattern",
     });
+  });
+});
+
+describe("workspaceRootForTransport", () => {
+  test("honors a loopback operator's requested workspace root", () => {
+    expect(workspaceRootForTransport("/workspace/example-project", "loopback"))
+      .toBe("/workspace/example-project");
+  });
+
+  test("returns undefined for a loopback caller that sent no root", () => {
+    expect(workspaceRootForTransport(undefined, "loopback")).toBeUndefined();
+  });
+
+  test("ignores a remote caller's requested root (pinned to server default)", () => {
+    // A crafted cwd from a remote/shared consumer must not steer the file tools.
+    expect(workspaceRootForTransport("/etc", "remote")).toBeUndefined();
+    expect(workspaceRootForTransport("/", "remote")).toBeUndefined();
   });
 });
 

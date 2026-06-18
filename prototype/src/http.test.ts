@@ -721,4 +721,42 @@ describe("session REST surface", () => {
     expect(response.status).toBe(400);
     expect(calls).toEqual([]);
   });
+
+  test("passes a string workspace through to the runtime as workspaceRoot", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: (input) => {
+        calls.push(input);
+        return Promise.resolve(runtimeResult());
+      },
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "hi", workspace: "/workspace/example-project" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(calls[0].workspaceRoot).toBe("/workspace/example-project");
+  });
+
+  test("rejects a non-string workspace on /api/turn", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: (input) => {
+        calls.push(input);
+        return Promise.resolve(runtimeResult());
+      },
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "hi", workspace: { evil: true } }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(calls).toEqual([]);
+  });
 });

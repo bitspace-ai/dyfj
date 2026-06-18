@@ -67,6 +67,7 @@ interface TurnRequestBody {
   mode?: unknown;
   routingOptions?: unknown;
   sessionId?: unknown;
+  workspace?: unknown;
 }
 
 export function createWorkbenchHttpHandler(
@@ -521,10 +522,17 @@ function buildRuntimeInputFromJson(
   }
   const routingOptions = parseRoutingOptions(body.routingOptions);
   if ("error" in routingOptions) return routingOptions;
+  if (body.workspace !== undefined && typeof body.workspace !== "string") {
+    return { error: "workspace must be a string" };
+  }
   return {
     mode,
     prompt: body.prompt,
     routingOptions,
+    // Honored only for a loopback operator; the runtime applies that gate.
+    ...(typeof body.workspace === "string"
+      ? { workspaceRoot: body.workspace }
+      : {}),
   };
 }
 

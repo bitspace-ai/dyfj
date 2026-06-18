@@ -55,6 +55,8 @@ export interface TurnRequest {
     hint?: "code" | "chat" | "reasoning";
   };
   sessionId?: string;
+  /** Working directory to scope the server's read-only file tools to. */
+  workspace?: string;
 }
 
 export interface CliConfig {
@@ -66,6 +68,10 @@ export interface CliConfig {
   tier?: 0 | 1 | 2;
   hint?: "code" | "chat" | "reasoning";
   sessionId?: string;
+  /** Working directory sent to the server to scope read-only file tools. */
+  workspace?: string;
+  /** True when workspace came from --workspace/DYFJ_WORKSPACE, not the cwd default. */
+  workspaceExplicit?: boolean;
   color: boolean;
 }
 
@@ -92,6 +98,18 @@ function buildHeaders(config: CliConfig, stream: boolean): Record<string, string
   return headers;
 }
 
+/** True when the server URL points at the local loopback interface. */
+export function isLoopbackServerUrl(serverUrl: string): boolean {
+  let host: string;
+  try {
+    host = new URL(serverUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  // URL() strips the brackets from IPv6 hosts, so compare the bare form too.
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 export function buildTurnBody(
   prompt: string,
   config: CliConfig,
@@ -105,6 +123,19 @@ export function buildTurnBody(
   const body: TurnRequest = { prompt, mode: config.mode };
   if (Object.keys(routingOptions).length > 0) body.routingOptions = routingOptions;
   if (sessionId !== undefined) body.sessionId = sessionId;
+  // Send the workspace only when establishing a NEW session (no sessionId): the
+  // server persists it on the session row, and resumed turns read it back, so
+  // the cwd is sent once on init rather than re-sent every turn. The IMPLICIT
+  // cwd default is sent only to a loopback server — never auto-disclose the
+  // operator's local absolute path to a remote endpoint. An explicitly supplied
+  // --workspace / DYFJ_WORKSPACE is honored regardless (the operator chose it).
+  const maySendWorkspace = config.workspaceExplicit ||
+    isLoopbackServerUrl(config.serverUrl);
+  if (
+    config.workspace !== undefined && sessionId === undefined && maySendWorkspace
+  ) {
+    body.workspace = config.workspace;
+  }
   return body;
 }
 
@@ -293,6 +324,7 @@ const VALUE_FLAGS = new Set([
   "--tier",
   "--hint",
   "--session",
+  "--workspace",
   "-p",
   "--print",
 ]);
@@ -317,6 +349,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (arg === "--key") overrides.key = value;
       else if (arg === "--model") overrides.model = value;
       else if (arg === "--session") overrides.sessionId = value;
+      else if (arg === "--workspace") overrides.workspace = value;
       else if (arg === "-p" || arg === "--print") printPrompt = value;
       else if (arg === "--mode") {
         if (value !== "turn" && value !== "ask" && value !== "next-work") {
@@ -376,6 +409,7 @@ export function resolveConfig(
   overrides: Partial<CliConfig>,
   env: { get(key: string): string | undefined },
   isTty = false,
+  cwd = ".",
 ): CliConfig {
   const tierEnv = env.get("DYFJ_WORKBENCH_TIER");
   const tier = tierEnv === "0" || tierEnv === "1" || tierEnv === "2"
@@ -385,6 +419,7 @@ export function resolveConfig(
   const hint = hintEnv === "code" || hintEnv === "chat" || hintEnv === "reasoning"
     ? hintEnv
     : undefined;
+  const explicitWorkspace = overrides.workspace ?? env.get("DYFJ_WORKSPACE");
   return {
     serverUrl: overrides.serverUrl ?? env.get("DYFJ_SERVER_URL") ?? DEFAULT_SERVER,
     key: overrides.key ?? env.get("DYFJ_WORKBENCH_API_KEY"),
@@ -393,6 +428,11 @@ export function resolveConfig(
     tier: overrides.tier ?? tier,
     hint: overrides.hint ?? hint,
     sessionId: overrides.sessionId,
+    // Workspace follows the directory `dyfj` runs in; --workspace or
+    // DYFJ_WORKSPACE override it. The implicit cwd is sent only to a loopback
+    // server (buildTurnBody); an explicit value is honored anywhere.
+    workspace: explicitWorkspace ?? cwd,
+    workspaceExplicit: explicitWorkspace !== undefined,
     color: !env.get("NO_COLOR") && isTty,
   };
 }
@@ -411,6 +451,7 @@ Options:
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --session <id>   resume a session
+  --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
   --json           one-shot only: print the full result as JSON
   -h, --help       show this help`;
 
@@ -468,7 +509,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
     io.err(HELP);
     return parsed.error ? 2 : 0;
   }
-  const config = resolveConfig(parsed.overrides, Deno.env, Deno.stdout.isTerminal());
+  const config = resolveConfig(
+    parsed.overrides,
+    Deno.env,
+    Deno.stdout.isTerminal(),
+    Deno.cwd(),
+  );
   if (parsed.command === "exec") {
     return await runExec(parsed.prompt!, config, io, parsed.json);
   }

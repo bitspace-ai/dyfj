@@ -6,6 +6,7 @@ import {
   formatReceipt,
   friendlyError,
   type Io,
+  isLoopbackServerUrl,
   parseArgs,
   readLineOrNull,
   resolveConfig,
@@ -298,6 +299,8 @@ describe("parseArgs", () => {
       serverUrl: "http://h",
     });
     expect(p.prompt).toBe("hi");
+    expect(parseArgs(["--workspace", "/ws", "exec", "hi"]).overrides.workspace)
+      .toBe("/ws");
   });
   test("rejects an invalid tier", () => {
     expect(parseArgs(["--tier", "9", "exec", "x"]).error).toContain("tier");
@@ -350,6 +353,29 @@ describe("resolveConfig", () => {
     expect(resolveConfig({}, { get: () => undefined }).mode).toBe("turn");
     expect(resolveConfig({ mode: "ask" }, { get: () => undefined }).mode).toBe("ask");
   });
+  test("workspace defaults to cwd; flag and env override it", () => {
+    expect(resolveConfig({}, { get: () => undefined }, false, "/work/dir").workspace)
+      .toBe("/work/dir");
+    const env = new Map([["DYFJ_WORKSPACE", "/env/ws"]]);
+    expect(resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd").workspace)
+      .toBe("/env/ws");
+    expect(
+      resolveConfig({ workspace: "/flag/ws" }, { get: (k) => env.get(k) }, false, "/cwd")
+        .workspace,
+    ).toBe("/flag/ws");
+  });
+  test("marks workspace explicit only when set via flag or env", () => {
+    expect(resolveConfig({}, { get: () => undefined }, false, "/cwd").workspaceExplicit)
+      .toBe(false);
+    expect(
+      resolveConfig({ workspace: "/w" }, { get: () => undefined }, false, "/cwd")
+        .workspaceExplicit,
+    ).toBe(true);
+    const env = new Map([["DYFJ_WORKSPACE", "/env"]]);
+    expect(
+      resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd").workspaceExplicit,
+    ).toBe(true);
+  });
 });
 
 describe("buildTurnBody", () => {
@@ -365,6 +391,32 @@ describe("buildTurnBody", () => {
   });
   test("carries the config mode into the request body", () => {
     expect(buildTurnBody("x", cfg({ mode: "ask" })).mode).toBe("ask");
+  });
+  test("sends the workspace only when establishing a new session", () => {
+    // New session (no sessionId) on a loopback server: workspace binds the session.
+    expect(buildTurnBody("hi", cfg({ workspace: "/work/dir" })).workspace)
+      .toBe("/work/dir");
+    // Resuming (sessionId present): omitted — the server reads it from the row.
+    expect(buildTurnBody("hi", cfg({ workspace: "/work/dir" }), "SESS").workspace)
+      .toBeUndefined();
+    expect(buildTurnBody("hi", cfg()).workspace).toBeUndefined();
+  });
+  test("never auto-sends the implicit cwd workspace to a remote server", () => {
+    const remote = cfg({ workspace: "/work/dir", serverUrl: "https://remote.example" });
+    // Implicit cwd default must not cross the local->remote boundary.
+    expect(buildTurnBody("hi", remote).workspace).toBeUndefined();
+    // An explicitly-supplied workspace is honored even for a remote server.
+    const remoteExplicit = cfg({
+      workspace: "/work/dir",
+      serverUrl: "https://remote.example",
+      workspaceExplicit: true,
+    });
+    expect(buildTurnBody("hi", remoteExplicit).workspace).toBe("/work/dir");
+  });
+  test("isLoopbackServerUrl recognizes loopback hosts only", () => {
+    expect(isLoopbackServerUrl("http://127.0.0.1:8787")).toBe(true);
+    expect(isLoopbackServerUrl("http://localhost:8787")).toBe(true);
+    expect(isLoopbackServerUrl("https://workbench.example.test")).toBe(false);
   });
 });
 
