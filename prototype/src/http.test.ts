@@ -216,6 +216,57 @@ describe("createWorkbenchHttpHandler", () => {
     expect(frames[frames.length - 1]).toMatchObject({ t: "done" });
   });
 
+  test("locks the turn receipt contract: identical receipt across in-process, JSON, and SSE paths", async () => {
+    // The result the runtime produces in-process is the fidelity reference.
+    const inProcess = runtimeResult();
+    const handler = () =>
+      createWorkbenchHttpHandler({
+        runRuntime: () => Promise.resolve(inProcess),
+      });
+    const turnBody = JSON.stringify({
+      prompt: "hi",
+      mode: "turn",
+      routingOptions: {},
+    });
+
+    // Buffered JSON path: body is the receipt plus the batched events array.
+    const jsonResp = await handler()(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: turnBody,
+      }),
+    );
+    const { events: _events, ...jsonReceipt } = await jsonResp.json();
+
+    // Streaming SSE path: the receipt rides the terminal `done` frame.
+    const sseResp = await handler()(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "text/event-stream",
+        },
+        body: turnBody,
+      }),
+    );
+    const done = parseSseFrames(await sseResp.text()).find((f) =>
+      f.t === "done"
+    );
+    const sseReceipt = done?.result;
+
+    // The receipt is faithful to the in-process result on both transports...
+    expect(jsonReceipt).toEqual(inProcess);
+    expect(sseReceipt).toEqual(inProcess);
+    // ...and identical across the two transports.
+    expect(sseReceipt).toEqual(jsonReceipt);
+    // The drift that motivated this lock (client TurnResult had no `context`):
+    // context.sources provenance must survive the wire on the streaming path.
+    expect((sseReceipt as typeof inProcess).context.sources).toEqual(
+      inProcess.context.sources,
+    );
+  });
+
   test("streaming path reports request-shape errors as JSON before the stream opens", async () => {
     const handler = createWorkbenchHttpHandler({
       runRuntime: () => Promise.resolve(runtimeResult()),

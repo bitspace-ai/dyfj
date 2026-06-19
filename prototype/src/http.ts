@@ -21,6 +21,15 @@ import {
   type WorkbenchProjectSessions,
   type WorkbenchSessionEvent,
 } from "./sessions";
+import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
+
+// Seam contract lock (BIT-136): the runtime result MUST satisfy the wire
+// receipt. If a receipt field is dropped or renamed in WorkbenchRuntimeResult,
+// this stops compiling here — before it can silently regress the HTTP/SSE path
+// or drift from the client. `true` only if assignable; otherwise the type is
+// `false` and this assignment fails to typecheck.
+export const RUNTIME_RESULT_SATISFIES_TURN_RECEIPT:
+  WorkbenchRuntimeResult extends TurnReceipt ? true : false = true;
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -497,7 +506,7 @@ async function handleStreamingTurn(
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (frame: unknown): void =>
+      const send = (frame: TurnStreamFrame): void =>
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
         );

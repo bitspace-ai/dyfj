@@ -14,37 +14,16 @@
 
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
+import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
 
-// ── Contract types (mirror the server; intentionally not imported) ───────────
+// ── Seam contract (shared with the server; BIT-136) ──────────────────────────
+// The receipt and SSE frame shapes are defined once in turn-contract.ts and
+// imported by both sides, so this thin client can never silently drift from
+// what the server sends. `import type` is erased at compile, keeping the binary
+// engine-free.
 
-export interface TurnResult {
-  sessionId: string;
-  traceId: string;
-  text: string;
-  receipt: string;
-  model: {
-    displayName: string;
-    slug: string;
-    provider: string;
-    api: string;
-    tier: 0 | 1 | 2;
-  };
-  route: { reason: string };
-  cost: { estimatedUsd: number; totalUsd: number; paidInferenceUsed: boolean };
-  tokens: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    totalCalls: number;
-  };
-}
-
-type SseFrame =
-  | { t: "delta"; text: string }
-  | { t: "event"; event: Record<string, unknown> }
-  | { t: "done"; result: TurnResult }
-  | { t: "error"; message: string };
+/** The receipt a turn carries. Canonical definition: the shared seam contract. */
+export type TurnResult = TurnReceipt;
 
 export interface TurnRequest {
   prompt: string;
@@ -183,7 +162,9 @@ export async function streamTurn(
       const block = buffer.slice(0, sep).trim();
       buffer = buffer.slice(sep + 2);
       if (!block.startsWith("data:")) continue;
-      const frame = JSON.parse(block.slice("data:".length).trim()) as SseFrame;
+      const frame = JSON.parse(
+        block.slice("data:".length).trim(),
+      ) as TurnStreamFrame;
       if (frame.t === "delta") handlers.onDelta(frame.text);
       else if (frame.t === "event") handlers.onEvent?.(frame.event);
       else if (frame.t === "done") result = frame.result;
