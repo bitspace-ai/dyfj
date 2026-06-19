@@ -385,6 +385,35 @@ const PAID_ESCALATION_OVER_HTTP =
   "paid inference requires an explicit CLI consent flow";
 
 /**
+ * Per-session turn serialization (BIT-147). Two concurrent turns for the same
+ * session would split-brain the append-only event log — each reads the prior
+ * events and appends its own — and race the shared Dolt pool. Chain same-session
+ * turns so they run one at a time: the operator's second turn runs after the
+ * first rather than being dropped. New turns (no sessionId) target fresh
+ * sessions and never collide, so they run immediately without serialization.
+ */
+const sessionTurnChains = new Map<string, Promise<unknown>>();
+
+function withSessionTurnLock<T>(
+  sessionId: string | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (sessionId === undefined) return run();
+  const prior = sessionTurnChains.get(sessionId) ?? Promise.resolve();
+  // Run after the prior turn settles, whether it resolved or rejected.
+  const result = prior.then(run, run);
+  const settled = result.then(() => {}, () => {});
+  sessionTurnChains.set(sessionId, settled);
+  void settled.finally(() => {
+    // Drop the chain once this turn is the tail, so the map does not grow.
+    if (sessionTurnChains.get(sessionId) === settled) {
+      sessionTurnChains.delete(sessionId);
+    }
+  });
+  return result;
+}
+
+/**
  * Parse and validate a turn request body into runtime input plus optional
  * resume context. Shared by the buffered and streaming turn handlers so both
  * apply identical validation, session-id checks, and transcript rebuilding.
@@ -459,16 +488,17 @@ async function handleJsonTurn(
 
   try {
     const events: WorkbenchRuntimeEvent[] = [];
-    const result = await runRuntime({
-      ...runtimeInput,
-      ...resume,
-      authContext,
-      onRuntimeEvent: (event) => {
-        events.push(event);
-      },
-      confirmPaidEscalation: () =>
-        Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
-    });
+    const result = await withSessionTurnLock(resume.sessionId, () =>
+      runRuntime({
+        ...runtimeInput,
+        ...resume,
+        authContext,
+        onRuntimeEvent: (event) => {
+          events.push(event);
+        },
+        confirmPaidEscalation: () =>
+          Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
+      }));
     return jsonResponse({ ...result, events });
   } catch (err) {
     return jsonResponse({
@@ -511,17 +541,18 @@ async function handleStreamingTurn(
           encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
         );
       try {
-        const result = await runRuntime({
-          ...runtimeInput,
-          ...resume,
-          authContext,
-          onTextDelta: (delta) => send({ t: "delta", text: delta }),
-          onRuntimeEvent: (event) => {
-            send({ t: "event", event });
-          },
-          confirmPaidEscalation: () =>
-            Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
-        });
+        const result = await withSessionTurnLock(resume.sessionId, () =>
+          runRuntime({
+            ...runtimeInput,
+            ...resume,
+            authContext,
+            onTextDelta: (delta) => send({ t: "delta", text: delta }),
+            onRuntimeEvent: (event) => {
+              send({ t: "event", event });
+            },
+            confirmPaidEscalation: () =>
+              Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
+          }));
         send({ t: "done", result });
       } catch (err) {
         send({ t: "error", message: (err as Error)?.message ?? String(err) });

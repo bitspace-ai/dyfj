@@ -267,6 +267,77 @@ describe("createWorkbenchHttpHandler", () => {
     );
   });
 
+  test("serializes concurrent same-session turns; never runs them in parallel (BIT-147)", async () => {
+    const order: string[] = [];
+    let active = 0;
+    let peak = 0;
+    const handler = createWorkbenchHttpHandler({
+      fetchSessionEvents: () => Promise.resolve([]),
+      runRuntime: async (input) => {
+        active++;
+        peak = Math.max(peak, active);
+        order.push(`start:${input.sessionId}`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        order.push(`end:${input.sessionId}`);
+        active--;
+        return runtimeResult({ sessionId: input.sessionId });
+      },
+    });
+    const sessionId = "01ABCDEF0123456789ABCDEF01";
+    const turn = () =>
+      handler(
+        new Request("http://localhost/api/turn", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            prompt: "x",
+            mode: "turn",
+            sessionId,
+            routingOptions: {},
+          }),
+        }),
+      );
+
+    const [a, b] = await Promise.all([turn(), turn()]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    // Never two same-session turns in flight at once (no split-brain on the log)...
+    expect(peak).toBe(1);
+    // ...and they ran in series, not interleaved.
+    expect(order).toEqual([
+      `start:${sessionId}`,
+      `end:${sessionId}`,
+      `start:${sessionId}`,
+      `end:${sessionId}`,
+    ]);
+  });
+
+  test("does not serialize independent (new-session) turns (BIT-147)", async () => {
+    let active = 0;
+    let peak = 0;
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active--;
+        return runtimeResult({ sessionId: input.sessionId });
+      },
+    });
+    const turn = () =>
+      handler(
+        new Request("http://localhost/api/turn", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ prompt: "x", mode: "turn", routingOptions: {} }),
+        }),
+      );
+    await Promise.all([turn(), turn()]);
+    // New-session turns are independent — the lock is per-session, so they run
+    // concurrently rather than being globally serialized.
+    expect(peak).toBe(2);
+  });
+
   test("streaming path reports request-shape errors as JSON before the stream opens", async () => {
     const handler = createWorkbenchHttpHandler({
       runRuntime: () => Promise.resolve(runtimeResult()),
