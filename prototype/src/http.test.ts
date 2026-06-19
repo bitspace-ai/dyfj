@@ -48,6 +48,16 @@ function parseSseFrames(raw: string): Array<Record<string, unknown>> {
     .map((block) => JSON.parse(block.slice("data: ".length)));
 }
 
+/**
+ * Simulate the ServeHandlerInfo Deno passes the handler. The TCP peer address
+ * here — not the request URL / Host header — is what decides loopback vs remote.
+ */
+function serveInfo(hostname: string): Deno.ServeHandlerInfo {
+  return {
+    remoteAddr: { transport: "tcp", hostname, port: 54321 },
+  } as Deno.ServeHandlerInfo;
+}
+
 describe("createWorkbenchHttpHandler", () => {
   test("serves a minimal human-readable Workbench surface", async () => {
     const handler = createWorkbenchHttpHandler({
@@ -431,7 +441,10 @@ describe("remote bearer auth", () => {
 
   test("rejects remote requests without a bearer", async () => {
     const calls: WorkbenchRuntimeInput[] = [];
-    const response = await authedHandler(calls)(turnRequest(remoteHost));
+    const response = await authedHandler(calls)(
+      turnRequest(remoteHost),
+      serveInfo(remoteHost),
+    );
     expect(response.status).toBe(401);
     expect(calls).toEqual([]);
   });
@@ -440,6 +453,7 @@ describe("remote bearer auth", () => {
     const calls: WorkbenchRuntimeInput[] = [];
     const response = await authedHandler(calls)(
       turnRequest(remoteHost, { authorization: "Bearer wrong-key" }),
+      serveInfo(remoteHost),
     );
     expect(response.status).toBe(401);
     expect(calls).toEqual([]);
@@ -449,6 +463,7 @@ describe("remote bearer auth", () => {
     const calls: WorkbenchRuntimeInput[] = [];
     const response = await authedHandler(calls)(
       turnRequest(remoteHost, { accept: "text/event-stream" }),
+      serveInfo(remoteHost),
     );
     // Bearer auth runs before stream negotiation: a JSON 401, no event-stream,
     // and the runtime is never reached.
@@ -461,6 +476,7 @@ describe("remote bearer auth", () => {
     const calls: WorkbenchRuntimeInput[] = [];
     const response = await authedHandler(calls)(
       turnRequest(remoteHost, { authorization: `Bearer ${apiKey}` }),
+      serveInfo(remoteHost),
     );
     expect(response.status).toBe(200);
     expect(calls[0]?.authContext).toEqual({
@@ -470,6 +486,30 @@ describe("remote bearer auth", () => {
       authnIssuerRef: "workbench_api_key",
       authzBasis: "capability:workbench-api-key",
     });
+  });
+
+  test("a forged loopback Host from a remote peer still requires a bearer", async () => {
+    // The classic bypass: a remote client sets Host: 127.0.0.1 to look local.
+    // Loopback is decided by the TCP peer, so this is remote and needs a bearer.
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest("127.0.0.1"),
+      serveInfo(remoteHost),
+    );
+    expect(response.status).toBe(401);
+    expect(calls).toEqual([]);
+  });
+
+  test("a remote peer forging a loopback Host gets remote clearance, never loopback", async () => {
+    // Even with a valid bearer, a forged loopback Host must not win the full
+    // private-memory clearance that transport: "loopback" carries.
+    const calls: WorkbenchRuntimeInput[] = [];
+    const response = await authedHandler(calls)(
+      turnRequest("127.0.0.1", { authorization: `Bearer ${apiKey}` }),
+      serveInfo(remoteHost),
+    );
+    expect(response.status).toBe(200);
+    expect(calls[0]?.authContext.transport).toBe("remote");
   });
 
   test("rejects unknown non-loopback hosts even with the bearer", async () => {
@@ -494,6 +534,7 @@ describe("remote bearer auth", () => {
     });
     const response = await handler(
       turnRequest(remoteHost, { authorization: `Bearer ${apiKey}` }),
+      serveInfo(remoteHost),
     );
     expect(response.status).toBe(401);
     expect(calls).toEqual([]);
@@ -544,6 +585,7 @@ describe("remote bearer auth", () => {
     const handler = authedHandler();
     const unauthenticated = await handler(
       new Request(`http://${remoteHost}:8787/api/models`),
+      serveInfo(remoteHost),
     );
     expect(unauthenticated.status).toBe(401);
 
@@ -551,6 +593,7 @@ describe("remote bearer auth", () => {
       new Request(`http://${remoteHost}:8787/api/models`, {
         headers: { authorization: `Bearer ${apiKey}` },
       }),
+      serveInfo(remoteHost),
     );
     expect(authenticated.status).toBe(200);
   });
@@ -670,6 +713,7 @@ describe("session REST surface", () => {
     });
     const response = await handler(
       new Request("http://100.64.0.7:8787/api/sessions"),
+      serveInfo("100.64.0.7"),
     );
     expect(response.status).toBe(401);
   });

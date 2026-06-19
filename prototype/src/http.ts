@@ -72,7 +72,7 @@ interface TurnRequestBody {
 
 export function createWorkbenchHttpHandler(
   options: WorkbenchHttpHandlerOptions = {},
-): (request: Request) => Promise<Response> {
+): (request: Request, info?: Deno.ServeHandlerInfo) => Promise<Response> {
   const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
   const loadModels = options.loadModels ?? loadPickerModels;
   const listSessions = options.listSessions ?? listWorkbenchSessions;
@@ -81,8 +81,12 @@ export function createWorkbenchHttpHandler(
   const fetchSessionEvents = options.fetchSessionEvents ??
     fetchWorkbenchSessionEvents;
   const auth = options.auth ?? {};
-  return async (request) => {
+  return async (request, info) => {
     const url = new URL(request.url);
+    // Loopback is decided by the real TCP peer, never the request URL / Host
+    // header (which a remote client forges to "127.0.0.1" to impersonate a
+    // local operator and win full private-memory clearance).
+    const peerLoopback = peerIsLoopback(info);
     if (request.method === "GET" && url.pathname === "/") {
       // Static shell only: no session or event data is embedded in the page,
       // so it is served on any bound interface without a bearer.
@@ -93,14 +97,14 @@ export function createWorkbenchHttpHandler(
       return htmlResponse(renderWorkbenchIndex());
     }
     if (request.method === "GET" && url.pathname === "/api/models") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
       return jsonResponse({ models: await loadModels() });
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -112,7 +116,7 @@ export function createWorkbenchHttpHandler(
       }
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -145,7 +149,7 @@ export function createWorkbenchHttpHandler(
       /^\/api\/sessions\/([^/]+)\/events$/,
     );
     if (request.method === "GET" && eventsMatch !== null) {
-      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -168,7 +172,7 @@ export function createWorkbenchHttpHandler(
       }
     }
     if (request.method === "POST" && url.pathname === "/api/turn") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth);
+      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -210,11 +214,17 @@ export function createWorkbenchHttpHandler(
  *   - Non-loopback requests are accepted only when the hostname is explicitly
  *     allowed AND a bearer key is configured AND the request presents it.
  *   - No key configured means no non-loopback access. Fail closed.
+ *
+ * `peerLoopback` is derived from the TCP peer address (info.remoteAddr), NOT
+ * from the request URL / Host header. A remote client can set Host: 127.0.0.1,
+ * but it cannot forge its source IP, so loopback clearance is decided by the
+ * connection, not by attacker-controlled headers.
  */
 async function resolveWorkbenchAuth(
   request: Request,
   url: URL,
   auth: WorkbenchHttpAuthOptions,
+  peerLoopback: boolean,
 ): Promise<WorkbenchAuthContext | { error: string; status: number }> {
   const hostError = validateRequestHost(request, url, auth);
   if (hostError !== undefined) {
@@ -226,7 +236,7 @@ async function resolveWorkbenchAuth(
     return { error: originError, status: 403 };
   }
 
-  const isLoopback = isLoopbackHost(url.hostname);
+  const isLoopback = peerLoopback;
   const bearer = parseBearerToken(request.headers.get("authorization"));
 
   if (bearer !== undefined) {
@@ -348,6 +358,18 @@ function isLoopbackHost(hostname: string): boolean {
     normalized === "127.0.0.1" ||
     normalized === "::1" ||
     normalized === "[::1]";
+}
+
+/**
+ * Decide loopback from the actual TCP peer. A unix-socket peer is local. When
+ * no ServeHandlerInfo is present the handler was invoked in-process (tests or a
+ * trusted embedding), which is itself local — network requests always carry it.
+ */
+function peerIsLoopback(info?: Deno.ServeHandlerInfo): boolean {
+  const addr = info?.remoteAddr;
+  if (addr === undefined) return true;
+  if (addr.transport !== "tcp" && addr.transport !== "udp") return true;
+  return isLoopbackHost(addr.hostname);
 }
 
 const PAID_ESCALATION_OVER_HTTP =
