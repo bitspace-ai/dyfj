@@ -1156,7 +1156,21 @@ function renderWorkbenchIndex(): string {
 
       function renderInspector() {
         const event = events[selectedEventIndex];
-        inspector.textContent = JSON.stringify(event ?? {}, null, 2);
+        if (!event || typeof event !== "object") {
+          inspector.textContent = "No event selected.";
+          return;
+        }
+        const rows = [];
+        for (const [key, value] of Object.entries(event)) {
+          if (value === null || value === undefined || value === "") continue;
+          const rendered = typeof value === "object"
+            ? JSON.stringify(value)
+            : String(value);
+          rows.push(humanizeKey(key).padEnd(16) + " " + rendered);
+        }
+        inspector.textContent = rows.length > 0
+          ? rows.join("\n")
+          : "(empty event)";
       }
 
       function summarizeEvent(event) {
@@ -1180,7 +1194,20 @@ function renderWorkbenchIndex(): string {
 
       function formatTokens(tokens) {
         if (!tokens) return "-";
-        return (tokens.input ?? 0) + " in / " + (tokens.output ?? 0) + " out";
+        let line = (tokens.input ?? 0) + " in / " + (tokens.output ?? 0) + " out";
+        const cacheRead = tokens.cacheRead ?? 0;
+        const cacheWrite = tokens.cacheWrite ?? 0;
+        if (cacheRead || cacheWrite) {
+          line += " · cache " + cacheRead + "r / " + cacheWrite + "w";
+        }
+        return line;
+      }
+
+      function humanizeKey(key) {
+        return String(key)
+          .replace(/_/g, " ")
+          .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+          .replace(/^./, function (c) { return c.toUpperCase(); });
       }
 
       function setBusy(isBusy) {

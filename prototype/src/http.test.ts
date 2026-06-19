@@ -63,6 +63,9 @@ describe("createWorkbenchHttpHandler", () => {
     expect(html).toContain("/api/turn");
     expect(html).toContain("Timeline");
     expect(html).toContain("Inspector");
+    // BIT-113: inspector renders a formatted receipt (not raw JSON) with cache telemetry.
+    expect(html).toContain("humanizeKey");
+    expect(html).toContain("cacheRead");
   });
 
   test("runs a JSON turn through the injected runtime", async () => {
