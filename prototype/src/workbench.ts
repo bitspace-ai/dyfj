@@ -927,7 +927,16 @@ export async function runWorkbenchRuntime(
   );
   const isNextWork = isNextWorkMode(mode);
   const usesRepoAskContext = mode === "ask" || isNextWork;
-  const bestEffortEvents = usesRepoAskContext;
+  // Event-write integrity policy (BIT-139), decoupled from mode. INTEGRITY
+  // events are the recomputable audit log + session-existence record, so a
+  // failed write fails the turn rather than silently dropping. BEST_EFFORT
+  // events (telemetry, denormalized projections derivable from events, and
+  // error notifications that must not mask the real error) are logged-and-
+  // skipped on failure. Replaces the old `bestEffortEvents = usesRepoAskContext`,
+  // which silently dropped integrity events on write failure in ask/next-work
+  // mode. These are the `bestEffort` argument to writeMaybe().
+  const INTEGRITY = false;
+  const BEST_EFFORT = true;
   const workletId = isNextWork ? "next-work.v0" : undefined;
   // Prior conversation now rides in the transcript as real messages (see the
   // seed below), so the prompt is just the current message — no flattened
@@ -964,7 +973,7 @@ export async function runWorkbenchRuntime(
       // The operator's prompt rides on session_start so a conversation
       // transcript can be rebuilt from events alone (resume, inspector).
       content: cliPrompt,
-    }), bestEffortEvents);
+    }), INTEGRITY);
 
   let spanId: string | null = null;
   let selectedForReceipt:
@@ -1027,7 +1036,7 @@ export async function runWorkbenchRuntime(
           tool_is_error: false,
           content: JSON.stringify({ sources: contextSourceLines }),
           duration_ms: Date.now() - sessionStart,
-        }), bestEffortEvents);
+        }), BEST_EFFORT);
 
       const companionBasePrompt = await loadCompanionBasePrompt();
       systemPrompt = buildAskSystemPrompt(companionBasePrompt, repoContext);
@@ -1110,7 +1119,7 @@ export async function runWorkbenchRuntime(
             traceId,
             contextSources: contextSourceLines,
           }),
-        }), bestEffortEvents);
+        }), INTEGRITY);
     }
 
     let models;
@@ -1195,7 +1204,7 @@ export async function runWorkbenchRuntime(
         api: selected.api,
         durationMs: Date.now() - sessionStart,
         authnFields: authnEventFields,
-      }), bestEffortEvents);
+      }), BEST_EFFORT);
     await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
       type: "modelSelected",
       sessionId,
@@ -1339,8 +1348,10 @@ export async function runWorkbenchRuntime(
         }, {
           sessionId,
           traceId,
+          // Agent-loop tool calls (call + result) are the conversation's audit
+          // backbone — integrity-required in every mode.
           writeEvent: (event) =>
-            writeMaybe(() => writeEvent(event), bestEffortEvents),
+            writeMaybe(() => writeEvent(event), INTEGRITY),
         });
         stepResults.push({
           commandId: toolCall.name,
@@ -1482,7 +1493,7 @@ export async function runWorkbenchRuntime(
           : turn.text,
         stop_reason: turn.stopReason,
         duration_ms: turn.timings.totalMs,
-      }), bestEffortEvents);
+      }), INTEGRITY);
     await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
       type: "turnCompleted",
       sessionId,
@@ -1523,7 +1534,7 @@ export async function runWorkbenchRuntime(
           content: (err as Error).message,
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
-        }), bestEffortEvents);
+        }), BEST_EFFORT);
       console.log(`\nBudget exceeded: ${(err as Error).message}`);
     } else {
       await writeMaybe(() =>
@@ -1545,7 +1556,7 @@ export async function runWorkbenchRuntime(
           content: (err as Error)?.message ?? String(err),
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
-        }), bestEffortEvents);
+        }), BEST_EFFORT);
       console.error("\nUnexpected error:", err);
     }
   } finally {
@@ -1563,9 +1574,9 @@ export async function runWorkbenchRuntime(
         authz_basis: authContext.authzBasis,
         ...authnEventFields,
         duration_ms: Date.now() - sessionStart,
-      }), bestEffortEvents);
+      }), INTEGRITY);
 
-    await writeMaybe(() => budget.writeSummaryEvent(), bestEffortEvents);
+    await writeMaybe(() => budget.writeSummaryEvent(), BEST_EFFORT);
 
     const summary = budget.getSummary();
     const paidInferenceUsed = ((summary.byTier["1"]?.calls ?? 0) +
@@ -1605,7 +1616,7 @@ export async function runWorkbenchRuntime(
           contextSources: contextSourceLines,
           receipt,
         }),
-      }), bestEffortEvents);
+      }), BEST_EFFORT);
     console.log("");
     console.log(receipt);
     // BIT-137: the runtime no longer closes the shared Dolt pool. A long-running

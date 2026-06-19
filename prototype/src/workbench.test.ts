@@ -45,6 +45,9 @@ const runtimeMocks = vi.hoisted(() => {
     sessionUpdates: [] as Record<string, unknown>[],
     model,
     runWorkbenchTurn: vi.fn(),
+    // BIT-139: when set, event writes for this event_type throw, to test the
+    // integrity-required vs best-effort write policy.
+    failEventType: null as string | null,
   };
 });
 
@@ -53,9 +56,15 @@ vi.mock("./utils", () => ({
   generateTraceId: () => "0123456789abcdef0123456789abcdef",
   generateSpanId: () => "0123456789abcdef",
   writeEvent: async (event: Record<string, unknown>) => {
+    if (event.event_type === runtimeMocks.failEventType) {
+      throw new Error(`simulated write failure: ${String(event.event_type)}`);
+    }
     runtimeMocks.writtenEvents.push(event);
   },
   writeModelSelectedEvent: async (params: Record<string, unknown>) => {
+    if (runtimeMocks.failEventType === "model_selected") {
+      throw new Error("simulated write failure: model_selected");
+    }
     runtimeMocks.writtenEvents.push({
       event_type: "model_selected",
       session_id: params.sessionId,
@@ -1014,5 +1023,42 @@ describe("shouldPrintBudgetTally", () => {
 
   test("off mode always stays quiet", () => {
     expect(shouldPrintBudgetTally("off", BASE_TALLY.session)).toBe(false);
+  });
+});
+
+describe("runWorkbenchRuntime event-write integrity policy (BIT-139)", () => {
+  const run = (mode: "turn" | "ask") =>
+    runWorkbenchRuntime({ mode, prompt: "policy probe", routingOptions: {} });
+
+  test("best-effort event write failure is swallowed (turn still completes)", async () => {
+    runtimeMocks.failEventType = "model_selected";
+    try {
+      const result = await run("turn");
+      expect(result.text).toBe("runtime response");
+    } finally {
+      runtimeMocks.failEventType = null;
+    }
+  });
+
+  test("integrity event (session_start) write failure fails the turn", async () => {
+    runtimeMocks.failEventType = "session_start";
+    try {
+      await expect(run("turn")).rejects.toThrow(
+        "simulated write failure: session_start",
+      );
+    } finally {
+      runtimeMocks.failEventType = null;
+    }
+  });
+
+  test("integrity events fail the turn in ask mode too — decoupled from mode (previously silently swallowed)", async () => {
+    runtimeMocks.failEventType = "session_start";
+    try {
+      await expect(run("ask")).rejects.toThrow(
+        "simulated write failure: session_start",
+      );
+    } finally {
+      runtimeMocks.failEventType = null;
+    }
   });
 });
