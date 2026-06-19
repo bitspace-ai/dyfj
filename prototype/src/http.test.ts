@@ -114,7 +114,9 @@ describe("createWorkbenchHttpHandler", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(calls).toEqual([{
+    // toMatchObject (not toEqual): the boundary also injects env-derived runtime
+    // defaults (principalId/rootOverride/budgetTallyMode, BIT-148) we don't pin here.
+    expect(calls).toMatchObject([{
       mode: "turn",
       prompt: "summarize the repo",
       routingOptions: { modelId: "gemma4:e2b", tier: 0 },

@@ -92,6 +92,25 @@ export interface WorkbenchRuntimeInput {
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   confirmPaidEscalation?: (banner: string) => Promise<void>;
+  /**
+   * Principal identity recorded on this turn's events. Lifted to the boundary
+   * (BIT-148): entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
+   * resolveRuntimeEnvDefaults(); the core reads only this field (default
+   * "user"), never the environment. A headless driver supplies its own.
+   */
+  principalId?: string;
+  /**
+   * Server/workspace root the read-only file tools fall back to when no loopback
+   * workspace is bound. Lifted to the boundary (BIT-148): entrypoints pass
+   * DYFJ_ROOT; the core falls back to Deno.cwd() when this is absent.
+   */
+  rootOverride?: string;
+  /**
+   * Whether to print the end-of-turn budget tally — a presentation/driver
+   * concern. Lifted to the boundary (BIT-148): entrypoints resolve it from
+   * DYFJ_BUDGET_TALLY; the core reads only this field (default "paid").
+   */
+  budgetTallyMode?: BudgetTallyMode;
 }
 
 export type WorkbenchRuntimeEvent =
@@ -548,6 +567,24 @@ export function parseBudgetTallyMode(
   return "paid";
 }
 
+/**
+ * Resolve the env-derived runtime defaults at the process boundary (BIT-148),
+ * so the core runtime reads no environment variables. Entrypoints (the CLI
+ * one-shot and the HTTP server) spread this into the runtime input; a headless
+ * driver supplies these explicitly instead. `rootOverride` stays undefined when
+ * DYFJ_ROOT is unset, so the core falls back to the process cwd.
+ */
+export function resolveRuntimeEnvDefaults(): Pick<
+  WorkbenchRuntimeInput,
+  "principalId" | "rootOverride" | "budgetTallyMode"
+> {
+  return {
+    principalId: process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ?? "user",
+    rootOverride: Deno.env.get("DYFJ_ROOT") ?? undefined,
+    budgetTallyMode: parseBudgetTallyMode(process.env.DYFJ_BUDGET_TALLY),
+  };
+}
+
 export function shouldPrintBudgetTally(
   mode: BudgetTallyMode,
   session: { paidCalls: number },
@@ -819,6 +856,7 @@ export async function runWorkbench(
   try {
     return await runWorkbenchRuntime({
       ...runtimeInput,
+      ...resolveRuntimeEnvDefaults(),
       onTextDelta: (delta) => {
         process.stdout.write(delta);
       },
@@ -884,9 +922,11 @@ export async function runWorkbenchRuntime(
   const sessionSlug = buildWorkbenchSessionSlug(sessionId);
   const traceId = generateTraceId();
   const sessionStart = Date.now();
-  const budget = new BudgetTracker(sessionId, traceId);
-  const principalId = process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ??
-    "user";
+  // BIT-148: env coupling lives at the boundary (resolveRuntimeEnvDefaults);
+  // the core reads only the input field. Resolved before the BudgetTracker so
+  // its budget_summary event is attributed to the same principal.
+  const principalId = runtimeInput.principalId ?? "user";
+  const budget = new BudgetTracker(sessionId, traceId, undefined, principalId);
   // Direct CLI invocation is authenticated by the local OS session; transport
   // layers (HTTP bearer auth) override this with the caller's real context.
   const authContext: WorkbenchAuthContext = runtimeInput.authContext ?? {
@@ -911,7 +951,9 @@ export async function runWorkbenchRuntime(
   // arbitrary host paths. `honoredWorkspace` is the gated request (a string when
   // a loopback caller bound a root, undefined otherwise): it is both persisted
   // at creation and canonicalized into the actual root where the tools mount.
-  const fallbackRoot = Deno.env.get("DYFJ_ROOT") ?? Deno.cwd();
+  // BIT-148: DYFJ_ROOT is resolved at the boundary; the core only falls back to
+  // the process cwd when no root was supplied.
+  const fallbackRoot = runtimeInput.rootOverride ?? Deno.cwd();
   let requestedWorkspace = runtimeInput.workspaceRoot;
   if (resumingSession && requestedWorkspace === undefined) {
     try {
@@ -1452,7 +1494,9 @@ export async function runWorkbenchRuntime(
       (summary.byTier["2"]?.calls ?? 0);
     if (
       shouldPrintBudgetTally(
-        parseBudgetTallyMode(process.env.DYFJ_BUDGET_TALLY),
+        // BIT-148: DYFJ_BUDGET_TALLY is parsed at the boundary; the core reads
+        // only the input field.
+        runtimeInput.budgetTallyMode ?? "paid",
         {
           paidCalls,
         },

@@ -1073,3 +1073,22 @@ describe("runWorkbenchRuntime event-write integrity policy (BIT-139)", () => {
     }
   });
 });
+
+describe("runWorkbenchRuntime reads runtime config from input, not env (BIT-148)", () => {
+  test("principalId comes from the input struct and flows to events", async () => {
+    const before = runtimeMocks.writtenEvents.length;
+    await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "probe",
+      routingOptions: {},
+      principalId: "custom-principal",
+    });
+    const principals = runtimeMocks.writtenEvents
+      .slice(before)
+      .map((event) => event.principal_id)
+      .filter((p): p is string => typeof p === "string");
+    expect(principals.length).toBeGreaterThan(0);
+    // Every event is attributed to the input principal, not the env/OS user.
+    expect(new Set(principals)).toEqual(new Set(["custom-principal"]));
+  });
+});

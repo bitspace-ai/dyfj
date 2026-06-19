@@ -1,4 +1,5 @@
 import {
+  resolveRuntimeEnvDefaults,
   runWorkbenchRuntime,
   type WorkbenchAuthContext,
   type WorkbenchRuntimeEvent,
@@ -497,6 +498,9 @@ async function handleJsonTurn(
       return runRuntime({
         ...runtimeInput,
         ...resume,
+        // BIT-148: env-derived runtime config resolved at the boundary, not in
+        // the core. A future headless driver supplies these from its own config.
+        ...resolveRuntimeEnvDefaults(),
         authContext,
         onRuntimeEvent: (event) => {
           events.push(event);
@@ -552,6 +556,8 @@ async function handleStreamingTurn(
           return runRuntime({
             ...runtimeInput,
             ...resume,
+            // BIT-148: env-derived runtime config resolved at the boundary.
+            ...resolveRuntimeEnvDefaults(),
             authContext,
             onTextDelta: (delta) => send({ t: "delta", text: delta }),
             onRuntimeEvent: (event) => {

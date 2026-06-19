@@ -101,6 +101,9 @@ export class BudgetTracker {
     private readonly sessionId: string,
     private readonly traceId:   string,
     public  readonly config:    BudgetConfig = defaultBudgetConfig(),
+    // BIT-148: principal is resolved at the boundary and passed in, so the
+    // budget_summary event no longer reads DYFJ_PRINCIPAL_ID / USER from env.
+    private readonly principalId: string = "user",
   ) {}
 
   // ── Accumulators ───────────────────────────────────────────────────────────
@@ -212,7 +215,7 @@ export class BudgetTracker {
       event_type:     "budget_summary",
       trace_id:       this.traceId,
       span_id:        overrides.spanId ?? generateSpanId(),
-      principal_id:   process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ?? "user",
+      principal_id:   this.principalId,
       principal_type: "human",
       action:         "summarise",
       resource:       "session_budget",
