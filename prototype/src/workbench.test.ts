@@ -1061,4 +1061,15 @@ describe("runWorkbenchRuntime event-write integrity policy (BIT-139)", () => {
       runtimeMocks.failEventType = null;
     }
   });
+
+  test("integrity event inside the runtime try (model_response) also fails the turn — not masked by the final receipt", async () => {
+    runtimeMocks.failEventType = "model_response";
+    try {
+      await expect(run("turn")).rejects.toThrow(
+        "simulated write failure: model_response",
+      );
+    } finally {
+      runtimeMocks.failEventType = null;
+    }
+  });
 });

@@ -937,6 +937,22 @@ export async function runWorkbenchRuntime(
   // mode. These are the `bestEffort` argument to writeMaybe().
   const INTEGRITY = false;
   const BEST_EFFORT = true;
+  // Integrity writes that run inside the broad runtime try below would otherwise
+  // throw, be caught by the catch, and then be masked by the `finally` returning
+  // a normal receipt — so a successful turn could be handed back with a missing
+  // audit/transcript event (BIT-139 review finding). Remember the first such
+  // failure; the `finally` rethrows it instead of returning a result.
+  let fatalEventError: unknown = null;
+  const writeIntegrity = async (
+    operation: () => Promise<void>,
+  ): Promise<void> => {
+    try {
+      await operation();
+    } catch (err) {
+      fatalEventError ??= err;
+      throw err;
+    }
+  };
   const workletId = isNextWork ? "next-work.v0" : undefined;
   // Prior conversation now rides in the transcript as real messages (see the
   // seed below), so the prompt is just the current message — no flattened
@@ -1105,7 +1121,7 @@ export async function runWorkbenchRuntime(
     }
 
     if (!resumingSession) {
-      await writeMaybe(() =>
+      await writeIntegrity(() =>
         createWorkbenchSession({
           sessionId,
           slug: sessionSlug,
@@ -1119,7 +1135,7 @@ export async function runWorkbenchRuntime(
             traceId,
             contextSources: contextSourceLines,
           }),
-        }), INTEGRITY);
+        }));
     }
 
     let models;
@@ -1351,7 +1367,7 @@ export async function runWorkbenchRuntime(
           // Agent-loop tool calls (call + result) are the conversation's audit
           // backbone — integrity-required in every mode.
           writeEvent: (event) =>
-            writeMaybe(() => writeEvent(event), INTEGRITY),
+            writeIntegrity(() => writeEvent(event)),
         });
         stepResults.push({
           commandId: toolCall.name,
@@ -1460,7 +1476,7 @@ export async function runWorkbenchRuntime(
       }));
     }
 
-    await writeMaybe(() =>
+    await writeIntegrity(() =>
       writeEvent({
         event_id: generateULID(),
         session_id: sessionId,
@@ -1493,7 +1509,7 @@ export async function runWorkbenchRuntime(
           : turn.text,
         stop_reason: turn.stopReason,
         duration_ms: turn.timings.totalMs,
-      }), INTEGRITY);
+      }));
     await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
       type: "turnCompleted",
       sessionId,
@@ -1624,6 +1640,10 @@ export async function runWorkbenchRuntime(
     // per-turn close would end the pool out from under an in-flight turn and
     // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
     // closes it in a finally; the server keeps it for the process lifetime).
+    // BIT-139 review fix: if an integrity audit/transcript write failed inside
+    // the try above, surface it to the caller instead of masking it behind a
+    // normal receipt (session_end + best-effort cleanup above still ran).
+    if (fatalEventError !== null) throw fatalEventError;
     return {
       sessionId,
       traceId,
