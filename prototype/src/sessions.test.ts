@@ -288,6 +288,12 @@ describe("buildConversationMessages", () => {
   const event = (
     eventType: string,
     content: string | null,
+    tool: {
+      name?: string;
+      callId?: string;
+      arguments?: string;
+      result?: string;
+    } = {},
   ) => ({
     eventId: "01E",
     eventType,
@@ -300,6 +306,10 @@ describe("buildConversationMessages", () => {
     tokensInput: null,
     tokensOutput: null,
     costTotal: null,
+    toolName: tool.name ?? null,
+    toolCallId: tool.callId ?? null,
+    toolArguments: tool.arguments ?? null,
+    toolResult: tool.result ?? null,
     createdAt: "2026-06-12 10:00:00",
   });
 
@@ -330,5 +340,61 @@ describe("buildConversationMessages", () => {
     expect(messages[0]).toEqual({ role: "user", content: "prompt 47" });
     expect(messages.at(-1)).toEqual({ role: "assistant", content: "response 49" });
     expect(messages.some((m) => m.content === "prompt 0")).toBe(false);
+  });
+
+  test("BIT-161: replays a tool_call event as a paired assistant+tool turn", () => {
+    const messages = buildConversationMessages([
+      event("session_start", "list the files"),
+      event("tool_call", "list_files allowed", {
+        name: "list_files",
+        callId: "call_1",
+        arguments: '{"path":"."}',
+        result: "README.md\nsrc/",
+      }),
+      event("model_response", "There are two entries."),
+    ]);
+    expect(messages).toEqual([
+      { role: "user", content: "list the files" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "call_1", name: "list_files", arguments: { path: "." } },
+        ],
+      },
+      { role: "tool", toolCallId: "call_1", name: "list_files", content: "README.md\nsrc/" },
+      { role: "assistant", content: "There are two entries." },
+    ]);
+    // The tool message is immediately preceded by an assistant carrying the
+    // same id — the wire-format pairing invariant.
+    const toolIdx = messages.findIndex((m) => m.role === "tool");
+    const prior = messages[toolIdx - 1];
+    expect(prior.role).toBe("assistant");
+    expect(prior.role === "assistant" && prior.toolCalls?.[0]?.id).toBe("call_1");
+  });
+
+  test("BIT-161: truncation never orphans a tool result from its call", () => {
+    // Two turns, each: user -> tool call+result -> assistant. maxTurns=1 must
+    // keep the whole most-recent turn (user + assistant-with-toolcall + tool +
+    // assistant), never start the window on the dangling tool message.
+    const turn = (i: number) => [
+      event("session_start", `prompt ${i}`),
+      event("tool_call", "list_files allowed", {
+        name: "list_files",
+        callId: `call_${i}`,
+        arguments: "{}",
+        result: `result ${i}`,
+      }),
+      event("model_response", `response ${i}`),
+    ];
+    const messages = buildConversationMessages([...turn(0), ...turn(1)], {
+      maxTurns: 1,
+    });
+    expect(messages[0]).toEqual({ role: "user", content: "prompt 1" });
+    expect(messages.some((m) => m.content === "prompt 0")).toBe(false);
+    // First message is a user turn; no leading orphaned tool message.
+    expect(messages[0].role).toBe("user");
+    const toolMsg = messages.find((m) => m.role === "tool");
+    expect(toolMsg && "toolCallId" in toolMsg && toolMsg.toolCallId).toBe("call_1");
   });
 });

@@ -232,6 +232,13 @@ export interface WorkbenchSessionEvent {
   tokensInput: number | null;
   tokensOutput: number | null;
   costTotal: string | null;
+  // BIT-161: tool-call audit fields, so resume can replay tool turns.
+  // toolArguments is normalized to a JSON string regardless of how the JSON
+  // column round-trips.
+  toolName: string | null;
+  toolCallId: string | null;
+  toolArguments: string | null;
+  toolResult: string | null;
   createdAt: string;
 }
 
@@ -261,7 +268,8 @@ export async function fetchWorkbenchSessionEvents(input: {
   const rows = await query(
     `SELECT event_id, event_type, trace_id, principal_id, model_id, ` +
       `provider, content, stop_reason, tokens_input, tokens_output, ` +
-      `cost_total, created_at FROM events${asOfClause} ` +
+      `cost_total, tool_name, tool_call_id, tool_arguments, tool_result, ` +
+      `created_at FROM events${asOfClause} ` +
       `WHERE session_id = ? ORDER BY created_at ASC;`,
     [input.sessionId],
   );
@@ -277,6 +285,10 @@ export async function fetchWorkbenchSessionEvents(input: {
     tokensInput: row.tokens_input === "" ? null : Number(row.tokens_input),
     tokensOutput: row.tokens_output === "" ? null : Number(row.tokens_output),
     costTotal: row.cost_total === "" ? null : row.cost_total,
+    toolName: row.tool_name ? String(row.tool_name) : null,
+    toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
+    toolArguments: normalizeToolArguments(row.tool_arguments),
+    toolResult: row.tool_result ? String(row.tool_result) : null,
     createdAt: row.created_at,
   }));
 }
@@ -285,13 +297,12 @@ export async function fetchWorkbenchSessionEvents(input: {
  * Rebuild prior session turns as real conversation messages for resume, so the
  * model sees structured user/assistant turns instead of a flattened "Conversation
  * so far:" string. Prompts live on session_start events (operator → user turns);
- * responses on model_response events (→ assistant turns). Returns the most recent
- * `maxTurns` exchanges; whole turns are kept (no mid-turn truncation). The caller
+ * responses on model_response events (→ assistant turns); and tool_call events
+ * (BIT-161) are replayed as the assistant's tool-call intention immediately
+ * followed by its matching result, so a resumed model sees its own tool trail
+ * rather than a transcript that silently dropped it. Returns the most recent
+ * `maxTurns` turns; whole turns are kept (no mid-turn truncation). The caller
  * appends the current user message and seeds the agent loop with the result.
- *
- * NOTE: prior tool calls/results are not yet persisted as resumable events, so
- * they are not replayed here — only the operator/assistant text turns. That is
- * still strictly better than the old string blob, which dropped them too.
  */
 export function buildConversationMessages(
   events: WorkbenchSessionEvent[],
@@ -300,15 +311,74 @@ export function buildConversationMessages(
   const maxTurns = options.maxTurns ?? 10;
   const messages: WorkbenchMessage[] = [];
   for (const event of events) {
-    if (event.content === null) continue;
     if (event.eventType === "session_start") {
+      if (event.content === null) continue;
       messages.push({ role: "user", content: event.content });
     } else if (event.eventType === "model_response") {
+      if (event.content === null) continue;
       messages.push({ role: "assistant", content: event.content });
+    } else if (event.eventType === "tool_call") {
+      // One tool_call event carries both halves: the call (name/id/arguments)
+      // and its result. Emit them as a paired assistant+tool sequence so the
+      // wire-format invariant holds — a `tool` message MUST be immediately
+      // preceded by an `assistant` message bearing the same tool-call id.
+      if (event.toolCallId === null || event.toolName === null) continue;
+      messages.push({
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          id: event.toolCallId,
+          name: event.toolName,
+          arguments: parseToolArguments(event.toolArguments),
+        }],
+      });
+      messages.push({
+        role: "tool",
+        toolCallId: event.toolCallId,
+        name: event.toolName,
+        content: event.toolResult ?? "",
+      });
     }
   }
-  // Keep the most recent maxTurns exchanges (a user+assistant pair per turn).
-  return messages.length > maxTurns * 2
-    ? messages.slice(messages.length - maxTurns * 2)
-    : messages;
+  return sliceToRecentTurns(messages, maxTurns);
+}
+
+/**
+ * Normalize a tool_arguments JSON column to a string, regardless of whether the
+ * driver returns JSON as text or an already-parsed object.
+ */
+function normalizeToolArguments(raw: unknown): string | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  return typeof raw === "string" ? raw : JSON.stringify(raw);
+}
+
+/** Parse a persisted tool_arguments JSON string back to a structured object. */
+function parseToolArguments(raw: string | null): Record<string, unknown> {
+  if (raw === null || raw.trim() === "") return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed !== null && typeof parsed === "object"
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Keep the most recent `maxTurns` user-initiated turns. Truncation lands on a
+ * `user` turn boundary so a `tool` message is never separated from the
+ * `assistant` tool-call it answers (which the wire format forbids). For a
+ * tool-free transcript this is exactly the prior "last maxTurns exchanges".
+ */
+function sliceToRecentTurns(
+  messages: WorkbenchMessage[],
+  maxTurns: number,
+): WorkbenchMessage[] {
+  const userIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === "user") userIndices.push(i);
+  }
+  if (userIndices.length <= maxTurns) return messages;
+  return messages.slice(userIndices[userIndices.length - maxTurns]);
 }
