@@ -811,13 +811,22 @@ export async function runWorkbench(
 
   const runtimeInput = buildWorkbenchRuntimeInput(invocation);
   if (runtimeInput === null) return;
-  return await runWorkbenchRuntime({
-    ...runtimeInput,
-    onTextDelta: (delta) => {
-      process.stdout.write(delta);
-    },
-    confirmPaidEscalation,
-  });
+  // This in-process one-shot path owns the Dolt pool lifecycle (BIT-137): the
+  // runtime no longer closes it, so close here after the single turn so the
+  // process exits cleanly. (The REPL drives this per turn; the HTTP server
+  // bypasses runWorkbench and keeps the pool for the process lifetime.)
+  const { closeDoltPool } = await import("./utils");
+  try {
+    return await runWorkbenchRuntime({
+      ...runtimeInput,
+      onTextDelta: (delta) => {
+        process.stdout.write(delta);
+      },
+      confirmPaidEscalation,
+    });
+  } finally {
+    await closeDoltPool();
+  }
 }
 
 export async function runWorkbenchRuntime(
@@ -829,7 +838,6 @@ export async function runWorkbenchRuntime(
     generateSpanId,
     writeEvent,
     writeModelSelectedEvent,
-    closeDoltPool,
   } = await import("./utils");
   const {
     defaultLocalWorkbenchModels,
@@ -1600,7 +1608,11 @@ export async function runWorkbenchRuntime(
       }), bestEffortEvents);
     console.log("");
     console.log(receipt);
-    await closeDoltPool();
+    // BIT-137: the runtime no longer closes the shared Dolt pool. A long-running
+    // host (HTTP server) runs many concurrent turns through this function; a
+    // per-turn close would end the pool out from under an in-flight turn and
+    // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
+    // closes it in a finally; the server keeps it for the process lifetime).
     return {
       sessionId,
       traceId,
