@@ -312,6 +312,56 @@ describe("createWorkbenchHttpHandler", () => {
     ]);
   });
 
+  test("serializes the transcript read inside the lock: the second same-session read waits for the first turn (BIT-147)", async () => {
+    const trace: string[] = [];
+    let fetchActive = 0;
+    let fetchPeak = 0;
+    const handler = createWorkbenchHttpHandler({
+      fetchSessionEvents: async ({ sessionId }) => {
+        fetchActive++;
+        fetchPeak = Math.max(fetchPeak, fetchActive);
+        trace.push(`fetch:${sessionId}`);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        fetchActive--;
+        return [];
+      },
+      runRuntime: async (input) => {
+        trace.push(`run:${input.sessionId}`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        trace.push(`done:${input.sessionId}`);
+        return runtimeResult({ sessionId: input.sessionId });
+      },
+    });
+    const sessionId = "01ABCDEF0123456789ABCDEF01";
+    const turn = () =>
+      handler(
+        new Request("http://localhost/api/turn", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            prompt: "x",
+            mode: "turn",
+            sessionId,
+            routingOptions: {},
+          }),
+        }),
+      );
+
+    await Promise.all([turn(), turn()]);
+    // The prior-event read is inside the per-session critical section: never two
+    // reads at once, and the second turn reads only after the first has run and
+    // appended its events (read-modify-append is atomic per session).
+    expect(fetchPeak).toBe(1);
+    expect(trace).toEqual([
+      `fetch:${sessionId}`,
+      `run:${sessionId}`,
+      `done:${sessionId}`,
+      `fetch:${sessionId}`,
+      `run:${sessionId}`,
+      `done:${sessionId}`,
+    ]);
+  });
+
   test("does not serialize independent (new-session) turns (BIT-147)", async () => {
     let active = 0;
     let peak = 0;

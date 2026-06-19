@@ -414,20 +414,20 @@ function withSessionTurnLock<T>(
 }
 
 /**
- * Parse and validate a turn request body into runtime input plus optional
- * resume context. Shared by the buffered and streaming turn handlers so both
- * apply identical validation, session-id checks, and transcript rebuilding.
+ * Parse and validate a turn request body into runtime input plus the validated
+ * resume sessionId. Shared by the buffered and streaming turn handlers.
+ *
+ * Deliberately does NOT read the session's prior events: transcript
+ * reconstruction is deferred into the per-session lock (see `buildResume`) so a
+ * resumed turn reads the latest committed events only after all earlier
+ * same-session turns have appended theirs. Reading here (before the lock) let a
+ * second same-session turn build a stale transcript — a TOCTOU on the audit log
+ * (BIT-147 review finding).
  */
 async function resolveTurnRequest(
   request: Request,
-  fetchSessionEvents: NonNullable<
-    WorkbenchHttpHandlerOptions["fetchSessionEvents"]
-  >,
 ): Promise<
-  | {
-    runtimeInput: WorkbenchRuntimeInput;
-    resume: Pick<WorkbenchRuntimeInput, "sessionId" | "conversationMessages">;
-  }
+  | { runtimeInput: WorkbenchRuntimeInput; sessionId: string | undefined }
   | { error: string; status: number }
 > {
   let body: TurnRequestBody;
@@ -442,13 +442,7 @@ async function resolveTurnRequest(
     return { error: runtimeInput.error, status: 400 };
   }
 
-  // Resume: rebuild prior turns as real conversation messages from the
-  // session's events so the model carries the conversation, and append this
-  // turn to the same id.
-  let resume: Pick<
-    WorkbenchRuntimeInput,
-    "sessionId" | "conversationMessages"
-  > = {};
+  let sessionId: string | undefined;
   if (body.sessionId !== undefined) {
     if (
       typeof body.sessionId !== "string" ||
@@ -456,20 +450,30 @@ async function resolveTurnRequest(
     ) {
       return { error: "invalid session id", status: 400 };
     }
-    try {
-      const priorEvents = await fetchSessionEvents({
-        sessionId: body.sessionId,
-      });
-      resume = {
-        sessionId: body.sessionId,
-        conversationMessages: buildConversationMessages(priorEvents),
-      };
-    } catch (err) {
-      return { error: (err as Error).message, status: 500 };
-    }
+    sessionId = body.sessionId;
   }
 
-  return { runtimeInput, resume };
+  return { runtimeInput, sessionId };
+}
+
+/**
+ * Rebuild the resume context (prior turns as conversation messages). Called
+ * INSIDE `withSessionTurnLock` so the prior-event read happens after all earlier
+ * same-session turns have settled — keeping the read-modify-append atomic per
+ * session (BIT-147).
+ */
+async function buildResume(
+  sessionId: string | undefined,
+  fetchSessionEvents: NonNullable<
+    WorkbenchHttpHandlerOptions["fetchSessionEvents"]
+  >,
+): Promise<Pick<WorkbenchRuntimeInput, "sessionId" | "conversationMessages">> {
+  if (sessionId === undefined) return {};
+  const priorEvents = await fetchSessionEvents({ sessionId });
+  return {
+    sessionId,
+    conversationMessages: buildConversationMessages(priorEvents),
+  };
 }
 
 async function handleJsonTurn(
@@ -480,16 +484,17 @@ async function handleJsonTurn(
     WorkbenchHttpHandlerOptions["fetchSessionEvents"]
   >,
 ): Promise<Response> {
-  const resolved = await resolveTurnRequest(request, fetchSessionEvents);
+  const resolved = await resolveTurnRequest(request);
   if ("error" in resolved) {
     return jsonResponse({ error: resolved.error }, resolved.status);
   }
-  const { runtimeInput, resume } = resolved;
+  const { runtimeInput, sessionId } = resolved;
 
   try {
     const events: WorkbenchRuntimeEvent[] = [];
-    const result = await withSessionTurnLock(resume.sessionId, () =>
-      runRuntime({
+    const result = await withSessionTurnLock(sessionId, async () => {
+      const resume = await buildResume(sessionId, fetchSessionEvents);
+      return runRuntime({
         ...runtimeInput,
         ...resume,
         authContext,
@@ -498,7 +503,8 @@ async function handleJsonTurn(
         },
         confirmPaidEscalation: () =>
           Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
-      }));
+      });
+    });
     return jsonResponse({ ...result, events });
   } catch (err) {
     return jsonResponse({
@@ -525,13 +531,13 @@ async function handleStreamingTurn(
     WorkbenchHttpHandlerOptions["fetchSessionEvents"]
   >,
 ): Promise<Response> {
-  const resolved = await resolveTurnRequest(request, fetchSessionEvents);
+  const resolved = await resolveTurnRequest(request);
   if ("error" in resolved) {
     // Request-shape errors occur before the stream opens, so report them as a
     // plain JSON error response rather than an SSE error frame.
     return jsonResponse({ error: resolved.error }, resolved.status);
   }
-  const { runtimeInput, resume } = resolved;
+  const { runtimeInput, sessionId } = resolved;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -541,8 +547,9 @@ async function handleStreamingTurn(
           encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
         );
       try {
-        const result = await withSessionTurnLock(resume.sessionId, () =>
-          runRuntime({
+        const result = await withSessionTurnLock(sessionId, async () => {
+          const resume = await buildResume(sessionId, fetchSessionEvents);
+          return runRuntime({
             ...runtimeInput,
             ...resume,
             authContext,
@@ -552,7 +559,8 @@ async function handleStreamingTurn(
             },
             confirmPaidEscalation: () =>
               Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
-          }));
+          });
+        });
         send({ t: "done", result });
       } catch (err) {
         send({ t: "error", message: (err as Error)?.message ?? String(err) });
