@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
-  assertPaidEscalationCanPrompt,
   type BudgetTallyInput,
   buildBudgetTallyLine,
   buildNextWorkBrief,
@@ -16,7 +15,7 @@ import {
   MAX_TOOL_STEPS,
   maybeBuildPaidEscalationPreflightBanner,
   type PaidEscalationPreflightInput,
-  PaidInferenceRequiresTtyError,
+  promptPaidEscalationTty,
   resolveWorkbenchInvocation,
   runWorkbenchRuntime,
   shouldPrintBudgetTally,
@@ -532,14 +531,15 @@ describe("buildPaidEscalationPreflightBanner", () => {
   });
 });
 
-describe("assertPaidEscalationCanPrompt", () => {
-  test("fails closed for paid inference without a TTY", () => {
-    expect(() => assertPaidEscalationCanPrompt(false))
-      .toThrow(PaidInferenceRequiresTtyError);
-  });
-
-  test("allows interactive paid consent prompts with a TTY", () => {
-    expect(() => assertPaidEscalationCanPrompt(true)).not.toThrow();
+describe("promptPaidEscalationTty (BIT-149 consent verdict)", () => {
+  test("escalates instead of prompting in a non-interactive session", async () => {
+    // The test process has no TTY: the CLI driver must escalate (defer to an
+    // out-of-band operator), not throw or block.
+    const verdict = await promptPaidEscalationTty("paid model selected");
+    expect(verdict).toEqual({
+      decision: "escalate",
+      reason: expect.any(String),
+    });
   });
 });
 
@@ -900,7 +900,7 @@ describe("runWorkbenchRuntime observer events", () => {
         mode: "turn",
         prompt: "explore",
         routingOptions: {},
-        confirmPaidEscalation: async () => {},
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
         onRuntimeEvent: (event) => events.push(event),
       });
       expect(result.text).toBe("");

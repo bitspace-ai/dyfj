@@ -506,7 +506,10 @@ async function handleJsonTurn(
           events.push(event);
         },
         confirmPaidEscalation: () =>
-          Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
+          Promise.resolve({
+            decision: "deny" as const,
+            reason: PAID_ESCALATION_OVER_HTTP,
+          }),
       });
     });
     return jsonResponse({ ...result, events });
@@ -564,7 +567,10 @@ async function handleStreamingTurn(
               send({ t: "event", event });
             },
             confirmPaidEscalation: () =>
-              Promise.reject(new Error(PAID_ESCALATION_OVER_HTTP)),
+              Promise.resolve({
+                decision: "deny" as const,
+                reason: PAID_ESCALATION_OVER_HTTP,
+              }),
           });
         });
         send({ t: "done", result });

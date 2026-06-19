@@ -91,7 +91,13 @@ export interface WorkbenchRuntimeInput {
   conversationMessages?: WorkbenchMessage[];
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
-  confirmPaidEscalation?: (banner: string) => Promise<void>;
+  /**
+   * Consent handler for paid-inference escalation (BIT-149). Returns a verdict
+   * (approve | deny+reason | escalate), not void/throw — so a headless driver
+   * can pre-approve or escalate. Drivers inject their own; the core defaults to
+   * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
+   */
+  confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
   /**
    * Principal identity recorded on this turn's events. Lifted to the boundary
    * (BIT-148): entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
@@ -238,17 +244,34 @@ export interface ToolResultSummary {
   result: string;
 }
 
-export class ConsentDeclinedError extends Error {
-  constructor() {
-    super("Paid inference consent declined");
-    this.name = "ConsentDeclinedError";
-  }
-}
+/**
+ * Verdict returned by a paid-inference consent handler (BIT-149). A structured
+ * value, not a throw, so a driver can express the third state — escalate — that
+ * void/throw could not: the driver can't decide and an out-of-band operator
+ * must. `approve` proceeds; `deny` and `escalate` both stop the turn.
+ */
+export type PaidEscalationVerdict =
+  | { decision: "approve" }
+  | { decision: "deny"; reason?: string }
+  | { decision: "escalate"; reason?: string };
 
-export class PaidInferenceRequiresTtyError extends Error {
-  constructor() {
-    super("Paid inference requires an interactive TTY consent prompt");
-    this.name = "PaidInferenceRequiresTtyError";
+export class PaidEscalationDeclinedError extends Error {
+  constructor(
+    public readonly verdict: Exclude<
+      PaidEscalationVerdict,
+      { decision: "approve" }
+    >,
+  ) {
+    super(
+      verdict.decision === "escalate"
+        ? `Paid inference escalation required${
+          verdict.reason ? `: ${verdict.reason}` : ""
+        }`
+        : `Paid inference consent declined${
+          verdict.reason ? `: ${verdict.reason}` : ""
+        }`,
+    );
+    this.name = "PaidEscalationDeclinedError";
   }
 }
 
@@ -753,24 +776,40 @@ export function buildWorkbenchRuntimeInput(
   };
 }
 
-export function assertPaidEscalationCanPrompt(
-  isTty: boolean | undefined,
-): void {
-  if (!isTty) {
-    throw new PaidInferenceRequiresTtyError();
-  }
+/**
+ * Default consent handler (BIT-149): deny. The core makes no TTY assumption —
+ * drivers inject their own. A headless Workshop driver pre-approves or escalates
+ * to an out-of-band operator; the CLI uses promptPaidEscalationTty.
+ */
+function denyPaidEscalation(): Promise<PaidEscalationVerdict> {
+  return Promise.resolve({
+    decision: "deny",
+    reason: "no consent handler configured",
+  });
 }
 
-async function confirmPaidEscalation(banner: string): Promise<void> {
-  assertPaidEscalationCanPrompt(process.stdin.isTTY);
+/**
+ * CLI consent driver: prompt the operator on an interactive TTY. A
+ * non-interactive CLI session escalates (operator must approve out of band)
+ * rather than guessing or blocking.
+ */
+export async function promptPaidEscalationTty(
+  banner: string,
+): Promise<PaidEscalationVerdict> {
+  if (!process.stdin.isTTY) {
+    return {
+      decision: "escalate",
+      reason: "non-interactive session cannot grant paid-inference consent",
+    };
+  }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const answer = await rl.question(
       `${banner}\nContinue with paid inference? Type yes to run: `,
     );
-    if (answer.trim().toLowerCase() !== "yes") {
-      throw new ConsentDeclinedError();
-    }
+    return answer.trim().toLowerCase() === "yes"
+      ? { decision: "approve" }
+      : { decision: "deny", reason: "operator declined" };
   } finally {
     rl.close();
   }
@@ -860,7 +899,7 @@ export async function runWorkbench(
       onTextDelta: (delta) => {
         process.stdout.write(delta);
       },
-      confirmPaidEscalation,
+      confirmPaidEscalation: promptPaidEscalationTty,
     });
   } finally {
     await closeDoltPool();
@@ -1246,9 +1285,13 @@ export async function runWorkbenchRuntime(
       perCallLimitUsd: preCall.perCallLimitUsd,
     });
     if (preflightBanner !== null) {
-      await (runtimeInput.confirmPaidEscalation ?? confirmPaidEscalation)(
-        preflightBanner,
-      );
+      const verdict =
+        await (runtimeInput.confirmPaidEscalation ?? denyPaidEscalation)(
+          preflightBanner,
+        );
+      if (verdict.decision !== "approve") {
+        throw new PaidEscalationDeclinedError(verdict);
+      }
     }
 
     await writeMaybe(() =>
@@ -1568,11 +1611,13 @@ export async function runWorkbenchRuntime(
       errorName: name,
       errorMessage: (err as Error)?.message ?? String(err),
     });
-    if (name === "ConsentDeclinedError") {
-      console.log("\nConsent declined - no model call made.");
-    } else if (name === "PaidInferenceRequiresTtyError") {
+    if (name === "PaidEscalationDeclinedError") {
+      const verdict = (err as PaidEscalationDeclinedError).verdict;
+      const detail = verdict.reason ? ` (${verdict.reason})` : "";
       console.log(
-        "\nPaid inference blocked: non-TTY sessions cannot grant consent.",
+        verdict.decision === "escalate"
+          ? `\nPaid inference escalation required - no model call made${detail}.`
+          : `\nPaid inference declined - no model call made${detail}.`,
       );
     } else if (name === "BudgetExceededError") {
       await writeMaybe(() =>

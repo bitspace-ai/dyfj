@@ -494,10 +494,11 @@ describe("createWorkbenchHttpHandler", () => {
     expect(calls).toEqual([]);
   });
 
-  test("fails closed when the runtime asks HTTP for paid inference consent", async () => {
+  test("denies paid inference consent over HTTP (no interactive flow)", async () => {
+    let verdict: unknown;
     const handler = createWorkbenchHttpHandler({
       runRuntime: async (input) => {
-        await input.confirmPaidEscalation?.("paid model selected");
+        verdict = await input.confirmPaidEscalation?.("paid model selected");
         return runtimeResult();
       },
     });
@@ -509,11 +510,13 @@ describe("createWorkbenchHttpHandler", () => {
         body: JSON.stringify({ prompt: "use paid inference" }),
       }),
     );
-    const body = await response.json();
 
-    expect(response.status).toBe(500);
-    expect(body).toEqual({
-      error: "paid inference requires an explicit CLI consent flow",
+    expect(response.status).toBe(200);
+    // BIT-149: HTTP returns a structured deny verdict rather than throwing; the
+    // real runtime stops the turn on a non-approve verdict.
+    expect(verdict).toEqual({
+      decision: "deny",
+      reason: "paid inference requires an explicit CLI consent flow",
     });
   });
 });
