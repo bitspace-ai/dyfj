@@ -651,6 +651,11 @@ function parseRoutingOptions(
   return output;
 }
 
+// NOTE: the entire document — including the inline <script> — is one template
+// literal. Any backslash escape in the embedded JS must be DOUBLED in source
+// (`"\\n"`, `/\\s+/g`) or the template literal eats it before it reaches the
+// browser (a bare "\n" becomes a real newline → SyntaxError). The
+// "served shell script parses" test in http.test.ts guards this.
 function renderWorkbenchIndex(): string {
   return `<!doctype html>
 <html lang="en">
@@ -680,7 +685,7 @@ function renderWorkbenchIndex(): string {
 
       body {
         margin: 0;
-        min-height: 100vh;
+        height: 100vh;
         background: var(--bg);
         color: var(--ink);
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -717,8 +722,87 @@ function renderWorkbenchIndex(): string {
 
       .shell {
         display: grid;
+        grid-template-columns: minmax(208px, 248px) minmax(0, 1fr);
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .content {
+        display: grid;
         grid-template-rows: auto minmax(0, 1fr);
-        min-height: 100vh;
+        min-height: 0;
+      }
+
+      .work {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 10px;
+        border-right: 1px solid var(--line);
+        background: #ffffff;
+        padding: 12px;
+        min-height: 0;
+      }
+
+      .work-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      #new-session {
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+
+      .work-list {
+        overflow: auto;
+        min-height: 0;
+        display: grid;
+        align-content: start;
+        gap: 3px;
+      }
+
+      .work-group-label {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 10px 4px 2px;
+      }
+
+      .session-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        padding: 6px 8px;
+        background: transparent;
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-item:hover {
+        background: var(--panel);
+      }
+
+      .session-item[aria-current="true"] {
+        border-color: var(--line);
+        background: var(--panel);
+        font-weight: 650;
+      }
+
+      .session-item small {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       header {
@@ -972,6 +1056,18 @@ function renderWorkbenchIndex(): string {
       }
 
       @media (max-width: 980px) {
+        .shell {
+          display: block;
+          height: auto;
+          overflow: visible;
+        }
+
+        .work {
+          border-right: none;
+          border-bottom: 1px solid var(--line);
+          max-height: 220px;
+        }
+
         header,
         main,
         aside,
@@ -999,6 +1095,16 @@ function renderWorkbenchIndex(): string {
   </head>
   <body>
     <div class="shell">
+      <nav class="work" aria-label="Work sessions">
+        <div class="work-head">
+          <h2>Work</h2>
+          <button id="new-session" type="button">+ New</button>
+        </div>
+        <div class="work-list" id="work-list">
+          <p class="empty">No sessions yet.</p>
+        </div>
+      </nav>
+      <div class="content">
       <header>
         <h1>DYFJ Workbench</h1>
         <section class="facts" aria-label="Turn facts">
@@ -1080,10 +1186,12 @@ function renderWorkbenchIndex(): string {
           </section>
         </aside>
       </main>
+      </div>
     </div>
 
     <script type="module">
       const form = document.querySelector("#turn-form");
+      const promptInput = document.querySelector("#prompt");
       const button = document.querySelector("#run-button");
       const errorBox = document.querySelector("#error");
       const responseText = document.querySelector("#response-text");
@@ -1100,8 +1208,14 @@ function renderWorkbenchIndex(): string {
         calls: document.querySelector("#fact-calls"),
       };
 
+      const workList = document.querySelector("#work-list");
+      const newSessionButton = document.querySelector("#new-session");
+
       let events = [];
       let selectedEventIndex = -1;
+      let currentSessionId = null;
+      let sessionGroups = [];
+      const SESSION_POINTER = "dyfj-workbench-session";
 
       const keyBar = document.querySelector("#key-bar");
       const keyInput = document.querySelector("#api-key");
@@ -1138,6 +1252,21 @@ function renderWorkbenchIndex(): string {
         showKeyBar();
       }
 
+      newSessionButton.addEventListener("click", startNewSession);
+
+      // Resume across restarts: load the project-grouped session list, then
+      // reopen the last session if it still exists (events come from Dolt, only
+      // the pointer is held client-side).
+      (async function initWorkbench() {
+        await loadSessions();
+        const pointer = readSessionPointer();
+        if (!pointer) return;
+        const exists = sessionGroups.some((group) =>
+          (group.sessions ?? []).some((s) => s.sessionId === pointer)
+        );
+        if (exists) await selectSession(pointer);
+      })();
+
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         clearError();
@@ -1157,14 +1286,13 @@ function renderWorkbenchIndex(): string {
           mode: String(formData.get("mode") ?? "turn"),
           routingOptions,
         };
+        // Resume into the open session; omitting sessionId starts a fresh one.
+        if (currentSessionId) body.sessionId = currentSessionId;
 
         try {
-          const headers = { "content-type": "application/json" };
-          const apiKey = storedApiKey();
-          if (apiKey !== "") headers["authorization"] = "Bearer " + apiKey;
           const response = await fetch("/api/turn", {
             method: "POST",
-            headers,
+            headers: authHeaders({ "content-type": "application/json" }),
             body: JSON.stringify(body),
           });
           const payload = await response.json();
@@ -1173,6 +1301,18 @@ function renderWorkbenchIndex(): string {
             throw new Error(payload.error ?? "request failed");
           }
           renderTurn(payload);
+          // Clear the prompt only on a successful turn (a failed turn keeps the
+          // text so the operator can retry).
+          promptInput.value = "";
+          // The session list and timeline render from Dolt truth, not the turn
+          // payload: adopt the (possibly newly created) session and reload its
+          // full persisted event history.
+          if (payload.sessionId) {
+            currentSessionId = payload.sessionId;
+            persistSessionPointer(currentSessionId);
+            await loadSessions();
+            await loadSessionEvents(currentSessionId);
+          }
         } catch (err) {
           showError(err instanceof Error ? err.message : String(err));
         } finally {
@@ -1181,13 +1321,137 @@ function renderWorkbenchIndex(): string {
       });
 
       function renderTurn(payload) {
-        events = Array.isArray(payload.events) ? payload.events : [];
-        selectedEventIndex = events.length > 0 ? events.length - 1 : -1;
         responseText.classList.remove("empty");
         responseText.textContent = payload.text || "";
         renderFacts(payload);
+      }
+
+      function authHeaders(extra) {
+        const headers = Object.assign({}, extra);
+        const apiKey = storedApiKey();
+        if (apiKey !== "") headers["authorization"] = "Bearer " + apiKey;
+        return headers;
+      }
+
+      async function apiGet(path) {
+        const response = await fetch(path, { headers: authHeaders() });
+        const payload = await response.json();
+        if (!response.ok) {
+          if (response.status === 401) showKeyBar();
+          throw new Error(payload.error ?? "request failed");
+        }
+        return payload;
+      }
+
+      async function loadSessions() {
+        try {
+          const payload = await apiGet("/api/sessions");
+          sessionGroups = Array.isArray(payload.projects) ? payload.projects : [];
+          renderSessions();
+        } catch (err) {
+          showError(err instanceof Error ? err.message : String(err));
+        }
+      }
+
+      function renderSessions() {
+        workList.replaceChildren();
+        const total = sessionGroups.reduce(
+          (n, group) => n + (group.sessions ? group.sessions.length : 0),
+          0,
+        );
+        if (total === 0) {
+          const empty = document.createElement("p");
+          empty.className = "empty";
+          empty.textContent = "No sessions yet.";
+          workList.append(empty);
+          return;
+        }
+        for (const group of sessionGroups) {
+          const label = document.createElement("div");
+          label.className = "work-group-label";
+          label.textContent = group.project || "(no project)";
+          workList.append(label);
+          for (const session of group.sessions ?? []) {
+            const item = document.createElement("button");
+            item.type = "button";
+            item.className = "session-item";
+            if (session.sessionId === currentSessionId) {
+              item.setAttribute("aria-current", "true");
+            }
+            // Lead with the distinguishing text (the task / first prompt); the
+            // sessionName is almost always a generic constant, so it would make
+            // the list a wall of identical titles. Short id as the subtitle for
+            // disambiguation + cross-referencing with the event endpoint.
+            const title = document.createElement("strong");
+            title.textContent = session.taskDescription || session.sessionName ||
+              session.slug || session.sessionId;
+            const sub = document.createElement("small");
+            sub.textContent = session.sessionId.slice(-8);
+            item.append(title, sub);
+            item.addEventListener("click", () => {
+              selectSession(session.sessionId);
+            });
+            workList.append(item);
+          }
+        }
+      }
+
+      async function loadSessionEvents(sessionId) {
+        const payload = await apiGet(
+          "/api/sessions/" + encodeURIComponent(sessionId) + "/events",
+        );
+        events = Array.isArray(payload.events) ? payload.events : [];
+        selectedEventIndex = events.length > 0 ? events.length - 1 : -1;
         renderTimeline();
         renderInspector();
+      }
+
+      async function selectSession(sessionId) {
+        try {
+          currentSessionId = sessionId;
+          persistSessionPointer(sessionId);
+          renderSessions();
+          await loadSessionEvents(sessionId);
+          facts.session.textContent = sessionId;
+        } catch (err) {
+          showError(err instanceof Error ? err.message : String(err));
+        }
+      }
+
+      function startNewSession() {
+        currentSessionId = null;
+        persistSessionPointer(null);
+        promptInput.value = "";
+        events = [];
+        selectedEventIndex = -1;
+        responseText.classList.add("empty");
+        responseText.textContent = "No turn yet.";
+        clearFacts();
+        renderTimeline();
+        renderInspector();
+        renderSessions();
+      }
+
+      function clearFacts() {
+        for (const el of Object.values(facts)) el.textContent = "-";
+        facts.cost.classList.remove("cost-paid");
+      }
+
+      function persistSessionPointer(sessionId) {
+        try {
+          if (sessionId) localStorage.setItem(SESSION_POINTER, sessionId);
+          else localStorage.removeItem(SESSION_POINTER);
+        } catch {
+          /* a browser that refuses storage just loses cross-reload resume */
+        }
+      }
+
+      function readSessionPointer() {
+        try {
+          return localStorage.getItem(SESSION_POINTER) ?? "";
+        } catch {
+          return "";
+        }
       }
 
       function renderFacts(payload) {
@@ -1227,7 +1491,7 @@ function renderWorkbenchIndex(): string {
 
           const text = document.createElement("span");
           const name = document.createElement("strong");
-          name.textContent = event.type ?? "event";
+          name.textContent = event.eventType ?? event.type ?? "event";
           const detail = document.createElement("span");
           detail.textContent = summarizeEvent(event);
           text.append(name, detail);
@@ -1251,20 +1515,27 @@ function renderWorkbenchIndex(): string {
           rows.push(humanizeKey(key).padEnd(16) + " " + rendered);
         }
         inspector.textContent = rows.length > 0
-          ? rows.join("\n")
+          ? rows.join("\\n")
           : "(empty event)";
       }
 
       function summarizeEvent(event) {
         if (!event || typeof event !== "object") return "";
-        if (event.modelSlug) return [event.modelSlug, event.reason].filter(Boolean).join(" | ");
-        if (event.traceId) return event.traceId;
-        if (event.sourceCount !== undefined) return event.sourceCount + " sources";
-        if (event.inputCount !== undefined || event.outputCount !== undefined) {
-          return (event.inputCount ?? 0) + " in / " + (event.outputCount ?? 0) + " out";
+        // Dolt WorkbenchSessionEvent shape (events render from Dolt truth).
+        if (event.toolName) {
+          return [event.toolName, snippet(event.toolResult)].filter(Boolean)
+            .join(" → ");
         }
-        if (event.promptLength !== undefined) return event.promptLength + " chars";
-        return event.sessionId ?? "";
+        if (event.modelId) return event.modelId;
+        if (event.content) return snippet(event.content);
+        if (event.stopReason) return event.stopReason;
+        return event.createdAt ?? "";
+      }
+
+      function snippet(value) {
+        if (value === null || value === undefined) return "";
+        const text = String(value).replace(/\\s+/g, " ").trim();
+        return text.length > 56 ? text.slice(0, 55) + "…" : text;
       }
 
       function formatCost(cost) {

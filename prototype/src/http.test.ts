@@ -76,6 +76,30 @@ describe("createWorkbenchHttpHandler", () => {
     // BIT-113: inspector renders a formatted receipt (not raw JSON) with cache telemetry.
     expect(html).toContain("humanizeKey");
     expect(html).toContain("cacheRead");
+    // BIT-115: the shell carries the project-grouped WORK pane wired to the
+    // runtime REST surface (session list, select-to-resume, new session) and
+    // renders events from Dolt truth rather than ephemeral client state.
+    expect(html).toContain('id="work-list"');
+    expect(html).toContain('id="new-session"');
+    expect(html).toContain("/api/sessions");
+    expect(html).toContain("loadSessionEvents");
+    expect(html).toContain("startNewSession");
+    expect(html).toContain("SESSION_POINTER");
+  });
+
+  test("the served shell script parses (no outer-template escape corruption)", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+    });
+    const html = await (await handler(new Request("http://localhost/"))).text();
+    const match = html.match(/<script type="module">([\s\S]*?)<\/script>/);
+    expect(match).not.toBeNull();
+    // The inline shell JS lives inside http.ts's outer HTML template literal, so
+    // a source "\n" or /\s+/ is eaten by that literal before it reaches the
+    // browser (a raw newline inside a string literal is a SyntaxError). The
+    // handler unit tests only assert on the HTML string and never execute the
+    // JS, so this guard compiles (parses, without running) the served script.
+    expect(() => new Function(match![1])).not.toThrow();
   });
 
   test("runs a JSON turn through the injected runtime", async () => {
