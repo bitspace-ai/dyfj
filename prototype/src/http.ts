@@ -898,6 +898,28 @@ function renderWorkbenchIndex(): string {
         text-transform: uppercase;
       }
 
+      .model-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+      }
+
+      #cap-filter {
+        width: auto;
+        min-height: 0;
+        height: 20px;
+        font-size: 11px;
+        padding: 0 4px;
+        text-transform: none;
+        color: var(--muted);
+      }
+
+      select:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
       textarea,
       input,
       select {
@@ -1141,8 +1163,20 @@ function renderWorkbenchIndex(): string {
                 </select>
               </div>
               <div>
-                <label for="model-id">Model</label>
-                <input id="model-id" name="modelId" placeholder="default">
+                <div class="model-head">
+                  <label for="model-id">Model</label>
+                  <select id="cap-filter" title="Filter models by capability"
+                    aria-label="Filter models by capability">
+                    <option value="">all capabilities</option>
+                    <option value="code">code</option>
+                    <option value="reasoning">reasoning</option>
+                    <option value="vision">vision</option>
+                    <option value="long-context">long-context</option>
+                  </select>
+                </div>
+                <select id="model-id" name="modelId">
+                  <option value="">Auto (smart routing)</option>
+                </select>
               </div>
               <div>
                 <label for="tier">Tier</label>
@@ -1210,6 +1244,11 @@ function renderWorkbenchIndex(): string {
 
       const workList = document.querySelector("#work-list");
       const newSessionButton = document.querySelector("#new-session");
+      const modelSelect = document.querySelector("#model-id");
+      const capFilter = document.querySelector("#cap-filter");
+      const tierSelect = document.querySelector("#tier");
+      const hintSelect = document.querySelector("#hint");
+      let allModels = [];
 
       let events = [];
       let selectedEventIndex = -1;
@@ -1253,6 +1292,11 @@ function renderWorkbenchIndex(): string {
       }
 
       newSessionButton.addEventListener("click", startNewSession);
+      capFilter.addEventListener("change", renderModelOptions);
+      modelSelect.addEventListener("change", updateRoutingCascade);
+      tierSelect.addEventListener("change", updateRoutingCascade);
+      loadModelsIntoPicker();
+      updateRoutingCascade();
 
       // Resume across restarts: load the project-grouped session list, then
       // reopen the last session if it still exists (events come from Dolt, only
@@ -1416,6 +1460,60 @@ function renderWorkbenchIndex(): string {
         } catch (err) {
           showError(err instanceof Error ? err.message : String(err));
         }
+      }
+
+      async function loadModelsIntoPicker() {
+        try {
+          const payload = await apiGet("/api/models");
+          const models = Array.isArray(payload.models) ? payload.models : [];
+          // Local-first ordering: tier ascending, then input cost ascending.
+          models.sort((a, b) => (a.tier - b.tier) || (a.costInput - b.costInput));
+          allModels = models;
+          renderModelOptions();
+        } catch (err) {
+          showError(err instanceof Error ? err.message : String(err));
+        }
+      }
+
+      function renderModelOptions() {
+        const cap = capFilter.value;
+        const previous = modelSelect.value;
+        const visible = cap
+          ? allModels.filter((m) => (m.capabilities || []).includes(cap))
+          : allModels;
+        modelSelect.replaceChildren();
+        const auto = document.createElement("option");
+        auto.value = "";
+        auto.textContent = "Auto (smart routing)";
+        modelSelect.append(auto);
+        for (const m of visible) {
+          const opt = document.createElement("option");
+          opt.value = m.slug;
+          opt.textContent = m.displayName + " · T" + m.tier + " · " +
+            m.provider + " · " + modelCostLabel(m);
+          modelSelect.append(opt);
+        }
+        // Preserve the prior choice if it still passes the filter; otherwise fall
+        // back to Auto. Then re-evaluate the cascade.
+        modelSelect.value = visible.some((m) => m.slug === previous)
+          ? previous
+          : "";
+        updateRoutingCascade();
+      }
+
+      function modelCostLabel(m) {
+        if (m.tier === 0 || (!m.costInput && !m.costOutput)) return "free";
+        return "$" + m.costInput + "/" + m.costOutput;
+      }
+
+      // Make the modelId > tier > hint precedence (selectWorkbenchModel) legible:
+      // a chosen model disables Tier + Hint; a chosen Tier disables Hint. Disabled
+      // controls are omitted from FormData, so only the effective field is sent.
+      function updateRoutingCascade() {
+        const modelChosen = modelSelect.value !== "";
+        tierSelect.disabled = modelChosen;
+        const tierChosen = !modelChosen && tierSelect.value !== "";
+        hintSelect.disabled = modelChosen || tierChosen;
       }
 
       function startNewSession() {

@@ -85,6 +85,14 @@ describe("createWorkbenchHttpHandler", () => {
     expect(html).toContain("loadSessionEvents");
     expect(html).toContain("startNewSession");
     expect(html).toContain("SESSION_POINTER");
+    // BIT-164: capability-aware model picker — a populated model <select> from
+    // /api/models, a capability filter, and the modelId>tier>hint cascade made
+    // legible by disabling overridden controls.
+    expect(html).toContain('id="model-id"');
+    expect(html).toContain('id="cap-filter"');
+    expect(html).toContain("/api/models");
+    expect(html).toContain("loadModelsIntoPicker");
+    expect(html).toContain("updateRoutingCascade");
   });
 
   test("the served shell script parses (no outer-template escape corruption)", async () => {
