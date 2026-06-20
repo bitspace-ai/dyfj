@@ -1161,6 +1161,84 @@ function renderWorkbenchIndex(): string {
         color: var(--warn);
       }
 
+      .budget-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .budget-row label {
+        text-transform: none;
+        font-weight: 600;
+      }
+
+      .budget-row input {
+        width: 84px;
+        min-height: 28px;
+      }
+
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 23, 0.42);
+        display: grid;
+        place-items: center;
+        z-index: 50;
+      }
+
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .modal-card {
+        background: #ffffff;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        padding: 20px 22px;
+        max-width: 440px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+      }
+
+      .modal-card h2 {
+        text-transform: none;
+        color: var(--ink);
+        font-size: 16px;
+        margin: 0 0 10px;
+      }
+
+      .modal-card p {
+        margin: 0 0 8px;
+        color: var(--ink);
+        text-transform: none;
+        font-weight: 500;
+      }
+
+      .modal-q {
+        font-weight: 650;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .modal-actions button {
+        width: auto;
+        padding: 6px 16px;
+      }
+
+      .modal-actions button:not(.primary) {
+        background: #ffffff;
+        color: var(--ink);
+        border-color: var(--line-strong);
+      }
+
       @media (max-width: 980px) {
         .shell {
           display: block;
@@ -1282,6 +1360,15 @@ function renderWorkbenchIndex(): string {
               </div>
               <button id="run-button" type="submit">Run</button>
             </div>
+            <div class="budget-row">
+              <span>Budget override (optional, this session)</span>
+              <label for="budget-session">session $</label>
+              <input id="budget-session" type="number" min="0" step="0.01"
+                inputmode="decimal" placeholder="1.00">
+              <label for="budget-per-call">per-call $</label>
+              <input id="budget-per-call" type="number" min="0" step="0.01"
+                inputmode="decimal" placeholder="0.10">
+            </div>
             <div class="error" id="error" role="alert"></div>
           </form>
 
@@ -1304,6 +1391,19 @@ function renderWorkbenchIndex(): string {
           </section>
         </aside>
       </main>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="paid-modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true"
+        aria-labelledby="paid-modal-title">
+        <h2 id="paid-modal-title">Paid inference</h2>
+        <p id="paid-modal-label"></p>
+        <p class="modal-q">Approve paid inference for this run?</p>
+        <div class="modal-actions">
+          <button type="button" id="paid-cancel">Cancel</button>
+          <button type="button" id="paid-approve" class="primary">Approve</button>
+        </div>
       </div>
     </div>
 
@@ -1332,6 +1432,12 @@ function renderWorkbenchIndex(): string {
       const capFilter = document.querySelector("#cap-filter");
       const tierSelect = document.querySelector("#tier");
       const hintSelect = document.querySelector("#hint");
+      const sessionBudgetInput = document.querySelector("#budget-session");
+      const perCallBudgetInput = document.querySelector("#budget-per-call");
+      const paidModal = document.querySelector("#paid-modal");
+      const paidModalLabel = document.querySelector("#paid-modal-label");
+      const paidApproveButton = document.querySelector("#paid-approve");
+      const paidCancelButton = document.querySelector("#paid-cancel");
       let allModels = [];
 
       let events = [];
@@ -1398,7 +1504,6 @@ function renderWorkbenchIndex(): string {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         clearError();
-        setBusy(true);
 
         const formData = new FormData(form);
         const routingOptions = {};
@@ -1416,7 +1521,20 @@ function renderWorkbenchIndex(): string {
         };
         // Resume into the open session; omitting sessionId starts a fresh one.
         if (currentSessionId) body.sessionId = currentSessionId;
+        // BIT-166: optional per-turn budget override (honored loopback-only
+        // server-side).
+        const budgetOverride = readBudgetOverride();
+        if (budgetOverride) body.budget = budgetOverride;
 
+        // BIT-166: a paid (T1/T2) selection requires explicit per-turn approval.
+        // Confirm before spending; cancelling aborts the turn entirely.
+        if (isPaidRiskSelection()) {
+          const approved = await confirmPaidInference(paidRiskLabel());
+          if (!approved) return;
+          body.approvePaidInference = true;
+        }
+
+        setBusy(true);
         try {
           const response = await fetch("/api/turn", {
             method: "POST",
@@ -1598,6 +1716,57 @@ function renderWorkbenchIndex(): string {
         tierSelect.disabled = modelChosen;
         const tierChosen = !modelChosen && tierSelect.value !== "";
         hintSelect.disabled = modelChosen || tierChosen;
+      }
+
+      function readBudgetOverride() {
+        const out = {};
+        const session = parseFloat(sessionBudgetInput.value);
+        const perCall = parseFloat(perCallBudgetInput.value);
+        if (Number.isFinite(session) && session > 0) out.sessionLimitUsd = session;
+        if (Number.isFinite(perCall) && perCall > 0) out.perCallLimitUsd = perCall;
+        return Object.keys(out).length > 0 ? out : null;
+      }
+
+      function selectedModel() {
+        return modelSelect.value
+          ? allModels.find((m) => m.slug === modelSelect.value) ?? null
+          : null;
+      }
+
+      // A turn risks paid inference when a specific paid model is chosen, or when
+      // Auto routing is pinned to a paid tier (1 or 2).
+      function isPaidRiskSelection() {
+        const m = selectedModel();
+        if (m) return m.tier > 0;
+        return !tierSelect.disabled &&
+          (tierSelect.value === "1" || tierSelect.value === "2");
+      }
+
+      function paidRiskLabel() {
+        const m = selectedModel();
+        if (m) return m.displayName + " · " + modelCostLabel(m) + " per Mtok";
+        return "a Tier " + tierSelect.value + " (paid) model";
+      }
+
+      // Promise-based paid-inference confirm: resolves true on Approve, false on
+      // Cancel. The request carries approvePaidInference only when this resolves
+      // true — and the server still requires the loopback transport on top.
+      function confirmPaidInference(label) {
+        return new Promise((resolve) => {
+          paidModalLabel.textContent = label;
+          paidModal.hidden = false;
+          paidApproveButton.focus();
+          const finish = (ok) => {
+            paidModal.hidden = true;
+            paidApproveButton.removeEventListener("click", onApprove);
+            paidCancelButton.removeEventListener("click", onCancel);
+            resolve(ok);
+          };
+          const onApprove = () => finish(true);
+          const onCancel = () => finish(false);
+          paidApproveButton.addEventListener("click", onApprove);
+          paidCancelButton.addEventListener("click", onCancel);
+        });
       }
 
       function startNewSession() {

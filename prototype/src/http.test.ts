@@ -93,6 +93,14 @@ describe("createWorkbenchHttpHandler", () => {
     expect(html).toContain("/api/models");
     expect(html).toContain("loadModelsIntoPicker");
     expect(html).toContain("updateRoutingCascade");
+    // BIT-166 (UI): per-turn paid-inference confirm dialog + budget override
+    // inputs that drive the loopback-gated server fields.
+    expect(html).toContain('id="paid-modal"');
+    expect(html).toContain('id="paid-approve"');
+    expect(html).toContain('id="budget-per-call"');
+    expect(html).toContain("confirmPaidInference");
+    expect(html).toContain("readBudgetOverride");
+    expect(html).toContain("isPaidRiskSelection");
   });
 
   test("the served shell script parses (no outer-template escape corruption)", async () => {
