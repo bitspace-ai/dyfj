@@ -117,6 +117,14 @@ export interface WorkbenchRuntimeInput {
    * DYFJ_BUDGET_TALLY; the core reads only this field (default "paid").
    */
   budgetTallyMode?: BudgetTallyMode;
+  /**
+   * Per-turn budget-limit overrides (BIT-166). Absent → the env/default limits
+   * apply. The HTTP boundary only sets these from a request on the LOOPBACK
+   * transport, so a remote caller can never raise the spend cap. The core just
+   * reads the fields; a headless driver supplies its own.
+   */
+  sessionLimitUsd?: number;
+  perCallLimitUsd?: number;
 }
 
 export type WorkbenchRuntimeEvent =
@@ -925,7 +933,8 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
-  const { BudgetExceededError, BudgetTracker } = await import("./budget");
+  const { BudgetExceededError, BudgetTracker, defaultBudgetConfig } =
+    await import("./budget");
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
@@ -965,7 +974,15 @@ export async function runWorkbenchRuntime(
   // the core reads only the input field. Resolved before the BudgetTracker so
   // its budget_summary event is attributed to the same principal.
   const principalId = runtimeInput.principalId ?? "user";
-  const budget = new BudgetTracker(sessionId, traceId, undefined, principalId);
+  // BIT-166: per-turn budget overrides win over the env/default limits; absent
+  // fields fall back to the default. (The HTTP boundary only populates the
+  // overrides for loopback callers.)
+  const defaults = defaultBudgetConfig();
+  const budgetConfig = {
+    sessionLimitUsd: runtimeInput.sessionLimitUsd ?? defaults.sessionLimitUsd,
+    perCallLimitUsd: runtimeInput.perCallLimitUsd ?? defaults.perCallLimitUsd,
+  };
+  const budget = new BudgetTracker(sessionId, traceId, budgetConfig, principalId);
   // Direct CLI invocation is authenticated by the local OS session; transport
   // layers (HTTP bearer auth) override this with the caller's real context.
   const authContext: WorkbenchAuthContext = runtimeInput.authContext ?? {

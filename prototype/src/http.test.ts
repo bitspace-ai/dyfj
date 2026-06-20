@@ -526,30 +526,141 @@ describe("createWorkbenchHttpHandler", () => {
     expect(calls).toEqual([]);
   });
 
-  test("denies paid inference consent over HTTP (no interactive flow)", async () => {
+  // BIT-166: paid inference over HTTP requires BOTH loopback transport AND an
+  // explicit per-turn opt-in. A captured-verdict runtime stub exercises the
+  // injected confirmPaidEscalation directly.
+  const captureVerdict = (sink: { verdict?: unknown }) =>
+    createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        sink.verdict = await input.confirmPaidEscalation?.("paid model selected");
+        return runtimeResult();
+      },
+    });
+  const REMOTE_KEY = "test-workbench-key-0123456789abcdef";
+  const REMOTE_HOST = "100.64.0.7";
+
+  test("BIT-166: loopback caller that explicitly opts in gets paid approval", async () => {
+    const sink: { verdict?: unknown } = {};
+    const response = await captureVerdict(sink)(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "paid", approvePaidInference: true }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(sink.verdict).toEqual({ decision: "approve" });
+  });
+
+  test("BIT-166: loopback caller without an opt-in is denied", async () => {
+    const sink: { verdict?: unknown } = {};
+    await captureVerdict(sink)(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "paid" }),
+      }),
+    );
+    expect(sink.verdict).toEqual({
+      decision: "deny",
+      reason: "paid inference was not approved for this turn",
+    });
+  });
+
+  test("BIT-166: a remote caller is denied even WITH the opt-in flag", async () => {
     let verdict: unknown;
     const handler = createWorkbenchHttpHandler({
       runRuntime: async (input) => {
         verdict = await input.confirmPaidEscalation?.("paid model selected");
         return runtimeResult();
       },
+      auth: { apiKey: REMOTE_KEY, allowedHosts: [REMOTE_HOST] },
     });
-
     const response = await handler(
+      new Request(`http://${REMOTE_HOST}:8787/api/turn`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${REMOTE_KEY}`,
+        },
+        body: JSON.stringify({ prompt: "paid", approvePaidInference: true }),
+      }),
+      serveInfo(REMOTE_HOST),
+    );
+    expect(response.status).toBe(200);
+    // The opt-in is ignored over a remote transport — remote can never spend.
+    expect(verdict).toEqual({
+      decision: "deny",
+      reason: "paid inference is not available to remote callers",
+    });
+  });
+
+  test("BIT-166: per-turn budget override is applied on loopback", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+    });
+    await handler(
       new Request("http://localhost/api/turn", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: "use paid inference" }),
+        body: JSON.stringify({
+          prompt: "raise the cap",
+          budget: { perCallLimitUsd: 5, sessionLimitUsd: 20 },
+        }),
       }),
     );
+    expect(calls[0].perCallLimitUsd).toBe(5);
+    expect(calls[0].sessionLimitUsd).toBe(20);
+  });
 
-    expect(response.status).toBe(200);
-    // BIT-149: HTTP returns a structured deny verdict rather than throwing; the
-    // real runtime stops the turn on a non-approve verdict.
-    expect(verdict).toEqual({
-      decision: "deny",
-      reason: "paid inference requires an explicit CLI consent flow",
+  test("BIT-166: a remote caller's budget override is ignored", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+      auth: { apiKey: REMOTE_KEY, allowedHosts: [REMOTE_HOST] },
     });
+    await handler(
+      new Request(`http://${REMOTE_HOST}:8787/api/turn`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${REMOTE_KEY}`,
+        },
+        body: JSON.stringify({
+          prompt: "raise the cap",
+          budget: { perCallLimitUsd: 5 },
+        }),
+      }),
+      serveInfo(REMOTE_HOST),
+    );
+    expect(calls[0].perCallLimitUsd).toBeUndefined();
+  });
+
+  test("BIT-166: rejects a non-boolean opt-in or malformed budget", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+    });
+    const bad = (body: unknown) =>
+      handler(
+        new Request("http://localhost/api/turn", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    expect((await bad({ prompt: "x", approvePaidInference: "yes" })).status)
+      .toBe(400);
+    expect((await bad({ prompt: "x", budget: { perCallLimitUsd: -1 } })).status)
+      .toBe(400);
+    expect((await bad({ prompt: "x", budget: { perCallLimitUsd: 99999 } }))
+      .status).toBe(400);
   });
 });
 

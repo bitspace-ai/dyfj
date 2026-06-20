@@ -1,4 +1,5 @@
 import {
+  type PaidEscalationVerdict,
   resolveRuntimeEnvDefaults,
   runWorkbenchRuntime,
   type WorkbenchAuthContext,
@@ -78,6 +79,11 @@ interface TurnRequestBody {
   routingOptions?: unknown;
   sessionId?: unknown;
   workspace?: unknown;
+  // BIT-166: explicit per-turn paid-inference opt-in + per-turn budget override.
+  // Both are honored only on the loopback transport (see resolveTurnRequest /
+  // the confirmPaidEscalation injection).
+  approvePaidInference?: unknown;
+  budget?: unknown;
 }
 
 export function createWorkbenchHttpHandler(
@@ -382,8 +388,24 @@ function peerIsLoopback(info?: Deno.ServeHandlerInfo): boolean {
   return isLoopbackHost(addr.hostname);
 }
 
-const PAID_ESCALATION_OVER_HTTP =
-  "paid inference requires an explicit CLI consent flow";
+// BIT-166: paid inference over HTTP is available only to a loopback caller that
+// explicitly opts in per turn. Remote callers are denied outright; a loopback
+// caller that did not opt in is denied with the second reason.
+const PAID_ESCALATION_REMOTE_DENIED =
+  "paid inference is not available to remote callers";
+const PAID_ESCALATION_NOT_APPROVED =
+  "paid inference was not approved for this turn";
+
+function httpPaidEscalationVerdict(
+  loopback: boolean,
+  approved: boolean,
+): PaidEscalationVerdict {
+  if (loopback && approved) return { decision: "approve" };
+  return {
+    decision: "deny",
+    reason: loopback ? PAID_ESCALATION_NOT_APPROVED : PAID_ESCALATION_REMOTE_DENIED,
+  };
+}
 
 /**
  * Per-session turn serialization (BIT-147). Two concurrent turns for the same
@@ -425,10 +447,40 @@ function withSessionTurnLock<T>(
  * second same-session turn build a stale transcript — a TOCTOU on the audit log
  * (BIT-147 review finding).
  */
+function parseBudgetOverride(
+  value: unknown,
+):
+  | { sessionLimitUsd?: number; perCallLimitUsd?: number }
+  | { error: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { error: "budget must be an object" };
+  }
+  const record = value as Record<string, unknown>;
+  const out: { sessionLimitUsd?: number; perCallLimitUsd?: number } = {};
+  for (const key of ["sessionLimitUsd", "perCallLimitUsd"] as const) {
+    const raw = record[key];
+    if (raw === undefined) continue;
+    // A fat-finger guard, not a security control — consent is the binding money
+    // gate. Reject non-positive / non-finite / absurd values.
+    if (
+      typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0 || raw > 1000
+    ) {
+      return { error: `budget.${key} must be a positive number up to 1000` };
+    }
+    out[key] = raw;
+  }
+  return out;
+}
+
 async function resolveTurnRequest(
   request: Request,
+  loopback: boolean,
 ): Promise<
-  | { runtimeInput: WorkbenchRuntimeInput; sessionId: string | undefined }
+  | {
+    runtimeInput: WorkbenchRuntimeInput;
+    sessionId: string | undefined;
+    approvePaidInference: boolean;
+  }
   | { error: string; status: number }
 > {
   let body: TurnRequestBody;
@@ -454,7 +506,36 @@ async function resolveTurnRequest(
     sessionId = body.sessionId;
   }
 
-  return { runtimeInput, sessionId };
+  // BIT-166: validate the explicit per-turn paid-inference opt-in. Whether it
+  // actually grants approval is decided at the confirmPaidEscalation injection,
+  // which additionally requires the loopback transport.
+  if (
+    body.approvePaidInference !== undefined &&
+    typeof body.approvePaidInference !== "boolean"
+  ) {
+    return { error: "approvePaidInference must be a boolean", status: 400 };
+  }
+  const approvePaidInference = body.approvePaidInference === true;
+
+  // BIT-166: per-turn budget override, applied only on the loopback transport so
+  // a remote caller can never raise the spend cap. (Malformed values still 400
+  // regardless of transport.)
+  if (body.budget !== undefined) {
+    const budget = parseBudgetOverride(body.budget);
+    if ("error" in budget) {
+      return { error: budget.error, status: 400 };
+    }
+    if (loopback) {
+      if (budget.sessionLimitUsd !== undefined) {
+        runtimeInput.sessionLimitUsd = budget.sessionLimitUsd;
+      }
+      if (budget.perCallLimitUsd !== undefined) {
+        runtimeInput.perCallLimitUsd = budget.perCallLimitUsd;
+      }
+    }
+  }
+
+  return { runtimeInput, sessionId, approvePaidInference };
 }
 
 /**
@@ -485,11 +566,12 @@ async function handleJsonTurn(
     WorkbenchHttpHandlerOptions["fetchSessionEvents"]
   >,
 ): Promise<Response> {
-  const resolved = await resolveTurnRequest(request);
+  const loopback = authContext.transport === "loopback";
+  const resolved = await resolveTurnRequest(request, loopback);
   if ("error" in resolved) {
     return jsonResponse({ error: resolved.error }, resolved.status);
   }
-  const { runtimeInput, sessionId } = resolved;
+  const { runtimeInput, sessionId, approvePaidInference } = resolved;
 
   try {
     const events: WorkbenchRuntimeEvent[] = [];
@@ -505,11 +587,12 @@ async function handleJsonTurn(
         onRuntimeEvent: (event) => {
           events.push(event);
         },
+        // BIT-166: paid inference is granted only to a loopback caller that
+        // explicitly opted in this turn; remote callers are always denied.
         confirmPaidEscalation: () =>
-          Promise.resolve({
-            decision: "deny" as const,
-            reason: PAID_ESCALATION_OVER_HTTP,
-          }),
+          Promise.resolve(
+            httpPaidEscalationVerdict(loopback, approvePaidInference),
+          ),
       });
     });
     return jsonResponse({ ...result, events });
@@ -538,13 +621,14 @@ async function handleStreamingTurn(
     WorkbenchHttpHandlerOptions["fetchSessionEvents"]
   >,
 ): Promise<Response> {
-  const resolved = await resolveTurnRequest(request);
+  const loopback = authContext.transport === "loopback";
+  const resolved = await resolveTurnRequest(request, loopback);
   if ("error" in resolved) {
     // Request-shape errors occur before the stream opens, so report them as a
     // plain JSON error response rather than an SSE error frame.
     return jsonResponse({ error: resolved.error }, resolved.status);
   }
-  const { runtimeInput, sessionId } = resolved;
+  const { runtimeInput, sessionId, approvePaidInference } = resolved;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -566,11 +650,11 @@ async function handleStreamingTurn(
             onRuntimeEvent: (event) => {
               send({ t: "event", event });
             },
+            // BIT-166: see handleJsonTurn — loopback + explicit per-turn opt-in.
             confirmPaidEscalation: () =>
-              Promise.resolve({
-                decision: "deny" as const,
-                reason: PAID_ESCALATION_OVER_HTTP,
-              }),
+              Promise.resolve(
+                httpPaidEscalationVerdict(loopback, approvePaidInference),
+              ),
           });
         });
         send({ t: "done", result });
