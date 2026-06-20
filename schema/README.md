@@ -27,6 +27,9 @@ Migrations are numbered and applied in order:
 - `016_models_local_coder_default.sql` — local default moves to the capable open-weights coder model (Qwen3-Coder-30B-A3B) on high-memory Apple Silicon; deactivates the prior small local default.
 - `017_prompts.sql` — authored, versioned system prompts (trusted config), kept separate from the untrusted memory layer.
 - `018_drop_vestigial.sql` — schema reconciliation: drops `reflections` and `skills`, and removes the unused capability/discovery event scaffolding from `010`.
+- `019_memories_visibility.sql` — memory visibility classification (privacy/visibility metadata on the memory layer).
+- `020_sessions_workspace.sql` — sessions gain a workspace binding.
+- `021_models_validity_2026_06.sql` — registry validity (BIT-168): corrects the Anthropic Haiku slug to its dated API id (`claude-haiku-4-5-20251001`) and deactivates the Google rows (`gemini-3.1-pro` 404s; `gemini-3.5-flash` could not be verified) pending provider-id verification and Google key-configuration cleanup, so the picker stops surfacing models that fail at call time.
 
 (Migration `005_*` is intentionally absent here; it lives in implementation-specific overlays where it belongs, not in the canonical substrate.)
 
