@@ -761,6 +761,9 @@ describe("buildGeminiRequest", () => {
     ]);
     expect(body.generationConfig.maxOutputTokens).toBeGreaterThan(0);
     expect(body.generationConfig.responseMimeType).toBeUndefined();
+    // BIT-170: Gemini 3.x thinking is bounded so it doesn't starve the answer
+    // (thinking tokens come out of maxOutputTokens).
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "low" });
   });
 
   test("requests a JSON mime type for strict JSON output", () => {
@@ -786,6 +789,13 @@ describe("parseGeminiStreamLine", () => {
   test("ignores blank and non-data lines", () => {
     expect(parseGeminiStreamLine("")).toBeNull();
     expect(parseGeminiStreamLine("event: message")).toBeNull();
+  });
+
+  test("excludes thinking parts from the text delta (BIT-170)", () => {
+    const event = parseGeminiStreamLine(
+      'data: {"candidates":[{"content":{"parts":[{"text":"secret reasoning","thought":true},{"text":"the answer"}]}}]}',
+    );
+    expect(event?.textDelta).toBe("the answer");
   });
 });
 

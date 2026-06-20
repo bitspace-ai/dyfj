@@ -126,6 +126,11 @@ const googleProviders = new Set(["google"]);
 const OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY";
 const GEMINI_DEFAULT_MAX_TOKENS = 8192;
+// Gemini 3.x are thinking models and draw thinking tokens from maxOutputTokens
+// (BIT-170). Bound thinking so it doesn't starve the answer; "low" keeps the
+// reasoning trail cheap while leaving the 8192 budget mostly for output. (2.5
+// rows would need thinkingBudget instead, but those are inactive.)
+const GEMINI_THINKING_LEVEL = "low";
 const allowedLocalProviderHosts = new Set([
   "localhost",
   "127.0.0.1",
@@ -1135,11 +1140,18 @@ export function buildGeminiRequest(
   const body: {
     systemInstruction: { parts: Array<{ text: string }> };
     contents: Array<{ role: string; parts: Array<{ text: string }> }>;
-    generationConfig: { maxOutputTokens: number; responseMimeType?: string };
+    generationConfig: {
+      maxOutputTokens: number;
+      responseMimeType?: string;
+      thinkingConfig: { thinkingLevel: string };
+    };
   } = {
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { maxOutputTokens: GEMINI_DEFAULT_MAX_TOKENS },
+    generationConfig: {
+      maxOutputTokens: GEMINI_DEFAULT_MAX_TOKENS,
+      thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL },
+    },
   };
   if (options.jsonObject) {
     body.generationConfig.responseMimeType = "application/json";
@@ -1153,7 +1165,7 @@ export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
 
   const json = JSON.parse(trimmed.slice("data:".length).trim()) as {
     candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> };
+      content?: { parts?: Array<{ text?: string; thought?: boolean }> };
       finishReason?: string;
     }>;
     usageMetadata?: {
@@ -1162,7 +1174,9 @@ export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
     };
   };
   const candidate = json.candidates?.[0];
+  // Exclude thinking parts (BIT-170): reasoning content is not answer text.
   const textDelta = (candidate?.content?.parts ?? [])
+    .filter((part) => !part.thought)
     .map((part) => part.text ?? "")
     .join("") || undefined;
   return {
@@ -1278,7 +1292,7 @@ async function readGeminiJson(
 }> {
   const json = await response.json() as {
     candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> };
+      content?: { parts?: Array<{ text?: string; thought?: boolean }> };
       finishReason?: string;
     }>;
     usageMetadata?: {
@@ -1288,7 +1302,9 @@ async function readGeminiJson(
   };
   const completed = now();
   const candidate = json.candidates?.[0];
+  // Exclude thinking parts (BIT-170): reasoning content is not answer text.
   const text = (candidate?.content?.parts ?? [])
+    .filter((part) => !part.thought)
     .map((part) => part.text ?? "")
     .join("");
 
