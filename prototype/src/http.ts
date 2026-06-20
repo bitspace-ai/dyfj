@@ -1408,6 +1408,14 @@ function renderWorkbenchIndex(): string {
     </div>
 
     <script type="module">
+      // Strip any residual query string from the address bar (e.g. a
+      // ?prompt=... left by a pre-JS GET submit) so prompt text never lingers in
+      // the URL or history. Live submits are intercepted (preventDefault), so
+      // this just cleans up the leak's footprint and any future accidental GET.
+      if (location.search) {
+        history.replaceState(null, "", location.pathname);
+      }
+
       const form = document.querySelector("#turn-form");
       const promptInput = document.querySelector("#prompt");
       const button = document.querySelector("#run-button");
