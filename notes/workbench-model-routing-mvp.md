@@ -61,11 +61,11 @@ much context the model receives and which buckets get priority.
 
 Current profiles:
 
-- `beads-first` - default for repo-local next-work; small budget, Beads-heavy,
-  fast enough for daily use
+- `compact` - default for repo-local next-work; small budget weighted to repo
+  context (AGENTS/README excerpts + workbench notes), fast enough for daily use
 - `full` - larger diagnostic profile for comparison and failure analysis
 
-The default next-work path uses `beads-first` because prior measurements showed
+The default next-work path uses `compact` because prior measurements showed
 that more context can add latency and can make the answer worse for this narrow
 question.
 

@@ -109,7 +109,7 @@ vi.mock("./repo-context", () => ({
     }],
     sections: [],
     budget: {},
-    profile: "beads-first",
+    profile: "compact",
   }),
 }));
 
@@ -216,7 +216,7 @@ const BASE_RECEIPT: WorkbenchReceiptInput = {
       derived_memory: { limitTokens: 1000, usedTokens: 1000 },
     },
   },
-  contextProfile: "beads-first",
+  contextProfile: "compact",
   timings: {
     responseHeadersMs: 10,
     timeToFirstTokenMs: 42,
@@ -227,7 +227,7 @@ const BASE_RECEIPT: WorkbenchReceiptInput = {
   contextSources: [
     "AGENTS.md <AGENTS.md>",
     "README.md Section 1 <README.md#section-1>",
-    "bd ready <bd ready>",
+    "notes/workbench-mvp-loop.md <notes/workbench-mvp-loop.md>",
   ],
   paidInferenceUsed: false,
   estimatedCostUsd: 0,
@@ -312,9 +312,9 @@ describe("buildWorkbenchReceipt", () => {
   test("includes context budget allocation", () => {
     const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
-    expect(receipt).toContain("Context profile: beads-first");
+    expect(receipt).toContain("Context profile: compact");
     expect(receipt).toContain(
-      "Context budget: 4000/5000 tokens; system 900/1000, active 2100/2500, Beads 1000/1000, headroom 500",
+      "Context budget: 4000/5000 tokens; system 900/1000, active 2100/2500, memory 1000/1000, headroom 500",
     );
   });
 
@@ -324,7 +324,9 @@ describe("buildWorkbenchReceipt", () => {
     expect(receipt).toContain("Context sources:");
     expect(receipt).toContain("- AGENTS.md <AGENTS.md>");
     expect(receipt).toContain("- README.md Section 1 <README.md#section-1>");
-    expect(receipt).toContain("- bd ready <bd ready>");
+    expect(receipt).toContain(
+      "- notes/workbench-mvp-loop.md <notes/workbench-mvp-loop.md>",
+    );
     expect(receipt).toContain("Paid inference used: no");
     expect(receipt).toContain("Estimated cost: $0.000000");
     expect(receipt).toContain("Actual cost:    $0.000000");
@@ -351,12 +353,12 @@ describe("buildNextWorkBrief", () => {
   test("requests strict JSON for the next-work worklet without private context", () => {
     const brief = buildNextWorkBrief({
       workletId: "next-work.v0",
-      contextProfile: "beads-first",
+      contextProfile: "compact",
       prompt: "what should I work on next here?",
     });
 
     expect(brief).toContain("worklet_id: next-work.v0");
-    expect(brief).toContain("context_profile: beads-first");
+    expect(brief).toContain("context_profile: compact");
     expect(brief).toContain("Return strict JSON only");
     expect(brief).toContain('"recommendation"');
     expect(brief).toContain('"confidence"');
@@ -457,10 +459,10 @@ describe("validateNextWorkJson", () => {
   test("accepts a complete strict JSON next-work result", () => {
     const result = validateNextWorkJson(JSON.stringify({
       worklet_id: "next-work.v0",
-      context_profile: "beads-first",
-      recommendation: "Work dyfj-2fl.8.2 next.",
+      context_profile: "compact",
+      recommendation: "Work the next-work routing slice next.",
       rationale: "It is the ready routing experiment slice.",
-      evidence: ["bd show dyfj-2fl.8.2"],
+      evidence: ["notes/workbench-model-routing-mvp.md"],
       risks: ["Local model output may drift."],
       next_commands: ["deno task test"],
       confidence: "medium",
@@ -470,10 +472,10 @@ describe("validateNextWorkJson", () => {
       ok: true,
       value: {
         worklet_id: "next-work.v0",
-        context_profile: "beads-first",
-        recommendation: "Work dyfj-2fl.8.2 next.",
+        context_profile: "compact",
+        recommendation: "Work the next-work routing slice next.",
         rationale: "It is the ready routing experiment slice.",
-        evidence: ["bd show dyfj-2fl.8.2"],
+        evidence: ["notes/workbench-model-routing-mvp.md"],
         risks: ["Local model output may drift."],
         next_commands: ["deno task test"],
         confidence: "medium",
@@ -483,7 +485,7 @@ describe("validateNextWorkJson", () => {
   });
 
   test("rejects prose or incomplete JSON before trusting the model result", () => {
-    expect(validateNextWorkJson("Work on the routing bead next."))
+    expect(validateNextWorkJson("Work on the routing item next."))
       .toMatchObject({
         ok: false,
         errors: ["model output was not strict JSON"],
@@ -491,8 +493,8 @@ describe("validateNextWorkJson", () => {
 
     const incomplete = validateNextWorkJson(JSON.stringify({
       worklet_id: "next-work.v0",
-      context_profile: "beads-first",
-      recommendation: "Work dyfj-2fl.8.2 next.",
+      context_profile: "compact",
+      recommendation: "Work the next-work routing slice next.",
     }));
 
     expect(incomplete).toMatchObject({

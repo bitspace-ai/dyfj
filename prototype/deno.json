@@ -80,9 +80,6 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "generativelanguage.googleapis.com:443"
-      ],
-      "run": [
-        "bd"
       ]
     },
     "workbench-http": {
@@ -128,9 +125,6 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "generativelanguage.googleapis.com:443"
-      ],
-      "run": [
-        "bd"
       ]
     },
     "cli": {

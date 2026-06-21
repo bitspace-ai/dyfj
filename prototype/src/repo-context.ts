@@ -49,11 +49,7 @@ export interface PackedContext {
   summary: PackedContextSummary;
 }
 
-export type AskContextProfile = "beads-first" | "full";
-
-interface CommandRunner {
-  (args: string[], cwd: string): Promise<string>;
-}
+export type AskContextProfile = "compact" | "full";
 
 const WORKBENCH_NOTE_PATHS = [
   "notes/workbench-mvp-loop.md",
@@ -69,11 +65,11 @@ export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   headroomPercent: 0.1,
 };
 
-export const BEADS_FIRST_CONTEXT_BUDGET: ContextBudget = {
+export const COMPACT_CONTEXT_BUDGET: ContextBudget = {
   totalTokens: 500,
   systemPercent: 0.4,
-  activeRepoPercent: 0.1,
-  derivedMemoryPercent: 0.4,
+  activeRepoPercent: 0.5,
+  derivedMemoryPercent: 0.0,
   headroomPercent: 0.1,
 };
 
@@ -91,20 +87,9 @@ export function buildContextSourceLines(sources: ContextSource[]): string[] {
   return sources.map((source) => `${source.label} <${source.path}>`);
 }
 
-export function parseReadyIssueIds(output: string): string[] {
-  const ids: string[] = [];
-  for (const line of output.split("\n")) {
-    const match = line.match(
-      /^\s*[○◐●✓❄]\s+([a-z]+-[a-z0-9]+(?:\.\d+)*)\b/,
-    );
-    if (match?.[1]) ids.push(match[1]);
-  }
-  return ids;
-}
-
 // basePrompt is the authored companion persona, loaded from the prompts table
 // (see prompts.ts / schema/017). This builder composes it with the live,
-// untrusted repo/Beads context below — the persona is no longer hardcoded here.
+// untrusted repo context below — the persona is no longer hardcoded here.
 export function buildAskSystemPrompt(
   basePrompt: string,
   context: LoadedRepoContext,
@@ -245,19 +230,17 @@ export async function findRepoRoot(startDir = Deno.cwd()): Promise<string> {
 
 export async function loadAskRepoContext(options: {
   repoRoot?: string;
-  runner?: CommandRunner;
   budget?: ContextBudget;
   profile?: AskContextProfile;
 } = {}): Promise<LoadedRepoContext> {
   const repoRoot = options.repoRoot ?? await findRepoRoot();
-  const runner = options.runner ?? runCommand;
   const profile = options.profile ?? askContextProfileFromEnv();
   const sections: ContextSection[] = [];
 
   const agents = await readRepoFile(repoRoot, "AGENTS.md");
   sections.push({
-    title: profile === "beads-first" ? "AGENTS.md excerpt" : "AGENTS.md",
-    body: profile === "beads-first" ? buildAgentsExcerpt(agents) : agents,
+    title: profile === "compact" ? "AGENTS.md excerpt" : "AGENTS.md",
+    body: profile === "compact" ? buildAgentsExcerpt(agents) : agents,
     bucket: "system",
     source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
   });
@@ -265,10 +248,10 @@ export async function loadAskRepoContext(options: {
   const readme = await readRepoFile(repoRoot, "README.md");
   const readmeSection1 = extractReadmeSection1(readme);
   sections.push({
-    title: profile === "beads-first"
+    title: profile === "compact"
       ? "README.md Section 1 excerpt"
       : "README.md Section 1",
-    body: profile === "beads-first"
+    body: profile === "compact"
       ? buildReadmeSection1Excerpt(readmeSection1)
       : readmeSection1,
     bucket: "system",
@@ -282,32 +265,10 @@ export async function loadAskRepoContext(options: {
   for (const notePath of WORKBENCH_NOTE_PATHS) {
     const body = await readRepoFile(repoRoot, notePath);
     sections.push({
-      title: profile === "beads-first" ? `${notePath} excerpt` : notePath,
-      body: profile === "beads-first" ? buildNoteExcerpt(notePath, body) : body,
+      title: profile === "compact" ? `${notePath} excerpt` : notePath,
+      body: profile === "compact" ? buildNoteExcerpt(notePath, body) : body,
       bucket: "active_repo",
       source: { kind: "file", label: notePath, path: notePath },
-    });
-  }
-
-  const ready = await runner(["ready"], repoRoot);
-  sections.push({
-    title: "Beads: bd ready",
-    body: ready,
-    bucket: "derived_memory",
-    source: { kind: "command", label: "bd ready", path: "bd ready" },
-  });
-
-  for (const issueId of parseReadyIssueIds(ready).slice(0, 3)) {
-    const show = await runner(["show", issueId], repoRoot);
-    sections.push({
-      title: `Beads: bd show ${issueId}`,
-      body: show,
-      bucket: "derived_memory",
-      source: {
-        kind: "command",
-        label: `bd show ${issueId}`,
-        path: `bd show ${issueId}`,
-      },
     });
   }
 
@@ -325,13 +286,13 @@ export async function loadAskRepoContext(options: {
 
 export function askContextProfileFromEnv(): AskContextProfile {
   const rawProfile = Deno.env.get("DYFJ_WORKBENCH_CONTEXT_PROFILE");
-  return rawProfile === "full" ? "full" : "beads-first";
+  return rawProfile === "full" ? "full" : "compact";
 }
 
 function contextBudgetFromEnv(profile: AskContextProfile): ContextBudget {
   const baseBudget = profile === "full"
     ? DEFAULT_CONTEXT_BUDGET
-    : BEADS_FIRST_CONTEXT_BUDGET;
+    : COMPACT_CONTEXT_BUDGET;
   const rawTotal = Deno.env.get("DYFJ_WORKBENCH_CONTEXT_TOKENS");
   const totalTokens = rawTotal === undefined
     ? baseBudget.totalTokens
@@ -351,8 +312,7 @@ function buildAgentsExcerpt(agents: string): string {
     "README.md",
     "Section 1",
     "authoritative",
-    "bd ready",
-    "beads",
+    "Linear",
     "Acyclic",
     "DAGs",
   ], 280);
@@ -405,20 +365,4 @@ async function readRepoFile(
   relativePath: string,
 ): Promise<string> {
   return await Deno.readTextFile(path.join(repoRoot, relativePath));
-}
-
-async function runCommand(args: string[], cwd: string): Promise<string> {
-  const command = new Deno.Command("bd", {
-    args,
-    cwd,
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const output = await command.output();
-  const stdout = new TextDecoder().decode(output.stdout).trim();
-  const stderr = new TextDecoder().decode(output.stderr).trim();
-  if (!output.success) {
-    throw new Error(`bd ${args.join(" ")} failed: ${stderr || stdout}`);
-  }
-  return stdout;
 }

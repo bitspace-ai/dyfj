@@ -300,10 +300,10 @@ export function buildNextWorkBrief(input: NextWorkBriefInput): string {
     "Required JSON shape:",
     "{",
     '  "worklet_id": "next-work.v0",',
-    '  "context_profile": "beads-first",',
+    '  "context_profile": "compact",',
     '  "recommendation": "one concrete next work item",',
     '  "rationale": "why this is next from the supplied context",',
-    '  "evidence": ["specific context source or bead evidence"],',
+    '  "evidence": ["specific context source or evidence"],',
     '  "risks": ["what could make this recommendation wrong"],',
     '  "next_commands": ["small commands the operator can run"],',
     '  "confidence": "low|medium|high"',
@@ -433,10 +433,10 @@ export function validateNextWorkJson(text: string): NextWorkValidationResult {
 
   if (
     "context_profile" in parsed &&
-    parsed.context_profile !== "beads-first" &&
+    parsed.context_profile !== "compact" &&
     parsed.context_profile !== "full"
   ) {
-    errors.push("context_profile must be beads-first or full");
+    errors.push("context_profile must be compact or full");
   }
   for (const field of ["worklet_id", "recommendation", "rationale"] as const) {
     if (field in parsed && typeof parsed[field] !== "string") {
@@ -559,7 +559,7 @@ export function formatContextBudgetLine(budget: PackedContextSummary): string {
     `${budget.usedTokens}/${budget.totalTokens} tokens; ` +
     `system ${budget.byBucket.system.usedTokens}/${budget.byBucket.system.limitTokens}, ` +
     `active ${budget.byBucket.active_repo.usedTokens}/${budget.byBucket.active_repo.limitTokens}, ` +
-    `Beads ${budget.byBucket.derived_memory.usedTokens}/${budget.byBucket.derived_memory.limitTokens}, ` +
+    `memory ${budget.byBucket.derived_memory.usedTokens}/${budget.byBucket.derived_memory.limitTokens}, ` +
     `headroom ${budget.headroomTokens}`;
 }
 

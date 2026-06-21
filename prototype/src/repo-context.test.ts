@@ -1,15 +1,14 @@
 import { describe, expect, test } from "vitest";
 import {
-  BEADS_FIRST_CONTEXT_BUDGET,
   buildAskSystemPrompt,
   buildContextSourceLines,
+  COMPACT_CONTEXT_BUDGET,
   type ContextSection,
   DEFAULT_CONTEXT_BUDGET,
   estimateContextTokens,
   extractReadmeSection1,
   type LoadedRepoContext,
   packContextSections,
-  parseReadyIssueIds,
 } from "./repo-context";
 
 describe("extractReadmeSection1", () => {
@@ -34,7 +33,7 @@ describe("extractReadmeSection1", () => {
 });
 
 describe("buildContextSourceLines", () => {
-  test("names repo files and Beads commands without private context paths", () => {
+  test("names repo files and context sources without private context paths", () => {
     const lines = buildContextSourceLines([
       { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
       {
@@ -42,13 +41,17 @@ describe("buildContextSourceLines", () => {
         label: "README.md Section 1",
         path: "README.md#section-1",
       },
-      { kind: "command", label: "bd ready", path: "bd ready" },
+      {
+        kind: "file",
+        label: "notes/workbench-mvp-loop.md",
+        path: "notes/workbench-mvp-loop.md",
+      },
     ]);
 
     expect(lines).toEqual([
       "AGENTS.md <AGENTS.md>",
       "README.md Section 1 <README.md#section-1>",
-      "bd ready <bd ready>",
+      "notes/workbench-mvp-loop.md <notes/workbench-mvp-loop.md>",
     ]);
   });
 });
@@ -58,9 +61,13 @@ describe("buildAskSystemPrompt", () => {
     const context: LoadedRepoContext = {
       sources: [
         { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
-        { kind: "command", label: "bd ready", path: "bd ready" },
+        {
+          kind: "file",
+          label: "notes/workbench-mvp-loop.md",
+          path: "notes/workbench-mvp-loop.md",
+        },
       ],
-      profile: "beads-first",
+      profile: "compact",
       budget: {
         totalTokens: 100,
         usedTokens: 20,
@@ -74,8 +81,8 @@ describe("buildAskSystemPrompt", () => {
       sections: [
         { title: "AGENTS.md", body: "Read README Section 1." },
         {
-          title: "Beads: bd ready",
-          body: "dyfj-2fl.7 Build first usable command",
+          title: "notes/workbench-mvp-loop.md excerpt",
+          body: "Workbench MVP loop: ship the smallest useful slice.",
         },
       ],
     };
@@ -86,40 +93,31 @@ describe("buildAskSystemPrompt", () => {
     );
 
     // The persona is the injected base prompt; the builder composes it with
-    // the live repo/Beads context (no hardcoded persona of its own).
+    // the live repo context (no hardcoded persona of its own).
     expect(prompt).toContain("You are the test companion. Help with anything.");
-    expect(prompt).toContain("dyfj-2fl.7 Build first usable command");
+    expect(prompt).toContain(
+      "Workbench MVP loop: ship the smallest useful slice.",
+    );
     expect(prompt).toContain("Context sources used");
   });
 });
 
-describe("parseReadyIssueIds", () => {
-  test("extracts ready Beads issue ids in display order", () => {
-    const ids = parseReadyIssueIds([
-      "○ dyfj-2fl.8.2 ● P1 Build next-work model routing experiment",
-      "○ dyfj-2fl.7 ● P1 Build first usable DYFJ companion command",
-      "○ dyfj-2fl ● P1 Design Workbench MVP",
-      "",
-      "Ready: 3 issues with no active blockers",
-    ].join("\n"));
-
-    expect(ids).toEqual(["dyfj-2fl.8.2", "dyfj-2fl.7", "dyfj-2fl"]);
-  });
-});
-
 describe("packContextSections", () => {
-  test("beads-first profile reserves most non-system context for Beads", () => {
-    expect(BEADS_FIRST_CONTEXT_BUDGET.totalTokens).toBe(500);
-    expect(BEADS_FIRST_CONTEXT_BUDGET.derivedMemoryPercent).toBeGreaterThan(
-      BEADS_FIRST_CONTEXT_BUDGET.activeRepoPercent,
+  test("compact profile uses a small budget weighted to repo context", () => {
+    expect(COMPACT_CONTEXT_BUDGET.totalTokens).toBe(500);
+    expect(COMPACT_CONTEXT_BUDGET.totalTokens).toBeLessThan(
+      DEFAULT_CONTEXT_BUDGET.totalTokens,
+    );
+    expect(COMPACT_CONTEXT_BUDGET.activeRepoPercent).toBeGreaterThan(
+      COMPACT_CONTEXT_BUDGET.derivedMemoryPercent,
     );
   });
 
-  test("beads-first budget can keep AGENTS and README Section 1 sources", () => {
+  test("compact budget can keep AGENTS and README Section 1 sources", () => {
     const packed = packContextSections([
       {
         title: "AGENTS.md excerpt",
-        body: "Read README Section 1. Section 1 is authoritative. Use Beads.",
+        body: "Read README Section 1. Section 1 is authoritative. Use Linear.",
         bucket: "system",
         source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
       },
@@ -135,17 +133,21 @@ describe("packContextSections", () => {
         },
       },
       {
-        title: "Beads: bd ready",
-        body: "○ dyfj-2fl.7 ● P1 Build first usable DYFJ companion command",
-        bucket: "derived_memory",
-        source: { kind: "command", label: "bd ready", path: "bd ready" },
+        title: "notes/workbench-mvp-loop.md excerpt",
+        body: "Workbench MVP loop: ship the smallest useful slice.",
+        bucket: "active_repo",
+        source: {
+          kind: "file",
+          label: "notes/workbench-mvp-loop.md",
+          path: "notes/workbench-mvp-loop.md",
+        },
       },
-    ], BEADS_FIRST_CONTEXT_BUDGET);
+    ], COMPACT_CONTEXT_BUDGET);
 
     expect(packed.sources.map((source) => source.label)).toEqual([
       "AGENTS.md",
       "README.md Section 1",
-      "bd ready",
+      "notes/workbench-mvp-loop.md",
     ]);
   });
 
@@ -159,7 +161,7 @@ describe("packContextSections", () => {
         bucket: "active_repo",
       },
       {
-        title: "Beads: bd ready",
+        title: "derived memory note",
         body: "b".repeat(800),
         bucket: "derived_memory",
       },
