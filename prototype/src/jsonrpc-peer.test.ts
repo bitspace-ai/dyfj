@@ -98,6 +98,14 @@ describe("JsonRpcPeer", () => {
     expect(await slow).toEqual({ done: true });
   });
 
+  test("a large response is delivered intact (handles partial socket writes)", async () => {
+    const big = "x".repeat(300_000); // exceeds a single socket write
+    const { client } = await connectPair({ big: () => ({ payload: big }) });
+    const result = await client.request("big") as { payload: string };
+    expect(result.payload.length).toBe(300_000);
+    expect(result.payload).toBe(big);
+  });
+
   test("pending requests reject when the connection closes", async () => {
     const { client } = await connectPair({
       slow: () => new Promise(() => {}), // never resolves

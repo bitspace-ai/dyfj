@@ -54,13 +54,23 @@ export class JsonRpcPeer {
     );
   }
 
+  // conn.write() may write fewer bytes than requested, so a large frame must be
+  // written in a loop — otherwise a big response is truncated on the wire and the
+  // peer's FrameDecoder waits forever for the missing newline.
+  async #writeAll(bytes: Uint8Array): Promise<void> {
+    let offset = 0;
+    while (offset < bytes.length) {
+      offset += await this.#conn.write(
+        offset === 0 ? bytes : bytes.subarray(offset),
+      );
+    }
+  }
+
   // Writes are serialized so concurrent notify()/request()/responses never
   // interleave partial frames on the wire.
   #write(message: JsonRpcMessage): Promise<void> {
     const bytes = encodeFrame(message);
-    const result = this.#writeChain
-      .then(() => this.#conn.write(bytes))
-      .then(() => {});
+    const result = this.#writeChain.then(() => this.#writeAll(bytes));
     this.#writeChain = result.catch(() => {});
     return result;
   }
