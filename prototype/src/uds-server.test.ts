@@ -187,3 +187,35 @@ describe("serveWorkbenchUnix turn method", () => {
     ).toEqual({ sessionLimitUsd: 5 });
   });
 });
+
+describe("serve-unix Deno permission profile", () => {
+  // serve-unix runs the SAME turn as workbench-http, so its env + net must grant
+  // everything the runtime needs. This pins parity so a runtime env var or
+  // endpoint added to workbench-http can't silently leave the UDS turn
+  // under-permissioned — the live failure that surfaced DYFJ_PRINCIPAL_ID.
+  test("grants the runtime env + net that workbench-http does", () => {
+    const config = JSON.parse(Deno.readTextFileSync("deno.json")) as {
+      permissions: Record<string, { env: string[]; net: string[] }>;
+    };
+    const http = config.permissions["workbench-http"];
+    const uds = config.permissions["serve-unix"];
+
+    // Env that is HTTP-transport-specific and legitimately absent over UDS.
+    const httpOnlyEnv = new Set([
+      "DYFJ_WORKBENCH_HTTP_HOST",
+      "DYFJ_WORKBENCH_HTTP_PORT",
+      "DYFJ_WORKBENCH_API_KEY",
+      "DYFJ_WORKBENCH_ALLOWED_HOSTS",
+    ]);
+    const missingEnv = http.env.filter(
+      (e) => !httpOnlyEnv.has(e) && !uds.env.includes(e),
+    );
+    expect(missingEnv).toEqual([]);
+
+    // Net hosts the turn dials; 127.0.0.1:8787 is the HTTP server's own port.
+    const missingNet = http.net.filter(
+      (n) => n !== "127.0.0.1:8787" && !uds.net.includes(n),
+    );
+    expect(missingNet).toEqual([]);
+  });
+});
