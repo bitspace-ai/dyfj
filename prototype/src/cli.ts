@@ -15,6 +15,8 @@
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
+import { connectUnixClient } from "./uds-client";
+import { resolveSocketPath } from "./uds-path";
 
 // ── Seam contract (shared with the server; BIT-136) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
@@ -51,6 +53,8 @@ export interface CliConfig {
   workspace?: string;
   /** True when workspace came from --workspace/DYFJ_WORKSPACE, not the cwd default. */
   workspaceExplicit?: boolean;
+  /** Unix socket path for the JSON-RPC read commands (models/sessions). */
+  socket: string;
   color: boolean;
 }
 
@@ -287,10 +291,95 @@ export async function runRepl(
   }
 }
 
+// ── UDS read commands (models/sessions over the JSON-RPC seam) ───────────────
+
+interface ModelRow {
+  slug?: string;
+  displayName?: string;
+  provider?: string;
+  tier?: number;
+}
+interface SessionRow {
+  slug?: string;
+  sessionName?: string;
+}
+interface ProjectGroup {
+  project: string | null;
+  sessions: SessionRow[];
+}
+
+export type ConnectFn = typeof connectUnixClient;
+
+function socketError(error: unknown, config: CliConfig): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    /no such file|not found|connection refused|enoent|os error 2|os error 61/i
+      .test(message)
+  ) {
+    return `dyfj: runtime not reachable at ${config.socket}. ` +
+      `Start it with: deno task serve-unix`;
+  }
+  return `dyfj: ${message}`;
+}
+
+export async function runModels(
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+): Promise<number> {
+  try {
+    const client = await connect(config.socket);
+    try {
+      const { models } = await client.request("models/list") as {
+        models: ModelRow[];
+      };
+      for (const m of models) {
+        io.out(
+          `${(m.slug ?? "").padEnd(28)} t${m.tier ?? "?"}  ` +
+            `${(m.provider ?? "").padEnd(10)} ${m.displayName ?? ""}\n`,
+        );
+      }
+    } finally {
+      client.close();
+    }
+    return 0;
+  } catch (error) {
+    io.err(socketError(error, config));
+    return 1;
+  }
+}
+
+export async function runSessions(
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+): Promise<number> {
+  try {
+    const client = await connect(config.socket);
+    try {
+      const { projects } = await client.request("sessions/list") as {
+        projects: ProjectGroup[];
+      };
+      for (const group of projects) {
+        io.out(`\n${group.project ?? "(unfiled)"}\n`);
+        for (const s of group.sessions) {
+          io.out(`  ${(s.slug ?? "").padEnd(40)} ${s.sessionName ?? ""}\n`);
+        }
+      }
+    } finally {
+      client.close();
+    }
+    return 0;
+  } catch (error) {
+    io.err(socketError(error, config));
+    return 1;
+  }
+}
+
 // ── Argument + config parsing ────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command: "exec" | "repl" | "help";
+  command: "exec" | "repl" | "help" | "models" | "sessions";
   prompt?: string;
   json: boolean;
   overrides: Partial<CliConfig>;
@@ -299,6 +388,7 @@ interface ParsedArgs {
 
 const VALUE_FLAGS = new Set([
   "--server",
+  "--socket",
   "--key",
   "--mode",
   "--model",
@@ -327,6 +417,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       const value = argv[++i];
       if (value === undefined) return error(`missing value for ${arg}`);
       if (arg === "--server") overrides.serverUrl = value;
+      else if (arg === "--socket") overrides.socket = value;
       else if (arg === "--key") overrides.key = value;
       else if (arg === "--model") overrides.model = value;
       else if (arg === "--session") overrides.sessionId = value;
@@ -360,6 +451,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   if (printPrompt !== undefined) {
     return { command: "exec", prompt: printPrompt, json, overrides };
+  }
+  if (positional[0] === "models" && positional.length === 1) {
+    return { command: "models", json, overrides };
+  }
+  if (positional[0] === "sessions" && positional.length === 1) {
+    return { command: "sessions", json, overrides };
   }
   if (positional[0] === "exec") {
     const prompt = positional.slice(1).join(" ").trim();
@@ -414,6 +511,7 @@ export function resolveConfig(
     // server (buildTurnBody); an explicit value is honored anywhere.
     workspace: explicitWorkspace ?? cwd,
     workspaceExplicit: explicitWorkspace !== undefined,
+    socket: overrides.socket ?? resolveSocketPath(env),
     color: !env.get("NO_COLOR") && isTty,
   };
 }
@@ -425,10 +523,13 @@ Usage:
   dyfj exec "<prompt>"      one-shot turn
   dyfj ask "<prompt>"       one-shot repo-context question (ask mode)
   dyfj -p "<prompt>"        one-shot turn (alias)
+  dyfj models               list models over the runtime UDS socket
+  dyfj sessions             list sessions over the runtime UDS socket
 
 Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
   --server <url>   runtime server (default ${DEFAULT_SERVER}, env DYFJ_SERVER_URL)
+  --socket <path>  runtime UDS socket for models/sessions (default per-user, env DYFJ_SOCKET)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --session <id>   resume a session
@@ -498,6 +599,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
   );
   if (parsed.command === "exec") {
     return await runExec(parsed.prompt!, config, io, parsed.json);
+  }
+  if (parsed.command === "models") {
+    return await runModels(config, io);
+  }
+  if (parsed.command === "sessions") {
+    return await runSessions(config, io);
   }
   await runRepl(config, io);
   return 0;

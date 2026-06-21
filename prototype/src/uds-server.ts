@@ -99,16 +99,27 @@ export interface WorkbenchUnixServer {
   close(): Promise<void>;
 }
 
+// Clear a stale socket from a prior unclean exit — but only if the path is
+// actually a socket, never an arbitrary file/dir (the Codex hardening item).
+function clearStaleSocket(socketPath: string): void {
+  let info: Deno.FileInfo;
+  try {
+    info = Deno.lstatSync(socketPath);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return;
+    throw err;
+  }
+  if (!info.isSocket) {
+    throw new Error(`refusing to bind: ${socketPath} exists and is not a socket`);
+  }
+  Deno.removeSync(socketPath);
+}
+
 export function serveWorkbenchUnix(
   socketPath: string,
   options: WorkbenchUnixServerOptions = {},
 ): WorkbenchUnixServer {
-  // Clear a stale socket left by a prior unclean exit.
-  try {
-    Deno.removeSync(socketPath);
-  } catch {
-    // not present
-  }
+  clearStaleSocket(socketPath);
 
   const handlers = buildReadHandlers(options);
   const listener = Deno.listen({ transport: "unix", path: socketPath });

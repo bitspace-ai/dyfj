@@ -7,11 +7,14 @@ import {
   friendlyError,
   type Io,
   isLoopbackServerUrl,
+  type ConnectFn,
   parseArgs,
   readLineOrNull,
   resolveConfig,
   runExec,
+  runModels,
   runRepl,
+  runSessions,
   streamTurn,
   type TurnResult,
 } from "./cli";
@@ -54,7 +57,13 @@ describe("readLineOrNull", () => {
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
-  return { serverUrl: "http://localhost:8787", mode: "turn", color: false, ...overrides };
+  return {
+    serverUrl: "http://localhost:8787",
+    socket: "/tmp/dyfj-test.sock",
+    mode: "turn",
+    color: false,
+    ...overrides,
+  };
 }
 
 function result(overrides: Partial<TurnResult> = {}): TurnResult {
@@ -311,6 +320,14 @@ describe("parseArgs", () => {
   test("--help asks for help", () => {
     expect(parseArgs(["--help"]).command).toBe("help");
   });
+  test("'models' and 'sessions' are their own commands", () => {
+    expect(parseArgs(["models"]).command).toBe("models");
+    expect(parseArgs(["sessions"]).command).toBe("sessions");
+  });
+  test("--socket overrides the socket path", () => {
+    expect(parseArgs(["--socket", "/run/x.sock", "models"]).overrides.socket)
+      .toBe("/run/x.sock");
+  });
   test("--mode sets the context mode", () => {
     expect(parseArgs(["--mode", "ask", "exec", "x"]).overrides.mode).toBe("ask");
   });
@@ -375,6 +392,73 @@ describe("resolveConfig", () => {
     expect(
       resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd").workspaceExplicit,
     ).toBe(true);
+  });
+  test("socket defaults via DYFJ_SOCKET and the --socket override", () => {
+    const env = new Map([["DYFJ_SOCKET", "/run/dyfj.sock"]]);
+    expect(resolveConfig({}, { get: (k) => env.get(k) }).socket).toBe(
+      "/run/dyfj.sock",
+    );
+    expect(
+      resolveConfig({ socket: "/flag.sock" }, { get: (k) => env.get(k) }).socket,
+    ).toBe("/flag.sock");
+  });
+});
+
+describe("models/sessions over UDS", () => {
+  function fakeConnect(responses: Record<string, unknown>): ConnectFn {
+    return (_socketPath: string) =>
+      Promise.resolve({
+        request: (method: string) => Promise.resolve(responses[method]),
+        close: () => {},
+      });
+  }
+
+  test("runModels lists models from the seam", async () => {
+    const { io, stdout } = fakeIo();
+    const code = await runModels(
+      cfg(),
+      io,
+      fakeConnect({
+        "models/list": {
+          models: [
+            { slug: "gemma4", tier: 0, provider: "ollama", displayName: "Gemma 4" },
+          ],
+        },
+      }),
+    );
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("gemma4");
+    expect(stdout.join("")).toContain("Gemma 4");
+  });
+
+  test("runSessions groups by project", async () => {
+    const { io, stdout } = fakeIo();
+    const code = await runSessions(
+      cfg(),
+      io,
+      fakeConnect({
+        "sessions/list": {
+          projects: [
+            { project: "dyfj", sessions: [{ slug: "s-1", sessionName: "Build" }] },
+          ],
+        },
+      }),
+    );
+    expect(code).toBe(0);
+    const out = stdout.join("");
+    expect(out).toContain("dyfj");
+    expect(out).toContain("s-1");
+    expect(out).toContain("Build");
+  });
+
+  test("a connection failure points the operator at serve-unix", async () => {
+    const { io, stderr } = fakeIo();
+    const code = await runModels(cfg({ socket: "/run/missing.sock" }), io, () => {
+      throw new Error("No such file or directory (os error 2)");
+    });
+    expect(code).toBe(1);
+    expect(stderr.join("\n")).toContain("serve-unix");
+    expect(stderr.join("\n")).toContain("/run/missing.sock");
   });
 });
 

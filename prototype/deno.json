@@ -1,11 +1,12 @@
 {
   "tasks": {
-    "check": "deno check --sloppy-imports src/http.ts src/workbench.ts src/jsonrpc.ts src/jsonrpc-peer.ts src/uds-server.ts mcp/server.ts src/cli.ts",
+    "check": "deno check --sloppy-imports src/http.ts src/workbench.ts src/jsonrpc.ts src/jsonrpc-peer.ts src/uds-server.ts src/uds-path.ts src/uds-client.ts src/uds-serve.ts mcp/server.ts src/cli.ts",
     "test": "deno task check && TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.6 run --root . --pool=threads",
     "start": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench": "deno run -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench-http": "deno run -P=workbench-http --env-file=.env --sloppy-imports src/http.ts",
     "cli": "deno run -P=cli --sloppy-imports src/cli.ts",
+    "serve-unix": "deno run -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
     "compile-cli": "deno compile --allow-env --allow-net=127.0.0.1,localhost --sloppy-imports -o dist/dyfj src/cli.ts",
     "context-size-response": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/context-size-response.ts",
     "model-response-modes": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/model-response-modes.ts",
@@ -130,6 +131,10 @@
     "cli": {
       "env": [
         "DYFJ_SERVER_URL",
+        "DYFJ_SOCKET",
+        "DYFJ_WORKSPACE",
+        "HOME",
+        "XDG_RUNTIME_DIR",
         "DYFJ_WORKBENCH_API_KEY",
         "DYFJ_WORKBENCH_MODEL",
         "DYFJ_WORKBENCH_HINT",
@@ -139,7 +144,32 @@
       "net": [
         "127.0.0.1",
         "localhost"
-      ]
+      ],
+      "read": true,
+      "write": true
+    },
+    "serve-unix": {
+      "env": [
+        "USER",
+        "HOME",
+        "XDG_RUNTIME_DIR",
+        "DYFJ_SOCKET",
+        "DOLT_HOST",
+        "DOLT_PORT",
+        "DOLT_USER",
+        "DOLT_PASSWORD",
+        "DOLT_DATABASE",
+        "NODE_DEBUG_NATIVE",
+        "NODE_DISABLE_COMPILE_CACHE",
+        "NODE_COMPILE_CACHE_PORTABLE",
+        "NODE_COMPILE_CACHE"
+      ],
+      "net": [
+        "127.0.0.1:3306",
+        "localhost"
+      ],
+      "read": true,
+      "write": true
     },
     "local-model-diagnostic": {
       "env": [
