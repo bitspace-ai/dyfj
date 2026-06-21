@@ -1,13 +1,15 @@
 // Serve the workbench JSON-RPC seam over a Unix domain socket (BIT-230). UDS is
 // the canonical `loopback` transport — full clearance, gated by filesystem perms
-// — per the transport-seam contract. This slice wires the read-only methods;
-// `turn` streaming and the server-initiated `approval` request land with BIT-116.
+// — per the transport-seam contract. Wires the read-only methods plus `turn`,
+// which runs an agentic turn over the shared turn-runner core and streams text
+// deltas + runtime events back as `stream` notifications. The server-initiated
+// `approval` request (mutating tools) lands with BIT-116.
 
 import {
   defaultLocalWorkbenchModels,
   loadWorkbenchModels,
-  type WorkbenchModel,
   withDefaultLocalWorkbenchModels,
+  type WorkbenchModel,
 } from "./provider";
 import {
   fetchWorkbenchSessionEvents,
@@ -18,8 +20,17 @@ import {
 } from "./sessions";
 import { RpcError, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
 import { JsonRpcPeer } from "./jsonrpc-peer";
+import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench";
+import type { TurnStreamFrame } from "./turn-contract";
+import {
+  executeTurn,
+  resolveTurnFromBody,
+  type TurnRequestBody,
+  type WorkbenchHttpRuntime,
+} from "./turn-runner";
 
 export interface WorkbenchUnixServerOptions {
+  runRuntime?: WorkbenchHttpRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
   listSessions?: (
     options: { project?: string },
@@ -78,7 +89,10 @@ export function buildReadHandlers(
         );
       }
       const asOf = record.asOf;
-      if (asOf !== undefined && (typeof asOf !== "string" || !isValidAsOfTimestamp(asOf))) {
+      if (
+        asOf !== undefined &&
+        (typeof asOf !== "string" || !isValidAsOfTimestamp(asOf))
+      ) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
           "events/query asOf must be a valid timestamp",
@@ -90,6 +104,62 @@ export function buildReadHandlers(
           asOf: typeof asOf === "string" ? asOf : undefined,
         }),
       };
+    },
+  };
+}
+
+// UDS is the canonical loopback transport: a connection is authenticated by the
+// OS as the local user via the socket's filesystem permissions (the 0700 parent
+// dir owned by the operator), and carries full loopback clearance. Paid
+// escalation and budget overrides therefore remain available — but, exactly as
+// on the HTTP loopback path, only with an explicit per-turn opt-in in the params
+// (BIT-166); the shared turn core enforces that, not this binding.
+const UDS_LOOPBACK_AUTH: WorkbenchAuthContext = {
+  transport: "loopback",
+  authnStatus: "authenticated",
+  authnMechanism: "local_user",
+  authnIssuerRef: "local_os",
+  authzBasis: "policy:loopback-uds",
+};
+
+// The `turn` method: run an agentic turn over the shared turn-runner core — the
+// SAME lock/resume/clearance/paid path as HTTP — streaming intermediate text
+// deltas and runtime events back as `stream` notifications on this connection.
+// The final receipt is the RPC result; errors propagate as RPC errors.
+export function buildTurnHandlers(
+  options: WorkbenchUnixServerOptions = {},
+): RpcHandlers {
+  const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
+  const fetchSessionEvents = options.fetchSessionEvents ??
+    fetchWorkbenchSessionEvents;
+
+  return {
+    turn: async (params, ctx) => {
+      const resolved = resolveTurnFromBody(
+        asRecord(params) as TurnRequestBody,
+        true,
+      );
+      if ("error" in resolved) {
+        throw new RpcError(RpcErrorCode.invalidParams, resolved.error);
+      }
+      return await executeTurn(resolved, {
+        authContext: UDS_LOOPBACK_AUTH,
+        loopback: true,
+        runRuntime,
+        fetchSessionEvents,
+        // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a
+        // client can reuse one frame handler across both transports.
+        onTextDelta: (text) =>
+          void ctx.notify(
+            "stream",
+            { t: "delta", text } satisfies TurnStreamFrame,
+          ),
+        onRuntimeEvent: (event) =>
+          void ctx.notify(
+            "stream",
+            { t: "event", event } satisfies TurnStreamFrame,
+          ),
+      });
     },
   };
 }
@@ -110,7 +180,9 @@ function clearStaleSocket(socketPath: string): void {
     throw err;
   }
   if (!info.isSocket) {
-    throw new Error(`refusing to bind: ${socketPath} exists and is not a socket`);
+    throw new Error(
+      `refusing to bind: ${socketPath} exists and is not a socket`,
+    );
   }
   Deno.removeSync(socketPath);
 }
@@ -121,7 +193,10 @@ export function serveWorkbenchUnix(
 ): WorkbenchUnixServer {
   clearStaleSocket(socketPath);
 
-  const handlers = buildReadHandlers(options);
+  const handlers: RpcHandlers = {
+    ...buildReadHandlers(options),
+    ...buildTurnHandlers(options),
+  };
   const listener = Deno.listen({ transport: "unix", path: socketPath });
   const peers = new Set<JsonRpcPeer>();
 
