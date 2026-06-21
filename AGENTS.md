@@ -22,15 +22,8 @@ Any intentional cycle must be named, justified, and tested.
 
 ## Issue Tracking
 
-This project uses **bd (beads)** for issue tracking.
-Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
+This project uses **Linear** for issue tracking (team Bitspace Applied Intelligence, `BIT-###`; DYFJ Workbench and related projects). Use the Linear MCP/integration to find ready work, claim, record progress, and close issues; for non-trivial work, create or claim a Linear issue before editing.
 
-**Quick reference:**
-- `bd ready` - Find unblocked work
-- `bd create "Title" --type task --priority 2` - Create issue
-- `bd close <id>` - Complete work
-- `bd dolt push` - Push beads to remote
-
-For full workflow details: `bd prime`
+Beads (`bd`) is retired (2026-06-20); historical Beads issues were migrated to Linear and are no longer tracked in this repo.
 
 That's it. Read the README.

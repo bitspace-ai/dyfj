@@ -11,7 +11,6 @@
     "model-response-modes": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/model-response-modes.ts",
     "structured-output": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output.ts",
     "structured-output-streaming": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output-streaming.ts",
-    "beads-tracer": "deno run -P=beads --sloppy-imports examples/beads-tracer.ts",
     "verify-workbench-events": "deno run -P=verify-workbench-events --env-file=.env --sloppy-imports examples/verify-workbench-events.ts",
     "smoke": "deno run examples/deno-smoke-test.ts"
   },
@@ -158,16 +157,6 @@
         "localhost:18080",
         "127.0.0.1:11434",
         "localhost:11434"
-      ]
-    },
-    "beads": {
-      "env": [
-        "BEADS_DIR",
-        "PATH",
-        "HOME"
-      ],
-      "run": [
-        "bd"
       ]
     },
     "verify-workbench-events": {

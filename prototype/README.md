@@ -83,16 +83,6 @@ curl -sS http://127.0.0.1:11434/api/generate \
 
 The response must include generated text. Health/list endpoints such as Ollama `/api/version`, `/api/tags`, and `/api/ps` do not prove the model runner can load.
 
-## Experimental tracers
-
-The Beads tracer is a small prototype demo for parent/child task decomposition, worker completion, gated recombination, and cleanup:
-
-```sh
-BEADS_DIR=/path/to/.beads deno task beads-tracer
-```
-
-It creates and deletes demo beads in the target Beads workspace.
-
 ## Layout
 
 - `src/` — Workbench entrypoint, shell, local HTTP veneer, shared runtime boundary, command registry, provider path, memory, budget, session persistence, event verification, MCP client, utilities, tests
