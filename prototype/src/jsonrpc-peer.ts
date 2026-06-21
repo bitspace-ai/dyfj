@@ -16,6 +16,7 @@ import {
   type JsonRpcResponse,
   notification,
   RpcError,
+  type RpcContext,
   type RpcHandlers,
 } from "./jsonrpc";
 
@@ -126,12 +127,22 @@ export class JsonRpcPeer {
     }
   }
 
+  // A context bound to this connection, so a handler can stream notifications and
+  // issue server-initiated requests (e.g. the mid-turn approval) while it runs.
+  #context(): RpcContext {
+    return {
+      notify: (method, params) => this.notify(method, params),
+      request: (method, params) => this.request(method, params),
+    };
+  }
+
   async #handle(message: JsonRpcMessage): Promise<void> {
     switch (classify(message)) {
       case "request": {
         const response = await dispatchRequest(
           message as JsonRpcRequest,
           this.#handlers,
+          this.#context(),
         );
         await this.#write(response);
         return;
@@ -160,7 +171,10 @@ export class JsonRpcPeer {
           this.#handlers[(message as { method: string }).method];
         if (handler) {
           try {
-            await handler((message as { params?: unknown }).params);
+            await handler(
+              (message as { params?: unknown }).params,
+              this.#context(),
+            );
           } catch {
             // Notifications never error back to the sender.
           }

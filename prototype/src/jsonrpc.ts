@@ -167,8 +167,25 @@ export function notification(
 
 // --- request dispatch ---
 
-export type RpcHandler = (params: unknown) => Promise<unknown> | unknown;
+// Context a handler receives so it can stream `notify` notifications and issue
+// server-initiated `request`s (the mid-turn approval round-trip) while it runs.
+// The peer supplies the concrete implementation bound to its connection; the
+// pure core only declares the shape and a no-op default.
+export interface RpcContext {
+  notify(method: string, params?: unknown): Promise<void>;
+  request(method: string, params?: unknown): Promise<unknown>;
+}
+
+export type RpcHandler = (
+  params: unknown,
+  ctx: RpcContext,
+) => Promise<unknown> | unknown;
 export type RpcHandlers = Record<string, RpcHandler>;
+
+const NOOP_CONTEXT: RpcContext = {
+  notify: () => Promise.resolve(),
+  request: () => Promise.reject(new Error("no peer context for this request")),
+};
 
 // Run one request against the handler map, producing a response envelope. A
 // thrown RpcError maps to its code; any other throw maps to internalError, so a
@@ -176,6 +193,7 @@ export type RpcHandlers = Record<string, RpcHandler>;
 export async function dispatchRequest(
   req: JsonRpcRequest,
   handlers: RpcHandlers,
+  ctx: RpcContext = NOOP_CONTEXT,
 ): Promise<JsonRpcResponse> {
   const handler = handlers[req.method];
   if (!handler) {
@@ -186,7 +204,7 @@ export async function dispatchRequest(
     );
   }
   try {
-    return success(req.id, await handler(req.params));
+    return success(req.id, await handler(req.params, ctx));
   } catch (err) {
     if (err instanceof RpcError) {
       return failure(req.id, err.code, err.message, err.data);

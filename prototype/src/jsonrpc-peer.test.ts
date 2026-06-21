@@ -98,6 +98,32 @@ describe("JsonRpcPeer", () => {
     expect(await slow).toEqual({ done: true });
   });
 
+  test("a handler streams notifications and issues an approval mid-execution (ctx)", async () => {
+    const streamed: unknown[] = [];
+    const { client } = await connectPair(
+      {
+        // server handler: streams progress, then asks the client to approve
+        work: async (_params, ctx) => {
+          await ctx.notify("stream", { delta: "step 1" });
+          await ctx.notify("stream", { delta: "step 2" });
+          const decision = await ctx.request("approval", { tool: "bash" });
+          return { decision };
+        },
+      },
+      {
+        // client side: collect stream notifications, answer the approval request
+        stream: (p) => {
+          streamed.push(p);
+        },
+        approval: () => ({ decision: "approve-once" }),
+      },
+    );
+    expect(await client.request("work")).toEqual({
+      decision: { decision: "approve-once" },
+    });
+    expect(streamed).toEqual([{ delta: "step 1" }, { delta: "step 2" }]);
+  });
+
   test("a large response is delivered intact (handles partial socket writes)", async () => {
     const big = "x".repeat(300_000); // exceeds a single socket write
     const { client } = await connectPair({ big: () => ({ payload: big }) });
