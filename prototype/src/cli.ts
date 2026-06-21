@@ -53,8 +53,10 @@ export interface CliConfig {
   workspace?: string;
   /** True when workspace came from --workspace/DYFJ_WORKSPACE, not the cwd default. */
   workspaceExplicit?: boolean;
-  /** Unix socket path for the JSON-RPC read commands (models/sessions). */
+  /** Unix socket path for the JSON-RPC seam (models/sessions, and turns with `unix`). */
   socket: string;
+  /** Route turns over the UDS/JSON-RPC seam instead of HTTP/SSE (--unix). */
+  unix?: boolean;
   color: boolean;
 }
 
@@ -72,7 +74,10 @@ const DEFAULT_SERVER = "http://127.0.0.1:8787";
 
 // ── HTTP / SSE client ────────────────────────────────────────────────────────
 
-function buildHeaders(config: CliConfig, stream: boolean): Record<string, string> {
+function buildHeaders(
+  config: CliConfig,
+  stream: boolean,
+): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
   };
@@ -104,7 +109,9 @@ export function buildTurnBody(
   if (config.hint !== undefined) routingOptions.hint = config.hint;
 
   const body: TurnRequest = { prompt, mode: config.mode };
-  if (Object.keys(routingOptions).length > 0) body.routingOptions = routingOptions;
+  if (Object.keys(routingOptions).length > 0) {
+    body.routingOptions = routingOptions;
+  }
   if (sessionId !== undefined) body.sessionId = sessionId;
   // Send the workspace only when establishing a NEW session (no sessionId): the
   // server persists it on the session row, and resumed turns read it back, so
@@ -115,7 +122,8 @@ export function buildTurnBody(
   const maySendWorkspace = config.workspaceExplicit ||
     isLoopbackServerUrl(config.serverUrl);
   if (
-    config.workspace !== undefined && sessionId === undefined && maySendWorkspace
+    config.workspace !== undefined && sessionId === undefined &&
+    maySendWorkspace
   ) {
     body.workspace = config.workspace;
   }
@@ -229,29 +237,37 @@ export async function runExec(
   io: Io,
   json: boolean,
   fetchFn: typeof fetch = fetch,
+  connect: ConnectFn = connectUnixClient,
 ): Promise<number> {
   const body = buildTurnBody(prompt, config, config.sessionId);
   try {
     if (json) {
-      const result = await bufferedTurn(config, body, fetchFn);
+      const result = config.unix
+        ? await socketTurn(config, body, {}, connect)
+        : await bufferedTurn(config, body, fetchFn);
       io.out(`${JSON.stringify(result, null, 2)}\n`);
     } else {
       let streamed = false;
-      const result = await streamTurn(
-        config,
-        body,
-        { onDelta: (text) => { streamed = true; io.out(text); } },
-        fetchFn,
-      );
+      const handlers = {
+        onDelta: (text: string) => {
+          streamed = true;
+          io.out(text);
+        },
+      };
+      const result = config.unix
+        ? await socketTurn(config, body, handlers, connect)
+        : await streamTurn(config, body, handlers, fetchFn);
       // Some turns don't stream deltas (e.g. a first model call with tools);
-      // the text still arrives on the done frame — render it so output is never empty.
+      // the text still arrives with the receipt — render it so output is never empty.
       if (!streamed && result.text.length > 0) io.out(result.text);
       io.out("\n");
       io.err(formatReceipt(result, config.color));
     }
     return 0;
   } catch (error) {
-    io.err(friendlyError(error, config));
+    io.err(
+      config.unix ? socketError(error, config) : friendlyError(error, config),
+    );
     return 1;
   }
 }
@@ -260,8 +276,13 @@ export async function runRepl(
   config: CliConfig,
   io: Io,
   fetchFn: typeof fetch = fetch,
+  connect: ConnectFn = connectUnixClient,
 ): Promise<void> {
-  io.err(`dyfj — ${config.serverUrl} · Ctrl-D or /exit to quit`);
+  io.err(
+    `dyfj — ${
+      config.unix ? config.socket : config.serverUrl
+    } · Ctrl-D or /exit to quit`,
+  );
   let sessionId = config.sessionId;
   try {
     for (;;) {
@@ -272,18 +293,26 @@ export async function runRepl(
       if (prompt === "/exit" || prompt === "/quit") break;
       try {
         let streamed = false;
-        const result = await streamTurn(
-          config,
-          buildTurnBody(prompt, config, sessionId),
-          { onDelta: (text) => { streamed = true; io.out(text); } },
-          fetchFn,
-        );
+        const handlers = {
+          onDelta: (text: string) => {
+            streamed = true;
+            io.out(text);
+          },
+        };
+        const body = buildTurnBody(prompt, config, sessionId);
+        const result = config.unix
+          ? await socketTurn(config, body, handlers, connect)
+          : await streamTurn(config, body, handlers, fetchFn);
         if (!streamed && result.text.length > 0) io.out(result.text);
         io.out("\n");
         io.err(formatReceipt(result, config.color));
         sessionId = result.sessionId;
       } catch (error) {
-        io.err(friendlyError(error, config));
+        io.err(
+          config.unix
+            ? socketError(error, config)
+            : friendlyError(error, config),
+        );
       }
     }
   } finally {
@@ -309,6 +338,42 @@ interface ProjectGroup {
 }
 
 export type ConnectFn = typeof connectUnixClient;
+
+/**
+ * Run a turn over the UDS/JSON-RPC seam: forward `stream` notifications to the
+ * handlers and resolve with the receipt (the RPC result). Mirrors streamTurn's
+ * shape so runExec/runRepl can pick a transport transparently. Over UDS there is
+ * no `done`/`error` frame — the receipt is the result, errors are RPC errors.
+ */
+export async function socketTurn(
+  config: CliConfig,
+  body: TurnRequest,
+  handlers: {
+    onDelta?: (text: string) => void;
+    onEvent?: (event: Record<string, unknown>) => void;
+  } = {},
+  connect: ConnectFn = connectUnixClient,
+): Promise<TurnResult> {
+  const wantsStream = handlers.onDelta !== undefined ||
+    handlers.onEvent !== undefined;
+  const client = await connect(
+    config.socket,
+    wantsStream
+      ? {
+        onStream: (params) => {
+          const frame = params as TurnStreamFrame;
+          if (frame.t === "delta") handlers.onDelta?.(frame.text);
+          else if (frame.t === "event") handlers.onEvent?.(frame.event);
+        },
+      }
+      : {},
+  );
+  try {
+    return await client.request("turn", body) as TurnResult;
+  } finally {
+    client.close();
+  }
+}
 
 function socketError(error: unknown, config: CliConfig): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -411,6 +476,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     const arg = argv[i];
     if (arg === "--json") {
       json = true;
+    } else if (arg === "--unix") {
+      overrides.unix = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     } else if (VALUE_FLAGS.has(arg)) {
@@ -461,7 +528,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (positional[0] === "exec") {
     const prompt = positional.slice(1).join(" ").trim();
     if (prompt.length === 0) {
-      return { command: "exec", json, overrides, error: "exec requires a prompt" };
+      return {
+        command: "exec",
+        json,
+        overrides,
+        error: "exec requires a prompt",
+      };
     }
     return { command: "exec", prompt, json, overrides };
   }
@@ -469,9 +541,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (positional[0] === "ask") {
     const prompt = positional.slice(1).join(" ").trim();
     if (prompt.length === 0) {
-      return { command: "exec", json, overrides, error: "ask requires a prompt" };
+      return {
+        command: "exec",
+        json,
+        overrides,
+        error: "ask requires a prompt",
+      };
     }
-    return { command: "exec", prompt, json, overrides: { ...overrides, mode: "ask" } };
+    return {
+      command: "exec",
+      prompt,
+      json,
+      overrides: { ...overrides, mode: "ask" },
+    };
   }
   if (positional.length > 0) {
     return error(`unknown command: ${positional[0]}`);
@@ -494,12 +576,14 @@ export function resolveConfig(
     ? (Number(tierEnv) as 0 | 1 | 2)
     : undefined;
   const hintEnv = env.get("DYFJ_WORKBENCH_HINT");
-  const hint = hintEnv === "code" || hintEnv === "chat" || hintEnv === "reasoning"
-    ? hintEnv
-    : undefined;
+  const hint =
+    hintEnv === "code" || hintEnv === "chat" || hintEnv === "reasoning"
+      ? hintEnv
+      : undefined;
   const explicitWorkspace = overrides.workspace ?? env.get("DYFJ_WORKSPACE");
   return {
-    serverUrl: overrides.serverUrl ?? env.get("DYFJ_SERVER_URL") ?? DEFAULT_SERVER,
+    serverUrl: overrides.serverUrl ?? env.get("DYFJ_SERVER_URL") ??
+      DEFAULT_SERVER,
     key: overrides.key ?? env.get("DYFJ_WORKBENCH_API_KEY"),
     mode: overrides.mode ?? "turn",
     model: overrides.model ?? env.get("DYFJ_WORKBENCH_MODEL"),
@@ -512,6 +596,7 @@ export function resolveConfig(
     workspace: explicitWorkspace ?? cwd,
     workspaceExplicit: explicitWorkspace !== undefined,
     socket: overrides.socket ?? resolveSocketPath(env),
+    unix: overrides.unix ?? env.get("DYFJ_UNIX") === "1",
     color: !env.get("NO_COLOR") && isTty,
   };
 }
@@ -529,7 +614,8 @@ Usage:
 Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
   --server <url>   runtime server (default ${DEFAULT_SERVER}, env DYFJ_SERVER_URL)
-  --socket <path>  runtime UDS socket for models/sessions (default per-user, env DYFJ_SOCKET)
+  --socket <path>  runtime UDS socket (models/sessions + turns with --unix; env DYFJ_SOCKET)
+  --unix           run turns over the UDS/JSON-RPC seam instead of HTTP (env DYFJ_UNIX=1)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --session <id>   resume a session

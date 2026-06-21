@@ -3,11 +3,11 @@ import {
   bufferedTurn,
   buildTurnBody,
   type CliConfig,
+  type ConnectFn,
   formatReceipt,
   friendlyError,
   type Io,
   isLoopbackServerUrl,
-  type ConnectFn,
   parseArgs,
   readLineOrNull,
   resolveConfig,
@@ -15,9 +15,12 @@ import {
   runModels,
   runRepl,
   runSessions,
+  socketTurn,
   streamTurn,
   type TurnResult,
 } from "./cli";
+import { serveWorkbenchUnix } from "./uds-server";
+import { connectUnixClient } from "./uds-client";
 
 describe("readLineOrNull", () => {
   test("resolves the answered line", async () => {
@@ -81,7 +84,13 @@ function result(overrides: Partial<TurnResult> = {}): TurnResult {
     },
     route: { reason: "default" },
     cost: { estimatedUsd: 0, totalUsd: 0, paidInferenceUsed: false },
-    tokens: { input: 12, output: 5, cacheRead: 0, cacheWrite: 0, totalCalls: 1 },
+    tokens: {
+      input: 12,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalCalls: 1,
+    },
     ...overrides,
   };
 }
@@ -124,7 +133,8 @@ function fakeIo(lines: string[] = []) {
   const io: Io = {
     out: (text) => stdout.push(text),
     err: (line) => stderr.push(line),
-    readLine: (_prompt) => Promise.resolve(queue.length ? queue.shift()! : null),
+    readLine: (_prompt) =>
+      Promise.resolve(queue.length ? queue.shift()! : null),
     close: () => {},
   };
   return { io, stdout, stderr };
@@ -156,14 +166,18 @@ describe("streamTurn", () => {
   });
 
   test("throws on an error frame", async () => {
-    const { fn } = recordingFetch([sseResponse([{ t: "error", message: "boom" }])]);
+    const { fn } = recordingFetch([
+      sseResponse([{ t: "error", message: "boom" }]),
+    ]);
     await expect(
       streamTurn(cfg(), { prompt: "x" }, { onDelta: () => {} }, fn),
     ).rejects.toThrow("boom");
   });
 
   test("surfaces a pre-stream JSON error", async () => {
-    const { fn } = recordingFetch([jsonResponse({ error: "bad request" }, 400)]);
+    const { fn } = recordingFetch([
+      jsonResponse({ error: "bad request" }, 400),
+    ]);
     await expect(
       streamTurn(cfg(), { prompt: "x" }, { onDelta: () => {} }, fn),
     ).rejects.toThrow("bad request");
@@ -176,7 +190,9 @@ describe("streamTurn", () => {
     await streamTurn(cfg(), { prompt: "hi" }, { onDelta: () => {} }, fn);
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers["accept"]).toBe("text/event-stream");
-    expect(JSON.parse(calls[0].init.body as string)).toMatchObject({ prompt: "hi" });
+    expect(JSON.parse(calls[0].init.body as string)).toMatchObject({
+      prompt: "hi",
+    });
   });
 });
 
@@ -189,7 +205,83 @@ describe("bufferedTurn", () => {
 
   test("throws the server error message on non-2xx", async () => {
     const { fn } = recordingFetch([jsonResponse({ error: "nope" }, 500)]);
-    await expect(bufferedTurn(cfg(), { prompt: "x" }, fn)).rejects.toThrow("nope");
+    await expect(bufferedTurn(cfg(), { prompt: "x" }, fn)).rejects.toThrow(
+      "nope",
+    );
+  });
+});
+
+// ── socketTurn (turns over the UDS seam) ─────────────────────────────────────
+
+/** A fake UDS connect that streams the given frames, then resolves `turn`. */
+function fakeTurnConnect(frames: Frame[], r: TurnResult): ConnectFn {
+  return (_socketPath: string, options) =>
+    Promise.resolve({
+      request: (method: string) => {
+        if (method === "turn") {
+          for (const f of frames) {
+            if (f.t === "delta" || f.t === "event") options?.onStream?.(f);
+          }
+          return Promise.resolve(r);
+        }
+        return Promise.resolve(undefined);
+      },
+      close: () => {},
+    });
+}
+
+describe("socketTurn", () => {
+  test("forwards stream frames and returns the receipt", async () => {
+    const deltas: string[] = [];
+    const events: Record<string, unknown>[] = [];
+    const r = await socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      { onDelta: (t) => deltas.push(t), onEvent: (e) => events.push(e) },
+      fakeTurnConnect(
+        [
+          { t: "event", event: { type: "modelSelected", modelSlug: "x" } },
+          { t: "delta", text: "Hello " },
+          { t: "delta", text: "world" },
+        ],
+        result(),
+      ),
+    );
+    expect(deltas.join("")).toBe("Hello world");
+    expect(events).toHaveLength(1);
+    expect(r.sessionId).toBe(result().sessionId);
+  });
+});
+
+describe("socketTurn over a real Unix socket (integration)", () => {
+  test("streams deltas and returns the receipt across the wire", async () => {
+    const dir = await Deno.makeTempDir();
+    const sock = `${dir}/wb.sock`;
+    const server = serveWorkbenchUnix(sock, {
+      // Stub runtime: stream two deltas, then return a receipt. Cast loosely so
+      // the test need not import the engine's runtime result type.
+      // deno-lint-ignore no-explicit-any
+      runRuntime: (async (input: any) => {
+        input.onTextDelta?.("Hello ");
+        input.onTextDelta?.("socket");
+        return result({ text: "Hello socket" });
+        // deno-lint-ignore no-explicit-any
+      }) as any,
+    });
+    try {
+      const deltas: string[] = [];
+      const r = await socketTurn(
+        cfg({ unix: true, socket: sock }),
+        { prompt: "hi" },
+        { onDelta: (t) => deltas.push(t) },
+        connectUnixClient,
+      );
+      expect(deltas.join("")).toBe("Hello socket");
+      expect(r.text).toBe("Hello socket");
+    } finally {
+      await server.close();
+      await Deno.remove(dir, { recursive: true });
+    }
   });
 });
 
@@ -198,7 +290,10 @@ describe("bufferedTurn", () => {
 describe("runExec", () => {
   test("streams text to stdout and the receipt to stderr", async () => {
     const { fn } = recordingFetch([
-      sseResponse([{ t: "delta", text: "Hi" }, { t: "done", result: result() }]),
+      sseResponse([{ t: "delta", text: "Hi" }, {
+        t: "done",
+        result: result(),
+      }]),
     ]);
     const { io, stdout, stderr } = fakeIo();
     const code = await runExec("hello", cfg(), io, false, fn);
@@ -228,11 +323,46 @@ describe("runExec", () => {
 
   test("reports an unreachable runtime with a hint", async () => {
     const fn = (() =>
-      Promise.reject(new TypeError("error sending request"))) as unknown as typeof fetch;
+      Promise.reject(
+        new TypeError("error sending request"),
+      )) as unknown as typeof fetch;
     const { io, stderr } = fakeIo();
     const code = await runExec("x", cfg(), io, false, fn);
     expect(code).toBe(1);
     expect(stderr.join("\n")).toContain("not reachable");
+  });
+});
+
+describe("runExec over the socket (--unix)", () => {
+  test("streams text + receipt over the seam", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const code = await runExec(
+      "hi",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      fakeTurnConnect([{ t: "delta", text: "Hi" }], result()),
+    );
+    expect(code).toBe(0);
+    expect(stdout.join("")).toBe("Hi\n");
+    expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
+  });
+
+  test("an unreachable socket points the operator at serve-unix", async () => {
+    const { io, stderr } = fakeIo();
+    const code = await runExec(
+      "hi",
+      cfg({ unix: true, socket: "/run/missing.sock" }),
+      io,
+      false,
+      fetch,
+      () => {
+        throw new Error("No such file or directory (os error 2)");
+      },
+    );
+    expect(code).toBe(1);
+    expect(stderr.join("\n")).toContain("serve-unix");
   });
 });
 
@@ -298,8 +428,16 @@ describe("parseArgs", () => {
   });
   test("collects routing + server flags", () => {
     const p = parseArgs([
-      "--model", "m", "--tier", "2", "--hint", "code", "--server", "http://h",
-      "exec", "hi",
+      "--model",
+      "m",
+      "--tier",
+      "2",
+      "--hint",
+      "code",
+      "--server",
+      "http://h",
+      "exec",
+      "hi",
     ]);
     expect(p.overrides).toMatchObject({
       model: "m",
@@ -328,8 +466,13 @@ describe("parseArgs", () => {
     expect(parseArgs(["--socket", "/run/x.sock", "models"]).overrides.socket)
       .toBe("/run/x.sock");
   });
+  test("--unix routes turns over the socket", () => {
+    expect(parseArgs(["--unix", "exec", "x"]).overrides.unix).toBe(true);
+  });
   test("--mode sets the context mode", () => {
-    expect(parseArgs(["--mode", "ask", "exec", "x"]).overrides.mode).toBe("ask");
+    expect(parseArgs(["--mode", "ask", "exec", "x"]).overrides.mode).toBe(
+      "ask",
+    );
   });
   test("rejects an invalid mode", () => {
     expect(parseArgs(["--mode", "wat", "exec", "x"]).error).toContain("mode");
@@ -368,29 +511,49 @@ describe("resolveConfig", () => {
   });
   test("mode defaults to turn and honors the override", () => {
     expect(resolveConfig({}, { get: () => undefined }).mode).toBe("turn");
-    expect(resolveConfig({ mode: "ask" }, { get: () => undefined }).mode).toBe("ask");
+    expect(resolveConfig({ mode: "ask" }, { get: () => undefined }).mode).toBe(
+      "ask",
+    );
   });
   test("workspace defaults to cwd; flag and env override it", () => {
-    expect(resolveConfig({}, { get: () => undefined }, false, "/work/dir").workspace)
+    expect(
+      resolveConfig({}, { get: () => undefined }, false, "/work/dir").workspace,
+    )
       .toBe("/work/dir");
     const env = new Map([["DYFJ_WORKSPACE", "/env/ws"]]);
-    expect(resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd").workspace)
+    expect(
+      resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd").workspace,
+    )
       .toBe("/env/ws");
     expect(
-      resolveConfig({ workspace: "/flag/ws" }, { get: (k) => env.get(k) }, false, "/cwd")
+      resolveConfig(
+        { workspace: "/flag/ws" },
+        { get: (k) => env.get(k) },
+        false,
+        "/cwd",
+      )
         .workspace,
     ).toBe("/flag/ws");
   });
   test("marks workspace explicit only when set via flag or env", () => {
-    expect(resolveConfig({}, { get: () => undefined }, false, "/cwd").workspaceExplicit)
+    expect(
+      resolveConfig({}, { get: () => undefined }, false, "/cwd")
+        .workspaceExplicit,
+    )
       .toBe(false);
     expect(
-      resolveConfig({ workspace: "/w" }, { get: () => undefined }, false, "/cwd")
+      resolveConfig(
+        { workspace: "/w" },
+        { get: () => undefined },
+        false,
+        "/cwd",
+      )
         .workspaceExplicit,
     ).toBe(true);
     const env = new Map([["DYFJ_WORKSPACE", "/env"]]);
     expect(
-      resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd").workspaceExplicit,
+      resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd")
+        .workspaceExplicit,
     ).toBe(true);
   });
   test("socket defaults via DYFJ_SOCKET and the --socket override", () => {
@@ -399,8 +562,17 @@ describe("resolveConfig", () => {
       "/run/dyfj.sock",
     );
     expect(
-      resolveConfig({ socket: "/flag.sock" }, { get: (k) => env.get(k) }).socket,
+      resolveConfig({ socket: "/flag.sock" }, { get: (k) => env.get(k) })
+        .socket,
     ).toBe("/flag.sock");
+  });
+  test("unix defaults off; flag and DYFJ_UNIX enable it", () => {
+    expect(resolveConfig({}, { get: () => undefined }).unix).toBe(false);
+    expect(resolveConfig({ unix: true }, { get: () => undefined }).unix).toBe(
+      true,
+    );
+    const env = new Map([["DYFJ_UNIX", "1"]]);
+    expect(resolveConfig({}, { get: (k) => env.get(k) }).unix).toBe(true);
   });
 });
 
@@ -421,7 +593,12 @@ describe("models/sessions over UDS", () => {
       fakeConnect({
         "models/list": {
           models: [
-            { slug: "gemma4", tier: 0, provider: "ollama", displayName: "Gemma 4" },
+            {
+              slug: "gemma4",
+              tier: 0,
+              provider: "ollama",
+              displayName: "Gemma 4",
+            },
           ],
         },
       }),
@@ -439,7 +616,10 @@ describe("models/sessions over UDS", () => {
       fakeConnect({
         "sessions/list": {
           projects: [
-            { project: "dyfj", sessions: [{ slug: "s-1", sessionName: "Build" }] },
+            {
+              project: "dyfj",
+              sessions: [{ slug: "s-1", sessionName: "Build" }],
+            },
           ],
         },
       }),
@@ -453,9 +633,13 @@ describe("models/sessions over UDS", () => {
 
   test("a connection failure points the operator at serve-unix", async () => {
     const { io, stderr } = fakeIo();
-    const code = await runModels(cfg({ socket: "/run/missing.sock" }), io, () => {
-      throw new Error("No such file or directory (os error 2)");
-    });
+    const code = await runModels(
+      cfg({ socket: "/run/missing.sock" }),
+      io,
+      () => {
+        throw new Error("No such file or directory (os error 2)");
+      },
+    );
     expect(code).toBe(1);
     expect(stderr.join("\n")).toContain("serve-unix");
     expect(stderr.join("\n")).toContain("/run/missing.sock");
@@ -481,12 +665,17 @@ describe("buildTurnBody", () => {
     expect(buildTurnBody("hi", cfg({ workspace: "/work/dir" })).workspace)
       .toBe("/work/dir");
     // Resuming (sessionId present): omitted — the server reads it from the row.
-    expect(buildTurnBody("hi", cfg({ workspace: "/work/dir" }), "SESS").workspace)
+    expect(
+      buildTurnBody("hi", cfg({ workspace: "/work/dir" }), "SESS").workspace,
+    )
       .toBeUndefined();
     expect(buildTurnBody("hi", cfg()).workspace).toBeUndefined();
   });
   test("never auto-sends the implicit cwd workspace to a remote server", () => {
-    const remote = cfg({ workspace: "/work/dir", serverUrl: "https://remote.example" });
+    const remote = cfg({
+      workspace: "/work/dir",
+      serverUrl: "https://remote.example",
+    });
     // Implicit cwd default must not cross the local->remote boundary.
     expect(buildTurnBody("hi", remote).workspace).toBeUndefined();
     // An explicitly-supplied workspace is honored even for a remote server.
