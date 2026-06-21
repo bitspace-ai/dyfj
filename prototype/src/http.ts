@@ -1,6 +1,4 @@
 import {
-  type PaidEscalationVerdict,
-  resolveRuntimeEnvDefaults,
   runWorkbenchRuntime,
   type WorkbenchAuthContext,
   type WorkbenchRuntimeEvent,
@@ -12,10 +10,8 @@ import {
   loadWorkbenchModels,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
-  type WorkbenchRoutingOptions,
 } from "./provider";
 import {
-  buildConversationMessages,
   createProjectWorkbenchSession,
   fetchWorkbenchSessionEvents,
   isValidAsOfTimestamp,
@@ -24,6 +20,12 @@ import {
   type WorkbenchSessionEvent,
 } from "./sessions";
 import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
+import {
+  executeTurn,
+  type ResolvedTurn,
+  resolveTurnFromBody,
+  type TurnRequestBody,
+} from "./turn-runner";
 
 // Seam contract lock (BIT-136): the runtime result MUST satisfy the wire
 // receipt. If a receipt field is dropped or renamed in WorkbenchRuntimeResult,
@@ -73,19 +75,6 @@ async function loadPickerModels(): Promise<WorkbenchModel[]> {
   }
 }
 
-interface TurnRequestBody {
-  prompt?: unknown;
-  mode?: unknown;
-  routingOptions?: unknown;
-  sessionId?: unknown;
-  workspace?: unknown;
-  // BIT-166: explicit per-turn paid-inference opt-in + per-turn budget override.
-  // Both are honored only on the loopback transport (see resolveTurnRequest /
-  // the confirmPaidEscalation injection).
-  approvePaidInference?: unknown;
-  budget?: unknown;
-}
-
 export function createWorkbenchHttpHandler(
   options: WorkbenchHttpHandlerOptions = {},
 ): (request: Request, info?: Deno.ServeHandlerInfo) => Promise<Response> {
@@ -113,14 +102,24 @@ export function createWorkbenchHttpHandler(
       return htmlResponse(renderWorkbenchIndex());
     }
     if (request.method === "GET" && url.pathname === "/api/models") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
+      const resolved = await resolveWorkbenchAuth(
+        request,
+        url,
+        auth,
+        peerLoopback,
+      );
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
       return jsonResponse({ models: await loadModels() });
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
+      const resolved = await resolveWorkbenchAuth(
+        request,
+        url,
+        auth,
+        peerLoopback,
+      );
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -132,7 +131,12 @@ export function createWorkbenchHttpHandler(
       }
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
+      const resolved = await resolveWorkbenchAuth(
+        request,
+        url,
+        auth,
+        peerLoopback,
+      );
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -165,7 +169,12 @@ export function createWorkbenchHttpHandler(
       /^\/api\/sessions\/([^/]+)\/events$/,
     );
     if (request.method === "GET" && eventsMatch !== null) {
-      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
+      const resolved = await resolveWorkbenchAuth(
+        request,
+        url,
+        auth,
+        peerLoopback,
+      );
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -188,7 +197,12 @@ export function createWorkbenchHttpHandler(
       }
     }
     if (request.method === "POST" && url.pathname === "/api/turn") {
-      const resolved = await resolveWorkbenchAuth(request, url, auth, peerLoopback);
+      const resolved = await resolveWorkbenchAuth(
+        request,
+        url,
+        auth,
+        peerLoopback,
+      );
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
@@ -388,174 +402,18 @@ function peerIsLoopback(info?: Deno.ServeHandlerInfo): boolean {
   return isLoopbackHost(addr.hostname);
 }
 
-// BIT-166: paid inference over HTTP is available only to a loopback caller that
-// explicitly opts in per turn. Remote callers are denied outright; a loopback
-// caller that did not opt in is denied with the second reason.
-const PAID_ESCALATION_REMOTE_DENIED =
-  "paid inference is not available to remote callers";
-const PAID_ESCALATION_NOT_APPROVED =
-  "paid inference was not approved for this turn";
-
-function httpPaidEscalationVerdict(
-  loopback: boolean,
-  approved: boolean,
-): PaidEscalationVerdict {
-  if (loopback && approved) return { decision: "approve" };
-  return {
-    decision: "deny",
-    reason: loopback ? PAID_ESCALATION_NOT_APPROVED : PAID_ESCALATION_REMOTE_DENIED,
-  };
-}
-
-/**
- * Per-session turn serialization (BIT-147). Two concurrent turns for the same
- * session would split-brain the append-only event log — each reads the prior
- * events and appends its own — and race the shared Dolt pool. Chain same-session
- * turns so they run one at a time: the operator's second turn runs after the
- * first rather than being dropped. New turns (no sessionId) target fresh
- * sessions and never collide, so they run immediately without serialization.
- */
-const sessionTurnChains = new Map<string, Promise<unknown>>();
-
-function withSessionTurnLock<T>(
-  sessionId: string | undefined,
-  run: () => Promise<T>,
-): Promise<T> {
-  if (sessionId === undefined) return run();
-  const prior = sessionTurnChains.get(sessionId) ?? Promise.resolve();
-  // Run after the prior turn settles, whether it resolved or rejected.
-  const result = prior.then(run, run);
-  const settled = result.then(() => {}, () => {});
-  sessionTurnChains.set(sessionId, settled);
-  void settled.finally(() => {
-    // Drop the chain once this turn is the tail, so the map does not grow.
-    if (sessionTurnChains.get(sessionId) === settled) {
-      sessionTurnChains.delete(sessionId);
-    }
-  });
-  return result;
-}
-
-/**
- * Parse and validate a turn request body into runtime input plus the validated
- * resume sessionId. Shared by the buffered and streaming turn handlers.
- *
- * Deliberately does NOT read the session's prior events: transcript
- * reconstruction is deferred into the per-session lock (see `buildResume`) so a
- * resumed turn reads the latest committed events only after all earlier
- * same-session turns have appended theirs. Reading here (before the lock) let a
- * second same-session turn build a stale transcript — a TOCTOU on the audit log
- * (BIT-147 review finding).
- */
-function parseBudgetOverride(
-  value: unknown,
-):
-  | { sessionLimitUsd?: number; perCallLimitUsd?: number }
-  | { error: string } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { error: "budget must be an object" };
-  }
-  const record = value as Record<string, unknown>;
-  const out: { sessionLimitUsd?: number; perCallLimitUsd?: number } = {};
-  for (const key of ["sessionLimitUsd", "perCallLimitUsd"] as const) {
-    const raw = record[key];
-    if (raw === undefined) continue;
-    // A fat-finger guard, not a security control — consent is the binding money
-    // gate. Reject non-positive / non-finite / absurd values.
-    if (
-      typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0 || raw > 1000
-    ) {
-      return { error: `budget.${key} must be a positive number up to 1000` };
-    }
-    out[key] = raw;
-  }
-  return out;
-}
-
+// Parse the HTTP request body, then resolve it through the shared turn core.
 async function resolveTurnRequest(
   request: Request,
   loopback: boolean,
-): Promise<
-  | {
-    runtimeInput: WorkbenchRuntimeInput;
-    sessionId: string | undefined;
-    approvePaidInference: boolean;
-  }
-  | { error: string; status: number }
-> {
+): Promise<ResolvedTurn | { error: string; status: number }> {
   let body: TurnRequestBody;
   try {
     body = await request.json() as TurnRequestBody;
   } catch {
     return { error: "request body must be JSON", status: 400 };
   }
-
-  const runtimeInput = buildRuntimeInputFromJson(body);
-  if ("error" in runtimeInput) {
-    return { error: runtimeInput.error, status: 400 };
-  }
-
-  let sessionId: string | undefined;
-  if (body.sessionId !== undefined) {
-    if (
-      typeof body.sessionId !== "string" ||
-      !SESSION_ID_SHAPE.test(body.sessionId)
-    ) {
-      return { error: "invalid session id", status: 400 };
-    }
-    sessionId = body.sessionId;
-  }
-
-  // BIT-166: validate the explicit per-turn paid-inference opt-in. Whether it
-  // actually grants approval is decided at the confirmPaidEscalation injection,
-  // which additionally requires the loopback transport.
-  if (
-    body.approvePaidInference !== undefined &&
-    typeof body.approvePaidInference !== "boolean"
-  ) {
-    return { error: "approvePaidInference must be a boolean", status: 400 };
-  }
-  const approvePaidInference = body.approvePaidInference === true;
-
-  // BIT-166: per-turn budget override, applied only on the loopback transport so
-  // a remote caller can never raise the spend cap. (Malformed values still 400
-  // regardless of transport.)
-  if (body.budget !== undefined) {
-    const budget = parseBudgetOverride(body.budget);
-    if ("error" in budget) {
-      return { error: budget.error, status: 400 };
-    }
-    if (loopback) {
-      if (budget.sessionLimitUsd !== undefined) {
-        runtimeInput.sessionLimitUsd = budget.sessionLimitUsd;
-      }
-      if (budget.perCallLimitUsd !== undefined) {
-        runtimeInput.perCallLimitUsd = budget.perCallLimitUsd;
-      }
-    }
-  }
-
-  return { runtimeInput, sessionId, approvePaidInference };
-}
-
-/**
- * Rebuild the resume context (prior turns as conversation messages). Called
- * INSIDE `withSessionTurnLock` so the prior-event read happens after all earlier
- * same-session turns have settled — keeping the read-modify-append atomic per
- * session (BIT-147).
- */
-async function buildResume(
-  sessionId: string | undefined,
-  fetchSessionEvents: NonNullable<
-    WorkbenchHttpHandlerOptions["fetchSessionEvents"]
-  >,
-): Promise<Pick<WorkbenchRuntimeInput, "sessionId" | "conversationMessages">> {
-  if (sessionId === undefined) return {};
-  const priorEvents = await fetchSessionEvents({ sessionId });
-  return {
-    sessionId,
-    conversationMessages: buildConversationMessages(priorEvents),
-  };
+  return resolveTurnFromBody(body, loopback);
 }
 
 async function handleJsonTurn(
@@ -571,29 +429,16 @@ async function handleJsonTurn(
   if ("error" in resolved) {
     return jsonResponse({ error: resolved.error }, resolved.status);
   }
-  const { runtimeInput, sessionId, approvePaidInference } = resolved;
-
   try {
     const events: WorkbenchRuntimeEvent[] = [];
-    const result = await withSessionTurnLock(sessionId, async () => {
-      const resume = await buildResume(sessionId, fetchSessionEvents);
-      return runRuntime({
-        ...runtimeInput,
-        ...resume,
-        // BIT-148: env-derived runtime config resolved at the boundary, not in
-        // the core. A future headless driver supplies these from its own config.
-        ...resolveRuntimeEnvDefaults(),
-        authContext,
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
-        // BIT-166: paid inference is granted only to a loopback caller that
-        // explicitly opted in this turn; remote callers are always denied.
-        confirmPaidEscalation: () =>
-          Promise.resolve(
-            httpPaidEscalationVerdict(loopback, approvePaidInference),
-          ),
-      });
+    const result = await executeTurn(resolved, {
+      authContext,
+      loopback,
+      runRuntime,
+      fetchSessionEvents,
+      onRuntimeEvent: (event) => {
+        events.push(event);
+      },
     });
     return jsonResponse({ ...result, events });
   } catch (err) {
@@ -628,8 +473,6 @@ async function handleStreamingTurn(
     // plain JSON error response rather than an SSE error frame.
     return jsonResponse({ error: resolved.error }, resolved.status);
   }
-  const { runtimeInput, sessionId, approvePaidInference } = resolved;
-
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -638,24 +481,15 @@ async function handleStreamingTurn(
           encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
         );
       try {
-        const result = await withSessionTurnLock(sessionId, async () => {
-          const resume = await buildResume(sessionId, fetchSessionEvents);
-          return runRuntime({
-            ...runtimeInput,
-            ...resume,
-            // BIT-148: env-derived runtime config resolved at the boundary.
-            ...resolveRuntimeEnvDefaults(),
-            authContext,
-            onTextDelta: (delta) => send({ t: "delta", text: delta }),
-            onRuntimeEvent: (event) => {
-              send({ t: "event", event });
-            },
-            // BIT-166: see handleJsonTurn — loopback + explicit per-turn opt-in.
-            confirmPaidEscalation: () =>
-              Promise.resolve(
-                httpPaidEscalationVerdict(loopback, approvePaidInference),
-              ),
-          });
+        const result = await executeTurn(resolved, {
+          authContext,
+          loopback,
+          runRuntime,
+          fetchSessionEvents,
+          onTextDelta: (delta) => send({ t: "delta", text: delta }),
+          onRuntimeEvent: (event) => {
+            send({ t: "event", event });
+          },
         });
         send({ t: "done", result });
       } catch (err) {
@@ -674,65 +508,6 @@ async function handleStreamingTurn(
       "connection": "keep-alive",
     },
   });
-}
-
-function buildRuntimeInputFromJson(
-  body: TurnRequestBody,
-): WorkbenchRuntimeInput | { error: string } {
-  if (typeof body.prompt !== "string" || body.prompt.trim().length === 0) {
-    return { error: "prompt must be a non-empty string" };
-  }
-  const mode = body.mode ?? "turn";
-  if (mode !== "turn" && mode !== "ask" && mode !== "next-work") {
-    return { error: "mode must be turn, ask, or next-work" };
-  }
-  const routingOptions = parseRoutingOptions(body.routingOptions);
-  if ("error" in routingOptions) return routingOptions;
-  if (body.workspace !== undefined && typeof body.workspace !== "string") {
-    return { error: "workspace must be a string" };
-  }
-  return {
-    mode,
-    prompt: body.prompt,
-    routingOptions,
-    // Honored only for a loopback operator; the runtime applies that gate.
-    ...(typeof body.workspace === "string"
-      ? { workspaceRoot: body.workspace }
-      : {}),
-  };
-}
-
-function parseRoutingOptions(
-  value: unknown,
-): WorkbenchRoutingOptions | { error: string } {
-  if (value === undefined) return {};
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { error: "routingOptions must be an object" };
-  }
-  const input = value as Record<string, unknown>;
-  const output: WorkbenchRoutingOptions = {};
-  if ("modelId" in input) {
-    if (typeof input.modelId !== "string") {
-      return { error: "routingOptions.modelId must be a string" };
-    }
-    output.modelId = input.modelId;
-  }
-  if ("tier" in input) {
-    if (input.tier !== 0 && input.tier !== 1 && input.tier !== 2) {
-      return { error: "routingOptions.tier must be 0, 1, or 2" };
-    }
-    output.tier = input.tier;
-  }
-  if ("hint" in input) {
-    if (
-      input.hint !== "code" && input.hint !== "chat" &&
-      input.hint !== "reasoning"
-    ) {
-      return { error: "routingOptions.hint must be code, chat, or reasoning" };
-    }
-    output.hint = input.hint;
-  }
-  return output;
 }
 
 // NOTE: the entire document — including the inline <script> — is one template
