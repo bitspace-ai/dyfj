@@ -20,6 +20,15 @@ Prefer pipelines of pure transformations over mutation-heavy objects. If mutatio
 
 Any intentional cycle must be named, justified, and tested.
 
+## Documentation Discipline
+
+Documentation is part of the change, not a follow-up. A commit that changes behavior, surface, or architecture updates the docs in the same commit — never leaving them to drift.
+
+- **CHANGELOG.** Every behavior- or surface-affecting change lands a `CHANGELOG.md` entry under `[Unreleased]`, following [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): grouped under `Added` / `Changed` / `Deprecated` / `Removed` / `Fixed` / `Security`, newest at the top, written for a reader who wasn't here. DYFJ has no release tags yet, so dated sections are cut from `[Unreleased]` rather than versioned. A pure-internal refactor with no observable change doesn't need an entry; anything that changes what the system does or exposes does.
+- **Docs must not lie — directly or by omission.** `README.md`, `prototype/README.md`, `mcp/README.md`, and the README's Section 1 (Decisions) are operating context: they must match the ground truth of the code. A new transport, endpoint, task, flag, env var, or architectural seam that the docs don't mention is a lie by omission. When you add or change a surface, find where the docs describe that area and bring it current in the same change; if a doc claim is now false, fix it — don't leave it.
+- **Scope honestly.** Document what is true *now*. Mark in-progress or deferred work as such rather than describing the intended end-state as if it shipped.
+- **Two trails, kept distinct.** `CHANGELOG.md` records code/behavior changes; the root README's Revision history records document-level revisions of the operating context. Update whichever the change touches; keep both current.
+
 ## Issue Tracking
 
 This project uses **Linear** for issue tracking (team Bitspace Applied Intelligence, `BIT-###`; DYFJ Workbench and related projects). Use the Linear MCP/integration to find ready work, claim, record progress, and close issues; for non-trivial work, create or claim a Linear issue before editing.

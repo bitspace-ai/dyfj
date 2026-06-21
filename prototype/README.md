@@ -2,7 +2,7 @@
 
 This is the TypeScript prototype layer of DYFJ.
 
-This layer contains working prototype code for Workbench CLI/shell, local HTTP, shared runtime execution, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
+This layer contains working prototype code for Workbench CLI/shell, local HTTP, the JSON-RPC/UDS transport seam, shared runtime execution, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
 
 If you want to understand DYFJ's stance on why prototype-and-substrate coexist in the same repo, read the project README at the repo root, especially the Layer 0 stance on Rust as a moving boundary.
 
@@ -46,6 +46,14 @@ The HTTP task listens on `http://127.0.0.1:8787/` by default. `GET /` returns a 
 
 Loopback needs no credentials. To serve additional interfaces (a private overlay network, for example), set `DYFJ_WORKBENCH_HTTP_HOST` to a comma-separated host list and provide a bearer key in `DYFJ_WORKBENCH_API_KEY` - non-loopback requests must present it as `Authorization: Bearer <key>`, and the server refuses non-loopback binds without it. `DYFJ_WORKBENCH_ALLOWED_HOSTS` allows extra non-loopback hostnames beyond the bind list. Authenticated requests are recorded on the event log with `authn_mechanism = api_key`. Project the key at process start (for example `op run`), as with provider keys; see the root README's "Remote access" section for the full posture.
 
+For the JSON-RPC seam over a Unix domain socket (the canonical `loopback` transport, shared with the terminal clients):
+
+```sh
+deno task serve-unix
+```
+
+It serves a duplex JSON-RPC 2.0 protocol — `models/list`, `sessions/list`, `events/query`, and the streaming `turn` method — over a socket resolved from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running the same shared turn core as the HTTP path. The engine-free `dyfj` CLI reaches the read methods over it with `deno task cli models --socket "$DYFJ_SOCKET"` (and `sessions`). Driving a turn from the CLI over the socket, plus the mid-turn approval round-trip, are landing next.
+
 The prototype reads Dolt connection settings from environment variables. For the default local server:
 
 ```sh
@@ -85,7 +93,7 @@ The response must include generated text. Health/list endpoints such as Ollama `
 
 ## Layout
 
-- `src/` — Workbench entrypoint, shell, local HTTP veneer, shared runtime boundary, command registry, provider path, memory, budget, session persistence, event verification, MCP client, utilities, tests
+- `src/` — Workbench entrypoint, shell, local HTTP veneer, the JSON-RPC/UDS transport seam, shared runtime boundary, command registry, provider path, memory, budget, session persistence, event verification, MCP client, utilities, tests
 - `mcp/` — MCP server (`server.ts`)
 - `examples/` — runnable Deno demos and tracers
 

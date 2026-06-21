@@ -7,7 +7,7 @@ This README is the *operating context* for the project. Decisions up front. How-
 ## Repo layout
 
 - `core/` - Rust substrate. Contains the first schema tracer bullet: a small event read/write library plus a demo binary that round-trips an event through Dolt. Where stabilized components live.
-- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI/shell, local HTTP veneer, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
+- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI/shell, local HTTP veneer, the JSON-RPC/UDS transport seam, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `CHANGELOG.md` - dated change tracking in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 - `LICENSE` - MIT.
@@ -16,7 +16,7 @@ The split between `core/` and `prototype/` is not a phase boundary. It's a perma
 
 ## Status
 
-Early and active. The prototype is functional - Workbench CLI/shell plus a thin `dyfj` CLI client over the REST seam, HTTP veneer (loopback by default, with optional authenticated remote interfaces), SSE streaming on the turn path, shared single-turn runtime boundary, a multi-step agent loop (iterating model↔tools with read-only workspace file tools), local-first provider path with hosted providers (Anthropic, OpenAI, and Google Gemini) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory with privacy-class scoping, system prompts persisted in a Dolt prompts table, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+Early and active. The prototype is functional - Workbench CLI/shell plus a thin engine-free `dyfj` CLI client over the REST and Unix-socket seams, HTTP veneer (loopback by default, with optional authenticated remote interfaces), SSE streaming on the turn path, a duplex JSON-RPC 2.0 seam over a Unix domain socket (the canonical loopback transport, sharing one turn core with the HTTP/SSE path), shared single-turn runtime boundary, a multi-step agent loop (iterating model↔tools with read-only workspace file tools), local-first provider path with hosted providers (Anthropic, OpenAI, and Google Gemini) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory with privacy-class scoping, system prompts persisted in a Dolt prompts table, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
 
 Dated change tracking lives in [CHANGELOG.md](CHANGELOG.md).
 
@@ -203,6 +203,23 @@ DYFJ_WORKBENCH_API_KEY="op://<vault>/<item>/credential" \
 
 Project the key from your secret manager at process start, as with provider keys. Do not put it in `.env`, and do not expose these ports publicly - this is an authenticated private-network posture, not an internet-facing one.
 
+#### JSON-RPC seam over a Unix domain socket
+
+Alongside the HTTP veneer, the workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket — the canonical `loopback` transport (no TCP port; gated by filesystem permissions; full local clearance). It is the seam the terminal clients use instead of HTTP, and both transports run the same shared turn core, so a turn behaves identically over HTTP/SSE and the socket.
+
+```sh
+deno task serve-unix      # serve the JSON-RPC seam on the Unix socket
+```
+
+The socket path resolves from `DYFJ_SOCKET`, else `$XDG_RUNTIME_DIR/dyfj/workbench.sock`, else `~/.dyfj/run/workbench.sock` (the parent directory is created mode 0700). The engine-free `dyfj` CLI reaches the read methods over the socket:
+
+```sh
+deno task cli models --socket "$DYFJ_SOCKET"
+deno task cli sessions --socket "$DYFJ_SOCKET"
+```
+
+The seam exposes `models/list`, `sessions/list`, `events/query`, and the streaming `turn` method (intermediate text deltas and runtime events arrive as `stream` notifications; the receipt is the result). Driving a `turn` from the CLI over the socket, and the mid-turn approval round-trip, are landing next; TCP-over-Tailscale for remote reach is deferred.
+
 Useful validation tasks:
 
 ```sh
@@ -296,7 +313,7 @@ Things that exist as boxes on a diagram.
   - Tool call mechanism (typed, validated, observable)
   - Context engineering pipeline: token counting / auto-compaction, incremental diffs (only changes since last turn), layered prompt composition (system + skills/tools + workspace anchors + retrieved context), retrieval tools (grep, LSP, AST, glob)
 - **Memory abstraction.** First-class subsystem, not a bolt-on. Distinct from the immutable log. Queryable, evictable, scoped, explicitly reasoned about.
-- **Workbench runtime boundary.** Shared single-turn runtime invoked by CLI/shell and local HTTP veneers. Presentation layers pass inputs and render results; the runtime owns model routing, command/tool execution, session/event writes, budget tracking, and receipt facts.
+- **Workbench runtime boundary.** Shared single-turn runtime invoked by CLI/shell, the local HTTP/SSE veneer, and the JSON-RPC/UDS seam — every transport runs the identical turn through one shared core (`turn-runner`), not a per-transport copy. Presentation layers pass inputs and render results; the runtime owns model routing, command/tool execution, session/event writes, budget tracking, and receipt facts.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable, versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
 - **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per Section 1: schema carries the metadata Day-1; runtime registry is stubbed Day-1, deferred to real implementation later.
@@ -379,3 +396,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-06-04 - Workbench runtime split into a shared single-turn boundary with CLI/shell and local HTTP veneers; C4/D2 runtime diagrams added.
 - 2026-06-12 - Remote-access posture documented (authenticated non-loopback interfaces); change tracking split out into CHANGELOG.md, leaving this section to document revisions.
 - 2026-06-16 - Freshness pass: tagline reframed to optionality; Status updated for the `dyfj` CLI client, SSE streaming, the multi-step agent loop with read-only file tools, three hosted providers (Anthropic/OpenAI/Gemini), memory privacy-class scoping, and the prompts table; local default corrected to Qwen3-Coder-30B-A3B (the 4B was retired in `schema/016`); hosted-inference section generalized across providers.
+- 2026-06-21 - Transport seam documented: a duplex JSON-RPC 2.0 protocol over a Unix domain socket as the canonical loopback transport, the shared `turn-runner` core both transports run, and the `serve-unix` launcher + engine-free CLI-over-socket; Status, Repo layout, the Layer 1 runtime boundary, and Run-it updated to match (per the transport-seam decision, 2026-06-21).
