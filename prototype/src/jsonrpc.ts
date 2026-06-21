@@ -93,6 +93,14 @@ export interface DecodedFrame {
 // frame never tears down the connection loop.
 export class FrameDecoder {
   #buf = "";
+  readonly #maxBytes?: number;
+
+  // maxBytes bounds the partial-line buffer so a newline-less stream cannot
+  // exhaust memory once a remote transport is wired (the Codex forward item).
+  // undefined = unbounded, which is fine for the trusted local UDS.
+  constructor(maxBytes?: number) {
+    this.#maxBytes = maxBytes;
+  }
 
   push(chunk: string): DecodedFrame[] {
     this.#buf += chunk;
@@ -107,6 +115,10 @@ export class FrameDecoder {
       } catch (err) {
         out.push({ ok: false, error: (err as Error).message });
       }
+    }
+    if (this.#maxBytes !== undefined && this.#buf.length > this.#maxBytes) {
+      out.push({ ok: false, error: `frame exceeds ${this.#maxBytes} bytes` });
+      this.#buf = "";
     }
     return out;
   }

@@ -39,6 +39,13 @@ describe("framing", () => {
     expect(frames[0].ok).toBe(false);
     expect(typeof frames[0].error).toBe("string");
   });
+
+  test("FrameDecoder bounds the partial buffer when maxBytes is set", () => {
+    const frames = new FrameDecoder(8).push("123456789"); // 9 chars, no newline
+    expect(frames.length).toBe(1);
+    expect(frames[0].ok).toBe(false);
+    expect(frames[0].error).toMatch(/exceeds/);
+  });
 });
 
 describe("classify", () => {
