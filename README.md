@@ -109,12 +109,11 @@ git clone https://github.com/bitspace-ai/dyfj
 cd dyfj/prototype
 deno install
 cp .env.example .env
-cp settings.example.json settings.json
 ```
 
 The prototype uses Deno tasks defined in `deno.json`. See `deno task` for the list of entry points.
 
-Edit `.env` and `settings.json` for your local config. The prototype reads Dolt connection settings from environment variables; for the default local SQL server, export:
+Edit `.env` for your local config. The prototype reads Dolt connection settings from environment variables; for the default local SQL server, export:
 
 ```sh
 export DOLT_HOST=127.0.0.1
