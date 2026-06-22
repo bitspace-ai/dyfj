@@ -22,7 +22,7 @@
  * limit check post-call (via record()) catches overruns if they occur.
  */
 
-import { writeEvent, generateULID, generateSpanId } from "./utils";
+import { generateSpanId, generateULID, writeEvent } from "./utils";
 import process from "node:process";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ export interface BudgetConfig {
 
 export function defaultBudgetConfig(): BudgetConfig {
   return {
-    sessionLimitUsd: parseFloat(process.env.DYFJ_BUDGET_SESSION_USD  ?? "1.00"),
+    sessionLimitUsd: parseFloat(process.env.DYFJ_BUDGET_SESSION_USD ?? "1.00"),
     perCallLimitUsd: parseFloat(process.env.DYFJ_BUDGET_PER_CALL_USD ?? "0.10"),
   };
 }
@@ -44,30 +44,30 @@ export function defaultBudgetConfig(): BudgetConfig {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TierSpend {
-  calls:        number;
-  tokensInput:  number;
+  calls: number;
+  tokensInput: number;
   tokensOutput: number;
-  costUsd:      number;
+  costUsd: number;
 }
 
 export interface PreCallCheck {
-  allowed:           boolean;
-  estimatedCost:     number;
-  sessionCostSoFar:  number;
-  sessionLimitUsd:   number;
-  perCallLimitUsd:   number;
+  allowed: boolean;
+  estimatedCost: number;
+  sessionCostSoFar: number;
+  sessionLimitUsd: number;
+  perCallLimitUsd: number;
   /** Only present when allowed === false */
   reason?: "per_call_limit" | "session_limit";
 }
 
 export interface BudgetSummary {
-  totalCostUsd:      number;
-  totalTokensInput:  number;
+  totalCostUsd: number;
+  totalTokensInput: number;
   totalTokensOutput: number;
-  totalCalls:        number;
-  config:            BudgetConfig;
+  totalCalls: number;
+  config: BudgetConfig;
   /** Keyed by tier number as string: "0", "1", "2" */
-  byTier:            Record<string, TierSpend>;
+  byTier: Record<string, TierSpend>;
 }
 
 // ── Error ─────────────────────────────────────────────────────────────────────
@@ -81,9 +81,9 @@ export class BudgetExceededError extends Error {
   ) {
     super(
       `Budget exceeded [${reason}]: ` +
-      `estimated $${estimatedCost.toFixed(6)}, ` +
-      `limit $${limitUsd.toFixed(6)}, ` +
-      `session total so far $${sessionCostSoFar.toFixed(6)}`
+        `estimated $${estimatedCost.toFixed(6)}, ` +
+        `limit $${limitUsd.toFixed(6)}, ` +
+        `session total so far $${sessionCostSoFar.toFixed(6)}`,
     );
     this.name = "BudgetExceededError";
   }
@@ -93,15 +93,15 @@ export class BudgetExceededError extends Error {
 
 export class BudgetTracker {
   private readonly _byTier = new Map<0 | 1 | 2, TierSpend>();
-  private _totalCost         = 0;
-  private _totalTokensInput  = 0;
+  private _totalCost = 0;
+  private _totalTokensInput = 0;
   private _totalTokensOutput = 0;
 
   constructor(
     private readonly sessionId: string,
-    private readonly traceId:   string,
-    public  readonly config:    BudgetConfig = defaultBudgetConfig(),
-    // BIT-148: principal is resolved at the boundary and passed in, so the
+    private readonly traceId: string,
+    public readonly config: BudgetConfig = defaultBudgetConfig(),
+    // principal is resolved at the boundary and passed in, so the
     // budget_summary event no longer reads DYFJ_PRINCIPAL_ID / USER from env.
     private readonly principalId: string = "user",
   ) {}
@@ -119,18 +119,21 @@ export class BudgetTracker {
     usage: { input: number; output: number; cost: { total: number } },
     tier: 0 | 1 | 2,
   ): void {
-    this._totalCost         += usage.cost.total;
-    this._totalTokensInput  += usage.input;
+    this._totalCost += usage.cost.total;
+    this._totalTokensInput += usage.input;
     this._totalTokensOutput += usage.output;
 
     const prev = this._byTier.get(tier) ?? {
-      calls: 0, tokensInput: 0, tokensOutput: 0, costUsd: 0,
+      calls: 0,
+      tokensInput: 0,
+      tokensOutput: 0,
+      costUsd: 0,
     };
     this._byTier.set(tier, {
-      calls:        prev.calls        + 1,
-      tokensInput:  prev.tokensInput  + usage.input,
+      calls: prev.calls + 1,
+      tokensInput: prev.tokensInput + usage.input,
       tokensOutput: prev.tokensOutput + usage.output,
-      costUsd:      prev.costUsd      + usage.cost.total,
+      costUsd: prev.costUsd + usage.cost.total,
     });
   }
 
@@ -156,8 +159,8 @@ export class BudgetTracker {
   ): PreCallCheck {
     const base: Omit<PreCallCheck, "allowed" | "estimatedCost" | "reason"> = {
       sessionCostSoFar: this._totalCost,
-      sessionLimitUsd:  this.config.sessionLimitUsd,
-      perCallLimitUsd:  this.config.perCallLimitUsd,
+      sessionLimitUsd: this.config.sessionLimitUsd,
+      perCallLimitUsd: this.config.perCallLimitUsd,
     };
 
     if (tier === 0) {
@@ -167,11 +170,21 @@ export class BudgetTracker {
     const estimatedCost = (estimatedInputTokens / 1_000_000) * costInputPerMTok;
 
     if (estimatedCost > this.config.perCallLimitUsd) {
-      return { ...base, allowed: false, estimatedCost, reason: "per_call_limit" };
+      return {
+        ...base,
+        allowed: false,
+        estimatedCost,
+        reason: "per_call_limit",
+      };
     }
 
     if (this._totalCost + estimatedCost > this.config.sessionLimitUsd) {
-      return { ...base, allowed: false, estimatedCost, reason: "session_limit" };
+      return {
+        ...base,
+        allowed: false,
+        estimatedCost,
+        reason: "session_limit",
+      };
     }
 
     return { ...base, allowed: true, estimatedCost };
@@ -179,10 +192,16 @@ export class BudgetTracker {
 
   // ── Accessors ───────────────────────────────────────────────────────────────
 
-  get totalCost():         number { return this._totalCost; }
-  get totalTokensInput():  number { return this._totalTokensInput; }
-  get totalTokensOutput(): number { return this._totalTokensOutput; }
-  get totalCalls():        number {
+  get totalCost(): number {
+    return this._totalCost;
+  }
+  get totalTokensInput(): number {
+    return this._totalTokensInput;
+  }
+  get totalTokensOutput(): number {
+    return this._totalTokensOutput;
+  }
+  get totalCalls(): number {
     return [...this._byTier.values()].reduce((n, t) => n + t.calls, 0);
   }
 
@@ -192,11 +211,11 @@ export class BudgetTracker {
       byTier[String(tier)] = { ...spend };
     }
     return {
-      totalCostUsd:      this._totalCost,
-      totalTokensInput:  this._totalTokensInput,
+      totalCostUsd: this._totalCost,
+      totalTokensInput: this._totalTokensInput,
       totalTokensOutput: this._totalTokensOutput,
-      totalCalls:        this.totalCalls,
-      config:            { ...this.config },
+      totalCalls: this.totalCalls,
+      config: { ...this.config },
       byTier,
     };
   }
@@ -207,23 +226,25 @@ export class BudgetTracker {
    * Build the Dolt event payload for the budget_summary event.
    * Pure function — accepts an optional id/spanId override for testing.
    */
-  buildSummaryEventPayload(overrides: { eventId?: string; spanId?: string } = {}): Record<string, unknown> {
+  buildSummaryEventPayload(
+    overrides: { eventId?: string; spanId?: string } = {},
+  ): Record<string, unknown> {
     const summary = this.getSummary();
     return {
-      event_id:       overrides.eventId ?? generateULID(),
-      session_id:     this.sessionId,
-      event_type:     "budget_summary",
-      trace_id:       this.traceId,
-      span_id:        overrides.spanId ?? generateSpanId(),
-      principal_id:   this.principalId,
+      event_id: overrides.eventId ?? generateULID(),
+      session_id: this.sessionId,
+      event_type: "budget_summary",
+      trace_id: this.traceId,
+      span_id: overrides.spanId ?? generateSpanId(),
+      principal_id: this.principalId,
       principal_type: "human",
-      action:         "summarise",
-      resource:       "session_budget",
-      authz_basis:    "system",
-      tokens_input:   summary.totalTokensInput  || null,
-      tokens_output:  summary.totalTokensOutput || null,
-      cost_total:     summary.totalCostUsd      || null,
-      content:        JSON.stringify(summary),
+      action: "summarise",
+      resource: "session_budget",
+      authz_basis: "system",
+      tokens_input: summary.totalTokensInput || null,
+      tokens_output: summary.totalTokensOutput || null,
+      cost_total: summary.totalCostUsd || null,
+      content: JSON.stringify(summary),
     };
   }
 

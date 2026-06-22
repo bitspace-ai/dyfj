@@ -39,7 +39,7 @@ export type JsonSchemaProperty = {
    * Mark a payload-bearing argument (e.g. write_file `content`) sensitive: it is
    * replaced with a constant redaction sentinel before the tool-call event is
    * persisted — regardless of the runtime value's type — so the durable log and
-   * session replay never retain the raw value (BIT-116 / CWE-532).
+   * session replay never retain the raw value (CWE-532).
    */
   redact?: boolean;
 };
@@ -268,7 +268,7 @@ export async function invokeCommand<TResult = unknown>(
 
   let authzBasis = policy.authzBasis;
   if (policy.decision === "ask") {
-    // A mutation does not run until the operator approves it (BIT-116). The
+    // A mutation does not run until the operator approves it. The
     // verdict comes from the injected transport approver; the default denies, so
     // an unapproved or channel-less call never executes.
     const verdict = await confirmApproval({
@@ -468,7 +468,7 @@ const REDACTED = "[redacted]";
  * Replace each argument marked `redact` in the command's input schema with a
  * constant sentinel — REGARDLESS of the runtime value's type — so payload-bearing
  * values (write_file content) never reach the durable event log or session replay
- * (BIT-116 / CWE-532), including for malformed (non-string) values and denied
+ * (CWE-532), including for malformed (non-string) values and denied
  * calls (which are still logged). Returns the original object untouched when
  * nothing is redacted, so non-mutating tools are unaffected. Centralized here so
  * every future mutating tool inherits it.
@@ -533,7 +533,7 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   const result = await invokeCommand<TResult>(registry, call, confirmApproval);
   // Redact payload-bearing arguments (e.g. write_file content) before the event
   // is persisted, so the durable log and session replay never retain the raw
-  // value (BIT-116 / CWE-532).
+  // value (CWE-532).
   const loggedArguments = redactCommandArguments(
     registry.lookup(call.commandId),
     call.arguments,

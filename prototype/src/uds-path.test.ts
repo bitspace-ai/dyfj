@@ -9,13 +9,19 @@ describe("resolveSocketPath", () => {
   test("DYFJ_SOCKET wins over everything", () => {
     expect(
       resolveSocketPath(
-        env({ DYFJ_SOCKET: "/explicit.sock", XDG_RUNTIME_DIR: "/run/u", HOME: "/home/c" }),
+        env({
+          DYFJ_SOCKET: "/explicit.sock",
+          XDG_RUNTIME_DIR: "/run/u",
+          HOME: "/home/c",
+        }),
       ),
     ).toBe("/explicit.sock");
   });
 
   test("falls back to $XDG_RUNTIME_DIR/dyfj", () => {
-    expect(resolveSocketPath(env({ XDG_RUNTIME_DIR: "/run/u", HOME: "/home/c" })))
+    expect(
+      resolveSocketPath(env({ XDG_RUNTIME_DIR: "/run/u", HOME: "/home/c" })),
+    )
       .toBe("/run/u/dyfj/workbench.sock");
   });
 

@@ -27,7 +27,7 @@ import {
   type TurnRequestBody,
 } from "./turn-runner";
 
-// Seam contract lock (BIT-136): the runtime result MUST satisfy the wire
+// Seam contract lock: the runtime result MUST satisfy the wire
 // receipt. If a receipt field is dropped or renamed in WorkbenchRuntimeResult,
 // this stops compiling here — before it can silently regress the HTTP/SSE path
 // or drift from the client. `true` only if assignable; otherwise the type is
@@ -1304,12 +1304,12 @@ function renderWorkbenchIndex(): string {
         };
         // Resume into the open session; omitting sessionId starts a fresh one.
         if (currentSessionId) body.sessionId = currentSessionId;
-        // BIT-166: optional per-turn budget override (honored loopback-only
+        // optional per-turn budget override (honored loopback-only
         // server-side).
         const budgetOverride = readBudgetOverride();
         if (budgetOverride) body.budget = budgetOverride;
 
-        // BIT-166: a paid (T1/T2) selection requires explicit per-turn approval.
+        // a paid (T1/T2) selection requires explicit per-turn approval.
         // Confirm before spending; cancelling aborts the turn entirely.
         if (isPaidRiskSelection()) {
           const approved = await confirmPaidInference(paidRiskLabel());

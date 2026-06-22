@@ -18,7 +18,7 @@ import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
 import { connectUnixClient } from "./uds-client";
 import { resolveSocketPath } from "./uds-path";
 
-// ── Seam contract (shared with the server; BIT-136) ──────────────────────────
+// ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
 // imported by both sides, so this thin client can never silently drift from
 // what the server sends. `import type` is erased at compile, keeping the binary

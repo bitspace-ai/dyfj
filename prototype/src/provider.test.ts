@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import {
-  toolWireNames,
   buildAnthropicMessagesRequest,
   buildGeminiRequest,
   buildOpenAIChatRequest,
@@ -14,6 +13,7 @@ import {
   parseOpenAIChatStreamLine,
   runWorkbenchTurn,
   selectWorkbenchModel,
+  toolWireNames,
   withDefaultLocalWorkbenchModels,
   withTimePerOutputToken,
   WorkbenchHostedProviderBaseUrlError,
@@ -104,7 +104,9 @@ describe("selectWorkbenchModel", () => {
   test("defaults to the local MLX Qwen model when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
 
-    expect(selection.selected.slug).toBe("mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit");
+    expect(selection.selected.slug).toBe(
+      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+    );
     expect(selection.selected.provider).toBe("mlx-lm");
     expect(selection.reason).toBe("default");
   });
@@ -275,7 +277,10 @@ describe("buildOpenAIChatRequest", () => {
       {
         name: "memory.read",
         description: "Load one Dolt-backed memory by slug.",
-        parameters: { type: "object", properties: { slug: { type: "string" } } },
+        parameters: {
+          type: "object",
+          properties: { slug: { type: "string" } },
+        },
       },
     ];
     const body = buildOpenAIChatRequest("gemma4", "system", "seed", false, {
@@ -286,15 +291,27 @@ describe("buildOpenAIChatRequest", () => {
           role: "assistant",
           content: "Reading memory.",
           toolCalls: [
-            { id: "call-1", name: "memory.read", arguments: { slug: "project_dyfj" } },
+            {
+              id: "call-1",
+              name: "memory.read",
+              arguments: { slug: "project_dyfj" },
+            },
           ],
         },
-        { role: "tool", toolCallId: "call-1", name: "memory.read", content: "# DYFJ" },
+        {
+          role: "tool",
+          toolCallId: "call-1",
+          name: "memory.read",
+          content: "# DYFJ",
+        },
       ],
     });
 
     expect(body.messages[0]).toEqual({ role: "system", content: "system" });
-    expect(body.messages[1]).toEqual({ role: "user", content: "what is this repo?" });
+    expect(body.messages[1]).toEqual({
+      role: "user",
+      content: "what is this repo?",
+    });
     // Assistant turn carries the tool-call intentions; dotted name sanitized to
     // the same wire form offered in `tools`, arguments serialized to a string.
     expect(body.messages[2]).toEqual({
@@ -304,7 +321,10 @@ describe("buildOpenAIChatRequest", () => {
         {
           id: "call-1",
           type: "function",
-          function: { name: "memory_read", arguments: JSON.stringify({ slug: "project_dyfj" }) },
+          function: {
+            name: "memory_read",
+            arguments: JSON.stringify({ slug: "project_dyfj" }),
+          },
         },
       ],
     });
@@ -415,7 +435,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     expect(requestUrl).toBe("http://127.0.0.1:18080/v1/chat/completions");
-    expect(requestModel).toBe("mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit");
+    expect(requestModel).toBe(
+      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+    );
     expect(result.model.provider).toBe("mlx-lm");
     expect(result.text).toBe("hello from mlx");
   });
@@ -556,12 +578,16 @@ describe("runWorkbenchTurn streaming", () => {
         },
         {
           choices: [{
-            delta: { tool_calls: [{ index: 0, function: { arguments: '{"path":' } }] },
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: '{"path":' } }],
+            },
           }],
         },
         {
           choices: [{
-            delta: { tool_calls: [{ index: 0, function: { arguments: '"a.ts"}' } }] },
+            delta: {
+              tool_calls: [{ index: 0, function: { arguments: '"a.ts"}' } }],
+            },
             finish_reason: "tool_calls",
           }],
         },
@@ -583,7 +609,10 @@ describe("runWorkbenchTurn streaming", () => {
       tools: [{
         name: "memory.read",
         description: "Load one memory by slug.",
-        parameters: { type: "object", properties: { slug: { type: "string" } } },
+        parameters: {
+          type: "object",
+          properties: { slug: { type: "string" } },
+        },
       }],
       fetchFn: async (_input, init) => {
         sentBody = JSON.parse(String(init?.body));
@@ -628,7 +657,8 @@ describe("runWorkbenchTurn streaming", () => {
         {
           choices: [{
             delta: {
-              content: "<function=list_files><parameter=path>.</parameter></function>",
+              content:
+                "<function=list_files><parameter=path>.</parameter></function>",
             },
           }],
         },
@@ -761,9 +791,11 @@ describe("buildGeminiRequest", () => {
     ]);
     expect(body.generationConfig.maxOutputTokens).toBeGreaterThan(0);
     expect(body.generationConfig.responseMimeType).toBeUndefined();
-    // BIT-170: Gemini 3.x thinking is bounded so it doesn't starve the answer
+    // Gemini 3.x thinking is bounded so it doesn't starve the answer
     // (thinking tokens come out of maxOutputTokens).
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "low" });
+    expect(body.generationConfig.thinkingConfig).toEqual({
+      thinkingLevel: "low",
+    });
   });
 
   test("requests a JSON mime type for strict JSON output", () => {
@@ -791,7 +823,7 @@ describe("parseGeminiStreamLine", () => {
     expect(parseGeminiStreamLine("event: message")).toBeNull();
   });
 
-  test("excludes thinking parts from the text delta (BIT-170)", () => {
+  test("excludes thinking parts from the text delta", () => {
     const event = parseGeminiStreamLine(
       'data: {"candidates":[{"content":{"parts":[{"text":"secret reasoning","thought":true},{"text":"the answer"}]}}]}',
     );
@@ -1023,22 +1055,45 @@ describe("anthropic provider adapter", () => {
               { id: "tu-2", name: "memory.read", arguments: { slug: "b" } },
             ],
           },
-          { role: "tool", toolCallId: "tu-1", name: "memory.read", content: "A" },
-          { role: "tool", toolCallId: "tu-2", name: "memory.read", content: "B" },
+          {
+            role: "tool",
+            toolCallId: "tu-1",
+            name: "memory.read",
+            content: "A",
+          },
+          {
+            role: "tool",
+            toolCallId: "tu-2",
+            name: "memory.read",
+            content: "B",
+          },
         ],
       },
     );
 
     // System stays top-level; the seed `prompt` is not used when history exists.
     expect(body.system[0]).toMatchObject({ text: "sys" });
-    expect(body.messages[0]).toEqual({ role: "user", content: "what is this repo?" });
+    expect(body.messages[0]).toEqual({
+      role: "user",
+      content: "what is this repo?",
+    });
     // Assistant turn: text block + one tool_use block per call (name sanitized).
     expect(body.messages[1]).toEqual({
       role: "assistant",
       content: [
         { type: "text", text: "Reading memory." },
-        { type: "tool_use", id: "tu-1", name: "memory_read", input: { slug: "a" } },
-        { type: "tool_use", id: "tu-2", name: "memory_read", input: { slug: "b" } },
+        {
+          type: "tool_use",
+          id: "tu-1",
+          name: "memory_read",
+          input: { slug: "a" },
+        },
+        {
+          type: "tool_use",
+          id: "tu-2",
+          name: "memory_read",
+          input: { slug: "b" },
+        },
       ],
     });
     // Consecutive tool results merge into ONE following user turn (Anthropic shape).
@@ -1287,7 +1342,9 @@ describe("explicit tier preference", () => {
       },
     ];
     const selection = selectWorkbenchModel(tierZero, { tier: 0 });
-    expect(selection.selected.slug).toBe("mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit");
+    expect(selection.selected.slug).toBe(
+      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+    );
     expect(selection.reason).toBe("explicit_tier");
     expect(selection.considered).toEqual([
       "laguna-xs.2",

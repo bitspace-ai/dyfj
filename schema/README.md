@@ -29,9 +29,9 @@ Migrations are numbered and applied in order:
 - `018_drop_vestigial.sql` — schema reconciliation: drops `reflections` and `skills`, and removes the unused capability/discovery event scaffolding from `010`.
 - `019_memories_visibility.sql` — memory visibility classification (privacy/visibility metadata on the memory layer).
 - `020_sessions_workspace.sql` — sessions gain a workspace binding.
-- `021_models_validity_2026_06.sql` — registry validity (BIT-168): corrects the Anthropic Haiku slug to its dated API id (`claude-haiku-4-5-20251001`) and deactivates the Google rows (`gemini-3.1-pro` 404s; `gemini-3.5-flash` could not be verified) pending provider-id verification and Google key-configuration cleanup, so the picker stops surfacing models that fail at call time.
-- `022_models_gemini_reactivate_2026_06.sql` — re-activates the Gemini rows (BIT-169) with slugs confirmed against the provider model list: `gemini-3.5-flash` (valid as-is) and `gemini-3.1-pro` → `gemini-3.1-pro-preview` (the served 3.1 Pro id).
-- `023_models_fable_deactivate_2026_06.sql` — deactivates `claude-fable-5` (BIT-169 UAT): it appears in the provider model list but is not currently usable, so list presence alone is not sufficient — operator curation overrides the catalog.
+- `021_models_validity_2026_06.sql` — registry validity: corrects the Anthropic Haiku slug to its dated API id (`claude-haiku-4-5-20251001`) and deactivates the Google rows (`gemini-3.1-pro` 404s; `gemini-3.5-flash` could not be verified) pending provider-id verification and Google key-configuration cleanup, so the picker stops surfacing models that fail at call time.
+- `022_models_gemini_reactivate_2026_06.sql` — re-activates the Gemini rows with slugs confirmed against the provider model list: `gemini-3.5-flash` (valid as-is) and `gemini-3.1-pro` → `gemini-3.1-pro-preview` (the served 3.1 Pro id).
+- `023_models_fable_deactivate_2026_06.sql` — deactivates `claude-fable-5` (UAT): it appears in the provider model list but is not currently usable, so list presence alone is not sufficient — operator curation overrides the catalog.
 
 (Migration `005_*` is intentionally absent here; it lives in implementation-specific overlays where it belongs, not in the canonical substrate.)
 

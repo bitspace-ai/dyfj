@@ -1,6 +1,6 @@
 -- DYFJ — Gemini hosted rows for the google-generative-ai adapter, 2026-06
 --
--- Part A2 of dfj-1dv.15: with the google-generative-ai adapter shipped,
+-- Part A2 of the subscription-inference-lanes work: with the google-generative-ai adapter shipped,
 -- reactivate Gemini as metered hosted inference. The stale gemini-2.5-*
 -- rows stay deactivated (deactivated in 014); these are the current models.
 --

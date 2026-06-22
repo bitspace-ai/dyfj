@@ -1,9 +1,9 @@
-// Serve the workbench JSON-RPC seam over a Unix domain socket (BIT-230). UDS is
+// Serve the workbench JSON-RPC seam over a Unix domain socket. UDS is
 // the canonical `loopback` transport — full clearance, gated by filesystem perms
 // — per the transport-seam contract. Wires the read-only methods plus `turn`,
 // which runs an agentic turn over the shared turn-runner core and streams text
 // deltas + runtime events back as `stream` notifications. The server-initiated
-// `approval` request (mutating tools) lands with BIT-116.
+// `approval` request (mutating tools) lands with the mutating-tools slice.
 
 import {
   defaultLocalWorkbenchModels,
@@ -114,7 +114,7 @@ export function buildReadHandlers(
 // dir owned by the operator), and carries full loopback clearance. Paid
 // escalation and budget overrides therefore remain available — but, exactly as
 // on the HTTP loopback path, only with an explicit per-turn opt-in in the params
-// (BIT-166); the shared turn core enforces that, not this binding.
+//; the shared turn core enforces that, not this binding.
 const UDS_LOOPBACK_AUTH: WorkbenchAuthContext = {
   transport: "loopback",
   authnStatus: "authenticated",
@@ -163,7 +163,7 @@ export function buildTurnHandlers(
         loopback: true,
         runRuntime,
         fetchSessionEvents,
-        // BIT-116: mid-turn approval over the duplex channel — the server asks
+        // mid-turn approval over the duplex channel — the server asks
         // the connected client to approve a mutating tool; the client's response
         // is the verdict. A failed request (no client approver, dropped
         // connection) denies, fail-closed.

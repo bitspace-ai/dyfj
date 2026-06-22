@@ -1,6 +1,6 @@
 -- DYFJ — OpenAI hosted rows + deactivate the adapterless Gemini rows, 2026-06
 --
--- Part A of the subscription-inference-lanes work (dfj-1dv.15): make the GPT
+-- Part A of the subscription-inference-lanes work: make the GPT
 -- family selectable as metered hosted inference through the openai-completions
 -- adapter (hosted path: https base URL + OPENAI_API_KEY bearer, behind the
 -- existing paid-escalation gate). The subscription lane (Part B) is separate.
@@ -19,7 +19,7 @@
 -- Tier semantics unchanged: 0 local / 1 API light / 2 API heavy.
 
 -- ── Deactivate Gemini rows (no adapter yet; were selectable-but-erroring) ─────
--- The google-generative-ai adapter is deferred to dfj-1dv.15 Part A2. Until it
+-- The google-generative-ai adapter is deferred to a follow-up migration. Until it
 -- ships, hide these so the picker does not offer a dead option.
 
 UPDATE models SET active = FALSE

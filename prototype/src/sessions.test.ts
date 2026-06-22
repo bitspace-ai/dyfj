@@ -2,11 +2,11 @@ import { describe, expect, test } from "vitest";
 import {
   buildConversationMessages,
   buildWorkbenchSessionContent,
-  fetchWorkbenchSessionWorkspace,
   buildWorkbenchSessionSlug,
   createProjectWorkbenchSession,
   createWorkbenchSession,
   fetchWorkbenchSessionEvents,
+  fetchWorkbenchSessionWorkspace,
   listWorkbenchSessions,
   updateWorkbenchSession,
 } from "./sessions";
@@ -338,11 +338,14 @@ describe("buildConversationMessages", () => {
     // 3 turns => 6 messages, and they are the most recent ones (no truncation).
     expect(messages).toHaveLength(6);
     expect(messages[0]).toEqual({ role: "user", content: "prompt 47" });
-    expect(messages.at(-1)).toEqual({ role: "assistant", content: "response 49" });
+    expect(messages.at(-1)).toEqual({
+      role: "assistant",
+      content: "response 49",
+    });
     expect(messages.some((m) => m.content === "prompt 0")).toBe(false);
   });
 
-  test("BIT-161: replays a tool_call event as a paired assistant+tool turn", () => {
+  test("replays a tool_call event as a paired assistant+tool turn", () => {
     const messages = buildConversationMessages([
       event("session_start", "list the files"),
       event("tool_call", "list_files allowed", {
@@ -362,7 +365,12 @@ describe("buildConversationMessages", () => {
           { id: "call_1", name: "list_files", arguments: { path: "." } },
         ],
       },
-      { role: "tool", toolCallId: "call_1", name: "list_files", content: "README.md\nsrc/" },
+      {
+        role: "tool",
+        toolCallId: "call_1",
+        name: "list_files",
+        content: "README.md\nsrc/",
+      },
       { role: "assistant", content: "There are two entries." },
     ]);
     // The tool message is immediately preceded by an assistant carrying the
@@ -370,10 +378,12 @@ describe("buildConversationMessages", () => {
     const toolIdx = messages.findIndex((m) => m.role === "tool");
     const prior = messages[toolIdx - 1];
     expect(prior.role).toBe("assistant");
-    expect(prior.role === "assistant" && prior.toolCalls?.[0]?.id).toBe("call_1");
+    expect(prior.role === "assistant" && prior.toolCalls?.[0]?.id).toBe(
+      "call_1",
+    );
   });
 
-  test("BIT-161: truncation never orphans a tool result from its call", () => {
+  test("truncation never orphans a tool result from its call", () => {
     // Two turns, each: user -> tool call+result -> assistant. maxTurns=1 must
     // keep the whole most-recent turn (user + assistant-with-toolcall + tool +
     // assistant), never start the window on the dangling tool message.
@@ -395,6 +405,8 @@ describe("buildConversationMessages", () => {
     // First message is a user turn; no leading orphaned tool message.
     expect(messages[0].role).toBe("user");
     const toolMsg = messages.find((m) => m.role === "tool");
-    expect(toolMsg && "toolCallId" in toolMsg && toolMsg.toolCallId).toBe("call_1");
+    expect(toolMsg && "toolCallId" in toolMsg && toolMsg.toolCallId).toBe(
+      "call_1",
+    );
   });
 });

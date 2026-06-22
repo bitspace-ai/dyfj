@@ -1,4 +1,4 @@
--- DYFJ — Deactivate Claude Fable 5 (BIT-169 UAT)
+-- DYFJ — Deactivate Claude Fable 5 (UAT)
 --
 -- claude-fable-5 appears in the provider model list but is not currently usable
 -- (availability is externally constrained). This is the case that proves

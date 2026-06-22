@@ -12,18 +12,31 @@ export interface WorkbenchEventSequenceResult {
   traceId: string | null;
 }
 
-export function verifyWorkbenchEventSequence(rows: WorkbenchEventRow[]): WorkbenchEventSequenceResult {
+export function verifyWorkbenchEventSequence(
+  rows: WorkbenchEventRow[],
+): WorkbenchEventSequenceResult {
   const errors: string[] = [];
   const eventTypes = rows.map((row) => row.event_type);
   const sessionIds = new Set(rows.map((row) => row.session_id));
   const traceIds = new Set(rows.map((row) => row.trace_id));
 
   if (rows.length === 0) errors.push("no events found");
-  if (sessionIds.size > 1) errors.push("events span multiple session_id values");
+  if (sessionIds.size > 1) {
+    errors.push("events span multiple session_id values");
+  }
   if (traceIds.size > 1) errors.push("events span multiple trace_id values");
 
-  for (const required of ["session_start", "model_selected", "session_end", "budget_summary"]) {
-    if (!eventTypes.includes(required)) errors.push(`missing event_type: ${required}`);
+  for (
+    const required of [
+      "session_start",
+      "model_selected",
+      "session_end",
+      "budget_summary",
+    ]
+  ) {
+    if (!eventTypes.includes(required)) {
+      errors.push(`missing event_type: ${required}`);
+    }
   }
 
   if (!eventTypes.includes("model_response") && !eventTypes.includes("error")) {

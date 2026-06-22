@@ -1,9 +1,9 @@
 // A bidirectional JSON-RPC 2.0 endpoint over a byte-stream connection — a Deno
-// UDS conn locally, a TCP/WebSocket conn remotely (BIT-230). Symmetric: both the
+// UDS conn locally, a TCP/WebSocket conn remotely. Symmetric: both the
 // server peer and the client peer use this. Each registers handlers for the
 // requests it answers and calls request()/notify() for the messages it
 // initiates. The server-initiated request() carries the mid-turn `approval`
-// round-trip for BIT-116. Built on the pure jsonrpc.ts core.
+// round-trip for the approval keystone. Built on the pure jsonrpc.ts core.
 
 import {
   classify,
@@ -15,8 +15,8 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
   notification,
-  RpcError,
   type RpcContext,
+  RpcError,
   type RpcHandlers,
 } from "./jsonrpc";
 
@@ -109,7 +109,9 @@ export class JsonRpcPeer {
           break; // connection closed under us
         }
         if (n === null) break;
-        for (const frame of this.#decoder.push(decoder.decode(buf.subarray(0, n)))) {
+        for (
+          const frame of this.#decoder.push(decoder.decode(buf.subarray(0, n)))
+        ) {
           if (!frame.ok) {
             this.#onParseError?.(frame.error ?? "parse error");
             continue;
@@ -167,8 +169,7 @@ export class JsonRpcPeer {
         return;
       }
       case "notification": {
-        const handler =
-          this.#handlers[(message as { method: string }).method];
+        const handler = this.#handlers[(message as { method: string }).method];
         if (handler) {
           try {
             await handler(

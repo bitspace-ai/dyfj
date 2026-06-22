@@ -220,7 +220,7 @@ describe("serve-unix Deno permission profile", () => {
   });
 });
 
-describe("serveWorkbenchUnix turn approval round-trip (BIT-116)", () => {
+describe("serveWorkbenchUnix turn approval round-trip", () => {
   // A runtime that asks to approve one mutating tool and reports the verdict.
   function approvalProbeRuntime(): WorkbenchHttpRuntime {
     return async (input) => {

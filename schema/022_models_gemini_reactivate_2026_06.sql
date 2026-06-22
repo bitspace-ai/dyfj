@@ -1,4 +1,4 @@
--- DYFJ — Re-activate Gemini rows with confirmed slugs (BIT-169)
+-- DYFJ — Re-activate Gemini rows with confirmed slugs
 --
 -- 021 deactivated the Google rows pending provider-id verification. The slugs
 -- have now been confirmed against the provider model list:

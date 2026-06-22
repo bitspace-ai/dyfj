@@ -1,4 +1,4 @@
--- DYFJ — Model registry validity fixes, 2026-06 (BIT-168)
+-- DYFJ — Model registry validity fixes, 2026-06
 --
 -- The hosted-model slugs were validated against each provider's live model
 -- list for the first time (015's "SLUG CAVEAT" asked for exactly this once the
@@ -17,7 +17,7 @@
 -- Actions:
 --   1. Correct the Anthropic Haiku slug to its dated API id.
 --   2. Deactivate both Google rows pending provider-id verification and Google
---      key-configuration cleanup, so the picker (BIT-164) stops surfacing models
+--      key-configuration cleanup, so the picker stops surfacing models
 --      that fail at call time. Re-activate in a later migration once verified.
 
 -- 1. Anthropic Haiku: bare slug -> dated API id.

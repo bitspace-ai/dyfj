@@ -93,14 +93,14 @@ export interface WorkbenchRuntimeInput {
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   /**
-   * Consent handler for paid-inference escalation (BIT-149). Returns a verdict
+   * Consent handler for paid-inference escalation. Returns a verdict
    * (approve | deny+reason | escalate), not void/throw — so a headless driver
    * can pre-approve or escalate. Drivers inject their own; the core defaults to
    * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
   /**
-   * Approval handler for mutating tools (BIT-116). When a tool's policy is
+   * Approval handler for mutating tools. When a tool's policy is
    * "ask", the runtime calls this for an approve/deny verdict; the default (no
    * handler) denies, fail-closed. The UDS transport asks the operator over the
    * duplex channel; HTTP has no such channel and so denies.
@@ -108,25 +108,25 @@ export interface WorkbenchRuntimeInput {
   confirmToolApproval?: ConfirmToolApproval;
   /**
    * Principal identity recorded on this turn's events. Lifted to the boundary
-   * (BIT-148): entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
+   * : entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
    * resolveRuntimeEnvDefaults(); the core reads only this field (default
    * "user"), never the environment. A headless driver supplies its own.
    */
   principalId?: string;
   /**
    * Server/workspace root the read-only file tools fall back to when no loopback
-   * workspace is bound. Lifted to the boundary (BIT-148): entrypoints pass
+   * workspace is bound. Lifted to the boundary: entrypoints pass
    * DYFJ_ROOT; the core falls back to Deno.cwd() when this is absent.
    */
   rootOverride?: string;
   /**
    * Whether to print the end-of-turn budget tally — a presentation/driver
-   * concern. Lifted to the boundary (BIT-148): entrypoints resolve it from
+   * concern. Lifted to the boundary: entrypoints resolve it from
    * DYFJ_BUDGET_TALLY; the core reads only this field (default "paid").
    */
   budgetTallyMode?: BudgetTallyMode;
   /**
-   * Per-turn budget-limit overrides (BIT-166). Absent → the env/default limits
+   * Per-turn budget-limit overrides. Absent → the env/default limits
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
    * transport, so a remote caller can never raise the spend cap. The core just
    * reads the fields; a headless driver supplies its own.
@@ -261,7 +261,7 @@ export interface ToolResultSummary {
 }
 
 /**
- * Verdict returned by a paid-inference consent handler (BIT-149). A structured
+ * Verdict returned by a paid-inference consent handler. A structured
  * value, not a throw, so a driver can express the third state — escalate — that
  * void/throw could not: the driver can't decide and an out-of-band operator
  * must. `approve` proceeds; `deny` and `escalate` both stop the turn.
@@ -607,7 +607,7 @@ export function parseBudgetTallyMode(
 }
 
 /**
- * Resolve the env-derived runtime defaults at the process boundary (BIT-148),
+ * Resolve the env-derived runtime defaults at the process boundary,
  * so the core runtime reads no environment variables. Entrypoints (the CLI
  * one-shot and the HTTP server) spread this into the runtime input; a headless
  * driver supplies these explicitly instead. `rootOverride` stays undefined when
@@ -793,7 +793,7 @@ export function buildWorkbenchRuntimeInput(
 }
 
 /**
- * Default consent handler (BIT-149): deny. The core makes no TTY assumption —
+ * Default consent handler: deny. The core makes no TTY assumption —
  * drivers inject their own. A headless Workshop driver pre-approves or escalates
  * to an out-of-band operator; the CLI uses promptPaidEscalationTty.
  */
@@ -903,7 +903,7 @@ export async function runWorkbench(
 
   const runtimeInput = buildWorkbenchRuntimeInput(invocation);
   if (runtimeInput === null) return;
-  // This in-process one-shot path owns the Dolt pool lifecycle (BIT-137): the
+  // This in-process one-shot path owns the Dolt pool lifecycle: the
   // runtime no longer closes it, so close here after the single turn so the
   // process exits cleanly. (The REPL drives this per turn; the HTTP server
   // bypasses runWorkbench and keeps the pool for the process lifetime.)
@@ -978,11 +978,11 @@ export async function runWorkbenchRuntime(
   const sessionSlug = buildWorkbenchSessionSlug(sessionId);
   const traceId = generateTraceId();
   const sessionStart = Date.now();
-  // BIT-148: env coupling lives at the boundary (resolveRuntimeEnvDefaults);
+  // env coupling lives at the boundary (resolveRuntimeEnvDefaults);
   // the core reads only the input field. Resolved before the BudgetTracker so
   // its budget_summary event is attributed to the same principal.
   const principalId = runtimeInput.principalId ?? "user";
-  // BIT-166: per-turn budget overrides win over the env/default limits; absent
+  // per-turn budget overrides win over the env/default limits; absent
   // fields fall back to the default. (The HTTP boundary only populates the
   // overrides for loopback callers.)
   const defaults = defaultBudgetConfig();
@@ -1020,7 +1020,7 @@ export async function runWorkbenchRuntime(
   // arbitrary host paths. `honoredWorkspace` is the gated request (a string when
   // a loopback caller bound a root, undefined otherwise): it is both persisted
   // at creation and canonicalized into the actual root where the tools mount.
-  // BIT-148: DYFJ_ROOT is resolved at the boundary; the core only falls back to
+  // DYFJ_ROOT is resolved at the boundary; the core only falls back to
   // the process cwd when no root was supplied.
   const fallbackRoot = runtimeInput.rootOverride ?? Deno.cwd();
   let requestedWorkspace = runtimeInput.workspaceRoot;
@@ -1038,7 +1038,7 @@ export async function runWorkbenchRuntime(
   );
   const isNextWork = isNextWorkMode(mode);
   const usesRepoAskContext = mode === "ask" || isNextWork;
-  // Event-write integrity policy (BIT-139), decoupled from mode. INTEGRITY
+  // Event-write integrity policy, decoupled from mode. INTEGRITY
   // events are the recomputable audit log + session-existence record, so a
   // failed write fails the turn rather than silently dropping. BEST_EFFORT
   // events (telemetry, denormalized projections derivable from events, and
@@ -1051,7 +1051,7 @@ export async function runWorkbenchRuntime(
   // Integrity writes that run inside the broad runtime try below would otherwise
   // throw, be caught by the catch, and then be masked by the `finally` returning
   // a normal receipt — so a successful turn could be handed back with a missing
-  // audit/transcript event (BIT-139 review finding). Remember the first such
+  // audit/transcript event (review finding). Remember the first such
   // failure; the `finally` rethrows it instead of returning a result.
   let fatalEventError: unknown = null;
   const writeIntegrity = async (
@@ -1578,7 +1578,7 @@ export async function runWorkbenchRuntime(
       (summary.byTier["2"]?.calls ?? 0);
     if (
       shouldPrintBudgetTally(
-        // BIT-148: DYFJ_BUDGET_TALLY is parsed at the boundary; the core reads
+        // DYFJ_BUDGET_TALLY is parsed at the boundary; the core reads
         // only the input field.
         runtimeInput.budgetTallyMode ?? "paid",
         {
@@ -1766,12 +1766,12 @@ export async function runWorkbenchRuntime(
       }), BEST_EFFORT);
     console.log("");
     console.log(receipt);
-    // BIT-137: the runtime no longer closes the shared Dolt pool. A long-running
+    // the runtime no longer closes the shared Dolt pool. A long-running
     // host (HTTP server) runs many concurrent turns through this function; a
     // per-turn close would end the pool out from under an in-flight turn and
     // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
     // closes it in a finally; the server keeps it for the process lifetime).
-    // BIT-139 review fix: if an integrity audit/transcript write failed inside
+    // review fix: if an integrity audit/transcript write failed inside
     // the try above, surface it to the caller instead of masking it behind a
     // normal receipt (session_end + best-effort cleanup above still ran).
     if (fatalEventError !== null) throw fatalEventError;

@@ -5,9 +5,9 @@ import {
   buildNextWorkBrief,
   buildPaidEscalationPreflightBanner,
   buildWorkbenchReceipt,
-  buildWorkspaceGrounding,
   buildWorkbenchRuntimeInput,
   buildWorkbenchShellBanner,
+  buildWorkspaceGrounding,
   formatMoney,
   isNextWorkMode,
   isWorkbenchShellExitCommand,
@@ -44,7 +44,7 @@ const runtimeMocks = vi.hoisted(() => {
     sessionUpdates: [] as Record<string, unknown>[],
     model,
     runWorkbenchTurn: vi.fn(),
-    // BIT-139: when set, event writes for this event_type throw, to test the
+    // when set, event writes for this event_type throw, to test the
     // integrity-required vs best-effort write policy.
     failEventType: null as string | null,
   };
@@ -368,7 +368,11 @@ describe("buildNextWorkBrief", () => {
 describe("toolStepToMessages", () => {
   test("emits the assistant tool-call turn followed by linked tool results", () => {
     const toolCalls = [
-      { id: "call-memory", name: "memory.read", arguments: { slug: "project_dyfj" } },
+      {
+        id: "call-memory",
+        name: "memory.read",
+        arguments: { slug: "project_dyfj" },
+      },
     ];
     const messages = toolStepToMessages(
       "Let me read the project memory.",
@@ -407,7 +411,12 @@ describe("toolStepToMessages", () => {
         { id: "c2", name: "memory.read", arguments: { slug: "missing" } },
       ],
       [
-        { commandId: "list_files", callId: "c1", isError: false, result: "a.ts" },
+        {
+          commandId: "list_files",
+          callId: "c1",
+          isError: false,
+          result: "a.ts",
+        },
         {
           commandId: "memory.read",
           callId: "c2",
@@ -533,7 +542,7 @@ describe("buildPaidEscalationPreflightBanner", () => {
   });
 });
 
-describe("promptPaidEscalationTty (BIT-149 consent verdict)", () => {
+describe("promptPaidEscalationTty (consent verdict)", () => {
   test("escalates instead of prompting in a non-interactive session", async () => {
     // The test process has no TTY: the CLI driver must escalate (defer to an
     // out-of-band operator), not throw or block.
@@ -723,7 +732,13 @@ describe("runWorkbenchRuntime observer events", () => {
         considered: [runtimeMocks.model.slug],
         reason: "default",
       },
-      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
       stopReason: "tool_use",
       timings: { responseHeadersMs: 1, totalMs: 2 },
     };
@@ -735,7 +750,11 @@ describe("runWorkbenchRuntime observer events", () => {
     runtimeMocks.runWorkbenchTurn
       .mockResolvedValueOnce(toolTurn("c1"))
       .mockResolvedValueOnce(toolTurn("c2"))
-      .mockResolvedValueOnce({ ...base, text: "done exploring", stopReason: "stop" });
+      .mockResolvedValueOnce({
+        ...base,
+        text: "done exploring",
+        stopReason: "stop",
+      });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const result = await runWorkbenchRuntime({
@@ -759,7 +778,13 @@ describe("runWorkbenchRuntime observer events", () => {
         considered: [runtimeMocks.model.slug],
         reason: "default",
       },
-      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
       stopReason: "tool_use",
       timings: { responseHeadersMs: 1, totalMs: 2 },
     };
@@ -778,7 +803,9 @@ describe("runWorkbenchRuntime observer events", () => {
       });
       expect(result.text).toBe("forced conclusion");
       // step 0 + MAX_TOOL_STEPS gather calls, then the loop exits
-      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1 + MAX_TOOL_STEPS);
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(
+        1 + MAX_TOOL_STEPS,
+      );
       // the final forced call dropped tools to make the model conclude
       const lastCall = runtimeMocks.runWorkbenchTurn.mock.calls.at(-1)![0];
       expect(lastCall.tools).toBeUndefined();
@@ -798,7 +825,13 @@ describe("runWorkbenchRuntime observer events", () => {
         considered: [runtimeMocks.model.slug],
         reason: "default",
       },
-      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
       stopReason: "tool_use",
       timings: { responseHeadersMs: 1, totalMs: 2 },
     };
@@ -837,7 +870,13 @@ describe("runWorkbenchRuntime observer events", () => {
         considered: [runtimeMocks.model.slug],
         reason: "default",
       },
-      usage: { input: 10, output: 2, cost: { total: 0 }, cacheRead: 0, cacheWrite: 0 },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
       stopReason: "tool_use",
       timings: { responseHeadersMs: 1, totalMs: 2 },
     };
@@ -888,7 +927,13 @@ describe("runWorkbenchRuntime observer events", () => {
           considered: [runtimeMocks.model.slug],
           reason: "default",
         },
-        usage: { input: 10, output: 2, cost: { total: 0.03 }, cacheRead: 0, cacheWrite: 0 },
+        usage: {
+          input: 10,
+          output: 2,
+          cost: { total: 0.03 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
         stopReason: "tool_use",
         timings: { responseHeadersMs: 1, totalMs: 2 },
       };
@@ -1028,7 +1073,7 @@ describe("shouldPrintBudgetTally", () => {
   });
 });
 
-describe("runWorkbenchRuntime event-write integrity policy (BIT-139)", () => {
+describe("runWorkbenchRuntime event-write integrity policy", () => {
   const run = (mode: "turn" | "ask") =>
     runWorkbenchRuntime({ mode, prompt: "policy probe", routingOptions: {} });
 
@@ -1076,7 +1121,7 @@ describe("runWorkbenchRuntime event-write integrity policy (BIT-139)", () => {
   });
 });
 
-describe("runWorkbenchRuntime reads runtime config from input, not env (BIT-148)", () => {
+describe("runWorkbenchRuntime reads runtime config from input, not env", () => {
   test("principalId comes from the input struct and flows to events", async () => {
     const before = runtimeMocks.writtenEvents.length;
     await runWorkbenchRuntime({

@@ -1,6 +1,6 @@
-// Shared turn execution core (BIT-230). The security-sensitive turn path —
-// request resolution, per-session serialization (BIT-147), resume
-// reconstruction, paid-escalation gating (BIT-166), and the runtime invocation —
+// Shared turn execution core. The security-sensitive turn path —
+// request resolution, per-session serialization, resume
+// reconstruction, paid-escalation gating, and the runtime invocation —
 // lifted out of the HTTP driver so EVERY transport (HTTP/SSE in http.ts, the
 // JSON-RPC/UDS server in uds-server.ts) runs the IDENTICAL turn with identical
 // clearance behavior. There must be exactly one copy of the money/audit/clearance
@@ -35,7 +35,7 @@ export interface TurnRequestBody {
   routingOptions?: unknown;
   sessionId?: unknown;
   workspace?: unknown;
-  // BIT-166: explicit per-turn paid-inference opt-in + per-turn budget override.
+  // explicit per-turn paid-inference opt-in + per-turn budget override.
   // Both are honored only on the loopback transport (see resolveTurnFromBody /
   // the confirmPaidEscalation injection).
   approvePaidInference?: unknown;
@@ -44,7 +44,7 @@ export interface TurnRequestBody {
 
 const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
 
-// BIT-166: paid inference requires BOTH a loopback transport AND that the
+// paid inference requires BOTH a loopback transport AND that the
 // operator explicitly opts in per turn. Remote callers are denied outright; a
 // loopback caller that did not opt in is denied with the second reason.
 export const PAID_ESCALATION_REMOTE_DENIED =
@@ -66,7 +66,7 @@ export function paidEscalationVerdict(
 }
 
 /**
- * Per-session turn serialization (BIT-147). Two concurrent turns for the same
+ * Per-session turn serialization. Two concurrent turns for the same
  * session would split-brain the append-only event log — each reads the prior
  * events and appends its own — and race the shared Dolt pool. Chain same-session
  * turns so they run one at a time: the operator's second turn runs after the
@@ -194,7 +194,7 @@ export interface ResolvedTurn {
  * `executeTurn`) so a resumed turn reads the latest committed events only after
  * all earlier same-session turns have appended theirs. Reading here (before the
  * lock) let a second same-session turn build a stale transcript — a TOCTOU on
- * the audit log (BIT-147 review finding).
+ * the audit log (review finding).
  */
 export function resolveTurnFromBody(
   body: TurnRequestBody,
@@ -216,7 +216,7 @@ export function resolveTurnFromBody(
     sessionId = body.sessionId;
   }
 
-  // BIT-166: validate the explicit per-turn paid-inference opt-in. Whether it
+  // validate the explicit per-turn paid-inference opt-in. Whether it
   // actually grants approval is decided at the confirmPaidEscalation injection,
   // which additionally requires the loopback transport.
   if (
@@ -227,7 +227,7 @@ export function resolveTurnFromBody(
   }
   const approvePaidInference = body.approvePaidInference === true;
 
-  // BIT-166: per-turn budget override, applied only on the loopback transport so
+  // per-turn budget override, applied only on the loopback transport so
   // a remote caller can never raise the spend cap. (Malformed values still 400
   // regardless of transport.)
   if (body.budget !== undefined) {
@@ -252,7 +252,7 @@ export function resolveTurnFromBody(
  * Rebuild the resume context (prior turns as conversation messages). Called
  * INSIDE `withSessionTurnLock` so the prior-event read happens after all earlier
  * same-session turns have settled — keeping the read-modify-append atomic per
- * session (BIT-147).
+ * session.
  */
 async function buildResume(
   sessionId: string | undefined,
@@ -274,7 +274,7 @@ export interface ExecuteTurnDeps {
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void;
   /**
-   * Mutating-tool approval handler (BIT-116). The UDS transport supplies a
+   * Mutating-tool approval handler. The UDS transport supplies a
    * duplex round-trip; HTTP omits it, so the runtime defaults to deny.
    */
   confirmToolApproval?: ConfirmToolApproval;
@@ -298,16 +298,16 @@ export function executeTurn(
     return deps.runRuntime({
       ...resolved.runtimeInput,
       ...resume,
-      // BIT-148: env-derived runtime config resolved at the boundary, not in the
+      // env-derived runtime config resolved at the boundary, not in the
       // core. A future headless driver supplies these from its own config.
       ...resolveRuntimeEnvDefaults(),
       authContext: deps.authContext,
       onTextDelta: deps.onTextDelta,
       onRuntimeEvent: deps.onRuntimeEvent,
-      // BIT-116: mutating tools run only after operator approval; the transport
+      // mutating tools run only after operator approval; the transport
       // supplies the approver (UDS = duplex round-trip), else the runtime denies.
       confirmToolApproval: deps.confirmToolApproval,
-      // BIT-166: paid inference is granted only to a loopback caller that
+      // paid inference is granted only to a loopback caller that
       // explicitly opted in this turn; remote callers are always denied.
       confirmPaidEscalation: () =>
         Promise.resolve(

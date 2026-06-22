@@ -1,5 +1,5 @@
 /**
- * Turn seam contract (BIT-136 — "lock the REST/SSE seam contract").
+ * Turn seam contract (— "lock the REST/SSE seam contract").
  *
  * The single typed definition of what crosses the `POST /api/turn` boundary,
  * shared by the server (`http.ts`, which produces it) and every client

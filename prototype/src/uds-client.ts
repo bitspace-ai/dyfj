@@ -1,4 +1,4 @@
-// Thin Unix-socket JSON-RPC client for the workbench CLI/TUI/GUI (BIT-230).
+// Thin Unix-socket JSON-RPC client for the workbench CLI/TUI/GUI.
 // Engine-free: imports only the protocol core + peer, never the runtime — so the
 // client binary stays small and can migrate to Rust under the same contract.
 

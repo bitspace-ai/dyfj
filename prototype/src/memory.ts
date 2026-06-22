@@ -38,7 +38,11 @@ export type MemoryType = "user" | "feedback" | "project" | "reference";
  * receive the row at injection time. Stored in the `memories.visibility` column
  * (schema/019); existing rows default to 'private'.
  */
-export type MemoryVisibility = "private" | "shareable" | "client_safe" | "public";
+export type MemoryVisibility =
+  | "private"
+  | "shareable"
+  | "client_safe"
+  | "public";
 
 /** Full clearance: a local operator sees every class. */
 export const MEMORY_VISIBILITY_ALL: readonly MemoryVisibility[] = [
@@ -53,7 +57,7 @@ export const MEMORY_VISIBILITY_ALL: readonly MemoryVisibility[] = [
  * loopback/in-process operator (Chris at the machine) sees everything; any
  * non-loopback consumer — remote or shared, even with the bearer key, since the
  * shared bearer does not prove identity — is limited to client-safe + public
- * until per-principal identity exists (dfj-1dv.12). Safe by default: an
+ * until per-principal identity exists. Safe by default: an
  * unrecognised transport gets the most restrictive set.
  */
 export function memoryClearanceFor(
@@ -65,18 +69,18 @@ export function memoryClearanceFor(
 }
 
 export interface Memory {
-  memoryId:    string;
-  slug:        string;
-  type:        MemoryType;
-  name:        string;
+  memoryId: string;
+  slug: string;
+  type: MemoryType;
+  name: string;
   description: string;
-  content:     string;
+  content: string;
 }
 
 export interface MemoryIndexEntry {
-  slug:        string;
-  type:        MemoryType;
-  name:        string;
+  slug: string;
+  type: MemoryType;
+  name: string;
   description: string;
 }
 
@@ -118,8 +122,8 @@ export async function loadMemoriesByType(
   const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
   const rows = await doltQuery(
     `SELECT memory_id, slug, type, name, description, content ` +
-    `FROM memories WHERE type IN (${typePlaceholders}) ` +
-    `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
+      `FROM memories WHERE type IN (${typePlaceholders}) ` +
+      `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
     [...types, ...allowedVisibility],
   );
   return rows.map(rowToMemory);
@@ -138,8 +142,8 @@ export async function loadMemoryIndex(
   const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
   const rows = await doltQuery(
     `SELECT slug, type, name, description ` +
-    `FROM memories WHERE type IN (${typePlaceholders}) ` +
-    `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
+      `FROM memories WHERE type IN (${typePlaceholders}) ` +
+      `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
     [...types, ...allowedVisibility],
   );
   return rows.map(rowToIndexEntry);
@@ -152,7 +156,7 @@ export async function loadMemoryIndex(
 export async function getMemoryBySlug(slug: string): Promise<Memory | null> {
   const rows = await doltQuery(
     `SELECT memory_id, slug, type, name, description, content ` +
-    `FROM memories WHERE slug = ? LIMIT 1;`,
+      `FROM memories WHERE slug = ? LIMIT 1;`,
     [slug],
   );
   return rows.length > 0 ? rowToMemory(rows[0]!) : null;
@@ -162,21 +166,21 @@ export async function getMemoryBySlug(slug: string): Promise<Memory | null> {
 
 function rowToMemory(row: Record<string, string>): Memory {
   return {
-    memoryId:    row['memory_id'] ?? '',
-    slug:        row['slug'] ?? '',
-    type:        (row['type'] ?? '') as MemoryType,
-    name:        row['name'] ?? '',
-    description: row['description'] ?? '',
-    content:     row['content'] ?? '',
+    memoryId: row["memory_id"] ?? "",
+    slug: row["slug"] ?? "",
+    type: (row["type"] ?? "") as MemoryType,
+    name: row["name"] ?? "",
+    description: row["description"] ?? "",
+    content: row["content"] ?? "",
   };
 }
 
 function rowToIndexEntry(row: Record<string, string>): MemoryIndexEntry {
   return {
-    slug:        row['slug'] ?? '',
-    type:        (row['type'] ?? '') as MemoryType,
-    name:        row['name'] ?? '',
-    description: row['description'] ?? '',
+    slug: row["slug"] ?? "",
+    type: (row["type"] ?? "") as MemoryType,
+    name: row["name"] ?? "",
+    description: row["description"] ?? "",
   };
 }
 
@@ -273,18 +277,23 @@ export function buildSystemPrompt(
   options: SystemPromptOptions = {},
 ): string {
   const identityPrefix = options.identitySlugPrefix ?? "";
-  const userTitle      = options.userSectionTitle   ?? "About the User";
+  const userTitle = options.userSectionTitle ?? "About the User";
 
   // Split user memories: agent identity vs user context
   const identity = identityPrefix
-    ? coreMemories.filter(m => m.type === "user" && m.slug.startsWith(identityPrefix))
+    ? coreMemories.filter((m) =>
+      m.type === "user" && m.slug.startsWith(identityPrefix)
+    )
     : [];
-  const user     = identityPrefix
-    ? coreMemories.filter(m => m.type === "user" && !m.slug.startsWith(identityPrefix))
-    : coreMemories.filter(m => m.type === "user");
-  const feedback = coreMemories.filter(m => m.type === "feedback");
+  const user = identityPrefix
+    ? coreMemories.filter((m) =>
+      m.type === "user" && !m.slug.startsWith(identityPrefix)
+    )
+    : coreMemories.filter((m) => m.type === "user");
+  const feedback = coreMemories.filter((m) => m.type === "feedback");
   const parts: string[] = [];
-  const hasUntrustedMemory = user.length > 0 || feedback.length > 0 || index.length > 0;
+  const hasUntrustedMemory = user.length > 0 || feedback.length > 0 ||
+    index.length > 0;
 
   if (hasUntrustedMemory) {
     parts.push(UNTRUSTED_MEMORY_INSTRUCTIONS);
@@ -293,10 +302,13 @@ export function buildSystemPrompt(
 
   // ── Agent Identity (assembled first — identity by design) ─────────────────
   // Canonical order: identity → voice → steering — remaining by insertion order
-  const IDENTITY_CORE = ["identity", "voice", "steering"].map(s => `${identityPrefix}${s}`);
+  const IDENTITY_CORE = ["identity", "voice", "steering"].map((s) =>
+    `${identityPrefix}${s}`
+  );
   const identitySorted = [
-    ...IDENTITY_CORE.map(slug => identity.find(m => m.slug === slug)).filter((m): m is Memory => m !== undefined),
-    ...identity.filter(m => !IDENTITY_CORE.includes(m.slug)),
+    ...IDENTITY_CORE.map((slug) => identity.find((m) => m.slug === slug))
+      .filter((m): m is Memory => m !== undefined),
+    ...identity.filter((m) => !IDENTITY_CORE.includes(m.slug)),
   ];
 
   if (identitySorted.length > 0) {
@@ -312,8 +324,8 @@ export function buildSystemPrompt(
   if (index.length > 0) {
     parts.push(
       "**Before starting any task:** scan the Context Index at the end of this prompt " +
-      "and call `read_memory()` for any project or reference entries relevant to the work at hand. " +
-      "Do this before you begin — working without pulling context first means working blind."
+        "and call `read_memory()` for any project or reference entries relevant to the work at hand. " +
+        "Do this before you begin — working without pulling context first means working blind.",
     );
     parts.push("");
   }
@@ -350,7 +362,7 @@ export function buildSystemPrompt(
     parts.push("");
     parts.push(
       "The following project and reference memories are available. " +
-      "Call `read_memory(slug)` to load full content for any that are relevant."
+        "Call `read_memory(slug)` to load full content for any that are relevant.",
     );
     parts.push("");
     parts.push("| slug | type | name | description |");
@@ -424,11 +436,11 @@ export function buildToolResult(
   isError = false,
 ): ToolResultMessage {
   return {
-    role:        "toolResult",
+    role: "toolResult",
     toolCallId,
     toolName,
-    content:     [{ type: "text", text: content }],
+    content: [{ type: "text", text: content }],
     isError,
-    timestamp:   Date.now(),
+    timestamp: Date.now(),
   };
 }

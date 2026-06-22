@@ -4,7 +4,9 @@ vi.mock("./utils", () => ({
   doltQuery: (...args: unknown[]) => mockDoltQuery(...args),
 }));
 
-let mockDoltQuery: (...args: unknown[]) => Promise<Array<Record<string, unknown>>>;
+let mockDoltQuery: (
+  ...args: unknown[]
+) => Promise<Array<Record<string, unknown>>>;
 
 const { loadCompanionBasePrompt, DEFAULT_COMPANION_PROMPT } = await import(
   "./prompts"

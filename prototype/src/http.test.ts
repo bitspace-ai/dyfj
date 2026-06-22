@@ -73,10 +73,10 @@ describe("createWorkbenchHttpHandler", () => {
     expect(html).toContain("/api/turn");
     expect(html).toContain("Timeline");
     expect(html).toContain("Inspector");
-    // BIT-113: inspector renders a formatted receipt (not raw JSON) with cache telemetry.
+    // inspector renders a formatted receipt (not raw JSON) with cache telemetry.
     expect(html).toContain("humanizeKey");
     expect(html).toContain("cacheRead");
-    // BIT-115: the shell carries the project-grouped WORK pane wired to the
+    // the shell carries the project-grouped WORK pane wired to the
     // runtime REST surface (session list, select-to-resume, new session) and
     // renders events from Dolt truth rather than ephemeral client state.
     expect(html).toContain('id="work-list"');
@@ -85,7 +85,7 @@ describe("createWorkbenchHttpHandler", () => {
     expect(html).toContain("loadSessionEvents");
     expect(html).toContain("startNewSession");
     expect(html).toContain("SESSION_POINTER");
-    // BIT-164: capability-aware model picker — a populated model <select> from
+    // capability-aware model picker — a populated model <select> from
     // /api/models, a capability filter, and the modelId>tier>hint cascade made
     // legible by disabling overridden controls.
     expect(html).toContain('id="model-id"');
@@ -93,7 +93,7 @@ describe("createWorkbenchHttpHandler", () => {
     expect(html).toContain("/api/models");
     expect(html).toContain("loadModelsIntoPicker");
     expect(html).toContain("updateRoutingCascade");
-    // BIT-166 (UI): per-turn paid-inference confirm dialog + budget override
+    // (UI): per-turn paid-inference confirm dialog + budget override
     // inputs that drive the loopback-gated server fields.
     expect(html).toContain('id="paid-modal"');
     expect(html).toContain('id="paid-approve"');
@@ -155,7 +155,7 @@ describe("createWorkbenchHttpHandler", () => {
 
     expect(response.status).toBe(200);
     // toMatchObject (not toEqual): the boundary also injects env-derived runtime
-    // defaults (principalId/rootOverride/budgetTallyMode, BIT-148) we don't pin here.
+    // defaults (principalId/rootOverride/budgetTallyMode) we don't pin here.
     expect(calls).toMatchObject([{
       mode: "turn",
       prompt: "summarize the repo",
@@ -309,7 +309,7 @@ describe("createWorkbenchHttpHandler", () => {
     );
   });
 
-  test("serializes concurrent same-session turns; never runs them in parallel (BIT-147)", async () => {
+  test("serializes concurrent same-session turns; never runs them in parallel", async () => {
     const order: string[] = [];
     let active = 0;
     let peak = 0;
@@ -354,7 +354,7 @@ describe("createWorkbenchHttpHandler", () => {
     ]);
   });
 
-  test("serializes the transcript read inside the lock: the second same-session read waits for the first turn (BIT-147)", async () => {
+  test("serializes the transcript read inside the lock: the second same-session read waits for the first turn", async () => {
     const trace: string[] = [];
     let fetchActive = 0;
     let fetchPeak = 0;
@@ -404,7 +404,7 @@ describe("createWorkbenchHttpHandler", () => {
     ]);
   });
 
-  test("does not serialize independent (new-session) turns (BIT-147)", async () => {
+  test("does not serialize independent (new-session) turns", async () => {
     let active = 0;
     let peak = 0;
     const handler = createWorkbenchHttpHandler({
@@ -421,7 +421,11 @@ describe("createWorkbenchHttpHandler", () => {
         new Request("http://localhost/api/turn", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompt: "x", mode: "turn", routingOptions: {} }),
+          body: JSON.stringify({
+            prompt: "x",
+            mode: "turn",
+            routingOptions: {},
+          }),
         }),
       );
     await Promise.all([turn(), turn()]);
@@ -534,20 +538,22 @@ describe("createWorkbenchHttpHandler", () => {
     expect(calls).toEqual([]);
   });
 
-  // BIT-166: paid inference over HTTP requires BOTH loopback transport AND an
+  // paid inference over HTTP requires BOTH loopback transport AND an
   // explicit per-turn opt-in. A captured-verdict runtime stub exercises the
   // injected confirmPaidEscalation directly.
   const captureVerdict = (sink: { verdict?: unknown }) =>
     createWorkbenchHttpHandler({
       runRuntime: async (input) => {
-        sink.verdict = await input.confirmPaidEscalation?.("paid model selected");
+        sink.verdict = await input.confirmPaidEscalation?.(
+          "paid model selected",
+        );
         return runtimeResult();
       },
     });
   const REMOTE_KEY = "test-workbench-key-0123456789abcdef";
   const REMOTE_HOST = "100.64.0.7";
 
-  test("BIT-166: loopback caller that explicitly opts in gets paid approval", async () => {
+  test("loopback caller that explicitly opts in gets paid approval", async () => {
     const sink: { verdict?: unknown } = {};
     const response = await captureVerdict(sink)(
       new Request("http://localhost/api/turn", {
@@ -560,7 +566,7 @@ describe("createWorkbenchHttpHandler", () => {
     expect(sink.verdict).toEqual({ decision: "approve" });
   });
 
-  test("BIT-166: loopback caller without an opt-in is denied", async () => {
+  test("loopback caller without an opt-in is denied", async () => {
     const sink: { verdict?: unknown } = {};
     await captureVerdict(sink)(
       new Request("http://localhost/api/turn", {
@@ -575,7 +581,7 @@ describe("createWorkbenchHttpHandler", () => {
     });
   });
 
-  test("BIT-166: a remote caller is denied even WITH the opt-in flag", async () => {
+  test("a remote caller is denied even WITH the opt-in flag", async () => {
     let verdict: unknown;
     const handler = createWorkbenchHttpHandler({
       runRuntime: async (input) => {
@@ -603,7 +609,7 @@ describe("createWorkbenchHttpHandler", () => {
     });
   });
 
-  test("BIT-166: per-turn budget override is applied on loopback", async () => {
+  test("per-turn budget override is applied on loopback", async () => {
     const calls: WorkbenchRuntimeInput[] = [];
     const handler = createWorkbenchHttpHandler({
       runRuntime: async (input) => {
@@ -625,7 +631,7 @@ describe("createWorkbenchHttpHandler", () => {
     expect(calls[0].sessionLimitUsd).toBe(20);
   });
 
-  test("BIT-166: a remote caller's budget override is ignored", async () => {
+  test("a remote caller's budget override is ignored", async () => {
     const calls: WorkbenchRuntimeInput[] = [];
     const handler = createWorkbenchHttpHandler({
       runRuntime: async (input) => {
@@ -651,7 +657,7 @@ describe("createWorkbenchHttpHandler", () => {
     expect(calls[0].perCallLimitUsd).toBeUndefined();
   });
 
-  test("BIT-166: rejects a non-boolean opt-in or malformed budget", async () => {
+  test("rejects a non-boolean opt-in or malformed budget", async () => {
     const handler = createWorkbenchHttpHandler({
       runRuntime: () => Promise.resolve(runtimeResult()),
     });
@@ -667,8 +673,10 @@ describe("createWorkbenchHttpHandler", () => {
       .toBe(400);
     expect((await bad({ prompt: "x", budget: { perCallLimitUsd: -1 } })).status)
       .toBe(400);
-    expect((await bad({ prompt: "x", budget: { perCallLimitUsd: 99999 } }))
-      .status).toBe(400);
+    expect(
+      (await bad({ prompt: "x", budget: { perCallLimitUsd: 99999 } }))
+        .status,
+    ).toBe(400);
   });
 });
 
@@ -1109,7 +1117,10 @@ describe("session REST surface", () => {
       new Request("http://127.0.0.1:8787/api/turn", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: "hi", workspace: "/workspace/example-project" }),
+        body: JSON.stringify({
+          prompt: "hi",
+          workspace: "/workspace/example-project",
+        }),
       }),
     );
     expect(response.status).toBe(200);

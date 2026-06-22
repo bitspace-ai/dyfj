@@ -13,8 +13,14 @@
  *   - The fire-and-forget error handling contract
  */
 
-import { test, expect, describe } from "vitest";
-import { extractText, extractThinking, normaliseStopReason, generateULID, generateTraceId } from "./utils";
+import { describe, expect, test } from "vitest";
+import {
+  extractText,
+  extractThinking,
+  generateTraceId,
+  generateULID,
+  normaliseStopReason,
+} from "./utils";
 import { BudgetTracker } from "./budget";
 
 // ── Tier inference (mirrors extension logic) ──────────────────────────────────
@@ -53,7 +59,7 @@ function extractToolResultText(
 ): string | null {
   const text = content
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
-    .map(c => c.text)
+    .map((c) => c.text)
     .join("")
     .slice(0, limit);
   return text || null;
@@ -178,7 +184,7 @@ describe("session state reset on session_start", () => {
     t1.record({ input: 100, output: 50, cost: { total: 0.01 } }, 1);
 
     const t2 = new BudgetTracker("sess2", "trace2");
-    expect(t2.totalCost).toBe(0);   // fresh tracker, not accumulated
+    expect(t2.totalCost).toBe(0); // fresh tracker, not accumulated
     expect(t1.totalCost).toBeCloseTo(0.01); // old tracker unchanged
   });
 });
@@ -189,9 +195,9 @@ describe("budget accumulation for a model session", () => {
   test("records multiple model responses and accumulates cost", () => {
     const tracker = new BudgetTracker("sess", "trace");
     // Simulate 3 assistant messages in a session
-    tracker.record({ input: 500,  output: 300, cost: { total: 0.004 } }, 1);
+    tracker.record({ input: 500, output: 300, cost: { total: 0.004 } }, 1);
     tracker.record({ input: 1000, output: 800, cost: { total: 0.009 } }, 1);
-    tracker.record({ input: 200,  output: 100, cost: { total: 0.0015 } }, 1);
+    tracker.record({ input: 200, output: 100, cost: { total: 0.0015 } }, 1);
 
     expect(tracker.totalCalls).toBe(3);
     expect(tracker.totalCost).toBeCloseTo(0.0145);
@@ -205,7 +211,7 @@ describe("budget accumulation for a model session", () => {
 
     const payload = tracker.buildSummaryEventPayload({
       eventId: "FIXED_ID",
-      spanId:  "FIXED_SPAN",
+      spanId: "FIXED_SPAN",
     });
 
     expect(payload.event_type).toBe("budget_summary");

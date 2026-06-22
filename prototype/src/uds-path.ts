@@ -1,4 +1,4 @@
-// Default Unix-socket path for the workbench runtime seam (BIT-230). Engine-free
+// Default Unix-socket path for the workbench runtime seam. Engine-free
 // so the thin CLI client and the server both import it.
 
 export interface EnvLookup {

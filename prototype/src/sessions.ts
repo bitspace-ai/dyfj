@@ -123,7 +123,7 @@ function truncateTaskDescription(value: string): string {
   return value.slice(0, 256);
 }
 
-// ─── Session REST surface (dfj-1dv.4) ────────────────────────────────────────
+// ─── Session REST surface ────────────────────────────────────────
 
 export interface WorkbenchSessionSummary {
   sessionId: string;
@@ -232,7 +232,7 @@ export interface WorkbenchSessionEvent {
   tokensInput: number | null;
   tokensOutput: number | null;
   costTotal: string | null;
-  // BIT-161: tool-call audit fields, so resume can replay tool turns.
+  // tool-call audit fields, so resume can replay tool turns.
   // toolArguments is normalized to a JSON string regardless of how the JSON
   // column round-trips.
   toolName: string | null;
@@ -298,7 +298,7 @@ export async function fetchWorkbenchSessionEvents(input: {
  * model sees structured user/assistant turns instead of a flattened "Conversation
  * so far:" string. Prompts live on session_start events (operator → user turns);
  * responses on model_response events (→ assistant turns); and tool_call events
- * (BIT-161) are replayed as the assistant's tool-call intention immediately
+ * are replayed as the assistant's tool-call intention immediately
  * followed by its matching result, so a resumed model sees its own tool trail
  * rather than a transcript that silently dropped it. Returns the most recent
  * `maxTurns` turns; whole turns are kept (no mid-turn truncation). The caller

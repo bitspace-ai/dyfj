@@ -11,15 +11,15 @@
  *   (migrated from stage/ via migrate_stage.ts)
  */
 
-import { test, expect, describe } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
+  buildSystemPrompt,
+  executeReadMemory,
+  getMemoryBySlug,
   loadMemoriesByType,
   loadMemoryIndex,
-  getMemoryBySlug,
-  executeReadMemory,
-  buildSystemPrompt,
-  MEMORY_VISIBILITY_ALL,
   type Memory,
+  MEMORY_VISIBILITY_ALL,
   type MemoryIndexEntry,
 } from "./memory";
 
@@ -29,25 +29,31 @@ describe("loadMemoriesByType (integration)", () => {
   test("loads user memories with full content", async () => {
     const memories = await loadMemoriesByType(["user"], MEMORY_VISIBILITY_ALL);
     expect(memories.length).toBeGreaterThan(0);
-    expect(memories.every(m => m.type === "user")).toBe(true);
-    expect(memories.every(m => m.content.length > 0)).toBe(true);
-    expect(memories.every(m => m.slug.length > 0)).toBe(true);
-    expect(memories.every(m => m.name.length > 0)).toBe(true);
+    expect(memories.every((m) => m.type === "user")).toBe(true);
+    expect(memories.every((m) => m.content.length > 0)).toBe(true);
+    expect(memories.every((m) => m.slug.length > 0)).toBe(true);
+    expect(memories.every((m) => m.name.length > 0)).toBe(true);
   });
 
   test("loads feedback memories with full content", async () => {
-    const memories = await loadMemoriesByType(["feedback"], MEMORY_VISIBILITY_ALL);
+    const memories = await loadMemoriesByType(
+      ["feedback"],
+      MEMORY_VISIBILITY_ALL,
+    );
     expect(memories.length).toBeGreaterThan(0);
-    expect(memories.every(m => m.type === "feedback")).toBe(true);
-    expect(memories.every(m => m.content.length > 0)).toBe(true);
+    expect(memories.every((m) => m.type === "feedback")).toBe(true);
+    expect(memories.every((m) => m.content.length > 0)).toBe(true);
   });
 
   test("loads user + feedback combined — the core memory set", async () => {
-    const memories = await loadMemoriesByType(["user", "feedback"], MEMORY_VISIBILITY_ALL);
-    expect(memories.some(m => m.type === "user")).toBe(true);
-    expect(memories.some(m => m.type === "feedback")).toBe(true);
+    const memories = await loadMemoriesByType(
+      ["user", "feedback"],
+      MEMORY_VISIBILITY_ALL,
+    );
+    expect(memories.some((m) => m.type === "user")).toBe(true);
+    expect(memories.some((m) => m.type === "feedback")).toBe(true);
     // Spot-check known slugs
-    const slugs = memories.map(m => m.slug);
+    const slugs = memories.map((m) => m.slug);
     expect(slugs).toContain("user_profile");
     expect(slugs).toContain("feedback_humor");
   });
@@ -56,7 +62,7 @@ describe("loadMemoriesByType (integration)", () => {
     const memories = await loadMemoriesByType(["user"], MEMORY_VISIBILITY_ALL);
     // At least one user memory should have a newline in its content —
     // confirms the RFC 4180 multiline CSV fix is working end-to-end
-    const hasMultiline = memories.some(m => m.content.includes("\n"));
+    const hasMultiline = memories.some((m) => m.content.includes("\n"));
     expect(hasMultiline).toBe(true);
   });
 
@@ -67,18 +73,24 @@ describe("loadMemoriesByType (integration)", () => {
 
   test("returns only requested types — no cross-contamination", async () => {
     const memories = await loadMemoriesByType(["user"], MEMORY_VISIBILITY_ALL);
-    expect(memories.every(m => m.type === "user")).toBe(true);
-    expect(memories.some(m => m.type === "feedback")).toBe(false);
+    expect(memories.every((m) => m.type === "user")).toBe(true);
+    expect(memories.some((m) => m.type === "feedback")).toBe(false);
   });
 
   test("remote clearance excludes the private personal corpus", async () => {
     // Seeded user/feedback memories default to 'private' (schema/019), so a
     // non-loopback consumer (client_safe + public) receives none of them —
     // the personal corpus cannot leak to a remote/shared surface.
-    const remote = await loadMemoriesByType(["user", "feedback"], ["client_safe", "public"]);
+    const remote = await loadMemoriesByType(["user", "feedback"], [
+      "client_safe",
+      "public",
+    ]);
     expect(remote).toEqual([]);
     // A loopback operator (full clearance) still gets the full corpus.
-    const all = await loadMemoriesByType(["user", "feedback"], MEMORY_VISIBILITY_ALL);
+    const all = await loadMemoriesByType(
+      ["user", "feedback"],
+      MEMORY_VISIBILITY_ALL,
+    );
     expect(all.length).toBeGreaterThan(0);
   });
 });
@@ -87,14 +99,20 @@ describe("loadMemoriesByType (integration)", () => {
 
 describe("loadMemoryIndex (integration)", () => {
   test("loads project + reference index entries", async () => {
-    const index = await loadMemoryIndex(["project", "reference"], MEMORY_VISIBILITY_ALL);
+    const index = await loadMemoryIndex(
+      ["project", "reference"],
+      MEMORY_VISIBILITY_ALL,
+    );
     expect(index.length).toBeGreaterThan(0);
-    expect(index.some(e => e.type === "project")).toBe(true);
-    expect(index.some(e => e.type === "reference")).toBe(true);
+    expect(index.some((e) => e.type === "project")).toBe(true);
+    expect(index.some((e) => e.type === "reference")).toBe(true);
   });
 
   test("index entries have slug, name, description but NO content field", async () => {
-    const index = await loadMemoryIndex(["project", "reference"], MEMORY_VISIBILITY_ALL);
+    const index = await loadMemoryIndex(
+      ["project", "reference"],
+      MEMORY_VISIBILITY_ALL,
+    );
     for (const entry of index) {
       expect(entry.slug.length).toBeGreaterThan(0);
       expect(entry.name.length).toBeGreaterThan(0);
@@ -105,13 +123,13 @@ describe("loadMemoryIndex (integration)", () => {
 
   test("index includes known project slugs", async () => {
     const index = await loadMemoryIndex(["project"], MEMORY_VISIBILITY_ALL);
-    const slugs = index.map(e => e.slug);
+    const slugs = index.map((e) => e.slug);
     expect(slugs).toContain("project_dyfj");
   });
 
   test("index includes known reference slugs", async () => {
     const index = await loadMemoryIndex(["reference"], MEMORY_VISIBILITY_ALL);
-    const slugs = index.map(e => e.slug);
+    const slugs = index.map((e) => e.slug);
     expect(slugs).toContain("reference_sleipnir");
   });
 
@@ -194,8 +212,14 @@ describe("executeReadMemory (integration)", () => {
 
 describe("full session context (integration)", () => {
   test("buildSystemPrompt with live data produces a non-trivial prompt", async () => {
-    const core  = await loadMemoriesByType(["user", "feedback"], MEMORY_VISIBILITY_ALL);
-    const index = await loadMemoryIndex(["project", "reference"], MEMORY_VISIBILITY_ALL);
+    const core = await loadMemoriesByType(
+      ["user", "feedback"],
+      MEMORY_VISIBILITY_ALL,
+    );
+    const index = await loadMemoryIndex(
+      ["project", "reference"],
+      MEMORY_VISIBILITY_ALL,
+    );
     const prompt = buildSystemPrompt(core, index);
 
     // Should contain key sections
@@ -209,15 +233,21 @@ describe("full session context (integration)", () => {
   });
 
   test("core memories cover expected counts", async () => {
-    const user     = await loadMemoriesByType(["user"], MEMORY_VISIBILITY_ALL);
-    const feedback = await loadMemoriesByType(["feedback"], MEMORY_VISIBILITY_ALL);
+    const user = await loadMemoriesByType(["user"], MEMORY_VISIBILITY_ALL);
+    const feedback = await loadMemoriesByType(
+      ["feedback"],
+      MEMORY_VISIBILITY_ALL,
+    );
     expect(user.length).toBeGreaterThan(0);
     expect(feedback.length).toBeGreaterThan(0);
   });
 
   test("index covers expected counts", async () => {
-    const project   = await loadMemoryIndex(["project"], MEMORY_VISIBILITY_ALL);
-    const reference = await loadMemoryIndex(["reference"], MEMORY_VISIBILITY_ALL);
+    const project = await loadMemoryIndex(["project"], MEMORY_VISIBILITY_ALL);
+    const reference = await loadMemoryIndex(
+      ["reference"],
+      MEMORY_VISIBILITY_ALL,
+    );
     expect(project.length).toBeGreaterThan(0);
     expect(reference.length).toBeGreaterThan(0);
   });

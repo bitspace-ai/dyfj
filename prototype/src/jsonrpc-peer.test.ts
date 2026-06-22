@@ -37,7 +37,9 @@ async function connectPair(
 
 describe("JsonRpcPeer", () => {
   test("client request -> server handler -> result", async () => {
-    const { client } = await connectPair({ "models/list": () => ({ models: [] }) });
+    const { client } = await connectPair({
+      "models/list": () => ({ models: [] }),
+    });
     expect(await client.request("models/list")).toEqual({ models: [] });
   });
 
@@ -49,7 +51,10 @@ describe("JsonRpcPeer", () => {
       },
     });
     expect(
-      await server.request("approval", { tool: "bash", command: "rm -rf build/" }),
+      await server.request("approval", {
+        tool: "bash",
+        command: "rm -rf build/",
+      }),
     ).toEqual({ decision: "approve-once" });
   });
 
@@ -73,7 +78,11 @@ describe("JsonRpcPeer", () => {
 
   test("notifications reach a matching handler fire-and-forget", async () => {
     let seen: unknown;
-    const { client } = await connectPair({ stream: (p) => { seen = p; } });
+    const { client } = await connectPair({
+      stream: (p) => {
+        seen = p;
+      },
+    });
     await client.notify("stream", { delta: "hi" });
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(seen).toEqual({ delta: "hi" });

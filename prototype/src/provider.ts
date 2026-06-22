@@ -127,7 +127,7 @@ const OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY";
 const GEMINI_DEFAULT_MAX_TOKENS = 8192;
 // Gemini 3.x are thinking models and draw thinking tokens from maxOutputTokens
-// (BIT-170). Bound thinking so it doesn't starve the answer; "low" keeps the
+//. Bound thinking so it doesn't starve the answer; "low" keeps the
 // reasoning trail cheap while leaving the 8192 budget mostly for output. (2.5
 // rows would need thinkingBudget instead, but those are inactive.)
 const GEMINI_THINKING_LEVEL = "low";
@@ -390,7 +390,11 @@ function toOpenAIWireMessages(
       }
       wire.push(out);
     } else {
-      wire.push({ role: "tool", tool_call_id: m.toolCallId, content: m.content });
+      wire.push({
+        role: "tool",
+        tool_call_id: m.toolCallId,
+        content: m.content,
+      });
     }
   }
   return wire;
@@ -678,7 +682,12 @@ export function toolWireNames(
 
 type AnthropicContentBlock =
   | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | {
+    type: "tool_use";
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+  }
   | { type: "tool_result"; tool_use_id: string; content: string };
 
 type AnthropicWireMessage = {
@@ -1174,7 +1183,7 @@ export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
     };
   };
   const candidate = json.candidates?.[0];
-  // Exclude thinking parts (BIT-170): reasoning content is not answer text.
+  // Exclude thinking parts: reasoning content is not answer text.
   const textDelta = (candidate?.content?.parts ?? [])
     .filter((part) => !part.thought)
     .map((part) => part.text ?? "")
@@ -1302,7 +1311,7 @@ async function readGeminiJson(
   };
   const completed = now();
   const candidate = json.candidates?.[0];
-  // Exclude thinking parts (BIT-170): reasoning content is not answer text.
+  // Exclude thinking parts: reasoning content is not answer text.
   const text = (candidate?.content?.parts ?? [])
     .filter((part) => !part.thought)
     .map((part) => part.text ?? "")

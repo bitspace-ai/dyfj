@@ -3,7 +3,7 @@
  *
  * `read_file` and `list_files` are read-only and side-effect-free (the policy
  * auto-allows them). `write_file` is mutating — the command policy routes it
- * through operator approval (BIT-116), so its executor never runs unapproved.
+ * through operator approval, so its executor never runs unapproved.
  * Every path is resolved within the root and traversal/symlink escape is
  * rejected, so the model can only touch the project it's working in. `bash` and
  * `edit_file` are later slices.

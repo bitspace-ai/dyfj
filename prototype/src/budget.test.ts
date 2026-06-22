@@ -7,24 +7,24 @@
  * all the interesting logic and produces a deterministic, inspectable result.
  */
 
-import { test, expect, describe, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import {
-  BudgetTracker,
-  BudgetExceededError,
-  defaultBudgetConfig,
   type BudgetConfig,
+  BudgetExceededError,
+  BudgetTracker,
+  defaultBudgetConfig,
   type TierSpend,
 } from "./budget";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const SESSION_ID = "01TEST0SESSION0000000000000";
-const TRACE_ID   = "aabbccddeeff00112233445566778899";
+const TRACE_ID = "aabbccddeeff00112233445566778899";
 
 function makeTracker(config?: Partial<BudgetConfig>): BudgetTracker {
   return new BudgetTracker(SESSION_ID, TRACE_ID, {
-    sessionLimitUsd:  1.00,
-    perCallLimitUsd:  0.10,
+    sessionLimitUsd: 1.00,
+    perCallLimitUsd: 0.10,
     ...config,
   });
 }
@@ -42,7 +42,9 @@ describe("defaultBudgetConfig", () => {
     try {
       expect(defaultBudgetConfig().sessionLimitUsd).toBe(1.00);
     } finally {
-      if (original !== undefined) process.env.DYFJ_BUDGET_SESSION_USD = original;
+      if (original !== undefined) {
+        process.env.DYFJ_BUDGET_SESSION_USD = original;
+      }
     }
   });
 
@@ -52,7 +54,9 @@ describe("defaultBudgetConfig", () => {
     try {
       expect(defaultBudgetConfig().perCallLimitUsd).toBe(0.10);
     } finally {
-      if (original !== undefined) process.env.DYFJ_BUDGET_PER_CALL_USD = original;
+      if (original !== undefined) {
+        process.env.DYFJ_BUDGET_PER_CALL_USD = original;
+      }
     }
   });
 
@@ -121,9 +125,9 @@ describe("BudgetTracker.record()", () => {
 
   test("tracks per-tier breakdown separately", () => {
     const t = makeTracker();
-    t.record(makeUsage(1000, 500, 0),     0); // Tier 0 free
-    t.record(makeUsage(100,  50,  0.001), 1); // Tier 1
-    t.record(makeUsage(200,  80,  0.010), 2); // Tier 2
+    t.record(makeUsage(1000, 500, 0), 0); // Tier 0 free
+    t.record(makeUsage(100, 50, 0.001), 1); // Tier 1
+    t.record(makeUsage(200, 80, 0.010), 2); // Tier 2
 
     const summary = t.getSummary();
     expect(summary.byTier["0"].costUsd).toBe(0);
@@ -339,7 +343,7 @@ describe("BudgetTracker.buildSummaryEventPayload()", () => {
   test("accepts overrides for eventId and spanId (deterministic testing)", () => {
     const payload = makeTracker().buildSummaryEventPayload({
       eventId: "FIXED_EVENT_ID",
-      spanId:  "FIXED_SPAN_ID",
+      spanId: "FIXED_SPAN_ID",
     });
     expect(payload.event_id).toBe("FIXED_EVENT_ID");
     expect(payload.span_id).toBe("FIXED_SPAN_ID");

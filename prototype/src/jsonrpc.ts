@@ -1,4 +1,4 @@
-// JSON-RPC 2.0 protocol core for the Workbench transport seam (BIT-230).
+// JSON-RPC 2.0 protocol core for the Workbench transport seam.
 //
 // Hand-rolled (no SDK) so it stays small and ports to Rust line-for-line per the
 // rust-core-sequencing thesis. Pure framing + classification + dispatch; entirely

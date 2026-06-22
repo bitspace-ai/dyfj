@@ -1,11 +1,15 @@
-import { test, expect, describe } from "vitest";
+import { describe, expect, test } from "vitest";
 import {
-  generateULID, generateTraceId, generateSpanId,
-  extractText, extractThinking,
-  parseCsvRow, parseCSVRows,
-  normaliseStopReason,
-  buildModelSelectedEventPayload,
   buildDoltPoolOptions,
+  buildModelSelectedEventPayload,
+  extractText,
+  extractThinking,
+  generateSpanId,
+  generateTraceId,
+  generateULID,
+  normaliseStopReason,
+  parseCsvRow,
+  parseCSVRows,
 } from "./utils";
 import type { MessageContent } from "./utils";
 
@@ -62,7 +66,9 @@ test("extractThinking correctly extracts and concatenates thinking content", () 
     { type: "thinking", thinking: "Thinking deep thoughts. " },
     { type: "thinking", thinking: "More thoughts." },
   ];
-  expect(extractThinking(content)).toBe("Thinking deep thoughts. More thoughts.");
+  expect(extractThinking(content)).toBe(
+    "Thinking deep thoughts. More thoughts.",
+  );
 });
 
 test("extractThinking returns null if no thinking content is present", () => {
@@ -106,7 +112,7 @@ describe("parseCsvRow", () => {
   });
 
   test("handles escaped double-quote inside quoted field", () => {
-    expect(parseCsvRow('"say \"\"hi\"\"",b')).toEqual(['say "hi"', "b"]);
+    expect(parseCsvRow('"say ""hi""",b')).toEqual(['say "hi"', "b"]);
   });
 
   test("handles JSON array value (RFC 4180 double-quote escaping, as Dolt outputs)", () => {
@@ -126,7 +132,7 @@ describe("parseCsvRow", () => {
 describe("parseCSVRows", () => {
   test("parses simple single-line rows", () => {
     const rows = parseCSVRows("a,b,c\n1,2,3");
-    expect(rows).toEqual([["a","b","c"],["1","2","3"]]);
+    expect(rows).toEqual([["a", "b", "c"], ["1", "2", "3"]]);
   });
 
   test("handles multiline content inside a quoted field", () => {

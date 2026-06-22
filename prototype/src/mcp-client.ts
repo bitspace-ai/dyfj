@@ -26,7 +26,15 @@ import process from "node:process";
 // ── Types (mirroring tool inputs/outputs) ─────────────────────────────────────
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";
-export type Phase = "observe" | "think" | "plan" | "build" | "execute" | "verify" | "learn" | "complete";
+export type Phase =
+  | "observe"
+  | "think"
+  | "plan"
+  | "build"
+  | "execute"
+  | "verify"
+  | "learn"
+  | "complete";
 
 export interface MemoryIndexEntry {
   slug: string;
@@ -49,7 +57,7 @@ export interface SessionSummary {
 // ── Client ────────────────────────────────────────────────────────────────────
 
 const SERVER_BIN = process.env.DENO_BIN ?? "deno";
-const DYFJ_ROOT   = process.env.DYFJ_ROOT ?? `${process.env.HOME}/.dyfj`;
+const DYFJ_ROOT = process.env.DYFJ_ROOT ?? `${process.env.HOME}/.dyfj`;
 const SERVER_SCRIPT = `${DYFJ_ROOT}/mcp/server.ts`;
 
 export class DyfjMcpClient {
@@ -71,7 +79,10 @@ export class DyfjMcpClient {
         "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE",
         SERVER_SCRIPT,
       ],
-      env: { ...process.env, HOME: process.env.HOME ?? "" } as Record<string, string>,
+      env: { ...process.env, HOME: process.env.HOME ?? "" } as Record<
+        string,
+        string
+      >,
     });
     await this.client.connect(this.transport);
     this.connected = true;
@@ -85,11 +96,18 @@ export class DyfjMcpClient {
 
   // ── Helper ──────────────────────────────────────────────────────────────────
 
-  private async call(name: string, args: Record<string, unknown>): Promise<string> {
+  private async call(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<string> {
     const result = await this.client.callTool({ name, arguments: args });
     const content = result.content as Array<{ type: string; text?: string }>;
-    const text = content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
-    if (result.isError) throw new Error(`MCP tool '${name}' returned error: ${text}`);
+    const text = content.filter((c) => c.type === "text").map((c) =>
+      c.text ?? ""
+    ).join("");
+    if (result.isError) {
+      throw new Error(`MCP tool '${name}' returned error: ${text}`);
+    }
     return text;
   }
 
@@ -110,7 +128,13 @@ export class DyfjMcpClient {
     description: string,
     content: string,
   ): Promise<string> {
-    return this.call("write_memory", { slug, name, type, description, content });
+    return this.call("write_memory", {
+      slug,
+      name,
+      type,
+      description,
+      content,
+    });
   }
 
   // ── Session tools ───────────────────────────────────────────────────────────
@@ -140,7 +164,10 @@ export class DyfjMcpClient {
     content?: string,
   ): Promise<string> {
     return this.call("update_session", {
-      session_id, phase, progress_done, progress_total,
+      session_id,
+      phase,
+      progress_done,
+      progress_total,
       ...(content ? { content } : {}),
     });
   }
