@@ -127,10 +127,10 @@ describe("loadMemoryIndex (integration)", () => {
     expect(slugs).toContain("project_dyfj");
   });
 
-  test("index includes known reference slugs", async () => {
+  test("loads reference-type index entries", async () => {
     const index = await loadMemoryIndex(["reference"], MEMORY_VISIBILITY_ALL);
-    const slugs = index.map((e) => e.slug);
-    expect(slugs).toContain("reference_sleipnir");
+    expect(index.length).toBeGreaterThan(0);
+    expect(index.every((e) => e.type === "reference")).toBe(true);
   });
 
   test("returns empty array for empty type list", async () => {

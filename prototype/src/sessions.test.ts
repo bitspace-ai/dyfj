@@ -158,12 +158,12 @@ describe("listWorkbenchSessions", () => {
           row({ session_id: "01AAAAAAAAAAAAAAAAAAAAAAAC", project: "" }),
           row({
             session_id: "01AAAAAAAAAAAAAAAAAAAAAAAD",
-            project: "dyfj-home",
+            project: "project-b",
             updated_at: "2026-06-12 11:00:00",
           }),
         ]),
     });
-    expect(groups.map((g) => g.project)).toEqual(["dyfj", "dyfj-home", null]);
+    expect(groups.map((g) => g.project)).toEqual(["dyfj", "project-b", null]);
     expect(groups[0].sessions[0].sessionId).toBe("01AAAAAAAAAAAAAAAAAAAAAAAB");
     expect(groups[2].sessions[0].project).toBeNull();
   });

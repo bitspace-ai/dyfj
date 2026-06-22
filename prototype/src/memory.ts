@@ -54,7 +54,7 @@ export const MEMORY_VISIBILITY_ALL: readonly MemoryVisibility[] = [
 
 /**
  * Visibility classes a consumer is cleared to receive, by transport. The
- * loopback/in-process operator (Chris at the machine) sees everything; any
+ * loopback/in-process operator at the machine sees everything; any
  * non-loopback consumer — remote or shared, even with the bearer key, since the
  * shared bearer does not prove identity — is limited to client-safe + public
  * until per-principal identity exists. Safe by default: an

@@ -84,10 +84,10 @@ const SAMPLE_INDEX: MemoryIndexEntry[] = [
     description: "User's AI platform",
   }),
   makeIndex({
-    slug: "reference_sleipnir",
+    slug: "reference_example_host",
     type: "reference",
-    name: "Sleipnir",
-    description: "Home server specs",
+    name: "Example Host",
+    description: "Example reference entry",
   }),
 ];
 
@@ -270,7 +270,7 @@ describe("buildSystemPrompt - context index", () => {
   test("includes each index entry slug", () => {
     const prompt = buildSystemPrompt([], SAMPLE_INDEX);
     expect(prompt).toContain("project_dyfj");
-    expect(prompt).toContain("reference_sleipnir");
+    expect(prompt).toContain("reference_example_host");
   });
 
   test("includes type in index row", () => {
