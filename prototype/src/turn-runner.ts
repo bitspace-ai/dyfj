@@ -19,6 +19,7 @@ import {
   buildConversationMessages,
   type WorkbenchSessionEvent,
 } from "./sessions";
+import type { ConfirmToolApproval } from "./commands";
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -272,6 +273,11 @@ export interface ExecuteTurnDeps {
   fetchSessionEvents: FetchSessionEvents;
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void;
+  /**
+   * Mutating-tool approval handler (BIT-116). The UDS transport supplies a
+   * duplex round-trip; HTTP omits it, so the runtime defaults to deny.
+   */
+  confirmToolApproval?: ConfirmToolApproval;
 }
 
 /**
@@ -298,6 +304,9 @@ export function executeTurn(
       authContext: deps.authContext,
       onTextDelta: deps.onTextDelta,
       onRuntimeEvent: deps.onRuntimeEvent,
+      // BIT-116: mutating tools run only after operator approval; the transport
+      // supplies the approver (UDS = duplex round-trip), else the runtime denies.
+      confirmToolApproval: deps.confirmToolApproval,
       // BIT-166: paid inference is granted only to a loopback caller that
       // explicitly opted in this turn; remote callers are always denied.
       confirmPaidEscalation: () =>

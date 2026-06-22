@@ -1,5 +1,9 @@
 import { executeReadMemory } from "./memory";
-import { executeListFiles, executeReadFile } from "./file-tools";
+import {
+  executeListFiles,
+  executeReadFile,
+  executeWriteFile,
+} from "./file-tools";
 import {
   generateSpanId,
   generateULID,
@@ -31,6 +35,13 @@ export type JsonSchemaProperty = {
   type: "string" | "number" | "boolean" | "object" | "array";
   pattern?: string;
   description?: string;
+  /**
+   * Mark a payload-bearing argument (e.g. write_file `content`) sensitive: it is
+   * replaced with a constant redaction sentinel before the tool-call event is
+   * persisted — regardless of the runtime value's type — so the durable log and
+   * session replay never retain the raw value (BIT-116 / CWE-532).
+   */
+  redact?: boolean;
 };
 
 export interface PermissionEnvelope {
@@ -100,10 +111,39 @@ export type CommandInvocationResult<TResult = unknown> =
     reason: string;
   };
 
+/** A mutating tool call awaiting operator approval. Serializable for the wire. */
+export interface ToolApprovalRequest {
+  commandId: string;
+  callId: string;
+  title: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolApprovalVerdict {
+  decision: "approve" | "deny";
+  reason?: string;
+}
+
+/**
+ * Resolve an `ask` policy: the runtime injects a transport-specific approver
+ * (UDS asks the operator over the duplex channel; HTTP has no such channel). The
+ * default denies — fail-closed, like denyPaidEscalation — so a missing approver
+ * never executes a mutation.
+ */
+export type ConfirmToolApproval = (
+  request: ToolApprovalRequest,
+) => Promise<ToolApprovalVerdict>;
+
+const denyToolApproval: ConfirmToolApproval = () =>
+  Promise.resolve({
+    decision: "deny",
+    reason: "tool approval is unavailable on this transport",
+  });
+
 export interface CoreCommandDependencies {
   readMemory?: (slug: string) => Promise<string> | string;
   allowedMemorySlugs?: readonly string[];
-  /** When set, register the read-only workspace file tools rooted here. */
+  /** When set, register the workspace file tools rooted here. */
   workspaceRoot?: string;
 }
 
@@ -202,6 +242,7 @@ export function evaluateCommandPolicy(
 export async function invokeCommand<TResult = unknown>(
   registry: CommandRegistry,
   call: CommandCall,
+  confirmApproval: ConfirmToolApproval = denyToolApproval,
 ): Promise<CommandInvocationResult<TResult>> {
   const command = registry.lookup(call.commandId) as
     | CommandDefinition<TResult>
@@ -216,22 +257,41 @@ export async function invokeCommand<TResult = unknown>(
   }
 
   const policy = evaluateCommandPolicy(command, call);
-  if (policy.decision !== "allow") {
+  if (policy.decision === "deny") {
     return {
-      decision: policy.decision,
+      decision: "deny",
       authzBasis: policy.authzBasis,
+      reason: policy.reason ?? "command denied",
       isError: true,
-      // "ask" results may omit a reason; the outcome contract requires one.
-      reason: policy.reason ?? "command requires operator approval",
     };
   }
 
-  const result = await command.executor(call, {
-    authzBasis: policy.authzBasis,
-  });
+  let authzBasis = policy.authzBasis;
+  if (policy.decision === "ask") {
+    // A mutation does not run until the operator approves it (BIT-116). The
+    // verdict comes from the injected transport approver; the default denies, so
+    // an unapproved or channel-less call never executes.
+    const verdict = await confirmApproval({
+      commandId: call.commandId,
+      callId: call.callId,
+      title: command.title,
+      arguments: call.arguments,
+    });
+    if (verdict.decision !== "approve") {
+      return {
+        decision: "deny",
+        authzBasis: "policy:deny:approval-denied",
+        reason: verdict.reason ?? "operator denied the tool call",
+        isError: true,
+      };
+    }
+    authzBasis = "policy:allow:operator-approved";
+  }
+
+  const result = await command.executor(call, { authzBasis });
   return {
     decision: "allow",
-    authzBasis: policy.authzBasis,
+    authzBasis,
     isError: false,
     result,
   };
@@ -343,6 +403,51 @@ export function buildListFilesCommand(root: string): CommandDefinition<string> {
   };
 }
 
+export function buildWriteFileCommand(root: string): CommandDefinition<string> {
+  return {
+    id: "write_file",
+    title: "Write File",
+    description:
+      "Write UTF-8 text to a file in the workspace, by path relative to the " +
+      "workspace root, creating or overwriting it. Mutating — requires " +
+      "operator approval before it runs.",
+    inputSchema: {
+      type: "object",
+      required: ["path", "content"],
+      properties: {
+        path: {
+          type: "string",
+          description: "File path relative to the workspace root.",
+        },
+        content: {
+          type: "string",
+          description: "Full UTF-8 text to write to the file.",
+          // Redacted from the persisted tool-call event + session replay; the
+          // raw body is written to the file, never retained in the audit log.
+          redact: true,
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      // defaultDecision "allow" + filesystem "write" routes through "ask" in
+      // evaluateCommandPolicy (the write-fs branch) — i.e. operator approval.
+      effects: ["write.filesystem", "emit.event"],
+      defaultDecision: "allow",
+      resources: ["file:write"],
+      network: "none",
+      filesystem: "write",
+      cost: "none",
+    },
+    executor: (call) =>
+      executeWriteFile(
+        root,
+        String(call.arguments.path),
+        String(call.arguments.content),
+      ),
+  };
+}
+
 export function registerCoreCommands(
   registry: CommandRegistry,
   deps: CoreCommandDependencies = {},
@@ -351,13 +456,46 @@ export function registerCoreCommands(
   if (deps.workspaceRoot !== undefined) {
     registry.register(buildReadFileCommand(deps.workspaceRoot));
     registry.register(buildListFilesCommand(deps.workspaceRoot));
+    registry.register(buildWriteFileCommand(deps.workspaceRoot));
   }
+}
+
+// Constant redaction sentinel — no length or content-derived hash, so a
+// sensitive value's size and a guess-confirming fingerprint never reach the log.
+const REDACTED = "[redacted]";
+
+/**
+ * Replace each argument marked `redact` in the command's input schema with a
+ * constant sentinel — REGARDLESS of the runtime value's type — so payload-bearing
+ * values (write_file content) never reach the durable event log or session replay
+ * (BIT-116 / CWE-532), including for malformed (non-string) values and denied
+ * calls (which are still logged). Returns the original object untouched when
+ * nothing is redacted, so non-mutating tools are unaffected. Centralized here so
+ * every future mutating tool inherits it.
+ */
+export function redactCommandArguments(
+  command: CommandDefinition | undefined,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = command?.inputSchema.properties ?? {};
+  let redactedAny = false;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (properties[key]?.redact) {
+      out[key] = REDACTED;
+      redactedAny = true;
+    } else {
+      out[key] = value;
+    }
+  }
+  return redactedAny ? out : args;
 }
 
 export function buildCommandToolCallEventPayload(
   call: CommandCall,
   result: CommandInvocationResult,
   context: CommandEventContext,
+  loggedArguments: Record<string, unknown> = call.arguments,
 ): Record<string, unknown> {
   const isError = result.isError;
   const resultText = isError
@@ -376,7 +514,7 @@ export function buildCommandToolCallEventPayload(
     authz_basis: result.authzBasis,
     tool_name: call.commandId,
     tool_call_id: call.callId,
-    tool_arguments: JSON.stringify(call.arguments),
+    tool_arguments: JSON.stringify(loggedArguments),
     tool_result: resultText,
     tool_is_error: isError,
     content: isError
@@ -390,9 +528,22 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   registry: CommandRegistry,
   call: CommandCall,
   context: CommandEventContext,
+  confirmApproval: ConfirmToolApproval = denyToolApproval,
 ): Promise<CommandInvocationResult<TResult>> {
-  const result = await invokeCommand<TResult>(registry, call);
-  const event = buildCommandToolCallEventPayload(call, result, context);
+  const result = await invokeCommand<TResult>(registry, call, confirmApproval);
+  // Redact payload-bearing arguments (e.g. write_file content) before the event
+  // is persisted, so the durable log and session replay never retain the raw
+  // value (BIT-116 / CWE-532).
+  const loggedArguments = redactCommandArguments(
+    registry.lookup(call.commandId),
+    call.arguments,
+  );
+  const event = buildCommandToolCallEventPayload(
+    call,
+    result,
+    context,
+    loggedArguments,
+  );
   await (context.writeEvent ?? writeDoltEvent)(event);
   return result;
 }

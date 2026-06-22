@@ -28,6 +28,7 @@ import {
   type TurnRequestBody,
   type WorkbenchHttpRuntime,
 } from "./turn-runner";
+import type { ToolApprovalVerdict } from "./commands";
 
 export interface WorkbenchUnixServerOptions {
   runRuntime?: WorkbenchHttpRuntime;
@@ -122,6 +123,21 @@ const UDS_LOOPBACK_AUTH: WorkbenchAuthContext = {
   authzBasis: "policy:loopback-uds",
 };
 
+// Parse the client's response to an `approval` request into a verdict. Anything
+// that is not an explicit approve denies — fail-closed.
+function toApprovalVerdict(response: unknown): ToolApprovalVerdict {
+  const r = typeof response === "object" && response !== null
+    ? response as Record<string, unknown>
+    : {};
+  if (r.decision === "approve") return { decision: "approve" };
+  return {
+    decision: "deny",
+    reason: typeof r.reason === "string"
+      ? r.reason
+      : "operator denied the tool call",
+  };
+}
+
 // The `turn` method: run an agentic turn over the shared turn-runner core — the
 // SAME lock/resume/clearance/paid path as HTTP — streaming intermediate text
 // deltas and runtime events back as `stream` notifications on this connection.
@@ -147,6 +163,18 @@ export function buildTurnHandlers(
         loopback: true,
         runRuntime,
         fetchSessionEvents,
+        // BIT-116: mid-turn approval over the duplex channel — the server asks
+        // the connected client to approve a mutating tool; the client's response
+        // is the verdict. A failed request (no client approver, dropped
+        // connection) denies, fail-closed.
+        confirmToolApproval: (request) =>
+          ctx.request("approval", request).then(
+            toApprovalVerdict,
+            (): ToolApprovalVerdict => ({
+              decision: "deny",
+              reason: "approval request failed (no client approver?)",
+            }),
+          ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a
         // client can reuse one frame handler across both transports.
         onTextDelta: (text) =>

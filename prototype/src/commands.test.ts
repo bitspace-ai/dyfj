@@ -226,6 +226,7 @@ describe("registerCoreCommands", () => {
       "list_files",
       "memory.read",
       "read_file",
+      "write_file",
     ]);
   });
 
@@ -238,6 +239,127 @@ describe("registerCoreCommands", () => {
       call({ path: "deno.json" }, { commandId: "read_file" }),
     );
     expect(result.decision).toBe("allow");
+  });
+});
+
+describe("invokeCommand approval (ask) flow", () => {
+  function writeFileCommand(
+    executor: CommandDefinition<string>["executor"] = (c) =>
+      `wrote ${c.arguments.path}`,
+  ): CommandDefinition<string> {
+    return readCommand({
+      id: "write_file",
+      title: "Write File",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: { path: { type: "string" } },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["write.filesystem", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["file:write"],
+        network: "none",
+        filesystem: "write",
+        cost: "none",
+      },
+      executor,
+    });
+  }
+
+  test("with no approver, a mutating tool is denied — fail-closed", async () => {
+    let ran = false;
+    const registry = createCommandRegistry([
+      writeFileCommand(() => {
+        ran = true;
+        return "ran";
+      }),
+    ]);
+    const result = await invokeCommand(
+      registry,
+      call({ path: "x" }, { commandId: "write_file" }),
+    );
+    expect(result).toMatchObject({
+      decision: "deny",
+      authzBasis: "policy:deny:approval-denied",
+      isError: true,
+    });
+    expect(ran).toBe(false);
+  });
+
+  test("an approve verdict runs the tool with the operator-approved basis", async () => {
+    const registry = createCommandRegistry([writeFileCommand()]);
+    const result = await invokeCommand(
+      registry,
+      call({ path: "x" }, { commandId: "write_file" }),
+      () => Promise.resolve({ decision: "approve" }),
+    );
+    expect(result).toEqual({
+      decision: "allow",
+      authzBasis: "policy:allow:operator-approved",
+      isError: false,
+      result: "wrote x",
+    });
+  });
+
+  test("a deny verdict does not run the tool and carries the reason", async () => {
+    let ran = false;
+    const registry = createCommandRegistry([
+      writeFileCommand(() => {
+        ran = true;
+        return "ran";
+      }),
+    ]);
+    const result = await invokeCommand(
+      registry,
+      call({ path: "x" }, { commandId: "write_file" }),
+      () => Promise.resolve({ decision: "deny", reason: "operator said no" }),
+    );
+    expect(result).toMatchObject({
+      decision: "deny",
+      authzBasis: "policy:deny:approval-denied",
+      reason: "operator said no",
+      isError: true,
+    });
+    expect(ran).toBe(false);
+  });
+
+  test("the approval request carries the tool identity and arguments", async () => {
+    let seen: unknown;
+    const registry = createCommandRegistry([writeFileCommand()]);
+    await invokeCommand(
+      registry,
+      call({ path: "a.txt" }, { commandId: "write_file" }),
+      (request) => {
+        seen = request;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    expect(seen).toEqual({
+      commandId: "write_file",
+      callId: "call-123",
+      title: "Write File",
+      arguments: { path: "a.txt" },
+    });
+  });
+
+  test("an invalid-argument mutating call is denied before any approval", async () => {
+    let asked = false;
+    const registry = createCommandRegistry([writeFileCommand()]);
+    const result = await invokeCommand(
+      registry,
+      call({ path: "x", extra: 1 }, { commandId: "write_file" }),
+      () => {
+        asked = true;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    expect(result).toMatchObject({
+      decision: "deny",
+      authzBasis: "policy:deny:invalid-arguments",
+    });
+    expect(asked).toBe(false);
   });
 });
 
@@ -353,6 +475,141 @@ describe("registerCoreCommands", () => {
       reason: "slug does not match required pattern",
     });
     expect(executed).toBe(false);
+  });
+});
+
+describe("redactCommandArguments (sensitive tool args)", () => {
+  test("a write-file event redacts the content argument, preserves path", async () => {
+    const writeCmd: CommandDefinition<string> = {
+      id: "write_file",
+      title: "Write File",
+      inputSchema: {
+        type: "object",
+        required: ["path", "content"],
+        properties: {
+          path: { type: "string" },
+          content: { type: "string", redact: true },
+        },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["write.filesystem", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["file:write"],
+        network: "none",
+        filesystem: "write",
+        cost: "none",
+      },
+      executor: () => "ok",
+    };
+    const registry = createCommandRegistry([writeCmd]);
+    const events: Record<string, unknown>[] = [];
+    await invokeCommandWithEvent(
+      registry,
+      call(
+        { path: "notes.md", content: "secret token ABC123" },
+        { commandId: "write_file" },
+      ),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        eventId: "01TESTEVENT0000000000000000",
+        spanId: "0123456789abcdef",
+        writeEvent: async (e) => {
+          events.push(e);
+        },
+      },
+      () => Promise.resolve({ decision: "approve" }),
+    );
+    const args = JSON.parse(events[0].tool_arguments as string);
+    expect(args.path).toBe("notes.md");
+    expect(args.content).toBe("[redacted]");
+  });
+
+  test("redacts a redact-marked argument of any type — malformed content cannot bypass it", async () => {
+    const writeCmd: CommandDefinition<string> = {
+      id: "write_file",
+      title: "Write File",
+      inputSchema: {
+        type: "object",
+        required: ["path", "content"],
+        properties: {
+          path: { type: "string" },
+          content: { type: "string", redact: true },
+        },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["write.filesystem", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["file:write"],
+        network: "none",
+        filesystem: "write",
+        cost: "none",
+      },
+      executor: () => "ok",
+    };
+    const registry = createCommandRegistry([writeCmd]);
+    for (
+      const malformed of [
+        { nested: "secret token ABC123" },
+        ["secret token ABC123"],
+      ]
+    ) {
+      const events: Record<string, unknown>[] = [];
+      const result = await invokeCommandWithEvent(
+        registry,
+        call(
+          { path: "notes.md", content: malformed },
+          { commandId: "write_file" },
+        ),
+        {
+          sessionId: "01TESTSESSION00000000000000",
+          traceId: "0123456789abcdef0123456789abcdef",
+          eventId: "01TESTEVENT0000000000000000",
+          spanId: "0123456789abcdef",
+          writeEvent: async (e) => {
+            events.push(e);
+          },
+        },
+        () => Promise.resolve({ decision: "approve" }),
+      );
+      // Non-string content is denied by validation before execution, but the
+      // denied call's persisted event still redacts content to the sentinel —
+      // the raw nested payload never reaches the log or replay.
+      expect(result.decision).toBe("deny");
+      const args = JSON.parse(events[0].tool_arguments as string);
+      expect(args.content).toBe("[redacted]");
+      expect(events[0].tool_arguments as string).not.toContain("secret token");
+    }
+  });
+
+  test("the real write_file command marks content for redaction", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    expect(
+      registry.lookup("write_file")!.inputSchema.properties!.content!.redact,
+    ).toBe(true);
+  });
+
+  test("leaves non-redacted arguments verbatim", async () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, {
+      readMemory: async (slug) => `# ${slug}`,
+    });
+    const events: Record<string, unknown>[] = [];
+    await invokeCommandWithEvent(registry, call(), {
+      sessionId: "01TESTSESSION00000000000000",
+      traceId: "0123456789abcdef0123456789abcdef",
+      eventId: "01TESTEVENT0000000000000000",
+      spanId: "0123456789abcdef",
+      writeEvent: async (e) => {
+        events.push(e);
+      },
+    });
+    expect(JSON.parse(events[0].tool_arguments as string)).toEqual({
+      slug: "project_dyfj",
+    });
   });
 });
 

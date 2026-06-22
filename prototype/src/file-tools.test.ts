@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   executeListFiles,
   executeReadFile,
+  executeWriteFile,
   isWithinRoot,
   resolveWorkspacePath,
 } from "./file-tools";
@@ -19,10 +20,14 @@ describe("resolveWorkspacePath", () => {
     expect(() => resolveWorkspacePath("/work", "../secret")).toThrow("escapes");
   });
   test("rejects an absolute path outside the root", () => {
-    expect(() => resolveWorkspacePath("/work", "/etc/hosts")).toThrow("escapes");
+    expect(() => resolveWorkspacePath("/work", "/etc/hosts")).toThrow(
+      "escapes",
+    );
   });
   test("rejects sneaky traversal that climbs out", () => {
-    expect(() => resolveWorkspacePath("/work", "a/../../etc")).toThrow("escapes");
+    expect(() => resolveWorkspacePath("/work", "a/../../etc")).toThrow(
+      "escapes",
+    );
   });
 });
 
@@ -64,7 +69,9 @@ describe("executeReadFile", () => {
     expect(await executeReadFile(root, "hello.txt")).toBe("hello world");
   });
   test("reads a nested file", async () => {
-    expect(await executeReadFile(root, "sub/nested.txt")).toBe("nested content");
+    expect(await executeReadFile(root, "sub/nested.txt")).toBe(
+      "nested content",
+    );
   });
   test("returns an error for a traversal attempt (no read happens)", async () => {
     expect(await executeReadFile(root, "../../../etc/hosts")).toMatch(
@@ -72,7 +79,9 @@ describe("executeReadFile", () => {
     );
   });
   test("returns an error for a missing file", async () => {
-    expect(await executeReadFile(root, "nope.txt")).toMatch(/^error: cannot read/);
+    expect(await executeReadFile(root, "nope.txt")).toMatch(
+      /^error: cannot read/,
+    );
   });
   test("returns an error when the path is a directory", async () => {
     expect(await executeReadFile(root, "sub")).toMatch(/is a directory/);
@@ -95,5 +104,60 @@ describe("executeListFiles", () => {
   });
   test("rejects a traversal attempt", async () => {
     expect(await executeListFiles(root, "..")).toMatch(/^error: path escapes/);
+  });
+});
+
+describe("executeWriteFile", () => {
+  test("writes a new file within the workspace", async () => {
+    const out = await executeWriteFile(root, "written.txt", "fresh content");
+    expect(out).toBe("wrote written.txt");
+    expect(await Deno.readTextFile(`${root}/written.txt`)).toBe(
+      "fresh content",
+    );
+  });
+  test("overwrites an existing file", async () => {
+    await executeWriteFile(root, "over.txt", "first");
+    await executeWriteFile(root, "over.txt", "second");
+    expect(await Deno.readTextFile(`${root}/over.txt`)).toBe("second");
+  });
+  test("writes into an existing subdirectory", async () => {
+    await executeWriteFile(root, "sub/new.txt", "in sub");
+    expect(await Deno.readTextFile(`${root}/sub/new.txt`)).toBe("in sub");
+  });
+  test("rejects a traversal escape (no write happens)", async () => {
+    expect(await executeWriteFile(root, "../escape.txt", "nope")).toMatch(
+      /^error: path escapes/,
+    );
+  });
+  test("errors when the parent directory does not exist", async () => {
+    expect(await executeWriteFile(root, "missing/deep.txt", "x")).toMatch(
+      /^error: cannot write/,
+    );
+  });
+  test("the success result carries no payload length (no size signal)", async () => {
+    expect(await executeWriteFile(root, "sized.txt", "0123456789")).toBe(
+      "wrote sized.txt",
+    );
+  });
+});
+
+describe("executeWriteFile symlink containment", () => {
+  // The scoped test sandbox forbids Deno.symlink (a symlink's target cannot be
+  // permission-scoped), so the no-follow guard is exercised with an injected
+  // lstat. The real OS symlink-follow escape — a dangling in-root link to an
+  // outside target — is validated separately by the Codex security PoC.
+  test("refuses to write when the target is a symlink, and writes nothing", async () => {
+    const fakeSymlinkLstat = () => Promise.resolve({ isSymlink: true });
+    const out = await executeWriteFile(
+      root,
+      "link.txt",
+      "escaped",
+      fakeSymlinkLstat,
+    );
+    expect(out).toMatch(/refusing to write through a symlink/);
+    // The guard runs before the write, so nothing is created.
+    await expect(Deno.stat(`${root}/link.txt`)).rejects.toBeInstanceOf(
+      Deno.errors.NotFound,
+    );
   });
 });

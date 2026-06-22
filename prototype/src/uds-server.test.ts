@@ -219,3 +219,69 @@ describe("serve-unix Deno permission profile", () => {
     expect(missingNet).toEqual([]);
   });
 });
+
+describe("serveWorkbenchUnix turn approval round-trip (BIT-116)", () => {
+  // A runtime that asks to approve one mutating tool and reports the verdict.
+  function approvalProbeRuntime(): WorkbenchHttpRuntime {
+    return async (input) => {
+      const verdict = await input.confirmToolApproval?.({
+        commandId: "write_file",
+        callId: "c1",
+        title: "Write File",
+        arguments: { path: "notes.md" },
+      });
+      return anyVal({ verdict });
+    };
+  }
+
+  test("server asks the client to approve a mutating tool mid-turn; approve flows back", async () => {
+    const asked: unknown[] = [];
+    const server = await startServer({
+      ...fakes,
+      runRuntime: approvalProbeRuntime(),
+    });
+    const client = await connectClient(server, {
+      approval: (req) => {
+        asked.push(req);
+        return { decision: "approve" };
+      },
+    });
+    const result = anyVal(
+      await client.request("turn", { prompt: "edit notes" }),
+    );
+    expect(result.verdict).toEqual({ decision: "approve" });
+    expect(asked[0]).toMatchObject({
+      commandId: "write_file",
+      arguments: { path: "notes.md" },
+    });
+  });
+
+  test("a client denial flows back as a deny verdict", async () => {
+    const server = await startServer({
+      ...fakes,
+      runRuntime: approvalProbeRuntime(),
+    });
+    const client = await connectClient(server, {
+      approval: () => ({ decision: "deny", reason: "not now" }),
+    });
+    const result = anyVal(
+      await client.request("turn", { prompt: "edit notes" }),
+    );
+    expect(result.verdict).toMatchObject({
+      decision: "deny",
+      reason: "not now",
+    });
+  });
+
+  test("no client approver -> fail-closed deny", async () => {
+    const server = await startServer({
+      ...fakes,
+      runRuntime: approvalProbeRuntime(),
+    });
+    const client = await connectClient(server);
+    const result = anyVal(
+      await client.request("turn", { prompt: "edit notes" }),
+    );
+    expect(result.verdict.decision).toBe("deny");
+  });
+});

@@ -3,6 +3,7 @@ import type { WorkbenchCallTimings } from "./provider";
 import type { WorkbenchMessage, WorkbenchToolCall } from "./provider";
 import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
+import type { ConfirmToolApproval } from "./commands";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 
@@ -98,6 +99,13 @@ export interface WorkbenchRuntimeInput {
    * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
+  /**
+   * Approval handler for mutating tools (BIT-116). When a tool's policy is
+   * "ask", the runtime calls this for an approve/deny verdict; the default (no
+   * handler) denies, fail-closed. The UDS transport asks the operator over the
+   * duplex channel; HTTP has no such channel and so denies.
+   */
+  confirmToolApproval?: ConfirmToolApproval;
   /**
    * Principal identity recorded on this turn's events. Lifted to the boundary
    * (BIT-148): entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
@@ -982,7 +990,12 @@ export async function runWorkbenchRuntime(
     sessionLimitUsd: runtimeInput.sessionLimitUsd ?? defaults.sessionLimitUsd,
     perCallLimitUsd: runtimeInput.perCallLimitUsd ?? defaults.perCallLimitUsd,
   };
-  const budget = new BudgetTracker(sessionId, traceId, budgetConfig, principalId);
+  const budget = new BudgetTracker(
+    sessionId,
+    traceId,
+    budgetConfig,
+    principalId,
+  );
   // Direct CLI invocation is authenticated by the local OS session; transport
   // layers (HTTP bearer auth) override this with the caller's real context.
   const authContext: WorkbenchAuthContext = runtimeInput.authContext ?? {
@@ -1174,11 +1187,20 @@ export async function runWorkbenchRuntime(
       // consumer gets only client-safe + public, so the personal corpus never
       // leaks to a remote or shared surface.
       const clearance = memoryClearanceFor(authContext.transport);
-      const coreMemories = await loadMemoriesByType(["user", "feedback"], clearance);
-      const memoryIndex = await loadMemoryIndex(["project", "reference"], clearance);
+      const coreMemories = await loadMemoriesByType(
+        ["user", "feedback"],
+        clearance,
+      );
+      const memoryIndex = await loadMemoryIndex(
+        ["project", "reference"],
+        clearance,
+      );
       // Record the memory layer as context sources so turn-mode receipts and the
       // inspector reflect what was loaded (previously [] — the bug this fixes).
-      contextSourceLines = buildMemoryContextSourceLines(coreMemories, memoryIndex);
+      contextSourceLines = buildMemoryContextSourceLines(
+        coreMemories,
+        memoryIndex,
+      );
       console.log(
         `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
           `(${authContext.transport} clearance)\n`,
@@ -1194,7 +1216,9 @@ export async function runWorkbenchRuntime(
           if ((await Deno.stat(real)).isDirectory) {
             workspaceRoot = real;
           } else {
-            console.log("Requested workspace is not a directory; using default.");
+            console.log(
+              "Requested workspace is not a directory; using default.",
+            );
           }
         } catch {
           console.log("Requested workspace not accessible; using default.");
@@ -1233,7 +1257,8 @@ export async function runWorkbenchRuntime(
             traceId,
             contextSources: contextSourceLines,
           }),
-        }));
+        })
+      );
     }
 
     let models;
@@ -1468,9 +1493,8 @@ export async function runWorkbenchRuntime(
           traceId,
           // Agent-loop tool calls (call + result) are the conversation's audit
           // backbone — integrity-required in every mode.
-          writeEvent: (event) =>
-            writeIntegrity(() => writeEvent(event)),
-        });
+          writeEvent: (event) => writeIntegrity(() => writeEvent(event)),
+        }, runtimeInput.confirmToolApproval);
         stepResults.push({
           commandId: toolCall.name,
           callId: toolCall.id,
@@ -1613,7 +1637,8 @@ export async function runWorkbenchRuntime(
           : turn.text,
         stop_reason: turn.stopReason,
         duration_ms: turn.timings.totalMs,
-      }));
+      })
+    );
     await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
       type: "turnCompleted",
       sessionId,
