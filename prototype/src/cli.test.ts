@@ -9,6 +9,7 @@ import {
   type Io,
   isLoopbackServerUrl,
   parseArgs,
+  promptToolApproval,
   readLineOrNull,
   resolveConfig,
   runExec,
@@ -20,7 +21,7 @@ import {
   type TurnResult,
 } from "./cli";
 import { serveWorkbenchUnix } from "./uds-server";
-import { connectUnixClient } from "./uds-client";
+import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client";
 
 describe("readLineOrNull", () => {
   test("resolves the answered line", async () => {
@@ -282,6 +283,104 @@ describe("socketTurn over a real Unix socket (integration)", () => {
       await server.close();
       await Deno.remove(dir, { recursive: true });
     }
+  });
+});
+
+// ── tool approval over the --unix seam ───────────────────────────────────────
+
+/** A fake UDS connect whose `turn` asks for approval mid-call, capturing the verdict. */
+function fakeApprovalConnect(
+  request: unknown,
+  r: TurnResult,
+  captured: { verdict?: ToolApprovalVerdict },
+): ConnectFn {
+  return (_socketPath: string, options) =>
+    Promise.resolve({
+      request: async (method: string) => {
+        if (method === "turn") {
+          captured.verdict = await options?.onApproval?.(request);
+          return r;
+        }
+        return undefined;
+      },
+      close: () => {},
+    });
+}
+
+describe("promptToolApproval", () => {
+  test("approves on y", async () => {
+    const { io } = fakeIo(["y"]);
+    expect(
+      await promptToolApproval(io, {
+        title: "Write File",
+        arguments: { path: "a" },
+      }, true),
+    ).toEqual({ decision: "approve" });
+  });
+  test("denies on anything else", async () => {
+    const { io } = fakeIo(["n"]);
+    expect((await promptToolApproval(io, {}, true)).decision).toBe("deny");
+  });
+  test("denies without prompting when non-interactive", async () => {
+    let asked = false;
+    const io: Io = {
+      out: () => {},
+      err: () => {},
+      readLine: () => {
+        asked = true;
+        return Promise.resolve("y");
+      },
+      close: () => {},
+    };
+    const verdict = await promptToolApproval(io, {}, false);
+    expect(verdict.decision).toBe("deny");
+    expect(asked).toBe(false);
+  });
+});
+
+describe("runExec tool approval (--unix)", () => {
+  test("prompts and sends the operator's approval back to the server", async () => {
+    const captured: { verdict?: ToolApprovalVerdict } = {};
+    const { io, stderr } = fakeIo(["y"]);
+    const code = await runExec(
+      "edit notes",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      fakeApprovalConnect(
+        {
+          commandId: "write_file",
+          title: "Write File",
+          arguments: { path: "notes.md", content: "hi" },
+        },
+        result(),
+        captured,
+      ),
+      true, // interactive
+    );
+    expect(code).toBe(0);
+    expect(captured.verdict).toEqual({ decision: "approve" });
+    expect(stderr.join("\n")).toContain("Write File");
+  });
+
+  test("a non-interactive run denies without prompting", async () => {
+    const captured: { verdict?: ToolApprovalVerdict } = {};
+    const { io } = fakeIo();
+    await runExec(
+      "edit notes",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      fakeApprovalConnect(
+        { commandId: "write_file", title: "Write File", arguments: {} },
+        result(),
+        captured,
+      ),
+      false, // not interactive
+    );
+    expect(captured.verdict?.decision).toBe("deny");
   });
 });
 

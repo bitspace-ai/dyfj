@@ -28,6 +28,7 @@ Documentation is part of the change, not a follow-up. A commit that changes beha
 - **Docs must not lie — directly or by omission.** `README.md`, `prototype/README.md`, `mcp/README.md`, and the README's Section 1 (Decisions) are operating context: they must match the ground truth of the code. A new transport, endpoint, task, flag, env var, or architectural seam that the docs don't mention is a lie by omission. When you add or change a surface, find where the docs describe that area and bring it current in the same change; if a doc claim is now false, fix it — don't leave it.
 - **Scope honestly.** Document what is true *now*. Mark in-progress or deferred work as such rather than describing the intended end-state as if it shipped.
 - **Two trails, kept distinct.** `CHANGELOG.md` records code/behavior changes; the root README's Revision history records document-level revisions of the operating context. Update whichever the change touches; keep both current.
+- **Issue references live in commit messages, not code or CHANGELOG.** Tracker IDs (`BIT-###`) belong in commit messages and PR descriptions — a maintainer artifact in git history. Code comments and `CHANGELOG.md` explain the *why* in the prose itself, so a public reader who can't reach the private tracker loses nothing. Don't tag comments `// BIT-…`.
 
 ## Issue Tracking
 

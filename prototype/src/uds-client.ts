@@ -10,6 +10,11 @@ export interface UnixClient {
   close(): void;
 }
 
+export interface ToolApprovalVerdict {
+  decision: "approve" | "deny";
+  reason?: string;
+}
+
 export interface UnixClientOptions {
   /**
    * Handle `stream` notifications the server emits during a streaming `turn`
@@ -17,6 +22,15 @@ export interface UnixClientOptions {
    * notification handler for the lifetime of the connection.
    */
   onStream?: (params: unknown) => void;
+  /**
+   * Answer the server's mid-turn `approval` request (the operator approving a
+   * mutating tool). Registered as the peer's `approval` request handler; the
+   * returned verdict is sent back as the response. Without it the peer has no
+   * `approval` handler, so the server's request fails and it denies — fail-closed.
+   */
+  onApproval?: (
+    request: unknown,
+  ) => Promise<ToolApprovalVerdict> | ToolApprovalVerdict;
 }
 
 export async function connectUnixClient(
@@ -29,6 +43,10 @@ export async function connectUnixClient(
     handlers.stream = (params) => {
       onStream(params);
     };
+  }
+  const onApproval = options.onApproval;
+  if (onApproval) {
+    handlers.approval = (params) => onApproval(params);
   }
   const conn = await Deno.connect({ transport: "unix", path: socketPath });
   const peer = new JsonRpcPeer(conn, { handlers });

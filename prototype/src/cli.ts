@@ -15,7 +15,11 @@
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
-import { connectUnixClient } from "./uds-client";
+import {
+  connectUnixClient,
+  type ToolApprovalVerdict,
+  type UnixClientOptions,
+} from "./uds-client";
 import { resolveSocketPath } from "./uds-path";
 
 // ── Seam contract (shared with the server) ──────────────────────────
@@ -238,12 +242,15 @@ export async function runExec(
   json: boolean,
   fetchFn: typeof fetch = fetch,
   connect: ConnectFn = connectUnixClient,
+  interactive = true,
 ): Promise<number> {
   const body = buildTurnBody(prompt, config, config.sessionId);
+  const onApproval = (request: unknown) =>
+    promptToolApproval(io, request, interactive);
   try {
     if (json) {
       const result = config.unix
-        ? await socketTurn(config, body, {}, connect)
+        ? await socketTurn(config, body, { onApproval }, connect)
         : await bufferedTurn(config, body, fetchFn);
       io.out(`${JSON.stringify(result, null, 2)}\n`);
     } else {
@@ -253,6 +260,7 @@ export async function runExec(
           streamed = true;
           io.out(text);
         },
+        onApproval,
       };
       const result = config.unix
         ? await socketTurn(config, body, handlers, connect)
@@ -277,6 +285,7 @@ export async function runRepl(
   io: Io,
   fetchFn: typeof fetch = fetch,
   connect: ConnectFn = connectUnixClient,
+  interactive = true,
 ): Promise<void> {
   io.err(
     `dyfj — ${
@@ -284,6 +293,8 @@ export async function runRepl(
     } · Ctrl-D or /exit to quit`,
   );
   let sessionId = config.sessionId;
+  const onApproval = (request: unknown) =>
+    promptToolApproval(io, request, interactive);
   try {
     for (;;) {
       const line = await io.readLine("\ndyfj> ");
@@ -298,6 +309,7 @@ export async function runRepl(
             streamed = true;
             io.out(text);
           },
+          onApproval,
         };
         const body = buildTurnBody(prompt, config, sessionId);
         const result = config.unix
@@ -351,28 +363,72 @@ export async function socketTurn(
   handlers: {
     onDelta?: (text: string) => void;
     onEvent?: (event: Record<string, unknown>) => void;
+    onApproval?: (
+      request: unknown,
+    ) => Promise<ToolApprovalVerdict> | ToolApprovalVerdict;
   } = {},
   connect: ConnectFn = connectUnixClient,
 ): Promise<TurnResult> {
-  const wantsStream = handlers.onDelta !== undefined ||
-    handlers.onEvent !== undefined;
-  const client = await connect(
-    config.socket,
-    wantsStream
-      ? {
-        onStream: (params) => {
-          const frame = params as TurnStreamFrame;
-          if (frame.t === "delta") handlers.onDelta?.(frame.text);
-          else if (frame.t === "event") handlers.onEvent?.(frame.event);
-        },
-      }
-      : {},
-  );
+  const clientOptions: UnixClientOptions = {};
+  if (handlers.onDelta !== undefined || handlers.onEvent !== undefined) {
+    clientOptions.onStream = (params) => {
+      const frame = params as TurnStreamFrame;
+      if (frame.t === "delta") handlers.onDelta?.(frame.text);
+      else if (frame.t === "event") handlers.onEvent?.(frame.event);
+    };
+  }
+  if (handlers.onApproval) clientOptions.onApproval = handlers.onApproval;
+  const client = await connect(config.socket, clientOptions);
   try {
     return await client.request("turn", body) as TurnResult;
   } finally {
     client.close();
   }
+}
+
+/**
+ * Prompt the operator to approve a mutating tool call over the UDS seam, reading
+ * y/N from the terminal. Non-interactive (no TTY) denies without prompting, so a
+ * scripted/piped run fails closed rather than hanging. The prompt + preview go
+ * to stderr so a `--json` turn's stdout stays clean.
+ */
+export async function promptToolApproval(
+  io: Io,
+  request: unknown,
+  interactive: boolean,
+): Promise<ToolApprovalVerdict> {
+  if (!interactive) {
+    return {
+      decision: "deny",
+      reason: "approval needs an interactive terminal",
+    };
+  }
+  const r = (typeof request === "object" && request !== null)
+    ? request as Record<string, unknown>
+    : {};
+  const title = typeof r.title === "string"
+    ? r.title
+    : String(r.commandId ?? "tool");
+  io.err(`\n⚠  approve ${title}?`);
+  io.err(formatApprovalArgs(r.arguments));
+  const answer = await io.readLine("   approve? [y/N] ");
+  if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
+    return { decision: "approve" };
+  }
+  return { decision: "deny", reason: "operator declined" };
+}
+
+function formatApprovalArgs(args: unknown): string {
+  if (typeof args !== "object" || args === null) return `   ${String(args)}`;
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    const raw = typeof value === "string" ? value : JSON.stringify(value);
+    const preview = raw.length > 200
+      ? `${raw.slice(0, 200)}… (${raw.length} chars)`
+      : raw;
+    lines.push(`   ${key}: ${preview.replace(/\n/g, "\n     ")}`);
+  }
+  return lines.join("\n");
 }
 
 function socketError(error: unknown, config: CliConfig): string {
@@ -615,7 +671,8 @@ Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
   --server <url>   runtime server (default ${DEFAULT_SERVER}, env DYFJ_SERVER_URL)
   --socket <path>  runtime UDS socket (models/sessions + turns with --unix; env DYFJ_SOCKET)
-  --unix           run turns over the UDS/JSON-RPC seam instead of HTTP (env DYFJ_UNIX=1)
+  --unix           run turns over the UDS/JSON-RPC seam instead of HTTP; prompts
+                   to approve mutating tools (env DYFJ_UNIX=1)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --session <id>   resume a session
@@ -683,8 +740,17 @@ export async function main(argv: string[], io: Io): Promise<number> {
     Deno.stdout.isTerminal(),
     Deno.cwd(),
   );
+  const interactive = Deno.stdin.isTerminal();
   if (parsed.command === "exec") {
-    return await runExec(parsed.prompt!, config, io, parsed.json);
+    return await runExec(
+      parsed.prompt!,
+      config,
+      io,
+      parsed.json,
+      fetch,
+      connectUnixClient,
+      interactive,
+    );
   }
   if (parsed.command === "models") {
     return await runModels(config, io);
@@ -692,7 +758,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   if (parsed.command === "sessions") {
     return await runSessions(config, io);
   }
-  await runRepl(config, io);
+  await runRepl(config, io, fetch, connectUnixClient, interactive);
   return 0;
 }
 
