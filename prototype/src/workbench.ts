@@ -961,6 +961,9 @@ export async function runWorkbenchRuntime(
     invokeCommandWithEvent,
     registerCoreCommands,
   } = await import("./commands");
+  const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
+    "./memory-search"
+  );
   const {
     buildWorkbenchSessionContent,
     buildWorkbenchSessionSlug,
@@ -1221,8 +1224,15 @@ export async function runWorkbenchRuntime(
         }
       }
       console.log(`Workspace: ${workspaceRoot}\n`);
+      // External-memory recall: offered only on a loopback/operator turn with an
+      // endpoint configured (DYFJ_MEMORY_MCP_URL). A non-loopback consumer never
+      // receives the tool, so the private external memory is unreachable off-box.
+      const recallConfig = authContext.transport === "loopback"
+        ? memorySearchConfigFromEnv()
+        : null;
       registerCoreCommands(commandRegistry, {
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
+        searchMemory: recallConfig ? buildMemorySearch(recallConfig) : undefined,
         // Read-only workspace file tools, scoped to the resolved root.
         workspaceRoot,
       });

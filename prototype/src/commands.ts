@@ -48,7 +48,10 @@ export interface PermissionEnvelope {
   effects: CommandEffect[];
   defaultDecision: PolicyDecision;
   resources: string[];
-  network?: "none" | "local" | "external";
+  // "recall": read-only egress to an operator-configured, fixed external memory
+  // endpoint (the model picks the query, not the destination). Auto-allowed
+  // without a per-call prompt — distinct from arbitrary "external" egress.
+  network?: "none" | "local" | "external" | "recall";
   filesystem?: "none" | "read" | "write";
   cost?: "none" | "local" | "paid";
 }
@@ -145,6 +148,12 @@ export interface CoreCommandDependencies {
   allowedMemorySlugs?: readonly string[];
   /** When set, register the workspace file tools rooted here. */
   workspaceRoot?: string;
+  /**
+   * When set, register the `search_memory` recall tool backed by this function.
+   * Gated at registration: callers pass it only for loopback/operator turns with
+   * an external memory endpoint configured, so the tool is absent otherwise.
+   */
+  searchMemory?: (query: string) => Promise<string> | string;
 }
 
 export interface CommandEventContext {
@@ -209,11 +218,29 @@ export function evaluateCommandPolicy(
   }
 
   if (
+    command.permission.network === "recall" &&
+    command.permission.defaultDecision === "allow" &&
+    command.permission.filesystem === "none" &&
+    command.permission.cost === "none"
+  ) {
+    // Read-only recall to an operator-configured, fixed external memory endpoint.
+    // The model chooses the query, never the destination, and the tool is
+    // registered only for loopback/operator turns with the endpoint configured —
+    // so this egress is auto-allowed without a per-call prompt, with its own
+    // audit basis distinct from arbitrary external network.
+    return {
+      decision: "allow",
+      authzBasis: "policy:allow:operator-configured-recall",
+    };
+  }
+
+  if (
     command.permission.defaultDecision === "allow" &&
     (command.permission.filesystem === "none" ||
       command.permission.filesystem === "read") &&
     command.permission.cost === "none" &&
-    command.permission.network !== "external"
+    command.permission.network !== "external" &&
+    command.permission.network !== "recall"
   ) {
     // Read-only local access (memory reads, workspace file reads) needs no
     // approval. Write filesystem, paid cost, and external network still fall
@@ -326,6 +353,39 @@ export function buildMemoryReadCommand(
       cost: "none",
     },
     executor: async (call) => readMemory(String(call.arguments.slug)),
+  };
+}
+
+export function buildMemorySearchCommand(
+  search: (query: string) => Promise<string> | string,
+): CommandDefinition<string> {
+  return {
+    id: "memory.search",
+    title: "Search Memory",
+    description:
+      "Search long-term external memory by meaning and return relevant " +
+      "entries. Use when the operator refers to past context — decisions, " +
+      "people, ideas, or events — that may have been captured before.",
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: {
+          type: "string",
+          description: "What to recall, in natural language.",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      effects: ["read.memory", "emit.event"],
+      defaultDecision: "allow",
+      resources: ["memory:external"],
+      network: "recall",
+      filesystem: "none",
+      cost: "none",
+    },
+    executor: async (call) => search(String(call.arguments.query)),
   };
 }
 
@@ -453,6 +513,9 @@ export function registerCoreCommands(
   deps: CoreCommandDependencies = {},
 ): void {
   registry.register(buildMemoryReadCommand(deps));
+  if (deps.searchMemory !== undefined) {
+    registry.register(buildMemorySearchCommand(deps.searchMemory));
+  }
   if (deps.workspaceRoot !== undefined) {
     registry.register(buildReadFileCommand(deps.workspaceRoot));
     registry.register(buildListFilesCommand(deps.workspaceRoot));

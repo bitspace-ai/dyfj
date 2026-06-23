@@ -242,6 +242,68 @@ describe("registerCoreCommands", () => {
   });
 });
 
+describe("search_memory (external recall)", () => {
+  test("registers only when a recall fn is provided", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { searchMemory: () => "hit" });
+    expect(registry.list().map((c) => c.id).sort()).toEqual([
+      "memory.read",
+      "memory.search",
+    ]);
+  });
+
+  test("recall is auto-allowed with its own audit basis (no per-call prompt)", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { searchMemory: () => "hit" });
+    const result = evaluateCommandPolicy(
+      registry.lookup("memory.search")!,
+      call({ query: "what did we decide about X" }, {
+        commandId: "memory.search",
+      }),
+    );
+    expect(result.decision).toBe("allow");
+    expect(result.authzBasis).toBe("policy:allow:operator-configured-recall");
+  });
+
+  test("invokes the bound recall function with the query", async () => {
+    const registry = createCommandRegistry();
+    let received = "";
+    registerCoreCommands(registry, {
+      searchMemory: (q) => {
+        received = q;
+        return "result text";
+      },
+    });
+    const result = await invokeCommand(
+      registry,
+      call({ query: "the auth rewrite" }, { commandId: "memory.search" }),
+    );
+    expect(received).toBe("the auth rewrite");
+    expect(result).toMatchObject({
+      decision: "allow",
+      isError: false,
+      result: "result text",
+    });
+  });
+
+  test("denies a malformed call before reaching the recall function", async () => {
+    const registry = createCommandRegistry();
+    let called = false;
+    registerCoreCommands(registry, {
+      searchMemory: () => {
+        called = true;
+        return "x";
+      },
+    });
+    const result = await invokeCommand(
+      registry,
+      call({}, { commandId: "memory.search" }),
+    );
+    expect(result.decision).toBe("deny");
+    expect(called).toBe(false);
+  });
+});
+
 describe("invokeCommand approval (ask) flow", () => {
   function writeFileCommand(
     executor: CommandDefinition<string>["executor"] = (c) =>
