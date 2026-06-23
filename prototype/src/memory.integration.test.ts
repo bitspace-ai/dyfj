@@ -144,17 +144,18 @@ describe("loadMemoryIndex (integration)", () => {
 // ── loadInjectedMemories / loadIndexedMemories (inject classification, 024) ─────
 
 describe("loadInjectedMemories (integration)", () => {
-  test("returns only the curated always-inject worldview, with content", async () => {
+  test("returns the curated always-inject worldview, with content", async () => {
     const injected = await loadInjectedMemories(MEMORY_VISIBILITY_ALL);
     expect(injected.length).toBeGreaterThan(0);
     expect(injected.every((m) => m.content.length > 0)).toBe(true);
-    // The whole point of 024: a small curated set, not the full personal pile.
-    // Guard against re-bloat — the always-inject worldview stays tight.
-    expect(injected.length).toBeLessThan(20);
+    // The always-inject set is the maintained operator-context projection — a
+    // tight curated worldview sourced from the maintained context source, not
+    // the former hand-picked granular pile. Guard against re-bloat.
+    expect(injected.length).toBeLessThan(5);
     const slugs = injected.map((m) => m.slug);
-    expect(slugs).toContain("user_profile");
-    expect(slugs).toContain("feedback_minimal_changes");
-    // Deep-personal memories are index-only, never bulk-injected.
+    expect(slugs).toContain("operator_context");
+    // Granular and deep-personal rows are index-only, never bulk-injected.
+    expect(slugs).not.toContain("user_profile");
     expect(slugs).not.toContain("user_health");
   });
 
@@ -175,9 +176,11 @@ describe("loadIndexedMemories (integration)", () => {
     expect(index.every((e) => "content" in e === false)).toBe(true);
     const slugs = index.map((e) => e.slug);
     expect(slugs).toContain("project_dyfj");
-    // always-inject rows live in the injected set, not the index.
-    expect(slugs).not.toContain("user_profile");
-    // never rows (retired/defunct) are withheld from the index entirely.
+    // Granular rows demoted from the former always-set are pull-on-demand here.
+    expect(slugs).toContain("user_profile");
+    // The always-inject worldview row lives in the injected set, not the index.
+    expect(slugs).not.toContain("operator_context");
+    // Retired/defunct rows were deleted — absent from the index entirely.
     expect(slugs).not.toContain("feedback_pai_attribution");
   });
 
