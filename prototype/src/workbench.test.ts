@@ -119,7 +119,7 @@ vi.mock("./memory", () => ({
     core: Array<{ slug: string }>,
     index: Array<{ slug: string }>,
   ) => [...core, ...index].map((m) => `mem <memory:${m.slug}>`),
-  loadMemoriesByType: async () => [{
+  loadInjectedMemories: async () => [{
     memoryId: "mem-user",
     slug: "user-context",
     type: "user",
@@ -127,7 +127,7 @@ vi.mock("./memory", () => ({
     description: "test",
     content: "test",
   }],
-  loadMemoryIndex: async () => [{
+  loadIndexedMemories: async () => [{
     slug: "project-context",
     type: "project",
     name: "Project Context",

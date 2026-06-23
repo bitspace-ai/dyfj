@@ -7,8 +7,8 @@
  *
  * Run with: deno task test src/memory.integration.test.ts
  *
- * Prerequisites: Dolt running with seeded memories table
- *   (migrated from stage/ via migrate_stage.ts)
+ * Prerequisites: Dolt running with a seeded + classified memories table
+ *   (privacy class per schema/019, inject classification per schema/024).
  */
 
 import { describe, expect, test } from "vitest";
@@ -16,6 +16,8 @@ import {
   buildSystemPrompt,
   executeReadMemory,
   getMemoryBySlug,
+  loadIndexedMemories,
+  loadInjectedMemories,
   loadMemoriesByType,
   loadMemoryIndex,
   type Memory,
@@ -136,6 +138,56 @@ describe("loadMemoryIndex (integration)", () => {
   test("returns empty array for empty type list", async () => {
     const index = await loadMemoryIndex([], MEMORY_VISIBILITY_ALL);
     expect(index).toEqual([]);
+  });
+});
+
+// ── loadInjectedMemories / loadIndexedMemories (inject classification, 024) ─────
+
+describe("loadInjectedMemories (integration)", () => {
+  test("returns only the curated always-inject worldview, with content", async () => {
+    const injected = await loadInjectedMemories(MEMORY_VISIBILITY_ALL);
+    expect(injected.length).toBeGreaterThan(0);
+    expect(injected.every((m) => m.content.length > 0)).toBe(true);
+    // The whole point of 024: a small curated set, not the full personal pile.
+    // Guard against re-bloat — the always-inject worldview stays tight.
+    expect(injected.length).toBeLessThan(20);
+    const slugs = injected.map((m) => m.slug);
+    expect(slugs).toContain("user_profile");
+    expect(slugs).toContain("feedback_minimal_changes");
+    // Deep-personal memories are index-only, never bulk-injected.
+    expect(slugs).not.toContain("user_health");
+  });
+
+  test("remote clearance excludes the private worldview", async () => {
+    const remote = await loadInjectedMemories(["client_safe", "public"]);
+    expect(remote).toEqual([]);
+  });
+
+  test("returns empty array for empty clearance", async () => {
+    expect(await loadInjectedMemories([])).toEqual([]);
+  });
+});
+
+describe("loadIndexedMemories (integration)", () => {
+  test("indexes pull-on-demand rows, excluding always-inject and never", async () => {
+    const index = await loadIndexedMemories(MEMORY_VISIBILITY_ALL);
+    expect(index.length).toBeGreaterThan(0);
+    expect(index.every((e) => "content" in e === false)).toBe(true);
+    const slugs = index.map((e) => e.slug);
+    expect(slugs).toContain("project_dyfj");
+    // always-inject rows live in the injected set, not the index.
+    expect(slugs).not.toContain("user_profile");
+    // never rows (retired/defunct) are withheld from the index entirely.
+    expect(slugs).not.toContain("feedback_pai_attribution");
+  });
+
+  test("remote clearance excludes the private index", async () => {
+    const remote = await loadIndexedMemories(["client_safe", "public"]);
+    expect(remote).toEqual([]);
+  });
+
+  test("returns empty array for empty clearance", async () => {
+    expect(await loadIndexedMemories([])).toEqual([]);
   });
 });
 

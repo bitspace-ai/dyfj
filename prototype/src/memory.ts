@@ -150,6 +150,48 @@ export async function loadMemoryIndex(
 }
 
 /**
+ * Load full content for the always-inject worldview — rows classified
+ * inject='always' (024), regardless of type: the small curated operating
+ * context (identity core + operating preferences). Replaces the former
+ * type-based bulk load of all user+feedback content: injection is now scoped by
+ * the inject classification, not by type, so the corpus is a curated worldview
+ * rather than the full personal pile.
+ */
+export async function loadInjectedMemories(
+  allowedVisibility: readonly MemoryVisibility[],
+): Promise<Memory[]> {
+  if (allowedVisibility.length === 0) return [];
+  const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
+  const rows = await doltQuery(
+    `SELECT memory_id, slug, type, name, description, content ` +
+      `FROM memories WHERE inject = 'always' ` +
+      `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
+    [...allowedVisibility],
+  );
+  return rows.map(rowToMemory);
+}
+
+/**
+ * Load the index (no content) of pull-on-demand rows — inject='index' (024).
+ * The model sees these exist and fetches full content via read_memory only when
+ * a turn needs it; nothing here is bulk-injected. inject='never' rows are
+ * withheld from the index entirely.
+ */
+export async function loadIndexedMemories(
+  allowedVisibility: readonly MemoryVisibility[],
+): Promise<MemoryIndexEntry[]> {
+  if (allowedVisibility.length === 0) return [];
+  const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
+  const rows = await doltQuery(
+    `SELECT slug, type, name, description ` +
+      `FROM memories WHERE inject = 'index' ` +
+      `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
+    [...allowedVisibility],
+  );
+  return rows.map(rowToIndexEntry);
+}
+
+/**
  * Fetch the full content of a single memory by slug.
  * Called at tool-execution time when the model invokes read_memory().
  */

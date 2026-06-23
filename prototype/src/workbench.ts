@@ -951,8 +951,8 @@ export async function runWorkbenchRuntime(
   const { loadCompanionBasePrompt } = await import("./prompts");
   const {
     buildMemoryContextSourceLines,
-    loadMemoriesByType,
-    loadMemoryIndex,
+    loadInjectedMemories,
+    loadIndexedMemories,
     buildSystemPrompt,
     memoryClearanceFor,
   } = await import("./memory");
@@ -1182,19 +1182,15 @@ export async function runWorkbenchRuntime(
       });
     } else {
       console.log("Loading context...");
-      // Scope memory injection to what this consumer is cleared to see. A
-      // loopback/in-process operator gets the full corpus; a non-loopback
-      // consumer gets only client-safe + public, so the personal corpus never
-      // leaks to a remote or shared surface.
+      // Scope memory injection two ways (024 + 019): by the inject
+      // classification — only the curated 'always' worldview loads as content;
+      // everything else is index-only, pulled on demand via read_memory — and by
+      // clearance: a loopback/in-process operator gets the full corpus; a
+      // non-loopback consumer gets only client-safe + public, so the personal
+      // corpus never leaks to a remote or shared surface.
       const clearance = memoryClearanceFor(authContext.transport);
-      const coreMemories = await loadMemoriesByType(
-        ["user", "feedback"],
-        clearance,
-      );
-      const memoryIndex = await loadMemoryIndex(
-        ["project", "reference"],
-        clearance,
-      );
+      const coreMemories = await loadInjectedMemories(clearance);
+      const memoryIndex = await loadIndexedMemories(clearance);
       // Record the memory layer as context sources so turn-mode receipts and the
       // inspector reflect what was loaded (previously [] — the bug this fixes).
       contextSourceLines = buildMemoryContextSourceLines(
