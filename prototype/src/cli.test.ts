@@ -612,6 +612,28 @@ describe("resolveConfig", () => {
     expect(c.serverUrl).toBe("http://127.0.0.1:8787");
     expect(c.color).toBe(true);
   });
+  test("defaults to the UDS seam locally; --server switches to HTTP", () => {
+    // No server configured → local-first default is the UDS seam.
+    expect(resolveConfig({}, { get: () => undefined }).unix).toBe(true);
+    // An explicit --server opts into HTTP.
+    expect(
+      resolveConfig({ serverUrl: "http://remote.example" }, {
+        get: () => undefined,
+      }).unix,
+    ).toBe(false);
+    // DYFJ_SERVER_URL env also opts into HTTP.
+    expect(
+      resolveConfig({}, {
+        get: (k) => (k === "DYFJ_SERVER_URL" ? "http://e" : undefined),
+      }).unix,
+    ).toBe(false);
+    // --unix forces the seam even with a server configured.
+    expect(
+      resolveConfig({ unix: true, serverUrl: "http://e" }, {
+        get: () => undefined,
+      }).unix,
+    ).toBe(true);
+  });
   test("mode defaults to turn and honors the override", () => {
     expect(resolveConfig({}, { get: () => undefined }).mode).toBe("turn");
     expect(resolveConfig({ mode: "ask" }, { get: () => undefined }).mode).toBe(
@@ -669,10 +691,12 @@ describe("resolveConfig", () => {
         .socket,
     ).toBe("/flag.sock");
   });
-  test("unix defaults off; flag and DYFJ_UNIX enable it", () => {
-    expect(resolveConfig({}, { get: () => undefined }).unix).toBe(false);
+  test("unix: --unix / --unix=false / DYFJ_UNIX override the default", () => {
     expect(resolveConfig({ unix: true }, { get: () => undefined }).unix).toBe(
       true,
+    );
+    expect(resolveConfig({ unix: false }, { get: () => undefined }).unix).toBe(
+      false,
     );
     const env = new Map([["DYFJ_UNIX", "1"]]);
     expect(resolveConfig({}, { get: (k) => env.get(k) }).unix).toBe(true);

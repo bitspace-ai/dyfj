@@ -651,9 +651,12 @@ export function resolveConfig(
       ? hintEnv
       : undefined;
   const explicitWorkspace = overrides.workspace ?? env.get("DYFJ_WORKSPACE");
+  // Local-first default: talk to the UDS loopback seam (where serve-unix listens)
+  // unless the operator explicitly points at an HTTP server. So `dyfj exec "…"`
+  // just works against the local runtime; `--server <url>` opts into HTTP/remote.
+  const explicitServer = overrides.serverUrl ?? env.get("DYFJ_SERVER_URL");
   return {
-    serverUrl: overrides.serverUrl ?? env.get("DYFJ_SERVER_URL") ??
-      DEFAULT_SERVER,
+    serverUrl: explicitServer ?? DEFAULT_SERVER,
     key: overrides.key ?? env.get("DYFJ_WORKBENCH_API_KEY"),
     mode: overrides.mode ?? "turn",
     model: overrides.model ?? env.get("DYFJ_WORKBENCH_MODEL"),
@@ -666,7 +669,10 @@ export function resolveConfig(
     workspace: explicitWorkspace ?? cwd,
     workspaceExplicit: explicitWorkspace !== undefined,
     socket: overrides.socket ?? resolveSocketPath(env),
-    unix: overrides.unix ?? env.get("DYFJ_UNIX") === "1",
+    // Default to the UDS seam locally; an explicit --server / DYFJ_SERVER_URL
+    // routes over HTTP instead. --unix (or DYFJ_UNIX=1) always forces the seam.
+    unix: overrides.unix ??
+      (env.get("DYFJ_UNIX") === "1" || explicitServer === undefined),
     approvePaid: overrides.approvePaid ?? false,
     color: !env.get("NO_COLOR") && isTty,
   };
@@ -674,20 +680,24 @@ export function resolveConfig(
 
 const HELP = `dyfj — Workbench daily-driver client
 
+Talks to the local runtime (start it with: deno task serve-unix) over the UDS
+seam by default. Permission posture (strict | operator) is engine config in
+~/.dyfj/config.toml, not a flag here. Use --server <url> to reach a remote HTTP
+runtime instead.
+
 Usage:
   dyfj                      interactive REPL (multi-turn, streaming)
   dyfj exec "<prompt>"      one-shot turn
   dyfj ask "<prompt>"       one-shot repo-context question (ask mode)
   dyfj -p "<prompt>"        one-shot turn (alias)
-  dyfj models               list models over the runtime UDS socket
-  dyfj sessions             list sessions over the runtime UDS socket
+  dyfj models               list available model slugs
+  dyfj sessions             list sessions
 
 Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
-  --server <url>   runtime server (default ${DEFAULT_SERVER}, env DYFJ_SERVER_URL)
-  --socket <path>  runtime UDS socket (models/sessions + turns with --unix; env DYFJ_SOCKET)
-  --unix           run turns over the UDS/JSON-RPC seam instead of HTTP; prompts
-                   to approve mutating tools (env DYFJ_UNIX=1)
+  --server <url>   reach a remote HTTP runtime instead of the local UDS seam (env DYFJ_SERVER_URL)
+  --socket <path>  local UDS socket path (env DYFJ_SOCKET)
+  --unix           force the UDS seam (the local default; needed only to override --server)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --session <id>   resume a session
