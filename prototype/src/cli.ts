@@ -466,9 +466,16 @@ export async function runModels(
       const { models } = await client.request("models/list") as {
         models: ModelRow[];
       };
+      // Pad the slug column to the widest slug so a long id (e.g. a fully
+      // qualified mlx-community/... slug) doesn't shove the later columns out
+      // of alignment.
+      const slugWidth = models.reduce(
+        (w, m) => Math.max(w, (m.slug ?? "").length),
+        0,
+      );
       for (const m of models) {
         io.out(
-          `${(m.slug ?? "").padEnd(28)} t${m.tier ?? "?"}  ` +
+          `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
             `${(m.provider ?? "").padEnd(10)} ${m.displayName ?? ""}\n`,
         );
       }
