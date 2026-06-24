@@ -21,6 +21,7 @@ import {
 import { RpcError, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
 import { JsonRpcPeer } from "./jsonrpc-peer";
 import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench";
+import type { PermissionLevel } from "./config";
 import type { TurnStreamFrame } from "./turn-contract";
 import {
   executeTurn,
@@ -42,6 +43,8 @@ export interface WorkbenchUnixServerOptions {
   onParseError?: (detail: string) => void;
   /** Engine default companion model (config), applied to bare turns. */
   defaultCompanionModel?: string | null;
+  /** Operator permission posture (config); the seam is always loopback. */
+  permissionLevel?: PermissionLevel;
 }
 
 // Mirrors http.ts loadPickerModels: degrade to the local defaults if the registry
@@ -166,6 +169,7 @@ export function buildTurnHandlers(
         runRuntime,
         fetchSessionEvents,
         defaultCompanionModel: options.defaultCompanionModel,
+        permissionLevel: options.permissionLevel,
         // mid-turn approval over the duplex channel — the server asks
         // the connected client to approve a mutating tool; the client's response
         // is the verdict. A failed request (no client approver, dropped

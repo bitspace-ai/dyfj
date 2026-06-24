@@ -304,6 +304,97 @@ describe("search_memory (external recall)", () => {
   });
 });
 
+describe("operator permission profile", () => {
+  function writeCmd(
+    over: Partial<CommandDefinition["permission"]> = {},
+  ): CommandDefinition<string> {
+    return readCommand({
+      id: "write_file",
+      title: "Write File",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: { path: { type: "string" } },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["write.filesystem", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["file:write"],
+        network: "none",
+        filesystem: "write",
+        cost: "none",
+        ...over,
+      },
+      executor: (c) => `wrote ${c.arguments.path}`,
+    });
+  }
+  const wcall = () => call({ path: "x" }, { commandId: "write_file" });
+
+  test("strict (default): a contained mutation still prompts for approval", () => {
+    expect(evaluateCommandPolicy(writeCmd(), wcall()).decision).toBe("ask");
+    expect(
+      evaluateCommandPolicy(writeCmd(), wcall(), {
+        permissionLevel: "strict",
+        loopback: true,
+      }).decision,
+    ).toBe("ask");
+  });
+
+  test("operator + loopback: a contained mutation auto-approves", () => {
+    const policy = evaluateCommandPolicy(writeCmd(), wcall(), {
+      permissionLevel: "operator",
+      loopback: true,
+    });
+    expect(policy.decision).toBe("allow");
+    expect(policy.authzBasis).toBe("policy:allow:operator-profile");
+  });
+
+  test("the operator profile is loopback-only", () => {
+    expect(
+      evaluateCommandPolicy(writeCmd(), wcall(), {
+        permissionLevel: "operator",
+        loopback: false,
+      }).decision,
+    ).toBe("ask");
+  });
+
+  test("operator does NOT cover paid or networked mutations (bash-class stays gated)", () => {
+    expect(
+      evaluateCommandPolicy(writeCmd({ cost: "paid" }), wcall(), {
+        permissionLevel: "operator",
+        loopback: true,
+      }).decision,
+    ).toBe("ask");
+    expect(
+      evaluateCommandPolicy(writeCmd({ network: "external" }), wcall(), {
+        permissionLevel: "operator",
+        loopback: true,
+      }).decision,
+    ).toBe("ask");
+  });
+
+  test("operator + loopback runs the tool without invoking the approver", async () => {
+    const registry = createCommandRegistry([writeCmd()]);
+    let approverCalled = false;
+    const result = await invokeCommand(
+      registry,
+      wcall(),
+      () => {
+        approverCalled = true;
+        return Promise.resolve({ decision: "approve" as const });
+      },
+      { permissionLevel: "operator", loopback: true },
+    );
+    expect(approverCalled).toBe(false);
+    expect(result).toMatchObject({
+      decision: "allow",
+      authzBasis: "policy:allow:operator-profile",
+      result: "wrote x",
+    });
+  });
+});
+
 describe("invokeCommand approval (ask) flow", () => {
   function writeFileCommand(
     executor: CommandDefinition<string>["executor"] = (c) =>

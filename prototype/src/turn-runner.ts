@@ -20,6 +20,7 @@ import {
   type WorkbenchSessionEvent,
 } from "./sessions";
 import type { ConfirmToolApproval } from "./commands";
+import type { PermissionLevel } from "./config";
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -283,6 +284,8 @@ export interface ExecuteTurnDeps {
    * once at the boundary and applied when a turn specifies no model/tier/hint.
    */
   defaultCompanionModel?: string | null;
+  /** Operator permission posture (config), loaded once at the boundary. */
+  permissionLevel?: PermissionLevel;
 }
 
 /**
@@ -308,6 +311,8 @@ export function executeTurn(
       ...resolveRuntimeEnvDefaults(),
       // engine default companion model, resolved once at the boundary from config
       defaultCompanionModel: deps.defaultCompanionModel,
+      // operator permission posture, resolved once at the boundary from config
+      permissionLevel: deps.permissionLevel,
       authContext: deps.authContext,
       onTextDelta: deps.onTextDelta,
       onRuntimeEvent: deps.onRuntimeEvent,

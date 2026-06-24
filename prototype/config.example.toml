@@ -15,6 +15,6 @@
 [permissions]
 # Command-policy posture:
 #   "strict"   — every mutating tool asks for per-call approval (safe default)
-#   "operator" — usable loopback profile: auto-approves the trusted tool set on
-#                an operator turn (honored once the permission-profile work lands)
+#   "operator" — auto-approves contained mutating tools (local, free, workspace-
+#                write) on a loopback operator turn; paid/networked/exec still prompt
 level = "strict"

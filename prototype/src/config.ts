@@ -38,8 +38,8 @@ export interface WorkbenchConfig {
   defaultCompanionModel: string | null;
   /**
    * Command-policy posture: "strict" = the current per-call approval gate;
-   * "operator" = the usable loopback profile (honored once the permission-profile
-   * work lands).
+   * "operator" = auto-approves contained mutating tools (local, free,
+   * workspace-write) on a loopback turn; paid/networked/exec tools still prompt.
    */
   permissionLevel: PermissionLevel;
 }

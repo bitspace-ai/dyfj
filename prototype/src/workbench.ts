@@ -4,6 +4,7 @@ import type { WorkbenchMessage, WorkbenchToolCall } from "./provider";
 import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
+import type { PermissionLevel } from "./config";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 
@@ -133,6 +134,14 @@ export interface WorkbenchRuntimeInput {
    * default when absent. A headless driver supplies its own.
    */
   defaultCompanionModel?: string | null;
+  /**
+   * Operator permission posture from config ("strict" | "operator"), resolved at
+   * the boundary. The core reads only this field (default "strict"); the command
+   * policy uses it together with the loopback transport to decide whether
+   * contained mutating tools auto-approve or prompt. A headless driver supplies
+   * its own.
+   */
+  permissionLevel?: PermissionLevel;
   /**
    * Per-turn budget-limit overrides. Absent → the env/default limits
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
@@ -980,8 +989,13 @@ export async function runWorkbenchRuntime(
     updateWorkbenchSession,
   } = await import("./sessions");
 
-  const { mode, prompt: cliPrompt, routingOptions, defaultCompanionModel } =
-    runtimeInput;
+  const {
+    mode,
+    prompt: cliPrompt,
+    routingOptions,
+    defaultCompanionModel,
+    permissionLevel,
+  } = runtimeInput;
   const commandRegistry = createCommandRegistry();
   let commandTools: ReturnType<typeof commandRegistry.projectTools> = [];
 
@@ -1514,7 +1528,12 @@ export async function runWorkbenchRuntime(
           // Agent-loop tool calls (call + result) are the conversation's audit
           // backbone — integrity-required in every mode.
           writeEvent: (event) => writeIntegrity(() => writeEvent(event)),
-        }, runtimeInput.confirmToolApproval);
+        }, runtimeInput.confirmToolApproval, {
+          // Operator permission profile: on a loopback turn with permissionLevel
+          // "operator", contained mutating tools auto-approve instead of prompting.
+          permissionLevel: permissionLevel ?? "strict",
+          loopback: authContext.transport === "loopback",
+        });
         stepResults.push({
           commandId: toolCall.name,
           callId: toolCall.id,

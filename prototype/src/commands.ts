@@ -1,4 +1,5 @@
 import { executeReadMemory } from "./memory";
+import type { PermissionLevel } from "./config";
 import {
   executeListFiles,
   executeReadFile,
@@ -201,9 +202,22 @@ export function createCommandRegistry(
   return registry;
 }
 
+/**
+ * Policy context for the operator permission profile. Defaults are safe: an
+ * absent context behaves as `strict` on a non-loopback turn, so nothing
+ * auto-approves unless deliberately enabled.
+ */
+export interface CommandPolicyContext {
+  /** Operator posture from config: "strict" (per-call approval) | "operator". */
+  permissionLevel?: PermissionLevel;
+  /** Whether this turn is on the canonical loopback transport. */
+  loopback?: boolean;
+}
+
 export function evaluateCommandPolicy(
   command: CommandDefinition,
   call: CommandCall,
+  context: CommandPolicyContext = {},
 ): CommandPolicyResult {
   const validationError = validateCommandArguments(
     command.inputSchema,
@@ -259,6 +273,27 @@ export function evaluateCommandPolicy(
     };
   }
 
+  // Operator permission profile (config permissionLevel="operator", on a
+  // loopback/operator turn): a CONTAINED mutating tool — local, free,
+  // workspace-write — is auto-approved without a per-call prompt, with its own
+  // audit basis. Command-execution, paid, or networked tools are deliberately
+  // NOT covered and still fall through to "ask" even under the operator profile,
+  // so a future bash tool stays gated until its own safety model says otherwise.
+  if (
+    context.permissionLevel === "operator" &&
+    context.loopback === true &&
+    command.permission.defaultDecision === "allow" &&
+    command.permission.filesystem === "write" &&
+    command.permission.cost === "none" &&
+    (command.permission.network === "none" ||
+      command.permission.network === undefined)
+  ) {
+    return {
+      decision: "allow",
+      authzBasis: "policy:allow:operator-profile",
+    };
+  }
+
   return {
     decision: "ask",
     authzBasis: "policy:ask:default",
@@ -270,6 +305,7 @@ export async function invokeCommand<TResult = unknown>(
   registry: CommandRegistry,
   call: CommandCall,
   confirmApproval: ConfirmToolApproval = denyToolApproval,
+  policyContext: CommandPolicyContext = {},
 ): Promise<CommandInvocationResult<TResult>> {
   const command = registry.lookup(call.commandId) as
     | CommandDefinition<TResult>
@@ -283,7 +319,7 @@ export async function invokeCommand<TResult = unknown>(
     };
   }
 
-  const policy = evaluateCommandPolicy(command, call);
+  const policy = evaluateCommandPolicy(command, call, policyContext);
   if (policy.decision === "deny") {
     return {
       decision: "deny",
@@ -592,8 +628,14 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   call: CommandCall,
   context: CommandEventContext,
   confirmApproval: ConfirmToolApproval = denyToolApproval,
+  policyContext: CommandPolicyContext = {},
 ): Promise<CommandInvocationResult<TResult>> {
-  const result = await invokeCommand<TResult>(registry, call, confirmApproval);
+  const result = await invokeCommand<TResult>(
+    registry,
+    call,
+    confirmApproval,
+    policyContext,
+  );
   // Redact payload-bearing arguments (e.g. write_file content) before the event
   // is persisted, so the durable log and session replay never retain the raw
   // value (CWE-532).
