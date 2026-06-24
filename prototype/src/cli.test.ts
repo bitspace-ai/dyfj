@@ -568,6 +568,10 @@ describe("parseArgs", () => {
   test("--unix routes turns over the socket", () => {
     expect(parseArgs(["--unix", "exec", "x"]).overrides.unix).toBe(true);
   });
+  test("--approve-paid sets the paid opt-in", () => {
+    expect(parseArgs(["--approve-paid", "exec", "x"]).overrides.approvePaid)
+      .toBe(true);
+  });
   test("--mode sets the context mode", () => {
     expect(parseArgs(["--mode", "ask", "exec", "x"]).overrides.mode).toBe(
       "ask",
@@ -758,6 +762,11 @@ describe("buildTurnBody", () => {
   });
   test("carries the config mode into the request body", () => {
     expect(buildTurnBody("x", cfg({ mode: "ask" })).mode).toBe("ask");
+  });
+  test("--approve-paid sets approvePaidInference; absent leaves it off", () => {
+    expect(buildTurnBody("hi", cfg({ approvePaid: true })).approvePaidInference)
+      .toBe(true);
+    expect(buildTurnBody("hi", cfg()).approvePaidInference).toBeUndefined();
   });
   test("sends the workspace only when establishing a new session", () => {
     // New session (no sessionId) on a loopback server: workspace binds the session.

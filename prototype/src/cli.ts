@@ -42,6 +42,11 @@ export interface TurnRequest {
   sessionId?: string;
   /** Working directory to scope the server's read-only file tools to. */
   workspace?: string;
+  /**
+   * Per-turn opt-in to paid (hosted) inference. The engine honors it only on the
+   * loopback transport AND only when set — a remote caller can never approve spend.
+   */
+  approvePaidInference?: boolean;
 }
 
 export interface CliConfig {
@@ -61,6 +66,11 @@ export interface CliConfig {
   socket: string;
   /** Route turns over the UDS/JSON-RPC seam instead of HTTP/SSE (--unix). */
   unix?: boolean;
+  /**
+   * Opt into paid (hosted) inference for this turn/session (--approve-paid).
+   * Persists across a REPL session; the engine gates it loopback-only.
+   */
+  approvePaid?: boolean;
   color: boolean;
 }
 
@@ -131,6 +141,8 @@ export function buildTurnBody(
   ) {
     body.workspace = config.workspace;
   }
+  // Per-turn paid opt-in; the engine ignores it on non-loopback transports.
+  if (config.approvePaid) body.approvePaidInference = true;
   return body;
 }
 
@@ -534,6 +546,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       json = true;
     } else if (arg === "--unix") {
       overrides.unix = true;
+    } else if (arg === "--approve-paid") {
+      overrides.approvePaid = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     } else if (VALUE_FLAGS.has(arg)) {
@@ -653,6 +667,7 @@ export function resolveConfig(
     workspaceExplicit: explicitWorkspace !== undefined,
     socket: overrides.socket ?? resolveSocketPath(env),
     unix: overrides.unix ?? env.get("DYFJ_UNIX") === "1",
+    approvePaid: overrides.approvePaid ?? false,
     color: !env.get("NO_COLOR") && isTty,
   };
 }
@@ -677,6 +692,7 @@ Options:
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --session <id>   resume a session
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
+  --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
   --json           one-shot only: print the full result as JSON
   -h, --help       show this help`;
 

@@ -7,7 +7,7 @@
     "workbench-http": "deno run -P=workbench-http --env-file=.env --sloppy-imports src/http.ts",
     "cli": "deno run -P=cli --sloppy-imports src/cli.ts",
     "serve-unix": "deno run -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
-    "compile-cli": "deno compile --allow-env --allow-net=127.0.0.1,localhost --sloppy-imports -o dist/dyfj src/cli.ts",
+    "compile-cli": "deno compile --allow-env=DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,NO_COLOR --allow-read --allow-write --allow-net=127.0.0.1,localhost --sloppy-imports -o dist/dyfj src/cli.ts",
     "context-size-response": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/context-size-response.ts",
     "model-response-modes": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/model-response-modes.ts",
     "structured-output": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output.ts",
