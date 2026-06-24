@@ -139,6 +139,42 @@ describe("selectWorkbenchModel", () => {
     expect(() => selectWorkbenchModel(models, { modelId: "missing" }))
       .toThrow("Model not found: missing");
   });
+
+  test("uses the configured default model on a bare turn", () => {
+    const selection = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
+    expect(selection.selected.slug).toBe("claude-haiku-4-5");
+    expect(selection.reason).toBe("default_config");
+  });
+
+  test("explicit modelId beats the configured default", () => {
+    const selection = selectWorkbenchModel(
+      models,
+      { modelId: "laguna-xs.2" },
+      "claude-haiku-4-5",
+    );
+    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.reason).toBe("explicit_model_id");
+  });
+
+  test("a routing hint suppresses the configured default", () => {
+    const selection = selectWorkbenchModel(
+      models,
+      { hint: "code" },
+      "claude-haiku-4-5",
+    );
+    expect(selection.reason).not.toBe("default_config");
+    expect(selection.selected.tier).toBe(0);
+  });
+
+  test("absent/empty default falls through to the local default", () => {
+    expect(selectWorkbenchModel(models, {}, null).reason).toBe("default");
+    expect(selectWorkbenchModel(models, {}, "").reason).toBe("default");
+  });
+
+  test("an unknown configured default fails before inference", () => {
+    expect(() => selectWorkbenchModel(models, {}, "nope"))
+      .toThrow("Model not found: nope");
+  });
 });
 
 describe("defaultLocalWorkbenchModels", () => {

@@ -278,6 +278,11 @@ export interface ExecuteTurnDeps {
    * duplex round-trip; HTTP omits it, so the runtime defaults to deny.
    */
   confirmToolApproval?: ConfirmToolApproval;
+  /**
+   * Engine default companion model (config ~/.dyfj/config.toml / env), loaded
+   * once at the boundary and applied when a turn specifies no model/tier/hint.
+   */
+  defaultCompanionModel?: string | null;
 }
 
 /**
@@ -301,6 +306,8 @@ export function executeTurn(
       // env-derived runtime config resolved at the boundary, not in the
       // core. A future headless driver supplies these from its own config.
       ...resolveRuntimeEnvDefaults(),
+      // engine default companion model, resolved once at the boundary from config
+      defaultCompanionModel: deps.defaultCompanionModel,
       authContext: deps.authContext,
       onTextDelta: deps.onTextDelta,
       onRuntimeEvent: deps.onRuntimeEvent,

@@ -126,6 +126,14 @@ export interface WorkbenchRuntimeInput {
    */
   budgetTallyMode?: BudgetTallyMode;
   /**
+   * Default companion model slug, used when a turn specifies no model, tier, or
+   * hint (the "bare turn" default). Lifted to the boundary: entrypoints resolve
+   * it from config (~/.dyfj/config.toml) / DYFJ_WORKBENCH_MODEL via loadConfig();
+   * the core reads only this field and falls through to the registry local
+   * default when absent. A headless driver supplies its own.
+   */
+  defaultCompanionModel?: string | null;
+  /**
    * Per-turn budget-limit overrides. Absent → the env/default limits
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
    * transport, so a remote caller can never raise the spend cap. The core just
@@ -972,7 +980,8 @@ export async function runWorkbenchRuntime(
     updateWorkbenchSession,
   } = await import("./sessions");
 
-  const { mode, prompt: cliPrompt, routingOptions } = runtimeInput;
+  const { mode, prompt: cliPrompt, routingOptions, defaultCompanionModel } =
+    runtimeInput;
   const commandRegistry = createCommandRegistry();
   let commandTools: ReturnType<typeof commandRegistry.projectTools> = [];
 
@@ -1281,7 +1290,11 @@ export async function runWorkbenchRuntime(
       );
       models = defaultLocalWorkbenchModels();
     }
-    const selection = selectWorkbenchModel(models, routingOptions);
+    const selection = selectWorkbenchModel(
+      models,
+      routingOptions,
+      defaultCompanionModel,
+    );
     const selected = selection.selected;
     selectedForReceipt = {
       displayName: selected.displayName,
@@ -1437,6 +1450,7 @@ export async function runWorkbenchRuntime(
       prompt: modelPrompt,
       messages,
       routing: routingOptions,
+      defaultModelId: defaultCompanionModel,
       models,
       jsonObject: isNextWork,
       tools: commandTools,
@@ -1541,6 +1555,7 @@ export async function runWorkbenchRuntime(
         prompt: modelPrompt,
         messages,
         routing: routingOptions,
+        defaultModelId: defaultCompanionModel,
         models,
         tools: forceConclude ? undefined : commandTools,
         // Stream the gather step when the provider streams tool calls, and

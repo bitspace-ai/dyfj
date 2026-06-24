@@ -67,6 +67,7 @@
         "DYFJ_MEMORY_MCP_URL",
         "DYFJ_MEMORY_MCP_TOOL",
         "DYFJ_MEMORY_MCP_TOKEN",
+        "DYFJ_PERMISSION_LEVEL",
         "NODE_DEBUG_NATIVE",
         "NODE_DISABLE_COMPILE_CACHE",
         "NODE_COMPILE_CACHE_PORTABLE",
@@ -114,6 +115,7 @@
         "DYFJ_MEMORY_MCP_URL",
         "DYFJ_MEMORY_MCP_TOOL",
         "DYFJ_MEMORY_MCP_TOKEN",
+        "DYFJ_PERMISSION_LEVEL",
         "NODE_DEBUG_NATIVE",
         "NODE_DISABLE_COMPILE_CACHE",
         "NODE_COMPILE_CACHE_PORTABLE",
@@ -181,6 +183,7 @@
         "DYFJ_MEMORY_MCP_URL",
         "DYFJ_MEMORY_MCP_TOOL",
         "DYFJ_MEMORY_MCP_TOKEN",
+        "DYFJ_PERMISSION_LEVEL",
         "NODE_DEBUG_NATIVE",
         "NODE_DISABLE_COMPILE_CACHE",
         "NODE_COMPILE_CACHE_PORTABLE",
@@ -240,6 +243,7 @@
   },
   "imports": {
     "$dax": "jsr:@david/dax@0.42.0",
+    "@std/toml": "jsr:@std/toml@1.0.8",
     "mysql2/promise": "npm:mysql2@3.22.3/promise",
     "ulid": "npm:ulid@2.4.0"
   },

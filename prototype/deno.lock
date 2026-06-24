@@ -1,11 +1,24 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/collections@^1.1.1": "1.2.0",
+    "jsr:@std/toml@1.0.8": "1.0.8",
     "npm:@modelcontextprotocol/sdk@1.29.0": "1.29.0_zod@4.4.3",
     "npm:mysql2@3.22.3": "3.22.3_@types+node@25.9.2",
     "npm:ulid@2.4.0": "2.4.0",
     "npm:vitest@3.2.6": "3.2.6",
     "npm:zod@4.4.3": "4.4.3"
+  },
+  "jsr": {
+    "@std/collections@1.2.0": {
+      "integrity": "47627a21d3a13138b77fd0e4d790ba9d2e603c3510b686cde6b132fe9aa98a88"
+    },
+    "@std/toml@1.0.8": {
+      "integrity": "eb8ae76b4cc1c6c13f2a91123675823adbec2380de75cd3748c628960d952164",
+      "dependencies": [
+        "jsr:@std/collections"
+      ]
+    }
   },
   "npm": {
     "@esbuild/aix-ppc64@0.27.7": {
@@ -1167,6 +1180,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@david/dax@0.42.0",
+      "jsr:@std/toml@1.0.8",
       "npm:mysql2@3.22.3",
       "npm:ulid@2.4.0"
     ]

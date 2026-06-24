@@ -1,0 +1,20 @@
+# DYFJ workbench engine config — hand-edited, read-mostly.
+#
+# Copy to ~/.dyfj/config.toml and edit. Every key is optional; omit one to use
+# its default. The app never writes this file (machine state lives elsewhere),
+# so your comments and formatting are always safe.
+#
+# Precedence: these values < environment variables < per-request overrides.
+
+[companion]
+# Model the engine uses when a turn doesn't specify one.
+# Omit (or leave blank) to use the registry's local default.
+# A frontier slug suits the companion — text chat is cheap.
+# default_model = "claude-opus-4-8"
+
+[permissions]
+# Command-policy posture:
+#   "strict"   — every mutating tool asks for per-call approval (safe default)
+#   "operator" — usable loopback profile: auto-approves the trusted tool set on
+#                an operator turn (honored once the permission-profile work lands)
+level = "strict"

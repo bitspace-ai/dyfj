@@ -250,6 +250,7 @@ export function withDefaultLocalWorkbenchModels(
 export function selectWorkbenchModel(
   models: WorkbenchModel[],
   options: WorkbenchRoutingOptions,
+  defaultModelId?: string | null,
 ): WorkbenchSelection {
   if (options.modelId !== undefined) {
     const selected = models.find((model) => model.slug === options.modelId);
@@ -268,6 +269,21 @@ export function selectWorkbenchModel(
       considered: tierModels.map((model) => model.slug),
       reason: "explicit_tier",
     };
+  }
+
+  // No explicit modelId or tier. If the request also gave no hint and the engine
+  // has a configured default companion model (config ~/.dyfj/config.toml /
+  // DYFJ_WORKBENCH_MODEL), use it — the "bare turn" default, ahead of the
+  // registry's local fallback.
+  if (
+    options.hint === undefined &&
+    defaultModelId !== undefined &&
+    defaultModelId !== null &&
+    defaultModelId !== ""
+  ) {
+    const selected = models.find((model) => model.slug === defaultModelId);
+    if (!selected) throw new WorkbenchModelNotFoundError(defaultModelId);
+    return { selected, considered: [], reason: "default_config" };
   }
 
   const localModels = models.filter((model) => model.tier === 0);
@@ -459,6 +475,12 @@ export interface WorkbenchTurnParams {
    */
   messages?: WorkbenchMessage[];
   routing: WorkbenchRoutingOptions;
+  /**
+   * Engine default model, applied when routing specifies no model/tier/hint —
+   * so this (authoritative) selection agrees with the boundary's instead of
+   * falling back to the registry local default. Threaded from config.
+   */
+  defaultModelId?: string | null;
   models?: WorkbenchModel[];
   onTextDelta?: (delta: string) => void;
   jsonObject?: boolean;
@@ -484,7 +506,11 @@ export async function runWorkbenchTurn(
   params: WorkbenchTurnParams,
 ): Promise<WorkbenchTurnResult> {
   const models = params.models ?? await loadWorkbenchModels();
-  const selection = selectWorkbenchModel(models, params.routing);
+  const selection = selectWorkbenchModel(
+    models,
+    params.routing,
+    params.defaultModelId,
+  );
   const model = selection.selected;
 
   if (anthropicProviders.has(model.provider)) {

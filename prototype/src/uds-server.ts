@@ -40,6 +40,8 @@ export interface WorkbenchUnixServerOptions {
     input: { sessionId: string; asOf?: string },
   ) => Promise<WorkbenchSessionEvent[]>;
   onParseError?: (detail: string) => void;
+  /** Engine default companion model (config), applied to bare turns. */
+  defaultCompanionModel?: string | null;
 }
 
 // Mirrors http.ts loadPickerModels: degrade to the local defaults if the registry
@@ -163,6 +165,7 @@ export function buildTurnHandlers(
         loopback: true,
         runRuntime,
         fetchSessionEvents,
+        defaultCompanionModel: options.defaultCompanionModel,
         // mid-turn approval over the duplex channel — the server asks
         // the connected client to approve a mutating tool; the client's response
         // is the verdict. A failed request (no client approver, dropped
