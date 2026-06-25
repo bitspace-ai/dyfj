@@ -219,10 +219,11 @@ describe("registerCoreCommands", () => {
     expect(registry.list().map((c) => c.id)).toEqual(["memory.read"]);
   });
 
-  test("registers the read-only file tools when a workspace root is set", () => {
+  test("registers the file tools when a workspace root is set", () => {
     const registry = createCommandRegistry();
     registerCoreCommands(registry, { workspaceRoot: "/work" });
     expect(registry.list().map((c) => c.id).sort()).toEqual([
+      "edit_file",
       "list_files",
       "memory.read",
       "read_file",

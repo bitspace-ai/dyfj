@@ -1,6 +1,7 @@
 import { executeReadMemory } from "./memory";
 import type { PermissionLevel } from "./config";
 import {
+  executeEditFile,
   executeListFiles,
   executeReadFile,
   executeWriteFile,
@@ -544,6 +545,57 @@ export function buildWriteFileCommand(root: string): CommandDefinition<string> {
   };
 }
 
+export function buildEditFileCommand(root: string): CommandDefinition<string> {
+  return {
+    id: "edit_file",
+    title: "Edit File",
+    description:
+      "Replace an exact text fragment in an existing file in the workspace, by " +
+      "path relative to the workspace root. The old text must occur exactly " +
+      "once. Mutating — requires operator approval before it runs.",
+    inputSchema: {
+      type: "object",
+      required: ["path", "old_string", "new_string"],
+      properties: {
+        path: {
+          type: "string",
+          description: "File path relative to the workspace root.",
+        },
+        old_string: {
+          type: "string",
+          description:
+            "Exact text to replace; must occur exactly once in the file.",
+          // Payload-bearing file content — redacted from the persisted event.
+          redact: true,
+        },
+        new_string: {
+          type: "string",
+          description: "Replacement text.",
+          redact: true,
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      // Same contained-write envelope as write_file: routes through "ask" under
+      // strict, auto-approves under the operator profile on a loopback turn.
+      effects: ["write.filesystem", "emit.event"],
+      defaultDecision: "allow",
+      resources: ["file:write"],
+      network: "none",
+      filesystem: "write",
+      cost: "none",
+    },
+    executor: (call) =>
+      executeEditFile(
+        root,
+        String(call.arguments.path),
+        String(call.arguments.old_string),
+        String(call.arguments.new_string),
+      ),
+  };
+}
+
 export function registerCoreCommands(
   registry: CommandRegistry,
   deps: CoreCommandDependencies = {},
@@ -556,6 +608,7 @@ export function registerCoreCommands(
     registry.register(buildReadFileCommand(deps.workspaceRoot));
     registry.register(buildListFilesCommand(deps.workspaceRoot));
     registry.register(buildWriteFileCommand(deps.workspaceRoot));
+    registry.register(buildEditFileCommand(deps.workspaceRoot));
   }
 }
 

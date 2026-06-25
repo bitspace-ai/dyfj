@@ -5,8 +5,8 @@
  * auto-allows them). `write_file` is mutating — the command policy routes it
  * through operator approval, so its executor never runs unapproved.
  * Every path is resolved within the root and traversal/symlink escape is
- * rejected, so the model can only touch the project it's working in. `bash` and
- * `edit_file` are later slices.
+ * rejected, so the model can only touch the project it's working in. `edit_file`
+ * applies a single exact-string replacement (also mutating); `bash` is a later slice.
  *
  * Executors never throw on operator/model error (bad path, missing file,
  * traversal attempt): they return an `error: …` string so the model sees the
@@ -178,4 +178,63 @@ export async function executeWriteFile(
   } catch (err) {
     return `error: cannot write ${p}: ${(err as Error).message}`;
   }
+}
+
+/**
+ * Apply a single exact-string replacement to an existing file within the
+ * workspace root: replace `oldString` with `newString`. The match must be
+ * unique — zero or multiple occurrences error rather than guess (the model adds
+ * surrounding context to disambiguate). The write-back goes through
+ * executeWriteFile, inheriting its parent-containment + symlink no-follow
+ * (CWE-59) guarantees. Mutating; the command policy routes it through operator
+ * approval, so the executor never runs unapproved.
+ */
+export async function executeEditFile(
+  root: string,
+  p: string,
+  oldString: string,
+  newString: string,
+  lstat: (path: string) => Promise<{ isSymlink: boolean }> = Deno.lstat,
+): Promise<string> {
+  if (oldString === "") {
+    return `error: oldString must be non-empty`;
+  }
+  if (oldString === newString) {
+    return `error: oldString and newString are identical; no edit to apply`;
+  }
+  let abs: string;
+  try {
+    abs = resolveWorkspacePath(root, p);
+  } catch (err) {
+    return `error: ${(err as Error).message}`;
+  }
+  let text: string;
+  try {
+    const target = await containedRealPath(root, abs);
+    if (target === null) {
+      return `error: path escapes the workspace root: ${p}`;
+    }
+    const info = await Deno.stat(target);
+    if (info.isDirectory) {
+      return `error: ${p} is a directory`;
+    }
+    text = await Deno.readTextFile(target);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) {
+      return `error: cannot edit ${p}: file not found`;
+    }
+    return `error: cannot read ${p}: ${(err as Error).message}`;
+  }
+  const first = text.indexOf(oldString);
+  if (first === -1) {
+    return `error: oldString not found in ${p}`;
+  }
+  if (text.indexOf(oldString, first + oldString.length) !== -1) {
+    return `error: oldString is not unique in ${p}; add more surrounding context`;
+  }
+  const updated = text.slice(0, first) + newString +
+    text.slice(first + oldString.length);
+  const writeResult = await executeWriteFile(root, p, updated, lstat);
+  // executeWriteFile returns "wrote <p>" on success or "error: …" on failure.
+  return writeResult.startsWith("error:") ? writeResult : `edited ${p}`;
 }

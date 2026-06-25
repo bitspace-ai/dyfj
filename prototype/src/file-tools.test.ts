@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  executeEditFile,
   executeListFiles,
   executeReadFile,
   executeWriteFile,
@@ -159,5 +160,60 @@ describe("executeWriteFile symlink containment", () => {
     await expect(Deno.stat(`${root}/link.txt`)).rejects.toBeInstanceOf(
       Deno.errors.NotFound,
     );
+  });
+});
+
+describe("executeEditFile", () => {
+  test("replaces a unique fragment and reports the edit", async () => {
+    await executeWriteFile(root, "edit-basic.txt", "alpha beta gamma");
+    const out = await executeEditFile(root, "edit-basic.txt", "beta", "DELTA");
+    expect(out).toBe("edited edit-basic.txt");
+    expect(await Deno.readTextFile(`${root}/edit-basic.txt`)).toBe(
+      "alpha DELTA gamma",
+    );
+  });
+  test("errors when the old text is absent (file unchanged)", async () => {
+    await executeWriteFile(root, "edit-absent.txt", "unchanged");
+    expect(await executeEditFile(root, "edit-absent.txt", "missing", "x"))
+      .toMatch(/oldString not found/);
+    expect(await Deno.readTextFile(`${root}/edit-absent.txt`)).toBe(
+      "unchanged",
+    );
+  });
+  test("errors when the old text is not unique (file unchanged)", async () => {
+    await executeWriteFile(root, "edit-dup.txt", "x x x");
+    expect(await executeEditFile(root, "edit-dup.txt", "x", "y")).toMatch(
+      /not unique/,
+    );
+    expect(await Deno.readTextFile(`${root}/edit-dup.txt`)).toBe("x x x");
+  });
+  test("errors for a missing file (no create)", async () => {
+    expect(await executeEditFile(root, "edit-nope.txt", "a", "b")).toMatch(
+      /file not found/,
+    );
+  });
+  test("rejects a traversal escape", async () => {
+    expect(await executeEditFile(root, "../escape.txt", "a", "b")).toMatch(
+      /^error: path escapes/,
+    );
+  });
+  test("rejects an empty oldString", async () => {
+    await executeWriteFile(root, "edit-empty.txt", "content");
+    expect(await executeEditFile(root, "edit-empty.txt", "", "x")).toMatch(
+      /oldString must be non-empty/,
+    );
+  });
+  test("inherits the write-back symlink guard (refuses, writes nothing)", async () => {
+    await executeWriteFile(root, "edit-link.txt", "before");
+    const fakeSymlinkLstat = () => Promise.resolve({ isSymlink: true });
+    const out = await executeEditFile(
+      root,
+      "edit-link.txt",
+      "before",
+      "after",
+      fakeSymlinkLstat,
+    );
+    expect(out).toMatch(/refusing to write through a symlink/);
+    expect(await Deno.readTextFile(`${root}/edit-link.txt`)).toBe("before");
   });
 });
