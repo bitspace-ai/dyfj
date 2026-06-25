@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildBashCommand,
   buildCommandToolCallEventPayload,
   type CommandCall,
   type CommandDefinition,
@@ -223,6 +224,7 @@ describe("registerCoreCommands", () => {
     const registry = createCommandRegistry();
     registerCoreCommands(registry, { workspaceRoot: "/work" });
     expect(registry.list().map((c) => c.id).sort()).toEqual([
+      "bash",
       "edit_file",
       "list_files",
       "memory.read",
@@ -373,6 +375,34 @@ describe("operator permission profile", () => {
         loopback: true,
       }).decision,
     ).toBe("ask");
+  });
+
+  test("no-exec invariant: a run.* effect never auto-approves, even with a contained envelope", () => {
+    // Identical write/free/local envelope to the auto-approving case above, but
+    // carrying an exec-class effect — the effect, not the metadata, is the gate,
+    // so it must fall through to "ask" under the operator profile.
+    for (
+      const effects of [
+        ["run.process", "write.filesystem", "emit.event"],
+        ["run.checks", "write.filesystem", "emit.event"],
+      ] as CommandDefinition["permission"]["effects"][]
+    ) {
+      const policy = evaluateCommandPolicy(writeCmd({ effects }), wcall(), {
+        permissionLevel: "operator",
+        loopback: true,
+      });
+      expect(policy.decision).toBe("ask");
+    }
+  });
+
+  test("the real bash command always asks under the operator profile", () => {
+    const bash = buildBashCommand("/work");
+    const policy = evaluateCommandPolicy(
+      bash,
+      call({ command: "ls" }, { commandId: "bash" }),
+      { permissionLevel: "operator", loopback: true },
+    );
+    expect(policy.decision).toBe("ask");
   });
 
   test("operator + loopback runs the tool without invoking the approver", async () => {

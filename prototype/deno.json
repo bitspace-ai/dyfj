@@ -85,6 +85,9 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "generativelanguage.googleapis.com:443"
+      ],
+      "run": [
+        "bash"
       ]
     },
     "workbench-http": {
@@ -134,6 +137,9 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "generativelanguage.googleapis.com:443"
+      ],
+      "run": [
+        "bash"
       ]
     },
     "cli": {
@@ -201,7 +207,10 @@
         "generativelanguage.googleapis.com:443"
       ],
       "read": true,
-      "write": true
+      "write": true,
+      "run": [
+        "bash"
+      ]
     },
     "local-model-diagnostic": {
       "env": [

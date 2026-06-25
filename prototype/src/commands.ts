@@ -6,6 +6,7 @@ import {
   executeReadFile,
   executeWriteFile,
 } from "./file-tools";
+import { executeBash } from "./exec-tools";
 import {
   generateSpanId,
   generateULID,
@@ -19,9 +20,19 @@ export type CommandEffect =
   | "read.filesystem"
   | "write.filesystem"
   | "run.checks"
+  | "run.process"
   | "call.model.local"
   | "call.model.paid"
   | "emit.event";
+
+// Exec-class effects spawn external processes. Operator auto-approval NEVER
+// covers them: command execution always requires an explicit per-call approval,
+// regardless of the filesystem/cost/network envelope (the no-exec invariant).
+// Metadata alone must not be trusted to gate exec — this effect check is the gate.
+const EXEC_EFFECTS: ReadonlySet<CommandEffect> = new Set([
+  "run.checks",
+  "run.process",
+]);
 
 // Type aliases (not interfaces) so these stay assignable to
 // Record<string, unknown> tool-parameter contracts: TypeScript gives
@@ -276,10 +287,13 @@ export function evaluateCommandPolicy(
 
   // Operator permission profile (config permissionLevel="operator", on a
   // loopback/operator turn): a CONTAINED mutating tool — local, free,
-  // workspace-write — is auto-approved without a per-call prompt, with its own
-  // audit basis. Command-execution, paid, or networked tools are deliberately
-  // NOT covered and still fall through to "ask" even under the operator profile,
-  // so a future bash tool stays gated until its own safety model says otherwise.
+  // workspace-write, NON-exec — is auto-approved without a per-call prompt, with
+  // its own audit basis. Command-execution, paid, or networked tools are
+  // deliberately NOT covered and still fall through to "ask" even under the
+  // operator profile. The no-exec invariant (`!executesProcesses`) is the
+  // explicit gate: a tool carrying a run.* effect can never auto-approve here,
+  // even if its filesystem/cost/network envelope would otherwise match — so bash
+  // always asks regardless of how its metadata is tagged.
   if (
     context.permissionLevel === "operator" &&
     context.loopback === true &&
@@ -287,7 +301,8 @@ export function evaluateCommandPolicy(
     command.permission.filesystem === "write" &&
     command.permission.cost === "none" &&
     (command.permission.network === "none" ||
-      command.permission.network === undefined)
+      command.permission.network === undefined) &&
+    !command.permission.effects.some((effect) => EXEC_EFFECTS.has(effect))
   ) {
     return {
       decision: "allow",
@@ -596,6 +611,48 @@ export function buildEditFileCommand(root: string): CommandDefinition<string> {
   };
 }
 
+export function buildBashCommand(root: string): CommandDefinition<string> {
+  return {
+    id: "bash",
+    title: "Run Bash Command",
+    description:
+      "Run a shell command via `bash -c`, with the working directory pinned to " +
+      "the workspace root. Returns the exit status and combined stdout/stderr. " +
+      "Always requires explicit operator approval before it runs — it is never " +
+      "auto-approved, even under the operator profile.",
+    inputSchema: {
+      type: "object",
+      required: ["command"],
+      properties: {
+        command: {
+          type: "string",
+          description: "The shell command to run (executed as `bash -c`).",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      // run.process is an exec-class effect: the no-exec invariant in
+      // evaluateCommandPolicy keeps it out of operator auto-approval, so bash
+      // ALWAYS routes to "ask". The honest filesystem/network envelope (a shell
+      // command can read, write, and reach the network) is recorded for audit,
+      // but the run.process effect is what actually gates it.
+      effects: [
+        "run.process",
+        "read.filesystem",
+        "write.filesystem",
+        "emit.event",
+      ],
+      defaultDecision: "allow",
+      resources: ["process:run"],
+      network: "external",
+      filesystem: "write",
+      cost: "none",
+    },
+    executor: (call) => executeBash(root, String(call.arguments.command)),
+  };
+}
+
 export function registerCoreCommands(
   registry: CommandRegistry,
   deps: CoreCommandDependencies = {},
@@ -609,6 +666,7 @@ export function registerCoreCommands(
     registry.register(buildListFilesCommand(deps.workspaceRoot));
     registry.register(buildWriteFileCommand(deps.workspaceRoot));
     registry.register(buildEditFileCommand(deps.workspaceRoot));
+    registry.register(buildBashCommand(deps.workspaceRoot));
   }
 }
 
