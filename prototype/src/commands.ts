@@ -623,10 +623,11 @@ export function buildBashCommand(root: string): CommandDefinition<string> {
     id: "bash",
     title: "Run Bash Command",
     description:
-      "Run a shell command via `bash -c`, with the working directory pinned to " +
-      "the workspace root. Returns the exit status and combined stdout/stderr. " +
-      "Always requires explicit operator approval before it runs — it is never " +
-      "auto-approved, even under the operator profile.",
+      "Run a shell command via `bash -c`. The working directory is the workspace " +
+      "root, but the command is NOT sandboxed — it can read and write anywhere on " +
+      "the machine and reach the network, exactly as if the operator ran it. " +
+      "Returns the exit status and combined stdout/stderr. Always requires " +
+      "explicit operator approval before it runs — it is never auto-approved.",
     inputSchema: {
       type: "object",
       required: ["command"],

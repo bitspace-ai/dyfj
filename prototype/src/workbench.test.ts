@@ -471,6 +471,17 @@ describe("buildWorkspaceGrounding", () => {
     // Frames acting as the default and reassures the model mutations are gated.
     expect(grounding).toMatch(/approves|approval|prompts/i);
   });
+
+  test("does not present bash as workspace-contained (it is not sandboxed)", () => {
+    const grounding = buildWorkspaceGrounding();
+    // bash is honestly described as uncontained, not lumped with the file tools.
+    expect(grounding).toMatch(/not sandboxed/i);
+    expect(grounding).toMatch(/anywhere on the machine/i);
+    // The "cannot escape" containment claim is scoped to the file tools, which
+    // are introduced before bash.
+    const [beforeBash] = grounding.split("bash");
+    expect(beforeBash).toMatch(/cannot escape/i);
+  });
 });
 
 describe("validateNextWorkJson", () => {

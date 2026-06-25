@@ -411,16 +411,19 @@ export function buildWorkspaceGrounding(): string {
   return [
     "",
     "",
-    `Workspace: you have file and shell tools scoped to the project's workspace ` +
-    `root. All paths are relative to that root and cannot escape it. Read with ` +
-    `list_files and read_file — when asked about files, directories, or the ` +
-    `project itself, use these instead of guessing from memory; start with ` +
-    `list_files on \`.\` to see what is actually here. You can also act: ` +
-    `write_file creates or overwrites a file, edit_file replaces an exact text ` +
-    `fragment in one, and bash runs a shell command. When the request calls for ` +
-    `changing a file or running a command, do it with these tools rather than ` +
-    `only describing the steps — the operator approves every mutation before it ` +
-    `runs (bash always prompts), so propose the concrete action.`,
+    `Workspace: you have file tools scoped to the project's workspace root — ` +
+    `list_files, read_file, write_file, and edit_file. Their paths are relative ` +
+    `to that root and cannot escape it. When asked about files, directories, or ` +
+    `the project, use them instead of guessing from memory; start with ` +
+    `list_files on \`.\` to see what is actually here. write_file creates or ` +
+    `overwrites a file; edit_file replaces an exact fragment in one. You also ` +
+    `have bash, which runs a real shell command with its working directory set ` +
+    `to the workspace root — but bash is NOT sandboxed: it can read and write ` +
+    `anywhere on the machine and reach the network, exactly as if the operator ` +
+    `ran the command themselves. When a request calls for changing a file or ` +
+    `running a command, do it with these tools rather than only describing the ` +
+    `steps — the operator approves every mutation before it runs (bash always ` +
+    `prompts), so propose the concrete action.`,
   ].join("\n");
 }
 
