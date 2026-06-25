@@ -837,6 +837,92 @@ describe("buildCommandToolCallEventPayload", () => {
     });
   });
 
+  test("redacts the result when redactResult is set, keeps it otherwise", () => {
+    const success = {
+      decision: "allow" as const,
+      authzBasis: "policy:allow:operator-profile",
+      isError: false as const,
+      result: "exit 0\nANTHROPIC_API_KEY=fixture-should-not-persist",
+    };
+    const ctx = {
+      eventId: "01TESTEVENT0000000000000000",
+      sessionId: "01TESTSESSION00000000000000",
+      traceId: "0123456789abcdef0123456789abcdef",
+      spanId: "0123456789abcdef",
+    };
+    const redacted = buildCommandToolCallEventPayload(
+      call({ command: "env" }, { commandId: "bash" }),
+      success,
+      ctx,
+      { command: "env" },
+      true,
+    );
+    expect(redacted.tool_result).toBe("[redacted]");
+    expect(redacted.tool_result as string).not.toContain("ANTHROPIC_API_KEY");
+
+    const kept = buildCommandToolCallEventPayload(
+      call({ command: "env" }, { commandId: "bash" }),
+      success,
+      ctx,
+      { command: "env" },
+      false,
+    );
+    expect(kept.tool_result).toContain("ANTHROPIC_API_KEY");
+  });
+
+  test("the real bash command marks its result for redaction", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    expect(registry.lookup("bash")!.redactResult).toBe(true);
+  });
+
+  test("invokeCommandWithEvent keeps a redactResult command's output out of the persisted event", async () => {
+    const sensitiveCmd: CommandDefinition<string> = {
+      id: "bash",
+      title: "Run Bash Command",
+      inputSchema: {
+        type: "object",
+        required: ["command"],
+        properties: { command: { type: "string" } },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["run.process", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["process:run"],
+        network: "external",
+        filesystem: "write",
+        cost: "none",
+      },
+      redactResult: true,
+      executor: () => "exit 0\nANTHROPIC_API_KEY=fixture-should-not-persist",
+    };
+    const registry = createCommandRegistry([sensitiveCmd]);
+    const events: Record<string, unknown>[] = [];
+    const result = await invokeCommandWithEvent(
+      registry,
+      call({ command: "env" }, { commandId: "bash" }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        eventId: "01TESTEVENT0000000000000000",
+        spanId: "0123456789abcdef",
+        writeEvent: async (e) => {
+          events.push(e);
+        },
+      },
+      () => Promise.resolve({ decision: "approve" }),
+    );
+    // The model still received the real output in-turn…
+    expect(result.isError).toBe(false);
+    if (!result.isError) {
+      expect(result.result).toContain("ANTHROPIC_API_KEY");
+    }
+    // …but the durable event never persists it.
+    expect(events[0].tool_result).toBe("[redacted]");
+    expect(events[0].tool_result as string).not.toContain("ANTHROPIC_API_KEY");
+  });
+
   test("builds a denied tool_call event without command execution", () => {
     const payload = buildCommandToolCallEventPayload(
       call({ slug: "../secret" }),

@@ -45,6 +45,7 @@
     },
     "workbench": {
       "env": [
+        "PATH",
         "USER",
         "DYFJ_ROOT",
         "DYFJ_PRINCIPAL_ID",
@@ -92,6 +93,7 @@
     },
     "workbench-http": {
       "env": [
+        "PATH",
         "USER",
         "DYFJ_ROOT",
         "DYFJ_PRINCIPAL_ID",
@@ -165,6 +167,7 @@
     },
     "serve-unix": {
       "env": [
+        "PATH",
         "USER",
         "HOME",
         "XDG_RUNTIME_DIR",

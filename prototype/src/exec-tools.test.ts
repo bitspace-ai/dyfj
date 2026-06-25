@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { type BashRunner, executeBash } from "./exec-tools";
+import { type BashRunner, buildSafeBashEnv, executeBash } from "./exec-tools";
 
 // A canned runner so these tests never spawn a real process.
 const cannedRunner = (
@@ -80,5 +80,43 @@ describe("executeBash", () => {
     expect(await executeBash("/work", "x", { runner })).toMatch(
       /^error: cannot run command: spawn EACCES/,
     );
+  });
+});
+
+describe("buildSafeBashEnv", () => {
+  const SAFE = new Set([
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+    "TMPDIR",
+  ]);
+
+  test("forwards only non-secret keys and never the projected secrets", () => {
+    // Secrets set in the parent env must NOT be forwarded to bash (CWE-532).
+    Deno.env.set("ANTHROPIC_API_KEY", "fixture-should-not-leak");
+    Deno.env.set("DOLT_PASSWORD", "test-should-not-leak");
+    Deno.env.set("DYFJ_WORKBENCH_API_KEY", "bearer-should-not-leak");
+    try {
+      const env = buildSafeBashEnv();
+      for (const key of Object.keys(env)) {
+        expect(SAFE.has(key)).toBe(true);
+      }
+      expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+      expect(env).not.toHaveProperty("DOLT_PASSWORD");
+      expect(env).not.toHaveProperty("DYFJ_WORKBENCH_API_KEY");
+      // PATH must be forwarded so commands still resolve.
+      expect(env.PATH).toBeDefined();
+    } finally {
+      Deno.env.delete("ANTHROPIC_API_KEY");
+      Deno.env.delete("DOLT_PASSWORD");
+      Deno.env.delete("DYFJ_WORKBENCH_API_KEY");
+    }
   });
 });

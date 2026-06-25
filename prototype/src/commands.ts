@@ -89,6 +89,13 @@ export interface CommandDefinition<TResult = unknown> {
   description: string;
   inputSchema: JsonSchemaObject;
   permission: PermissionEnvelope;
+  /**
+   * Redact this command's RESULT from the durable tool_call event (the model
+   * still receives it in-turn). Set for tools whose output can carry secrets the
+   * approver cannot pre-screen — e.g. bash printing env or file contents that
+   * would otherwise persist into session/event history (CWE-532).
+   */
+  redactResult?: boolean;
   executor: (
     call: CommandCall,
     context: CommandExecutionContext,
@@ -649,6 +656,9 @@ export function buildBashCommand(root: string): CommandDefinition<string> {
       filesystem: "write",
       cost: "none",
     },
+    // bash output can carry secrets the approver can't pre-screen (env dumps,
+    // file contents), so keep the raw result out of the durable event log.
+    redactResult: true,
     executor: (call) => executeBash(root, String(call.arguments.command)),
   };
 }
@@ -706,10 +716,16 @@ export function buildCommandToolCallEventPayload(
   result: CommandInvocationResult,
   context: CommandEventContext,
   loggedArguments: Record<string, unknown> = call.arguments,
+  redactResult = false,
 ): Record<string, unknown> {
   const isError = result.isError;
+  // An error reason is our own message (safe); a success result may carry the
+  // command's raw output, which for redactResult tools (bash) is replaced with
+  // the sentinel so secrets never reach the durable log (CWE-532).
   const resultText = isError
     ? result.reason
+    : redactResult
+    ? REDACTED
     : formatCommandResult(result.result);
   return {
     event_id: context.eventId ?? generateULID(),
@@ -750,15 +766,14 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   // Redact payload-bearing arguments (e.g. write_file content) before the event
   // is persisted, so the durable log and session replay never retain the raw
   // value (CWE-532).
-  const loggedArguments = redactCommandArguments(
-    registry.lookup(call.commandId),
-    call.arguments,
-  );
+  const command = registry.lookup(call.commandId);
+  const loggedArguments = redactCommandArguments(command, call.arguments);
   const event = buildCommandToolCallEventPayload(
     call,
     result,
     context,
     loggedArguments,
+    command?.redactResult ?? false,
   );
   await (context.writeEvent ?? writeDoltEvent)(event);
   return result;

@@ -31,11 +31,51 @@ export type BashRunner = (
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_BYTES = 64 * 1024;
 
+// bash runs with a deliberately minimal environment. clearEnv drops the parent
+// process env — which holds the projected provider keys (ANTHROPIC/OPENAI/GEMINI),
+// the Dolt password, the workbench bearer key, and MCP tokens — and only this
+// non-secret allowlist is forwarded, so an approved command cannot read or print
+// the runtime's secrets through the inherited environment (CWE-532). Reads are
+// defensive: a var the runtime is not granted is simply absent (PATH must be
+// granted for commands to resolve).
+const SAFE_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "TZ",
+  "TMPDIR",
+] as const;
+
+function readEnv(key: string): string | undefined {
+  try {
+    return Deno.env.get(key);
+  } catch {
+    return undefined; // not granted to the runtime — treat as absent
+  }
+}
+
+export function buildSafeBashEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of SAFE_ENV_KEYS) {
+    const value = readEnv(key);
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 /** Real runner: spawn `bash -c <command>` with cwd pinned, killed on timeout. */
 const defaultRunner: BashRunner = async (command, cwd, timeoutMs) => {
   const proc = new Deno.Command("bash", {
     args: ["-c", command],
     cwd,
+    clearEnv: true,
+    env: buildSafeBashEnv(),
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
