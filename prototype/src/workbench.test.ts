@@ -967,23 +967,25 @@ describe("runWorkbenchRuntime observer events", () => {
     }
   });
 
-  test("emits turnFailed when the provider request fails", async () => {
+  test("surfaces the error and emits turnFailed when the provider request fails", async () => {
     runtimeMocks.runWorkbenchTurn.mockRejectedValueOnce(
       new Error("local model unavailable"),
     );
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const events: unknown[] = [];
     try {
-      const result = await runWorkbenchRuntime({
+      // An unexpected provider error (e.g. a missing hosted credential) now
+      // propagates to the caller instead of being swallowed into a benign empty
+      // receipt; the turnFailed runtime event is still emitted before it surfaces.
+      await expect(runWorkbenchRuntime({
         mode: "turn",
         prompt: "summarize",
         routingOptions: {},
         onRuntimeEvent: (event) => {
           events.push(event);
         },
-      });
+      })).rejects.toThrow("local model unavailable");
 
-      expect(result.text).toBe("");
       expect(events.at(-1)).toEqual({
         type: "turnFailed",
         sessionId: "01TEST00000000000000000001",

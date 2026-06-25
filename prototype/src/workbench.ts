@@ -1080,6 +1080,11 @@ export async function runWorkbenchRuntime(
   // audit/transcript event (review finding). Remember the first such
   // failure; the `finally` rethrows it instead of returning a result.
   let fatalEventError: unknown = null;
+  // Capture an unexpected turn error (e.g. a missing hosted credential) so the
+  // finally can re-throw it after the receipt. Without this the catch's else
+  // branch logs only to server stderr and the turn looks like a benign empty
+  // ($0 / 0-token) success to the client.
+  let turnError: unknown = null;
   const writeIntegrity = async (
     operation: () => Promise<void>,
   ): Promise<void> => {
@@ -1745,6 +1750,7 @@ export async function runWorkbenchRuntime(
           duration_ms: Date.now() - sessionStart,
         }), BEST_EFFORT);
       console.error("\nUnexpected error:", err);
+      turnError = err;
     }
   } finally {
     await writeMaybe(() =>
@@ -1814,6 +1820,9 @@ export async function runWorkbenchRuntime(
     // review fix: if an integrity audit/transcript write failed inside
     // the try above, surface it to the caller instead of masking it behind a
     // normal receipt (session_end + best-effort cleanup above still ran).
+    // An unexpected turn error (credential missing, provider failure) must reach
+    // the caller — the receipt above still prints, but the turn is not a success.
+    if (turnError !== null) throw turnError;
     if (fatalEventError !== null) throw fatalEventError;
     return {
       sessionId,
