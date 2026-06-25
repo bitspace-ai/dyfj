@@ -462,6 +462,15 @@ describe("buildWorkspaceGrounding", () => {
     expect(grounding).not.toMatch(/\/Users\//);
     expect(grounding).not.toMatch(/\/home\//);
   });
+
+  test("surfaces the mutating tools so the model acts, not just describes", () => {
+    const grounding = buildWorkspaceGrounding();
+    expect(grounding).toContain("write_file");
+    expect(grounding).toContain("edit_file");
+    expect(grounding).toContain("bash");
+    // Frames acting as the default and reassures the model mutations are gated.
+    expect(grounding).toMatch(/approves|approval|prompts/i);
+  });
 });
 
 describe("validateNextWorkJson", () => {

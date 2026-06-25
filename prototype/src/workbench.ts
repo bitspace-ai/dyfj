@@ -411,11 +411,16 @@ export function buildWorkspaceGrounding(): string {
   return [
     "",
     "",
-    `Workspace: you have read-only file tools (list_files, read_file) scoped to ` +
-    `the project's workspace root. All paths are relative to that root and ` +
-    `cannot escape it. When asked about files, directories, or the project ` +
-    `itself, use these tools instead of guessing from memory — start with ` +
-    `list_files on \`.\` to see what is actually here.`,
+    `Workspace: you have file and shell tools scoped to the project's workspace ` +
+    `root. All paths are relative to that root and cannot escape it. Read with ` +
+    `list_files and read_file — when asked about files, directories, or the ` +
+    `project itself, use these instead of guessing from memory; start with ` +
+    `list_files on \`.\` to see what is actually here. You can also act: ` +
+    `write_file creates or overwrites a file, edit_file replaces an exact text ` +
+    `fragment in one, and bash runs a shell command. When the request calls for ` +
+    `changing a file or running a command, do it with these tools rather than ` +
+    `only describing the steps — the operator approves every mutation before it ` +
+    `runs (bash always prompts), so propose the concrete action.`,
   ].join("\n");
 }
 
