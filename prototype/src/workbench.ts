@@ -999,7 +999,7 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
-  const { BudgetExceededError, BudgetTracker, ensureBudgetAllowed } =
+  const { BudgetExceededError, BudgetTracker, createTurnBudgetCeilingGate } =
     await import("./budget");
   const {
     buildAskSystemPrompt,
@@ -1383,10 +1383,11 @@ export async function runWorkbenchRuntime(
       selected.costInput,
       estimatedInputTokens,
     );
+    const budgetCeilingGate = createTurnBudgetCeilingGate(
+      runtimeInput.confirmBudgetCeiling,
+    );
 
-    if (!preCall.allowed) {
-      await ensureBudgetAllowed(preCall, runtimeInput.confirmBudgetCeiling);
-    }
+    await budgetCeilingGate.ensureAllowed(preCall);
     estimatedCostUsd = preCall.estimatedCost;
 
     const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
@@ -1438,16 +1439,14 @@ export async function runWorkbenchRuntime(
       // Budget-gate and record EVERY provider call: the agent loop can make
       // several calls in one turn, so per-call and session limits must be
       // enforced before each one and usage recorded after each one (paid
-      // consent is still granted once per turn above; per-call + session
-      // limits and MAX_TOOL_STEPS bound loop spend).
+      // consent and ceiling confirmation are granted once per turn above;
+      // per-call + session limits and MAX_TOOL_STEPS bound loop spend).
       const callPre = budget.checkPreCall(
         selected.tier,
         selected.costInput,
         request.estimatedInputCount,
       );
-      if (!callPre.allowed) {
-        await ensureBudgetAllowed(callPre, runtimeInput.confirmBudgetCeiling);
-      }
+      await budgetCeilingGate.ensureAllowed(callPre);
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "beforeProviderRequest",
         sessionId,

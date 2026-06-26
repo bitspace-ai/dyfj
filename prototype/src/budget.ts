@@ -181,6 +181,58 @@ export async function ensureBudgetAllowed(
   }
 }
 
+/** Per-turn high-water marks for operator-confirmed ceiling overruns. */
+export interface TurnBudgetCeilingConfirmations {
+  per_call_limit?: number;
+  session_limit?: number;
+}
+
+function projectedCeilingSpend(
+  preCall: PreCallCheck,
+  reason: "per_call_limit" | "session_limit",
+): number {
+  return reason === "session_limit"
+    ? preCall.sessionCostSoFar + preCall.estimatedCost
+    : preCall.estimatedCost;
+}
+
+function ceilingAlreadyConfirmed(
+  preCall: PreCallCheck,
+  confirmed: TurnBudgetCeilingConfirmations,
+): boolean {
+  const reason = preCall.reason ?? "session_limit";
+  const prior = confirmed[reason];
+  if (prior === undefined) return false;
+  return projectedCeilingSpend(preCall, reason) <= prior;
+}
+
+export interface TurnBudgetCeilingGate {
+  /** Enforce a ceiling once per turn for the same projected spend level. */
+  ensureAllowed(preCall: PreCallCheck): Promise<void>;
+}
+
+/**
+ * Wrap budget-ceiling confirmation so the operator is prompted at most once per
+ * turn for the same ceiling/reason at an equal-or-lower projected spend. Mirrors
+ * the once-per-turn paid-consent preflight: a later agent-loop call re-prompts
+ * only when projected spend rises above what was already confirmed (e.g. session
+ * accumulation crosses the session ceiling for the first time).
+ */
+export function createTurnBudgetCeilingGate(
+  confirm?: ConfirmBudgetCeiling,
+): TurnBudgetCeilingGate {
+  const confirmed: TurnBudgetCeilingConfirmations = {};
+  return {
+    async ensureAllowed(preCall: PreCallCheck): Promise<void> {
+      if (preCall.allowed) return;
+      if (ceilingAlreadyConfirmed(preCall, confirmed)) return;
+      await ensureBudgetAllowed(preCall, confirm);
+      const reason = preCall.reason ?? "session_limit";
+      confirmed[reason] = projectedCeilingSpend(preCall, reason);
+    },
+  };
+}
+
 export interface BudgetSummary {
   totalCostUsd: number;
   totalTokensInput: number;

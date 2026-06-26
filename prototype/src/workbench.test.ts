@@ -930,6 +930,79 @@ describe("runWorkbenchRuntime observer events", () => {
     }
   });
 
+  test("confirms a budget ceiling overrun once per turn (preflight + per-call gate)", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 15;
+    const confirmBudgetCeiling = vi.fn(async () => ({
+      decision: "approve" as const,
+    }));
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      text: "done",
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0.001 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "stop",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        defaultPerCallBudgetUsd: 0.00001,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        confirmBudgetCeiling,
+      });
+      expect(confirmBudgetCeiling).toHaveBeenCalledTimes(1);
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+      expect(result.text).toBe("done");
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+
+  test("declining a budget ceiling aborts before any provider call", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 15;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        defaultPerCallBudgetUsd: 0.00001,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        confirmBudgetCeiling: async () => ({
+          decision: "deny" as const,
+          reason: "too much",
+        }),
+      });
+      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+      expect(result.text).toBe("");
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+
   test("rejects an over-budget follow-up call before invoking the provider (tier 1)", async () => {
     const prevTier = runtimeMocks.model.tier;
     const prevCost = runtimeMocks.model.costInput;
