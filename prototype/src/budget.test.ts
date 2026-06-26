@@ -486,6 +486,32 @@ describe("createTurnBudgetCeilingGate", () => {
     expect(confirm).toHaveBeenCalledTimes(2);
   });
 
+  test("frames the session re-prompt as a session limit, not the per-call reason checkPreCall reports", async () => {
+    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const warnings: Array<{ reason: string; limitUsd: number }> = [];
+    const confirm = vi.fn(async (w: { reason: string; limitUsd: number }) => {
+      warnings.push({ reason: w.reason, limitUsd: w.limitUsd });
+      return { decision: "approve" as const };
+    });
+    const gate = createTurnBudgetCeilingGate(confirm);
+    await gate.ensureAllowed(overPerCall);
+    // Session accumulation now crosses the session ceiling; per-call already
+    // confirmed at this estimate, so the only *newly* crossed dimension is session.
+    await gate.ensureAllowed({
+      allowed: false,
+      estimatedCost: 0.12,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.1,
+      reason: "per_call_limit",
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(warnings[0].reason).toBe("per_call_limit");
+    expect(warnings[0].limitUsd).toBeCloseTo(0.1);
+    expect(warnings[1].reason).toBe("session_limit");
+    expect(warnings[1].limitUsd).toBeCloseTo(1);
+  });
+
   test("re-prompts when projected session spend rises above the confirmed level", async () => {
     const { createTurnBudgetCeilingGate } = await import("./budget");
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));

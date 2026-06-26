@@ -91,8 +91,9 @@ export type ConfirmBudgetCeiling = (
 
 export function buildBudgetCeilingWarning(
   preCall: PreCallCheck,
+  overrideReason?: "per_call_limit" | "session_limit",
 ): BudgetCeilingWarning {
-  const reason = preCall.reason ?? "session_limit";
+  const reason = overrideReason ?? preCall.reason ?? "session_limit";
   const limitUsd = reason === "per_call_limit"
     ? preCall.perCallLimitUsd
     : preCall.sessionLimitUsd;
@@ -164,13 +165,15 @@ export class BudgetCeilingDeclinedError extends Error {
 export async function ensureBudgetAllowed(
   preCall: PreCallCheck,
   confirm?: ConfirmBudgetCeiling,
+  promptReason?: "per_call_limit" | "session_limit",
 ): Promise<void> {
   if (preCall.allowed) return;
-  const reason = preCall.reason ?? "session_limit";
-  const limit = reason === "per_call_limit"
-    ? preCall.perCallLimitUsd
-    : preCall.sessionLimitUsd;
   if (!confirm) {
+    // Fail closed on the original verdict, not the prompt-only override.
+    const reason = preCall.reason ?? "session_limit";
+    const limit = reason === "per_call_limit"
+      ? preCall.perCallLimitUsd
+      : preCall.sessionLimitUsd;
     throw new BudgetExceededError(
       reason,
       preCall.estimatedCost,
@@ -178,7 +181,7 @@ export async function ensureBudgetAllowed(
       preCall.sessionCostSoFar,
     );
   }
-  const warning = buildBudgetCeilingWarning(preCall);
+  const warning = buildBudgetCeilingWarning(preCall, promptReason);
   const verdict = await confirm(warning);
   if (verdict.decision !== "approve") {
     throw new BudgetCeilingDeclinedError(verdict.reason);
@@ -215,6 +218,28 @@ function ceilingAlreadyConfirmed(
     (confirmed.session_limit !== undefined &&
       projectedSessionSpend(preCall) <= confirmed.session_limit);
   return perCallOk && sessionOk;
+}
+
+/**
+ * Pick the dimension to frame the prompt around: the one that is *newly* crossing
+ * for this call (not yet confirmed this turn). `checkPreCall` always reports
+ * `per_call_limit` when per-call is exceeded, so a re-prompt driven purely by
+ * session accumulation would otherwise be mislabeled as a per-call overrun.
+ * When both dimensions newly cross at once, keep `preCall.reason` (undefined here).
+ */
+function newlyExceededPromptReason(
+  preCall: PreCallCheck,
+  confirmed: TurnBudgetCeilingConfirmations,
+): "per_call_limit" | "session_limit" | undefined {
+  const perCallNew = crossesPerCallLimit(preCall) &&
+    (confirmed.per_call_limit === undefined ||
+      preCall.estimatedCost > confirmed.per_call_limit);
+  const sessionNew = crossesSessionLimit(preCall) &&
+    (confirmed.session_limit === undefined ||
+      projectedSessionSpend(preCall) > confirmed.session_limit);
+  if (sessionNew && !perCallNew) return "session_limit";
+  if (perCallNew && !sessionNew) return "per_call_limit";
+  return undefined;
 }
 
 function recordCeilingConfirmations(
@@ -256,7 +281,8 @@ export function createTurnBudgetCeilingGate(
     async ensureAllowed(preCall: PreCallCheck): Promise<void> {
       if (preCall.allowed) return;
       if (ceilingAlreadyConfirmed(preCall, confirmed)) return;
-      await ensureBudgetAllowed(preCall, confirm);
+      const promptReason = newlyExceededPromptReason(preCall, confirmed);
+      await ensureBudgetAllowed(preCall, confirm, promptReason);
       recordCeilingConfirmations(preCall, confirmed);
     },
   };
