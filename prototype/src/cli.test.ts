@@ -6,6 +6,7 @@ import {
   type ConnectFn,
   formatReceipt,
   friendlyError,
+  handleReplModelCommand,
   type Io,
   isLoopbackServerUrl,
   parseArgs,
@@ -770,6 +771,58 @@ describe("models/sessions over UDS", () => {
     expect(code).toBe(1);
     expect(stderr.join("\n")).toContain("serve-unix");
     expect(stderr.join("\n")).toContain("/run/missing.sock");
+  });
+});
+
+describe("REPL /model", () => {
+  function fakeConnect(models: { slug: string }[]): ConnectFn {
+    return () =>
+      Promise.resolve({
+        request: (method: string) =>
+          method === "models/list" ? Promise.resolve({ models }) : Promise.resolve({}),
+        close: () => {},
+      });
+  }
+
+  test("/model with no arg prints the active model and available slugs", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "gpt-5.5" });
+    const handled = await handleReplModelCommand(
+      "/model",
+      config,
+      io,
+      fakeConnect([{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5" }]),
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain("active model: gpt-5.5");
+    expect(stderr.join("\n")).toContain("claude-opus-4-8");
+  });
+
+  test("/model <slug> switches the active model when the slug is known", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "claude-opus-4-8" });
+    const handled = await handleReplModelCommand(
+      "/model gpt-5.5",
+      config,
+      io,
+      fakeConnect([{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5" }]),
+    );
+    expect(handled).toBe(true);
+    expect(config.model).toBe("gpt-5.5");
+    expect(stderr.join("\n")).toContain("model: gpt-5.5");
+  });
+
+  test("/model rejects an unknown slug and leaves the active model unchanged", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "claude-opus-4-8" });
+    await handleReplModelCommand(
+      "/model no-such-model",
+      config,
+      io,
+      fakeConnect([{ slug: "claude-opus-4-8" }]),
+    );
+    expect(config.model).toBe("claude-opus-4-8");
+    expect(stderr.join("\n")).toContain("unknown model");
   });
 });
 

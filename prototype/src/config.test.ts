@@ -24,19 +24,26 @@ describe("loadConfig", () => {
   test("returns defaults when there is no file and no env", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
     expect(cfg).toEqual(CONFIG_DEFAULTS);
+    expect(cfg.approvePaidDefault).toBe(false);
+    expect(cfg.defaultSessionBudgetUsd).toBe(BUDGET_DEFAULTS.sessionLimitUsd);
   });
 
-  test("applies values from the config file", async () => {
+  test("applies paid posture and budget defaults from the config file", async () => {
     const cfg = await loadConfig({
       env: env(HOME),
       readTextFile: present,
       parseToml: table({
         companion: { default_model: "claude-opus-4-8" },
         permissions: { level: "operator" },
+        paid: { approve_paid_default: true },
+        budget: { session_limit_usd: 2.5, per_call_limit_usd: 0.25 },
       }),
     });
     expect(cfg.defaultCompanionModel).toBe("claude-opus-4-8");
     expect(cfg.permissionLevel).toBe("operator");
+    expect(cfg.approvePaidDefault).toBe(true);
+    expect(cfg.defaultSessionBudgetUsd).toBe(2.5);
+    expect(cfg.defaultPerCallBudgetUsd).toBe(0.25);
   });
 
   test("environment overrides the file (precedence)", async () => {
@@ -45,15 +52,21 @@ describe("loadConfig", () => {
         ...HOME,
         DYFJ_WORKBENCH_MODEL: "env-model",
         DYFJ_PERMISSION_LEVEL: "operator",
+        DYFJ_APPROVE_PAID_DEFAULT: "true",
+        DYFJ_BUDGET_SESSION_USD: "3",
       }),
       readTextFile: present,
       parseToml: table({
         companion: { default_model: "file-model" },
         permissions: { level: "strict" },
+        paid: { approve_paid_default: false },
+        budget: { session_limit_usd: 9 },
       }),
     });
     expect(cfg.defaultCompanionModel).toBe("env-model");
     expect(cfg.permissionLevel).toBe("operator");
+    expect(cfg.approvePaidDefault).toBe(true);
+    expect(cfg.defaultSessionBudgetUsd).toBe(3);
   });
 
   test("rejects an invalid permission level — fail loud at startup", async () => {

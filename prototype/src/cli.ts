@@ -258,7 +258,7 @@ export async function runExec(
 ): Promise<number> {
   const body = buildTurnBody(prompt, config, config.sessionId);
   const onApproval = (request: unknown) =>
-    promptToolApproval(io, request, interactive);
+    promptMidTurnApproval(io, request, interactive);
   try {
     if (json) {
       const result = config.unix
@@ -306,7 +306,7 @@ export async function runRepl(
   );
   let sessionId = config.sessionId;
   const onApproval = (request: unknown) =>
-    promptToolApproval(io, request, interactive);
+    promptMidTurnApproval(io, request, interactive);
   try {
     for (;;) {
       const line = await io.readLine("\ndyfj> ");
@@ -314,6 +314,7 @@ export async function runRepl(
       const prompt = line.trim();
       if (prompt.length === 0) continue;
       if (prompt === "/exit" || prompt === "/quit") break;
+      if (await handleReplModelCommand(prompt, config, io, connect)) continue;
       try {
         let streamed = false;
         const handlers = {
@@ -399,12 +400,12 @@ export async function socketTurn(
 }
 
 /**
- * Prompt the operator to approve a mutating tool call over the UDS seam, reading
- * y/N from the terminal. Non-interactive (no TTY) denies without prompting, so a
- * scripted/piped run fails closed rather than hanging. The prompt + preview go
- * to stderr so a `--json` turn's stdout stays clean.
+ * Prompt the operator to approve a mid-turn request over the UDS seam: mutating
+ * tools or a budget-ceiling overrun. Non-interactive (no TTY) denies without
+ * prompting, fail-closed. The prompt goes to stderr so a `--json` turn's stdout
+ * stays clean.
  */
-export async function promptToolApproval(
+export async function promptMidTurnApproval(
   io: Io,
   request: unknown,
   interactive: boolean,
@@ -418,6 +419,17 @@ export async function promptToolApproval(
   const r = (typeof request === "object" && request !== null)
     ? request as Record<string, unknown>
     : {};
+  if (r.kind === "budget_ceiling") {
+    const message = typeof r.message === "string"
+      ? r.message
+      : "Projected spend crosses the configured budget ceiling.";
+    io.err(`\n⚠  ${message}`);
+    const answer = await io.readLine("   exceed budget ceiling? [y/N] ");
+    if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
+      return { decision: "approve" };
+    }
+    return { decision: "deny", reason: "operator declined" };
+  }
   const title = typeof r.title === "string"
     ? r.title
     : String(r.commandId ?? "tool");
@@ -429,6 +441,9 @@ export async function promptToolApproval(
   }
   return { decision: "deny", reason: "operator declined" };
 }
+
+/** @deprecated Use promptMidTurnApproval — kept as an alias for existing tests. */
+export const promptToolApproval = promptMidTurnApproval;
 
 function formatApprovalArgs(args: unknown): string {
   if (typeof args !== "object" || args === null) return `   ${String(args)}`;
@@ -455,38 +470,87 @@ function socketError(error: unknown, config: CliConfig): string {
   return `dyfj: ${message}`;
 }
 
-export async function runModels(
+export async function fetchModelSlugs(
   config: CliConfig,
-  io: Io,
   connect: ConnectFn = connectUnixClient,
-): Promise<number> {
+): Promise<{ slugs: string[]; models: ModelRow[] } | { error: string }> {
   try {
     const client = await connect(config.socket);
     try {
       const { models } = await client.request("models/list") as {
         models: ModelRow[];
       };
-      // Pad the slug column to the widest slug so a long id (e.g. a fully
-      // qualified mlx-community/... slug) doesn't shove the later columns out
-      // of alignment.
-      const slugWidth = models.reduce(
-        (w, m) => Math.max(w, (m.slug ?? "").length),
-        0,
-      );
-      for (const m of models) {
-        io.out(
-          `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
-            `${(m.provider ?? "").padEnd(10)} ${m.displayName ?? ""}\n`,
-        );
-      }
+      const slugs = models
+        .map((m) => m.slug)
+        .filter((slug): slug is string => typeof slug === "string" && slug.length > 0);
+      return { slugs, models };
     } finally {
       client.close();
     }
-    return 0;
   } catch (error) {
-    io.err(socketError(error, config));
+    return { error: socketError(error, config) };
+  }
+}
+
+export async function handleReplModelCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  const parts = line.trim().split(/\s+/);
+  if (parts[0] !== "/model") return false;
+
+  const listed = await fetchModelSlugs(config, connect);
+  if ("error" in listed) {
+    io.err(listed.error);
+    return true;
+  }
+
+  if (parts.length === 1) {
+    const active = config.model ?? "(registry default)";
+    io.err(`active model: ${active}`);
+    io.err(`available: ${listed.slugs.join(", ") || "(none)"}`);
+    return true;
+  }
+
+  const slug = parts[1];
+  if (!listed.slugs.includes(slug)) {
+    io.err(
+      `dyfj: unknown model "${slug}". Available: ${
+        listed.slugs.join(", ") || "(none)"
+      }`,
+    );
+    return true;
+  }
+
+  config.model = slug;
+  io.err(`model: ${slug}`);
+  return true;
+}
+
+export async function runModels(
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+): Promise<number> {
+  const listed = await fetchModelSlugs(config, connect);
+  if ("error" in listed) {
+    io.err(listed.error);
     return 1;
   }
+  const { models } = listed;
+  const slugWidth = models.reduce(
+    (w, m) => Math.max(w, (m.slug ?? "").length),
+    0,
+  );
+  for (const m of models) {
+    io.out(
+      `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
+        `${(m.provider ?? "").padEnd(10)} ${m.displayName ?? ""}\n`,
+    );
+  }
+  return 0;
 }
 
 export async function runSessions(
@@ -699,6 +763,10 @@ Usage:
   dyfj -p "<prompt>"        one-shot turn (alias)
   dyfj models               list available model slugs
   dyfj sessions             list sessions
+
+REPL commands:
+  /model [<slug>]           show or switch the active model (validated slugs)
+  /exit, /quit              exit the REPL
 
 Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)

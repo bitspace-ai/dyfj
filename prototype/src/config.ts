@@ -134,6 +134,14 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
     default: 0.1,
   },
+  {
+    key: "approvePaidDefault",
+    envVar: "DYFJ_APPROVE_PAID_DEFAULT",
+    domain: "engine",
+    type: "boolean",
+    kind: "value",
+    default: false,
+  },
   // ── engine: other runtime knobs (declared so the allowlist derives here) ──
   { key: "root", envVar: "DYFJ_ROOT", domain: "engine", type: "string", kind: "value" },
   { key: "routingHint", envVar: "DYFJ_WORKBENCH_HINT", domain: "engine", type: "string", kind: "value" },
@@ -182,6 +190,34 @@ export function declaredEnvVars(domain: ConfigDomain): readonly string[] {
   ];
 }
 
+function schemaSpecForKey(key: string): ConfigKeySpec {
+  const spec = CONFIG_SCHEMA.find((s) => s.key === key);
+  if (spec === undefined) {
+    throw new Error(`config: ${key} is not declared in CONFIG_SCHEMA`);
+  }
+  return spec;
+}
+
+function schemaEnvVar(key: string): string {
+  return schemaSpecForKey(key).envVar;
+}
+
+function schemaNumberDefault(key: string): number {
+  const spec = schemaSpecForKey(key);
+  if (typeof spec.default !== "number") {
+    throw new Error(`config: ${key} has no numeric default in CONFIG_SCHEMA`);
+  }
+  return spec.default;
+}
+
+function schemaBooleanDefault(key: string): boolean {
+  const spec = schemaSpecForKey(key);
+  if (typeof spec.default !== "boolean") {
+    throw new Error(`config: ${key} has no boolean default in CONFIG_SCHEMA`);
+  }
+  return spec.default;
+}
+
 export interface WorkbenchConfig {
   /**
    * Model the engine uses when a turn doesn't specify one (null → the registry's
@@ -194,11 +230,24 @@ export interface WorkbenchConfig {
    * workspace-write) on a loopback turn; paid/networked/exec tools still prompt.
    */
   permissionLevel: PermissionLevel;
+  /**
+   * Standing paid-inference posture on loopback turns: when a request omits
+   * approvePaidInference, the engine falls back to this default (explicit
+   * per-turn opt-in/out always wins). Non-loopback transports never inherit it.
+   */
+  approvePaidDefault: boolean;
+  /** Default max total USD spend across a session (startup posture). */
+  defaultSessionBudgetUsd: number;
+  /** Default max USD spend for a single API call (startup posture). */
+  defaultPerCallBudgetUsd: number;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultCompanionModel: null,
   permissionLevel: "strict",
+  approvePaidDefault: schemaBooleanDefault("approvePaidDefault"),
+  defaultSessionBudgetUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
+  defaultPerCallBudgetUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
 };
 
 /** Minimal env surface, so callers can inject a fake in tests. */
@@ -247,6 +296,32 @@ export async function loadConfig(
     if (fileLevel !== undefined) {
       config.permissionLevel = validateLevel(fileLevel, path);
     }
+    const fileApprovePaid = readBoolean(table, "paid", "approve_paid_default");
+    if (fileApprovePaid !== undefined) {
+      config.approvePaidDefault = fileApprovePaid;
+    }
+    const fileSessionBudget = readNumber(
+      table,
+      "budget",
+      "session_limit_usd",
+    );
+    if (fileSessionBudget !== undefined) {
+      config.defaultSessionBudgetUsd = validatePositiveUsd(
+        fileSessionBudget,
+        `${path} [budget].session_limit_usd`,
+      );
+    }
+    const filePerCallBudget = readNumber(
+      table,
+      "budget",
+      "per_call_limit_usd",
+    );
+    if (filePerCallBudget !== undefined) {
+      config.defaultPerCallBudgetUsd = validatePositiveUsd(
+        filePerCallBudget,
+        `${path} [budget].per_call_limit_usd`,
+      );
+    }
   }
 
   // ── env layer (overrides the file) ──
@@ -258,6 +333,23 @@ export async function loadConfig(
   if (envLevel !== undefined && envLevel !== "") {
     config.permissionLevel = validateLevel(envLevel, "DYFJ_PERMISSION_LEVEL");
   }
+  const envApprovePaid = env.get(schemaEnvVar("approvePaidDefault"));
+  if (envApprovePaid !== undefined && envApprovePaid !== "") {
+    config.approvePaidDefault = parseBooleanEnv(
+      envApprovePaid,
+      schemaEnvVar("approvePaidDefault"),
+    );
+  }
+  config.defaultSessionBudgetUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultSessionBudgetUsd"),
+    config.defaultSessionBudgetUsd,
+  );
+  config.defaultPerCallBudgetUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultPerCallBudgetUsd"),
+    config.defaultPerCallBudgetUsd,
+  );
 
   return config;
 }
@@ -305,6 +397,65 @@ function readString(
   return val;
 }
 
+function readBoolean(
+  table: Record<string, unknown>,
+  section: string,
+  key: string,
+): boolean | undefined {
+  const sec = table[section];
+  if (sec === undefined) return undefined;
+  if (typeof sec !== "object" || sec === null) {
+    throw new Error(`config: [${section}] must be a table`);
+  }
+  const val = (sec as Record<string, unknown>)[key];
+  if (val === undefined) return undefined;
+  if (typeof val !== "boolean") {
+    throw new Error(`config: ${section}.${key} must be a boolean`);
+  }
+  return val;
+}
+
+function readNumber(
+  table: Record<string, unknown>,
+  section: string,
+  key: string,
+): number | undefined {
+  const sec = table[section];
+  if (sec === undefined) return undefined;
+  if (typeof sec !== "object" || sec === null) {
+    throw new Error(`config: [${section}] must be a table`);
+  }
+  const val = (sec as Record<string, unknown>)[key];
+  if (val === undefined) return undefined;
+  if (typeof val !== "number" || !Number.isFinite(val)) {
+    throw new Error(`config: ${section}.${key} must be a number`);
+  }
+  return val;
+}
+
+function validatePositiveUsd(value: number, source: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(
+      `config: invalid USD value from ${source} (expected a non-negative number)`,
+    );
+  }
+  return value;
+}
+
+function parseBooleanEnv(raw: string, source: string): boolean {
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no") {
+    return false;
+  }
+  throw new Error(
+    `config: invalid boolean "${raw}" from ${source} ` +
+      `(expected true/false, 1/0, or yes/no)`,
+  );
+}
+
 function validateLevel(value: string, source: string): PermissionLevel {
   if ((PERMISSION_LEVELS as readonly string[]).includes(value)) {
     return value as PermissionLevel;
@@ -322,26 +473,6 @@ export interface BudgetDefaults {
   sessionLimitUsd: number;
   /** Default max USD spend for a single API call (estimated from input tokens). */
   perCallLimitUsd: number;
-}
-
-function schemaSpecForKey(key: string): ConfigKeySpec {
-  const spec = CONFIG_SCHEMA.find((s) => s.key === key);
-  if (spec === undefined) {
-    throw new Error(`config: ${key} is not declared in CONFIG_SCHEMA`);
-  }
-  return spec;
-}
-
-function schemaEnvVar(key: string): string {
-  return schemaSpecForKey(key).envVar;
-}
-
-function schemaNumberDefault(key: string): number {
-  const spec = schemaSpecForKey(key);
-  if (typeof spec.default !== "number") {
-    throw new Error(`config: ${key} has no numeric default in CONFIG_SCHEMA`);
-  }
-  return spec.default;
 }
 
 /** The declared budget defaults — the single source for the limit numbers. */

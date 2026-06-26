@@ -16,8 +16,7 @@ const config = await loadConfig();
 
 const server = serveWorkbenchUnix(socketPath, {
   onParseError: (detail) => console.error(`[uds] ${detail}`),
-  defaultCompanionModel: config.defaultCompanionModel,
-  permissionLevel: config.permissionLevel,
+  engineConfig: config,
 });
 console.error(
   `dyfj runtime: JSON-RPC over UDS at ${socketPath}  (ctrl-c to stop)`,

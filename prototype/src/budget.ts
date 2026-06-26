@@ -67,6 +67,227 @@ export interface PreCallCheck {
   reason?: "per_call_limit" | "session_limit";
 }
 
+/** Structured warn payload for a budget-ceiling confirmation (telemetry-safe). */
+export interface BudgetCeilingWarning {
+  kind: "budget_ceiling";
+  reason: "per_call_limit" | "session_limit";
+  estimatedCostUsd: number;
+  limitUsd: number;
+  sessionCostSoFarUsd: number;
+  sessionLimitUsd: number;
+  perCallLimitUsd: number;
+  /** Audit basis for an operator-confirmed ceiling overrun; carried in the
+   *  warning/approval payload for downstream audit logging — not persisted here. */
+  authzBasis: "policy:allow:operator-confirmed-ceiling";
+}
+
+export type BudgetCeilingVerdict =
+  | { decision: "approve" }
+  | { decision: "deny"; reason?: string };
+
+export type ConfirmBudgetCeiling = (
+  warning: BudgetCeilingWarning,
+) => Promise<BudgetCeilingVerdict>;
+
+export function buildBudgetCeilingWarning(
+  preCall: PreCallCheck,
+  overrideReason?: "per_call_limit" | "session_limit",
+): BudgetCeilingWarning {
+  const reason = overrideReason ?? preCall.reason ?? "session_limit";
+  const limitUsd = reason === "per_call_limit"
+    ? preCall.perCallLimitUsd
+    : preCall.sessionLimitUsd;
+  return {
+    kind: "budget_ceiling",
+    reason,
+    estimatedCostUsd: preCall.estimatedCost,
+    limitUsd,
+    sessionCostSoFarUsd: preCall.sessionCostSoFar,
+    sessionLimitUsd: preCall.sessionLimitUsd,
+    perCallLimitUsd: preCall.perCallLimitUsd,
+    authzBasis: "policy:allow:operator-confirmed-ceiling",
+  };
+}
+
+export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): string {
+  const limitLabel = warning.reason === "per_call_limit"
+    ? "per-call limit"
+    : "session limit";
+  return [
+    "Budget ceiling warning",
+    `Reason:          ${limitLabel}`,
+    `Estimated cost:  $${warning.estimatedCostUsd.toFixed(6)}`,
+    `Limit:           $${warning.limitUsd.toFixed(6)}`,
+    `Session spent:   $${warning.sessionCostSoFarUsd.toFixed(6)} / ${
+      warning.sessionLimitUsd.toFixed(6)
+    }`,
+    `Projected total: $${
+      (warning.sessionCostSoFarUsd + warning.estimatedCostUsd).toFixed(6)
+    } / ${warning.sessionLimitUsd.toFixed(6)}`,
+    `Per-call limit:  $${warning.perCallLimitUsd.toFixed(6)}`,
+  ].join("\n");
+}
+
+/** Wire shape for the UDS mid-turn approval channel. */
+export function budgetCeilingApprovalRequest(
+  warning: BudgetCeilingWarning,
+): Record<string, unknown> {
+  return {
+    kind: warning.kind,
+    title: "Budget ceiling",
+    reason: warning.reason,
+    estimatedCostUsd: warning.estimatedCostUsd,
+    limitUsd: warning.limitUsd,
+    sessionCostSoFarUsd: warning.sessionCostSoFarUsd,
+    sessionLimitUsd: warning.sessionLimitUsd,
+    perCallLimitUsd: warning.perCallLimitUsd,
+    authzBasis: warning.authzBasis,
+    message: formatBudgetCeilingWarning(warning),
+  };
+}
+
+export class BudgetCeilingDeclinedError extends Error {
+  constructor(public readonly reason?: string) {
+    super(
+      reason
+        ? `Budget ceiling confirmation declined: ${reason}`
+        : "Budget ceiling confirmation declined",
+    );
+    this.name = "BudgetCeilingDeclinedError";
+  }
+}
+
+/**
+ * Enforce a budget ceiling: under the limit proceeds silently; over the limit
+ * warns and requires explicit operator confirmation when a handler is supplied.
+ * Without a handler (non-interactive / no round-trip), fails closed.
+ */
+export async function ensureBudgetAllowed(
+  preCall: PreCallCheck,
+  confirm?: ConfirmBudgetCeiling,
+  promptReason?: "per_call_limit" | "session_limit",
+): Promise<void> {
+  if (preCall.allowed) return;
+  if (!confirm) {
+    // Fail closed on the original verdict, not the prompt-only override.
+    const reason = preCall.reason ?? "session_limit";
+    const limit = reason === "per_call_limit"
+      ? preCall.perCallLimitUsd
+      : preCall.sessionLimitUsd;
+    throw new BudgetExceededError(
+      reason,
+      preCall.estimatedCost,
+      limit,
+      preCall.sessionCostSoFar,
+    );
+  }
+  const warning = buildBudgetCeilingWarning(preCall, promptReason);
+  const verdict = await confirm(warning);
+  if (verdict.decision !== "approve") {
+    throw new BudgetCeilingDeclinedError(verdict.reason);
+  }
+}
+
+/** Per-turn high-water marks for operator-confirmed ceiling overruns. */
+export interface TurnBudgetCeilingConfirmations {
+  per_call_limit?: number;
+  session_limit?: number;
+}
+
+function crossesPerCallLimit(preCall: PreCallCheck): boolean {
+  return preCall.estimatedCost > preCall.perCallLimitUsd;
+}
+
+function crossesSessionLimit(preCall: PreCallCheck): boolean {
+  return preCall.sessionCostSoFar + preCall.estimatedCost >
+    preCall.sessionLimitUsd;
+}
+
+function projectedSessionSpend(preCall: PreCallCheck): number {
+  return preCall.sessionCostSoFar + preCall.estimatedCost;
+}
+
+function ceilingAlreadyConfirmed(
+  preCall: PreCallCheck,
+  confirmed: TurnBudgetCeilingConfirmations,
+): boolean {
+  const perCallOk = !crossesPerCallLimit(preCall) ||
+    (confirmed.per_call_limit !== undefined &&
+      preCall.estimatedCost <= confirmed.per_call_limit);
+  const sessionOk = !crossesSessionLimit(preCall) ||
+    (confirmed.session_limit !== undefined &&
+      projectedSessionSpend(preCall) <= confirmed.session_limit);
+  return perCallOk && sessionOk;
+}
+
+/**
+ * Pick the dimension to frame the prompt around: the one that is *newly* crossing
+ * for this call (not yet confirmed this turn). `checkPreCall` always reports
+ * `per_call_limit` when per-call is exceeded, so a re-prompt driven purely by
+ * session accumulation would otherwise be mislabeled as a per-call overrun.
+ * When both dimensions newly cross at once, keep `preCall.reason` (undefined here).
+ */
+function newlyExceededPromptReason(
+  preCall: PreCallCheck,
+  confirmed: TurnBudgetCeilingConfirmations,
+): "per_call_limit" | "session_limit" | undefined {
+  const perCallNew = crossesPerCallLimit(preCall) &&
+    (confirmed.per_call_limit === undefined ||
+      preCall.estimatedCost > confirmed.per_call_limit);
+  const sessionNew = crossesSessionLimit(preCall) &&
+    (confirmed.session_limit === undefined ||
+      projectedSessionSpend(preCall) > confirmed.session_limit);
+  if (sessionNew && !perCallNew) return "session_limit";
+  if (perCallNew && !sessionNew) return "per_call_limit";
+  return undefined;
+}
+
+function recordCeilingConfirmations(
+  preCall: PreCallCheck,
+  confirmed: TurnBudgetCeilingConfirmations,
+): void {
+  if (crossesPerCallLimit(preCall)) {
+    confirmed.per_call_limit = Math.max(
+      confirmed.per_call_limit ?? 0,
+      preCall.estimatedCost,
+    );
+  }
+  if (crossesSessionLimit(preCall)) {
+    confirmed.session_limit = Math.max(
+      confirmed.session_limit ?? 0,
+      projectedSessionSpend(preCall),
+    );
+  }
+}
+
+export interface TurnBudgetCeilingGate {
+  /** Enforce a ceiling once per turn for the same projected spend level. */
+  ensureAllowed(preCall: PreCallCheck): Promise<void>;
+}
+
+/**
+ * Wrap budget-ceiling confirmation so the operator is prompted at most once per
+ * turn for the same projected spend level on each crossed dimension. Mirrors the
+ * once-per-turn paid-consent preflight: a later agent-loop call re-prompts when
+ * any crossed dimension (per-call or session) exceeds what was already confirmed
+ * for that dimension — including when session accumulation crosses the session
+ * ceiling even though per-call was already confirmed at the same estimate.
+ */
+export function createTurnBudgetCeilingGate(
+  confirm?: ConfirmBudgetCeiling,
+): TurnBudgetCeilingGate {
+  const confirmed: TurnBudgetCeilingConfirmations = {};
+  return {
+    async ensureAllowed(preCall: PreCallCheck): Promise<void> {
+      if (preCall.allowed) return;
+      if (ceilingAlreadyConfirmed(preCall, confirmed)) return;
+      const promptReason = newlyExceededPromptReason(preCall, confirmed);
+      await ensureBudgetAllowed(preCall, confirm, promptReason);
+      recordCeilingConfirmations(preCall, confirmed);
+    },
+  };
+}
+
 export interface BudgetSummary {
   totalCostUsd: number;
   totalTokensInput: number;

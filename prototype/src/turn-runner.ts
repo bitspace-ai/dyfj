@@ -20,7 +20,8 @@ import {
   type WorkbenchSessionEvent,
 } from "./sessions";
 import type { ConfirmToolApproval } from "./commands";
-import type { PermissionLevel } from "./config";
+import type { ConfirmBudgetCeiling } from "./budget";
+import type { PermissionLevel, WorkbenchConfig } from "./config";
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -197,9 +198,15 @@ export interface ResolvedTurn {
  * lock) let a second same-session turn build a stale transcript — a TOCTOU on
  * the audit log (review finding).
  */
+export interface ResolveTurnOptions {
+  /** Standing paid posture when the request omits approvePaidInference (loopback only). */
+  approvePaidDefault?: boolean;
+}
+
 export function resolveTurnFromBody(
   body: TurnRequestBody,
   loopback: boolean,
+  options: ResolveTurnOptions = {},
 ): ResolvedTurn | { error: string; status: number } {
   const runtimeInput = buildRuntimeInputFromJson(body);
   if ("error" in runtimeInput) {
@@ -220,13 +227,17 @@ export function resolveTurnFromBody(
   // validate the explicit per-turn paid-inference opt-in. Whether it
   // actually grants approval is decided at the confirmPaidEscalation injection,
   // which additionally requires the loopback transport.
-  if (
-    body.approvePaidInference !== undefined &&
-    typeof body.approvePaidInference !== "boolean"
-  ) {
-    return { error: "approvePaidInference must be a boolean", status: 400 };
+  let approvePaidInference: boolean;
+  if (body.approvePaidInference !== undefined) {
+    if (typeof body.approvePaidInference !== "boolean") {
+      return { error: "approvePaidInference must be a boolean", status: 400 };
+    }
+    approvePaidInference = body.approvePaidInference === true;
+  } else if (loopback) {
+    approvePaidInference = options.approvePaidDefault === true;
+  } else {
+    approvePaidInference = false;
   }
-  const approvePaidInference = body.approvePaidInference === true;
 
   // per-turn budget override, applied only on the loopback transport so
   // a remote caller can never raise the spend cap. (Malformed values still 400
@@ -286,6 +297,44 @@ export interface ExecuteTurnDeps {
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config), loaded once at the boundary. */
   permissionLevel?: PermissionLevel;
+  /** Standing paid posture (config), applied when the request omits opt-in. */
+  approvePaidDefault?: boolean;
+  /** Engine budget defaults (config), resolved once at the boundary. */
+  defaultSessionBudgetUsd?: number;
+  defaultPerCallBudgetUsd?: number;
+  /**
+   * Warn-then-confirm handler when projected spend crosses a budget ceiling.
+   * The UDS transport supplies a duplex round-trip; HTTP omits it, so the
+   * runtime fails closed when a ceiling would be exceeded.
+   */
+  confirmBudgetCeiling?: ConfirmBudgetCeiling;
+}
+
+/** Thread the loaded engine config into executeTurn deps. */
+export function engineConfigToTurnDeps(
+  config: Pick<
+    WorkbenchConfig,
+    | "defaultCompanionModel"
+    | "permissionLevel"
+    | "approvePaidDefault"
+    | "defaultSessionBudgetUsd"
+    | "defaultPerCallBudgetUsd"
+  >,
+): Pick<
+  ExecuteTurnDeps,
+  | "defaultCompanionModel"
+  | "permissionLevel"
+  | "approvePaidDefault"
+  | "defaultSessionBudgetUsd"
+  | "defaultPerCallBudgetUsd"
+> {
+  return {
+    defaultCompanionModel: config.defaultCompanionModel,
+    permissionLevel: config.permissionLevel,
+    approvePaidDefault: config.approvePaidDefault,
+    defaultSessionBudgetUsd: config.defaultSessionBudgetUsd,
+    defaultPerCallBudgetUsd: config.defaultPerCallBudgetUsd,
+  };
 }
 
 /**
@@ -313,12 +362,21 @@ export function executeTurn(
       defaultCompanionModel: deps.defaultCompanionModel,
       // operator permission posture, resolved once at the boundary from config
       permissionLevel: deps.permissionLevel,
+      // config-file budget defaults override the env-only boundary resolver
+      ...(deps.defaultSessionBudgetUsd !== undefined
+        ? { defaultSessionBudgetUsd: deps.defaultSessionBudgetUsd }
+        : {}),
+      ...(deps.defaultPerCallBudgetUsd !== undefined
+        ? { defaultPerCallBudgetUsd: deps.defaultPerCallBudgetUsd }
+        : {}),
       authContext: deps.authContext,
       onTextDelta: deps.onTextDelta,
       onRuntimeEvent: deps.onRuntimeEvent,
       // mutating tools run only after operator approval; the transport
       // supplies the approver (UDS = duplex round-trip), else the runtime denies.
       confirmToolApproval: deps.confirmToolApproval,
+      // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
+      confirmBudgetCeiling: deps.confirmBudgetCeiling,
       // paid inference is granted only to a loopback caller that
       // explicitly opted in this turn; remote callers are always denied.
       confirmPaidEscalation: () =>

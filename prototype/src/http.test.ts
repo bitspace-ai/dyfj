@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createWorkbenchHttpHandler } from "./http";
+import { PAID_ESCALATION_REMOTE_DENIED } from "./turn-runner";
 import type {
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
@@ -578,6 +579,66 @@ describe("createWorkbenchHttpHandler", () => {
     expect(sink.verdict).toEqual({
       decision: "deny",
       reason: "paid inference was not approved for this turn",
+    });
+  });
+
+  test("loopback inherits approvePaidDefault when the request omits opt-in", async () => {
+    const sink: { verdict?: unknown } = {};
+    const handler = createWorkbenchHttpHandler({
+      engineConfig: {
+        defaultCompanionModel: null,
+        permissionLevel: "strict",
+        approvePaidDefault: true,
+        defaultSessionBudgetUsd: 1,
+        defaultPerCallBudgetUsd: 0.1,
+      },
+      runRuntime: async (input) => {
+        sink.verdict = await input.confirmPaidEscalation?.(
+          "paid model selected",
+        );
+        return runtimeResult();
+      },
+    });
+    await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "paid" }),
+      }),
+    );
+    expect(sink.verdict).toEqual({ decision: "approve" });
+  });
+
+  test("remote caller never inherits approvePaidDefault", async () => {
+    let verdict: unknown;
+    const handler = createWorkbenchHttpHandler({
+      engineConfig: {
+        defaultCompanionModel: null,
+        permissionLevel: "strict",
+        approvePaidDefault: true,
+        defaultSessionBudgetUsd: 1,
+        defaultPerCallBudgetUsd: 0.1,
+      },
+      runRuntime: async (input) => {
+        verdict = await input.confirmPaidEscalation?.("paid model selected");
+        return runtimeResult();
+      },
+      auth: { apiKey: REMOTE_KEY, allowedHosts: [REMOTE_HOST] },
+    });
+    await handler(
+      new Request(`http://${REMOTE_HOST}:8787/api/turn`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${REMOTE_KEY}`,
+        },
+        body: JSON.stringify({ prompt: "paid" }),
+      }),
+      serveInfo(REMOTE_HOST),
+    );
+    expect(verdict).toEqual({
+      decision: "deny",
+      reason: PAID_ESCALATION_REMOTE_DENIED,
     });
   });
 

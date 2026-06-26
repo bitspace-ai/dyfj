@@ -7,12 +7,13 @@
  * all the interesting logic and produces a deterministic, inspectable result.
  */
 
-import { beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   type BudgetConfig,
   BudgetExceededError,
   BudgetTracker,
   defaultBudgetConfig,
+  type PreCallCheck,
   type TierSpend,
 } from "./budget";
 
@@ -373,5 +374,194 @@ describe("BudgetExceededError", () => {
     const e = new BudgetExceededError("per_call_limit", 0.12, 0.10, 0.05);
     expect(e.message).toContain("per_call_limit");
     expect(e.message).toContain("0.10");
+  });
+});
+
+// ── ensureBudgetAllowed (warn-then-confirm) ───────────────────────────────────
+
+describe("ensureBudgetAllowed", () => {
+  test("under ceiling proceeds without prompting", async () => {
+    const { ensureBudgetAllowed } = await import("./budget");
+    const confirm = vi.fn();
+    await ensureBudgetAllowed(
+      {
+        allowed: true,
+        estimatedCost: 0.01,
+        sessionCostSoFar: 0,
+        sessionLimitUsd: 1,
+        perCallLimitUsd: 0.1,
+      },
+      confirm,
+    );
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  test("over ceiling with confirm proceeds on approve", async () => {
+    const { ensureBudgetAllowed } = await import("./budget");
+    await ensureBudgetAllowed(
+      {
+        allowed: false,
+        estimatedCost: 0.12,
+        sessionCostSoFar: 0.95,
+        sessionLimitUsd: 1,
+        perCallLimitUsd: 0.1,
+        reason: "session_limit",
+      },
+      async () => ({ decision: "approve" }),
+    );
+  });
+
+  test("over ceiling without confirm fails closed", async () => {
+    const { BudgetExceededError, ensureBudgetAllowed } = await import(
+      "./budget"
+    );
+    await expect(
+      ensureBudgetAllowed(
+        {
+          allowed: false,
+          estimatedCost: 0.12,
+          sessionCostSoFar: 0.95,
+          sessionLimitUsd: 1,
+          perCallLimitUsd: 0.1,
+          reason: "session_limit",
+        },
+      ),
+    ).rejects.toBeInstanceOf(BudgetExceededError);
+  });
+
+  test("over ceiling denies on decline", async () => {
+    const { BudgetCeilingDeclinedError, ensureBudgetAllowed } = await import(
+      "./budget"
+    );
+    await expect(
+      ensureBudgetAllowed(
+        {
+          allowed: false,
+          estimatedCost: 0.12,
+          sessionCostSoFar: 0,
+          sessionLimitUsd: 1,
+          perCallLimitUsd: 0.1,
+          reason: "per_call_limit",
+        },
+        async () => ({ decision: "deny", reason: "too much" }),
+      ),
+    ).rejects.toBeInstanceOf(BudgetCeilingDeclinedError);
+  });
+});
+
+// ── createTurnBudgetCeilingGate (once-per-turn dedupe) ────────────────────────
+
+describe("createTurnBudgetCeilingGate", () => {
+  const overPerCall: PreCallCheck = {
+    allowed: false,
+    estimatedCost: 0.12,
+    sessionCostSoFar: 0,
+    sessionLimitUsd: 1,
+    perCallLimitUsd: 0.1,
+    reason: "per_call_limit",
+  };
+
+  test("dedupes identical pre-flight and per-call gates to one confirm", async () => {
+    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const gate = createTurnBudgetCeilingGate(confirm);
+    await gate.ensureAllowed(overPerCall);
+    await gate.ensureAllowed({ ...overPerCall });
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  test("re-prompts when session spend crosses after per-call was already confirmed", async () => {
+    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const gate = createTurnBudgetCeilingGate(confirm);
+    await gate.ensureAllowed(overPerCall);
+    await gate.ensureAllowed({
+      allowed: false,
+      estimatedCost: 0.12,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.1,
+      reason: "per_call_limit",
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  test("frames the session re-prompt as a session limit, not the per-call reason checkPreCall reports", async () => {
+    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const warnings: Array<{ reason: string; limitUsd: number }> = [];
+    const confirm = vi.fn(async (w: { reason: string; limitUsd: number }) => {
+      warnings.push({ reason: w.reason, limitUsd: w.limitUsd });
+      return { decision: "approve" as const };
+    });
+    const gate = createTurnBudgetCeilingGate(confirm);
+    await gate.ensureAllowed(overPerCall);
+    // Session accumulation now crosses the session ceiling; per-call already
+    // confirmed at this estimate, so the only *newly* crossed dimension is session.
+    await gate.ensureAllowed({
+      allowed: false,
+      estimatedCost: 0.12,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.1,
+      reason: "per_call_limit",
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(warnings[0].reason).toBe("per_call_limit");
+    expect(warnings[0].limitUsd).toBeCloseTo(0.1);
+    expect(warnings[1].reason).toBe("session_limit");
+    expect(warnings[1].limitUsd).toBeCloseTo(1);
+  });
+
+  test("re-prompts when projected session spend rises above the confirmed level", async () => {
+    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const gate = createTurnBudgetCeilingGate(confirm);
+    await gate.ensureAllowed({
+      allowed: false,
+      estimatedCost: 0.05,
+      sessionCostSoFar: 0.96,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.5,
+      reason: "session_limit",
+    });
+    await gate.ensureAllowed({
+      allowed: false,
+      estimatedCost: 0.08,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.5,
+      reason: "session_limit",
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  test("decline still aborts without recording a confirmation", async () => {
+    const { BudgetCeilingDeclinedError, createTurnBudgetCeilingGate } =
+      await import("./budget");
+    const confirm = vi.fn(async () => ({
+      decision: "deny" as const,
+      reason: "too much",
+    }));
+    const gate = createTurnBudgetCeilingGate(confirm);
+    await expect(gate.ensureAllowed(overPerCall)).rejects.toBeInstanceOf(
+      BudgetCeilingDeclinedError,
+    );
+    await expect(gate.ensureAllowed(overPerCall)).rejects.toBeInstanceOf(
+      BudgetCeilingDeclinedError,
+    );
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  test("without a confirm handler fails closed on every gate", async () => {
+    const { BudgetExceededError, createTurnBudgetCeilingGate } = await import(
+      "./budget"
+    );
+    const gate = createTurnBudgetCeilingGate(undefined);
+    await expect(gate.ensureAllowed(overPerCall)).rejects.toBeInstanceOf(
+      BudgetExceededError,
+    );
+    await expect(gate.ensureAllowed(overPerCall)).rejects.toBeInstanceOf(
+      BudgetExceededError,
+    );
   });
 });

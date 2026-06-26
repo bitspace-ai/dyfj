@@ -1,3 +1,5 @@
+import type { ConfirmBudgetCeiling } from "./budget";
+import { BudgetCeilingDeclinedError } from "./budget";
 import type { WorkbenchRoutingOptions } from "./provider";
 import type { WorkbenchCallTimings } from "./provider";
 import type { WorkbenchMessage, WorkbenchToolCall } from "./provider";
@@ -105,6 +107,12 @@ export interface WorkbenchRuntimeInput {
    * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
+  /**
+   * Warn-then-confirm handler when projected spend crosses a budget ceiling.
+   * Without it the runtime fails closed at the ceiling (same posture as the
+   * approval gate on non-interactive transports).
+   */
+  confirmBudgetCeiling?: ConfirmBudgetCeiling;
   /**
    * Approval handler for mutating tools. When a tool's policy is
    * "ask", the runtime calls this for an approve/deny verdict; the default (no
@@ -991,7 +999,9 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
-  const { BudgetExceededError, BudgetTracker } = await import("./budget");
+  const { BudgetTracker, createTurnBudgetCeilingGate } = await import(
+    "./budget"
+  );
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
@@ -1374,18 +1384,11 @@ export async function runWorkbenchRuntime(
       selected.costInput,
       estimatedInputTokens,
     );
+    const budgetCeilingGate = createTurnBudgetCeilingGate(
+      runtimeInput.confirmBudgetCeiling,
+    );
 
-    if (!preCall.allowed) {
-      const limit = preCall.reason === "per_call_limit"
-        ? preCall.perCallLimitUsd
-        : preCall.sessionLimitUsd;
-      throw new BudgetExceededError(
-        preCall.reason ?? "session_limit",
-        preCall.estimatedCost,
-        limit,
-        preCall.sessionCostSoFar,
-      );
-    }
+    await budgetCeilingGate.ensureAllowed(preCall);
     estimatedCostUsd = preCall.estimatedCost;
 
     const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
@@ -1437,24 +1440,14 @@ export async function runWorkbenchRuntime(
       // Budget-gate and record EVERY provider call: the agent loop can make
       // several calls in one turn, so per-call and session limits must be
       // enforced before each one and usage recorded after each one (paid
-      // consent is still granted once per turn above; per-call + session
-      // limits and MAX_TOOL_STEPS bound loop spend).
+      // consent and ceiling confirmation are granted once per turn above;
+      // per-call + session limits and MAX_TOOL_STEPS bound loop spend).
       const callPre = budget.checkPreCall(
         selected.tier,
         selected.costInput,
         request.estimatedInputCount,
       );
-      if (!callPre.allowed) {
-        const limit = callPre.reason === "per_call_limit"
-          ? callPre.perCallLimitUsd
-          : callPre.sessionLimitUsd;
-        throw new BudgetExceededError(
-          callPre.reason ?? "session_limit",
-          callPre.estimatedCost,
-          limit,
-          callPre.sessionCostSoFar,
-        );
-      }
+      await budgetCeilingGate.ensureAllowed(callPre);
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "beforeProviderRequest",
         sessionId,
@@ -1762,6 +1755,13 @@ export async function runWorkbenchRuntime(
           duration_ms: Date.now() - sessionStart,
         }), BEST_EFFORT);
       console.log(`\nBudget exceeded: ${(err as Error).message}`);
+    } else if (name === "BudgetCeilingDeclinedError") {
+      const detail = (err as BudgetCeilingDeclinedError).reason;
+      console.log(
+        `\nBudget ceiling confirmation declined${
+          detail ? `: ${detail}` : ""
+        } — the over-budget call was not made.`,
+      );
     } else {
       await writeMaybe(() =>
         writeEvent({

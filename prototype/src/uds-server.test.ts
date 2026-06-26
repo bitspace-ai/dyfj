@@ -173,6 +173,29 @@ describe("serveWorkbenchUnix turn method", () => {
     expect(result.verdict.decision).toBe("deny");
   });
 
+  test("loopback inherits approvePaidDefault when the request omits opt-in", async () => {
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      const verdict = await input.confirmPaidEscalation?.();
+      return anyVal({ verdict });
+    };
+    const client = await connectClient(
+      await startServer({
+        ...fakes,
+        runRuntime,
+        engineConfig: {
+          defaultCompanionModel: null,
+          permissionLevel: "strict",
+          approvePaidDefault: true,
+          defaultSessionBudgetUsd: 1,
+          defaultPerCallBudgetUsd: 0.1,
+        },
+      }),
+    );
+    expect(await client.request("turn", { prompt: "hi" })).toEqual({
+      verdict: { decision: "approve" },
+    });
+  });
+
   test("applies a loopback budget override", async () => {
     const runRuntime: WorkbenchHttpRuntime = async (input) =>
       anyVal({ sessionLimitUsd: input.sessionLimitUsd ?? null });
