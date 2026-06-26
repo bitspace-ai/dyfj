@@ -13,7 +13,9 @@
  *   - buildSummaryEventPayload() is a pure function — testable without Dolt
  *   - writeSummaryEvent() calls writeEvent(); call once at session end
  *
- * Budget config comes from env vars with safe defaults:
+ * Budget defaults are a declared engine config key (`CONFIG_SCHEMA` in
+ * config.ts): the env-var bindings and the limit numbers live on the declared
+ * surface, not inline here, so the permission allowlist derives from one source.
  *   DYFJ_BUDGET_SESSION_USD  — max total spend per session  (default $1.00)
  *   DYFJ_BUDGET_PER_CALL_USD — max spend per individual call (default $0.10)
  *
@@ -23,6 +25,7 @@
  */
 
 import { generateSpanId, generateULID, writeEvent } from "./utils";
+import { resolveBudgetDefaultsFromEnv } from "./config";
 import process from "node:process";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -34,11 +37,15 @@ export interface BudgetConfig {
   perCallLimitUsd: number;
 }
 
+/**
+ * Resolve the default budget limits from the environment, against the declared
+ * config surface (defaults → env). Kept as the convenience default for
+ * `BudgetTracker` and the not-yet-config-wired entrypoints; the runtime boundary
+ * resolves these once and threads them in (see resolveRuntimeEnvDefaults).
+ */
 export function defaultBudgetConfig(): BudgetConfig {
-  return {
-    sessionLimitUsd: parseFloat(process.env.DYFJ_BUDGET_SESSION_USD ?? "1.00"),
-    perCallLimitUsd: parseFloat(process.env.DYFJ_BUDGET_PER_CALL_USD ?? "0.10"),
-  };
+  const env = { get: (key: string): string | undefined => process.env[key] };
+  return resolveBudgetDefaultsFromEnv(env);
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────

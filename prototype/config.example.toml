@@ -18,3 +18,11 @@
 #   "operator" — auto-approves contained mutating tools (local, free, workspace-
 #                write) on a loopback operator turn; paid/networked/exec still prompt
 level = "strict"
+
+# The full configuration surface is declared in src/config.ts (CONFIG_SCHEMA),
+# split into engine vs client domains, with secret keys held as POINTERS (op:// /
+# keychain / env-var name), never plaintext. Only the keys above have a config-
+# FILE layer today; the rest (e.g. the budget defaults DYFJ_BUDGET_SESSION_USD /
+# DYFJ_BUDGET_PER_CALL_USD) are environment-driven, resolved against the same
+# declared surface at the runtime boundary. Folding more keys into this file is a
+# follow-on slice.

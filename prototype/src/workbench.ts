@@ -5,6 +5,11 @@ import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
+import {
+  BUDGET_DEFAULTS,
+  resolveBudgetDefaultsFromEnv,
+  resolvePrincipalId,
+} from "./config";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 
@@ -143,7 +148,17 @@ export interface WorkbenchRuntimeInput {
    */
   permissionLevel?: PermissionLevel;
   /**
-   * Per-turn budget-limit overrides. Absent → the env/default limits
+   * Default budget limits (the engine's startup posture), resolved once at the
+   * boundary from the declared config surface (DYFJ_BUDGET_* via
+   * resolveBudgetDefaultsFromEnv) so the core reads no env. The core uses these
+   * as the per-session defaults; the per-turn overrides below take precedence,
+   * and the declared BUDGET_DEFAULTS are the final fallback. A headless driver
+   * supplies its own.
+   */
+  defaultSessionBudgetUsd?: number;
+  defaultPerCallBudgetUsd?: number;
+  /**
+   * Per-turn budget-limit overrides. Absent → the default limits above
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
    * transport, so a remote caller can never raise the spend cap. The core just
    * reads the fields; a headless driver supplies its own.
@@ -640,12 +655,22 @@ export function parseBudgetTallyMode(
  */
 export function resolveRuntimeEnvDefaults(): Pick<
   WorkbenchRuntimeInput,
-  "principalId" | "rootOverride" | "budgetTallyMode"
+  | "principalId"
+  | "rootOverride"
+  | "budgetTallyMode"
+  | "defaultSessionBudgetUsd"
+  | "defaultPerCallBudgetUsd"
 > {
+  // process.env adapter so the declared resolvers (config.ts) read the same
+  // environment as the rest of this boundary.
+  const env = { get: (key: string): string | undefined => process.env[key] };
+  const budget = resolveBudgetDefaultsFromEnv(env);
   return {
-    principalId: process.env.DYFJ_PRINCIPAL_ID ?? process.env.USER ?? "user",
+    principalId: resolvePrincipalId(env),
     rootOverride: Deno.env.get("DYFJ_ROOT") ?? undefined,
     budgetTallyMode: parseBudgetTallyMode(process.env.DYFJ_BUDGET_TALLY),
+    defaultSessionBudgetUsd: budget.sessionLimitUsd,
+    defaultPerCallBudgetUsd: budget.perCallLimitUsd,
   };
 }
 
@@ -966,8 +991,7 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
-  const { BudgetExceededError, BudgetTracker, defaultBudgetConfig } =
-    await import("./budget");
+  const { BudgetExceededError, BudgetTracker } = await import("./budget");
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
@@ -1016,13 +1040,15 @@ export async function runWorkbenchRuntime(
   // the core reads only the input field. Resolved before the BudgetTracker so
   // its budget_summary event is attributed to the same principal.
   const principalId = runtimeInput.principalId ?? "user";
-  // per-turn budget overrides win over the env/default limits; absent
-  // fields fall back to the default. (The HTTP boundary only populates the
-  // overrides for loopback callers.)
-  const defaults = defaultBudgetConfig();
+  // Precedence: per-turn override → boundary-resolved default (from the declared
+  // config surface) → the declared BUDGET_DEFAULTS. The core reads no env; the
+  // boundary (resolveRuntimeEnvDefaults) resolves DYFJ_BUDGET_* once. The HTTP
+  // boundary only populates the per-turn overrides for loopback callers.
   const budgetConfig = {
-    sessionLimitUsd: runtimeInput.sessionLimitUsd ?? defaults.sessionLimitUsd,
-    perCallLimitUsd: runtimeInput.perCallLimitUsd ?? defaults.perCallLimitUsd,
+    sessionLimitUsd: runtimeInput.sessionLimitUsd ??
+      runtimeInput.defaultSessionBudgetUsd ?? BUDGET_DEFAULTS.sessionLimitUsd,
+    perCallLimitUsd: runtimeInput.perCallLimitUsd ??
+      runtimeInput.defaultPerCallBudgetUsd ?? BUDGET_DEFAULTS.perCallLimitUsd,
   };
   const budget = new BudgetTracker(
     sessionId,
