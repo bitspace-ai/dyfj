@@ -470,6 +470,22 @@ describe("createTurnBudgetCeilingGate", () => {
     expect(confirm).toHaveBeenCalledTimes(1);
   });
 
+  test("re-prompts when session spend crosses after per-call was already confirmed", async () => {
+    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const gate = createTurnBudgetCeilingGate(confirm);
+    await gate.ensureAllowed(overPerCall);
+    await gate.ensureAllowed({
+      allowed: false,
+      estimatedCost: 0.12,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.1,
+      reason: "per_call_limit",
+    });
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
   test("re-prompts when projected session spend rises above the confirmed level", async () => {
     const { createTurnBudgetCeilingGate } = await import("./budget");
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
@@ -477,7 +493,7 @@ describe("createTurnBudgetCeilingGate", () => {
     await gate.ensureAllowed({
       allowed: false,
       estimatedCost: 0.05,
-      sessionCostSoFar: 0.9,
+      sessionCostSoFar: 0.96,
       sessionLimitUsd: 1,
       perCallLimitUsd: 0.5,
       reason: "session_limit",

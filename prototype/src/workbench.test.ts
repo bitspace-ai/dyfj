@@ -976,6 +976,63 @@ describe("runWorkbenchRuntime observer events", () => {
     }
   });
 
+  test("re-confirms budget ceiling when a later same-size call crosses the session limit", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 15;
+    const confirmBudgetCeiling = vi.fn(async () => ({
+      decision: "approve" as const,
+    }));
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0.000015 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "tool_use",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce({
+        ...base,
+        text: "",
+        toolCalls: [{ id: "c1", name: "list_files", arguments: { path: "." } }],
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        text: "done",
+        stopReason: "stop",
+      });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        defaultPerCallBudgetUsd: 0.00001,
+        defaultSessionBudgetUsd: 0.00003,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        confirmBudgetCeiling,
+      });
+      expect(confirmBudgetCeiling).toHaveBeenCalledTimes(2);
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(2);
+      expect(result.text).toBe("done");
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+
   test("declining a budget ceiling aborts before any provider call", async () => {
     const prevTier = runtimeMocks.model.tier;
     const prevCost = runtimeMocks.model.costInput;

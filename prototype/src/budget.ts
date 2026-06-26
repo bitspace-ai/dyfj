@@ -187,23 +187,48 @@ export interface TurnBudgetCeilingConfirmations {
   session_limit?: number;
 }
 
-function projectedCeilingSpend(
-  preCall: PreCallCheck,
-  reason: "per_call_limit" | "session_limit",
-): number {
-  return reason === "session_limit"
-    ? preCall.sessionCostSoFar + preCall.estimatedCost
-    : preCall.estimatedCost;
+function crossesPerCallLimit(preCall: PreCallCheck): boolean {
+  return preCall.estimatedCost > preCall.perCallLimitUsd;
+}
+
+function crossesSessionLimit(preCall: PreCallCheck): boolean {
+  return preCall.sessionCostSoFar + preCall.estimatedCost >
+    preCall.sessionLimitUsd;
+}
+
+function projectedSessionSpend(preCall: PreCallCheck): number {
+  return preCall.sessionCostSoFar + preCall.estimatedCost;
 }
 
 function ceilingAlreadyConfirmed(
   preCall: PreCallCheck,
   confirmed: TurnBudgetCeilingConfirmations,
 ): boolean {
-  const reason = preCall.reason ?? "session_limit";
-  const prior = confirmed[reason];
-  if (prior === undefined) return false;
-  return projectedCeilingSpend(preCall, reason) <= prior;
+  const perCallOk = !crossesPerCallLimit(preCall) ||
+    (confirmed.per_call_limit !== undefined &&
+      preCall.estimatedCost <= confirmed.per_call_limit);
+  const sessionOk = !crossesSessionLimit(preCall) ||
+    (confirmed.session_limit !== undefined &&
+      projectedSessionSpend(preCall) <= confirmed.session_limit);
+  return perCallOk && sessionOk;
+}
+
+function recordCeilingConfirmations(
+  preCall: PreCallCheck,
+  confirmed: TurnBudgetCeilingConfirmations,
+): void {
+  if (crossesPerCallLimit(preCall)) {
+    confirmed.per_call_limit = Math.max(
+      confirmed.per_call_limit ?? 0,
+      preCall.estimatedCost,
+    );
+  }
+  if (crossesSessionLimit(preCall)) {
+    confirmed.session_limit = Math.max(
+      confirmed.session_limit ?? 0,
+      projectedSessionSpend(preCall),
+    );
+  }
 }
 
 export interface TurnBudgetCeilingGate {
@@ -213,10 +238,11 @@ export interface TurnBudgetCeilingGate {
 
 /**
  * Wrap budget-ceiling confirmation so the operator is prompted at most once per
- * turn for the same ceiling/reason at an equal-or-lower projected spend. Mirrors
- * the once-per-turn paid-consent preflight: a later agent-loop call re-prompts
- * only when projected spend rises above what was already confirmed (e.g. session
- * accumulation crosses the session ceiling for the first time).
+ * turn for the same projected spend level on each crossed dimension. Mirrors the
+ * once-per-turn paid-consent preflight: a later agent-loop call re-prompts when
+ * any crossed dimension (per-call or session) exceeds what was already confirmed
+ * for that dimension — including when session accumulation crosses the session
+ * ceiling even though per-call was already confirmed at the same estimate.
  */
 export function createTurnBudgetCeilingGate(
   confirm?: ConfirmBudgetCeiling,
@@ -227,8 +253,7 @@ export function createTurnBudgetCeilingGate(
       if (preCall.allowed) return;
       if (ceilingAlreadyConfirmed(preCall, confirmed)) return;
       await ensureBudgetAllowed(preCall, confirm);
-      const reason = preCall.reason ?? "session_limit";
-      confirmed[reason] = projectedCeilingSpend(preCall, reason);
+      recordCeilingConfirmations(preCall, confirmed);
     },
   };
 }
