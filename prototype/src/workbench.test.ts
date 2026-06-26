@@ -933,10 +933,11 @@ describe("runWorkbenchRuntime observer events", () => {
   test("rejects an over-budget follow-up call before invoking the provider (tier 1)", async () => {
     const prevTier = runtimeMocks.model.tier;
     const prevCost = runtimeMocks.model.costInput;
-    const prevSession = process.env.DYFJ_BUDGET_SESSION_USD;
     (runtimeMocks.model as { tier: number }).tier = 1;
     runtimeMocks.model.costInput = 0; // estimate 0; the session limit catches accumulated recorded cost
-    process.env.DYFJ_BUDGET_SESSION_USD = "0.02";
+    // The core reads no env: the budget default rides the runtime input,
+    // resolved at the boundary (resolveRuntimeEnvDefaults from the declared
+    // DYFJ_BUDGET_* surface). Drive it directly here, as a boundary would.
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const events: unknown[] = [];
     try {
@@ -967,6 +968,7 @@ describe("runWorkbenchRuntime observer events", () => {
         mode: "turn",
         prompt: "explore",
         routingOptions: {},
+        defaultSessionBudgetUsd: 0.02,
         confirmPaidEscalation: async () => ({ decision: "approve" as const }),
         onRuntimeEvent: (event) => events.push(event),
       });
@@ -981,8 +983,6 @@ describe("runWorkbenchRuntime observer events", () => {
     } finally {
       (runtimeMocks.model as { tier: number }).tier = prevTier;
       runtimeMocks.model.costInput = prevCost;
-      if (prevSession === undefined) delete process.env.DYFJ_BUDGET_SESSION_USD;
-      else process.env.DYFJ_BUDGET_SESSION_USD = prevSession;
       log.mockRestore();
     }
   });

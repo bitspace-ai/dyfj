@@ -8,6 +8,10 @@ If you only have 60 seconds, that's enough - `Section 1` is short by design.
 
 If you want context on naming, **DYFJ** is the umbrella concept and this repo is the OSS framework.
 
+## Public/Private Boundary
+
+This repo is **public** — it is the OSS framework half of DYFJ. Private strategy, operator workflow, and cross-repo personal context live elsewhere and must never land in public artifacts: code, comments, notes, commit messages, or `CHANGELOG.md`. Design intent may be *sourced* from private material, but anything committed here must be public-safe on its own. When in doubt, leave it out — a public artifact built from a non-public-safe draft is a defect, not a shortcut.
+
 ## Engineering Doctrine
 
 Architectural default: acyclic ownership and data flow.

@@ -1,4 +1,5 @@
 import { ulid } from "ulid";
+import { resolvePrincipalId } from "./config";
 import process from "node:process";
 
 export type MessageContent =
@@ -252,8 +253,8 @@ export function buildModelSelectedEventPayload(params: {
     event_type: "model_selected",
     trace_id: params.traceId,
     span_id: params.spanId ?? generateSpanId(),
-    principal_id: params.principalId ?? process.env.DYFJ_PRINCIPAL_ID ??
-      process.env.USER ?? "user",
+    principal_id: params.principalId ??
+      resolvePrincipalId({ get: (key) => process.env[key] }),
     principal_type: "human",
     action: "select",
     resource: params.selected,

@@ -1,18 +1,27 @@
 /**
- * config.ts — typed engine configuration: the runtime's startup posture.
+ * config.ts — typed configuration: the system's startup posture.
  *
- * One declared surface for the defaults the engine uses when a request doesn't
+ * One declared surface for the defaults the system uses when a request doesn't
  * specify. Per the configuration-system working thesis:
  *   - Secret POINTERS, never values (op:// refs / env-var names), resolved at
- *     point of use. Neither field in this first slice is a secret; the pattern
- *     is established here for the follow-on slices that fold in credentials.
+ *     point of use. Keys carrying credentials are declared `secret-pointer`; the
+ *     config surface never stores the plaintext value.
+ *   - Engine vs client DOMAINS. The engine owns runtime/data/secret config; the
+ *     engine-free CLI owns its own slice (server URL, socket, routing prefs). The
+ *     `CONFIG_SCHEMA` registry tags each key with its domain so the two slices
+ *     stay distinct (the thin client never loads the engine's schema).
  *   - Config is startup posture, NOT session state. The model for THIS turn, the
  *     workspace, and the principal ride the request — not this file. Anything the
  *     app *writes* (last-used, learned prefs) belongs in a separate app-owned
  *     state store, never here — so config.toml stays a pristine, hand-edited file
  *     and comment-preserving writes are a non-problem.
- *   - Precedence: defaults → ~/.dyfj/config.toml → environment. Per-request
- *     overrides are applied above this, at the turn boundary.
+ *   - Precedence: defaults → ~/.dyfj/config.toml → environment → per-request
+ *     overrides (the last applied above this, at the turn boundary).
+ *   - ONE declared surface the permission allowlist derives from. `CONFIG_SCHEMA`
+ *     is the single source of truth for the engine env surface; a parity test
+ *     asserts the `deno.json` permission `env` profiles against it, so the
+ *     allowlist-drift class of bug (a runtime env var present in one profile and
+ *     missing from another) is caught structurally, not band-aided.
  *
  * Format: TOML — hand-edited, comments, idiomatic for the future Rust core.
  * Keep the schema FLAT / SECTIONED; TOML clunks on deep nesting.
@@ -22,13 +31,156 @@
  * parser only runs when a real config file is read under Deno. Tests inject a
  * parser, so they exercise the precedence/validation logic without it.
  *
- * First slice threads the two daily-driver defaults (companion model, permission
- * level). Migrating the other ~25 env-read sites and deriving the deno.json
- * permission allowlist from this schema are follow-on config slices.
+ * `WorkbenchConfig` + `loadConfig` thread the daily-driver engine defaults that
+ * carry a config-file layer today (companion model, permission level). The budget
+ * defaults are declared in `CONFIG_SCHEMA` and resolved from the environment at
+ * the runtime boundary (`resolveBudgetDefaultsFromEnv`); their config-FILE layer
+ * and the loadConfig-everywhere wiring for the CLI/HTTP entrypoints are the next
+ * config slice. Migrating the remaining env-read sites onto the declared surface
+ * continues incrementally.
  */
 
 export type PermissionLevel = "strict" | "operator";
 const PERMISSION_LEVELS: readonly PermissionLevel[] = ["strict", "operator"];
+
+// ── Declared key registry ─────────────────────────────────────────────────────
+
+/**
+ * Which slice owns a key. The engine owns runtime/data/secret config; the
+ * engine-free CLI client owns its own transport/routing slice. One system, two
+ * domains — so the thin client never has to load the engine's schema.
+ */
+export type ConfigDomain = "engine" | "client";
+
+/**
+ * `value` is an ordinary config value. `secret-pointer` holds a POINTER to a
+ * credential (an `op://` ref, a keychain item, or — today — an env-var name),
+ * resolved at point of use. The config surface NEVER stores the plaintext value
+ * of a secret-pointer key; it is a first-class type distinction, not a
+ * convention.
+ */
+export type ConfigKind = "value" | "secret-pointer";
+
+export type ConfigValueType = "string" | "number" | "boolean" | "enum";
+
+/**
+ * One declared configuration key. The registry is metadata: it names the key,
+ * its env-var binding, its domain, its type, and whether it is a secret pointer.
+ * Both the loaders and the permission-parity test consume it, so the env
+ * allowlist derives from one source of truth.
+ */
+export interface ConfigKeySpec {
+  /** Logical config key (camelCase). */
+  key: string;
+  /** Env var this key binds to. */
+  envVar: string;
+  domain: ConfigDomain;
+  type: ConfigValueType;
+  kind: ConfigKind;
+  /** Allowed values for an `enum` type. */
+  enumValues?: readonly string[];
+  /**
+   * Declared session/connection state, NOT config. Per the config thesis the
+   * principal rides the connection (the UDS peer's OS identity locally, the
+   * tailnet identity remotely — BIT-128), so it is deliberately not a config
+   * value. It is declared here only so the permission-allowlist parity check can
+   * account for its env var.
+   */
+  sessionState?: boolean;
+  /** Default for a non-secret value key (secrets have no default — absence = off). */
+  default?: string | number | boolean | null;
+}
+
+/**
+ * The single declared surface. Engine keys' env vars must appear in the engine
+ * `deno.json` permission profiles (asserted by the parity test); client keys
+ * belong to the engine-free CLI slice. Secret-pointer keys are declared so the
+ * allowlist covers them — their values are resolved at point of use, never
+ * stored here.
+ */
+export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
+  // ── engine: values with a config-file layer (WorkbenchConfig) ──
+  {
+    key: "defaultCompanionModel",
+    envVar: "DYFJ_WORKBENCH_MODEL",
+    domain: "engine",
+    type: "string",
+    kind: "value",
+    default: null,
+  },
+  {
+    key: "permissionLevel",
+    envVar: "DYFJ_PERMISSION_LEVEL",
+    domain: "engine",
+    type: "enum",
+    kind: "value",
+    enumValues: PERMISSION_LEVELS,
+    default: "strict",
+  },
+  // ── engine: budget defaults (env layer today; file layer is the next slice) ──
+  {
+    key: "defaultSessionBudgetUsd",
+    envVar: "DYFJ_BUDGET_SESSION_USD",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 1.0,
+  },
+  {
+    key: "defaultPerCallBudgetUsd",
+    envVar: "DYFJ_BUDGET_PER_CALL_USD",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 0.1,
+  },
+  // ── engine: other runtime knobs (declared so the allowlist derives here) ──
+  { key: "root", envVar: "DYFJ_ROOT", domain: "engine", type: "string", kind: "value" },
+  { key: "routingHint", envVar: "DYFJ_WORKBENCH_HINT", domain: "engine", type: "string", kind: "value" },
+  { key: "routingTier", envVar: "DYFJ_WORKBENCH_TIER", domain: "engine", type: "string", kind: "value" },
+  { key: "contextProfile", envVar: "DYFJ_WORKBENCH_CONTEXT_PROFILE", domain: "engine", type: "string", kind: "value" },
+  { key: "contextTokens", envVar: "DYFJ_WORKBENCH_CONTEXT_TOKENS", domain: "engine", type: "number", kind: "value" },
+  { key: "budgetTally", envVar: "DYFJ_BUDGET_TALLY", domain: "engine", type: "string", kind: "value" },
+  { key: "doltHost", envVar: "DOLT_HOST", domain: "engine", type: "string", kind: "value" },
+  { key: "doltPort", envVar: "DOLT_PORT", domain: "engine", type: "string", kind: "value" },
+  { key: "doltUser", envVar: "DOLT_USER", domain: "engine", type: "string", kind: "value" },
+  { key: "doltDatabase", envVar: "DOLT_DATABASE", domain: "engine", type: "string", kind: "value" },
+  { key: "memoryMcpUrl", envVar: "DYFJ_MEMORY_MCP_URL", domain: "engine", type: "string", kind: "value" },
+  { key: "memoryMcpTool", envVar: "DYFJ_MEMORY_MCP_TOOL", domain: "engine", type: "string", kind: "value" },
+  // ── engine: HTTP-transport-specific (only the workbench-http profile) ──
+  { key: "httpHost", envVar: "DYFJ_WORKBENCH_HTTP_HOST", domain: "engine", type: "string", kind: "value" },
+  { key: "httpPort", envVar: "DYFJ_WORKBENCH_HTTP_PORT", domain: "engine", type: "string", kind: "value" },
+  { key: "httpAllowedHosts", envVar: "DYFJ_WORKBENCH_ALLOWED_HOSTS", domain: "engine", type: "string", kind: "value" },
+  // ── engine: secret POINTERS (resolved at point of use; never stored here) ──
+  { key: "anthropicApiKey", envVar: "ANTHROPIC_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
+  { key: "openaiApiKey", envVar: "OPENAI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
+  { key: "geminiApiKey", envVar: "GEMINI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
+  { key: "doltPassword", envVar: "DOLT_PASSWORD", domain: "engine", type: "string", kind: "secret-pointer" },
+  { key: "memoryMcpToken", envVar: "DYFJ_MEMORY_MCP_TOKEN", domain: "engine", type: "string", kind: "secret-pointer" },
+  { key: "httpApiKey", envVar: "DYFJ_WORKBENCH_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
+  // ── engine: session/identity — declared, but NOT config (rides the connection) ──
+  { key: "principalId", envVar: "DYFJ_PRINCIPAL_ID", domain: "engine", type: "string", kind: "value", sessionState: true },
+  // ── client: the engine-free CLI's own slice ──
+  { key: "serverUrl", envVar: "DYFJ_SERVER_URL", domain: "client", type: "string", kind: "value" },
+  { key: "socket", envVar: "DYFJ_SOCKET", domain: "client", type: "string", kind: "value" },
+  { key: "workspace", envVar: "DYFJ_WORKSPACE", domain: "client", type: "string", kind: "value" },
+  { key: "unix", envVar: "DYFJ_UNIX", domain: "client", type: "string", kind: "value" },
+  { key: "clientApiKey", envVar: "DYFJ_WORKBENCH_API_KEY", domain: "client", type: "string", kind: "secret-pointer" },
+  { key: "clientModel", envVar: "DYFJ_WORKBENCH_MODEL", domain: "client", type: "string", kind: "value" },
+  { key: "clientHint", envVar: "DYFJ_WORKBENCH_HINT", domain: "client", type: "string", kind: "value" },
+  { key: "clientTier", envVar: "DYFJ_WORKBENCH_TIER", domain: "client", type: "string", kind: "value" },
+];
+
+/** The env vars a given domain declares (deduped). */
+export function declaredEnvVars(domain: ConfigDomain): readonly string[] {
+  return [
+    ...new Set(
+      CONFIG_SCHEMA.filter((spec) => spec.domain === domain).map((spec) =>
+        spec.envVar
+      ),
+    ),
+  ];
+}
 
 export interface WorkbenchConfig {
   /**
@@ -161,4 +313,78 @@ function validateLevel(value: string, source: string): PermissionLevel {
     `config: invalid permission level "${value}" from ${source} ` +
       `(expected one of: ${PERMISSION_LEVELS.join(", ")})`,
   );
+}
+
+// ── Budget defaults (declared in CONFIG_SCHEMA; env layer at the boundary) ─────
+
+export interface BudgetDefaults {
+  /** Default max total USD spend across a session. */
+  sessionLimitUsd: number;
+  /** Default max USD spend for a single API call (estimated from input tokens). */
+  perCallLimitUsd: number;
+}
+
+function schemaNumberDefault(key: string): number {
+  const spec = CONFIG_SCHEMA.find((s) => s.key === key);
+  if (spec === undefined || typeof spec.default !== "number") {
+    throw new Error(`config: ${key} has no numeric default in CONFIG_SCHEMA`);
+  }
+  return spec.default;
+}
+
+/** The declared budget defaults — the single source for the limit numbers. */
+export const BUDGET_DEFAULTS: BudgetDefaults = {
+  sessionLimitUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
+  perCallLimitUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
+};
+
+function readPositiveUsd(
+  env: ConfigEnv,
+  envVar: string,
+  fallback: number,
+): number {
+  const raw = env.get(envVar);
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(
+      `config: invalid USD value "${raw}" from ${envVar} ` +
+        `(expected a non-negative number)`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Resolve the budget defaults from the environment against the declared surface
+ * (defaults → env). This is the boundary resolver the runtime entrypoints use so
+ * the core reads no env; the config-FILE layer for budget is the next slice.
+ */
+export function resolveBudgetDefaultsFromEnv(
+  env: ConfigEnv = Deno.env,
+): BudgetDefaults {
+  return {
+    sessionLimitUsd: readPositiveUsd(
+      env,
+      "DYFJ_BUDGET_SESSION_USD",
+      BUDGET_DEFAULTS.sessionLimitUsd,
+    ),
+    perCallLimitUsd: readPositiveUsd(
+      env,
+      "DYFJ_BUDGET_PER_CALL_USD",
+      BUDGET_DEFAULTS.perCallLimitUsd,
+    ),
+  };
+}
+
+// ── Principal (session/identity — NOT config) ─────────────────────────────────
+
+/**
+ * Resolve the runtime principal id from the environment, in one place. Per the
+ * config thesis the principal is session/connection state, not config — it is
+ * resolved here only at the process boundary (and as a deep fallback) until
+ * connection-derived identity lands (BIT-128) and the static env var is retired.
+ */
+export function resolvePrincipalId(env: ConfigEnv = Deno.env): string {
+  return env.get("DYFJ_PRINCIPAL_ID") ?? env.get("USER") ?? "user";
 }
