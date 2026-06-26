@@ -54,6 +54,14 @@ deno task serve-unix
 
 It serves a duplex JSON-RPC 2.0 protocol — `models/list`, `sessions/list`, `events/query`, and the streaming `turn` method — over a socket resolved from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running the same shared turn core as the HTTP path. The engine-free `dyfj` CLI reaches the read methods over it with `deno task cli models --socket "$DYFJ_SOCKET"` (and `sessions`). Driving a turn from the CLI over the socket, plus the mid-turn approval round-trip, are landing next.
 
+For a compiled daily-driver binary (Deno 2.9+), build and put `dist/` on your `PATH`:
+
+```sh
+deno task compile-cli   # dist/dyfj (launcher) + dist/dyfj-bin (compiled)
+```
+
+The launcher execs the fast compiled binary on the default socket path and falls back to `deno run` with a runtime-resolved `unix:` net grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path away from `~/.dyfj/run/workbench.sock`. Without a compile step, `prototype/scripts/dyfj-launcher.sh` behaves the same via the `deno run` fallback.
+
 The prototype reads Dolt connection settings from environment variables. For the default local server:
 
 ```sh
