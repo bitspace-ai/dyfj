@@ -999,8 +999,9 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
-  const { BudgetExceededError, BudgetTracker, createTurnBudgetCeilingGate } =
-    await import("./budget");
+  const { BudgetTracker, createTurnBudgetCeilingGate } = await import(
+    "./budget"
+  );
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
