@@ -7,7 +7,7 @@
  * all the interesting logic and produces a deterministic, inspectable result.
  */
 
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   type BudgetConfig,
   BudgetExceededError,
