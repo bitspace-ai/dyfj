@@ -764,6 +764,10 @@ Usage:
   dyfj models               list available model slugs
   dyfj sessions             list sessions
 
+REPL commands:
+  /model [<slug>]           show or switch the active model (validated slugs)
+  /exit, /quit              exit the REPL
+
 Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
   --server <url>   reach a remote HTTP runtime instead of the local UDS seam (env DYFJ_SERVER_URL)
