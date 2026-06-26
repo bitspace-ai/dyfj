@@ -76,7 +76,8 @@ export interface BudgetCeilingWarning {
   sessionCostSoFarUsd: number;
   sessionLimitUsd: number;
   perCallLimitUsd: number;
-  /** Audit basis recorded when the operator confirms (no prompt content). */
+  /** Audit basis for an operator-confirmed ceiling overrun; carried in the
+   *  warning/approval payload for downstream audit logging — not persisted here. */
   authzBasis: "policy:allow:operator-confirmed-ceiling";
 }
 
