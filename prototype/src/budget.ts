@@ -120,6 +120,9 @@ export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): strin
     `Session spent:   $${warning.sessionCostSoFarUsd.toFixed(6)} / ${
       warning.sessionLimitUsd.toFixed(6)
     }`,
+    `Projected total: $${
+      (warning.sessionCostSoFarUsd + warning.estimatedCostUsd).toFixed(6)
+    } / ${warning.sessionLimitUsd.toFixed(6)}`,
     `Per-call limit:  $${warning.perCallLimitUsd.toFixed(6)}`,
   ].join("\n");
 }

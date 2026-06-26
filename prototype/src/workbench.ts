@@ -1760,7 +1760,7 @@ export async function runWorkbenchRuntime(
       console.log(
         `\nBudget ceiling confirmation declined${
           detail ? `: ${detail}` : ""
-        } — no model call made.`,
+        } — the over-budget call was not made.`,
       );
     } else {
       await writeMaybe(() =>
