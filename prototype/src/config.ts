@@ -82,7 +82,7 @@ export interface ConfigKeySpec {
   /**
    * Declared session/connection state, NOT config. Per the config thesis the
    * principal rides the connection (the UDS peer's OS identity locally, the
-   * tailnet identity remotely — BIT-128), so it is deliberately not a config
+   * tailnet identity remotely), so it is deliberately not a config
    * value. It is declared here only so the permission-allowlist parity check can
    * account for its env var.
    */
@@ -324,9 +324,21 @@ export interface BudgetDefaults {
   perCallLimitUsd: number;
 }
 
-function schemaNumberDefault(key: string): number {
+function schemaSpecForKey(key: string): ConfigKeySpec {
   const spec = CONFIG_SCHEMA.find((s) => s.key === key);
-  if (spec === undefined || typeof spec.default !== "number") {
+  if (spec === undefined) {
+    throw new Error(`config: ${key} is not declared in CONFIG_SCHEMA`);
+  }
+  return spec;
+}
+
+function schemaEnvVar(key: string): string {
+  return schemaSpecForKey(key).envVar;
+}
+
+function schemaNumberDefault(key: string): number {
+  const spec = schemaSpecForKey(key);
+  if (typeof spec.default !== "number") {
     throw new Error(`config: ${key} has no numeric default in CONFIG_SCHEMA`);
   }
   return spec.default;
@@ -366,12 +378,12 @@ export function resolveBudgetDefaultsFromEnv(
   return {
     sessionLimitUsd: readPositiveUsd(
       env,
-      "DYFJ_BUDGET_SESSION_USD",
+      schemaEnvVar("defaultSessionBudgetUsd"),
       BUDGET_DEFAULTS.sessionLimitUsd,
     ),
     perCallLimitUsd: readPositiveUsd(
       env,
-      "DYFJ_BUDGET_PER_CALL_USD",
+      schemaEnvVar("defaultPerCallBudgetUsd"),
       BUDGET_DEFAULTS.perCallLimitUsd,
     ),
   };
@@ -383,7 +395,7 @@ export function resolveBudgetDefaultsFromEnv(
  * Resolve the runtime principal id from the environment, in one place. Per the
  * config thesis the principal is session/connection state, not config — it is
  * resolved here only at the process boundary (and as a deep fallback) until
- * connection-derived identity lands (BIT-128) and the static env var is retired.
+ * connection-derived identity replaces the static env var.
  */
 export function resolvePrincipalId(env: ConfigEnv = Deno.env): string {
   return env.get("DYFJ_PRINCIPAL_ID") ?? env.get("USER") ?? "user";
