@@ -20,7 +20,10 @@ import {
   type WorkbenchSessionEvent,
 } from "./sessions";
 import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
+import type { WorkbenchConfig } from "./config";
+import { loadConfig } from "./config";
 import {
+  engineConfigToTurnDeps,
   executeTurn,
   type ResolvedTurn,
   resolveTurnFromBody,
@@ -61,6 +64,15 @@ export interface WorkbenchHttpHandlerOptions {
     sessionId: string;
     asOf?: string;
   }) => Promise<WorkbenchSessionEvent[]>;
+  /** Loaded engine config (companion, posture, budget defaults). */
+  engineConfig?: Pick<
+    WorkbenchConfig,
+    | "defaultCompanionModel"
+    | "permissionLevel"
+    | "approvePaidDefault"
+    | "defaultSessionBudgetUsd"
+    | "defaultPerCallBudgetUsd"
+  >;
 }
 
 const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
@@ -86,6 +98,9 @@ export function createWorkbenchHttpHandler(
   const fetchSessionEvents = options.fetchSessionEvents ??
     fetchWorkbenchSessionEvents;
   const auth = options.auth ?? {};
+  const engineDeps = options.engineConfig !== undefined
+    ? engineConfigToTurnDeps(options.engineConfig)
+    : {};
   return async (request, info) => {
     const url = new URL(request.url);
     // Loopback is decided by the real TCP peer, never the request URL / Host
@@ -223,12 +238,14 @@ export function createWorkbenchHttpHandler(
           runRuntime,
           resolved,
           fetchSessionEvents,
+          engineDeps,
         )
         : await handleJsonTurn(
           request,
           runRuntime,
           resolved,
           fetchSessionEvents,
+          engineDeps,
         );
     }
     return jsonResponse({ error: "not found" }, 404);
@@ -406,6 +423,7 @@ function peerIsLoopback(info?: Deno.ServeHandlerInfo): boolean {
 async function resolveTurnRequest(
   request: Request,
   loopback: boolean,
+  approvePaidDefault?: boolean,
 ): Promise<ResolvedTurn | { error: string; status: number }> {
   let body: TurnRequestBody;
   try {
@@ -413,7 +431,7 @@ async function resolveTurnRequest(
   } catch {
     return { error: "request body must be JSON", status: 400 };
   }
-  return resolveTurnFromBody(body, loopback);
+  return resolveTurnFromBody(body, loopback, { approvePaidDefault });
 }
 
 async function handleJsonTurn(
@@ -423,9 +441,14 @@ async function handleJsonTurn(
   fetchSessionEvents: NonNullable<
     WorkbenchHttpHandlerOptions["fetchSessionEvents"]
   >,
+  engineDeps: ReturnType<typeof engineConfigToTurnDeps> = {},
 ): Promise<Response> {
   const loopback = authContext.transport === "loopback";
-  const resolved = await resolveTurnRequest(request, loopback);
+  const resolved = await resolveTurnRequest(
+    request,
+    loopback,
+    engineDeps.approvePaidDefault,
+  );
   if ("error" in resolved) {
     return jsonResponse({ error: resolved.error }, resolved.status);
   }
@@ -436,6 +459,7 @@ async function handleJsonTurn(
       loopback,
       runRuntime,
       fetchSessionEvents,
+      ...engineDeps,
       onRuntimeEvent: (event) => {
         events.push(event);
       },
@@ -465,9 +489,14 @@ async function handleStreamingTurn(
   fetchSessionEvents: NonNullable<
     WorkbenchHttpHandlerOptions["fetchSessionEvents"]
   >,
+  engineDeps: ReturnType<typeof engineConfigToTurnDeps> = {},
 ): Promise<Response> {
   const loopback = authContext.transport === "loopback";
-  const resolved = await resolveTurnRequest(request, loopback);
+  const resolved = await resolveTurnRequest(
+    request,
+    loopback,
+    engineDeps.approvePaidDefault,
+  );
   if ("error" in resolved) {
     // Request-shape errors occur before the stream opens, so report them as a
     // plain JSON error response rather than an SSE error frame.
@@ -486,6 +515,7 @@ async function handleStreamingTurn(
           loopback,
           runRuntime,
           fetchSessionEvents,
+          ...engineDeps,
           onTextDelta: (delta) => send({ t: "delta", text: delta }),
           onRuntimeEvent: (event) => {
             send({ t: "event", event });
@@ -1731,6 +1761,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 if (import.meta.main) {
+  const engineConfig = await loadConfig();
   const port = Number(Deno.env.get("DYFJ_WORKBENCH_HTTP_PORT") ?? "8787");
   const hostnames = (Deno.env.get("DYFJ_WORKBENCH_HTTP_HOST") ?? "127.0.0.1")
     .split(",")
@@ -1755,6 +1786,7 @@ if (import.meta.main) {
 
   const handler = createWorkbenchHttpHandler({
     auth: { apiKey, allowedHosts },
+    engineConfig,
   });
   let bound = 0;
   for (const hostname of hostnames) {

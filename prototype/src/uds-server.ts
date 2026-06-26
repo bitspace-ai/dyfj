@@ -21,9 +21,14 @@ import {
 import { RpcError, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
 import { JsonRpcPeer } from "./jsonrpc-peer";
 import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench";
-import type { PermissionLevel } from "./config";
+import type { PermissionLevel, WorkbenchConfig } from "./config";
+import {
+  budgetCeilingApprovalRequest,
+  type BudgetCeilingVerdict,
+} from "./budget";
 import type { TurnStreamFrame } from "./turn-contract";
 import {
+  engineConfigToTurnDeps,
   executeTurn,
   resolveTurnFromBody,
   type TurnRequestBody,
@@ -45,6 +50,15 @@ export interface WorkbenchUnixServerOptions {
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config); the seam is always loopback. */
   permissionLevel?: PermissionLevel;
+  /** Loaded engine config (companion, posture, budget defaults). */
+  engineConfig?: Pick<
+    WorkbenchConfig,
+    | "defaultCompanionModel"
+    | "permissionLevel"
+    | "approvePaidDefault"
+    | "defaultSessionBudgetUsd"
+    | "defaultPerCallBudgetUsd"
+  >;
 }
 
 // Mirrors http.ts loadPickerModels: degrade to the local defaults if the registry
@@ -143,6 +157,31 @@ function toApprovalVerdict(response: unknown): ToolApprovalVerdict {
   };
 }
 
+function toBudgetCeilingVerdict(response: unknown): BudgetCeilingVerdict {
+  const r = typeof response === "object" && response !== null
+    ? response as Record<string, unknown>
+    : {};
+  if (r.decision === "approve") return { decision: "approve" };
+  return {
+    decision: "deny",
+    reason: typeof r.reason === "string"
+      ? r.reason
+      : "operator declined the budget ceiling",
+  };
+}
+
+function resolveEngineTurnDeps(
+  options: WorkbenchUnixServerOptions,
+): ReturnType<typeof engineConfigToTurnDeps> {
+  if (options.engineConfig !== undefined) {
+    return engineConfigToTurnDeps(options.engineConfig);
+  }
+  return {
+    defaultCompanionModel: options.defaultCompanionModel,
+    permissionLevel: options.permissionLevel,
+  };
+}
+
 // The `turn` method: run an agentic turn over the shared turn-runner core — the
 // SAME lock/resume/clearance/paid path as HTTP — streaming intermediate text
 // deltas and runtime events back as `stream` notifications on this connection.
@@ -153,12 +192,14 @@ export function buildTurnHandlers(
   const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
   const fetchSessionEvents = options.fetchSessionEvents ??
     fetchWorkbenchSessionEvents;
+  const engineDeps = resolveEngineTurnDeps(options);
 
   return {
     turn: async (params, ctx) => {
       const resolved = resolveTurnFromBody(
         asRecord(params) as TurnRequestBody,
         true,
+        { approvePaidDefault: engineDeps.approvePaidDefault },
       );
       if ("error" in resolved) {
         throw new RpcError(RpcErrorCode.invalidParams, resolved.error);
@@ -168,18 +209,25 @@ export function buildTurnHandlers(
         loopback: true,
         runRuntime,
         fetchSessionEvents,
-        defaultCompanionModel: options.defaultCompanionModel,
-        permissionLevel: options.permissionLevel,
+        ...engineDeps,
         // mid-turn approval over the duplex channel — the server asks
-        // the connected client to approve a mutating tool; the client's response
-        // is the verdict. A failed request (no client approver, dropped
-        // connection) denies, fail-closed.
+        // the connected client to approve a mutating tool or budget ceiling;
+        // the client's response is the verdict. A failed request (no client
+        // approver, dropped connection) denies, fail-closed.
         confirmToolApproval: (request) =>
           ctx.request("approval", request).then(
             toApprovalVerdict,
             (): ToolApprovalVerdict => ({
               decision: "deny",
               reason: "approval request failed (no client approver?)",
+            }),
+          ),
+        confirmBudgetCeiling: (warning) =>
+          ctx.request("approval", budgetCeilingApprovalRequest(warning)).then(
+            toBudgetCeilingVerdict,
+            (): BudgetCeilingVerdict => ({
+              decision: "deny",
+              reason: "budget ceiling approval failed (no client approver?)",
             }),
           ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a

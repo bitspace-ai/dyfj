@@ -7,7 +7,7 @@
  * all the interesting logic and produces a deterministic, inspectable result.
  */
 
-import { beforeEach, describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   type BudgetConfig,
   BudgetExceededError,
@@ -373,5 +373,77 @@ describe("BudgetExceededError", () => {
     const e = new BudgetExceededError("per_call_limit", 0.12, 0.10, 0.05);
     expect(e.message).toContain("per_call_limit");
     expect(e.message).toContain("0.10");
+  });
+});
+
+// ── ensureBudgetAllowed (warn-then-confirm) ───────────────────────────────────
+
+describe("ensureBudgetAllowed", () => {
+  test("under ceiling proceeds without prompting", async () => {
+    const { ensureBudgetAllowed } = await import("./budget");
+    const confirm = vi.fn();
+    await ensureBudgetAllowed(
+      {
+        allowed: true,
+        estimatedCost: 0.01,
+        sessionCostSoFar: 0,
+        sessionLimitUsd: 1,
+        perCallLimitUsd: 0.1,
+      },
+      confirm,
+    );
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  test("over ceiling with confirm proceeds on approve", async () => {
+    const { ensureBudgetAllowed } = await import("./budget");
+    await ensureBudgetAllowed(
+      {
+        allowed: false,
+        estimatedCost: 0.12,
+        sessionCostSoFar: 0.95,
+        sessionLimitUsd: 1,
+        perCallLimitUsd: 0.1,
+        reason: "session_limit",
+      },
+      async () => ({ decision: "approve" }),
+    );
+  });
+
+  test("over ceiling without confirm fails closed", async () => {
+    const { BudgetExceededError, ensureBudgetAllowed } = await import(
+      "./budget"
+    );
+    await expect(
+      ensureBudgetAllowed(
+        {
+          allowed: false,
+          estimatedCost: 0.12,
+          sessionCostSoFar: 0.95,
+          sessionLimitUsd: 1,
+          perCallLimitUsd: 0.1,
+          reason: "session_limit",
+        },
+      ),
+    ).rejects.toBeInstanceOf(BudgetExceededError);
+  });
+
+  test("over ceiling denies on decline", async () => {
+    const { BudgetCeilingDeclinedError, ensureBudgetAllowed } = await import(
+      "./budget"
+    );
+    await expect(
+      ensureBudgetAllowed(
+        {
+          allowed: false,
+          estimatedCost: 0.12,
+          sessionCostSoFar: 0,
+          sessionLimitUsd: 1,
+          perCallLimitUsd: 0.1,
+          reason: "per_call_limit",
+        },
+        async () => ({ decision: "deny", reason: "too much" }),
+      ),
+    ).rejects.toBeInstanceOf(BudgetCeilingDeclinedError);
   });
 });

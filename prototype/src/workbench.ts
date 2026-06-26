@@ -1,3 +1,5 @@
+import type { ConfirmBudgetCeiling } from "./budget";
+import { BudgetCeilingDeclinedError } from "./budget";
 import type { WorkbenchRoutingOptions } from "./provider";
 import type { WorkbenchCallTimings } from "./provider";
 import type { WorkbenchMessage, WorkbenchToolCall } from "./provider";
@@ -105,6 +107,12 @@ export interface WorkbenchRuntimeInput {
    * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
+  /**
+   * Warn-then-confirm handler when projected spend crosses a budget ceiling.
+   * Without it the runtime fails closed at the ceiling (same posture as the
+   * approval gate on non-interactive transports).
+   */
+  confirmBudgetCeiling?: ConfirmBudgetCeiling;
   /**
    * Approval handler for mutating tools. When a tool's policy is
    * "ask", the runtime calls this for an approve/deny verdict; the default (no
@@ -991,7 +999,8 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
-  const { BudgetExceededError, BudgetTracker } = await import("./budget");
+  const { BudgetExceededError, BudgetTracker, ensureBudgetAllowed } =
+    await import("./budget");
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
@@ -1376,15 +1385,7 @@ export async function runWorkbenchRuntime(
     );
 
     if (!preCall.allowed) {
-      const limit = preCall.reason === "per_call_limit"
-        ? preCall.perCallLimitUsd
-        : preCall.sessionLimitUsd;
-      throw new BudgetExceededError(
-        preCall.reason ?? "session_limit",
-        preCall.estimatedCost,
-        limit,
-        preCall.sessionCostSoFar,
-      );
+      await ensureBudgetAllowed(preCall, runtimeInput.confirmBudgetCeiling);
     }
     estimatedCostUsd = preCall.estimatedCost;
 
@@ -1445,15 +1446,7 @@ export async function runWorkbenchRuntime(
         request.estimatedInputCount,
       );
       if (!callPre.allowed) {
-        const limit = callPre.reason === "per_call_limit"
-          ? callPre.perCallLimitUsd
-          : callPre.sessionLimitUsd;
-        throw new BudgetExceededError(
-          callPre.reason ?? "session_limit",
-          callPre.estimatedCost,
-          limit,
-          callPre.sessionCostSoFar,
-        );
+        await ensureBudgetAllowed(callPre, runtimeInput.confirmBudgetCeiling);
       }
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "beforeProviderRequest",
@@ -1762,6 +1755,13 @@ export async function runWorkbenchRuntime(
           duration_ms: Date.now() - sessionStart,
         }), BEST_EFFORT);
       console.log(`\nBudget exceeded: ${(err as Error).message}`);
+    } else if (name === "BudgetCeilingDeclinedError") {
+      const detail = (err as BudgetCeilingDeclinedError).reason;
+      console.log(
+        `\nBudget ceiling confirmation declined${
+          detail ? `: ${detail}` : ""
+        } — no model call made.`,
+      );
     } else {
       await writeMaybe(() =>
         writeEvent({

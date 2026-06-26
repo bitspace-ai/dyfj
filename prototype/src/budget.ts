@@ -67,6 +67,120 @@ export interface PreCallCheck {
   reason?: "per_call_limit" | "session_limit";
 }
 
+/** Structured warn payload for a budget-ceiling confirmation (telemetry-safe). */
+export interface BudgetCeilingWarning {
+  kind: "budget_ceiling";
+  reason: "per_call_limit" | "session_limit";
+  estimatedCostUsd: number;
+  limitUsd: number;
+  sessionCostSoFarUsd: number;
+  sessionLimitUsd: number;
+  perCallLimitUsd: number;
+  /** Audit basis recorded when the operator confirms (no prompt content). */
+  authzBasis: "policy:allow:operator-confirmed-ceiling";
+}
+
+export type BudgetCeilingVerdict =
+  | { decision: "approve" }
+  | { decision: "deny"; reason?: string };
+
+export type ConfirmBudgetCeiling = (
+  warning: BudgetCeilingWarning,
+) => Promise<BudgetCeilingVerdict>;
+
+export function buildBudgetCeilingWarning(
+  preCall: PreCallCheck,
+): BudgetCeilingWarning {
+  const reason = preCall.reason ?? "session_limit";
+  const limitUsd = reason === "per_call_limit"
+    ? preCall.perCallLimitUsd
+    : preCall.sessionLimitUsd;
+  return {
+    kind: "budget_ceiling",
+    reason,
+    estimatedCostUsd: preCall.estimatedCost,
+    limitUsd,
+    sessionCostSoFarUsd: preCall.sessionCostSoFar,
+    sessionLimitUsd: preCall.sessionLimitUsd,
+    perCallLimitUsd: preCall.perCallLimitUsd,
+    authzBasis: "policy:allow:operator-confirmed-ceiling",
+  };
+}
+
+export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): string {
+  const limitLabel = warning.reason === "per_call_limit"
+    ? "per-call limit"
+    : "session limit";
+  return [
+    "Budget ceiling warning",
+    `Reason:          ${limitLabel}`,
+    `Estimated cost:  $${warning.estimatedCostUsd.toFixed(6)}`,
+    `Limit:           $${warning.limitUsd.toFixed(6)}`,
+    `Session spent:   $${warning.sessionCostSoFarUsd.toFixed(6)} / ${
+      warning.sessionLimitUsd.toFixed(6)
+    }`,
+    `Per-call limit:  $${warning.perCallLimitUsd.toFixed(6)}`,
+  ].join("\n");
+}
+
+/** Wire shape for the UDS mid-turn approval channel. */
+export function budgetCeilingApprovalRequest(
+  warning: BudgetCeilingWarning,
+): Record<string, unknown> {
+  return {
+    kind: warning.kind,
+    title: "Budget ceiling",
+    reason: warning.reason,
+    estimatedCostUsd: warning.estimatedCostUsd,
+    limitUsd: warning.limitUsd,
+    sessionCostSoFarUsd: warning.sessionCostSoFarUsd,
+    sessionLimitUsd: warning.sessionLimitUsd,
+    perCallLimitUsd: warning.perCallLimitUsd,
+    authzBasis: warning.authzBasis,
+    message: formatBudgetCeilingWarning(warning),
+  };
+}
+
+export class BudgetCeilingDeclinedError extends Error {
+  constructor(public readonly reason?: string) {
+    super(
+      reason
+        ? `Budget ceiling confirmation declined: ${reason}`
+        : "Budget ceiling confirmation declined",
+    );
+    this.name = "BudgetCeilingDeclinedError";
+  }
+}
+
+/**
+ * Enforce a budget ceiling: under the limit proceeds silently; over the limit
+ * warns and requires explicit operator confirmation when a handler is supplied.
+ * Without a handler (non-interactive / no round-trip), fails closed.
+ */
+export async function ensureBudgetAllowed(
+  preCall: PreCallCheck,
+  confirm?: ConfirmBudgetCeiling,
+): Promise<void> {
+  if (preCall.allowed) return;
+  const reason = preCall.reason ?? "session_limit";
+  const limit = reason === "per_call_limit"
+    ? preCall.perCallLimitUsd
+    : preCall.sessionLimitUsd;
+  if (!confirm) {
+    throw new BudgetExceededError(
+      reason,
+      preCall.estimatedCost,
+      limit,
+      preCall.sessionCostSoFar,
+    );
+  }
+  const warning = buildBudgetCeilingWarning(preCall);
+  const verdict = await confirm(warning);
+  if (verdict.decision !== "approve") {
+    throw new BudgetCeilingDeclinedError(verdict.reason);
+  }
+}
+
 export interface BudgetSummary {
   totalCostUsd: number;
   totalTokensInput: number;
