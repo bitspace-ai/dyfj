@@ -22,12 +22,25 @@ describe("renderInlineMarkdown", () => {
   test("handles italic with underscore", () => {
     expect(renderInlineMarkdown("_emphasis_", false)).toBe("emphasis");
   });
+
+  test("leaves snake_case identifiers intact in prose", () => {
+    expect(renderInlineMarkdown("set approve_paid_default in config", false))
+      .toBe("set approve_paid_default in config");
+    expect(renderInlineMarkdown("_real emphasis_ not approve_paid_default", false))
+      .toBe("real emphasis not approve_paid_default");
+  });
 });
 
 describe("renderMarkdownLine", () => {
   test("renders ATX headers without hash markers", () => {
     expect(renderMarkdownLine("## Section", false, false).text).toBe("Section\n");
     expect(renderMarkdownLine("# Title", false, false).text).toBe("Title\n");
+  });
+
+  test("re-asserts header styling after inline code spans", () => {
+    const { text } = renderMarkdownLine("# Hello `code` rest", false, true);
+    expect(text).toContain("\x1b[1m\x1b[96mHello \x1b[36mcode\x1b[0m");
+    expect(text).toContain("\x1b[0m\x1b[1m\x1b[96m rest");
   });
 
   test("renders list bullets without dash markers", () => {

@@ -35,6 +35,31 @@ function styled(text: string, codes: string, color: boolean): string {
   return `${codes}${text}${RESET}`;
 }
 
+function isWordChar(ch: string): boolean {
+  return /[A-Za-z0-9_]/.test(ch);
+}
+
+/** CommonMark-style: '_' emphasis only when delimiters are not intraword. */
+function canOpenUnderscoreEmphasis(text: string, i: number): boolean {
+  const before = i > 0 ? text[i - 1] : "";
+  return before === "" || !isWordChar(before);
+}
+
+function canCloseUnderscoreEmphasis(text: string, end: number): boolean {
+  const after = end + 1 < text.length ? text[end + 1] : "";
+  return after === "" || !isWordChar(after);
+}
+
+/** Re-apply outer ANSI codes after inline span resets (e.g. header + `code`). */
+function withPersistentStyle(
+  body: string,
+  codes: string,
+  color: boolean,
+): string {
+  if (!color) return body;
+  return `${codes}${body.replaceAll(RESET, `${RESET}${codes}`)}${RESET}`;
+}
+
 /** Parse inline markdown (**bold**, *italic*, `code`) into styled text. */
 export function renderInlineMarkdown(text: string, color: boolean): string {
   let out = "";
@@ -64,13 +89,18 @@ export function renderInlineMarkdown(text: string, color: boolean): string {
         continue;
       }
     }
-    if (text[i] === "_" && text[i + 1] !== "_") {
-      const end = text.indexOf("_", i + 1);
-      if (end !== -1 && text[end + 1] !== "_") {
-        out += styled(text.slice(i + 1, end), ITALIC, color);
-        i = end + 1;
-        continue;
+    if (text[i] === "_" && text[i + 1] !== "_" &&
+      canOpenUnderscoreEmphasis(text, i)) {
+      let end = text.indexOf("_", i + 1);
+      while (end !== -1) {
+        if (canCloseUnderscoreEmphasis(text, end) && end > i + 1) {
+          out += styled(text.slice(i + 1, end), ITALIC, color);
+          i = end + 1;
+          break;
+        }
+        end = text.indexOf("_", end + 1);
       }
+      if (end !== -1) continue;
     }
     out += text[i];
     i++;
@@ -101,8 +131,9 @@ export function renderMarkdownLine(
   const header = line.match(/^(#{1,6})\s+(.*)$/);
   if (header) {
     const level = header[1].length;
+    const codes = level <= 1 ? HEADER : BOLD;
     const body = renderInlineMarkdown(header[2], color);
-    const prefix = styled(body, level <= 1 ? HEADER : BOLD, color);
+    const prefix = withPersistentStyle(body, codes, color);
     return { text: `${prefix}\n`, inCodeBlock: false };
   }
 
