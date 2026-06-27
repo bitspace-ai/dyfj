@@ -8,8 +8,13 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
+- Line-buffered streaming markdown rendering in the `dyfj` CLI output path. Companion turn text is accumulated until each newline, then styled for the terminal (headers, bold, italic, lists, inline code, fenced code blocks) with word-wrapping at terminal width and `NO_COLOR` honored. Streaming stays line-granular; `--json`, receipt lines, and approval prompts are unchanged. Renderer lives in `prototype/src/streaming-markdown.ts` with regression tests for common shapes.
 - Hosted multi-model daily-driver ergonomics: a standing **paid-inference posture** (`approvePaidDefault` / `[paid].approve_paid_default` / `DYFJ_APPROVE_PAID_DEFAULT`, default off) and a **budget-ceiling warn-then-confirm** path. When a loopback turn omits `approvePaidInference`, the engine falls back to the configured default; explicit per-turn opt-in/out (`--approve-paid`) still wins, and non-loopback transports never inherit the standing posture. Budget session/per-call ceilings (`defaultSessionBudgetUsd` / `defaultPerCallBudgetUsd`) gain a config-file layer (`[budget]` in `~/.dyfj/config.toml`) alongside the existing env bindings; when projected spend would cross a ceiling the runtime warns with the numbers and requires explicit confirmation before proceeding (reusing the UDS mid-turn `approval` round-trip — the CLI prompts on stderr). Without an interactive approver it fails closed, matching the existing approval-gate posture. The HTTP and UDS servers now load engine config at boot and thread it through the shared turn core.
 - In-session model switching in the `dyfj` REPL: `/model` prints the active model and available slugs; `/model <slug>` validates against `models/list` and mutates the active routing for subsequent turns without relaunching or changing the paid posture.
+
+### Fixed
+
+- CLI streaming markdown renderer: underscore emphasis now requires word-boundary delimiters (CommonMark-style) so snake_case identifiers are not corrupted; header ANSI styling is re-applied after inline code spans so the rest of the line keeps header formatting.
 
 ### Changed
 

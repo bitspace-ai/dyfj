@@ -21,6 +21,7 @@ import {
   type UnixClientOptions,
 } from "./uds-client";
 import { resolveSocketPath } from "./uds-path";
+import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
@@ -222,6 +223,44 @@ export async function bufferedTurn(
 
 // ── Presentation ─────────────────────────────────────────────────────────────
 
+function terminalColumns(): number {
+  try {
+    return Deno.consoleSize()?.columns ?? 80;
+  } catch {
+    return 80;
+  }
+}
+
+/** Wrap streamed turn text with line-buffered markdown rendering. */
+export function createTurnOutputHandlers(
+  config: CliConfig,
+  io: Io,
+): {
+  onDelta: (text: string) => void;
+  emitBufferedText: (text: string) => void;
+  finish: () => void;
+  streamed: () => boolean;
+} {
+  let sawDelta = false;
+  const renderer = createStreamingMarkdownRenderer({
+    out: (text) => io.out(text),
+    color: config.color,
+    columns: terminalColumns(),
+  });
+  return {
+    onDelta: (text: string) => {
+      sawDelta = true;
+      renderer.push(text);
+    },
+    emitBufferedText: (text: string) => {
+      renderer.push(text);
+      renderer.flush();
+    },
+    finish: () => renderer.flush(),
+    streamed: () => sawDelta,
+  };
+}
+
 export function formatReceipt(result: TurnResult, color: boolean): string {
   const dim = (s: string) => (color ? `\x1b[2m${s}\x1b[0m` : s);
   const cost = result.cost.totalUsd > 0
@@ -266,12 +305,9 @@ export async function runExec(
         : await bufferedTurn(config, body, fetchFn);
       io.out(`${JSON.stringify(result, null, 2)}\n`);
     } else {
-      let streamed = false;
+      const output = createTurnOutputHandlers(config, io);
       const handlers = {
-        onDelta: (text: string) => {
-          streamed = true;
-          io.out(text);
-        },
+        onDelta: output.onDelta,
         onApproval,
       };
       const result = config.unix
@@ -279,8 +315,11 @@ export async function runExec(
         : await streamTurn(config, body, handlers, fetchFn);
       // Some turns don't stream deltas (e.g. a first model call with tools);
       // the text still arrives with the receipt — render it so output is never empty.
-      if (!streamed && result.text.length > 0) io.out(result.text);
-      io.out("\n");
+      if (!output.streamed() && result.text.length > 0) {
+        output.emitBufferedText(result.text);
+      } else {
+        output.finish();
+      }
       io.err(formatReceipt(result, config.color));
     }
     return 0;
@@ -316,20 +355,20 @@ export async function runRepl(
       if (prompt === "/exit" || prompt === "/quit") break;
       if (await handleReplModelCommand(prompt, config, io, connect)) continue;
       try {
-        let streamed = false;
+        const output = createTurnOutputHandlers(config, io);
         const handlers = {
-          onDelta: (text: string) => {
-            streamed = true;
-            io.out(text);
-          },
+          onDelta: output.onDelta,
           onApproval,
         };
         const body = buildTurnBody(prompt, config, sessionId);
         const result = config.unix
           ? await socketTurn(config, body, handlers, connect)
           : await streamTurn(config, body, handlers, fetchFn);
-        if (!streamed && result.text.length > 0) io.out(result.text);
-        io.out("\n");
+        if (!output.streamed() && result.text.length > 0) {
+          output.emitBufferedText(result.text);
+        } else {
+          output.finish();
+        }
         io.err(formatReceipt(result, config.color));
         sessionId = result.sessionId;
       } catch (error) {

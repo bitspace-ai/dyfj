@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   bufferedTurn,
   buildTurnBody,
+  createTurnOutputHandlers,
   type CliConfig,
   type ConnectFn,
   formatReceipt,
@@ -400,6 +401,22 @@ describe("runExec", () => {
     expect(code).toBe(0);
     expect(stdout.join("")).toBe("Hi\n");
     expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
+  });
+
+  test("renders streamed markdown without raw markers", async () => {
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "delta", text: "## Tools\n- **read_file**\n" },
+        { t: "done", result: result() },
+      ]),
+    ]);
+    const { io, stdout } = fakeIo();
+    const code = await runExec("list tools", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    const out = stdout.join("");
+    expect(out).not.toMatch(/##|\*\*/);
+    expect(out).toContain("Tools");
+    expect(out).toContain("read_file");
   });
 
   test("falls back to result.text when a turn streams no deltas", async () => {
