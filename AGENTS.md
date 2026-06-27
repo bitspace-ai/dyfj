@@ -33,6 +33,7 @@ Documentation is part of the change, not a follow-up. A commit that changes beha
 - **Scope honestly.** Document what is true *now*. Mark in-progress or deferred work as such rather than describing the intended end-state as if it shipped.
 - **Two trails, kept distinct.** `CHANGELOG.md` records code/behavior changes; the root README's Revision history records document-level revisions of the operating context. Update whichever the change touches; keep both current.
 - **Issue references live in commit messages, not code or CHANGELOG.** Tracker IDs (`BIT-###`) belong in commit messages and PR descriptions — a maintainer artifact in git history. Code comments and `CHANGELOG.md` explain the *why* in the prose itself, so a public reader who can't reach the private tracker loses nothing. Don't tag comments `// BIT-…`.
+- **No AI-tool attribution in git history.** Never add `Co-authored-by` (or similar) trailers crediting a harness or model (Cursor, Composer, Claude, etc.) — a tool is not a person or a git contributor. Disable commit attribution at the harness source when the setting exists.
 
 ## Issue Tracking
 

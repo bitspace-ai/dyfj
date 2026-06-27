@@ -217,6 +217,8 @@ deno task cli models --socket "$DYFJ_SOCKET"
 deno task cli sessions --socket "$DYFJ_SOCKET"
 ```
 
+For a compiled daily-driver binary under Deno 2.9+, run `deno task compile-cli` in `prototype/` and put `dist/` on your `PATH`. The shipped `dist/dyfj` launcher execs the compiled binary on the default socket path and falls back to `deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path.
+
 The seam exposes `models/list`, `sessions/list`, `events/query`, and the streaming `turn` method (intermediate text deltas and runtime events arrive as `stream` notifications; the receipt is the result). Driving a `turn` from the CLI over the socket, and the mid-turn approval round-trip, are landing next; TCP-over-Tailscale for remote reach is deferred.
 
 Useful validation tasks:

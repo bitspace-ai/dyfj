@@ -13,6 +13,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Changed
 
+- Compiled `dyfj` CLI net grants for Deno 2.9 dynamic UDS paths. Deno 2.9 requires an exact-match `unix:` net grant per socket path; the compiled binary still bakes the default `~/.dyfj/run/workbench.sock` grant at compile time for speed, but `deno task compile-cli` now ships a thin launcher (`dist/dyfj`) that execs the compiled `dist/dyfj-bin` on the default path and falls back to `deno run` with a runtime-resolved `unix:<sock>` grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path (mirroring the serve-unix bind-side pattern). Net permission stays scoped to loopback HTTP plus the one UDS path in use; no literal host path is committed. Regression coverage lives in `prototype/scripts/dyfj-launcher.test.ts`.
 - Budget enforcement at the spend boundary is warn-then-confirm rather than an immediate hard deny when an approver is available; non-interactive transports still fail closed at the ceiling.
 - Budget-ceiling confirmation is deduped to once per turn for the same projected spend level (preflight + per-call gate no longer double-prompt); a later agent-loop call re-prompts only when projected spend rises above what was already confirmed.
 - Budget-ceiling dedupe tracks per-call and session projections independently so a later call that crosses the session limit re-prompts even when per-call was already confirmed at the same estimate.
