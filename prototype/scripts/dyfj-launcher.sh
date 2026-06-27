@@ -20,13 +20,10 @@ default_socket_path() {
   printf '%s' "${HOME:-.}/.dyfj/run/workbench.sock"
 }
 
-# Mirror resolveConfig's unix default: local UDS unless an explicit HTTP server wins.
+# Mirror resolveConfig: --unix / DYFJ_UNIX=1 win over an explicit HTTP server.
 uses_unix_transport() {
   if [[ "${DYFJ_UNIX:-}" == "1" ]]; then
     return 0
-  fi
-  if [[ -n "${DYFJ_SERVER_URL:-}" ]]; then
-    return 1
   fi
   local arg
   local saw_server=0
@@ -40,6 +37,9 @@ uses_unix_transport() {
         ;;
     esac
   done
+  if [[ -n "${DYFJ_SERVER_URL:-}" ]]; then
+    return 1
+  fi
   [[ "$saw_server" -eq 0 ]]
 }
 

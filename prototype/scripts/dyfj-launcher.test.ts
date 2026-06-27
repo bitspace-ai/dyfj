@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
 const LAUNCHER = new URL("./dyfj-launcher.sh", import.meta.url).pathname;
+const COMPILED_BIN = new URL("../dist/dyfj-bin", import.meta.url).pathname;
+
+async function hasCompiledBin(): Promise<boolean> {
+  return await Deno.stat(COMPILED_BIN).then(() => true).catch(() => false);
+}
 
 async function dryRun(
   env: Record<string, string>,
@@ -30,7 +35,11 @@ describe("dyfj launcher routing", () => {
   test("default path prefers compiled when the binary exists", async () => {
     const { route, sock } = await dryRun({ HOME: "/home/c" });
     expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
-    expect(["compiled", "deno"]).toContain(route);
+    if (await hasCompiledBin()) {
+      expect(route).toBe("compiled");
+    } else {
+      expect(route).toBe("deno");
+    }
   });
 
   test("DYFJ_SOCKET selects deno when the path is non-default", async () => {
@@ -57,13 +66,15 @@ describe("dyfj launcher routing", () => {
       DYFJ_SOCKET: "/home/c/.dyfj/run/workbench.sock",
     });
     expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
-    expect(["compiled", "deno"]).toContain(route);
+    if (await hasCompiledBin()) {
+      expect(route).toBe("compiled");
+    } else {
+      expect(route).toBe("deno");
+    }
   });
 
   test("HTTP transport does not force deno when a compiled binary is present", async () => {
-    const compiled = new URL("../dist/dyfj-bin", import.meta.url).pathname;
-    const hasCompiled = await Deno.stat(compiled).then(() => true).catch(() => false);
-    if (!hasCompiled) return;
+    if (!(await hasCompiledBin())) return;
 
     const customOnly = await dryRun({
       HOME: "/home/c",
@@ -78,6 +89,19 @@ describe("dyfj launcher routing", () => {
     );
     expect(customOnly.route).toBe("deno");
     expect(customWithHttp.route).toBe("compiled");
+  });
+
+  test("--unix forces deno fallback despite DYFJ_SERVER_URL with a custom socket", async () => {
+    const { route, sock } = await dryRun(
+      {
+        HOME: "/home/c",
+        DYFJ_SOCKET: "/run/custom.sock",
+        DYFJ_SERVER_URL: "http://127.0.0.1:8787",
+      },
+      ["--unix", "models"],
+    );
+    expect(sock).toBe("/run/custom.sock");
+    expect(route).toBe("deno");
   });
 
   test("committed launcher carries no literal host path", async () => {
