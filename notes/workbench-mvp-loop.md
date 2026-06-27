@@ -63,7 +63,7 @@ The loop is CLI-shaped first. A richer visual work surface can project from the 
 
 `prototype/src/index.ts` was removed with the legacy router path. `deno task start` and `deno task workbench` now both point at the Workbench entrypoint.
 
-## Completed first beads
+## Completed first work items
 
 - Implement Workbench session receipt.
 - Add paid-escalation preflight banner.

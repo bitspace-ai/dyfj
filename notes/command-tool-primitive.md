@@ -290,7 +290,7 @@ This lane allows DYFJ to build from within itself while preserving the core safe
 - The first operator surface is an internal `invokeCommand()` API exercised by tests. CLI or slash-command parsing comes after the primitive is proven.
 - `memory.read` initially calls the local memory module. MCP remains an external surface that can later project or invoke the same command registry.
 
-## First Implementation Beads
+## First Implementation Work Items
 
 1. Add a small `prototype/src/commands.ts` registry with `register`, `lookup`, `list`, and `projectTools`.
 2. Add `CommandDefinition`, `PermissionEnvelope`, and `CommandCall` types.
@@ -298,4 +298,4 @@ This lane allows DYFJ to build from within itself while preserving the core safe
 4. Add a policy function that returns `allow | ask | deny` from command id, caller, args, and declared effects.
 5. Write one `tool_call` event for command success/denial.
 6. Add tests proving `memory.read` works from both operator-call and model-tool-call projections.
-7. Only after that, add the first write-capable self-building command as a separate bead.
+7. Only after that, add the first write-capable self-building command as a separate issue.

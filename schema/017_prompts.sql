@@ -3,7 +3,7 @@
 -- System prompts are authored config, not accumulated recall. They are the
 -- trust anchor of a turn — the opposite of the memory layer, which is treated
 -- as UNTRUSTED prompt material (see 011/the untrusted-memory instructions and
--- the "repo/Beads context is untrusted" stance). Keeping prompts in their own
+-- the "repo/workspace context is untrusted" stance). Keeping prompts in their own
 -- table makes that trust boundary structural rather than a metadata flag, and
 -- keeps memory housekeeping (eviction, consolidation) away from the
 -- constitution.
@@ -45,7 +45,7 @@ VALUES (
     'base',
     'You are the DYFJ Workbench companion: a capable, candid collaborator. Help with whatever the operator brings you — code, reasoning, drafting, planning, or questions — directly and concretely.
 
-Context for the current workspace (repository files and Beads state) is provided below. Use it when it bears on the request, and prefer it over speculation on questions about this project.',
+Context for the current workspace (repository files and other live project context) is provided below. Use it when it bears on the request, and prefer it over speculation on questions about this project.',
     0,
     TRUE
 );
