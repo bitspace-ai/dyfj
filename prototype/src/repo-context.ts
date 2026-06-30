@@ -326,7 +326,7 @@ function buildReadmeSection1Excerpt(section: string): string {
     "local-first",
     "policy",
     "authority",
-    "non-goal",
+    "boundaries",
   ], 450);
 }
 

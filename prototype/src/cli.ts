@@ -308,6 +308,10 @@ export async function runExec(
       const output = createTurnOutputHandlers(config, io);
       const handlers = {
         onDelta: output.onDelta,
+        onEvent: (event: Record<string, unknown>) => {
+          const line = formatRuntimeEvent(event);
+          if (line !== null) io.err(line);
+        },
         onApproval,
       };
       const result = config.unix
@@ -358,6 +362,10 @@ export async function runRepl(
         const output = createTurnOutputHandlers(config, io);
         const handlers = {
           onDelta: output.onDelta,
+          onEvent: (event: Record<string, unknown>) => {
+            const line = formatRuntimeEvent(event);
+            if (line !== null) io.err(line);
+          },
           onApproval,
         };
         const body = buildTurnBody(prompt, config, sessionId);
@@ -484,6 +492,36 @@ export async function promptMidTurnApproval(
 /** @deprecated Use promptMidTurnApproval — kept as an alias for existing tests. */
 export const promptToolApproval = promptMidTurnApproval;
 
+export function formatRuntimeEvent(
+  event: Record<string, unknown>,
+): string | null {
+  if (event.type === "toolStepStarted") {
+    const step = typeof event.step === "number" ? event.step : "?";
+    const count = typeof event.toolCallCount === "number"
+      ? event.toolCallCount
+      : "?";
+    return `tool: step ${step} running ${count} call(s)`;
+  }
+  if (event.type === "toolCallStarted") {
+    const commandId = typeof event.commandId === "string"
+      ? event.commandId
+      : "tool";
+    return `tool: ${commandId} started`;
+  }
+  if (event.type === "toolCallCompleted") {
+    const commandId = typeof event.commandId === "string"
+      ? event.commandId
+      : "tool";
+    const duration = typeof event.durationMs === "number"
+      ? ` (${event.durationMs}ms)`
+      : "";
+    return `tool: ${commandId} ${
+      event.isError === true ? "failed" : "finished"
+    }${duration}`;
+  }
+  return null;
+}
+
 function formatApprovalArgs(args: unknown): string {
   if (typeof args !== "object" || args === null) return `   ${String(args)}`;
   const lines: string[] = [];
@@ -521,7 +559,9 @@ export async function fetchModelSlugs(
       };
       const slugs = models
         .map((m) => m.slug)
-        .filter((slug): slug is string => typeof slug === "string" && slug.length > 0);
+        .filter((slug): slug is string =>
+          typeof slug === "string" && slug.length > 0
+        );
       return { slugs, models };
     } finally {
       client.close();

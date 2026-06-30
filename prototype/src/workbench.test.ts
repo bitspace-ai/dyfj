@@ -562,6 +562,32 @@ describe("buildPaidEscalationPreflightBanner", () => {
   });
 });
 
+describe("paid escalation preflight", () => {
+  test("declining paid inference aborts before any provider call", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 2;
+    runtimeMocks.model.costInput = 15;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        confirmPaidEscalation: async () => ({
+          decision: "deny" as const,
+          reason: "operator declined",
+        }),
+      })).rejects.toThrow("Paid inference consent declined");
+      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+});
+
 describe("promptPaidEscalationTty (consent verdict)", () => {
   test("escalates instead of prompting in a non-interactive session", async () => {
     // The test process has no TTY: the CLI driver must escalate (defer to an
@@ -1040,7 +1066,7 @@ describe("runWorkbenchRuntime observer events", () => {
     runtimeMocks.model.costInput = 15;
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      const result = await runWorkbenchRuntime({
+      await expect(runWorkbenchRuntime({
         mode: "turn",
         prompt: "explore",
         routingOptions: {},
@@ -1050,9 +1076,8 @@ describe("runWorkbenchRuntime observer events", () => {
           decision: "deny" as const,
           reason: "too much",
         }),
-      });
+      })).rejects.toThrow("Budget ceiling confirmation declined");
       expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
-      expect(result.text).toBe("");
     } finally {
       (runtimeMocks.model as { tier: number }).tier = prevTier;
       runtimeMocks.model.costInput = prevCost;

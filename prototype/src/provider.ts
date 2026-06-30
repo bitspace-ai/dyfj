@@ -87,7 +87,7 @@ export class WorkbenchModelNotFoundError extends Error {
 
 export class HostedInferenceRequiresProviderError extends Error {
   constructor(public readonly slug: string) {
-    super(`Hosted inference provider is not implemented yet: ${slug}`);
+    super(`Unsupported hosted inference provider: ${slug}`);
     this.name = "HostedInferenceRequiresProviderError";
   }
 }
@@ -1156,8 +1156,8 @@ async function readAnthropicMessagesStream(
 // ─── Google Generative AI (Gemini) adapter ───────────────────────────────────
 // Gemini's wire format is its own: model in the URL path, x-goog-api-key
 // header, contents/systemInstruction/generationConfig request, and
-// candidates[].content.parts[].text + usageMetadata response. Tool calling
-// uses a different shape and is deferred; Gemini turns are text/JSON only.
+// candidates[].content.parts[].text + usageMetadata response. This adapter
+// currently serves text/JSON turns.
 
 export interface GeminiStreamEvent {
   done: boolean;

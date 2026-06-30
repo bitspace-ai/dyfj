@@ -18,9 +18,8 @@
 --
 -- Tier semantics unchanged: 0 local / 1 API light / 2 API heavy.
 
--- ── Deactivate Gemini rows (no adapter yet; were selectable-but-erroring) ─────
--- The google-generative-ai adapter is deferred to a follow-up migration. Until it
--- ships, hide these so the picker does not offer a dead option.
+-- ── Deactivate Gemini rows until native routing owns them ────────────────────
+-- Keep the picker aligned with provider adapters that can execute a turn.
 
 UPDATE models SET active = FALSE
   WHERE slug IN ('gemini-2.5-flash', 'gemini-2.5-pro');

@@ -81,6 +81,112 @@ describe("serveWorkbenchUnix read methods", () => {
     });
   });
 
+  test("runtime/status returns the local transport posture", async () => {
+    const client = await connectClient(
+      await startServer({
+        ...fakes,
+        engineConfig: {
+          defaultCompanionModel: "local-x",
+          permissionLevel: "operator",
+          approvePaidDefault: false,
+          defaultSessionBudgetUsd: 2,
+          defaultPerCallBudgetUsd: 0.2,
+        },
+      }),
+    );
+    expect(await client.request("runtime/status")).toMatchObject({
+      runtime: {
+        transport: "uds",
+        clearance: "loopback",
+        defaultCompanionModel: "local-x",
+        permissionLevel: "operator",
+        approvePaidDefault: false,
+        models: { total: 1 },
+      },
+    });
+  });
+
+  test("runtime/status exposes method catalog metadata", async () => {
+    const client = await connectClient(await startServer(fakes));
+    expect(await client.request("runtime/status")).toMatchObject({
+      runtime: {
+        methods: [
+          "runtime/status",
+          "surface/snapshot",
+          "models/list",
+          "sessions/list",
+          "events/query",
+          "tools/list",
+          "tools/inspect",
+          "turn",
+        ],
+        methodCatalog: [
+          { id: "runtime/status", namespace: "runtime", kind: "read" },
+          { id: "surface/snapshot", namespace: "surface", kind: "read" },
+          { id: "models/list", namespace: "models", kind: "read" },
+          { id: "sessions/list", namespace: "sessions", kind: "read" },
+          { id: "events/query", namespace: "events", kind: "read" },
+          { id: "tools/list", namespace: "tools", kind: "read" },
+          { id: "tools/inspect", namespace: "tools", kind: "read" },
+          { id: "turn", namespace: "turn", kind: "interactive" },
+        ],
+      },
+    });
+  });
+
+  test("tools/list exposes a catalog without executing tools", async () => {
+    const client = await connectClient(await startServer(fakes));
+    const result = anyVal(
+      await client.request("tools/list", { workspace: "/workspace" }),
+    );
+    expect(result.tools.map((tool: { id: string }) => tool.id)).toEqual([
+      "memory.read",
+      "read_file",
+      "list_files",
+      "write_file",
+      "edit_file",
+      "bash",
+    ]);
+    expect(result.tools.find((tool: { id: string }) => tool.id === "bash"))
+      .toMatchObject({
+        permission: { filesystem: "write", network: "external" },
+        redactResult: true,
+      });
+  });
+
+  test("tools/inspect returns one tool schema", async () => {
+    const client = await connectClient(await startServer(fakes));
+    expect(
+      await client.request("tools/inspect", {
+        workspace: "/workspace",
+        commandId: "read_file",
+      }),
+    ).toMatchObject({
+      tool: {
+        id: "read_file",
+        inputSchema: { required: ["path"] },
+        permission: { filesystem: "read" },
+      },
+    });
+  });
+
+  test("surface/snapshot bundles status, models, sessions, and tools", async () => {
+    const client = await connectClient(await startServer(fakes));
+    const result = anyVal(
+      await client.request("surface/snapshot", {
+        project: "dyfj",
+        workspace: "/workspace",
+      }),
+    );
+    expect(result.generatedAt).toEqual(expect.any(String));
+    expect(result.runtime).toMatchObject({ transport: "uds" });
+    expect(result.models).toEqual([{ slug: "local-x" }]);
+    expect(result.projects).toEqual([{ project: "dyfj", sessions: [] }]);
+    expect(result.tools.map((tool: { id: string }) => tool.id)).toContain(
+      "read_file",
+    );
+  });
+
   test("events/query without a sessionId -> invalidParams", async () => {
     const client = await connectClient(await startServer(fakes));
     await expect(client.request("events/query", {})).rejects.toMatchObject({

@@ -2,10 +2,11 @@ import { describe, expect, test } from "vitest";
 import {
   bufferedTurn,
   buildTurnBody,
-  createTurnOutputHandlers,
   type CliConfig,
   type ConnectFn,
+  createTurnOutputHandlers,
   formatReceipt,
+  formatRuntimeEvent,
   friendlyError,
   handleReplModelCommand,
   type Io,
@@ -403,6 +404,46 @@ describe("runExec", () => {
     expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
   });
 
+  test("surfaces tool progress events to stderr", async () => {
+    const { fn } = recordingFetch([
+      sseResponse([
+        {
+          t: "event",
+          event: {
+            type: "toolStepStarted",
+            step: 1,
+            toolCallCount: 1,
+          },
+        },
+        {
+          t: "event",
+          event: {
+            type: "toolCallStarted",
+            commandId: "bash",
+            callId: "call-1",
+          },
+        },
+        {
+          t: "event",
+          event: {
+            type: "toolCallCompleted",
+            commandId: "bash",
+            callId: "call-1",
+            isError: false,
+            durationMs: 85,
+          },
+        },
+        { t: "done", result: result() },
+      ]),
+    ]);
+    const { io, stderr } = fakeIo();
+    const code = await runExec("inspect", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    expect(stderr).toContain("tool: step 1 running 1 call(s)");
+    expect(stderr).toContain("tool: bash started");
+    expect(stderr).toContain("tool: bash finished (85ms)");
+  });
+
   test("renders streamed markdown without raw markers", async () => {
     const { fn } = recordingFetch([
       sseResponse([
@@ -447,6 +488,12 @@ describe("runExec", () => {
     const code = await runExec("x", cfg(), io, false, fn);
     expect(code).toBe(1);
     expect(stderr.join("\n")).toContain("not reachable");
+  });
+});
+
+describe("formatRuntimeEvent", () => {
+  test("ignores routine non-tool lifecycle events", () => {
+    expect(formatRuntimeEvent({ type: "modelSelected" })).toBeNull();
   });
 });
 
@@ -796,7 +843,9 @@ describe("REPL /model", () => {
     return () =>
       Promise.resolve({
         request: (method: string) =>
-          method === "models/list" ? Promise.resolve({ models }) : Promise.resolve({}),
+          method === "models/list"
+            ? Promise.resolve({ models })
+            : Promise.resolve({}),
         close: () => {},
       });
   }

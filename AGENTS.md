@@ -1,6 +1,6 @@
 # AGENTS.md
 
-If you're an agent picking up work in this repo: read **`README.md`**, especially **Section 1 (Decisions)**. That section is authoritative - non-goals, the five Layer 0 stances, the Goal 1 done-line, the Day-1 inter-agent-contracts posture, and the authority/policy rules.
+If you're an agent picking up work in this repo: read **`README.md`**, especially **Section 1 (Decisions)**. That section is authoritative - project boundaries, the five Layer 0 stances, the Goal 1 done-line, the Day-1 inter-agent-contracts posture, and the authority/policy rules.
 
 If `Section 1` and prose elsewhere in the README contradict, `Section 1` wins.
 
@@ -38,7 +38,5 @@ Documentation is part of the change, not a follow-up. A commit that changes beha
 ## Issue Tracking
 
 This project uses **Linear** for issue tracking (team Bitspace Applied Intelligence, `BIT-###`; DYFJ Workbench and related projects). Use the Linear MCP/integration to find ready work, claim, record progress, and close issues; for non-trivial work, create or claim a Linear issue before editing.
-
-Beads (`bd`) is retired (2026-06-20); historical Beads issues were migrated to Linear and are no longer tracked in this repo.
 
 That's it. Read the README.

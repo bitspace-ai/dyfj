@@ -1,21 +1,14 @@
--- DYFJ — Shake off vestigial schema, 2026-06-14
+-- DYFJ — Reconcile schema around live runtime surfaces, 2026-06-14
 --
--- Schema reconciliation pass. Three things here were dead to the live Workbench
--- loop (DECISION-1: the Workbench IS the loop) and are removed:
+-- Schema reconciliation pass. The live Workbench loop keeps the surfaces it
+-- consumes directly:
 --
---   reflections (004)  — consumed only by the standalone MCP memory-server's
---                        write_reflection tool, never by the runtime. The
---                        effort-tier/self-critique framing is superseded in
---                        spirit by the work-shaped-evals direction (measure
---                        quality x cost x latency per task class), not this table.
---   skills (009)       — consumed only by the MCP server's invoke_skill/list_skills
---                        tools. "Prompt template stored in Dolt" is now redundant
---                        with the live prompts table (017), and it is NOT the
---                        agent-loop tooling (that is file/bash, filesystem skills).
---   capability_* events (010) — the bilateral-discovery event scaffolding was a
---                        Day-1 routing-registry bet emitted by nothing. Per 010's
---                        own note, a registry schema can be re-added as a clean
---                        migration if/when the routing-registry work is real.
+--   reflections (004)  — replaced by the work-shaped-evals direction: measure
+--                        quality x cost x latency per task class.
+--   skills (009)       — prompt templates live in the prompts table (017);
+--                        agent-loop tooling is represented by concrete tools.
+--   capability_* events (010) — discovery behavior should be shaped by concrete
+--                        registry producers and consumers.
 --
 -- The corresponding MCP tools (write_reflection, invoke_skill, list_skills) and
 -- their client methods are removed in the same change. memories and sessions are
@@ -24,7 +17,7 @@
 DROP TABLE IF EXISTS reflections;
 DROP TABLE IF EXISTS skills;
 
--- Revert the capability/discovery scaffolding added in 010_events_capability.sql.
+-- Remove the capability/discovery fields added in 010_events_capability.sql.
 -- Drop the indexes before the columns they cover.
 ALTER TABLE events DROP INDEX idx_capability_name;
 ALTER TABLE events DROP INDEX idx_capability_lease;

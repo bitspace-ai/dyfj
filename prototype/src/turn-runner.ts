@@ -191,12 +191,11 @@ export interface ResolvedTurn {
  * resume sessionId and paid opt-in. Transport-neutral: the HTTP handler parses
  * the Request body, the UDS handler passes its JSON-RPC params — both call this.
  *
- * Deliberately does NOT read the session's prior events: transcript
- * reconstruction is deferred into the per-session lock (see `buildResume` /
- * `executeTurn`) so a resumed turn reads the latest committed events only after
- * all earlier same-session turns have appended theirs. Reading here (before the
- * lock) let a second same-session turn build a stale transcript — a TOCTOU on
- * the audit log (review finding).
+ * Transcript reconstruction belongs inside the per-session lock (see
+ * `buildResume` / `executeTurn`) so a resumed turn reads the latest committed
+ * events only after all earlier same-session turns have appended theirs.
+ * Reading before the lock let a second same-session turn build a stale
+ * transcript — a TOCTOU on the audit log (review finding).
  */
 export interface ResolveTurnOptions {
   /** Standing paid posture when the request omits approvePaidInference (loopback only). */

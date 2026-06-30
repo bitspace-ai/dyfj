@@ -205,6 +205,28 @@ export type WorkbenchRuntimeEvent =
     outputCount: number;
     totalMs?: number;
   }
+  | {
+    type: "toolStepStarted";
+    sessionId: string;
+    step: number;
+    toolCallCount: number;
+  }
+  | {
+    type: "toolCallStarted";
+    sessionId: string;
+    commandId: string;
+    callId: string;
+  }
+  | {
+    type: "toolCallCompleted";
+    sessionId: string;
+    commandId: string;
+    callId: string;
+    isError: boolean;
+    durationMs: number;
+    errorName?: string;
+    errorMessage?: string;
+  }
   | { type: "turnCompleted"; sessionId: string; traceId: string }
   | {
     type: "turnFailed";
@@ -1304,7 +1326,9 @@ export async function runWorkbenchRuntime(
         : null;
       registerCoreCommands(commandRegistry, {
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
-        searchMemory: recallConfig ? buildMemorySearch(recallConfig) : undefined,
+        searchMemory: recallConfig
+          ? buildMemorySearch(recallConfig)
+          : undefined,
         // Read-only workspace file tools, scoped to the resolved root.
         workspaceRoot,
       });
@@ -1538,6 +1562,12 @@ export async function runWorkbenchRuntime(
       console.log(
         `Step ${toolSteps}: running ${turn.toolCalls.length} tool call(s)...`,
       );
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "toolStepStarted",
+        sessionId,
+        step: toolSteps,
+        toolCallCount: turn.toolCalls.length,
+      });
       const stepSignatures = turn.toolCalls.map(
         (toolCall) => `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`,
       );
@@ -1546,26 +1576,62 @@ export async function runWorkbenchRuntime(
       const requestedToolCalls = turn.toolCalls;
       const stepResults: ToolResultSummary[] = [];
       for (const toolCall of requestedToolCalls) {
-        const commandResult = await invokeCommandWithEvent(commandRegistry, {
+        const toolStartedAt = Date.now();
+        await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+          type: "toolCallStarted",
+          sessionId,
           commandId: toolCall.name,
           callId: toolCall.id,
-          caller: {
-            principalId: "workbench",
-            principalType: "agent",
-          },
-          arguments: toolCall.arguments,
-        }, {
-          sessionId,
-          traceId,
-          // Agent-loop tool calls (call + result) are the conversation's audit
-          // backbone — integrity-required in every mode.
-          writeEvent: (event) => writeIntegrity(() => writeEvent(event)),
-        }, runtimeInput.confirmToolApproval, {
-          // Operator permission profile: on a loopback turn with permissionLevel
-          // "operator", contained mutating tools auto-approve instead of prompting.
-          permissionLevel: permissionLevel ?? "strict",
-          loopback: authContext.transport === "loopback",
         });
+        let commandResult: Awaited<ReturnType<typeof invokeCommandWithEvent>>;
+        try {
+          commandResult = await invokeCommandWithEvent(
+            commandRegistry,
+            {
+              commandId: toolCall.name,
+              callId: toolCall.id,
+              caller: {
+                principalId: "workbench",
+                principalType: "agent",
+              },
+              arguments: toolCall.arguments,
+            },
+            {
+              sessionId,
+              traceId,
+              // Agent-loop tool calls (call + result) are the conversation's audit
+              // backbone — integrity-required in every mode.
+              writeEvent: (event) => writeIntegrity(() => writeEvent(event)),
+            },
+            runtimeInput.confirmToolApproval,
+            {
+              // Operator permission profile: on a loopback turn with permissionLevel
+              // "operator", contained mutating tools auto-approve instead of prompting.
+              permissionLevel: permissionLevel ?? "strict",
+              loopback: authContext.transport === "loopback",
+            },
+          );
+          await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+            type: "toolCallCompleted",
+            sessionId,
+            commandId: toolCall.name,
+            callId: toolCall.id,
+            isError: commandResult.isError,
+            durationMs: Date.now() - toolStartedAt,
+          });
+        } catch (err) {
+          await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+            type: "toolCallCompleted",
+            sessionId,
+            commandId: toolCall.name,
+            callId: toolCall.id,
+            isError: true,
+            durationMs: Date.now() - toolStartedAt,
+            errorName: err instanceof Error ? err.name : undefined,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        }
         stepResults.push({
           commandId: toolCall.name,
           callId: toolCall.id,
@@ -1733,6 +1799,7 @@ export async function runWorkbenchRuntime(
           ? `\nPaid inference escalation required - no model call made${detail}.`
           : `\nPaid inference declined - no model call made${detail}.`,
       );
+      turnError = err;
     } else if (name === "BudgetExceededError") {
       await writeMaybe(() =>
         writeEvent({
@@ -1762,6 +1829,7 @@ export async function runWorkbenchRuntime(
           detail ? `: ${detail}` : ""
         } — the over-budget call was not made.`,
       );
+      turnError = err;
     } else {
       await writeMaybe(() =>
         writeEvent({

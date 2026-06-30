@@ -1,9 +1,8 @@
 -- DYFJ — Add capability/discovery events
 --
--- Day-1 schema commitment from README §10 and §1 inter-agent contracts:
--- the event log carries capability/discovery metadata structurally, so the
--- runtime registry (deferred Day-1) can be derived from the log later
--- without retrofitting.
+-- Capability/discovery event experiment from README §10 and §1 inter-agent
+-- contracts: the event log can carry capability metadata structurally so
+-- registry behavior has an append-only audit trail.
 --
 -- Four new event_type values represent the bilateral-discovery speech acts
 -- (Jini-shaped — lookup, leasing, capability/need matching):

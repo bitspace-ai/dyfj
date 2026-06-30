@@ -1,8 +1,8 @@
 # The Events Table as Shared Substrate
 
-Design note. *How DYFJ's cross-cutting concerns — observability, auth/authz, capability discovery, cost — share one append-only log instead of getting their own services.*
+Design note. *How DYFJ's cross-cutting concerns — observability, auth/authz, cost, and future discovery views — share one append-only log.*
 
-> **Update (2026-06-14):** the capability/discovery columns and `capability_*` event types this note describes were removed in `schema/018_drop_vestigial.sql` — they shipped with no producer or consumer (the Rust `capability_round_trip` test was their only exerciser). The *design* below still stands as the intended shape if/when capability discovery is built; treat the concrete schema specifics (columns present, round-trip proof) as deferred, to be re-added as a clean migration when there are real consumers.
+> **Current schema note (2026-06-14):** `schema/018_drop_vestigial.sql` reconciles the live event schema around runtime-used fields. Capability discovery remains a design lens in this note; its concrete schema should be shaped by real producers and consumers.
 
 ---
 
@@ -46,7 +46,7 @@ Same table. Different lenses. Different indexes carry the queries each lens need
 |---|---|---|---|
 | **Observability** | `trace_id`, `span_id`, `parent_span_id`, `created_at`, `duration_ms` | Distributed traces, span tree visualizations, latency profiles | Schema present, populated by callers, no exporter built |
 | **Auditability** | `principal_id`, `principal_type`, `action`, `resource`, `authz_basis` | "Who did what when on what authority" | Schema present, populated by callers, no audit UI built |
-| **Capability discovery** | `event_type IN (capability_*)` + 5 `capability_*` columns (**removed in `018`**) | "Who currently provides X / who needs X / what's bound to what" | **Removed in `018`** — was schema-only, never wired to a producer or consumer |
+| **Capability discovery** | Future capability/discovery event fields | "Who currently provides X / who needs X / what's bound to what" | Design lens; concrete schema should follow real producers and consumers |
 | **Cost & budget** | `model_id`, `provider`, `tokens_*`, `cost_total` | Per-session/per-principal/per-model spend rollups, budget thresholds | Partial — schema present, Workbench provider path populates core events, no consolidated surface |
 
 Notice what's the same in every row of this table: *schema in the data layer, populated by producers, projected by consumers, no separate store*.
@@ -59,7 +59,7 @@ Notice what's different: each concern is at a different stage of having actual p
 
 This is the concern the capability/discovery columns in the schema serve, and the one I had the most uncertainty about. Walking it through three times — today, tomorrow, later — makes the picture concrete.
 
-> The `capability_*` columns and event types described in this section were removed in `schema/018_drop_vestigial.sql` (2026-06-14): they shipped schema-only and never gained a producer or consumer. The walkthrough below is preserved as the *intended shape* for if/when capability discovery is actually built and the schema is re-added as a clean migration — read its present tense as describing that design, not the current schema.
+> The walkthrough below describes the intended capability-discovery shape. The live schema should continue to track runtime-used fields until a real discovery consumer shapes the concrete migration.
 
 ### Today (the shape exists; behavior does not)
 
@@ -71,11 +71,9 @@ The schema supports four event types:
 
 Plus five typed columns: `capability_name`, `capability_version`, `capability_lease_id`, `capability_lease_expires`, `capability_metadata`.
 
-(In the original tracer bullet, the Rust core's `events::write` / `events::read_by_id` bound these fields and a `capability_round_trip.rs` integration test proved they survived a Dolt round-trip — all removed in `018`.)
+That's it. Today this section describes design shape; runtime behavior should be driven by the first real discovery consumer.
 
-That's it. Nothing announces. Nothing discovers. No matcher. No registry process. The capability_provide row from the test is sitting in Dolt right now, expired, unread. Today this is schema shape only, not runtime behavior.
-
-This is the correct state of the world. Day-1 schema is committed because it's expensive to retrofit. Behavior is not committed because it's cheap to add when there's a real consumer.
+This is the correct state of the world. Day-1 schema direction is cheap-now-expensive-later substrate work; behavior should land when there is a real consumer.
 
 ### Tomorrow (a thin `register()` / `lookup()` stub)
 
@@ -172,7 +170,7 @@ The anti-pattern is treating each cross-cutting concern as a service that needs 
 
 DYFJ rejects this for one reason: **the events table is already the integration point.** Every concern is describing the same actions from a different angle. If you give each concern its own store, you have to integrate them. If they all share one store, integration is the schema.
 
-This is also why `register()` and `lookup()` are deferred until there's a consumer. A registry built without consumers is a registry built on guesses. The shape we'd lock in — sync vs. async, push vs. pull, eager vs. lazy match — would all be guesswork. The right forcing function is a real agent, doing real work, hitting a real "I need to discover X" moment. Then the API can be shaped by observed use.
+This is also why `register()` and `lookup()` should be shaped by the first real consumer. A registry API earns its shape from real agent work and observed lookup needs, not from guesses about sync vs. async, push vs. pull, or eager vs. lazy matching.
 
 The Jini lineage matters here. Sun's Jini got bilateral capability discovery right thirty years ago: lookup, leasing, capability/need matching as substrate primitives. DYFJ borrows the *shape of the question* (per the README's Influences section), not the protocol. The shape is: one substrate, many participants, all reads and writes go through it. Not many services with their own state.
 
@@ -211,9 +209,9 @@ It's also why the daily-driver discipline matters. By using DYFJ end-to-end, rea
 
 - README §1 — the Layer 0 stances, especially "data-layer schema is canonical" and "swappable with strong defaults."
 - README §6 (Architecture — tiered primitives) — Layer 1 names "Inter-Agent Contracts & Capability Discovery" as a subsystem; this design note is the elaboration.
-- README §10 — Near-term commitments, including the deferred `register()` / `lookup()` stub.
+- README §10 — Near-term commitments, including the `register()` / `lookup()` seam.
 - `schema/001_events.sql` — the canonical event row.
-- `schema/010_events_capability.sql` — the capability/discovery columns and the four event-type extensions (reverted by `schema/018_drop_vestigial.sql`).
+- `schema/010_events_capability.sql` — historical capability/discovery experiment.
 - `notes/tracer-bullet.md` — the previous design note (substrate plumbing through Rust).
 - `core/src/events.rs` — the producer side of the API.
-- `schema/018_drop_vestigial.sql` — removed the capability columns and the `capability_round_trip.rs` test as unbuilt.
+- `schema/018_drop_vestigial.sql` — schema reconciliation around runtime-used event fields.

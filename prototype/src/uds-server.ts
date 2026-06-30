@@ -34,7 +34,50 @@ import {
   type TurnRequestBody,
   type WorkbenchHttpRuntime,
 } from "./turn-runner";
-import type { ToolApprovalVerdict } from "./commands";
+import {
+  type CommandDefinition,
+  createCommandRegistry,
+  registerCoreCommands,
+  type ToolApprovalVerdict,
+} from "./commands";
+
+export interface WorkbenchToolSummary {
+  id: string;
+  title: string;
+  description: string;
+  inputSchema: CommandDefinition["inputSchema"];
+  permission: CommandDefinition["permission"];
+  redactResult: boolean;
+}
+
+export type WorkbenchMethodKind = "read" | "interactive";
+
+export interface WorkbenchMethodSummary {
+  id: string;
+  namespace: string;
+  kind: WorkbenchMethodKind;
+}
+
+export interface WorkbenchRuntimeStatus {
+  transport: "uds";
+  clearance: "loopback";
+  methods: string[];
+  methodCatalog: WorkbenchMethodSummary[];
+  defaultCompanionModel: string | null;
+  permissionLevel: PermissionLevel;
+  approvePaidDefault: boolean;
+  defaultSessionBudgetUsd: number;
+  defaultPerCallBudgetUsd: number;
+  models: { total: number; local: number; hosted: number };
+}
+
+export interface WorkbenchSurfaceSnapshot {
+  generatedAt: string;
+  runtime: WorkbenchRuntimeStatus;
+  models: WorkbenchModel[];
+  projects: WorkbenchProjectSessions[];
+  tools: WorkbenchToolSummary[];
+}
 
 export interface WorkbenchUnixServerOptions {
   runRuntime?: WorkbenchHttpRuntime;
@@ -77,9 +120,70 @@ function asRecord(params: unknown): Record<string, unknown> {
     : {};
 }
 
-// The read-only method surface, reusing the same runtime functions the REST
+const METHOD_CATALOG = [
+  { id: "runtime/status", namespace: "runtime", kind: "read" },
+  { id: "surface/snapshot", namespace: "surface", kind: "read" },
+  { id: "models/list", namespace: "models", kind: "read" },
+  { id: "sessions/list", namespace: "sessions", kind: "read" },
+  { id: "events/query", namespace: "events", kind: "read" },
+  { id: "tools/list", namespace: "tools", kind: "read" },
+  { id: "tools/inspect", namespace: "tools", kind: "read" },
+  { id: "turn", namespace: "turn", kind: "interactive" },
+] as const satisfies readonly WorkbenchMethodSummary[];
+
+const METHOD_IDS = METHOD_CATALOG.map((method) => method.id);
+
+function runtimeStatus(
+  options: WorkbenchUnixServerOptions,
+  models: WorkbenchModel[],
+): WorkbenchRuntimeStatus {
+  return {
+    transport: "uds",
+    clearance: "loopback",
+    methods: [...METHOD_IDS],
+    methodCatalog: METHOD_CATALOG.map((method) => ({ ...method })),
+    defaultCompanionModel: options.engineConfig?.defaultCompanionModel ??
+      options.defaultCompanionModel ??
+      null,
+    permissionLevel: options.engineConfig?.permissionLevel ??
+      options.permissionLevel ??
+      "strict",
+    approvePaidDefault: options.engineConfig?.approvePaidDefault ?? false,
+    defaultSessionBudgetUsd: options.engineConfig?.defaultSessionBudgetUsd ?? 1,
+    defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
+      0.1,
+    models: {
+      total: models.length,
+      local: models.filter((model) => model.tier === 0).length,
+      hosted: models.filter((model) => model.tier > 0).length,
+    },
+  };
+}
+
+function projectCommand(command: CommandDefinition): WorkbenchToolSummary {
+  return {
+    id: command.id,
+    title: command.title,
+    description: command.description,
+    inputSchema: command.inputSchema,
+    permission: command.permission,
+    redactResult: command.redactResult === true,
+  };
+}
+
+function buildToolCatalog(params: unknown): WorkbenchToolSummary[] {
+  const record = asRecord(params);
+  const workspaceRoot = typeof record.workspace === "string"
+    ? record.workspace
+    : undefined;
+  const registry = createCommandRegistry();
+  registerCoreCommands(registry, { workspaceRoot });
+  return registry.list().map(projectCommand);
+}
+
+// The cataloged method surface, reusing the same runtime functions the REST
 // endpoints use so the two transports stay in parity.
-export function buildReadHandlers(
+export function buildWorkbenchHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
   const loadModels = options.loadModels ?? loadPickerModels;
@@ -88,7 +192,53 @@ export function buildReadHandlers(
     fetchWorkbenchSessionEvents;
 
   return {
+    "runtime/status": async () => {
+      const models = await loadModels();
+      return { runtime: runtimeStatus(options, models) };
+    },
+
+    "surface/snapshot": async (params) => {
+      const record = asRecord(params);
+      const project = record.project;
+      const [models, projects] = await Promise.all([
+        loadModels(),
+        listSessions({
+          project: typeof project === "string" ? project : undefined,
+        }),
+      ]);
+      return {
+        generatedAt: new Date().toISOString(),
+        runtime: runtimeStatus(options, models),
+        models,
+        projects,
+        tools: buildToolCatalog(params),
+      } satisfies WorkbenchSurfaceSnapshot;
+    },
+
     "models/list": async () => ({ models: await loadModels() }),
+
+    "tools/list": async (params) => ({ tools: buildToolCatalog(params) }),
+
+    "tools/inspect": async (params) => {
+      const record = asRecord(params);
+      const commandId = record.commandId ?? record.id;
+      if (typeof commandId !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "tools/inspect requires a string commandId",
+        );
+      }
+      const tool = buildToolCatalog(params).find((candidate) =>
+        candidate.id === commandId
+      );
+      if (tool === undefined) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          `unknown tool: ${commandId}`,
+        );
+      }
+      return { tool };
+    },
 
     "sessions/list": async (params) => {
       const project = asRecord(params).project;
@@ -277,7 +427,7 @@ export function serveWorkbenchUnix(
   clearStaleSocket(socketPath);
 
   const handlers: RpcHandlers = {
-    ...buildReadHandlers(options),
+    ...buildWorkbenchHandlers(options),
     ...buildTurnHandlers(options),
   };
   const listener = Deno.listen({ transport: "unix", path: socketPath });

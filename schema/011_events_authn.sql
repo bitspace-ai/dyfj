@@ -10,10 +10,10 @@
 -- identity field and does not add an authn_context JSON blob; structurally
 -- important audit fields stay queryable as SQL primitives.
 --
--- Credential material is out of scope by design. Do not store tokens, cookies,
--- API keys, raw OAuth claims, raw JWTs, decoded credential bodies, private key
--- material, or other credential contents in these columns. Use stable
--- references only:
+-- Credential material stays outside event rows. Store stable references only;
+-- keep tokens, cookies, API keys, raw OAuth claims, raw JWTs, decoded
+-- credential bodies, private key material, and other credential contents out of
+-- these columns:
 --
 --   authn_issuer_ref   = identity issuer reference (local_os, github, google,
 --                       kubernetes, runtime, workshop, etc.)

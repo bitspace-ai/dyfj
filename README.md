@@ -2,17 +2,17 @@
 
 A local-first AI workbench and automation framework built for optionality — you choose where each task runs, local or hosted, with cost visible before work runs. Modular, vendor-loose, and explicit about model cost.
 
-This README is the *operating context* for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
+This README is the _operating context_ for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
 ## Repo layout
 
 - `core/` - Rust substrate. Contains the first schema tracer bullet: a small event read/write library plus a demo binary that round-trips an event through Dolt. Where stabilized components live.
-- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI/shell, local HTTP veneer, the JSON-RPC/UDS transport seam, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or get retired here.
+- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI/shell, local HTTP veneer, the JSON-RPC/UDS transport seam, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or stay here as fast-moving prototype code.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `CHANGELOG.md` - dated change tracking in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 - `LICENSE` - MIT.
 
-The split between `core/` and `prototype/` is not a phase boundary. It's a permanent two-tier structure where the Rust line is a moving boundary that advances downward as components stabilize. See Layer 0 stance #3 below.
+The split between `core/` and `prototype/` is a permanent two-tier structure where the Rust line advances downward as components stabilize. See Layer 0 stance #3 below.
 
 ## Status
 
@@ -24,8 +24,8 @@ Dated change tracking lives in [CHANGELOG.md](CHANGELOG.md).
 
 Two audiences, one source of truth.
 
-- **An agent picking up work on DYFJ** should be able to read Section 1–Section 4 in about 60 seconds and know the operating rules: what's decided, what's out of scope, what "done" looks like, which constraints are settled, and how the work itself happens. Stop reading there unless you need the why.
-- **A human reader (including future maintainers)** should read the whole document. Section 6 onward carries the rationale and goal-traceability notes - the *why* behind Section 1–Section 4.
+- **An agent picking up work on DYFJ** should be able to read Section 1–Section 4 in about 60 seconds and know the operating rules: what's decided, what "done" looks like, which constraints are settled, and how the work itself happens. Stop reading there unless you need the why.
+- **A human reader (including future maintainers)** should read the whole document. Section 6 onward carries the rationale and goal-traceability notes - the _why_ behind Section 1–Section 4.
 
 If something in Section 1–Section 4 contradicts prose later in the doc, Section 1–Section 4 wins. The front matter is authoritative; the rationale exists to explain it, not amend it.
 
@@ -33,14 +33,14 @@ If something in Section 1–Section 4 contradicts prose later in the doc, Sectio
 
 ## 1. Decisions
 
-### Non-goals
+### Boundaries
 
-DYFJ is **not**:
+DYFJ starts as:
 
-- A hosted SaaS.
-- A multi-tenant platform.
-- A model-agnostic abstraction over every provider - only the ones actually in use, with strong defaults.
-- A hosted, self-serve system. Generalization is a future question, not a Day-1 constraint.
+- A local-first, operator-owned workbench and automation substrate.
+- A single-operator system with a clear path to stronger multi-principal boundaries as real use demands them.
+- A provider-loose framework for the models and runtimes actually in use, with strong defaults instead of universal abstraction.
+- An OSS substrate first; hosted/self-serve generalization is a later product question.
 
 ### Layer 0 stances (operative everywhere)
 
@@ -50,18 +50,18 @@ All five apply from Day-1.
 2. **Local-first by default; paid inference is explicit escalation.** Inference, memory, and tools default to local execution. Calling out to a hosted model is a deliberate, logged decision - never the default path.
 3. **Rust for the autonomous core; TypeScript for prototyping.** The Rust line is a moving boundary that advances downward as components stabilize - Rust where its compile/build cycle does not interfere with active prototyping.
 4. **Data-layer schema is canonical.** Event and memory contracts live in Dolt DDL. TypeScript and Rust types are consumers of that schema, not sources of truth.
-5. **Cost visibility as a default, not an add-on.** Token spend, model selection, and budget posture are surfaced before the work runs and tracked while it runs. Cost is a *design* concern, not a billing concern.
+5. **Cost visibility as a default, not an add-on.** Token spend, model selection, and budget posture are surfaced before the work runs and tracked while it runs. Cost is a _design_ concern, not a billing concern.
 
 ### Goal done-line
 
-> *I am doing most of my daily work from the tool, with cost visibility up front from the beginning, with confidence I'm not ripping through obscene amounts of token burn.*
+> _I am doing most of my daily work from the tool, with cost visibility up front from the beginning, with confidence I'm not ripping through obscene amounts of token burn._
 
 Working-system criterion. Cost visibility is part of the done-line itself, not a deferrable enhancement.
 
 ### Inter-agent contracts - Day-1 posture
 
-- **Event schema is the inter-agent contract.** A capability/discovery column set was a Day-1 bet locked into the DDL, but it shipped with no producer or consumer and was removed in `schema/018_drop_vestigial.sql`; re-add it as a clean migration when the registry has real consumers. OTel and security fields remain structural.
-- **Runtime registry is interface-only Day-1.** `register()` and `lookup()` exist as a stubbed interface backed by static config. Real registration/leasing service deferred until there are actual consumers.
+- **Event schema is the inter-agent contract.** Runtime events carry the audit, trace, identity, and cost fields that agents and tools share. Discovery-specific schema should be shaped by real producers and consumers.
+- **Runtime registry is interface-only Day-1.** `register()` and `lookup()` exist as a stubbed interface backed by static config. The first real registration/leasing behavior should be driven by an observed consumer.
 
 ### Authority and policy
 
@@ -100,7 +100,7 @@ How the work actually happens, separate from what gets built.
 - [Deno](https://deno.com) 2.7+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [MLX-LM](https://github.com/ml-explore/mlx-lm) for the Apple silicon local default, or [Ollama](https://ollama.com) as a supported local fallback
-- *(Optional, for `core/`)* [`rustup`](https://rustup.rs/) - the toolchain pin in `core/rust-toolchain.toml` will install the right Rust automatically when you `cargo build` there.
+- _(Optional, for `core/`)_ [`rustup`](https://rustup.rs/) - the toolchain pin in `core/rust-toolchain.toml` will install the right Rust automatically when you `cargo build` there.
 
 ### Set up the prototype
 
@@ -219,7 +219,13 @@ deno task cli sessions --socket "$DYFJ_SOCKET"
 
 For a compiled daily-driver binary under Deno 2.9+, run `deno task compile-cli` in `prototype/` and put `dist/` on your `PATH`. The shipped `dist/dyfj` launcher execs the compiled binary on the default socket path and falls back to `deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path.
 
-The seam exposes `models/list`, `sessions/list`, `events/query`, and the streaming `turn` method (intermediate text deltas and runtime events arrive as `stream` notifications; the receipt is the result). The `dyfj` CLI drives turns over this seam (and over HTTP/SSE when `--server` is set), renders companion markdown line-by-line with ANSI styling (headers, emphasis, lists, code) while streaming, and handles the mid-turn approval round-trip on stderr; `--json` stays buffered/raw. TCP-over-Tailscale for remote reach is deferred.
+The seam exposes read methods for `runtime/status`, `surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`, and `tools/inspect`, plus the streaming `turn` method (intermediate text deltas and runtime events arrive as `stream` notifications; the receipt is the result). `runtime/status` returns both the simple method id list and grouped method catalog metadata for CLI/TUI/GUI surfaces. The `dyfj` CLI drives turns over this seam (and over HTTP/SSE when `--server` is set), renders companion markdown line-by-line with ANSI styling (headers, emphasis, lists, code) while streaming, and handles the mid-turn approval round-trip on stderr; `--json` stays buffered/raw. Remote reach can layer on the same contract through a tailnet transport.
+
+#### Active work coordination
+
+Workbench owns delegated agent coordination from inside the operator surface. The session coordination prototype keeps the underlying primitive small: coordination claims, launch packets, exit receipts, scope paths, heartbeats, stale-base warnings, deterministic path overlap, and registry/git drift checks. The normal command-line entrypoints remain `dyfj` for the CLI/TUI client and, eventually, `dyfj workbench` for the GUI.
+
+The coordination primitive is visibility-first and intended to make concurrent agent work observable before richer orchestration grows around it.
 
 Useful validation tasks:
 
@@ -287,7 +293,12 @@ The prototype exposes its memory substrate over MCP via `prototype/mcp/server.ts
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/deno",
-      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "args": [
+        "run",
+        "--allow-net=127.0.0.1:3306",
+        "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE",
+        "/path/to/dyfj/prototype/mcp/server.ts"
+      ]
     }
   }
 }
@@ -299,7 +310,7 @@ See `prototype/mcp/README.md` for per-client examples.
 
 ## 6. Architecture - tiered primitives
 
-The architectural surface, sorted by altitude. Section 1 already states the *decisions*; this section carries the *boxes on the diagram* and their rationale.
+The architectural surface, sorted by altitude. Section 1 already states the _decisions_; this section carries the _boxes on the diagram_ and their rationale.
 
 ### 6.1 Layer 0 - stances
 
@@ -317,7 +328,7 @@ Things that exist as boxes on a diagram.
 - **Workbench runtime boundary.** Shared single-turn runtime invoked by CLI/shell, the local HTTP/SSE veneer, and the JSON-RPC/UDS seam — every transport runs the identical turn through one shared core (`turn-runner`), not a per-transport copy. Presentation layers pass inputs and render results; the runtime owns model routing, command/tool execution, session/event writes, budget tracking, and receipt facts.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable, versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
-- **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per Section 1: schema carries the metadata Day-1; runtime registry is stubbed Day-1, deferred to real implementation later.
+- **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per Section 1: the shared runtime event schema carries the audit and trace substrate; concrete discovery schema follows real producers and consumers.
 
 ### 6.3 Layer 2 - cross-cutting concerns
 
@@ -351,22 +362,22 @@ Topics worth separate notes: Rust boundary, local-first defaults, cost visibilit
 
 ---
 
-## 9. Influences (not lineage)
+## 9. Influences
 
-Two systems shaped the *thinking* behind this stack without being inherited from in code or architecture:
+Two systems shaped the _thinking_ behind this stack:
 
-- A pre-existing end-user-owned AI stack first showed me what a locally-owned AI stack could feel like in daily use. DYFJ is not a successor to it and shares no implementation lineage.
-- Sun's Jini introduced the concept of bilateral lookup, leasing, and capability/need matching as a substrate primitive. DYFJ borrows the *shape of the question*, not the protocol.
+- A pre-existing end-user-owned AI stack first showed what a locally-owned AI stack could feel like in daily use.
+- Sun's Jini introduced the concept of bilateral lookup, leasing, and capability/need matching as a substrate primitive. DYFJ borrows the _shape of the question_, not the protocol.
 
-Called out so neither shows up downstream as an implied dependency.
+Called out as conceptual influences rather than implementation dependencies.
 
 ---
 
 ## 10. Near-term commitments
 
-Things agreed to but not yet fully done. Updated as work progresses.
+Things agreed to and evolving as work progresses.
 
-- Extend the current static command registry toward the deferred `register()` / `lookup()` runtime shape when real consumers need it.
+- Extend the current static command registry toward the `register()` / `lookup()` runtime shape when real consumers need it.
 - Extend Workbench veneer validation beyond the current CLI/shell and local HTTP smoke paths as the surface grows.
 - Continue the cost-visibility surface beyond the shipped preflight/receipt path: soft/hard budget UX and later daily-scope budget projection.
 - Grow the Rust core only where components have stabilized enough to earn the boundary; the first schema tracer bullet is shipped.
@@ -391,10 +402,10 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-04-27 - Restructured into an operating-context document; Decisions block (Section 1) authoritative.
 - 2026-04-27 - Repo structured: TypeScript prototype in `prototype/`; Rust substrate at `core/`; schema/ at root as canonical, language-agnostic source of truth.
 - 2026-04-27 - Section 4 Engineering posture added - tests + evals as stated practice.
-- 2026-05-25 - Runtime clarified as Deno; Workbench tracer bullet owns the Deno task entrypoint; legacy router path retired; paid preflight, receipts, and event-sequence verification added.
+- 2026-05-25 - Runtime clarified as Deno; Workbench tracer bullet owns the Deno task entrypoint; legacy router path closed; paid preflight, receipts, and event-sequence verification added.
 - 2026-05-25 - Rust core tracer bullet shipped: `dyfj_core::events::{write, read_by_id}` plus demo and ignored live-Dolt integration tests.
 - 2026-05-30 - Event authn metadata shipped as `schema/011_events_authn.sql`; repo-native schema validation added with `deno task validate-schema` and `deno task test:schema`.
 - 2026-06-04 - Workbench runtime split into a shared single-turn boundary with CLI/shell and local HTTP veneers; C4/D2 runtime diagrams added.
 - 2026-06-12 - Remote-access posture documented (authenticated non-loopback interfaces); change tracking split out into CHANGELOG.md, leaving this section to document revisions.
-- 2026-06-16 - Freshness pass: tagline reframed to optionality; Status updated for the `dyfj` CLI client, SSE streaming, the multi-step agent loop with read-only file tools, three hosted providers (Anthropic/OpenAI/Gemini), memory privacy-class scoping, and the prompts table; local default corrected to Qwen3-Coder-30B-A3B (the 4B was retired in `schema/016`); hosted-inference section generalized across providers.
+- 2026-06-16 - Freshness pass: tagline reframed to optionality; Status updated for the `dyfj` CLI client, SSE streaming, the multi-step agent loop with read-only file tools, three hosted providers (Anthropic/OpenAI/Gemini), memory privacy-class scoping, and the prompts table; local default corrected to Qwen3-Coder-30B-A3B (`schema/016`); hosted-inference section generalized across providers.
 - 2026-06-21 - Transport seam documented: a duplex JSON-RPC 2.0 protocol over a Unix domain socket as the canonical loopback transport, the shared `turn-runner` core both transports run, and the `serve-unix` launcher + engine-free CLI-over-socket; Status, Repo layout, the Layer 1 runtime boundary, and Run-it updated to match (per the transport-seam decision, 2026-06-21).

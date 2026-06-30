@@ -26,7 +26,7 @@ Inventoried so the surface design doesn't restate what's already shipped:
 - `BudgetTracker.checkPreCall()` returns `{ allowed, estimatedCost, sessionCostSoFar, sessionLimitUsd, perCallLimitUsd, reason? }` — the Workbench preflight banner now displays these numbers for Tier 1/2 selections.
 - `DYFJ_BUDGET_TALLY=on|paid|off` controls the post-turn tally. Default `paid` keeps Tier-0-only sessions quiet and prints the running tally after paid inference has occurred.
 - `BudgetExceededError` halts on per-call or session-limit breach. Workbench catches it and writes an `error` event.
-- Tier semantics: `0` free / no consent · `1` paid escalation · `2` paid escalation. The current Workbench prototype prompts on each paid invocation; sticky session-grant behavior is not implemented.
+- Tier semantics: `0` free / no consent · `1` paid escalation · `2` paid escalation. The current Workbench prototype prompts on each paid invocation.
 - Knobs today: `DYFJ_BUDGET_SESSION_USD` ($1.00), `DYFJ_BUDGET_PER_CALL_USD` ($0.10).
 
 This is the floor. The surface stacks on top.
@@ -103,7 +103,7 @@ DYFJ_BUDGET_DAILY_USD     (default $5.00)
 
 **Multi-process race protection (best-effort, not a lock).** Two concurrent `deno task` invocations can each pass a daily-headroom check at 99% used and both proceed, doubling the overrun. Cheap mitigation rather than a heavyweight lock: before any Tier ≥ 1 call, check whether *another* active session exists (events-log query — `session_start` rows without a matching `session_end` within the last hour) **and** daily spend is ≥ 75% of cap. If both, prompt the principal explicitly to confirm the call is intentional. Below 75%, the worst-case race overrun is bounded; above it, asking once is cheap insurance. Single-prompt-per-session — once acknowledged, sticky for that session. False positives (an unrelated DYFJ session in another shell) are intentional: they correctly surface "you have two sessions in flight; sure?" rather than mask coordination cost.
 
-Task-scope and principal-scope budgets are deferred. They become real when there are multiple tasks-in-flight or multiple principals — neither is true today, and designing them now would be speculative.
+Task-scope and principal-scope budgets become useful when real usage has multiple tasks in flight or multiple principals.
 
 ### 6. Estimate accuracy
 

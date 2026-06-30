@@ -15,8 +15,8 @@
  *   DYFJ_MEMORY_MCP_TOOL   the search tool to call on it (default "search")
  *   DYFJ_MEMORY_MCP_TOKEN  optional bearer for the endpoint
  *
- * Read-only: this invokes a search tool and returns its text. Capturing/writing
- * to the external memory is deliberately out of scope.
+ * Read-only: this invokes a search tool and returns its text. Capture/write
+ * flows should use separate capability contracts.
  */
 
 import process from "node:process";

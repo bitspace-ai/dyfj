@@ -1,9 +1,9 @@
 -- DYFJ — Sessions Schema
--- A session is a unit of work — an Algorithm run or a native-mode task.
--- Structured metadata (phase, effort, progress) enables dashboards and
--- queries. Freeform content (context, criteria, decisions, verification)
--- stays as markdown TEXT because the model reads it as prose and makes
--- its own judgments.
+-- A session is a durable interaction container. It may hold freeform
+-- conversation, focused work, delegated execution, writing, inspection, or
+-- orchestration history without changing its core identity. Structured
+-- metadata (phase, effort, progress) remains optional query context;
+-- freeform content stays as markdown TEXT because models read it as prose.
 
 CREATE TABLE IF NOT EXISTS sessions (
     -- Identity — use ULID/UUIDv7 for time-sortable inserts
@@ -16,12 +16,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- Nullable because the workbench will generate its own session IDs
     external_id     VARCHAR(128)  NULL,
 
-    -- Structured work metadata — the queryable envelope
+    -- Structured session metadata — the queryable envelope
     task_description VARCHAR(256) NOT NULL,
-    -- Nullable: NULL before Algorithm mode assigns an effort level
+    -- Nullable: NULL when a session has no effort classification
     -- Canonical effort levels — keep in sync with reflections.effort_level
     effort_level    ENUM('standard','extended','advanced','deep','comprehensive') NULL,
-    -- Nullable: NULL for native-mode sessions that don't use the Algorithm
+    -- Nullable: NULL when a session has no structured phase
     phase           ENUM('observe','think','plan','build','execute','verify','learn','complete') NULL,
     progress_done   INT UNSIGNED  NOT NULL DEFAULT 0,
     progress_total  INT UNSIGNED  NOT NULL DEFAULT 0,
