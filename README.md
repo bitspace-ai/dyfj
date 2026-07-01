@@ -145,7 +145,7 @@ ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
   op run -- deno task workbench --model claude-haiku-4-5 --prompt "..."
 ```
 
-Which models exist, what they cost, and which tier they sit in is registry data, not code - see the current catalog in `schema/catalog/001_models.sql`. Historical catalog changes are preserved under `schema/history/`. Repricing or adding a model is a Dolt commit.
+Which models exist, what they cost, and which tier they sit in is registry data, not code - see the current catalog in `schema/catalog/001_models.sql`. Catalog pricing and availability rows are operator-curated seed values, not authoritative provider price sheets. Historical catalog changes are preserved under `schema/history/`. Repricing or adding a model is a Dolt commit.
 
 ### Initialize Dolt and apply the schema
 

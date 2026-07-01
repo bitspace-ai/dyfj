@@ -88,8 +88,9 @@ export function buildContextSourceLines(sources: ContextSource[]): string[] {
 }
 
 // basePrompt is the authored companion persona, loaded from the prompts table
-// (see prompts.ts / schema/catalog/002_prompts.sql). This builder composes it with the live,
-// untrusted repo context below — the persona is no longer hardcoded here.
+// (see prompts.ts / schema/catalog/002_prompts.sql). This builder composes it
+// with the live, untrusted repo context below — the persona is no longer
+// hardcoded here.
 export function buildAskSystemPrompt(
   basePrompt: string,
   context: LoadedRepoContext,
