@@ -6,6 +6,17 @@ type CommandResult = {
   stderr: string;
 };
 
+type SchemaDirectory = "current" | "catalog" | "migrations" | "history";
+
+export type SchemaApplyPlan = Record<SchemaDirectory, string[]>;
+
+const schemaDirectories: SchemaDirectory[] = [
+  "current",
+  "catalog",
+  "migrations",
+  "history",
+];
+
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
@@ -14,6 +25,34 @@ export function migrationFileNames(entries: Iterable<DirEntryLike>): string[] {
     .filter((entry) => entry.isFile && entry.name.endsWith(".sql"))
     .map((entry) => entry.name)
     .sort();
+}
+
+function prefixedFileNames(
+  directory: SchemaDirectory,
+  entries: Iterable<DirEntryLike> | undefined,
+): string[] {
+  return migrationFileNames(entries ?? [])
+    .map((fileName) => `${directory}/${fileName}`);
+}
+
+export function buildSchemaApplyPlan(
+  entriesByDirectory: Partial<Record<SchemaDirectory, Iterable<DirEntryLike>>>,
+): SchemaApplyPlan {
+  return {
+    current: prefixedFileNames("current", entriesByDirectory.current),
+    catalog: prefixedFileNames("catalog", entriesByDirectory.catalog),
+    migrations: prefixedFileNames("migrations", entriesByDirectory.migrations),
+    history: prefixedFileNames("history", entriesByDirectory.history),
+  };
+}
+
+export function assertSchemaApplyPlan(plan: SchemaApplyPlan): void {
+  if (plan.current.length === 0) {
+    throw new Error("no schema/current/*.sql baseline files found");
+  }
+  if (plan.history.length === 0) {
+    throw new Error("no schema/history/*.sql replay files found");
+  }
 }
 
 export function assertEventsTablePresent(output: string): void {
@@ -69,35 +108,63 @@ async function runChecked(
   return result;
 }
 
-export async function validateSchema(): Promise<void> {
-  const schemaDir = new URL("./", import.meta.url);
+async function readDirectoryEntries(
+  directory: URL,
+): Promise<Deno.DirEntry[]> {
   const entries: Deno.DirEntry[] = [];
-  for await (const entry of Deno.readDir(schemaDir)) {
-    entries.push(entry);
+  try {
+    for await (const entry of Deno.readDir(directory)) {
+      entries.push(entry);
+    }
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return [];
+    }
+    throw error;
   }
 
-  const files = migrationFileNames(entries);
-  if (files.length === 0) {
-    throw new Error("no schema/*.sql files found");
+  return entries;
+}
+
+async function readSchemaApplyPlan(schemaDir: URL): Promise<SchemaApplyPlan> {
+  const entriesByDirectory: Partial<Record<SchemaDirectory, Deno.DirEntry[]>> =
+    {};
+
+  for (const directory of schemaDirectories) {
+    entriesByDirectory[directory] = await readDirectoryEntries(
+      new URL(`${directory}/`, schemaDir),
+    );
   }
 
+  return buildSchemaApplyPlan(entriesByDirectory);
+}
+
+async function initDoltRepository(tempDir: string): Promise<void> {
+  await runChecked("dolt", [
+    "init",
+    "--name",
+    "DYFJ Schema Validation",
+    "--email",
+    "schema-validation@example.invalid",
+  ], {
+    cwd: tempDir,
+    label: "dolt init",
+  });
+}
+
+async function validateFileSequence(
+  schemaDir: URL,
+  files: string[],
+  label: string,
+): Promise<void> {
   const tempDir = await Deno.makeTempDir({
     dir: "/private/tmp",
     prefix: "dyfj-schema-validate-",
   });
-  console.log(`Validating ${files.length} schema migrations in ${tempDir}`);
+  console.log(`Validating ${label}: ${files.length} files in ${tempDir}`);
 
   try {
-    await runChecked("dolt", [
-      "init",
-      "--name",
-      "DYFJ Schema Validation",
-      "--email",
-      "schema-validation@example.invalid",
-    ], {
-      cwd: tempDir,
-      label: "dolt init",
-    });
+    await initDoltRepository(tempDir);
 
     for (const file of files) {
       console.log(`Applying schema/${file}`);
@@ -120,6 +187,20 @@ export async function validateSchema(): Promise<void> {
   } finally {
     await Deno.remove(tempDir, { recursive: true });
   }
+}
+
+export async function validateSchema(): Promise<void> {
+  const schemaDir = new URL("./", import.meta.url);
+  const plan = await readSchemaApplyPlan(schemaDir);
+  assertSchemaApplyPlan(plan);
+
+  const currentFiles = [
+    ...plan.current,
+    ...plan.catalog,
+    ...plan.migrations,
+  ];
+  await validateFileSequence(schemaDir, currentFiles, "current schema");
+  await validateFileSequence(schemaDir, plan.history, "historical replay");
 
   console.log("Schema validation passed.");
 }

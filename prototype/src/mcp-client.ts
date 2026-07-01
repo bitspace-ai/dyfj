@@ -26,15 +26,7 @@ import process from "node:process";
 // ── Types (mirroring tool inputs/outputs) ─────────────────────────────────────
 
 export type MemoryType = "user" | "feedback" | "project" | "reference";
-export type Phase =
-  | "observe"
-  | "think"
-  | "plan"
-  | "build"
-  | "execute"
-  | "verify"
-  | "learn"
-  | "complete";
+export type SessionStatus = "active" | "completed";
 
 export interface MemoryIndexEntry {
   slug: string;
@@ -48,7 +40,7 @@ export interface SessionSummary {
   slug: string;
   session_name?: string;
   task_description: string;
-  phase: Phase;
+  status: SessionStatus;
   progress_done: number;
   progress_total: number;
   created_at: string;
@@ -158,24 +150,24 @@ export class DyfjMcpClient {
 
   async updateSession(
     session_id: string,
-    phase: Phase,
+    status: SessionStatus,
     progress_done: number,
     progress_total: number,
     content?: string,
   ): Promise<string> {
     return this.call("update_session", {
       session_id,
-      phase,
+      status,
       progress_done,
       progress_total,
       ...(content ? { content } : {}),
     });
   }
 
-  async listSessions(limit?: number, phase?: Phase): Promise<string> {
+  async listSessions(limit?: number, status?: SessionStatus): Promise<string> {
     return this.call("list_sessions", {
       ...(limit ? { limit } : {}),
-      ...(phase ? { phase } : {}),
+      ...(status ? { status } : {}),
     });
   }
 

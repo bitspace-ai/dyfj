@@ -1,10 +1,12 @@
 import { doltQuery } from "./utils";
 
 // The companion base prompt is the trust anchor of a turn. It is loaded from
-// the Dolt `prompts` table (authored, versioned config — see schema/017), but
+// the Dolt `prompts` table (authored, versioned config — see
+// schema/catalog/002_prompts.sql), but
 // it is too important to ever fail-empty: if the store is unreachable or the
 // row is missing, fall back to this hardcoded default so a turn always has a
-// sane frame. Keep this in sync with the `companion-base` seed in schema/017.
+// sane frame. Keep this in sync with the `companion-base` seed in
+// schema/catalog/002_prompts.sql.
 export const DEFAULT_COMPANION_PROMPT =
   "You are the DYFJ Workbench companion: a capable, candid collaborator. " +
   "Help with whatever the operator brings you — code, reasoning, drafting, " +

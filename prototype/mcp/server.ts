@@ -13,8 +13,8 @@
  *   write_memory(slug, name, type, desc, content) — upsert a memory
  *   list_memories(type?)                      — index of all memories
  *   start_session(task_description, slug?)    — create a session row, return session_id
- *   update_session(session_id, phase, progress_done, progress_total, content?) — write phase transition
- *   list_sessions(limit?, phase?)             — recent sessions
+ *   update_session(session_id, status, progress_done, progress_total, content?) — update session state
+ *   list_sessions(limit?, status?)            — recent sessions
  *   get_session(session_id?, slug?)           — load a prior session
  *
  * Architecture:
@@ -181,12 +181,12 @@ server.tool(
 server.tool(
   "start_session",
   "Create a new work session in Dolt. Returns the session_id. " +
-    "Call this at the start of any Algorithm run to establish a PRD-equivalent record.",
+    "Call this when starting a durable Workbench session record.",
   {
     task_description: z
       .string()
       .max(256)
-      .describe("One-line description of the task (maps to ISC task_description)"),
+      .describe("One-line description of the session"),
     slug: z
       .string()
       .optional()
@@ -213,8 +213,8 @@ server.tool(
         .replace(/-$/, "")}`;
 
     await doltExec(
-      `INSERT INTO sessions (session_id, slug, session_name, task_description, phase, progress_done, progress_total) ` +
-        `VALUES (?, ?, ?, ?, 'observe', 0, 0);`,
+      `INSERT INTO sessions (session_id, slug, session_name, task_description, status, progress_done, progress_total) ` +
+        `VALUES (?, ?, ?, ?, 'active', 0, 0);`,
       [id, derivedSlug, session_name ?? null, task_description],
     );
     return {
@@ -232,50 +232,40 @@ server.tool(
 
 server.tool(
   "update_session",
-  "Update an existing session's phase, progress, and content. " +
-    "Call this at each Algorithm phase transition and whenever criteria or decisions change.",
+  "Update an existing session's lifecycle status, progress, and content.",
   {
     session_id: z.string().describe("session_id returned by start_session"),
-    phase: z
-      .enum([
-        "observe",
-        "think",
-        "plan",
-        "build",
-        "execute",
-        "verify",
-        "learn",
-        "complete",
-      ])
-      .describe("Current Algorithm phase"),
+    status: z
+      .enum(["active", "completed"])
+      .describe("Current session lifecycle status"),
     progress_done: z
       .number()
       .int()
       .min(0)
-      .describe("Number of ISC criteria completed"),
+      .describe("Number of progress units completed"),
     progress_total: z
       .number()
       .int()
       .min(0)
-      .describe("Total ISC criteria count"),
+      .describe("Total progress unit count"),
     content: z
       .string()
       .optional()
       .describe(
-        "Freeform session content — ISC criteria, decisions, verification notes (markdown)"
+        "Freeform session content — context, decisions, verification notes (markdown)"
       ),
   },
-  async ({ session_id, phase, progress_done, progress_total, content }) => {
+  async ({ session_id, status, progress_done, progress_total, content }) => {
     await doltExec(
-      `UPDATE sessions SET phase = ?, progress_done = ?, progress_total = ?, ` +
+      `UPDATE sessions SET status = ?, progress_done = ?, progress_total = ?, ` +
         `content = COALESCE(?, content) WHERE session_id = ?;`,
-      [phase, progress_done, progress_total, content ?? null, session_id],
+      [status, progress_done, progress_total, content ?? null, session_id],
     );
     return {
       content: [
         {
           type: "text",
-          text: `Session ${session_id} updated: phase=${phase} progress=${progress_done}/${progress_total}`,
+          text: `Session ${session_id} updated: status=${status} progress=${progress_done}/${progress_total}`,
         },
       ],
     };
@@ -286,7 +276,7 @@ server.tool(
 
 server.tool(
   "list_sessions",
-  "List recent work sessions from Dolt. Returns session_id, slug, task_description, phase, and progress. " +
+  "List recent work sessions from Dolt. Returns session_id, slug, task_description, status, and progress. " +
     "Use this to find a prior session to resume with get_session().",
   {
     limit: z
@@ -296,16 +286,16 @@ server.tool(
       .max(50)
       .optional()
       .describe("Max sessions to return (default 10)"),
-    phase: z
-      .enum(["observe","think","plan","build","execute","verify","learn","complete"])
+    status: z
+      .enum(["active", "completed"])
       .optional()
-      .describe("Filter by phase (omit for all)"),
+      .describe("Filter by status (omit for all)"),
   },
-  async ({ limit = 10, phase }) => {
-    const where = phase ? "WHERE phase = ?" : "";
-    const params: SqlParam[] = phase ? [phase, limit] : [limit];
+  async ({ limit = 10, status }) => {
+    const where = status ? "WHERE status = ?" : "";
+    const params: SqlParam[] = status ? [status, limit] : [limit];
     const rows = await doltQuery(
-      `SELECT session_id, slug, session_name, task_description, phase, ` +
+      `SELECT session_id, slug, session_name, task_description, status, ` +
         `progress_done, progress_total, created_at ` +
         `FROM sessions ${where} ORDER BY created_at DESC LIMIT ?;`,
       params,
@@ -318,7 +308,7 @@ server.tool(
       const prog = r.progress_total !== "0"
         ? ` [${r.progress_done}/${r.progress_total}]`
         : "";
-      return `${(r.created_at ?? "").slice(0, 16)} | ${r.phase}${prog} | ${r.task_description}${name}\n  id: ${r.session_id}\n  slug: ${r.slug}`;
+      return `${(r.created_at ?? "").slice(0, 16)} | ${r.status}${prog} | ${r.task_description}${name}\n  id: ${r.session_id}\n  slug: ${r.slug}`;
     });
     return { content: [{ type: "text", text: lines.join("\n\n") }] };
   }
@@ -329,7 +319,7 @@ server.tool(
 server.tool(
   "get_session",
   "Load the full content of a prior session by session_id or slug. " +
-    "Use this to resume a session: load its ISC criteria, decisions, and progress, " +
+    "Use this to resume a session: load its context, decisions, and progress, " +
     "then continue from where it left off using update_session().",
   {
     session_id: z.string().optional().describe("session_id from list_sessions"),
@@ -346,7 +336,7 @@ server.tool(
     const params = [session_id ?? slug!];
     const rows = await doltQuery(
       `SELECT session_id, slug, session_name, task_description, effort_level, ` +
-        `phase, progress_done, progress_total, mode, content, created_at, updated_at ` +
+        `status, progress_done, progress_total, mode, content, created_at, updated_at ` +
         `FROM sessions ${where} LIMIT 1;`,
       params,
     );
@@ -362,7 +352,7 @@ server.tool(
       `**ID:** ${s.session_id}`,
       `**Slug:** ${s.slug}`,
       s.session_name ? `**Name:** ${s.session_name}` : "",
-      `**Phase:** ${s.phase}  **Progress:** ${s.progress_done}/${s.progress_total}`,
+      `**Status:** ${s.status}  **Progress:** ${s.progress_done}/${s.progress_total}`,
       s.effort_level ? `**Effort:** ${s.effort_level}` : "",
       `**Created:** ${s.created_at}  **Updated:** ${s.updated_at}`,
       "",

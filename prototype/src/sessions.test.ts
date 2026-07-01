@@ -61,7 +61,7 @@ describe("createWorkbenchSession", () => {
       "workbench-01testsession00000000000000",
       "Workbench Harness Shell",
       "What next?",
-      "execute",
+      "active",
       "interactive",
       null, // workspace unbound
       "initial content",
@@ -124,7 +124,7 @@ describe("updateWorkbenchSession", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].sql).toContain("UPDATE sessions");
     expect(calls[0].params).toEqual([
-      "complete",
+      "completed",
       1,
       1,
       "final content",
@@ -140,7 +140,7 @@ describe("listWorkbenchSessions", () => {
     session_name: "Workbench Harness Shell",
     task_description: "demo",
     project: "",
-    phase: "",
+    status: "active",
     created_at: "2026-06-12 10:00:00",
     updated_at: "2026-06-12 10:00:00",
     ...over,

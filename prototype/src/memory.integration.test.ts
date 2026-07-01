@@ -8,7 +8,7 @@
  * Run with: deno task test src/memory.integration.test.ts
  *
  * Prerequisites: Dolt running with a seeded + classified memories table
- *   (privacy class per schema/019, inject classification per schema/024).
+ *   (privacy and inject classifications per schema/current/001_structure.sql).
  */
 
 import { describe, expect, test } from "vitest";
@@ -80,7 +80,7 @@ describe("loadMemoriesByType (integration)", () => {
   });
 
   test("remote clearance excludes the private personal corpus", async () => {
-    // Seeded user/feedback memories default to 'private' (schema/019), so a
+    // Seeded user/feedback memories default to 'private', so a
     // non-loopback consumer (client_safe + public) receives none of them —
     // the personal corpus cannot leak to a remote/shared surface.
     const remote = await loadMemoriesByType(["user", "feedback"], [

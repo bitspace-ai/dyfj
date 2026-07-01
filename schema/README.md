@@ -4,51 +4,47 @@ Canonical data model for DYFJ, expressed as Dolt DDL.
 
 ## Why DDL is the source of truth
 
-Event and memory contracts live in Dolt DDL. TypeScript and Rust bindings are consumers of that schema, not sources of truth. If you want to understand why, see the project README's Layer 0 stance on data-layer schema.
+Event, memory, session, model, and prompt contracts live in Dolt DDL.
+TypeScript and Rust bindings are consumers of that schema, not sources of
+truth. If you want the product-level reason, see the project README's Layer 0
+stance on data-layer schema.
 
-## Files
+## Layout
 
-Migrations are numbered and applied in order:
+Use the readable current baseline for new databases:
 
-- `001_events.sql` — append-only runtime telemetry. Every model call, tool invocation, error. OTel correlation fields and security/audit fields are structural, not optional.
-- `002_memories.sql` — durable context (user profile, feedback, environment, project, reference). Structured metadata + freeform `TEXT` content for model interpretation.
-- `003_sessions.sql` — durable interaction containers, with optional structured metadata for queries and freeform markdown for the model.
-- `004_reflections.sql` — historical reflection table; `018` reconciles the live schema around runtime-used event, memory, and prompt tables.
-- `006_models.sql` — registry of available models (local and remote), capabilities, costs.
-- `007_events_model_selected.sql` — adds the `model_selected` event type (routing decisions, including rejected candidates).
-- `008_events_budget_summary.sql` — adds the `budget_summary` event type (one cost/token ledger row per session).
-- `009_skills.sql` — historical skill-template table; `018` reconciles the live schema around runtime-used event, memory, and prompt tables.
-- `010_events_capability.sql` — historical capability/discovery experiment; `018` reconciles the live schema around runtime-used event fields.
-- `011_events_authn.sql` — authentication metadata for the acting principal on event rows. Adds primitive authn fields for status, mechanism, issuer/session references, assertion times, and evidence pointers; credential material is represented by stable references only.
-- `012_models_2026_06_refresh.sql` — registry refresh: current Anthropic lineup with cache economics, the MLX local default, Opus 4.5 deprecated.
-- `013_sessions_project.sql` — adds the `project` column to `sessions` so Workbench sessions group by project.
-- `014_models_openai_2026_06.sql` — hosted OpenAI (GPT) rows; deactivates the adapterless Gemini rows.
-- `015_models_gemini_2026_06.sql` — current Gemini rows behind the native adapter.
-- `016_models_local_coder_default.sql` — local default moves to the capable open-weights coder model (Qwen3-Coder-30B-A3B) on high-memory Apple Silicon; deactivates the prior small local default.
-- `017_prompts.sql` — authored, versioned system prompts (trusted config), kept separate from the untrusted memory layer.
-- `018_drop_vestigial.sql` — schema reconciliation around the runtime-used event, memory, prompt, and model surfaces.
-- `019_memories_visibility.sql` — memory visibility classification (privacy/visibility metadata on the memory layer).
-- `020_sessions_workspace.sql` — sessions gain a workspace binding.
-- `021_models_validity_2026_06.sql` — registry validity: corrects the Anthropic Haiku slug to its dated API id (`claude-haiku-4-5-20251001`) and deactivates the Google rows (`gemini-3.1-pro` 404s; `gemini-3.5-flash` could not be verified) pending provider-id verification and Google key-configuration cleanup, so the picker stops surfacing models that fail at call time.
-- `022_models_gemini_reactivate_2026_06.sql` — re-activates the Gemini rows with slugs confirmed against the provider model list: `gemini-3.5-flash` (valid as-is) and `gemini-3.1-pro` → `gemini-3.1-pro-preview` (the served 3.1 Pro id).
-- `023_models_fable_deactivate_2026_06.sql` — deactivates `claude-fable-5` (UAT): it appears in the provider model list but is not currently usable, so list presence alone is not sufficient — operator curation overrides the catalog.
-- `024_memories_inject.sql` — memory injection classification: an `inject` column (`always` | `index` | `never`, default `index`) scopes what reaches the context by curation rather than by type. `always` injects full content (the small curated worldview); `index` is pull-on-demand via `read_memory`; `never` is withheld. The relevance-scoping complement to `019`'s privacy-scoping.
+- `current/001_structure.sql` — live structural schema for runtime-used tables:
+  `events`, `memories`, `sessions`, `models`, and `prompts`.
+- `catalog/001_models.sql` — mutable model catalog seed data.
+- `catalog/002_prompts.sql` — trusted prompt catalog seed data.
+- `migrations/` — forward migrations after the current baseline.
+- `history/` — preserved replay history that produced the current baseline.
 
-(Migration `005_*` is intentionally absent here; it lives in implementation-specific overlays where it belongs, not in the canonical substrate.)
+The model and prompt catalogs are separated from structure because provider
+availability, pricing, and prompt text change faster than the table contracts.
+
+The historical replay files are provenance and validation input. They include
+the earlier reflection/skills/capability experiments, authn metadata, model
+catalog refreshes, session workspace/project fields, prompt table work, and
+memory visibility/injection classification through `024_memories_inject.sql`.
 
 ## Apply the schema
 
-Requires [Dolt](https://www.dolthub.com/). Apply from the Dolt database directory so `dolt sql` targets the working set directly:
+Requires [Dolt](https://www.dolthub.com/). Apply from the Dolt database
+directory so `dolt sql` targets the working set directly:
 
 ```sh
-for f in /path/to/dyfj/schema/*.sql; do
+for dir in /path/to/dyfj/schema/current \
+           /path/to/dyfj/schema/catalog \
+           /path/to/dyfj/schema/migrations; do
+  find "$dir" -maxdepth 1 -name '*.sql' | sort | while read -r f; do
     dolt sql < "$f"
+  done
 done
 ```
 
-Order matters because some tables reference others. The numeric prefix encodes the order.
-
-If a local `dolt sql-server` is already running, you can query it with Dolt itself:
+If a local `dolt sql-server` is already running, you can query it with Dolt
+itself:
 
 ```sh
 dolt --host 127.0.0.1 --port 3306 --no-tls \
@@ -58,15 +54,37 @@ dolt --host 127.0.0.1 --port 3306 --no-tls \
 
 ## Validate the schema
 
-Run the canonical DDL against a fresh disposable Dolt repository:
+Run the canonical validation against fresh disposable Dolt repositories:
 
 ```sh
 deno task validate-schema
 ```
 
-The command applies `schema/*.sql` in lexical order, fails on invalid DDL or ordering errors, and confirms the `events` table exists. It does not connect to or mutate any long-running local Dolt SQL server.
+The command applies:
+
+1. `schema/current/*.sql`
+2. `schema/catalog/*.sql`
+3. `schema/migrations/*.sql`
+
+It also separately replays `schema/history/*.sql` to prove the preserved history
+still applies. Validation fails on invalid DDL or ordering errors and confirms
+the `events` table exists. It does not connect to or mutate any long-running
+local Dolt SQL server.
+
+## Forward migration workflow
+
+For the current MVP, keep forward migrations as numbered SQL files in
+`schema/migrations/` and update `schema/current/` when cutting a new readable
+baseline.
+
+If this becomes difficult to audit, the next step is a tiny DYFJ-native
+migration ledger table that records applied migration ids and checksums. Do not
+introduce an external migration framework before the repository needs that
+weight.
 
 ## Why Dolt
 
-Dolt gives MySQL-compatible SQL on top of git-like versioning — branches, diffs, commits, time-travel. For a substrate that values an immutable record alongside queryable working state, that combination is hard to replace with anything else.
-
+Dolt gives MySQL-compatible SQL on top of git-like versioning — branches,
+diffs, commits, time-travel. For a substrate that values an immutable record
+alongside queryable working state, that combination is hard to replace with
+anything else.

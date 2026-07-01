@@ -2,7 +2,7 @@
 
 Design note. *How DYFJ's cross-cutting concerns — observability, auth/authz, cost, and future discovery views — share one append-only log.*
 
-> **Current schema note (2026-06-14):** `schema/018_drop_vestigial.sql` reconciles the live event schema around runtime-used fields. Capability discovery remains a design lens in this note; its concrete schema should be shaped by real producers and consumers.
+> **Current schema note (2026-06-14):** the live event schema is reconciled around runtime-used fields. Capability discovery remains a design lens in this note; its concrete schema should be shaped by real producers and consumers.
 
 ---
 
@@ -210,8 +210,8 @@ It's also why the daily-driver discipline matters. By using DYFJ end-to-end, rea
 - README §1 — the Layer 0 stances, especially "data-layer schema is canonical" and "swappable with strong defaults."
 - README §6 (Architecture — tiered primitives) — Layer 1 names "Inter-Agent Contracts & Capability Discovery" as a subsystem; this design note is the elaboration.
 - README §10 — Near-term commitments, including the `register()` / `lookup()` seam.
-- `schema/001_events.sql` — the canonical event row.
-- `schema/010_events_capability.sql` — historical capability/discovery experiment.
+- `schema/current/001_structure.sql` — the canonical live event row.
+- `schema/history/010_events_capability.sql` — historical capability/discovery experiment.
 - `notes/tracer-bullet.md` — the previous design note (substrate plumbing through Rust).
 - `core/src/events.rs` — the producer side of the API.
-- `schema/018_drop_vestigial.sql` — schema reconciliation around runtime-used event fields.
+- `schema/history/018_drop_vestigial.sql` — schema reconciliation around runtime-used event fields.

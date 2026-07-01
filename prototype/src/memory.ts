@@ -36,7 +36,7 @@ export type MemoryType = "user" | "feedback" | "project" | "reference";
 /**
  * Privacy class of a memory row (AGENTS.md taxonomy). Governs which consumers
  * receive the row at injection time. Stored in the `memories.visibility` column
- * (schema/019); existing rows default to 'private'.
+ * (schema/current/001_structure.sql); existing rows default to 'private'.
  */
 export type MemoryVisibility =
   | "private"

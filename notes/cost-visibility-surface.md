@@ -185,6 +185,5 @@ Approximate total: ~10h. No piece is required for the next; ship in any order dr
 - README §2 — Goal 1 done-line.
 - README §6.3 — Cost & budget machinery as cross-cutting concern.
 - `prototype/src/budget.ts` - the tracker this surface drives.
-- `schema/006_models.sql` - pricing source of truth.
-- `schema/008_events_budget_summary.sql` - summary event already in the ENUM.
-- `schema/007_events_model_selected.sql` - routing decisions surfaced in the banner.
+- `schema/catalog/001_models.sql` - pricing source of truth.
+- `schema/current/001_structure.sql` - summary and model-selection events are part of the live event enum.

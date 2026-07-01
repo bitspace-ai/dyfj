@@ -424,14 +424,14 @@ describe("extractTextToolCalls", () => {
 
   test("recovers multiple calls and coerces parameter values", () => {
     const text =
-      "<function=read_file><parameter=path>schema/019.sql</parameter><parameter=max>120</parameter></function>" +
+      "<function=read_file><parameter=path>schema/current/001_structure.sql</parameter><parameter=max>120</parameter></function>" +
       "<function=list_files><parameter=path>.</parameter></function>";
     const { toolCalls } = extractTextToolCalls(text);
     expect(toolCalls).toEqual([
       {
         id: "text-tool-1",
         name: "read_file",
-        arguments: { path: "schema/019.sql", max: 120 },
+        arguments: { path: "schema/current/001_structure.sql", max: 120 },
       },
       { id: "text-tool-2", name: "list_files", arguments: { path: "." } },
     ]);

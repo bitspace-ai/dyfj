@@ -10,8 +10,8 @@ Exposes DYFJ's Dolt-backed memory substrate to any agent that speaks MCP.
 | `list_memories(type?)` | Index of all memories, optionally filtered by type |
 | `write_memory(slug, name, type, description, content)` | Upsert a memory |
 | `start_session(task_description, slug?, session_name?)` | Create a session record, returns session_id |
-| `update_session(session_id, phase, progress_done, progress_total, content?)` | Write phase transition |
-| `list_sessions(limit?, phase?)` | List recent sessions |
+| `update_session(session_id, status, progress_done, progress_total, content?)` | Update session state |
+| `list_sessions(limit?, status?)` | List recent sessions |
 | `get_session(session_id?, slug?)` | Load a prior session by id or slug |
 
 ## Running

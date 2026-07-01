@@ -5,7 +5,7 @@ Location of the work: `core/`. This is the first meaningful Rust commit for DYFJ
 
 ## Goal
 
-Prove the Layer 0 stance "data-layer schema is canonical" end-to-end in Rust: write one well-formed event into Dolt against the canonical `schema/001_events.sql`, read it back, verify round-trip equality. If this works, Rust code can read and write events into the same Dolt database the prototype uses, with no language-side schema definition and no type-level source of truth.
+Prove the Layer 0 stance "data-layer schema is canonical" end-to-end in Rust: write one well-formed event into Dolt against the canonical schema, read it back, verify round-trip equality. If this works, Rust code can read and write events into the same Dolt database the prototype uses, with no language-side schema definition and no type-level source of truth.
 
 ## Scope
 
@@ -98,7 +98,7 @@ On any field mismatch: the test fails with a useful diff (and the binary, which 
 ## Resolved during implementation
 
 - **`.sqlx` cache vs. live `DATABASE_URL` at compile time.** The repo carries a `.sqlx/` cache so a fresh clone can compile without a live Dolt server. Live-Dolt checks remain available through ignored integration tests.
-- **Schema header label drift.** `schema/001_events.sql` now carries the project-level event schema label.
+- **Schema header label drift.** The historical event migration now carries the project-level event schema label.
 
 ## What this seeds for next
 

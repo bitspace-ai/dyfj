@@ -70,14 +70,14 @@ export async function createWorkbenchSession(
   const exec = input.exec ?? doltExec;
   await exec(
     "INSERT INTO sessions " +
-      "(session_id, slug, session_name, task_description, phase, mode, workspace, content) " +
+      "(session_id, slug, session_name, task_description, status, mode, workspace, content) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
     [
       input.sessionId,
       input.slug,
       "Workbench Harness Shell",
       truncateTaskDescription(input.taskDescription),
-      "execute",
+      "active",
       "interactive",
       input.workspace ?? null,
       input.content,
@@ -107,10 +107,10 @@ export async function updateWorkbenchSession(
 ): Promise<void> {
   const exec = input.exec ?? doltExec;
   await exec(
-    "UPDATE sessions SET phase = ?, progress_done = ?, progress_total = ?, " +
+    "UPDATE sessions SET status = ?, progress_done = ?, progress_total = ?, " +
       "content = ? WHERE session_id = ?;",
     [
-      "complete",
+      "completed",
       1,
       1,
       input.content,
@@ -131,7 +131,7 @@ export interface WorkbenchSessionSummary {
   sessionName: string;
   taskDescription: string;
   project: string | null;
-  phase: string | null;
+  status: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -156,7 +156,7 @@ export async function listWorkbenchSessions(options: {
   }
   const rows = await query(
     "SELECT session_id, slug, session_name, task_description, project, " +
-      "phase, created_at, updated_at FROM sessions " +
+      "status, created_at, updated_at FROM sessions " +
       where +
       `ORDER BY updated_at DESC LIMIT ${limit};`,
     params,
@@ -176,7 +176,7 @@ export async function listWorkbenchSessions(options: {
       sessionName: row.session_name,
       taskDescription: row.task_description,
       project,
-      phase: row.phase === "" ? null : row.phase,
+      status: row.status || "active",
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     });

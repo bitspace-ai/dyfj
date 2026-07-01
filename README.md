@@ -145,7 +145,7 @@ ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
   op run -- deno task workbench --model claude-haiku-4-5 --prompt "..."
 ```
 
-Which models exist, what they cost, and which tier they sit in is registry data, not code - see `schema/006_models.sql`, `schema/012_models_2026_06_refresh.sql`, and the per-provider rows in `schema/014` (OpenAI), `schema/015` (Gemini), and `schema/016` (local coder default). Repricing or adding a model is a Dolt commit.
+Which models exist, what they cost, and which tier they sit in is registry data, not code - see the current catalog in `schema/catalog/001_models.sql`. Historical catalog changes are preserved under `schema/history/`. Repricing or adding a model is a Dolt commit.
 
 ### Initialize Dolt and apply the schema
 
@@ -155,8 +155,10 @@ From the repo root:
 mkdir -p data/dolt
 cd data/dolt
 dolt init
-for f in ../../schema/*.sql; do
-    dolt sql < "$f"
+for dir in ../../schema/current ../../schema/catalog ../../schema/migrations; do
+    find "$dir" -maxdepth 1 -name '*.sql' | sort | while read -r f; do
+        dolt sql < "$f"
+    done
 done
 dolt sql-server --host 127.0.0.1 --port 3306 &
 cd ../..
@@ -197,7 +199,7 @@ DYFJ_WORKBENCH_API_KEY="op://<vault>/<item>/credential" \
 - `DYFJ_WORKBENCH_HTTP_HOST` takes a comma-separated host list; each bound interface that is not loopback requires every request to present `Authorization: Bearer <key>`.
 - `DYFJ_WORKBENCH_ALLOWED_HOSTS` optionally allows extra non-loopback hostnames (an overlay-network FQDN, for example) beyond the bind list.
 - The server fails closed: non-loopback binds are refused when no API key is configured, unknown hostnames are rejected regardless of credentials, and a wrong bearer is rejected even on loopback.
-- Requests arriving with a valid bearer are recorded on the event log with `authn_mechanism = api_key`; keyless loopback requests record the local-policy basis. Identity is audit data, not an afterthought - see `schema/011_events_authn.sql`.
+- Requests arriving with a valid bearer are recorded on the event log with `authn_mechanism = api_key`; keyless loopback requests record the local-policy basis. Identity is audit data, not an afterthought - see `schema/current/001_structure.sql` and the historical authn migration in `schema/history/011_events_authn.sql`.
 - The HTML surface prompts for the key on first remote use and keeps it in browser `localStorage`.
 
 Project the key from your secret manager at process start, as with provider keys. Do not put it in `.env`, and do not expose these ports publicly - this is an authenticated private-network posture, not an internet-facing one.
@@ -404,8 +406,9 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-04-27 - Section 4 Engineering posture added - tests + evals as stated practice.
 - 2026-05-25 - Runtime clarified as Deno; Workbench tracer bullet owns the Deno task entrypoint; legacy router path closed; paid preflight, receipts, and event-sequence verification added.
 - 2026-05-25 - Rust core tracer bullet shipped: `dyfj_core::events::{write, read_by_id}` plus demo and ignored live-Dolt integration tests.
-- 2026-05-30 - Event authn metadata shipped as `schema/011_events_authn.sql`; repo-native schema validation added with `deno task validate-schema` and `deno task test:schema`.
+- 2026-05-30 - Event authn metadata shipped; repo-native schema validation added with `deno task validate-schema` and `deno task test:schema`.
 - 2026-06-04 - Workbench runtime split into a shared single-turn boundary with CLI/shell and local HTTP veneers; C4/D2 runtime diagrams added.
 - 2026-06-12 - Remote-access posture documented (authenticated non-loopback interfaces); change tracking split out into CHANGELOG.md, leaving this section to document revisions.
-- 2026-06-16 - Freshness pass: tagline reframed to optionality; Status updated for the `dyfj` CLI client, SSE streaming, the multi-step agent loop with read-only file tools, three hosted providers (Anthropic/OpenAI/Gemini), memory privacy-class scoping, and the prompts table; local default corrected to Qwen3-Coder-30B-A3B (`schema/016`); hosted-inference section generalized across providers.
+- 2026-06-16 - Freshness pass: tagline reframed to optionality; Status updated for the `dyfj` CLI client, SSE streaming, the multi-step agent loop with read-only file tools, three hosted providers (Anthropic/OpenAI/Gemini), memory privacy-class scoping, and the prompts table; local default corrected to Qwen3-Coder-30B-A3B; hosted-inference section generalized across providers.
+- 2026-06-30 - Schema refactored into a readable current baseline (`schema/current/`), mutable catalog seeds (`schema/catalog/`), forward migrations (`schema/migrations/`), and preserved replay history (`schema/history/`).
 - 2026-06-21 - Transport seam documented: a duplex JSON-RPC 2.0 protocol over a Unix domain socket as the canonical loopback transport, the shared `turn-runner` core both transports run, and the `serve-unix` launcher + engine-free CLI-over-socket; Status, Repo layout, the Layer 1 runtime boundary, and Run-it updated to match (per the transport-seam decision, 2026-06-21).
