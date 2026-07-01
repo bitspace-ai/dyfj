@@ -10,7 +10,7 @@
     "structured-output-streaming": "deno task --cwd prototype structured-output-streaming",
     "test": "deno task --cwd prototype test",
     "test:schema": "deno test --allow-read=schema schema/validate-schema.test.ts",
-    "validate-schema": "deno run --allow-read=schema --allow-write=/private/tmp,/tmp --allow-run=dolt schema/validate-schema.ts",
+    "validate-schema": "deno run --allow-read=schema --allow-write --allow-run=dolt schema/validate-schema.ts",
     "verify-workbench-events": "deno task --cwd prototype verify-workbench-events"
   }
 }

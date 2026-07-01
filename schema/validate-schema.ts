@@ -158,7 +158,6 @@ async function validateFileSequence(
   label: string,
 ): Promise<void> {
   const tempDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
     prefix: "dyfj-schema-validate-",
   });
   console.log(`Validating ${label}: ${files.length} files in ${tempDir}`);
