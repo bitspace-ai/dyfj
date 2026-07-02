@@ -8,10 +8,11 @@
  * `evaluateCommandPolicy` keeps exec-class effects out of operator
  * auto-approval. The executor therefore never runs unapproved.
  *
- * This module is the explicit danger boundary that BIT-123 will eventually move
- * behind a Rust exec/sandbox enforcement floor; until then, per-call human
- * approval is the floor. The process runner is injectable so tests exercise the
- * output/timeout/truncation logic without spawning a real process.
+ * This module is the explicit danger boundary until a Rust exec/sandbox
+ * enforcement floor replaces the TypeScript process runner; until then,
+ * per-call human approval is the floor. The process runner is injectable so
+ * tests exercise the output/timeout/truncation logic without spawning
+ * a real process.
  */
 
 export interface BashResult {

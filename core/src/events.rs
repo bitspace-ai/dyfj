@@ -1,6 +1,6 @@
 //! Event read/write against the canonical Dolt schema.
 //!
-//! Mirrors `schema/001_events.sql` for the fields exercised by the
+//! Mirrors `schema/current/001_structure.sql` for the fields exercised by the
 //! tracer bullet (the identity + OTel + security trio plus event_type
 //! and created_at). Other schema fields — model/provider context,
 //! token usage, content, tool fields, thinking, duration — will be
