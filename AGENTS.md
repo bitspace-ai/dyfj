@@ -32,11 +32,11 @@ Documentation is part of the change, not a follow-up. A commit that changes beha
 - **Docs must not lie — directly or by omission.** `README.md`, `prototype/README.md`, `mcp/README.md`, and the README's Section 1 (Decisions) are operating context: they must match the ground truth of the code. A new transport, endpoint, task, flag, env var, or architectural seam that the docs don't mention is a lie by omission. When you add or change a surface, find where the docs describe that area and bring it current in the same change; if a doc claim is now false, fix it — don't leave it.
 - **Scope honestly.** Document what is true *now*. Mark in-progress or deferred work as such rather than describing the intended end-state as if it shipped.
 - **Two trails, kept distinct.** `CHANGELOG.md` records code/behavior changes; the root README's Revision history records document-level revisions of the operating context. Update whichever the change touches; keep both current.
-- **Issue references live in commit messages, not code or CHANGELOG.** Tracker IDs (`BIT-###`) belong in commit messages and PR descriptions — a maintainer artifact in git history. Code comments and `CHANGELOG.md` explain the *why* in the prose itself, so a public reader who can't reach the private tracker loses nothing. Don't tag comments `// BIT-…`.
+- **Keep private tracker IDs out of public artifacts.** Private tracker IDs belong in the tracker and private coordination notes, not commit messages, PR descriptions, code comments, `CHANGELOG.md`, docs, or other public repo artifacts. Explain the *why* in public-safe prose so a reader who cannot access the private tracker loses nothing.
 - **No AI-tool attribution in git history.** Never add `Co-authored-by` (or similar) trailers crediting a harness or model (Cursor, Composer, Claude, etc.) — a tool is not a person or a git contributor. Disable commit attribution at the harness source when the setting exists.
 
 ## Issue Tracking
 
-This project uses **Linear** for issue tracking (team Bitspace Applied Intelligence, `BIT-###`; DYFJ Workbench and related projects). Use the Linear MCP/integration to find ready work, claim, record progress, and close issues; for non-trivial work, create or claim a Linear issue before editing.
+Maintainers coordinate work in a private tracker. Use the available tracker integration to find ready work, claim, record progress, and close issues; for non-trivial work, create or claim an issue before editing. Keep tracker-specific identifiers and private coordination details out of public artifacts.
 
 That's it. Read the README.
