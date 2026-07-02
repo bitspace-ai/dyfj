@@ -117,7 +117,8 @@ describe("packContextSections", () => {
     const packed = packContextSections([
       {
         title: "AGENTS.md excerpt",
-        body: "Read README Section 1. Section 1 is authoritative. Use Linear.",
+        body:
+          "Read README Section 1. Section 1 is authoritative. Use the private tracker.",
         bucket: "system",
         source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
       },

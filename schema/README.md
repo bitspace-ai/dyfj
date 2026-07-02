@@ -18,7 +18,7 @@ Use the readable current baseline for new databases:
 - `catalog/001_models.sql` — mutable model catalog seed data.
 - `catalog/002_prompts.sql` — trusted prompt catalog seed data.
 - `migrations/` — forward migrations after the current baseline.
-- `history/` — preserved replay history that produced the current baseline.
+- `history/` — preserved replay history that preceded the current baseline.
 
 The model and prompt catalogs are separated from structure because provider
 availability, pricing, and prompt text change faster than the table contracts.
@@ -67,9 +67,13 @@ The command applies:
 3. `schema/migrations/*.sql`
 
 It also separately replays `schema/history/*.sql` to prove the preserved history
-still applies. Validation fails on invalid DDL or ordering errors and confirms
-the `events` table exists. It does not connect to or mutate any long-running
-local Dolt SQL server.
+still parses and applies. That replay is provenance, not an upgrade path from
+every historical state to the current baseline. Existing databases created
+before a baseline cut should be migrated with files in `schema/migrations/` or
+with an operator-reviewed manual migration before using current runtime code.
+Validation fails on invalid DDL or ordering errors and confirms the `events`
+table exists. It does not connect to or mutate any long-running local Dolt SQL
+server.
 
 ## Forward migration workflow
 

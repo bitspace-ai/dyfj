@@ -313,7 +313,7 @@ function buildAgentsExcerpt(agents: string): string {
     "README.md",
     "Section 1",
     "authoritative",
-    "Linear",
+    "private tracker",
     "Acyclic",
     "DAGs",
   ], 280);
