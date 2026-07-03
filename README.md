@@ -1,6 +1,6 @@
 # DYFJ
 
-A local-first AI workbench and automation framework built for optionality — you choose where each task runs, local or hosted, with cost visible before work runs. Modular, vendor-loose, and explicit about model cost.
+An operator-owned AI workbench and automation framework built for optionality — you choose where each task runs, local or hosted, with cost visible while work runs. Modular, vendor-loose, and explicit about model cost.
 
 This README is the _operating context_ for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
@@ -37,7 +37,7 @@ If something in Section 1–Section 4 contradicts prose later in the doc, Sectio
 
 DYFJ starts as:
 
-- A local-first, operator-owned workbench and automation substrate.
+- An operator-owned, cost-aware workbench and automation substrate.
 - A single-operator system with a clear path to stronger multi-principal boundaries as real use demands them.
 - A provider-loose framework for the models and runtimes actually in use, with strong defaults instead of universal abstraction.
 - An OSS substrate first; hosted/self-serve generalization is a later product question.
@@ -46,8 +46,8 @@ DYFJ starts as:
 
 All five apply from Day-1.
 
-1. **Swappable with strong defaults.** Components are modular and replaceable behind stable interop contracts. The system ships with strong local defaults; paid escalation is configurable per principal - no provider holds a privileged position in the architecture. Optionality, not performative vendor-neutrality.
-2. **Local-first by default; paid inference is explicit escalation.** Inference, memory, and tools default to local execution. Calling out to a hosted model is a deliberate, logged decision - never the default path.
+1. **Swappable with strong defaults.** Components are modular and replaceable behind stable interop contracts. The system ships with strong defaults; model routing and spend posture are configurable per principal - no provider holds a privileged position in the architecture. Optionality, not performative vendor-neutrality.
+2. **Operator-routed inference inside cost envelopes.** The operator sets the default model; hosted frontier models are a normal choice, and local models are a first-class option (evals, privacy-scoped work, offline) rather than a privileged default. Paid spend runs inside operator-configured budget envelopes (per session and per day): within an envelope, calls run without ceremony and every call is receipted; crossing an envelope requires one explicit confirmation, which raises the envelope for that scope; anomalous spend (projected cost spiking far outside the session's trailing pattern) halts for confirmation. Non-loopback transports never inherit the standing paid posture and fail closed, and a model is not routable without a catalog pricing row. _Runtime status: envelope enforcement is landing incrementally; today the runtime still consent-prompts per paid call (see Section 5)._
 3. **Rust for the autonomous core; TypeScript for prototyping.** The Rust line is a moving boundary that advances downward as components stabilize - Rust where its compile/build cycle does not interfere with active prototyping.
 4. **Data-layer schema is canonical.** Event and memory contracts live in Dolt DDL. TypeScript and Rust types are consumers of that schema, not sources of truth.
 5. **Cost visibility as a default, not an add-on.** Token spend, model selection, and budget posture are surfaced before the work runs and tracked while it runs. Cost is a _design_ concern, not a billing concern.
@@ -345,7 +345,7 @@ Touch every subsystem.
 
 - **Observability.** OpenTelemetry metadata is mandatory on the event/message schema. Every step (context build → LLM call → tool exec → result injection) gets automatic spans plus full transcript. Sampling controls volume.
 - **Permissions / Policy Engine.** Identity and authz metadata mandatory on the core event schema. Dedicated policy engine intercepts every tool call before execution. Tiered rules (allow / ask / deny) keyed on tool, pattern, or risk. Sandboxing plus explicit human friction for high-risk actions. Per Section 1: model-supplied arguments are ignored during permission checks.
-- **Cost & Budget Awareness.** First-class. Budgets per session, per task, per user. Cost-aware model routing (default local, escalate explicitly). Hard stops and soft warnings. Already promoted to a Layer 0 stance (Section 1); the cross-cutting machinery here is what makes the stance real at runtime.
+- **Cost & Budget Awareness.** First-class. Budgets per session, per day, per task, per user. Cost-aware model routing (operator-set default, envelope-governed spend). Hard stops for anomalies, soft confirmations at envelope boundaries. Already promoted to a Layer 0 stance (Section 1); the cross-cutting machinery here is what makes the stance real at runtime.
 - **Eval & Regression.** Built-in benchmark harness. Capability tests, regression catches, model-comparison and prompt-comparison runs. Measurement is part of the work product, not a side artifact.
 - **Self-reflection / planning / review loops.** Built-in mechanisms for the agent to critique its own output, decompose subtasks, verify results, and recover from errors.
 
@@ -361,13 +361,13 @@ How things actually execute.
 
 ## 7. How the primitives serve the goal
 
-Every Layer 0 stance, every Layer 1 subsystem, and every Layer 2 cross-cutting concern named above exists to make the automation substrate vendor-loose, locally-defaultable, and cost-aware. The five Layer 0 stances carry the most concentrated weight because they have the highest leverage on whether the substrate works.
+Every Layer 0 stance, every Layer 1 subsystem, and every Layer 2 cross-cutting concern named above exists to make the automation substrate vendor-loose, locally-capable, and cost-aware. The five Layer 0 stances carry the most concentrated weight because they have the highest leverage on whether the substrate works.
 
 ---
 
 ## 8. Topics worth longer treatment
 
-Topics worth separate notes: Rust boundary, local-first defaults, cost visibility, immutable log vs. memory, and schema/data-layer ownership.
+Topics worth separate notes: Rust boundary, local inference and routing defaults, cost visibility, immutable log vs. memory, and schema/data-layer ownership.
 
 ---
 
@@ -419,3 +419,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-06-16 - Freshness pass: tagline reframed to optionality; Status updated for the `dyfj` CLI client, SSE streaming, the multi-step agent loop with read-only file tools, three hosted providers (Anthropic/OpenAI/Gemini), memory privacy-class scoping, and the prompts table; local default corrected to Qwen3-Coder-30B-A3B; hosted-inference section generalized across providers.
 - 2026-06-21 - Transport seam documented: a duplex JSON-RPC 2.0 protocol over a Unix domain socket as the canonical loopback transport, the shared `turn-runner` core both transports run, and the `serve-unix` launcher + engine-free CLI-over-socket; Status, Repo layout, the Layer 1 runtime boundary, and Run-it updated to match (per the transport-seam decision, 2026-06-21).
 - 2026-06-30 - Schema refactored into a readable current baseline (`schema/current/`), mutable catalog seeds (`schema/catalog/`), forward migrations (`schema/migrations/`), and preserved replay history (`schema/history/`).
+- 2026-07-03 - Cost posture revised: Layer 0 stance #2 rewritten from local-first-by-default with per-call paid escalation to operator-routed inference inside budget envelopes (per-session and per-day) with a runaway-anomaly hard stop; stance #1, Boundaries, the tagline, and the Layer 2 cost/budget entry aligned. Local inference remains first-class and fail-closed; non-loopback transports remain fail-closed; unpriced models are not routable. Cost visibility is unchanged as a Layer 0 stance — the consent ceremony is demoted, not the accounting. Envelope enforcement is marked as in-progress runtime work.
