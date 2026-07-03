@@ -25,10 +25,7 @@
       "write": [
         "."
       ],
-      "net": [
-        "127.0.0.1:3306",
-        "localhost"
-      ],
+      "net": true,
       "run": [
         "bash",
         "node_modules/.deno/esbuild@0.27.7/node_modules/esbuild/bin/esbuild",

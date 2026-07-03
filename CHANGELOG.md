@@ -17,6 +17,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- Test suite runs green under Deno 2.9 again: the `test` permission profile now grants `net: true`. Deno 2.9 requires an exact-match `unix:<absolute path>` net grant per socket (no directory prefixes), and the UDS integration tests bind sockets at randomized per-run temp paths, so no static allowlist can cover them and `deno.json` cannot carry machine-specific absolute paths. The relaxation is confined to the dev-only test profile; all runtime profiles keep their scoped allowlists and the structural permission-parity checks are unaffected.
 - `deno task cli` now routes through the same launcher as the compiled `dyfj` client, so default Unix-socket reads such as `deno task cli models` and `deno task cli sessions` receive the exact `unix:<socket>` Deno net grant instead of falling into an interactive permission prompt.
 - CLI streaming markdown renderer: underscore emphasis now requires word-boundary delimiters (CommonMark-style) so snake_case identifiers are not corrupted; header ANSI styling is re-applied after inline code spans so the rest of the line keeps header formatting.
 
