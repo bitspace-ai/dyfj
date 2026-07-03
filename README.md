@@ -212,11 +212,18 @@ Alongside the HTTP veneer, the workbench speaks a duplex JSON-RPC 2.0 protocol o
 deno task serve-unix      # serve the JSON-RPC seam on the Unix socket
 ```
 
+For daily use, prefer the `dyfj` CLI lifecycle commands:
+
+```sh
+dyfj status               # check local runtime reachability and model posture
+dyfj start                # foreground the local UDS runtime
+```
+
 The socket path resolves from `DYFJ_SOCKET`, else `$XDG_RUNTIME_DIR/dyfj/workbench.sock`, else `~/.dyfj/run/workbench.sock` (the parent directory is created mode 0700). The engine-free `dyfj` CLI reaches the read methods over the socket:
 
 ```sh
-deno task cli models --socket "$DYFJ_SOCKET"
-deno task cli sessions --socket "$DYFJ_SOCKET"
+dyfj models
+dyfj sessions
 ```
 
 For a compiled daily-driver binary under Deno 2.9+, run `deno task compile-cli` in `prototype/` and put `dist/` on your `PATH`. The shipped `dist/dyfj` launcher execs the compiled binary on the default socket path and falls back to `deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path.

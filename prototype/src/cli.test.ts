@@ -7,6 +7,7 @@ import {
   createTurnOutputHandlers,
   formatReceipt,
   formatRuntimeEvent,
+  formatRuntimeStatus,
   friendlyError,
   handleReplModelCommand,
   type Io,
@@ -19,7 +20,10 @@ import {
   runModels,
   runRepl,
   runSessions,
+  runStart,
+  runStatus,
   socketTurn,
+  type StartRuntimeFn,
   streamTurn,
   type TurnResult,
 } from "./cli";
@@ -513,7 +517,7 @@ describe("runExec over the socket (--unix)", () => {
     expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
   });
 
-  test("an unreachable socket points the operator at serve-unix", async () => {
+  test("an unreachable socket points the operator at dyfj start", async () => {
     const { io, stderr } = fakeIo();
     const code = await runExec(
       "hi",
@@ -526,7 +530,7 @@ describe("runExec over the socket (--unix)", () => {
       },
     );
     expect(code).toBe(1);
-    expect(stderr.join("\n")).toContain("serve-unix");
+    expect(stderr.join("\n")).toContain("dyfj start");
   });
 });
 
@@ -625,6 +629,10 @@ describe("parseArgs", () => {
   test("'models' and 'sessions' are their own commands", () => {
     expect(parseArgs(["models"]).command).toBe("models");
     expect(parseArgs(["sessions"]).command).toBe("sessions");
+  });
+  test("'status' and 'start' are their own commands", () => {
+    expect(parseArgs(["status"]).command).toBe("status");
+    expect(parseArgs(["start"]).command).toBe("start");
   });
   test("--socket overrides the socket path", () => {
     expect(parseArgs(["--socket", "/run/x.sock", "models"]).overrides.socket)
@@ -823,7 +831,7 @@ describe("models/sessions over UDS", () => {
     expect(out).toContain("Build");
   });
 
-  test("a connection failure points the operator at serve-unix", async () => {
+  test("a connection failure points the operator at dyfj start", async () => {
     const { io, stderr } = fakeIo();
     const code = await runModels(
       cfg({ socket: "/run/missing.sock" }),
@@ -833,8 +841,98 @@ describe("models/sessions over UDS", () => {
       },
     );
     expect(code).toBe(1);
-    expect(stderr.join("\n")).toContain("serve-unix");
+    expect(stderr.join("\n")).toContain("dyfj start");
     expect(stderr.join("\n")).toContain("/run/missing.sock");
+  });
+});
+
+describe("runtime lifecycle commands", () => {
+  function fakeConnect(responses: Record<string, unknown>): ConnectFn {
+    return (_socketPath: string) =>
+      Promise.resolve({
+        request: (method: string) => Promise.resolve(responses[method]),
+        close: () => {},
+      });
+  }
+
+  test("formatRuntimeStatus gives an operator-readable local snapshot", () => {
+    const text = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
+      runtime: {
+        transport: "uds",
+        clearance: "loopback",
+        defaultCompanionModel: "qwen-local",
+        permissionLevel: "strict",
+        approvePaidDefault: false,
+        defaultSessionBudgetUsd: 2,
+        defaultPerCallBudgetUsd: 0.25,
+        models: { total: 3, local: 1, hosted: 2 },
+        methods: ["runtime/status", "models/list"],
+      },
+    });
+    expect(text).toContain("runtime: reachable");
+    expect(text).toContain("socket: /run/wb.sock");
+    expect(text).toContain("qwen-local");
+    expect(text).toContain("3 total");
+    expect(text).toContain("methods: 2");
+  });
+
+  test("runStatus reports reachable runtime details", async () => {
+    const { io, stdout } = fakeIo();
+    const code = await runStatus(
+      cfg({ socket: "/run/wb.sock" }),
+      io,
+      fakeConnect({
+        "runtime/status": {
+          runtime: {
+            transport: "uds",
+            clearance: "loopback",
+            models: { total: 1, local: 1, hosted: 0 },
+            methods: ["runtime/status"],
+          },
+        },
+      }),
+    );
+    expect(code).toBe(0);
+    const out = stdout.join("");
+    expect(out).toContain("runtime: reachable");
+    expect(out).toContain("/run/wb.sock");
+  });
+
+  test("runStatus reports unreachable runtime and start hint", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const code = await runStatus(
+      cfg({ socket: "/run/missing.sock" }),
+      io,
+      () => {
+        throw new Error("No such file or directory (os error 2)");
+      },
+    );
+    expect(code).toBe(1);
+    expect(stdout.join("")).toContain("runtime: unreachable");
+    expect(stderr.join("\n")).toContain("dyfj start");
+  });
+
+  test("runStart delegates to the runtime starter", async () => {
+    const { io, stderr } = fakeIo();
+    const calls: string[] = [];
+    const starter: StartRuntimeFn = (config) => {
+      calls.push(config.socket);
+      return Promise.resolve(0);
+    };
+    const code = await runStart(cfg({ socket: "/run/wb.sock" }), io, starter);
+    expect(code).toBe(0);
+    expect(calls).toEqual(["/run/wb.sock"]);
+    expect(stderr.join("\n")).toContain("foreground process");
+  });
+
+  test("runStart fails with a precise fallback command", async () => {
+    const { io, stderr } = fakeIo();
+    const code = await runStart(cfg(), io, () => {
+      throw new Error("permission denied");
+    });
+    expect(code).toBe(1);
+    expect(stderr.join("\n")).toContain("could not start");
+    expect(stderr.join("\n")).toContain("deno task serve-unix");
   });
 });
 

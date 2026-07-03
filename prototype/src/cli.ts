@@ -9,7 +9,8 @@
  *   dyfj exec --json ...    one-shot; full result JSON to stdout (buffered)
  *   dyfj                    interactive line REPL (multi-turn, streaming)
  *
- * Assumes the runtime server is running (default http://127.0.0.1:8787).
+ * Assumes the runtime server is running; use `dyfj status` to check it and
+ * `dyfj start` to foreground the local UDS runtime.
  */
 
 import { createInterface } from "node:readline/promises";
@@ -408,8 +409,30 @@ interface ProjectGroup {
   project: string | null;
   sessions: SessionRow[];
 }
+interface RuntimeStatusPayload {
+  runtime?: {
+    transport?: string;
+    clearance?: string;
+    defaultCompanionModel?: string | null;
+    permissionLevel?: string;
+    approvePaidDefault?: boolean;
+    defaultSessionBudgetUsd?: number;
+    defaultPerCallBudgetUsd?: number;
+    models?: { total?: number; local?: number; hosted?: number };
+    methods?: string[];
+  };
+}
+
+export interface StartRuntimeOptions {
+  command?: string;
+  cwd?: string;
+}
 
 export type ConnectFn = typeof connectUnixClient;
+export type StartRuntimeFn = (
+  config: CliConfig,
+  options?: StartRuntimeOptions,
+) => Promise<number>;
 
 /**
  * Run a turn over the UDS/JSON-RPC seam: forward `stream` notifications to the
@@ -542,7 +565,7 @@ function socketError(error: unknown, config: CliConfig): string {
       .test(message)
   ) {
     return `dyfj: runtime not reachable at ${config.socket}. ` +
-      `Start it with: deno task serve-unix`;
+      `Start it with: dyfj start`;
   }
   return `dyfj: ${message}`;
 }
@@ -659,10 +682,109 @@ export async function runSessions(
   }
 }
 
+export function formatRuntimeStatus(
+  config: CliConfig,
+  payload: RuntimeStatusPayload,
+): string {
+  const runtime = payload.runtime ?? {};
+  const models = runtime.models ?? {};
+  const methods = runtime.methods ?? [];
+  return [
+    `runtime: reachable`,
+    `socket: ${config.socket}`,
+    `transport: ${runtime.transport ?? "unknown"} / ${
+      runtime.clearance ?? "unknown"
+    }`,
+    `default model: ${runtime.defaultCompanionModel ?? "(registry default)"}`,
+    `models: ${models.total ?? 0} total · ${models.local ?? 0} local · ${
+      models.hosted ?? 0
+    } hosted`,
+    `permission: ${runtime.permissionLevel ?? "unknown"}`,
+    `approve paid default: ${
+      runtime.approvePaidDefault === true ? "yes" : "no"
+    }`,
+    `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
+      (runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)
+    } per call`,
+    `methods: ${methods.length}`,
+  ].join("\n");
+}
+
+export async function runStatus(
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+): Promise<number> {
+  try {
+    const client = await connect(config.socket);
+    try {
+      const payload = await client.request(
+        "runtime/status",
+      ) as RuntimeStatusPayload;
+      io.out(`${formatRuntimeStatus(config, payload)}\n`);
+      return 0;
+    } finally {
+      client.close();
+    }
+  } catch (error) {
+    io.out(`runtime: unreachable\n`);
+    io.out(`socket: ${config.socket}\n`);
+    io.err(socketError(error, config));
+    return 1;
+  }
+}
+
+function defaultPrototypeRoot(): string {
+  const envRoot = Deno.env.get("DYFJ_PROTOTYPE_ROOT");
+  if (envRoot && envRoot.length > 0) return envRoot;
+  return Deno.cwd();
+}
+
+export async function startLocalRuntime(
+  _config: CliConfig,
+  options: StartRuntimeOptions = {},
+): Promise<number> {
+  const command = options.command ?? "deno";
+  const cwd = options.cwd ?? defaultPrototypeRoot();
+  const child = new Deno.Command(command, {
+    args: ["task", "serve-unix"],
+    cwd,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  const status = await child.status;
+  return status.code;
+}
+
+export async function runStart(
+  config: CliConfig,
+  io: Io,
+  startRuntime: StartRuntimeFn = startLocalRuntime,
+): Promise<number> {
+  io.err(`dyfj: starting local runtime at ${config.socket}`);
+  io.err(`dyfj: foreground process; Ctrl-C stops the runtime`);
+  try {
+    return await startRuntime(config);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    io.err(`dyfj: could not start local runtime: ${message}`);
+    io.err(`dyfj: fallback command: cd prototype && deno task serve-unix`);
+    return 1;
+  }
+}
+
 // ── Argument + config parsing ────────────────────────────────────────────────
 
 interface ParsedArgs {
-  command: "exec" | "repl" | "help" | "models" | "sessions";
+  command:
+    | "exec"
+    | "repl"
+    | "help"
+    | "models"
+    | "sessions"
+    | "status"
+    | "start";
   prompt?: string;
   json: boolean;
   overrides: Partial<CliConfig>;
@@ -744,6 +866,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
   if (positional[0] === "sessions" && positional.length === 1) {
     return { command: "sessions", json, overrides };
+  }
+  if (positional[0] === "status" && positional.length === 1) {
+    return { command: "status", json, overrides };
+  }
+  if (positional[0] === "start" && positional.length === 1) {
+    return { command: "start", json, overrides };
   }
   if (positional[0] === "exec") {
     const prompt = positional.slice(1).join(" ").trim();
@@ -830,7 +958,7 @@ export function resolveConfig(
 
 const HELP = `dyfj — Workbench daily-driver client
 
-Talks to the local runtime (start it with: deno task serve-unix) over the UDS
+Talks to the local runtime (start it with: dyfj start) over the UDS
 seam by default. Permission posture (strict | operator) is engine config in
 ~/.dyfj/config.toml, not a flag here. Use --server <url> to reach a remote HTTP
 runtime instead.
@@ -840,6 +968,8 @@ Usage:
   dyfj exec "<prompt>"      one-shot turn
   dyfj ask "<prompt>"       one-shot repo-context question (ask mode)
   dyfj -p "<prompt>"        one-shot turn (alias)
+  dyfj status               check the local runtime and socket
+  dyfj start                foreground the local runtime (Ctrl-C to stop)
   dyfj models               list available model slugs
   dyfj sessions             list sessions
 
@@ -937,6 +1067,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
   }
   if (parsed.command === "sessions") {
     return await runSessions(config, io);
+  }
+  if (parsed.command === "status") {
+    return await runStatus(config, io);
+  }
+  if (parsed.command === "start") {
+    return await runStart(config, io);
   }
   await runRepl(config, io, fetch, connectUnixClient, interactive);
   return 0;

@@ -7,6 +7,25 @@ async function hasCompiledBin(): Promise<boolean> {
   return await Deno.stat(COMPILED_BIN).then(() => true).catch(() => false);
 }
 
+async function hasFreshCompiledBin(): Promise<boolean> {
+  const source = new URL("../src/cli.ts", import.meta.url).pathname;
+  const [compiledStat, sourceStat, launcherStat] = await Promise.all([
+    Deno.stat(COMPILED_BIN).catch(() => null),
+    Deno.stat(source).catch(() => null),
+    Deno.stat(LAUNCHER).catch(() => null),
+  ]);
+  if (!compiledStat) return false;
+  const compiledMtime = compiledStat.mtime?.getTime();
+  if (compiledMtime === undefined) return false;
+  const sourceMtime = sourceStat?.mtime?.getTime();
+  if (sourceMtime !== undefined && compiledMtime <= sourceMtime) return false;
+  const launcherMtime = launcherStat?.mtime?.getTime();
+  if (launcherMtime !== undefined && compiledMtime <= launcherMtime) {
+    return false;
+  }
+  return true;
+}
+
 async function dryRun(
   env: Record<string, string>,
   args: string[] = [],
@@ -35,7 +54,7 @@ describe("dyfj launcher routing", () => {
   test("default path prefers compiled when the binary exists", async () => {
     const { route, sock } = await dryRun({ HOME: "/home/c" });
     expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
-    if (await hasCompiledBin()) {
+    if (await hasFreshCompiledBin()) {
       expect(route).toBe("compiled");
     } else {
       expect(route).toBe("deno");
@@ -66,15 +85,15 @@ describe("dyfj launcher routing", () => {
       DYFJ_SOCKET: "/home/c/.dyfj/run/workbench.sock",
     });
     expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
-    if (await hasCompiledBin()) {
+    if (await hasFreshCompiledBin()) {
       expect(route).toBe("compiled");
     } else {
       expect(route).toBe("deno");
     }
   });
 
-  test("HTTP transport does not force deno when a compiled binary is present", async () => {
-    if (!(await hasCompiledBin())) return;
+  test("HTTP transport does not force deno when a fresh compiled binary is present", async () => {
+    if (!(await hasFreshCompiledBin())) return;
 
     const customOnly = await dryRun({
       HOME: "/home/c",

@@ -52,7 +52,14 @@ For the JSON-RPC seam over a Unix domain socket (the canonical `loopback` transp
 deno task serve-unix
 ```
 
-It serves a duplex JSON-RPC 2.0 protocol — read methods for `runtime/status`, `surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`, and `tools/inspect`, plus the streaming `turn` method — over a socket resolved from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running the same shared turn core as the HTTP path. `runtime/status` includes grouped method catalog metadata for client surfaces. The engine-free `dyfj` CLI reaches the read methods over it with `deno task cli models` (and `sessions`). The launcher grants the concrete Unix-socket permission at runtime so custom `DYFJ_SOCKET` / `XDG_RUNTIME_DIR` paths keep working.
+For daily use, prefer the `dyfj` lifecycle commands:
+
+```sh
+dyfj status
+dyfj start
+```
+
+It serves a duplex JSON-RPC 2.0 protocol — read methods for `runtime/status`, `surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`, and `tools/inspect`, plus the streaming `turn` method — over a socket resolved from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running the same shared turn core as the HTTP path. `runtime/status` includes grouped method catalog metadata for client surfaces. The engine-free `dyfj` CLI reaches the read methods over it with `dyfj models` and `dyfj sessions`. The launcher grants the concrete Unix-socket permission at runtime so custom `DYFJ_SOCKET` / `XDG_RUNTIME_DIR` paths keep working.
 
 For a compiled daily-driver binary (Deno 2.9+), build and put `dist/` on your `PATH`:
 

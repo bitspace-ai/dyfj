@@ -61,21 +61,36 @@ compiled_bin() {
   fi
 }
 
+compiled_is_fresh() {
+  local compiled proto source launcher
+  compiled="$(compiled_bin)"
+  proto="$(prototype_root)"
+  source="$proto/src/cli.ts"
+  launcher="$proto/scripts/dyfj-launcher.sh"
+  [[ -x "$compiled" ]] || return 1
+  if [[ -e "$source" && ! "$compiled" -nt "$source" ]]; then
+    return 1
+  fi
+  if [[ -e "$launcher" && ! "$compiled" -nt "$launcher" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 cli_env_allowlist() {
-  printf '%s' 'DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,NO_COLOR'
+  printf '%s' 'DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,NO_COLOR'
 }
 
 route_cli() {
-  local resolved default compiled
+  local resolved default
   resolved="$(resolve_socket_path)"
   default="$(default_socket_path)"
-  compiled="$(compiled_bin)"
 
   if uses_unix_transport "$@" && [[ "$resolved" != "$default" ]]; then
     printf 'deno'
     return
   fi
-  if [[ -x "$compiled" ]]; then
+  if compiled_is_fresh; then
     printf 'compiled'
     return
   fi
@@ -86,10 +101,11 @@ run_deno_cli() {
   local sock proto
   sock="$(resolve_socket_path)"
   proto="$(prototype_root)"
-  exec deno run \
+  DYFJ_PROTOTYPE_ROOT="$proto" exec deno run \
     --allow-env="$(cli_env_allowlist)" \
     --allow-read \
     --allow-write \
+    --allow-run=deno \
     --allow-net="127.0.0.1,localhost,unix:${sock}" \
     --sloppy-imports \
     "${proto}/src/cli.ts" \
@@ -107,7 +123,7 @@ main() {
 
   case "$route" in
     compiled)
-      exec "$(compiled_bin)" "$@"
+      DYFJ_PROTOTYPE_ROOT="$(prototype_root)" exec "$(compiled_bin)" "$@"
       ;;
     deno)
       run_deno_cli "$@"

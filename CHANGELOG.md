@@ -8,6 +8,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
+- `dyfj status` and `dyfj start` lifecycle commands for the local Workbench runtime. `status` reports socket reachability plus runtime/model/permission/budget posture; `start` foregrounds the Unix-socket runtime so the operator does not need to remember the underlying Deno task.
 - Inter-agent coordination Slice 0 primitives: active session-coordination claims, launch packets, exit receipts, heartbeats, stale-base detection, deterministic path-overlap detection, branch-drift reconciliation, and hook-check helpers for future Workbench-native delegation. This is visibility-first coordination for concurrent agent work and gives Workbench a small substrate for making delegated work observable.
 - JSON-RPC/UDS read surface now includes runtime status with grouped method catalog metadata, surface snapshots, and command/tool catalog inspection so CLI/TUI/GUI clients can share one local Workbench status substrate.
 - Line-buffered streaming markdown rendering in the `dyfj` CLI output path. Companion turn text is accumulated until each newline, then styled for the terminal (headers, bold, italic, lists, inline code, fenced code blocks) with word-wrapping at terminal width and `NO_COLOR` honored. Streaming stays line-granular; `--json`, receipt lines, and approval prompts are unchanged. Renderer lives in `prototype/src/streaming-markdown.ts` with regression tests for common shapes.
