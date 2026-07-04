@@ -20,6 +20,8 @@ import {
   runModels,
   runRepl,
   runSessions,
+  buildServeUnixArgs,
+  readServeUnixNetGrants,
   runStart,
   runStatus,
   socketTurn,
@@ -933,6 +935,47 @@ describe("runtime lifecycle commands", () => {
     expect(code).toBe(1);
     expect(stderr.join("\n")).toContain("could not start");
     expect(stderr.join("\n")).toContain("deno task serve-unix");
+  });
+
+  test("buildServeUnixArgs grants the resolved socket alongside the profile net list", () => {
+    const args = buildServeUnixArgs(
+      ["127.0.0.1:3306", "localhost:18080"],
+      "/run/wb.sock",
+    );
+    expect(args).toEqual([
+      "run",
+      "-P=serve-unix",
+      "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
+      "--env-file=.env",
+      "--sloppy-imports",
+      "src/uds-serve.ts",
+    ]);
+  });
+
+  test("buildServeUnixArgs does not duplicate an already-granted socket", () => {
+    const args = buildServeUnixArgs(
+      ["unix:/run/wb.sock"],
+      "/run/wb.sock",
+    );
+    expect(args[2]).toBe("--allow-net=unix:/run/wb.sock");
+  });
+
+  test("readServeUnixNetGrants reads the real profile", async () => {
+    // Guards the runtime read path: the serve-unix profile must keep a
+    // declared net grant list for dyfj start to reproduce.
+    const grants = await readServeUnixNetGrants(".");
+    expect(grants.length).toBeGreaterThan(0);
+    expect(grants).toContain("127.0.0.1:3306");
+  });
+
+  test("dyfj start spawn args stay in lockstep with the serve-unix task", async () => {
+    // buildServeUnixArgs reproduces the serve-unix task plus the socket net
+    // grant. If the task definition changes shape, change both together.
+    const raw = await Deno.readTextFile("deno.json");
+    const tasks = (JSON.parse(raw) as { tasks: Record<string, string> }).tasks;
+    expect(tasks["serve-unix"]).toBe(
+      "deno run -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
+    );
   });
 });
 

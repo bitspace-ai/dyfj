@@ -740,14 +740,56 @@ function defaultPrototypeRoot(): string {
   return Deno.cwd();
 }
 
+/**
+ * Build the `deno run` args for foregrounding the runtime. The serve-unix
+ * permission profile cannot carry the machine-specific `unix:<socket>` net
+ * grant (deno.json commits no host paths), and a spawned child cannot prompt
+ * for it (the CLI holds stdin in raw mode). So `dyfj start` passes an explicit
+ * --allow-net that reproduces the profile's net list plus the one resolved
+ * socket path; -P still supplies every other permission category.
+ */
+export function buildServeUnixArgs(
+  netGrants: string[],
+  socketPath: string,
+): string[] {
+  const socketGrant = `unix:${socketPath}`;
+  const net = netGrants.includes(socketGrant)
+    ? netGrants
+    : [...netGrants, socketGrant];
+  return [
+    "run",
+    "-P=serve-unix",
+    `--allow-net=${net.join(",")}`,
+    "--env-file=.env",
+    "--sloppy-imports",
+    "src/uds-serve.ts",
+  ];
+}
+
+/** Read the serve-unix profile's declared net grants from deno.json. */
+export async function readServeUnixNetGrants(cwd: string): Promise<string[]> {
+  const raw = await Deno.readTextFile(`${cwd}/deno.json`);
+  const parsed = JSON.parse(raw) as {
+    permissions?: { "serve-unix"?: { net?: unknown } };
+  };
+  const net = parsed.permissions?.["serve-unix"]?.net;
+  if (!Array.isArray(net) || !net.every((n) => typeof n === "string")) {
+    throw new Error(
+      `serve-unix permission profile in ${cwd}/deno.json has no net grant list`,
+    );
+  }
+  return net;
+}
+
 export async function startLocalRuntime(
-  _config: CliConfig,
+  config: CliConfig,
   options: StartRuntimeOptions = {},
 ): Promise<number> {
   const command = options.command ?? "deno";
   const cwd = options.cwd ?? defaultPrototypeRoot();
+  const netGrants = await readServeUnixNetGrants(cwd);
   const child = new Deno.Command(command, {
-    args: ["task", "serve-unix"],
+    args: buildServeUnixArgs(netGrants, config.socket),
     cwd,
     stdin: "inherit",
     stdout: "inherit",
