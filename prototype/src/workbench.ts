@@ -101,6 +101,14 @@ export interface WorkbenchRuntimeInput {
   onTextDelta?: (delta: string) => void;
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   /**
+   * Presentation sink for human-readable turn narration: context loading,
+   * workspace/model/route lines, turn text, budget tally, and the receipt.
+   * The direct CLI/shell path injects console output; transport servers leave
+   * it unset so client presentation never renders on the server console.
+   * Default: silent — the runtime core does not narrate.
+   */
+  log?: (...parts: unknown[]) => void;
+  /**
    * Consent handler for paid-inference escalation. Returns a verdict
    * (approve | deny+reason | escalate), not void/throw — so a headless driver
    * can pre-approve or escalate. Drivers inject their own; the core defaults to
@@ -767,38 +775,39 @@ export function buildWorkbenchShellBanner(): string {
 function printNextWorkResult(
   result: NextWorkValidationResult,
   rawText: string,
+  log: (...parts: unknown[]) => void,
 ): void {
   if (!result.ok) {
-    console.log("Next-work validation failed");
+    log("Next-work validation failed");
     for (const error of result.errors) {
-      console.log(`- ${error}`);
+      log(`- ${error}`);
     }
-    console.log("");
-    console.log("Raw model output:");
-    console.log(rawText);
+    log("");
+    log("Raw model output:");
+    log(rawText);
     return;
   }
 
-  console.log("Next work");
-  console.log(`Recommendation: ${result.value.recommendation}`);
-  console.log(`Rationale: ${result.value.rationale}`);
-  console.log(`Confidence: ${result.value.confidence}`);
+  log("Next work");
+  log(`Recommendation: ${result.value.recommendation}`);
+  log(`Rationale: ${result.value.rationale}`);
+  log(`Confidence: ${result.value.confidence}`);
   if (result.value.evidence.length > 0) {
-    console.log("Evidence:");
+    log("Evidence:");
     for (const item of result.value.evidence) {
-      console.log(`- ${item}`);
+      log(`- ${item}`);
     }
   }
   if (result.value.risks.length > 0) {
-    console.log("Risks:");
+    log("Risks:");
     for (const item of result.value.risks) {
-      console.log(`- ${item}`);
+      log(`- ${item}`);
     }
   }
   if (result.value.next_commands.length > 0) {
-    console.log("Next commands:");
+    log("Next commands:");
     for (const command of result.value.next_commands) {
-      console.log(`- ${command}`);
+      log(`- ${command}`);
     }
   }
 }
@@ -992,6 +1001,8 @@ export async function runWorkbench(
     return await runWorkbenchRuntime({
       ...runtimeInput,
       ...resolveRuntimeEnvDefaults(),
+      // The in-process CLI/shell is its own presenter.
+      log: console.log,
       onTextDelta: (delta) => {
         process.stdout.write(delta);
       },
@@ -1060,6 +1071,8 @@ export async function runWorkbenchRuntime(
     defaultCompanionModel,
     permissionLevel,
   } = runtimeInput;
+  // Silent by default: narration renders only where a presenter is injected.
+  const log = runtimeInput.log ?? (() => {});
   const commandRegistry = createCommandRegistry();
   let commandTools: ReturnType<typeof commandRegistry.projectTools> = [];
 
@@ -1167,7 +1180,7 @@ export async function runWorkbenchRuntime(
   // "Conversation so far:" prepend.
   let modelPrompt = cliPrompt;
 
-  console.log("DYFJ Workbench\n");
+  log("DYFJ Workbench\n");
 
   await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
     type: "sessionStart",
@@ -1231,12 +1244,12 @@ export async function runWorkbenchRuntime(
   try {
     let systemPrompt: string;
     if (usesRepoAskContext) {
-      console.log("Loading repo-local context...");
+      log("Loading repo-local context...");
       const repoContext = await loadAskRepoContext();
       contextSourceLines = buildContextSourceLines(repoContext.sources);
       contextBudget = repoContext.budget;
       contextProfile = repoContext.profile;
-      console.log(`Loaded ${repoContext.sources.length} context sources\n`);
+      log(`Loaded ${repoContext.sources.length} context sources\n`);
 
       await writeMaybe(() =>
         writeEvent({
@@ -1278,7 +1291,7 @@ export async function runWorkbenchRuntime(
         profile: repoContext.profile,
       });
     } else {
-      console.log("Loading context...");
+      log("Loading context...");
       // Scope memory injection two ways (024 + 019): by the inject
       // classification — only the curated 'always' worldview loads as content;
       // everything else is index-only, pulled on demand via read_memory — and by
@@ -1294,7 +1307,7 @@ export async function runWorkbenchRuntime(
         coreMemories,
         memoryIndex,
       );
-      console.log(
+      log(
         `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
           `(${authContext.transport} clearance)\n`,
       );
@@ -1309,15 +1322,15 @@ export async function runWorkbenchRuntime(
           if ((await Deno.stat(real)).isDirectory) {
             workspaceRoot = real;
           } else {
-            console.log(
+            log(
               "Requested workspace is not a directory; using default.",
             );
           }
         } catch {
-          console.log("Requested workspace not accessible; using default.");
+          log("Requested workspace not accessible; using default.");
         }
       }
-      console.log(`Workspace: ${workspaceRoot}\n`);
+      log(`Workspace: ${workspaceRoot}\n`);
       // External-memory recall: offered only on a loopback/operator turn with an
       // endpoint configured (DYFJ_MEMORY_MCP_URL). A non-loopback consumer never
       // receives the tool, so the private external memory is unreachable off-box.
@@ -1455,8 +1468,8 @@ export async function runWorkbenchRuntime(
       reason: routingReason,
     });
 
-    console.log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
-    console.log(`Route:  ${routingReason}\n`);
+    log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
+    log(`Route:  ${routingReason}\n`);
     const runObservedTurn = async (
       params: Parameters<typeof runWorkbenchTurn>[0],
       request: { modelSlug: string; estimatedInputCount: number },
@@ -1559,7 +1572,7 @@ export async function runWorkbenchRuntime(
       toolSteps < MAX_TOOL_STEPS
     ) {
       toolSteps++;
-      console.log(
+      log(
         `Step ${toolSteps}: running ${turn.toolCalls.length} tool call(s)...`,
       );
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
@@ -1643,7 +1656,7 @@ export async function runWorkbenchRuntime(
       const atCap = toolSteps >= MAX_TOOL_STEPS;
       const forceConclude = atCap || allRepeats;
       if (forceConclude) {
-        console.log(
+        log(
           atCap
             ? `Reached the ${MAX_TOOL_STEPS}-step tool limit; forcing a concluding answer.`
             : "Model repeated prior tool calls; forcing a concluding answer.",
@@ -1686,11 +1699,11 @@ export async function runWorkbenchRuntime(
     if (isNextWork) {
       const result = validateNextWorkJson(turn.text);
       validation = { ok: result.ok, errors: result.errors };
-      printNextWorkResult(result, turn.text);
+      printNextWorkResult(result, turn.text, log);
     } else if (streamedText) {
-      console.log("");
+      log("");
     } else {
-      console.log(turn.text);
+      log(turn.text);
     }
     finalText = turn.text;
 
@@ -1724,8 +1737,8 @@ export async function runWorkbenchRuntime(
         },
       )
     ) {
-      console.log("");
-      console.log(buildBudgetTallyLine({
+      log("");
+      log(buildBudgetTallyLine({
         turn: {
           tokensInput: turnInputTokens,
           tokensOutput: turnOutputTokens,
@@ -1794,7 +1807,7 @@ export async function runWorkbenchRuntime(
     if (name === "PaidEscalationDeclinedError") {
       const verdict = (err as PaidEscalationDeclinedError).verdict;
       const detail = verdict.reason ? ` (${verdict.reason})` : "";
-      console.log(
+      log(
         verdict.decision === "escalate"
           ? `\nPaid inference escalation required - no model call made${detail}.`
           : `\nPaid inference declined - no model call made${detail}.`,
@@ -1821,10 +1834,10 @@ export async function runWorkbenchRuntime(
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
         }), BEST_EFFORT);
-      console.log(`\nBudget exceeded: ${(err as Error).message}`);
+      log(`\nBudget exceeded: ${(err as Error).message}`);
     } else if (name === "BudgetCeilingDeclinedError") {
       const detail = (err as BudgetCeilingDeclinedError).reason;
-      console.log(
+      log(
         `\nBudget ceiling confirmation declined${
           detail ? `: ${detail}` : ""
         } — the over-budget call was not made.`,
@@ -1912,8 +1925,8 @@ export async function runWorkbenchRuntime(
           receipt,
         }),
       }), BEST_EFFORT);
-    console.log("");
-    console.log(receipt);
+    log("");
+    log(receipt);
     // the runtime no longer closes the shared Dolt pool. A long-running
     // host (HTTP server) runs many concurrent turns through this function; a
     // per-turn close would end the pool out from under an in-flight turn and

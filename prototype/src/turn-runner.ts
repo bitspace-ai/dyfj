@@ -342,6 +342,21 @@ export function engineConfigToTurnDeps(
  * caller's transport + opt-in. Identical for every transport; the caller only
  * supplies the streaming/event callbacks and the auth context.
  */
+/**
+ * One operational stderr line per completed transport turn: routing and cost
+ * facts only — no turn content, no memory or context-source names. Client
+ * presentation belongs to clients; the receipt carries the full detail.
+ */
+export function formatTurnSummaryLine(result: WorkbenchRuntimeResult): string {
+  const model = result.model?.slug ?? "unknown";
+  const tokens = result.tokens
+    ? `${result.tokens.input}in/${result.tokens.output}out`
+    : "?";
+  const cost = result.cost ? `$${result.cost.totalUsd.toFixed(6)}` : "$?";
+  const paid = result.cost?.paidInferenceUsed ? "paid" : "local";
+  return `[turn] session=${result.sessionId} model=${model} tokens=${tokens} cost=${cost} ${paid}`;
+}
+
 export function executeTurn(
   resolved: ResolvedTurn,
   deps: ExecuteTurnDeps,
@@ -351,37 +366,47 @@ export function executeTurn(
       resolved.sessionId,
       deps.fetchSessionEvents,
     );
-    return deps.runRuntime({
-      ...resolved.runtimeInput,
-      ...resume,
-      // env-derived runtime config resolved at the boundary, not in the
-      // core. A future headless driver supplies these from its own config.
-      ...resolveRuntimeEnvDefaults(),
-      // engine default companion model, resolved once at the boundary from config
-      defaultCompanionModel: deps.defaultCompanionModel,
-      // operator permission posture, resolved once at the boundary from config
-      permissionLevel: deps.permissionLevel,
-      // config-file budget defaults override the env-only boundary resolver
-      ...(deps.defaultSessionBudgetUsd !== undefined
-        ? { defaultSessionBudgetUsd: deps.defaultSessionBudgetUsd }
-        : {}),
-      ...(deps.defaultPerCallBudgetUsd !== undefined
-        ? { defaultPerCallBudgetUsd: deps.defaultPerCallBudgetUsd }
-        : {}),
-      authContext: deps.authContext,
-      onTextDelta: deps.onTextDelta,
-      onRuntimeEvent: deps.onRuntimeEvent,
-      // mutating tools run only after operator approval; the transport
-      // supplies the approver (UDS = duplex round-trip), else the runtime denies.
-      confirmToolApproval: deps.confirmToolApproval,
-      // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
-      confirmBudgetCeiling: deps.confirmBudgetCeiling,
-      // paid inference is granted only to a loopback caller that
-      // explicitly opted in this turn; remote callers are always denied.
-      confirmPaidEscalation: () =>
-        Promise.resolve(
-          paidEscalationVerdict(deps.loopback, resolved.approvePaidInference),
-        ),
-    });
+    const result = await runExecuteTurn(resolved, deps, resume);
+    console.error(formatTurnSummaryLine(result));
+    return result;
+  });
+}
+
+function runExecuteTurn(
+  resolved: ResolvedTurn,
+  deps: ExecuteTurnDeps,
+  resume: Awaited<ReturnType<typeof buildResume>>,
+): Promise<WorkbenchRuntimeResult> {
+  return deps.runRuntime({
+    ...resolved.runtimeInput,
+    ...resume,
+    // env-derived runtime config resolved at the boundary, not in the
+    // core. A future headless driver supplies these from its own config.
+    ...resolveRuntimeEnvDefaults(),
+    // engine default companion model, resolved once at the boundary from config
+    defaultCompanionModel: deps.defaultCompanionModel,
+    // operator permission posture, resolved once at the boundary from config
+    permissionLevel: deps.permissionLevel,
+    // config-file budget defaults override the env-only boundary resolver
+    ...(deps.defaultSessionBudgetUsd !== undefined
+      ? { defaultSessionBudgetUsd: deps.defaultSessionBudgetUsd }
+      : {}),
+    ...(deps.defaultPerCallBudgetUsd !== undefined
+      ? { defaultPerCallBudgetUsd: deps.defaultPerCallBudgetUsd }
+      : {}),
+    authContext: deps.authContext,
+    onTextDelta: deps.onTextDelta,
+    onRuntimeEvent: deps.onRuntimeEvent,
+    // mutating tools run only after operator approval; the transport
+    // supplies the approver (UDS = duplex round-trip), else the runtime denies.
+    confirmToolApproval: deps.confirmToolApproval,
+    // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
+    confirmBudgetCeiling: deps.confirmBudgetCeiling,
+    // paid inference is granted only to a loopback caller that
+    // explicitly opted in this turn; remote callers are always denied.
+    confirmPaidEscalation: () =>
+      Promise.resolve(
+        paidEscalationVerdict(deps.loopback, resolved.approvePaidInference),
+      ),
   });
 }
