@@ -196,10 +196,16 @@ export async function validateSchema(): Promise<void> {
   const currentFiles = [
     ...plan.current,
     ...plan.catalog,
-    ...plan.migrations,
   ];
   await validateFileSequence(schemaDir, currentFiles, "current schema");
-  await validateFileSequence(schemaDir, plan.history, "historical replay");
+  // Forward migrations are an upgrade path for pre-baseline databases, so they
+  // are validated on top of the historical replay end-state (the old-world
+  // shape), not on top of the baseline they are already folded into.
+  await validateFileSequence(
+    schemaDir,
+    [...plan.history, ...plan.migrations],
+    "historical replay + forward migrations",
+  );
 
   console.log("Schema validation passed.");
 }
