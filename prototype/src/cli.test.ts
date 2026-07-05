@@ -267,7 +267,7 @@ describe("socketTurn over a real Unix socket (integration)", () => {
   test("streams deltas and returns the receipt across the wire", async () => {
     const dir = await Deno.makeTempDir();
     const sock = `${dir}/wb.sock`;
-    const server = serveWorkbenchUnix(sock, {
+    const server = await serveWorkbenchUnix(sock, {
       // Stub runtime: stream two deltas, then return a receipt. Cast loosely so
       // the test need not import the engine's runtime result type.
       // deno-lint-ignore no-explicit-any

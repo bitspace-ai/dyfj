@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  assertSocketBindable,
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
   type WorkbenchUnixServerOptions,
@@ -17,7 +18,7 @@ async function startServer(
   options: WorkbenchUnixServerOptions,
 ): Promise<WorkbenchUnixServer> {
   const dir = await Deno.makeTempDir();
-  const server = serveWorkbenchUnix(`${dir}/wb.sock`, options);
+  const server = await serveWorkbenchUnix(`${dir}/wb.sock`, options);
   cleanups.push(async () => {
     await server.close();
     try {
@@ -385,5 +386,46 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
       await client.request("turn", { prompt: "edit notes" }),
     );
     expect(result.verdict.decision).toBe("deny");
+  });
+});
+
+describe("socket bind safety", () => {
+  test("refuses to bind while a live runtime answers on the socket", async () => {
+    const server = await startServer(fakes);
+    await expect(serveWorkbenchUnix(server.socketPath, fakes)).rejects.toThrow(
+      /live runtime is already serving/,
+    );
+    // The live server is untouched: its socket file still exists and accepts.
+    const client = await connectClient(server);
+    await expect(client.request("runtime/status")).resolves.toBeTruthy();
+  });
+
+  test("clears a genuinely stale socket and binds", async () => {
+    const dir = await Deno.makeTempDir();
+    const sock = `${dir}/wb.sock`;
+    // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its
+    // socket file behind with nothing accepting. (A cleanly closed Deno
+    // listener removes its file, so this needs a hard-killed process.)
+    const fabricate = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        `nc -lU '${sock}' & pid=$!; for i in $(seq 1 50); do [ -S '${sock}' ] && break; sleep 0.1; done; kill -9 $pid 2>/dev/null; wait $pid 2>/dev/null; [ -S '${sock}' ]`,
+      ],
+    }).output();
+    expect(fabricate.success).toBe(true);
+    expect(Deno.lstatSync(sock).isSocket).toBe(true);
+    await assertSocketBindable(sock);
+    expect(() => Deno.lstatSync(sock)).toThrow();
+    await Deno.remove(dir, { recursive: true });
+  });
+
+  test("refuses to bind over a non-socket path", async () => {
+    const dir = await Deno.makeTempDir();
+    const path = `${dir}/wb.sock`;
+    await Deno.writeTextFile(path, "not a socket");
+    await expect(assertSocketBindable(path)).rejects.toThrow(
+      /exists and is not a socket/,
+    );
+    await Deno.remove(dir, { recursive: true });
   });
 });

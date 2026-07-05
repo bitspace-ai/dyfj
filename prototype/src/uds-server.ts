@@ -402,9 +402,16 @@ export interface WorkbenchUnixServer {
   close(): Promise<void>;
 }
 
-// Clear a stale socket from a prior unclean exit — but only if the path is
-// actually a socket, never an arbitrary file/dir (the Codex hardening item).
-function clearStaleSocket(socketPath: string): void {
+/**
+ * Assert the socket path is bindable, clearing a stale socket from a prior
+ * unclean exit — but only if the path is actually a socket, never an
+ * arbitrary file/dir (the Codex hardening item), and never while a live
+ * runtime still answers on it. Silently unlinking a live runtime's socket
+ * orphans it: the old process keeps running (holding its Dolt pool) but
+ * becomes unreachable, and clients silently land on whichever process bound
+ * last (observed with two operator shells, 2026-07-04).
+ */
+export async function assertSocketBindable(socketPath: string): Promise<void> {
   let info: Deno.FileInfo;
   try {
     info = Deno.lstatSync(socketPath);
@@ -417,14 +424,26 @@ function clearStaleSocket(socketPath: string): void {
       `refusing to bind: ${socketPath} exists and is not a socket`,
     );
   }
-  Deno.removeSync(socketPath);
+  let live: Deno.UnixConn;
+  try {
+    live = await Deno.connect({ transport: "unix", path: socketPath });
+  } catch {
+    // Nothing answered: a stale socket from an unclean exit. Clear it.
+    Deno.removeSync(socketPath);
+    return;
+  }
+  live.close();
+  throw new Error(
+    `refusing to bind: a live runtime is already serving on ${socketPath} ` +
+      `(inspect with: dyfj status; stop it before starting another)`,
+  );
 }
 
-export function serveWorkbenchUnix(
+export async function serveWorkbenchUnix(
   socketPath: string,
   options: WorkbenchUnixServerOptions = {},
-): WorkbenchUnixServer {
-  clearStaleSocket(socketPath);
+): Promise<WorkbenchUnixServer> {
+  await assertSocketBindable(socketPath);
 
   const handlers: RpcHandlers = {
     ...buildWorkbenchHandlers(options),

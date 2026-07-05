@@ -14,7 +14,7 @@ ensureSocketDir(socketPath);
 // boundary and passed into the runtime; a malformed config fails the boot loudly.
 const config = await loadConfig();
 
-const server = serveWorkbenchUnix(socketPath, {
+const server = await serveWorkbenchUnix(socketPath, {
   onParseError: (detail) => console.error(`[uds] ${detail}`),
   engineConfig: config,
 });
