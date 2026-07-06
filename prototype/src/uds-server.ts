@@ -405,11 +405,10 @@ export interface WorkbenchUnixServer {
 /**
  * Assert the socket path is bindable, clearing a stale socket from a prior
  * unclean exit — but only if the path is actually a socket, never an
- * arbitrary file/dir (the Codex hardening item), and never while a live
- * runtime still answers on it. Silently unlinking a live runtime's socket
- * orphans it: the old process keeps running (holding its Dolt pool) but
- * becomes unreachable, and clients silently land on whichever process bound
- * last (observed with two operator shells, 2026-07-04).
+ * arbitrary file/dir, and never while a live runtime still answers on it.
+ * Silently unlinking a live runtime's socket orphans it: the old process
+ * keeps running (holding its Dolt pool) but becomes unreachable, and clients
+ * silently land on whichever process bound last.
  */
 export async function assertSocketBindable(socketPath: string): Promise<void> {
   let info: Deno.FileInfo;

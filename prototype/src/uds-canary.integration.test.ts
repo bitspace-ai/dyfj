@@ -1,20 +1,20 @@
 /**
  * Server-console canary leak test (integration).
  *
- * Regression guard for the 2026-07-04 console privacy leak: the shared turn
- * core narrated every turn (context sources, model text, receipt — including
- * private memory names) to the server console, and the launchd-managed server
- * persisted it to disk. The leak survived every diff-scoped review because it
- * emerged from the composition of changes; this test guards the invariant
- * behaviorally instead: run a REAL turn through the REAL server path with a
- * canary private memory injected, capture everything the server writes to the
- * console, and assert the canary (and the turn content) never appears there.
+ * Behavioral guard for the privacy invariant on the transport server: turn
+ * content and private memory context must never reach the server console —
+ * only the operational summary line may appear there. Static review cannot
+ * reliably protect this invariant (it emerges from the composition of the
+ * turn core and its transport callers), so the test runs a REAL turn through
+ * the REAL server path with a canary private memory injected, captures
+ * everything the server writes to the console, and asserts the canary (and
+ * the turn text) never appears.
  *
  * Real dependencies, per the repo testing posture: hits the live Dolt
  * sql-server at 127.0.0.1:3306 (canary rows are inserted and removed around
  * the test) and stands up a loopback stub that speaks the OpenAI-compatible
  * chat/completions wire as the "model". Console capture hooks console.*,
- * which is the channel the original leak used.
+ * the channel the narration path uses.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";

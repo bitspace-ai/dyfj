@@ -1864,7 +1864,14 @@ export async function runWorkbenchRuntime(
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
         }), BEST_EFFORT);
-      console.error("\nUnexpected error:", err);
+      // Full detail is already on the audit log (the error event above) and
+      // goes to the injected presenter; the server console gets the error
+      // class only, so an exception message that quotes turn content cannot
+      // leak there.
+      log("\nUnexpected error:", err);
+      console.error(
+        `[turn-error] ${err instanceof Error ? err.constructor.name : typeof err}`,
+      );
       turnError = err;
     }
   } finally {
