@@ -120,6 +120,39 @@ export class WorkbenchLocalProviderBaseUrlError extends Error {
 export type FetchLike = typeof fetch;
 
 const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
+
+/**
+ * Provider requests previously carried no timeout at all, so a blackholed
+ * connection (VPN/mesh route flaps, IPv6 with no route) hung the whole turn
+ * silently and indefinitely — the operator sees nothing after tool approval.
+ * Bound the time to response HEADERS only: once headers arrive the abort timer
+ * is cleared, so long streaming bodies are unaffected. Aborts surface as a
+ * named error carrying the provider label instead of an infinite hang.
+ */
+export const PROVIDER_HEADER_TIMEOUT_MS = 30_000;
+
+export async function fetchWithHeaderTimeout(
+  fetchFn: typeof fetch,
+  url: string,
+  init: RequestInit,
+  label: string,
+  timeoutMs: number = PROVIDER_HEADER_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchFn(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `${label}: no response headers within ${timeoutMs}ms (network unreachable or provider stalled)`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const openAIHostedProviders = new Set(["openai"]);
 const anthropicProviders = new Set(["anthropic"]);
 const googleProviders = new Set(["google"]);
@@ -564,7 +597,8 @@ async function executeOpenAICompatibleTurn(
   const now = params.now ?? performance.now.bind(performance);
   const stream = params.onTextDelta !== undefined;
   const requestStarted = now();
-  const response = await fetchFn(
+  const response = await fetchWithHeaderTimeout(
+    fetchFn,
     `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,
     {
       method: "POST",
@@ -586,6 +620,7 @@ async function executeOpenAICompatibleTurn(
         ),
       ),
     },
+    `${model.provider}/${model.slug}`,
   );
   const headersReceived = now();
 
@@ -911,7 +946,8 @@ async function runAnthropicMessagesTurn(
   const now = params.now ?? performance.now.bind(performance);
   const stream = params.onTextDelta !== undefined;
   const requestStarted = now();
-  const response = await fetchFn(
+  const response = await fetchWithHeaderTimeout(
+    fetchFn,
     `${model.baseUrl.replace(/\/$/, "")}/v1/messages`,
     {
       method: "POST",
@@ -934,6 +970,7 @@ async function runAnthropicMessagesTurn(
         ),
       ),
     },
+    `anthropic/${model.slug}`,
   );
   const headersReceived = now();
 
@@ -1257,7 +1294,7 @@ async function runGoogleGenerativeAITurn(
     ? `${base}/v1beta/models/${model.slug}:streamGenerateContent?alt=sse`
     : `${base}/v1beta/models/${model.slug}:generateContent`;
   const requestStarted = now();
-  const response = await fetchFn(endpoint, {
+  const response = await fetchWithHeaderTimeout(fetchFn, endpoint, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -1268,7 +1305,7 @@ async function runGoogleGenerativeAITurn(
         jsonObject: params.jsonObject,
       }),
     ),
-  });
+  }, `gemini/${model.slug}`);
   const headersReceived = now();
 
   if (!response.ok) {

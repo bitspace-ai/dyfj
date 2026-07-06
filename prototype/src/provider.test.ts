@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  fetchWithHeaderTimeout,
   buildAnthropicMessagesRequest,
   buildGeminiRequest,
   buildOpenAIChatRequest,
@@ -1386,5 +1387,34 @@ describe("explicit tier preference", () => {
       "laguna-xs.2",
       "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
     ]);
+  });
+});
+
+describe("fetchWithHeaderTimeout", () => {
+  test("aborts a blackholed connection with a named error", async () => {
+    const blackhole = ((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      })) as unknown as typeof fetch;
+    await expect(
+      fetchWithHeaderTimeout(blackhole, "http://x/", {}, "anthropic/test", 30),
+    ).rejects.toThrow(/anthropic\/test: no response headers within 30ms/);
+  });
+
+  test("passes a normal response through and clears the timer", async () => {
+    const ok = (() =>
+      Promise.resolve(new Response("hi"))) as unknown as typeof fetch;
+    const response = await fetchWithHeaderTimeout(ok, "http://x/", {}, "l", 30);
+    expect(await response.text()).toBe("hi");
+  });
+
+  test("non-abort failures pass through unchanged", async () => {
+    const refused = (() =>
+      Promise.reject(new Error("connection refused"))) as unknown as typeof fetch;
+    await expect(
+      fetchWithHeaderTimeout(refused, "http://x/", {}, "l", 1000),
+    ).rejects.toThrow("connection refused");
   });
 });
