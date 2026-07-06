@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  normalizeSessionRef,
   bufferedTurn,
   buildTurnBody,
   type CliConfig,
@@ -833,6 +834,31 @@ describe("models/sessions over UDS", () => {
     expect(out).toContain("Build");
   });
 
+  test("runSessions shows when each session last moved and a resume hint", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const code = await runSessions(
+      cfg(),
+      io,
+      fakeConnect({
+        "sessions/list": {
+          projects: [
+            {
+              project: "dyfj",
+              sessions: [{
+                slug: "workbench-01ktz1xwcn7jmgs5e8kakfezkr",
+                sessionName: "Build",
+                updatedAt: "2026-07-05 09:12:33.123456",
+              }],
+            },
+          ],
+        },
+      }),
+    );
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("2026-07-05 09:12");
+    expect(stderr.join("\n")).toContain("resume one with: dyfj --session");
+  });
+
   test("a connection failure points the operator at dyfj start", async () => {
     const { io, stderr } = fakeIo();
     const code = await runModels(
@@ -1095,5 +1121,28 @@ describe("presentation", () => {
     const s = friendlyError(new TypeError("tcp connect error"), cfg());
     expect(s).toContain("not reachable");
     expect(s).toContain("workbench-http");
+  });
+});
+
+describe("normalizeSessionRef", () => {
+  test("accepts the slug exactly as dyfj sessions lists it", () => {
+    expect(normalizeSessionRef("workbench-01ktz1xwcn7jmgs5e8kakfezkr")).toBe(
+      "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+    );
+  });
+
+  test("accepts a bare session id in either case", () => {
+    expect(normalizeSessionRef("01KTZ1XWCN7JMGS5E8KAKFEZKR")).toBe(
+      "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+    );
+    expect(normalizeSessionRef("01ktz1xwcn7jmgs5e8kakfezkr")).toBe(
+      "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+    );
+  });
+
+  test("rejects garbage with a pointer to dyfj sessions", () => {
+    expect(() => normalizeSessionRef("not-a-session")).toThrow(
+      /dyfj sessions/,
+    );
   });
 });

@@ -358,6 +358,15 @@ export async function runRepl(
       const prompt = line.trim();
       if (prompt.length === 0) continue;
       if (prompt === "/exit" || prompt === "/quit") break;
+      if (prompt === "/session") {
+        if (sessionId === undefined) {
+          io.err("no session yet — send a prompt first");
+        } else {
+          io.err(`session: ${sessionId}`);
+          io.err(`resume later with: dyfj --session ${sessionId}`);
+        }
+        continue;
+      }
       if (await handleReplModelCommand(prompt, config, io, connect)) continue;
       try {
         const output = createTurnOutputHandlers(config, io);
@@ -404,6 +413,7 @@ interface ModelRow {
 interface SessionRow {
   slug?: string;
   sessionName?: string;
+  updatedAt?: string;
 }
 interface ProjectGroup {
   project: string | null;
@@ -655,6 +665,23 @@ export async function runModels(
   return 0;
 }
 
+/**
+ * Accept a session reference as either the bare 26-char session id or the
+ * slug exactly as `dyfj sessions` lists it (workbench-<id>, lowercased).
+ * Returns the canonical uppercase session id.
+ */
+export function normalizeSessionRef(value: string): string {
+  const ULID = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+  const slugMatch = value.match(/^workbench-([0-9A-Za-z]{26})$/i);
+  const candidate = slugMatch ? slugMatch[1] : value;
+  if (!ULID.test(candidate)) {
+    throw new Error(
+      `dyfj: --session expects a session id or a slug as listed by 'dyfj sessions', got: ${value}`,
+    );
+  }
+  return candidate.toUpperCase();
+}
+
 export async function runSessions(
   config: CliConfig,
   io: Io,
@@ -669,9 +696,15 @@ export async function runSessions(
       for (const group of projects) {
         io.out(`\n${group.project ?? "(unfiled)"}\n`);
         for (const s of group.sessions) {
-          io.out(`  ${(s.slug ?? "").padEnd(40)} ${s.sessionName ?? ""}\n`);
+          const when = (s.updatedAt ?? "").slice(0, 16);
+          io.out(
+            `  ${(s.slug ?? "").padEnd(40)} ${when.padEnd(18)} ${
+              s.sessionName ?? ""
+            }\n`,
+          );
         }
       }
+      io.err(`resume one with: dyfj --session <session> (the first column)`);
     } finally {
       client.close();
     }
@@ -871,7 +904,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (arg === "--socket") overrides.socket = value;
       else if (arg === "--key") overrides.key = value;
       else if (arg === "--model") overrides.model = value;
-      else if (arg === "--session") overrides.sessionId = value;
+      else if (arg === "--session") {
+        overrides.sessionId = normalizeSessionRef(value);
+      }
       else if (arg === "--workspace") overrides.workspace = value;
       else if (arg === "-p" || arg === "--print") printPrompt = value;
       else if (arg === "--mode") {
@@ -1017,6 +1052,7 @@ Usage:
 
 REPL commands:
   /model [<slug>]           show or switch the active model (validated slugs)
+  /session                  show the current session id (for --session resume)
   /exit, /quit              exit the REPL
 
 Options:
@@ -1026,7 +1062,7 @@ Options:
   --unix           force the UDS seam (the local default; needed only to override --server)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
-  --session <id>   resume a session
+  --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
   --json           one-shot only: print the full result as JSON
