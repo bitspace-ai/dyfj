@@ -158,14 +158,20 @@ function buildRuntimeInputFromJson(
 export function parseBudgetOverride(
   value: unknown,
 ):
-  | { sessionLimitUsd?: number; perCallLimitUsd?: number }
+  | { sessionLimitUsd?: number; perCallLimitUsd?: number; dailyLimitUsd?: number }
   | { error: string } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { error: "budget must be an object" };
   }
   const record = value as Record<string, unknown>;
-  const out: { sessionLimitUsd?: number; perCallLimitUsd?: number } = {};
-  for (const key of ["sessionLimitUsd", "perCallLimitUsd"] as const) {
+  const out: {
+    sessionLimitUsd?: number;
+    perCallLimitUsd?: number;
+    dailyLimitUsd?: number;
+  } = {};
+  for (
+    const key of ["sessionLimitUsd", "perCallLimitUsd", "dailyLimitUsd"] as const
+  ) {
     const raw = record[key];
     if (raw === undefined) continue;
     // A fat-finger guard, not a security control — consent is the binding money
@@ -253,6 +259,9 @@ export function resolveTurnFromBody(
       if (budget.perCallLimitUsd !== undefined) {
         runtimeInput.perCallLimitUsd = budget.perCallLimitUsd;
       }
+      if (budget.dailyLimitUsd !== undefined) {
+        runtimeInput.dailyLimitUsd = budget.dailyLimitUsd;
+      }
     }
   }
 
@@ -301,6 +310,7 @@ export interface ExecuteTurnDeps {
   /** Engine budget defaults (config), resolved once at the boundary. */
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
+  defaultDailyBudgetUsd?: number;
   /**
    * Warn-then-confirm handler when projected spend crosses a budget ceiling.
    * The UDS transport supplies a duplex round-trip; HTTP omits it, so the
@@ -318,6 +328,7 @@ export function engineConfigToTurnDeps(
     | "approvePaidDefault"
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
+    | "defaultDailyBudgetUsd"
   >,
 ): Pick<
   ExecuteTurnDeps,
@@ -326,6 +337,7 @@ export function engineConfigToTurnDeps(
   | "approvePaidDefault"
   | "defaultSessionBudgetUsd"
   | "defaultPerCallBudgetUsd"
+  | "defaultDailyBudgetUsd"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -333,6 +345,7 @@ export function engineConfigToTurnDeps(
     approvePaidDefault: config.approvePaidDefault,
     defaultSessionBudgetUsd: config.defaultSessionBudgetUsd,
     defaultPerCallBudgetUsd: config.defaultPerCallBudgetUsd,
+    defaultDailyBudgetUsd: config.defaultDailyBudgetUsd,
   };
 }
 
@@ -393,6 +406,9 @@ function runExecuteTurn(
       : {}),
     ...(deps.defaultPerCallBudgetUsd !== undefined
       ? { defaultPerCallBudgetUsd: deps.defaultPerCallBudgetUsd }
+      : {}),
+    ...(deps.defaultDailyBudgetUsd !== undefined
+      ? { defaultDailyBudgetUsd: deps.defaultDailyBudgetUsd }
       : {}),
     authContext: deps.authContext,
     onTextDelta: deps.onTextDelta,

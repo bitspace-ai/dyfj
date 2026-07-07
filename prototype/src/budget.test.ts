@@ -22,12 +22,16 @@ import {
 const SESSION_ID = "01TEST0SESSION0000000000000";
 const TRACE_ID = "aabbccddeeff00112233445566778899";
 
-function makeTracker(config?: Partial<BudgetConfig>): BudgetTracker {
+function makeTracker(
+  config?: Partial<BudgetConfig>,
+  baselines?: { sessionSpentUsd: number; dailySpentUsd: number },
+): BudgetTracker {
   return new BudgetTracker(SESSION_ID, TRACE_ID, {
     sessionLimitUsd: 1.00,
     perCallLimitUsd: 0.10,
+    dailyLimitUsd: 25.00,
     ...config,
-  });
+  }, "user", baselines);
 }
 
 function makeUsage(input: number, output: number, costTotal: number) {
@@ -563,5 +567,140 @@ describe("createTurnBudgetCeilingGate", () => {
     await expect(gate.ensureAllowed(overPerCall)).rejects.toBeInstanceOf(
       BudgetExceededError,
     );
+  });
+});
+
+describe("daily envelope", () => {
+  test("checkPreCall crosses the daily limit when today's rollup plus the call exceeds it", () => {
+    const tracker = makeTracker(
+      { dailyLimitUsd: 25 },
+      { sessionSpentUsd: 0, dailySpentUsd: 24.95 },
+    );
+    // $0.06 estimated: within per-call and session, but 24.95 + 0.06 > 25.
+    const check = tracker.checkPreCall(2, 6, 10_000);
+    expect(check.allowed).toBe(false);
+    expect(check.reason).toBe("daily_limit");
+    expect(check.dailyCostSoFar).toBeCloseTo(24.95);
+    expect(check.dailyLimitUsd).toBe(25);
+  });
+
+  test("session baseline makes the session envelope survive across turns", () => {
+    // A new tracker per turn used to reset session spend to zero; the baseline
+    // carries the session's earlier turns.
+    const tracker = makeTracker(
+      { sessionLimitUsd: 1 },
+      { sessionSpentUsd: 0.98, dailySpentUsd: 0.98 },
+    );
+    const check = tracker.checkPreCall(2, 6, 10_000);
+    expect(check.allowed).toBe(false);
+    expect(check.reason).toBe("session_limit");
+    expect(check.sessionCostSoFar).toBeCloseTo(0.98);
+  });
+
+  test("fetchSpendBaselines maps the rollup row and scopes by session and day", async () => {
+    const { fetchSpendBaselines } = await import("./budget");
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const query = async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      return [{ session_spent: "0.12", daily_spent: "3.4" }];
+    };
+    const baselines = await fetchSpendBaselines(
+      SESSION_ID,
+      "2026-07-06 00:00:00",
+      query as never,
+    );
+    expect(baselines).toEqual({ sessionSpentUsd: 0.12, dailySpentUsd: 3.4 });
+    expect(calls[0].params).toEqual([SESSION_ID, "2026-07-06 00:00:00"]);
+    expect(calls[0].sql).toContain("cost_total");
+  });
+
+  test("localDayStart is a local-midnight timestamp string", async () => {
+    const { localDayStart, localDayKey } = await import("./budget");
+    const start = localDayStart(new Date(2026, 6, 6, 15, 30));
+    expect(start).toBe("2026-07-06 00:00:00");
+    expect(localDayKey(new Date(2026, 6, 6, 15, 30))).toBe("2026-07-06");
+  });
+
+  test("a confirmed overrun raises the envelope for its scope across turns", async () => {
+    const {
+      ceilingConfirmationStoreFor,
+      createTurnBudgetCeilingGate,
+      resetCeilingConfirmations,
+    } = await import("./budget");
+    resetCeilingConfirmations();
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const overDaily: PreCallCheck = {
+      allowed: false,
+      estimatedCost: 0.05,
+      sessionCostSoFar: 0,
+      sessionLimitUsd: 5,
+      perCallLimitUsd: 1,
+      dailyCostSoFar: 24.99,
+      dailyLimitUsd: 25,
+      reason: "daily_limit",
+    };
+    // Turn 1, session A: confirm once.
+    const gateA = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-A", "2026-07-06"),
+    );
+    await gateA.ensureAllowed(overDaily);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    // Turn 2 — and even a DIFFERENT session — same day, same projection: the
+    // daily raise holds, no re-prompt.
+    const gateB = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-B", "2026-07-06"),
+    );
+    await gateB.ensureAllowed({ ...overDaily });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    // A new day forgets the raise.
+    const gateC = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-B", "2026-07-07"),
+    );
+    await gateC.ensureAllowed({ ...overDaily });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    resetCeilingConfirmations();
+  });
+
+  test("session-scope raises persist per session id, not globally", async () => {
+    const {
+      ceilingConfirmationStoreFor,
+      createTurnBudgetCeilingGate,
+      resetCeilingConfirmations,
+    } = await import("./budget");
+    resetCeilingConfirmations();
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const overSession: PreCallCheck = {
+      allowed: false,
+      estimatedCost: 0.2,
+      sessionCostSoFar: 4.9,
+      sessionLimitUsd: 5,
+      perCallLimitUsd: 1,
+      dailyCostSoFar: 5,
+      dailyLimitUsd: 25,
+      reason: "session_limit",
+    };
+    const gate1 = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-A", "2026-07-06"),
+    );
+    await gate1.ensureAllowed(overSession);
+    // Next turn, same session: raise holds.
+    const gate2 = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-A", "2026-07-06"),
+    );
+    await gate2.ensureAllowed({ ...overSession });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    // Different session: its own envelope, re-prompts.
+    const gate3 = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-B", "2026-07-06"),
+    );
+    await gate3.ensureAllowed({ ...overSession });
+    expect(confirm).toHaveBeenCalledTimes(2);
+    resetCeilingConfirmations();
   });
 });

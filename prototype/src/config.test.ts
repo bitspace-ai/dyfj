@@ -126,15 +126,23 @@ describe("configFilePath", () => {
 describe("resolveBudgetDefaultsFromEnv", () => {
   test("returns the declared defaults when env is unset", () => {
     expect(resolveBudgetDefaultsFromEnv(env())).toEqual(BUDGET_DEFAULTS);
-    expect(BUDGET_DEFAULTS).toEqual({ sessionLimitUsd: 1.0, perCallLimitUsd: 0.1 });
+    expect(BUDGET_DEFAULTS).toEqual({
+      sessionLimitUsd: 1.0,
+      perCallLimitUsd: 0.1,
+      dailyLimitUsd: 25.0,
+    });
   });
 
   test("reads the declared env vars (env overrides defaults)", () => {
     expect(
       resolveBudgetDefaultsFromEnv(
-        env({ DYFJ_BUDGET_SESSION_USD: "5", DYFJ_BUDGET_PER_CALL_USD: "0.25" }),
+        env({
+          DYFJ_BUDGET_SESSION_USD: "5",
+          DYFJ_BUDGET_PER_CALL_USD: "0.25",
+          DYFJ_BUDGET_DAILY_USD: "40",
+        }),
       ),
-    ).toEqual({ sessionLimitUsd: 5, perCallLimitUsd: 0.25 });
+    ).toEqual({ sessionLimitUsd: 5, perCallLimitUsd: 0.25, dailyLimitUsd: 40 });
   });
 
   test("rejects a non-numeric value rather than coercing to NaN", () => {

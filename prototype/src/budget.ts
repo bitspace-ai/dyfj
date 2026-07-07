@@ -24,7 +24,7 @@
  * limit check post-call (via record()) catches overruns if they occur.
  */
 
-import { generateSpanId, generateULID, writeEvent } from "./utils";
+import { doltQuery, generateSpanId, generateULID, writeEvent } from "./utils";
 import { resolveBudgetDefaultsFromEnv } from "./config";
 import process from "node:process";
 
@@ -35,6 +35,56 @@ export interface BudgetConfig {
   sessionLimitUsd: number;
   /** Maximum USD spend for a single API call (estimated from input tokens). */
   perCallLimitUsd: number;
+  /** Maximum total USD spend across ALL sessions in a local day. */
+  dailyLimitUsd: number;
+}
+
+/**
+ * Spend already on the books before this turn starts, from the events table:
+ * the session's own prior turns and today's spend across all sessions. The
+ * tracker itself only accumulates the current turn, so without these baselines
+ * the "session" and "daily" envelopes would silently reset every turn.
+ */
+export interface SpendBaselines {
+  sessionSpentUsd: number;
+  dailySpentUsd: number;
+}
+
+/** Start of the local day, in the clock the Dolt server stamps created_at with. */
+export function localDayStart(now: Date = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d} 00:00:00`;
+}
+
+/** Local-day key for scope-persistent ceiling confirmations. */
+export function localDayKey(now: Date = new Date()): string {
+  return localDayStart(now).slice(0, 10);
+}
+
+/**
+ * Roll up prior spend from the events table: this session's earlier turns and
+ * today's spend across all sessions. `created_at` is stamped by the Dolt
+ * server's clock (local time), so the day boundary is computed in local time.
+ * Query is injectable so the rollup logic is testable without Dolt.
+ */
+export async function fetchSpendBaselines(
+  sessionId: string,
+  dayStart: string = localDayStart(),
+  query: typeof doltQuery = doltQuery,
+): Promise<SpendBaselines> {
+  const rows = await query(
+    "SELECT " +
+      "COALESCE(SUM(CASE WHEN session_id = ? THEN cost_total ELSE 0 END), 0) AS session_spent, " +
+      "COALESCE(SUM(CASE WHEN created_at >= ? THEN cost_total ELSE 0 END), 0) AS daily_spent " +
+      "FROM events WHERE cost_total IS NOT NULL AND cost_total > 0",
+    [sessionId, dayStart],
+  );
+  return {
+    sessionSpentUsd: Number(rows[0]?.session_spent ?? 0) || 0,
+    dailySpentUsd: Number(rows[0]?.daily_spent ?? 0) || 0,
+  };
 }
 
 /**
@@ -63,19 +113,25 @@ export interface PreCallCheck {
   sessionCostSoFar: number;
   sessionLimitUsd: number;
   perCallLimitUsd: number;
+  dailyCostSoFar: number;
+  dailyLimitUsd: number;
   /** Only present when allowed === false */
-  reason?: "per_call_limit" | "session_limit";
+  reason?: BudgetLimitReason;
 }
+
+export type BudgetLimitReason = "per_call_limit" | "session_limit" | "daily_limit";
 
 /** Structured warn payload for a budget-ceiling confirmation (telemetry-safe). */
 export interface BudgetCeilingWarning {
   kind: "budget_ceiling";
-  reason: "per_call_limit" | "session_limit";
+  reason: BudgetLimitReason;
   estimatedCostUsd: number;
   limitUsd: number;
   sessionCostSoFarUsd: number;
   sessionLimitUsd: number;
   perCallLimitUsd: number;
+  dailyCostSoFarUsd: number;
+  dailyLimitUsd: number;
   /** Audit basis for an operator-confirmed ceiling overrun; carried in the
    *  warning/approval payload for downstream audit logging — not persisted here. */
   authzBasis: "policy:allow:operator-confirmed-ceiling";
@@ -91,11 +147,13 @@ export type ConfirmBudgetCeiling = (
 
 export function buildBudgetCeilingWarning(
   preCall: PreCallCheck,
-  overrideReason?: "per_call_limit" | "session_limit",
+  overrideReason?: BudgetLimitReason,
 ): BudgetCeilingWarning {
   const reason = overrideReason ?? preCall.reason ?? "session_limit";
   const limitUsd = reason === "per_call_limit"
     ? preCall.perCallLimitUsd
+    : reason === "daily_limit"
+    ? preCall.dailyLimitUsd
     : preCall.sessionLimitUsd;
   return {
     kind: "budget_ceiling",
@@ -105,6 +163,8 @@ export function buildBudgetCeilingWarning(
     sessionCostSoFarUsd: preCall.sessionCostSoFar,
     sessionLimitUsd: preCall.sessionLimitUsd,
     perCallLimitUsd: preCall.perCallLimitUsd,
+    dailyCostSoFarUsd: preCall.dailyCostSoFar,
+    dailyLimitUsd: preCall.dailyLimitUsd,
     authzBasis: "policy:allow:operator-confirmed-ceiling",
   };
 }
@@ -112,6 +172,8 @@ export function buildBudgetCeilingWarning(
 export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): string {
   const limitLabel = warning.reason === "per_call_limit"
     ? "per-call limit"
+    : warning.reason === "daily_limit"
+    ? "daily limit"
     : "session limit";
   return [
     "Budget ceiling warning",
@@ -120,6 +182,9 @@ export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): strin
     `Limit:           $${warning.limitUsd.toFixed(6)}`,
     `Session spent:   $${warning.sessionCostSoFarUsd.toFixed(6)} / ${
       warning.sessionLimitUsd.toFixed(6)
+    }`,
+    `Today spent:     $${warning.dailyCostSoFarUsd.toFixed(6)} / ${
+      warning.dailyLimitUsd.toFixed(6)
     }`,
     `Projected total: $${
       (warning.sessionCostSoFarUsd + warning.estimatedCostUsd).toFixed(6)
@@ -141,6 +206,8 @@ export function budgetCeilingApprovalRequest(
     sessionCostSoFarUsd: warning.sessionCostSoFarUsd,
     sessionLimitUsd: warning.sessionLimitUsd,
     perCallLimitUsd: warning.perCallLimitUsd,
+    dailyCostSoFarUsd: warning.dailyCostSoFarUsd,
+    dailyLimitUsd: warning.dailyLimitUsd,
     authzBasis: warning.authzBasis,
     message: formatBudgetCeilingWarning(warning),
   };
@@ -165,7 +232,7 @@ export class BudgetCeilingDeclinedError extends Error {
 export async function ensureBudgetAllowed(
   preCall: PreCallCheck,
   confirm?: ConfirmBudgetCeiling,
-  promptReason?: "per_call_limit" | "session_limit",
+  promptReason?: BudgetLimitReason,
 ): Promise<void> {
   if (preCall.allowed) return;
   if (!confirm) {
@@ -173,6 +240,8 @@ export async function ensureBudgetAllowed(
     const reason = preCall.reason ?? "session_limit";
     const limit = reason === "per_call_limit"
       ? preCall.perCallLimitUsd
+      : reason === "daily_limit"
+      ? preCall.dailyLimitUsd
       : preCall.sessionLimitUsd;
     throw new BudgetExceededError(
       reason,
@@ -188,10 +257,80 @@ export async function ensureBudgetAllowed(
   }
 }
 
-/** Per-turn high-water marks for operator-confirmed ceiling overruns. */
-export interface TurnBudgetCeilingConfirmations {
+/**
+ * High-water marks for operator-confirmed ceiling overruns. Confirming a
+ * ceiling RAISES the envelope for its scope (cost-posture decision): per-call
+ * and session confirmations persist for the session, the daily confirmation
+ * persists for the local day — all in runtime-process memory, so a restart
+ * forgets raises (the safe direction).
+ */
+export interface BudgetCeilingConfirmations {
   per_call_limit?: number;
   session_limit?: number;
+  daily_limit?: number;
+}
+
+/** @deprecated alias for the pre-daily-envelope name; kept for tests. */
+export type TurnBudgetCeilingConfirmations = BudgetCeilingConfirmations;
+
+const MAX_TRACKED_SCOPES = 512;
+
+function boundedGet(
+  store: Map<string, BudgetCeilingConfirmations>,
+  key: string,
+): BudgetCeilingConfirmations {
+  let entry = store.get(key);
+  if (!entry) {
+    if (store.size >= MAX_TRACKED_SCOPES) {
+      const oldest = store.keys().next().value;
+      if (oldest !== undefined) store.delete(oldest);
+    }
+    entry = {};
+    store.set(key, entry);
+  }
+  return entry;
+}
+
+const sessionScopeConfirmations = new Map<string, BudgetCeilingConfirmations>();
+const dailyScopeConfirmations = new Map<string, BudgetCeilingConfirmations>();
+
+/**
+ * The confirmation store for a turn: per-call/session marks live under the
+ * session id; the daily mark lives under the local-day key, shared across
+ * sessions, so one confirmed daily overrun does not re-prompt every session.
+ */
+export function ceilingConfirmationStoreFor(
+  sessionId: string,
+  dayKey: string = localDayKey(),
+): BudgetCeilingConfirmations {
+  const session = boundedGet(sessionScopeConfirmations, sessionId);
+  const daily = boundedGet(dailyScopeConfirmations, dayKey);
+  return {
+    get per_call_limit() {
+      return session.per_call_limit;
+    },
+    set per_call_limit(v: number | undefined) {
+      session.per_call_limit = v;
+    },
+    get session_limit() {
+      return session.session_limit;
+    },
+    set session_limit(v: number | undefined) {
+      session.session_limit = v;
+    },
+    get daily_limit() {
+      return daily.daily_limit;
+    },
+    set daily_limit(v: number | undefined) {
+      daily.daily_limit = v;
+    },
+  };
+}
+
+/** Test seam: forget all scope-persistent confirmations. */
+export function resetCeilingConfirmations(): void {
+  sessionScopeConfirmations.clear();
+  dailyScopeConfirmations.clear();
 }
 
 function crossesPerCallLimit(preCall: PreCallCheck): boolean {
@@ -203,13 +342,22 @@ function crossesSessionLimit(preCall: PreCallCheck): boolean {
     preCall.sessionLimitUsd;
 }
 
+function crossesDailyLimit(preCall: PreCallCheck): boolean {
+  return preCall.dailyCostSoFar + preCall.estimatedCost >
+    preCall.dailyLimitUsd;
+}
+
 function projectedSessionSpend(preCall: PreCallCheck): number {
   return preCall.sessionCostSoFar + preCall.estimatedCost;
 }
 
+function projectedDailySpend(preCall: PreCallCheck): number {
+  return preCall.dailyCostSoFar + preCall.estimatedCost;
+}
+
 function ceilingAlreadyConfirmed(
   preCall: PreCallCheck,
-  confirmed: TurnBudgetCeilingConfirmations,
+  confirmed: BudgetCeilingConfirmations,
 ): boolean {
   const perCallOk = !crossesPerCallLimit(preCall) ||
     (confirmed.per_call_limit !== undefined &&
@@ -217,7 +365,10 @@ function ceilingAlreadyConfirmed(
   const sessionOk = !crossesSessionLimit(preCall) ||
     (confirmed.session_limit !== undefined &&
       projectedSessionSpend(preCall) <= confirmed.session_limit);
-  return perCallOk && sessionOk;
+  const dailyOk = !crossesDailyLimit(preCall) ||
+    (confirmed.daily_limit !== undefined &&
+      projectedDailySpend(preCall) <= confirmed.daily_limit);
+  return perCallOk && sessionOk && dailyOk;
 }
 
 /**
@@ -229,22 +380,31 @@ function ceilingAlreadyConfirmed(
  */
 function newlyExceededPromptReason(
   preCall: PreCallCheck,
-  confirmed: TurnBudgetCeilingConfirmations,
-): "per_call_limit" | "session_limit" | undefined {
+  confirmed: BudgetCeilingConfirmations,
+): BudgetLimitReason | undefined {
   const perCallNew = crossesPerCallLimit(preCall) &&
     (confirmed.per_call_limit === undefined ||
       preCall.estimatedCost > confirmed.per_call_limit);
   const sessionNew = crossesSessionLimit(preCall) &&
     (confirmed.session_limit === undefined ||
       projectedSessionSpend(preCall) > confirmed.session_limit);
-  if (sessionNew && !perCallNew) return "session_limit";
-  if (perCallNew && !sessionNew) return "per_call_limit";
-  return undefined;
+  const dailyNew = crossesDailyLimit(preCall) &&
+    (confirmed.daily_limit === undefined ||
+      projectedDailySpend(preCall) > confirmed.daily_limit);
+  const newly = [
+    dailyNew ? "daily_limit" : null,
+    sessionNew ? "session_limit" : null,
+    perCallNew ? "per_call_limit" : null,
+  ].filter(Boolean) as BudgetLimitReason[];
+  // Exactly one newly-crossing dimension frames the prompt; several at once
+  // fall back to the preCall verdict (daily is the outermost envelope, so it
+  // wins the tie in `newly` ordering when the caller uses the first entry).
+  return newly.length === 1 ? newly[0] : undefined;
 }
 
 function recordCeilingConfirmations(
   preCall: PreCallCheck,
-  confirmed: TurnBudgetCeilingConfirmations,
+  confirmed: BudgetCeilingConfirmations,
 ): void {
   if (crossesPerCallLimit(preCall)) {
     confirmed.per_call_limit = Math.max(
@@ -256,6 +416,12 @@ function recordCeilingConfirmations(
     confirmed.session_limit = Math.max(
       confirmed.session_limit ?? 0,
       projectedSessionSpend(preCall),
+    );
+  }
+  if (crossesDailyLimit(preCall)) {
+    confirmed.daily_limit = Math.max(
+      confirmed.daily_limit ?? 0,
+      projectedDailySpend(preCall),
     );
   }
 }
@@ -275,8 +441,11 @@ export interface TurnBudgetCeilingGate {
  */
 export function createTurnBudgetCeilingGate(
   confirm?: ConfirmBudgetCeiling,
+  // Scope-persistent store (ceilingConfirmationStoreFor) makes a confirmation
+  // RAISE the envelope for its scope across turns; the default fresh object
+  // preserves the old per-turn behavior for existing callers/tests.
+  confirmed: BudgetCeilingConfirmations = {},
 ): TurnBudgetCeilingGate {
-  const confirmed: TurnBudgetCeilingConfirmations = {};
   return {
     async ensureAllowed(preCall: PreCallCheck): Promise<void> {
       if (preCall.allowed) return;
@@ -302,7 +471,7 @@ export interface BudgetSummary {
 
 export class BudgetExceededError extends Error {
   constructor(
-    public readonly reason: "per_call_limit" | "session_limit",
+    public readonly reason: BudgetLimitReason,
     public readonly estimatedCost: number,
     public readonly limitUsd: number,
     public readonly sessionCostSoFar: number,
@@ -332,6 +501,13 @@ export class BudgetTracker {
     // principal is resolved at the boundary and passed in, so the
     // budget_summary event no longer reads DYFJ_PRINCIPAL_ID / USER from env.
     private readonly principalId: string = "user",
+    // Prior spend from the events table (fetchSpendBaselines): the session's
+    // earlier turns and today's spend across sessions. Without these the
+    // session and daily envelopes silently reset every turn.
+    private readonly baselines: SpendBaselines = {
+      sessionSpentUsd: 0,
+      dailySpentUsd: 0,
+    },
   ) {}
 
   // ── Accumulators ───────────────────────────────────────────────────────────
@@ -385,10 +561,14 @@ export class BudgetTracker {
     costInputPerMTok: number,
     estimatedInputTokens: number,
   ): PreCallCheck {
+    const sessionCostSoFar = this.baselines.sessionSpentUsd + this._totalCost;
+    const dailyCostSoFar = this.baselines.dailySpentUsd + this._totalCost;
     const base: Omit<PreCallCheck, "allowed" | "estimatedCost" | "reason"> = {
-      sessionCostSoFar: this._totalCost,
+      sessionCostSoFar,
       sessionLimitUsd: this.config.sessionLimitUsd,
       perCallLimitUsd: this.config.perCallLimitUsd,
+      dailyCostSoFar,
+      dailyLimitUsd: this.config.dailyLimitUsd,
     };
 
     if (tier === 0) {
@@ -406,12 +586,21 @@ export class BudgetTracker {
       };
     }
 
-    if (this._totalCost + estimatedCost > this.config.sessionLimitUsd) {
+    if (sessionCostSoFar + estimatedCost > this.config.sessionLimitUsd) {
       return {
         ...base,
         allowed: false,
         estimatedCost,
         reason: "session_limit",
+      };
+    }
+
+    if (dailyCostSoFar + estimatedCost > this.config.dailyLimitUsd) {
+      return {
+        ...base,
+        allowed: false,
+        estimatedCost,
+        reason: "daily_limit",
       };
     }
 

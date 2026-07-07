@@ -135,6 +135,14 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     default: 0.1,
   },
   {
+    key: "defaultDailyBudgetUsd",
+    envVar: "DYFJ_BUDGET_DAILY_USD",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 25.0,
+  },
+  {
     key: "approvePaidDefault",
     envVar: "DYFJ_APPROVE_PAID_DEFAULT",
     domain: "engine",
@@ -240,6 +248,8 @@ export interface WorkbenchConfig {
   defaultSessionBudgetUsd: number;
   /** Default max USD spend for a single API call (startup posture). */
   defaultPerCallBudgetUsd: number;
+  /** Default max total USD spend across all sessions in a local day (startup posture). */
+  defaultDailyBudgetUsd: number;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
@@ -248,6 +258,7 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   approvePaidDefault: schemaBooleanDefault("approvePaidDefault"),
   defaultSessionBudgetUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
   defaultPerCallBudgetUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
+  defaultDailyBudgetUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
 };
 
 /** Minimal env surface, so callers can inject a fake in tests. */
@@ -309,6 +320,17 @@ export async function loadConfig(
       config.defaultSessionBudgetUsd = validatePositiveUsd(
         fileSessionBudget,
         `${path} [budget].session_limit_usd`,
+      );
+    }
+    const fileDailyBudget = readNumber(
+      table,
+      "budget",
+      "daily_limit_usd",
+    );
+    if (fileDailyBudget !== undefined) {
+      config.defaultDailyBudgetUsd = validatePositiveUsd(
+        fileDailyBudget,
+        `${path} [budget].daily_limit_usd`,
       );
     }
     const filePerCallBudget = readNumber(
@@ -473,12 +495,15 @@ export interface BudgetDefaults {
   sessionLimitUsd: number;
   /** Default max USD spend for a single API call (estimated from input tokens). */
   perCallLimitUsd: number;
+  /** Default max total USD spend across all sessions in a local day. */
+  dailyLimitUsd: number;
 }
 
 /** The declared budget defaults — the single source for the limit numbers. */
 export const BUDGET_DEFAULTS: BudgetDefaults = {
   sessionLimitUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
   perCallLimitUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
+  dailyLimitUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
 };
 
 function readPositiveUsd(
@@ -516,6 +541,11 @@ export function resolveBudgetDefaultsFromEnv(
       env,
       schemaEnvVar("defaultPerCallBudgetUsd"),
       BUDGET_DEFAULTS.perCallLimitUsd,
+    ),
+    dailyLimitUsd: readPositiveUsd(
+      env,
+      schemaEnvVar("defaultDailyBudgetUsd"),
+      BUDGET_DEFAULTS.dailyLimitUsd,
     ),
   };
 }

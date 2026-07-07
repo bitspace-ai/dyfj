@@ -31,6 +31,10 @@ level = "strict"
 # an interactive approver it fails closed. Per-turn overrides still win.
 # session_limit_usd = 1.0
 # per_call_limit_usd = 0.10
+# Daily envelope: total spend across ALL sessions in a local day (rolled up
+# from the events table). Confirming a crossed ceiling raises that envelope
+# for its scope — the session, or the whole day — instead of re-prompting.
+# daily_limit_usd = 25.0
 
 # The full configuration surface is declared in src/config.ts (CONFIG_SCHEMA),
 # split into engine vs client domains, with secret keys held as POINTERS (op:// /
