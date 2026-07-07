@@ -372,6 +372,11 @@ export async function loadConfig(
     schemaEnvVar("defaultPerCallBudgetUsd"),
     config.defaultPerCallBudgetUsd,
   );
+  config.defaultDailyBudgetUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultDailyBudgetUsd"),
+    config.defaultDailyBudgetUsd,
+  );
 
   return config;
 }

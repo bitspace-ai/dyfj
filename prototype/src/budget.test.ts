@@ -15,6 +15,7 @@ import {
   defaultBudgetConfig,
   type PreCallCheck,
   type TierSpend,
+  type BudgetCeilingWarning,
 } from "./budget";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -612,6 +613,8 @@ describe("daily envelope", () => {
     expect(baselines).toEqual({ sessionSpentUsd: 0.12, dailySpentUsd: 3.4 });
     expect(calls[0].params).toEqual([SESSION_ID, "2026-07-06 00:00:00"]);
     expect(calls[0].sql).toContain("cost_total");
+    // budget_summary rows aggregate the session and would double count.
+    expect(calls[0].sql).toContain("event_type = 'model_response'");
   });
 
   test("localDayStart is a local-midnight timestamp string", async () => {
@@ -702,5 +705,41 @@ describe("daily envelope", () => {
     await gate3.ensureAllowed({ ...overSession });
     expect(confirm).toHaveBeenCalledTimes(2);
     resetCeilingConfirmations();
+  });
+});
+
+describe("composite ceiling approvals", () => {
+  test("one prompt names every newly-crossed scope and raises only those", async () => {
+    const {
+      createTurnBudgetCeilingGate,
+      formatBudgetCeilingWarning,
+    } = await import("./budget");
+    const warnings: BudgetCeilingWarning[] = [];
+    const confirm = vi.fn(async (w: BudgetCeilingWarning) => {
+      warnings.push(w);
+      return { decision: "approve" as const };
+    });
+    const confirmed: Record<string, number | undefined> = {};
+    const gate = createTurnBudgetCeilingGate(confirm, confirmed);
+    // Session AND daily newly cross together; per-call does not.
+    await gate.ensureAllowed({
+      allowed: false,
+      estimatedCost: 0.2,
+      sessionCostSoFar: 4.9,
+      sessionLimitUsd: 5,
+      perCallLimitUsd: 1,
+      dailyCostSoFar: 24.9,
+      dailyLimitUsd: 25,
+      reason: "per_call_limit", // deliberately misleading preCall framing
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].crossedScopes).toEqual(["daily_limit", "session_limit"]);
+    const message = formatBudgetCeilingWarning(warnings[0]);
+    expect(message).toContain("daily limit + session limit");
+    expect(message).toContain("Approving raises:");
+    // Only the presented scopes were raised; per-call was never confirmed.
+    expect(confirmed.session_limit).toBeCloseTo(5.1);
+    expect(confirmed.daily_limit).toBeCloseTo(25.1);
+    expect(confirmed.per_call_limit).toBeUndefined();
   });
 });

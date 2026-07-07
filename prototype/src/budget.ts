@@ -65,9 +65,15 @@ export function localDayKey(now: Date = new Date()): string {
 
 /**
  * Roll up prior spend from the events table: this session's earlier turns and
- * today's spend across all sessions. `created_at` is stamped by the Dolt
- * server's clock (local time), so the day boundary is computed in local time.
- * Query is injectable so the rollup logic is testable without Dolt.
+ * today's spend across all sessions. Only atomic `model_response` costs are
+ * summed — `budget_summary` rows carry the session AGGREGATE and would double
+ * count every session that already ended (review finding). `created_at` is
+ * stamped by the Dolt server's clock (local time), so the day boundary is
+ * computed in local time. The daily scope is deliberately the single local
+ * operator's global envelope, not per-principal — the runtime is a
+ * single-operator system (README boundaries); principal-scoped envelopes
+ * arrive with real multi-principal boundaries. Query is injectable so the
+ * rollup logic is testable without Dolt.
  */
 export async function fetchSpendBaselines(
   sessionId: string,
@@ -78,7 +84,7 @@ export async function fetchSpendBaselines(
     "SELECT " +
       "COALESCE(SUM(CASE WHEN session_id = ? THEN cost_total ELSE 0 END), 0) AS session_spent, " +
       "COALESCE(SUM(CASE WHEN created_at >= ? THEN cost_total ELSE 0 END), 0) AS daily_spent " +
-      "FROM events WHERE cost_total IS NOT NULL AND cost_total > 0",
+      "FROM events WHERE event_type = 'model_response' AND cost_total IS NOT NULL AND cost_total > 0",
     [sessionId, dayStart],
   );
   return {
@@ -125,6 +131,12 @@ export type BudgetLimitReason = "per_call_limit" | "session_limit" | "daily_limi
 export interface BudgetCeilingWarning {
   kind: "budget_ceiling";
   reason: BudgetLimitReason;
+  /**
+   * Every scope this approval covers. One confirmation raises exactly these
+   * envelopes — never a scope that was not presented (review finding: a
+   * per-call-framed prompt must not silently raise session/daily).
+   */
+  crossedScopes: BudgetLimitReason[];
   estimatedCostUsd: number;
   limitUsd: number;
   sessionCostSoFarUsd: number;
@@ -148,6 +160,7 @@ export type ConfirmBudgetCeiling = (
 export function buildBudgetCeilingWarning(
   preCall: PreCallCheck,
   overrideReason?: BudgetLimitReason,
+  crossedScopes?: BudgetLimitReason[],
 ): BudgetCeilingWarning {
   const reason = overrideReason ?? preCall.reason ?? "session_limit";
   const limitUsd = reason === "per_call_limit"
@@ -158,6 +171,9 @@ export function buildBudgetCeilingWarning(
   return {
     kind: "budget_ceiling",
     reason,
+    crossedScopes: crossedScopes && crossedScopes.length > 0
+      ? crossedScopes
+      : [reason],
     estimatedCostUsd: preCall.estimatedCost,
     limitUsd,
     sessionCostSoFarUsd: preCall.sessionCostSoFar,
@@ -170,14 +186,19 @@ export function buildBudgetCeilingWarning(
 }
 
 export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): string {
-  const limitLabel = warning.reason === "per_call_limit"
-    ? "per-call limit"
-    : warning.reason === "daily_limit"
-    ? "daily limit"
-    : "session limit";
+  const label = (scope: BudgetLimitReason): string =>
+    scope === "per_call_limit"
+      ? "per-call limit"
+      : scope === "daily_limit"
+      ? "daily limit"
+      : "session limit";
+  const scopes = warning.crossedScopes.length > 0
+    ? warning.crossedScopes
+    : [warning.reason];
   return [
     "Budget ceiling warning",
-    `Reason:          ${limitLabel}`,
+    `Reason:          ${scopes.map(label).join(" + ")}`,
+    `Approving raises: ${scopes.map(label).join(", ")}`,
     `Estimated cost:  $${warning.estimatedCostUsd.toFixed(6)}`,
     `Limit:           $${warning.limitUsd.toFixed(6)}`,
     `Session spent:   $${warning.sessionCostSoFarUsd.toFixed(6)} / ${
@@ -208,6 +229,7 @@ export function budgetCeilingApprovalRequest(
     perCallLimitUsd: warning.perCallLimitUsd,
     dailyCostSoFarUsd: warning.dailyCostSoFarUsd,
     dailyLimitUsd: warning.dailyLimitUsd,
+    crossedScopes: warning.crossedScopes,
     authzBasis: warning.authzBasis,
     message: formatBudgetCeilingWarning(warning),
   };
@@ -233,6 +255,7 @@ export async function ensureBudgetAllowed(
   preCall: PreCallCheck,
   confirm?: ConfirmBudgetCeiling,
   promptReason?: BudgetLimitReason,
+  crossedScopes?: BudgetLimitReason[],
 ): Promise<void> {
   if (preCall.allowed) return;
   if (!confirm) {
@@ -250,7 +273,7 @@ export async function ensureBudgetAllowed(
       preCall.sessionCostSoFar,
     );
   }
-  const warning = buildBudgetCeilingWarning(preCall, promptReason);
+  const warning = buildBudgetCeilingWarning(preCall, promptReason, crossedScopes);
   const verdict = await confirm(warning);
   if (verdict.decision !== "approve") {
     throw new BudgetCeilingDeclinedError(verdict.reason);
@@ -378,10 +401,17 @@ function ceilingAlreadyConfirmed(
  * session accumulation would otherwise be mislabeled as a per-call overrun.
  * When both dimensions newly cross at once, keep `preCall.reason` (undefined here).
  */
-function newlyExceededPromptReason(
+/**
+ * Every scope that is newly crossing for this call — crossed, and not already
+ * confirmed at or above this projection. Ordered outermost-first (daily,
+ * session, per-call): the first entry frames the prompt, and the full list is
+ * what one approval raises, so the operator is never shown one scope while
+ * another is silently raised (review finding).
+ */
+function newlyExceededScopes(
   preCall: PreCallCheck,
   confirmed: BudgetCeilingConfirmations,
-): BudgetLimitReason | undefined {
+): BudgetLimitReason[] {
   const perCallNew = crossesPerCallLimit(preCall) &&
     (confirmed.per_call_limit === undefined ||
       preCall.estimatedCost > confirmed.per_call_limit);
@@ -391,34 +421,33 @@ function newlyExceededPromptReason(
   const dailyNew = crossesDailyLimit(preCall) &&
     (confirmed.daily_limit === undefined ||
       projectedDailySpend(preCall) > confirmed.daily_limit);
-  const newly = [
+  return [
     dailyNew ? "daily_limit" : null,
     sessionNew ? "session_limit" : null,
     perCallNew ? "per_call_limit" : null,
   ].filter(Boolean) as BudgetLimitReason[];
-  // Exactly one newly-crossing dimension frames the prompt; several at once
-  // fall back to the preCall verdict (daily is the outermost envelope, so it
-  // wins the tie in `newly` ordering when the caller uses the first entry).
-  return newly.length === 1 ? newly[0] : undefined;
 }
 
 function recordCeilingConfirmations(
   preCall: PreCallCheck,
   confirmed: BudgetCeilingConfirmations,
+  approvedScopes: BudgetLimitReason[],
 ): void {
-  if (crossesPerCallLimit(preCall)) {
+  // Raise exactly the scopes the approval presented — never a scope the
+  // operator was not shown.
+  if (approvedScopes.includes("per_call_limit")) {
     confirmed.per_call_limit = Math.max(
       confirmed.per_call_limit ?? 0,
       preCall.estimatedCost,
     );
   }
-  if (crossesSessionLimit(preCall)) {
+  if (approvedScopes.includes("session_limit")) {
     confirmed.session_limit = Math.max(
       confirmed.session_limit ?? 0,
       projectedSessionSpend(preCall),
     );
   }
-  if (crossesDailyLimit(preCall)) {
+  if (approvedScopes.includes("daily_limit")) {
     confirmed.daily_limit = Math.max(
       confirmed.daily_limit ?? 0,
       projectedDailySpend(preCall),
@@ -450,9 +479,10 @@ export function createTurnBudgetCeilingGate(
     async ensureAllowed(preCall: PreCallCheck): Promise<void> {
       if (preCall.allowed) return;
       if (ceilingAlreadyConfirmed(preCall, confirmed)) return;
-      const promptReason = newlyExceededPromptReason(preCall, confirmed);
-      await ensureBudgetAllowed(preCall, confirm, promptReason);
-      recordCeilingConfirmations(preCall, confirmed);
+      const scopes = newlyExceededScopes(preCall, confirmed);
+      // First (outermost) scope frames the prompt; the warning lists them all.
+      await ensureBudgetAllowed(preCall, confirm, scopes[0], scopes);
+      recordCeilingConfirmations(preCall, confirmed, scopes);
     },
   };
 }
