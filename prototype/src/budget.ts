@@ -281,11 +281,15 @@ export async function ensureBudgetAllowed(
 }
 
 /**
- * High-water marks for operator-confirmed ceiling overruns. Confirming a
- * ceiling RAISES the envelope for its scope (cost-posture decision): per-call
- * and session confirmations persist for the session, the daily confirmation
- * persists for the local day — all in runtime-process memory, so a restart
- * forgets raises (the safe direction).
+ * Operator-confirmed ceiling overruns. Confirming a ceiling covers its scope
+ * for the scope's period: a confirmed session or daily overrun does not
+ * re-prompt for the rest of that session or local day — crossing an envelope
+ * soft-confirms ONCE, and the runaway-anomaly gate (not repeated envelope
+ * prompts) is the backstop against pathological spend. Per-call stays a
+ * per-event high-water mark: a single call larger than any previously
+ * confirmed one is a fresh fat-finger check. All of it lives in
+ * runtime-process memory, so a restart forgets confirmations (the safe
+ * direction).
  */
 export interface BudgetCeilingConfirmations {
   per_call_limit?: number;
@@ -434,17 +438,14 @@ function recordCeilingConfirmations(
       preCall.estimatedCost,
     );
   }
+  // Session and daily confirmations cover the whole scope period; recording
+  // the projected level instead re-prompted on every later agent-loop call
+  // as the projection grew — per-call ceremony under another name.
   if (approvedScopes.includes("session_limit")) {
-    confirmed.session_limit = Math.max(
-      confirmed.session_limit ?? 0,
-      projectedSessionSpend(preCall),
-    );
+    confirmed.session_limit = Number.POSITIVE_INFINITY;
   }
   if (approvedScopes.includes("daily_limit")) {
-    confirmed.daily_limit = Math.max(
-      confirmed.daily_limit ?? 0,
-      projectedDailySpend(preCall),
-    );
+    confirmed.daily_limit = Number.POSITIVE_INFINITY;
   }
 }
 

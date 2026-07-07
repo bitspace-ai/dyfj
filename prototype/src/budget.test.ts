@@ -517,7 +517,7 @@ describe("createTurnBudgetCeilingGate", () => {
     expect(warnings[1].limitUsd).toBeCloseTo(1);
   });
 
-  test("re-prompts when projected session spend rises above the confirmed level", async () => {
+  test("a confirmed session overrun covers later larger projections in the scope", async () => {
     const { createTurnBudgetCeilingGate } = await import("./budget");
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const gate = createTurnBudgetCeilingGate(confirm);
@@ -529,6 +529,8 @@ describe("createTurnBudgetCeilingGate", () => {
       perCallLimitUsd: 0.5,
       reason: "session_limit",
     });
+    // Larger projection, same scope: the session confirmation holds — an
+    // agent loop must not degenerate into per-call ceremony.
     await gate.ensureAllowed({
       allowed: false,
       estimatedCost: 0.08,
@@ -537,7 +539,7 @@ describe("createTurnBudgetCeilingGate", () => {
       perCallLimitUsd: 0.5,
       reason: "session_limit",
     });
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(confirm).toHaveBeenCalledTimes(1);
   });
 
   test("decline still aborts without recording a confirmation", async () => {
@@ -708,6 +710,76 @@ describe("daily envelope", () => {
   });
 });
 
+describe("scope-period ceiling confirmations", () => {
+  test("one daily confirm covers later larger projections in the same period", async () => {
+    // UAT reproduction: an agent-loop turn's second call projected past the
+    // level recorded at confirmation time and re-prompted mid-turn.
+    const {
+      ceilingConfirmationStoreFor,
+      createTurnBudgetCeilingGate,
+      resetCeilingConfirmations,
+    } = await import("./budget");
+    resetCeilingConfirmations();
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const gate = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-A", "2026-07-07"),
+    );
+    const overDaily = (estimatedCost: number, dailyCostSoFar: number): PreCallCheck => ({
+      allowed: false,
+      estimatedCost,
+      sessionCostSoFar: dailyCostSoFar,
+      sessionLimitUsd: 5,
+      perCallLimitUsd: 1,
+      dailyCostSoFar,
+      dailyLimitUsd: 0.05,
+      reason: "daily_limit",
+    });
+    await gate.ensureAllowed(overDaily(0.038, 0.082));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    // Later call in the same turn, larger projection: covered.
+    await gate.ensureAllowed(overDaily(0.074, 0.091));
+    // Next turn, same day, even bigger: still covered.
+    const nextTurnGate = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-A", "2026-07-07"),
+    );
+    await nextTurnGate.ensureAllowed(overDaily(0.9, 3.0));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    resetCeilingConfirmations();
+  });
+
+  test("per-call stays a per-event high-water: a bigger single call re-prompts", async () => {
+    const {
+      ceilingConfirmationStoreFor,
+      createTurnBudgetCeilingGate,
+      resetCeilingConfirmations,
+    } = await import("./budget");
+    resetCeilingConfirmations();
+    const confirm = vi.fn(async () => ({ decision: "approve" as const }));
+    const gate = createTurnBudgetCeilingGate(
+      confirm,
+      ceilingConfirmationStoreFor("SESSION-A", "2026-07-07"),
+    );
+    const overPerCall = (estimatedCost: number): PreCallCheck => ({
+      allowed: false,
+      estimatedCost,
+      sessionCostSoFar: 0,
+      sessionLimitUsd: 5,
+      perCallLimitUsd: 1,
+      dailyCostSoFar: 0,
+      dailyLimitUsd: 25,
+      reason: "per_call_limit",
+    });
+    await gate.ensureAllowed(overPerCall(1.2));
+    await gate.ensureAllowed(overPerCall(1.1)); // smaller: covered
+    expect(confirm).toHaveBeenCalledTimes(1);
+    await gate.ensureAllowed(overPerCall(2.5)); // bigger single call: fresh check
+    expect(confirm).toHaveBeenCalledTimes(2);
+    resetCeilingConfirmations();
+  });
+});
+
 describe("composite ceiling approvals", () => {
   test("one prompt names every newly-crossed scope and raises only those", async () => {
     const {
@@ -737,9 +809,10 @@ describe("composite ceiling approvals", () => {
     const message = formatBudgetCeilingWarning(warnings[0]);
     expect(message).toContain("daily limit + session limit");
     expect(message).toContain("Approving raises:");
-    // Only the presented scopes were raised; per-call was never confirmed.
-    expect(confirmed.session_limit).toBeCloseTo(5.1);
-    expect(confirmed.daily_limit).toBeCloseTo(25.1);
+    // Only the presented scopes were confirmed — period-wide for session and
+    // daily; per-call was never confirmed.
+    expect(confirmed.session_limit).toBe(Number.POSITIVE_INFINITY);
+    expect(confirmed.daily_limit).toBe(Number.POSITIVE_INFINITY);
     expect(confirmed.per_call_limit).toBeUndefined();
   });
 });
