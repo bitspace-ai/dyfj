@@ -67,7 +67,7 @@ export function localDayKey(now: Date = new Date()): string {
  * Roll up prior spend from the events table: this session's earlier turns and
  * today's spend across all sessions. Only atomic `model_response` costs are
  * summed — `budget_summary` rows carry the session AGGREGATE and would double
- * count every session that already ended (review finding). `created_at` is
+ * count every session that already ended. `created_at` is
  * stamped by the Dolt server's clock (local time), so the day boundary is
  * computed in local time. The daily scope is deliberately the single local
  * operator's global envelope, not per-principal — the runtime is a
@@ -133,8 +133,8 @@ export interface BudgetCeilingWarning {
   reason: BudgetLimitReason;
   /**
    * Every scope this approval covers. One confirmation raises exactly these
-   * envelopes — never a scope that was not presented (review finding: a
-   * per-call-framed prompt must not silently raise session/daily).
+   * envelopes — never a scope that was not presented: a per-call-framed
+   * prompt must not silently raise the session or daily envelope.
    */
   crossedScopes: BudgetLimitReason[];
   estimatedCostUsd: number;
@@ -395,18 +395,11 @@ function ceilingAlreadyConfirmed(
 }
 
 /**
- * Pick the dimension to frame the prompt around: the one that is *newly* crossing
- * for this call (not yet confirmed this turn). `checkPreCall` always reports
- * `per_call_limit` when per-call is exceeded, so a re-prompt driven purely by
- * session accumulation would otherwise be mislabeled as a per-call overrun.
- * When both dimensions newly cross at once, keep `preCall.reason` (undefined here).
- */
-/**
  * Every scope that is newly crossing for this call — crossed, and not already
  * confirmed at or above this projection. Ordered outermost-first (daily,
  * session, per-call): the first entry frames the prompt, and the full list is
  * what one approval raises, so the operator is never shown one scope while
- * another is silently raised (review finding).
+ * another is silently raised.
  */
 function newlyExceededScopes(
   preCall: PreCallCheck,
