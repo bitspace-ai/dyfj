@@ -1506,7 +1506,7 @@ export async function runWorkbenchRuntime(
       if (selected.tier > 0) {
         // Fresh cross-session daily figure before every paid call, so
         // concurrent sessions see each other's completed spend (in-flight
-        // calls remain invisible; receipts and the anomaly gate backstop).
+        // calls remain invisible; the overshoot shows in receipts).
         const fresh = await fetchBaselines(sessionId);
         budget.refreshDailyOtherSessions(fresh.dailyOtherSessionsUsd);
       }

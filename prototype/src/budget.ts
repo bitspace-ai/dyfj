@@ -77,8 +77,8 @@ export function localDayKey(now: Date = new Date()): string {
  * Enforcement freshness: the daily figure is re-fetched before EVERY paid
  * call, so concurrent sessions see each other's completed calls; calls still
  * in flight are invisible, so simultaneous turns can overshoot the daily
- * envelope by at most the sum of in-flight call costs. Receipts and the
- * runaway-anomaly gate are the backstop for that residual — this is a
+ * envelope by at most the sum of in-flight call costs, visible afterward in
+ * receipts — this is a
  * single-operator cost envelope, not an adversarial control, and it is
  * deliberately global rather than per-principal (single-operator system per
  * the README boundaries). Query is injectable so the rollup logic is
@@ -296,8 +296,9 @@ export async function ensureBudgetAllowed(
  * Operator-confirmed ceiling overruns. Confirming a ceiling covers its scope
  * for the scope's period: a confirmed session or daily overrun does not
  * re-prompt for the rest of that session or local day — crossing an envelope
- * soft-confirms ONCE, and the runaway-anomaly gate (not repeated envelope
- * prompts) is the backstop against pathological spend. Per-call stays a
+ * soft-confirms ONCE. After confirmation, spend in that scope is bounded only
+ * by the per-call check, per-turn paid consent, and the agent-loop step cap
+ * until the period ends. Per-call stays a
  * per-event high-water mark: a single call larger than any previously
  * confirmed one is a fresh fat-finger check. All of it lives in
  * runtime-process memory, so a restart forgets confirmations (the safe
