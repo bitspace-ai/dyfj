@@ -46,8 +46,10 @@ export interface BudgetConfig {
  * the "session" and "daily" envelopes would silently reset every turn.
  */
 export interface SpendBaselines {
+  /** This session's spend from earlier turns (static under the session lock). */
   sessionSpentUsd: number;
-  dailySpentUsd: number;
+  /** Today's spend across OTHER sessions; refreshed before each paid call. */
+  dailyOtherSessionsUsd: number;
 }
 
 /** Start of the local day, in the clock the Dolt server stamps created_at with. */
@@ -64,16 +66,23 @@ export function localDayKey(now: Date = new Date()): string {
 }
 
 /**
- * Roll up prior spend from the events table: this session's earlier turns and
- * today's spend across all sessions. Only atomic `model_response` costs are
- * summed — `budget_summary` rows carry the session AGGREGATE and would double
- * count every session that already ended. `created_at` is
- * stamped by the Dolt server's clock (local time), so the day boundary is
- * computed in local time. The daily scope is deliberately the single local
- * operator's global envelope, not per-principal — the runtime is a
- * single-operator system (README boundaries); principal-scoped envelopes
- * arrive with real multi-principal boundaries. Query is injectable so the
- * rollup logic is testable without Dolt.
+ * Roll up prior spend from the events table: this session's earlier turns,
+ * and today's spend across OTHER sessions (this session's contribution is the
+ * session baseline plus the live turn tracker, so the two never double
+ * count). Only atomic `model_response` costs are summed — `budget_summary`
+ * rows carry the session AGGREGATE and would double count every session that
+ * already ended. `created_at` is stamped by the Dolt server's clock (local
+ * time), so the day boundary is computed in local time.
+ *
+ * Enforcement freshness: the daily figure is re-fetched before EVERY paid
+ * call, so concurrent sessions see each other's completed calls; calls still
+ * in flight are invisible, so simultaneous turns can overshoot the daily
+ * envelope by at most the sum of in-flight call costs. Receipts and the
+ * runaway-anomaly gate are the backstop for that residual — this is a
+ * single-operator cost envelope, not an adversarial control, and it is
+ * deliberately global rather than per-principal (single-operator system per
+ * the README boundaries). Query is injectable so the rollup logic is
+ * testable without Dolt.
  */
 export async function fetchSpendBaselines(
   sessionId: string,
@@ -83,13 +92,13 @@ export async function fetchSpendBaselines(
   const rows = await query(
     "SELECT " +
       "COALESCE(SUM(CASE WHEN session_id = ? THEN cost_total ELSE 0 END), 0) AS session_spent, " +
-      "COALESCE(SUM(CASE WHEN created_at >= ? THEN cost_total ELSE 0 END), 0) AS daily_spent " +
+      "COALESCE(SUM(CASE WHEN created_at >= ? AND session_id <> ? THEN cost_total ELSE 0 END), 0) AS daily_others " +
       "FROM events WHERE event_type = 'model_response' AND cost_total IS NOT NULL AND cost_total > 0",
-    [sessionId, dayStart],
+    [sessionId, dayStart, sessionId],
   );
   return {
     sessionSpentUsd: Number(rows[0]?.session_spent ?? 0) || 0,
-    dailySpentUsd: Number(rows[0]?.daily_spent ?? 0) || 0,
+    dailyOtherSessionsUsd: Number(rows[0]?.daily_others ?? 0) || 0,
   };
 }
 
@@ -207,9 +216,12 @@ export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): strin
     `Today spent:     $${warning.dailyCostSoFarUsd.toFixed(6)} / ${
       warning.dailyLimitUsd.toFixed(6)
     }`,
-    `Projected total: $${
+    `Projected session: $${
       (warning.sessionCostSoFarUsd + warning.estimatedCostUsd).toFixed(6)
     } / ${warning.sessionLimitUsd.toFixed(6)}`,
+    `Projected today: $${
+      (warning.dailyCostSoFarUsd + warning.estimatedCostUsd).toFixed(6)
+    } / ${warning.dailyLimitUsd.toFixed(6)}`,
     `Per-call limit:  $${warning.perCallLimitUsd.toFixed(6)}`,
   ].join("\n");
 }
@@ -528,11 +540,19 @@ export class BudgetTracker {
     // Prior spend from the events table (fetchSpendBaselines): the session's
     // earlier turns and today's spend across sessions. Without these the
     // session and daily envelopes silently reset every turn.
-    private readonly baselines: SpendBaselines = {
+    private baselines: SpendBaselines = {
       sessionSpentUsd: 0,
-      dailySpentUsd: 0,
+      dailyOtherSessionsUsd: 0,
     },
   ) {}
+
+  /**
+   * Refresh the cross-session daily figure (called before each paid call) so
+   * concurrent sessions see each other's completed spend.
+   */
+  refreshDailyOtherSessions(usd: number): void {
+    this.baselines = { ...this.baselines, dailyOtherSessionsUsd: usd };
+  }
 
   // ── Accumulators ───────────────────────────────────────────────────────────
 
@@ -586,7 +606,8 @@ export class BudgetTracker {
     estimatedInputTokens: number,
   ): PreCallCheck {
     const sessionCostSoFar = this.baselines.sessionSpentUsd + this._totalCost;
-    const dailyCostSoFar = this.baselines.dailySpentUsd + this._totalCost;
+    const dailyCostSoFar = this.baselines.dailyOtherSessionsUsd +
+      sessionCostSoFar;
     const base: Omit<PreCallCheck, "allowed" | "estimatedCost" | "reason"> = {
       sessionCostSoFar,
       sessionLimitUsd: this.config.sessionLimitUsd,

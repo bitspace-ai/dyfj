@@ -1111,8 +1111,9 @@ export async function runWorkbenchRuntime(
   };
   // Seed the envelopes with spend already on the books: this session's prior
   // turns and today's spend across all sessions. Injectable for tests.
-  const spendBaselines = await (runtimeInput.fetchSpendBaselines ??
-    fetchSpendBaselines)(sessionId);
+  const fetchBaselines = runtimeInput.fetchSpendBaselines ??
+    fetchSpendBaselines;
+  const spendBaselines = await fetchBaselines(sessionId);
   const budget = new BudgetTracker(
     sessionId,
     traceId,
@@ -1502,6 +1503,13 @@ export async function runWorkbenchRuntime(
       // enforced before each one and usage recorded after each one (paid
       // consent and ceiling confirmation are granted once per turn above;
       // per-call + session limits and MAX_TOOL_STEPS bound loop spend).
+      if (selected.tier > 0) {
+        // Fresh cross-session daily figure before every paid call, so
+        // concurrent sessions see each other's completed spend (in-flight
+        // calls remain invisible; receipts and the anomaly gate backstop).
+        const fresh = await fetchBaselines(sessionId);
+        budget.refreshDailyOtherSessions(fresh.dailyOtherSessionsUsd);
+      }
       const callPre = budget.checkPreCall(
         selected.tier,
         selected.costInput,

@@ -53,7 +53,7 @@ const runtimeMocks = vi.hoisted(() => {
 
 vi.mock("./utils", () => ({
   // Spend-baseline rollup: no prior spend on the books in unit tests.
-  doltQuery: async () => [{ session_spent: "0", daily_spent: "0" }],
+  doltQuery: async () => [{ session_spent: "0", daily_others: "0" }],
   generateULID: () => `01TEST${String(++runtimeMocks.ulid).padStart(20, "0")}`,
   generateTraceId: () => "0123456789abcdef0123456789abcdef",
   generateSpanId: () => "0123456789abcdef",

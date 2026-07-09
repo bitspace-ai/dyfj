@@ -25,7 +25,7 @@ const TRACE_ID = "aabbccddeeff00112233445566778899";
 
 function makeTracker(
   config?: Partial<BudgetConfig>,
-  baselines?: { sessionSpentUsd: number; dailySpentUsd: number },
+  baselines?: { sessionSpentUsd: number; dailyOtherSessionsUsd: number },
 ): BudgetTracker {
   return new BudgetTracker(SESSION_ID, TRACE_ID, {
     sessionLimitUsd: 1.00,
@@ -577,7 +577,7 @@ describe("daily envelope", () => {
   test("checkPreCall crosses the daily limit when today's rollup plus the call exceeds it", () => {
     const tracker = makeTracker(
       { dailyLimitUsd: 25 },
-      { sessionSpentUsd: 0, dailySpentUsd: 24.95 },
+      { sessionSpentUsd: 0, dailyOtherSessionsUsd: 24.95 },
     );
     // $0.06 estimated: within per-call and session, but 24.95 + 0.06 > 25.
     const check = tracker.checkPreCall(2, 6, 10_000);
@@ -592,7 +592,7 @@ describe("daily envelope", () => {
     // carries the session's earlier turns.
     const tracker = makeTracker(
       { sessionLimitUsd: 1 },
-      { sessionSpentUsd: 0.98, dailySpentUsd: 0.98 },
+      { sessionSpentUsd: 0.98, dailyOtherSessionsUsd: 0 },
     );
     const check = tracker.checkPreCall(2, 6, 10_000);
     expect(check.allowed).toBe(false);
@@ -605,15 +605,24 @@ describe("daily envelope", () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const query = async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      return [{ session_spent: "0.12", daily_spent: "3.4" }];
+      return [{ session_spent: "0.12", daily_others: "3.4" }];
     };
     const baselines = await fetchSpendBaselines(
       SESSION_ID,
       "2026-07-06 00:00:00",
       query as never,
     );
-    expect(baselines).toEqual({ sessionSpentUsd: 0.12, dailySpentUsd: 3.4 });
-    expect(calls[0].params).toEqual([SESSION_ID, "2026-07-06 00:00:00"]);
+    expect(baselines).toEqual({
+      sessionSpentUsd: 0.12,
+      dailyOtherSessionsUsd: 3.4,
+    });
+    expect(calls[0].params).toEqual([
+      SESSION_ID,
+      "2026-07-06 00:00:00",
+      SESSION_ID,
+    ]);
+    // Other-session scoping: this session's own rows must not count twice.
+    expect(calls[0].sql).toContain("session_id <> ?");
     expect(calls[0].sql).toContain("cost_total");
     // budget_summary rows aggregate the session and would double count.
     expect(calls[0].sql).toContain("event_type = 'model_response'");
@@ -814,5 +823,39 @@ describe("composite ceiling approvals", () => {
     expect(confirmed.session_limit).toBe(Number.POSITIVE_INFINITY);
     expect(confirmed.daily_limit).toBe(Number.POSITIVE_INFINITY);
     expect(confirmed.per_call_limit).toBeUndefined();
+  });
+});
+
+describe("cross-session daily refresh", () => {
+  test("a refreshed daily figure moves the envelope check", () => {
+    const tracker = makeTracker(
+      { dailyLimitUsd: 25 },
+      { sessionSpentUsd: 0, dailyOtherSessionsUsd: 0 },
+    );
+    // $0.06 call: fine while other sessions have spent nothing today.
+    expect(tracker.checkPreCall(2, 6, 10_000).allowed).toBe(true);
+    // Another session finishes a big call; the refreshed figure crosses.
+    tracker.refreshDailyOtherSessions(24.99);
+    const check = tracker.checkPreCall(2, 6, 10_000);
+    expect(check.allowed).toBe(false);
+    expect(check.reason).toBe("daily_limit");
+    expect(check.dailyCostSoFar).toBeCloseTo(24.99);
+  });
+
+  test("the ceiling warning projects the crossed daily scope", async () => {
+    const { buildBudgetCeilingWarning, formatBudgetCeilingWarning } =
+      await import("./budget");
+    const message = formatBudgetCeilingWarning(buildBudgetCeilingWarning({
+      allowed: false,
+      estimatedCost: 0.06,
+      sessionCostSoFar: 0.06,
+      sessionLimitUsd: 5,
+      perCallLimitUsd: 1,
+      dailyCostSoFar: 24.99,
+      dailyLimitUsd: 25,
+      reason: "daily_limit",
+    }));
+    expect(message).toContain("Projected today: $25.050000 / 25.000000");
+    expect(message).toContain("Projected session: $0.120000 / 5.000000");
   });
 });
