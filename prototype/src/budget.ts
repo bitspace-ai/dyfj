@@ -474,7 +474,11 @@ function recordCeilingConfirmations(
 }
 
 export interface TurnBudgetCeilingGate {
-  /** Enforce a ceiling once per turn for the same projected spend level. */
+  /**
+   * Enforce the per-call/session/daily ceilings; a crossed, unconfirmed scope
+   * prompts once and the confirmation covers that scope per the injected
+   * confirmation store's lifetime.
+   */
   ensureAllowed(preCall: PreCallCheck): Promise<void>;
 }
 
@@ -489,8 +493,8 @@ export interface TurnBudgetCeilingGate {
 export function createTurnBudgetCeilingGate(
   confirm?: ConfirmBudgetCeiling,
   // Scope-persistent store (ceilingConfirmationStoreFor) makes a confirmation
-  // RAISE the envelope for its scope across turns; the default fresh object
-  // preserves the old per-turn behavior for existing callers/tests.
+  // cover its scope for the scope period; the default fresh object scopes
+  // coverage to this gate instance (one turn) for callers and tests.
   confirmed: BudgetCeilingConfirmations = {},
 ): TurnBudgetCeilingGate {
   return {
