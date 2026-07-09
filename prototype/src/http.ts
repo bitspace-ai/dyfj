@@ -64,7 +64,7 @@ export interface WorkbenchHttpHandlerOptions {
     sessionId: string;
     asOf?: string;
   }) => Promise<WorkbenchSessionEvent[]>;
-  /** Loaded engine config (companion, posture, budget defaults). */
+  /** Loaded engine config (companion, posture, budget defaults, anomaly multiples). */
   engineConfig?: Pick<
     WorkbenchConfig,
     | "defaultCompanionModel"
@@ -73,6 +73,8 @@ export interface WorkbenchHttpHandlerOptions {
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
+    | "anomalyTurnMultiple"
+    | "anomalyScopeMultiple"
   >;
 }
 

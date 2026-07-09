@@ -25,6 +25,7 @@ import type { PermissionLevel, WorkbenchConfig } from "./config";
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
+  runawayAnomalyApprovalRequest,
 } from "./budget";
 import type { TurnStreamFrame } from "./turn-contract";
 import {
@@ -94,7 +95,7 @@ export interface WorkbenchUnixServerOptions {
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config); the seam is always loopback. */
   permissionLevel?: PermissionLevel;
-  /** Loaded engine config (companion, posture, budget defaults). */
+  /** Loaded engine config (companion, posture, budget defaults, anomaly multiples). */
   engineConfig?: Pick<
     WorkbenchConfig,
     | "defaultCompanionModel"
@@ -103,6 +104,8 @@ export interface WorkbenchUnixServerOptions {
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
+    | "anomalyTurnMultiple"
+    | "anomalyScopeMultiple"
   >;
 }
 
@@ -381,6 +384,14 @@ export function buildTurnHandlers(
             (): BudgetCeilingVerdict => ({
               decision: "deny",
               reason: "budget ceiling approval failed (no client approver?)",
+            }),
+          ),
+        confirmRunawayAnomaly: (warning) =>
+          ctx.request("approval", runawayAnomalyApprovalRequest(warning)).then(
+            toBudgetCeilingVerdict,
+            (): BudgetCeilingVerdict => ({
+              decision: "deny",
+              reason: "anomaly halt approval failed (no client approver?)",
             }),
           ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a

@@ -916,3 +916,190 @@ describe("scope-aware budget errors", () => {
     expect(tracker.checkPreCall(2, 6, 10_000).reason).toBe("daily_limit");
   });
 });
+
+// ── Runaway anomaly gate ──────────────────────────────────────────────────────
+
+describe("BudgetTracker.checkAnomaly()", () => {
+  const ANOMALY = { turnMultiple: 3, scopeMultiple: 2 };
+  // Config: per-call $0.10, session $1.00, daily $25.00 → halts at
+  // turn $0.30, session $2.00, daily $50.00.
+
+  test("tier 0 never halts, even past every threshold", () => {
+    const t = makeTracker(undefined, {
+      sessionSpentUsd: 100,
+      sessionSpentTodayUsd: 100,
+      dailyOtherSessionsUsd: 100,
+    });
+    t.record(makeUsage(1000, 1000, 5), 2);
+    const check = t.checkAnomaly(0, ANOMALY);
+    expect(check.halted).toBe(false);
+    expect(check.trigger).toBeUndefined();
+  });
+
+  test("no spend → no halt (first call of a fresh turn)", () => {
+    const check = makeTracker().checkAnomaly(2, ANOMALY);
+    expect(check.halted).toBe(false);
+    expect(check.turnSpentUsd).toBe(0);
+    expect(check.turnHaltUsd).toBeCloseTo(0.30);
+  });
+
+  test("uses ACTUAL recorded spend, not estimates: turn accumulation trips the turn trigger", () => {
+    const t = makeTracker();
+    // Three real calls, each under the per-call limit, piling past 3×.
+    t.record(makeUsage(50_000, 500, 0.09), 2);
+    t.record(makeUsage(60_000, 500, 0.09), 2);
+    let check = t.checkAnomaly(2, ANOMALY);
+    expect(check.halted).toBe(false); // $0.18 < $0.30
+    t.record(makeUsage(80_000, 500, 0.15), 2);
+    check = t.checkAnomaly(2, ANOMALY);
+    expect(check.halted).toBe(true); // $0.33 > $0.30
+    expect(check.trigger).toBe("turn_spend");
+    expect(check.turnSpentUsd).toBeCloseTo(0.33);
+  });
+
+  test("session scope trips at scopeMultiple × session limit, counting baselines", () => {
+    const t = makeTracker(undefined, {
+      sessionSpentUsd: 1.95,
+      sessionSpentTodayUsd: 1.95,
+      dailyOtherSessionsUsd: 0,
+    });
+    t.record(makeUsage(1000, 100, 0.10), 2);
+    const check = t.checkAnomaly(2, ANOMALY);
+    expect(check.halted).toBe(true); // $2.05 > $2.00
+    expect(check.trigger).toBe("session_scope");
+    expect(check.sessionSpentUsd).toBeCloseTo(2.05);
+    expect(check.sessionHaltUsd).toBeCloseTo(2.00);
+  });
+
+  test("daily scope trips at scopeMultiple × daily limit and outranks session", () => {
+    const t = makeTracker(undefined, {
+      sessionSpentUsd: 3.0, // session also past its $2 halt
+      sessionSpentTodayUsd: 3.0,
+      dailyOtherSessionsUsd: 47.5,
+    });
+    const check = t.checkAnomaly(2, ANOMALY);
+    expect(check.halted).toBe(true); // $50.50 > $50.00
+    expect(check.trigger).toBe("daily_scope"); // outermost frames the halt
+    expect(check.dailySpentUsd).toBeCloseTo(50.5);
+    expect(check.dailyHaltUsd).toBeCloseTo(50.0);
+  });
+
+  test("a lifetime-spanning session counts only today toward the daily halt", () => {
+    const t = makeTracker(undefined, {
+      sessionSpentUsd: 60, // huge lifetime → session_scope trips
+      sessionSpentTodayUsd: 0.5,
+      dailyOtherSessionsUsd: 1.0,
+    });
+    const check = t.checkAnomaly(2, ANOMALY);
+    expect(check.trigger).toBe("session_scope");
+    expect(check.dailySpentUsd).toBeCloseTo(1.5); // not 61
+  });
+});
+
+describe("ensureAnomalyAllowed", () => {
+  const ANOMALY = { turnMultiple: 3, scopeMultiple: 2 };
+
+  async function trippedCheck() {
+    const t = makeTracker();
+    t.record(makeUsage(100_000, 1000, 0.35), 2);
+    return t.checkAnomaly(2, ANOMALY);
+  }
+
+  test("no halt → no prompt, no error", async () => {
+    const { ensureAnomalyAllowed } = await import("./budget");
+    const confirm = vi.fn();
+    await ensureAnomalyAllowed(makeTracker().checkAnomaly(2, ANOMALY), confirm);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  test("fails closed without a confirm handler", async () => {
+    const { ensureAnomalyAllowed, RunawayAnomalyHaltError } = await import(
+      "./budget"
+    );
+    await expect(ensureAnomalyAllowed(await trippedCheck())).rejects.toThrow(
+      RunawayAnomalyHaltError,
+    );
+  });
+
+  test("approval admits the call; the warning carries the halt and approval bases", async () => {
+    const { ensureAnomalyAllowed } = await import("./budget");
+    const seen: unknown[] = [];
+    await ensureAnomalyAllowed(await trippedCheck(), (warning) => {
+      seen.push(warning);
+      return Promise.resolve({ decision: "approve" });
+    });
+    const warning = seen[0] as Record<string, unknown>;
+    expect(warning.kind).toBe("runaway_anomaly");
+    expect(warning.trigger).toBe("turn_spend");
+    expect(warning.authzBasis).toBe("policy:halt:runaway-anomaly");
+    expect(warning.approvalAuthzBasis).toBe(
+      "policy:allow:operator-confirmed-anomaly",
+    );
+  });
+
+  test("decline throws with the trigger and figures", async () => {
+    const { ensureAnomalyAllowed, RunawayAnomalyHaltError } = await import(
+      "./budget"
+    );
+    let caught: InstanceType<typeof RunawayAnomalyHaltError> | undefined;
+    try {
+      await ensureAnomalyAllowed(await trippedCheck(), () =>
+        Promise.resolve({ decision: "deny", reason: "not today" }));
+    } catch (e) {
+      caught = e as InstanceType<typeof RunawayAnomalyHaltError>;
+    }
+    expect(caught?.name).toBe("RunawayAnomalyHaltError");
+    expect(caught?.trigger).toBe("turn_spend");
+    expect(caught?.declined).toBe(true);
+    expect(caught?.message).toContain("not today");
+  });
+
+  test("approvals never persist: the same tripped check prompts again", async () => {
+    const { ensureAnomalyAllowed } = await import("./budget");
+    const check = await trippedCheck();
+    const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
+    await ensureAnomalyAllowed(check, confirm);
+    await ensureAnomalyAllowed(check, confirm);
+    expect(confirm).toHaveBeenCalledTimes(2); // no high-water mark, no coverage
+  });
+});
+
+describe("runaway anomaly warning formatting", () => {
+  test("format names the trigger, the actuals, and the no-raise semantics", async () => {
+    const { buildRunawayAnomalyWarning, formatRunawayAnomalyWarning } =
+      await import("./budget");
+    const t = makeTracker();
+    t.record(makeUsage(100_000, 1000, 0.35), 2);
+    const text = formatRunawayAnomalyWarning(
+      buildRunawayAnomalyWarning(
+        t.checkAnomaly(2, { turnMultiple: 3, scopeMultiple: 2 }),
+      ),
+    );
+    expect(text).toContain("Runaway spend anomaly — hard stop");
+    expect(text).toContain("turn spend at 3× the per-call limit");
+    expect(text).toContain("$0.350000");
+    expect(text).toContain("nothing is raised");
+  });
+
+  test("approval-request wire shape carries kind, message, and both bases", async () => {
+    const { buildRunawayAnomalyWarning, runawayAnomalyApprovalRequest } =
+      await import("./budget");
+    const t = makeTracker(undefined, {
+      sessionSpentUsd: 2.5,
+      sessionSpentTodayUsd: 2.5,
+      dailyOtherSessionsUsd: 0,
+    });
+    const request = runawayAnomalyApprovalRequest(
+      buildRunawayAnomalyWarning(
+        t.checkAnomaly(2, { turnMultiple: 3, scopeMultiple: 2 }),
+      ),
+    );
+    expect(request.kind).toBe("runaway_anomaly");
+    expect(request.trigger).toBe("session_scope");
+    expect(typeof request.message).toBe("string");
+    expect(request.authzBasis).toBe("policy:halt:runaway-anomaly");
+    expect(request.approvalAuthzBasis).toBe(
+      "policy:allow:operator-confirmed-anomaly",
+    );
+  });
+});

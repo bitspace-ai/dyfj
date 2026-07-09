@@ -511,6 +511,19 @@ export async function promptMidTurnApproval(
     }
     return { decision: "deny", reason: "operator declined" };
   }
+  if (r.kind === "runaway_anomaly") {
+    const message = typeof r.message === "string"
+      ? r.message
+      : "Actual spend crossed a runaway-anomaly hard stop.";
+    io.err(`\n🛑 ${message}`);
+    const answer = await io.readLine(
+      "   allow the next call anyway? [y/N] ",
+    );
+    if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
+      return { decision: "approve" };
+    }
+    return { decision: "deny", reason: "operator declined" };
+  }
   const title = typeof r.title === "string"
     ? r.title
     : String(r.commandId ?? "tool");

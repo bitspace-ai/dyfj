@@ -20,7 +20,7 @@ import {
   type WorkbenchSessionEvent,
 } from "./sessions";
 import type { ConfirmToolApproval } from "./commands";
-import type { ConfirmBudgetCeiling } from "./budget";
+import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget";
 import type { PermissionLevel, WorkbenchConfig } from "./config";
 
 export type WorkbenchHttpRuntime = (
@@ -311,12 +311,20 @@ export interface ExecuteTurnDeps {
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
   defaultDailyBudgetUsd?: number;
+  /** Runaway-anomaly hard-stop multiples (config), resolved once at the boundary. */
+  anomalyTurnMultiple?: number;
+  anomalyScopeMultiple?: number;
   /**
    * Warn-then-confirm handler when projected spend crosses a budget ceiling.
    * The UDS transport supplies a duplex round-trip; HTTP omits it, so the
    * runtime fails closed when a ceiling would be exceeded.
    */
   confirmBudgetCeiling?: ConfirmBudgetCeiling;
+  /**
+   * Confirm handler for a runaway-anomaly hard stop. UDS supplies a duplex
+   * round-trip; HTTP omits it, so the runtime fails closed at the halt.
+   */
+  confirmRunawayAnomaly?: ConfirmRunawayAnomaly;
 }
 
 /** Thread the loaded engine config into executeTurn deps. */
@@ -329,6 +337,8 @@ export function engineConfigToTurnDeps(
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
+    | "anomalyTurnMultiple"
+    | "anomalyScopeMultiple"
   >,
 ): Pick<
   ExecuteTurnDeps,
@@ -338,6 +348,8 @@ export function engineConfigToTurnDeps(
   | "defaultSessionBudgetUsd"
   | "defaultPerCallBudgetUsd"
   | "defaultDailyBudgetUsd"
+  | "anomalyTurnMultiple"
+  | "anomalyScopeMultiple"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -346,6 +358,8 @@ export function engineConfigToTurnDeps(
     defaultSessionBudgetUsd: config.defaultSessionBudgetUsd,
     defaultPerCallBudgetUsd: config.defaultPerCallBudgetUsd,
     defaultDailyBudgetUsd: config.defaultDailyBudgetUsd,
+    anomalyTurnMultiple: config.anomalyTurnMultiple,
+    anomalyScopeMultiple: config.anomalyScopeMultiple,
   };
 }
 
@@ -410,6 +424,12 @@ function runExecuteTurn(
     ...(deps.defaultDailyBudgetUsd !== undefined
       ? { defaultDailyBudgetUsd: deps.defaultDailyBudgetUsd }
       : {}),
+    ...(deps.anomalyTurnMultiple !== undefined
+      ? { anomalyTurnMultiple: deps.anomalyTurnMultiple }
+      : {}),
+    ...(deps.anomalyScopeMultiple !== undefined
+      ? { anomalyScopeMultiple: deps.anomalyScopeMultiple }
+      : {}),
     authContext: deps.authContext,
     onTextDelta: deps.onTextDelta,
     onRuntimeEvent: deps.onRuntimeEvent,
@@ -418,6 +438,8 @@ function runExecuteTurn(
     confirmToolApproval: deps.confirmToolApproval,
     // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
     confirmBudgetCeiling: deps.confirmBudgetCeiling,
+    // runaway-anomaly hard stop; absent => fail closed at the halt.
+    confirmRunawayAnomaly: deps.confirmRunawayAnomaly,
     // paid inference is granted only to a loopback caller that
     // explicitly opted in this turn; remote callers are always denied.
     confirmPaidEscalation: () =>

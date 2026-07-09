@@ -1321,3 +1321,150 @@ describe("runWorkbenchRuntime reads runtime config from input, not env", () => {
     expect(new Set(principals)).toEqual(new Set(["custom-principal"]));
   });
 });
+
+describe("runWorkbenchRuntime runaway anomaly gate", () => {
+  // Estimates are zeroed (costInput 0) so the estimate-based ceiling gate
+  // stays silent and only the anomaly gate — which reads ACTUAL recorded
+  // spend — is exercised. Per-call limit $0.10 × turnMultiple 3 → the turn
+  // halts once its actual spend passes $0.30.
+  const paidBase = () => ({
+    model: runtimeMocks.model,
+    selection: {
+      selected: runtimeMocks.model,
+      considered: [runtimeMocks.model.slug],
+      reason: "default",
+    },
+    usage: {
+      input: 10,
+      output: 2,
+      cost: { total: 0.12 },
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    stopReason: "tool_use",
+    timings: { responseHeadersMs: 1, totalMs: 2 },
+  });
+  const toolTurn = (id: string) => ({
+    ...paidBase(),
+    text: "",
+    toolCalls: [{ id, name: "list_files", arguments: { path: "." } }],
+  });
+
+  test("halts a multi-call turn on ACTUAL accumulated spend, failing closed without a handler", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 0;
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce(toolTurn("c1"))
+      .mockResolvedValueOnce(toolTurn("c2"))
+      .mockResolvedValueOnce(toolTurn("c3"))
+      .mockResolvedValueOnce({
+        ...paidBase(),
+        text: "never reached",
+        stopReason: "stop",
+      });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        defaultPerCallBudgetUsd: 0.10,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        // no confirmRunawayAnomaly → fail closed at the halt
+      })).rejects.toThrow("Runaway spend anomaly");
+      // Calls 1-3 ran ($0.36 recorded); the halt fired BEFORE call 4.
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(3);
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+
+  test("an approval admits one call only — the next anomalous call prompts again", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 0;
+    const confirmRunawayAnomaly = vi.fn(async () => ({
+      decision: "approve" as const,
+    }));
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce(toolTurn("c1")) // pre-check: $0
+      .mockResolvedValueOnce(toolTurn("c2")) // pre-check: $0.12
+      .mockResolvedValueOnce(toolTurn("c3")) // pre-check: $0.24
+      .mockResolvedValueOnce(toolTurn("c4")) // pre-check: $0.36 → prompt 1
+      .mockResolvedValueOnce({
+        ...paidBase(),
+        text: "done",
+        stopReason: "stop", // pre-check: $0.48 → prompt 2
+      });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        defaultPerCallBudgetUsd: 0.10,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        confirmRunawayAnomaly,
+      });
+      expect(result.text).toBe("done");
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(5);
+      // Never persists: BOTH anomalous pre-checks prompted, unlike the
+      // ceiling gate's scope-period coverage where the first approval
+      // would have silenced the second.
+      expect(confirmRunawayAnomaly).toHaveBeenCalledTimes(2);
+      const first = confirmRunawayAnomaly.mock.calls[0][0] as {
+        trigger: string;
+        turnSpentUsd: number;
+      };
+      expect(first.trigger).toBe("turn_spend");
+      expect(first.turnSpentUsd).toBeCloseTo(0.36);
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+
+  test("scope hard-multiple halts even spend a ceiling confirmation already covered", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 0;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        defaultSessionBudgetUsd: 1.0,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        // Session lifetime spend already past 2× the $1 envelope.
+        fetchSpendBaselines: async () => ({
+          sessionSpentUsd: 2.5,
+          sessionSpentTodayUsd: 2.5,
+          dailyOtherSessionsUsd: 0,
+        }),
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        // The ceiling handler approving is exactly the blind spot: the
+        // anomaly halt must fire regardless, and fail closed without its own
+        // handler.
+        confirmBudgetCeiling: async () => ({ decision: "approve" as const }),
+      })).rejects.toThrow("Runaway spend anomaly");
+      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+});

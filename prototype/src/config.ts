@@ -150,6 +150,23 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
     default: false,
   },
+  // ── engine: runaway-anomaly hard-stop multiples (applied to ACTUAL spend) ──
+  {
+    key: "anomalyTurnMultiple",
+    envVar: "DYFJ_ANOMALY_TURN_MULTIPLE",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 3.0,
+  },
+  {
+    key: "anomalyScopeMultiple",
+    envVar: "DYFJ_ANOMALY_SCOPE_MULTIPLE",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 2.0,
+  },
   // ── engine: other runtime knobs (declared so the allowlist derives here) ──
   { key: "root", envVar: "DYFJ_ROOT", domain: "engine", type: "string", kind: "value" },
   { key: "routingHint", envVar: "DYFJ_WORKBENCH_HINT", domain: "engine", type: "string", kind: "value" },
@@ -250,6 +267,14 @@ export interface WorkbenchConfig {
   defaultPerCallBudgetUsd: number;
   /** Default max total USD spend across all sessions in a local day (startup posture). */
   defaultDailyBudgetUsd: number;
+  /**
+   * Runaway-anomaly hard-stop multiples. Unlike the envelopes (soft,
+   * confirmable, scope-persistent), the anomaly gate halts on ACTUAL recorded
+   * spend and its confirmations never persist. Multiples rather than dollar
+   * knobs so they scale when the envelopes are retuned.
+   */
+  anomalyTurnMultiple: number;
+  anomalyScopeMultiple: number;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
@@ -259,6 +284,8 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultSessionBudgetUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
   defaultPerCallBudgetUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
   defaultDailyBudgetUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
+  anomalyTurnMultiple: schemaNumberDefault("anomalyTurnMultiple"),
+  anomalyScopeMultiple: schemaNumberDefault("anomalyScopeMultiple"),
 };
 
 /** Minimal env surface, so callers can inject a fake in tests. */
@@ -344,6 +371,20 @@ export async function loadConfig(
         `${path} [budget].per_call_limit_usd`,
       );
     }
+    const fileTurnMultiple = readNumber(table, "anomaly", "turn_multiple");
+    if (fileTurnMultiple !== undefined) {
+      config.anomalyTurnMultiple = validatePositiveMultiple(
+        fileTurnMultiple,
+        `${path} [anomaly].turn_multiple`,
+      );
+    }
+    const fileScopeMultiple = readNumber(table, "anomaly", "scope_multiple");
+    if (fileScopeMultiple !== undefined) {
+      config.anomalyScopeMultiple = validatePositiveMultiple(
+        fileScopeMultiple,
+        `${path} [anomaly].scope_multiple`,
+      );
+    }
   }
 
   // ── env layer (overrides the file) ──
@@ -376,6 +417,16 @@ export async function loadConfig(
     env,
     schemaEnvVar("defaultDailyBudgetUsd"),
     config.defaultDailyBudgetUsd,
+  );
+  config.anomalyTurnMultiple = readPositiveMultiple(
+    env,
+    schemaEnvVar("anomalyTurnMultiple"),
+    config.anomalyTurnMultiple,
+  );
+  config.anomalyScopeMultiple = readPositiveMultiple(
+    env,
+    schemaEnvVar("anomalyScopeMultiple"),
+    config.anomalyScopeMultiple,
   );
 
   return config;
@@ -469,6 +520,18 @@ function validatePositiveUsd(value: number, source: string): number {
   return value;
 }
 
+// Strictly positive: a zero multiple would halt every paid call the moment any
+// spend exists — if the operator wants that, they should say so with a tiny
+// envelope, not a degenerate multiple. There is deliberately no disable knob.
+function validatePositiveMultiple(value: number, source: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `config: invalid multiple from ${source} (expected a positive number)`,
+    );
+  }
+  return value;
+}
+
 function parseBooleanEnv(raw: string, source: string): boolean {
   const normalized = raw.trim().toLowerCase();
   if (normalized === "1" || normalized === "true" || normalized === "yes") {
@@ -551,6 +614,54 @@ export function resolveBudgetDefaultsFromEnv(
       env,
       schemaEnvVar("defaultDailyBudgetUsd"),
       BUDGET_DEFAULTS.dailyLimitUsd,
+    ),
+  };
+}
+
+// ── Anomaly defaults (declared in CONFIG_SCHEMA; env layer at the boundary) ────
+
+export interface AnomalyDefaults {
+  /** Turn hard stop: halt when a turn's actual spend exceeds this × per-call limit. */
+  turnMultiple: number;
+  /** Scope hard stop: halt when actual session/daily spend exceeds this × the envelope. */
+  scopeMultiple: number;
+}
+
+/** The declared anomaly defaults — the single source for the multiples. */
+export const ANOMALY_DEFAULTS: AnomalyDefaults = {
+  turnMultiple: schemaNumberDefault("anomalyTurnMultiple"),
+  scopeMultiple: schemaNumberDefault("anomalyScopeMultiple"),
+};
+
+function readPositiveMultiple(
+  env: ConfigEnv,
+  envVar: string,
+  fallback: number,
+): number {
+  const raw = env.get(envVar);
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number.parseFloat(raw);
+  return validatePositiveMultiple(value, envVar);
+}
+
+/**
+ * Resolve the anomaly multiples from the environment against the declared
+ * surface (defaults → env), mirroring resolveBudgetDefaultsFromEnv: the
+ * boundary resolves once; the core reads no env.
+ */
+export function resolveAnomalyDefaultsFromEnv(
+  env: ConfigEnv = Deno.env,
+): AnomalyDefaults {
+  return {
+    turnMultiple: readPositiveMultiple(
+      env,
+      schemaEnvVar("anomalyTurnMultiple"),
+      ANOMALY_DEFAULTS.turnMultiple,
+    ),
+    scopeMultiple: readPositiveMultiple(
+      env,
+      schemaEnvVar("anomalyScopeMultiple"),
+      ANOMALY_DEFAULTS.scopeMultiple,
     ),
   };
 }

@@ -1,4 +1,8 @@
-import type { ConfirmBudgetCeiling, SpendBaselines } from "./budget";
+import type {
+  ConfirmBudgetCeiling,
+  ConfirmRunawayAnomaly,
+  SpendBaselines,
+} from "./budget";
 import { BudgetCeilingDeclinedError } from "./budget";
 import type { WorkbenchRoutingOptions } from "./provider";
 import type { WorkbenchCallTimings } from "./provider";
@@ -8,7 +12,9 @@ import type { AskContextProfile } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
 import {
+  ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
+  resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
 } from "./config";
@@ -122,6 +128,13 @@ export interface WorkbenchRuntimeInput {
    */
   confirmBudgetCeiling?: ConfirmBudgetCeiling;
   /**
+   * Confirm handler for a runaway-anomaly hard stop (actual spend past the
+   * anomaly multiples). Unlike the ceiling handler, an approval admits the
+   * next call only and never raises an envelope; without a handler the
+   * runtime fails closed at the halt.
+   */
+  confirmRunawayAnomaly?: ConfirmRunawayAnomaly;
+  /**
    * Approval handler for mutating tools. When a tool's policy is
    * "ask", the runtime calls this for an approve/deny verdict; the default (no
    * handler) denies, fail-closed. The UDS transport asks the operator over the
@@ -174,6 +187,13 @@ export interface WorkbenchRuntimeInput {
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
   defaultDailyBudgetUsd?: number;
+  /**
+   * Runaway-anomaly hard-stop multiples (startup posture), resolved at the
+   * boundary like the budget defaults. Deliberately config-only — no per-turn
+   * override field, so a request can never loosen the hard stop.
+   */
+  anomalyTurnMultiple?: number;
+  anomalyScopeMultiple?: number;
   /**
    * Per-turn budget-limit overrides. Absent → the default limits above
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
@@ -706,11 +726,14 @@ export function resolveRuntimeEnvDefaults(): Pick<
   | "defaultSessionBudgetUsd"
   | "defaultPerCallBudgetUsd"
   | "defaultDailyBudgetUsd"
+  | "anomalyTurnMultiple"
+  | "anomalyScopeMultiple"
 > {
   // process.env adapter so the declared resolvers (config.ts) read the same
   // environment as the rest of this boundary.
   const env = { get: (key: string): string | undefined => process.env[key] };
   const budget = resolveBudgetDefaultsFromEnv(env);
+  const anomaly = resolveAnomalyDefaultsFromEnv(env);
   return {
     principalId: resolvePrincipalId(env),
     rootOverride: Deno.env.get("DYFJ_ROOT") ?? undefined,
@@ -718,6 +741,8 @@ export function resolveRuntimeEnvDefaults(): Pick<
     defaultSessionBudgetUsd: budget.sessionLimitUsd,
     defaultPerCallBudgetUsd: budget.perCallLimitUsd,
     defaultDailyBudgetUsd: budget.dailyLimitUsd,
+    anomalyTurnMultiple: anomaly.turnMultiple,
+    anomalyScopeMultiple: anomaly.scopeMultiple,
   };
 }
 
@@ -1045,6 +1070,7 @@ export async function runWorkbenchRuntime(
     BudgetTracker,
     ceilingConfirmationStoreFor,
     createTurnBudgetCeilingGate,
+    ensureAnomalyAllowed,
     fetchSpendBaselines,
   } = await import("./budget");
   const {
@@ -1108,6 +1134,14 @@ export async function runWorkbenchRuntime(
       runtimeInput.defaultPerCallBudgetUsd ?? BUDGET_DEFAULTS.perCallLimitUsd,
     dailyLimitUsd: runtimeInput.dailyLimitUsd ??
       runtimeInput.defaultDailyBudgetUsd ?? BUDGET_DEFAULTS.dailyLimitUsd,
+  };
+  // Anomaly multiples have no per-turn override lane: boundary-resolved config
+  // or the declared defaults only, so a request can never loosen the hard stop.
+  const anomalyConfig = {
+    turnMultiple: runtimeInput.anomalyTurnMultiple ??
+      ANOMALY_DEFAULTS.turnMultiple,
+    scopeMultiple: runtimeInput.anomalyScopeMultiple ??
+      ANOMALY_DEFAULTS.scopeMultiple,
   };
   // Seed the envelopes with spend already on the books: this session's prior
   // turns and today's spend across all sessions. Injectable for tests.
@@ -1510,6 +1544,14 @@ export async function runWorkbenchRuntime(
         const fresh = await fetchBaselines(sessionId);
         budget.refreshDailyOtherSessions(fresh.dailyOtherSessionsUsd);
       }
+      // Runaway-anomaly hard stop FIRST, on actual recorded spend — it holds
+      // where the estimate-based ceiling below is blind (multi-call turn
+      // accumulation, spend a scope confirmation already covered). An approval
+      // admits this one call; the next call re-checks fresh.
+      await ensureAnomalyAllowed(
+        budget.checkAnomaly(selected.tier, anomalyConfig),
+        runtimeInput.confirmRunawayAnomaly,
+      );
       const callPre = budget.checkPreCall(
         selected.tier,
         selected.costInput,

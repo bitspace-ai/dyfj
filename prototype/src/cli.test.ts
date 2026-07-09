@@ -346,6 +346,25 @@ describe("promptToolApproval", () => {
     expect(verdict.decision).toBe("deny");
     expect(asked).toBe(false);
   });
+
+  test("runaway_anomaly gets its own hard-stop prompt and approves on y", async () => {
+    const { io, stderr } = fakeIo(["y"]);
+    const verdict = await promptToolApproval(io, {
+      kind: "runaway_anomaly",
+      message: "Runaway spend anomaly — hard stop",
+    }, true);
+    expect(verdict).toEqual({ decision: "approve" });
+    expect(stderr.join("\n")).toContain("Runaway spend anomaly — hard stop");
+    expect(stderr.join("\n")).not.toContain("exceed budget ceiling");
+  });
+
+  test("runaway_anomaly denies on anything but yes", async () => {
+    const { io } = fakeIo([""]);
+    const verdict = await promptToolApproval(io, {
+      kind: "runaway_anomaly",
+    }, true);
+    expect(verdict.decision).toBe("deny");
+  });
 });
 
 describe("runExec tool approval (--unix)", () => {
