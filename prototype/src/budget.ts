@@ -276,18 +276,24 @@ export async function ensureBudgetAllowed(
 ): Promise<void> {
   if (preCall.allowed) return;
   if (!confirm) {
-    // Fail closed on the original verdict, not the prompt-only override.
+    // Fail closed on the original verdict, not the prompt-only override,
+    // with the limit and the so-far figure of the scope that blocked.
     const reason = preCall.reason ?? "session_limit";
     const limit = reason === "per_call_limit"
       ? preCall.perCallLimitUsd
       : reason === "daily_limit"
       ? preCall.dailyLimitUsd
       : preCall.sessionLimitUsd;
+    const scopeSoFar = reason === "per_call_limit"
+      ? preCall.estimatedCost
+      : reason === "daily_limit"
+      ? preCall.dailyCostSoFar
+      : preCall.sessionCostSoFar;
     throw new BudgetExceededError(
       reason,
       preCall.estimatedCost,
       limit,
-      preCall.sessionCostSoFar,
+      scopeSoFar,
     );
   }
   const warning = buildBudgetCeilingWarning(preCall, promptReason, crossedScopes);
@@ -473,12 +479,12 @@ export interface TurnBudgetCeilingGate {
 }
 
 /**
- * Wrap budget-ceiling confirmation so the operator is prompted at most once per
- * turn for the same projected spend level on each crossed dimension. Mirrors the
- * once-per-turn paid-consent preflight: a later agent-loop call re-prompts when
- * any crossed dimension (per-call or session) exceeds what was already confirmed
- * for that dimension — including when session accumulation crosses the session
- * ceiling even though per-call was already confirmed at the same estimate.
+ * Wrap budget-ceiling confirmation over the per-call, session, and daily
+ * scopes. One prompt names every newly-crossed scope and the approval covers
+ * exactly those scopes. With the default fresh store, coverage lasts the
+ * turn; pass `ceilingConfirmationStoreFor(sessionId, dayKey)` to persist
+ * confirmations for their scope periods — the rest of the session for
+ * per-call/session marks, the rest of the local day for the daily mark.
  */
 export function createTurnBudgetCeilingGate(
   confirm?: ConfirmBudgetCeiling,
@@ -516,13 +522,20 @@ export class BudgetExceededError extends Error {
     public readonly reason: BudgetLimitReason,
     public readonly estimatedCost: number,
     public readonly limitUsd: number,
-    public readonly sessionCostSoFar: number,
+    /** Spend so far in the scope named by `reason` (session, day, or 0 for per-call). */
+    public readonly scopeCostSoFar: number,
   ) {
     super(
       `Budget exceeded [${reason}]: ` +
         `estimated $${estimatedCost.toFixed(6)}, ` +
         `limit $${limitUsd.toFixed(6)}, ` +
-        `session total so far $${sessionCostSoFar.toFixed(6)}`,
+        `${
+          reason === "daily_limit"
+            ? "today's total so far"
+            : reason === "per_call_limit"
+            ? "call estimate"
+            : "session total so far"
+        } $${scopeCostSoFar.toFixed(6)}`,
     );
     this.name = "BudgetExceededError";
   }
@@ -631,31 +644,20 @@ export class BudgetTracker {
 
     const estimatedCost = (estimatedInputTokens / 1_000_000) * costInputPerMTok;
 
-    if (estimatedCost > this.config.perCallLimitUsd) {
-      return {
-        ...base,
-        allowed: false,
-        estimatedCost,
-        reason: "per_call_limit",
-      };
-    }
+    // Reason reports the OUTERMOST crossed scope (daily > session > per-call)
+    // so a fail-closed error names the broadest envelope that blocked the
+    // call rather than masking a daily stop behind a session framing.
+    const reason: BudgetLimitReason | undefined =
+      dailyCostSoFar + estimatedCost > this.config.dailyLimitUsd
+        ? "daily_limit"
+        : sessionCostSoFar + estimatedCost > this.config.sessionLimitUsd
+        ? "session_limit"
+        : estimatedCost > this.config.perCallLimitUsd
+        ? "per_call_limit"
+        : undefined;
 
-    if (sessionCostSoFar + estimatedCost > this.config.sessionLimitUsd) {
-      return {
-        ...base,
-        allowed: false,
-        estimatedCost,
-        reason: "session_limit",
-      };
-    }
-
-    if (dailyCostSoFar + estimatedCost > this.config.dailyLimitUsd) {
-      return {
-        ...base,
-        allowed: false,
-        estimatedCost,
-        reason: "daily_limit",
-      };
+    if (reason !== undefined) {
+      return { ...base, allowed: false, estimatedCost, reason };
     }
 
     return { ...base, allowed: true, estimatedCost };

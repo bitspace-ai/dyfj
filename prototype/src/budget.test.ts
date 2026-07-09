@@ -375,7 +375,7 @@ describe("BudgetExceededError", () => {
     expect(e.reason).toBe("session_limit");
     expect(e.estimatedCost).toBe(0.15);
     expect(e.limitUsd).toBe(1.00);
-    expect(e.sessionCostSoFar).toBe(0.92);
+    expect(e.scopeCostSoFar).toBe(0.92);
     expect(e).toBeInstanceOf(Error);
   });
 
@@ -879,5 +879,40 @@ describe("resumed sessions spanning days", () => {
     expect(check.allowed).toBe(true);
     expect(check.sessionCostSoFar).toBeCloseTo(10);
     expect(check.dailyCostSoFar).toBeCloseTo(1.02);
+  });
+});
+
+describe("scope-aware budget errors", () => {
+  test("a daily fail-closed error carries the daily figures and framing", async () => {
+    const { ensureBudgetAllowed } = await import("./budget");
+    let caught: BudgetExceededError | undefined;
+    try {
+      await ensureBudgetAllowed({
+        allowed: false,
+        estimatedCost: 0.06,
+        sessionCostSoFar: 0.5,
+        sessionLimitUsd: 5,
+        perCallLimitUsd: 1,
+        dailyCostSoFar: 24.99,
+        dailyLimitUsd: 25,
+        reason: "daily_limit",
+      });
+    } catch (e) {
+      caught = e as BudgetExceededError;
+    }
+    expect(caught?.reason).toBe("daily_limit");
+    expect(caught?.limitUsd).toBe(25);
+    expect(caught?.scopeCostSoFar).toBeCloseTo(24.99);
+    expect(caught?.message).toContain("today's total so far");
+    expect(caught?.message).not.toContain("session total");
+  });
+
+  test("checkPreCall reports the outermost crossed scope", () => {
+    // Session AND daily both cross: daily (outermost) frames the verdict.
+    const tracker = makeTracker(
+      { sessionLimitUsd: 1, dailyLimitUsd: 25 },
+      { sessionSpentUsd: 0.98, sessionSpentTodayUsd: 0.98, dailyOtherSessionsUsd: 24.5 },
+    );
+    expect(tracker.checkPreCall(2, 6, 10_000).reason).toBe("daily_limit");
   });
 });
