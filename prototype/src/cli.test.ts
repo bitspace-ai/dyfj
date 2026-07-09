@@ -970,6 +970,7 @@ describe("runtime lifecycle commands", () => {
     );
     expect(args).toEqual([
       "run",
+      "--no-prompt",
       "-P=serve-unix",
       "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
       "--env-file=.env",
@@ -983,7 +984,7 @@ describe("runtime lifecycle commands", () => {
       ["unix:/run/wb.sock"],
       "/run/wb.sock",
     );
-    expect(args[2]).toBe("--allow-net=unix:/run/wb.sock");
+    expect(args[3]).toBe("--allow-net=unix:/run/wb.sock");
   });
 
   test("readServeUnixNetGrants reads the real profile", async () => {
@@ -1000,8 +1001,12 @@ describe("runtime lifecycle commands", () => {
     const raw = await Deno.readTextFile("deno.json");
     const tasks = (JSON.parse(raw) as { tasks: Record<string, string> }).tasks;
     expect(tasks["serve-unix"]).toBe(
-      "deno run -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
+      "deno run --no-prompt -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
     );
+    // Every server entrypoint must refuse to prompt.
+    for (const task of ["serve-unix", "workbench", "workbench-http", "start"]) {
+      expect(tasks[task]).toContain("--no-prompt");
+    }
   });
 });
 
