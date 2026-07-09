@@ -46,8 +46,11 @@ export interface BudgetConfig {
  * the "session" and "daily" envelopes would silently reset every turn.
  */
 export interface SpendBaselines {
-  /** This session's spend from earlier turns (static under the session lock). */
+  /** This session's lifetime spend from earlier turns (static under the session lock). */
   sessionSpentUsd: number;
+  /** This session's spend from earlier turns TODAY — a resumed session may span
+   * days, and only today's share counts toward the daily envelope. */
+  sessionSpentTodayUsd: number;
   /** Today's spend across OTHER sessions; refreshed before each paid call. */
   dailyOtherSessionsUsd: number;
 }
@@ -92,12 +95,14 @@ export async function fetchSpendBaselines(
   const rows = await query(
     "SELECT " +
       "COALESCE(SUM(CASE WHEN session_id = ? THEN cost_total ELSE 0 END), 0) AS session_spent, " +
+      "COALESCE(SUM(CASE WHEN session_id = ? AND created_at >= ? THEN cost_total ELSE 0 END), 0) AS session_today, " +
       "COALESCE(SUM(CASE WHEN created_at >= ? AND session_id <> ? THEN cost_total ELSE 0 END), 0) AS daily_others " +
       "FROM events WHERE event_type = 'model_response' AND cost_total IS NOT NULL AND cost_total > 0",
-    [sessionId, dayStart, sessionId],
+    [sessionId, sessionId, dayStart, dayStart, sessionId],
   );
   return {
     sessionSpentUsd: Number(rows[0]?.session_spent ?? 0) || 0,
+    sessionSpentTodayUsd: Number(rows[0]?.session_today ?? 0) || 0,
     dailyOtherSessionsUsd: Number(rows[0]?.daily_others ?? 0) || 0,
   };
 }
@@ -543,6 +548,7 @@ export class BudgetTracker {
     // session and daily envelopes silently reset every turn.
     private baselines: SpendBaselines = {
       sessionSpentUsd: 0,
+      sessionSpentTodayUsd: 0,
       dailyOtherSessionsUsd: 0,
     },
   ) {}
@@ -607,8 +613,10 @@ export class BudgetTracker {
     estimatedInputTokens: number,
   ): PreCallCheck {
     const sessionCostSoFar = this.baselines.sessionSpentUsd + this._totalCost;
+    // Only today's share of this session counts toward the daily envelope —
+    // a resumed session may span days; the live turn's spend is all today.
     const dailyCostSoFar = this.baselines.dailyOtherSessionsUsd +
-      sessionCostSoFar;
+      this.baselines.sessionSpentTodayUsd + this._totalCost;
     const base: Omit<PreCallCheck, "allowed" | "estimatedCost" | "reason"> = {
       sessionCostSoFar,
       sessionLimitUsd: this.config.sessionLimitUsd,

@@ -25,7 +25,11 @@ const TRACE_ID = "aabbccddeeff00112233445566778899";
 
 function makeTracker(
   config?: Partial<BudgetConfig>,
-  baselines?: { sessionSpentUsd: number; dailyOtherSessionsUsd: number },
+  baselines?: {
+    sessionSpentUsd: number;
+    sessionSpentTodayUsd: number;
+    dailyOtherSessionsUsd: number;
+  },
 ): BudgetTracker {
   return new BudgetTracker(SESSION_ID, TRACE_ID, {
     sessionLimitUsd: 1.00,
@@ -577,7 +581,7 @@ describe("daily envelope", () => {
   test("checkPreCall crosses the daily limit when today's rollup plus the call exceeds it", () => {
     const tracker = makeTracker(
       { dailyLimitUsd: 25 },
-      { sessionSpentUsd: 0, dailyOtherSessionsUsd: 24.95 },
+      { sessionSpentUsd: 0, sessionSpentTodayUsd: 0, dailyOtherSessionsUsd: 24.95 },
     );
     // $0.06 estimated: within per-call and session, but 24.95 + 0.06 > 25.
     const check = tracker.checkPreCall(2, 6, 10_000);
@@ -592,7 +596,7 @@ describe("daily envelope", () => {
     // carries the session's earlier turns.
     const tracker = makeTracker(
       { sessionLimitUsd: 1 },
-      { sessionSpentUsd: 0.98, dailyOtherSessionsUsd: 0 },
+      { sessionSpentUsd: 0.98, sessionSpentTodayUsd: 0.98, dailyOtherSessionsUsd: 0 },
     );
     const check = tracker.checkPreCall(2, 6, 10_000);
     expect(check.allowed).toBe(false);
@@ -605,7 +609,7 @@ describe("daily envelope", () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const query = async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      return [{ session_spent: "0.12", daily_others: "3.4" }];
+      return [{ session_spent: "0.12", session_today: "0.05", daily_others: "3.4" }];
     };
     const baselines = await fetchSpendBaselines(
       SESSION_ID,
@@ -614,10 +618,13 @@ describe("daily envelope", () => {
     );
     expect(baselines).toEqual({
       sessionSpentUsd: 0.12,
+      sessionSpentTodayUsd: 0.05,
       dailyOtherSessionsUsd: 3.4,
     });
     expect(calls[0].params).toEqual([
       SESSION_ID,
+      SESSION_ID,
+      "2026-07-06 00:00:00",
       "2026-07-06 00:00:00",
       SESSION_ID,
     ]);
@@ -721,8 +728,8 @@ describe("daily envelope", () => {
 
 describe("scope-period ceiling confirmations", () => {
   test("one daily confirm covers later larger projections in the same period", async () => {
-    // UAT reproduction: an agent-loop turn's second call projected past the
-    // level recorded at confirmation time and re-prompted mid-turn.
+    // An agent-loop turn's later calls project past the level recorded at
+    // confirmation time; the confirmation must hold for the scope period.
     const {
       ceilingConfirmationStoreFor,
       createTurnBudgetCeilingGate,
@@ -830,7 +837,7 @@ describe("cross-session daily refresh", () => {
   test("a refreshed daily figure moves the envelope check", () => {
     const tracker = makeTracker(
       { dailyLimitUsd: 25 },
-      { sessionSpentUsd: 0, dailyOtherSessionsUsd: 0 },
+      { sessionSpentUsd: 0, sessionSpentTodayUsd: 0, dailyOtherSessionsUsd: 0 },
     );
     // $0.06 call: fine while other sessions have spent nothing today.
     expect(tracker.checkPreCall(2, 6, 10_000).allowed).toBe(true);
@@ -857,5 +864,20 @@ describe("cross-session daily refresh", () => {
     }));
     expect(message).toContain("Projected today: $25.050000 / 25.000000");
     expect(message).toContain("Projected session: $0.120000 / 5.000000");
+  });
+});
+
+describe("resumed sessions spanning days", () => {
+  test("yesterday's same-session spend counts for the session, not for today", () => {
+    // A session with $10 lifetime spend, only $0.02 of it today: the daily
+    // envelope sees today's share; the session envelope sees the lifetime.
+    const tracker = makeTracker(
+      { sessionLimitUsd: 20, dailyLimitUsd: 25 },
+      { sessionSpentUsd: 10, sessionSpentTodayUsd: 0.02, dailyOtherSessionsUsd: 1 },
+    );
+    const check = tracker.checkPreCall(2, 6, 10_000);
+    expect(check.allowed).toBe(true);
+    expect(check.sessionCostSoFar).toBeCloseTo(10);
+    expect(check.dailyCostSoFar).toBeCloseTo(1.02);
   });
 });
