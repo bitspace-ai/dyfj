@@ -526,7 +526,7 @@ export class BudgetExceededError extends Error {
     public readonly reason: BudgetLimitReason,
     public readonly estimatedCost: number,
     public readonly limitUsd: number,
-    /** Spend so far in the scope named by `reason` (session, day, or 0 for per-call). */
+    /** Spend so far in the scope named by `reason` (session/day so far; for per-call this is the call estimate). */
     public readonly scopeCostSoFar: number,
   ) {
     super(
