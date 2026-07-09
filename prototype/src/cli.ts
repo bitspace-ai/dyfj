@@ -792,6 +792,10 @@ export function buildServeUnixArgs(
     : [...netGrants, socketGrant];
   return [
     "run",
+    // A server must never interactively prompt: ungranted access throws
+    // NotCapable (fail-closed) instead of parking the runtime on a TTY
+    // prompt nobody watches while clients hang on a silent turn.
+    "--no-prompt",
     "-P=serve-unix",
     `--allow-net=${net.join(",")}`,
     "--env-file=.env",
