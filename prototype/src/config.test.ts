@@ -126,15 +126,23 @@ describe("configFilePath", () => {
 describe("resolveBudgetDefaultsFromEnv", () => {
   test("returns the declared defaults when env is unset", () => {
     expect(resolveBudgetDefaultsFromEnv(env())).toEqual(BUDGET_DEFAULTS);
-    expect(BUDGET_DEFAULTS).toEqual({ sessionLimitUsd: 1.0, perCallLimitUsd: 0.1 });
+    expect(BUDGET_DEFAULTS).toEqual({
+      sessionLimitUsd: 1.0,
+      perCallLimitUsd: 0.1,
+      dailyLimitUsd: 25.0,
+    });
   });
 
   test("reads the declared env vars (env overrides defaults)", () => {
     expect(
       resolveBudgetDefaultsFromEnv(
-        env({ DYFJ_BUDGET_SESSION_USD: "5", DYFJ_BUDGET_PER_CALL_USD: "0.25" }),
+        env({
+          DYFJ_BUDGET_SESSION_USD: "5",
+          DYFJ_BUDGET_PER_CALL_USD: "0.25",
+          DYFJ_BUDGET_DAILY_USD: "40",
+        }),
       ),
-    ).toEqual({ sessionLimitUsd: 5, perCallLimitUsd: 0.25 });
+    ).toEqual({ sessionLimitUsd: 5, perCallLimitUsd: 0.25, dailyLimitUsd: 40 });
   });
 
   test("rejects a non-numeric value rather than coercing to NaN", () => {
@@ -234,5 +242,30 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
     const uds = new Set(denoJson.permissions["serve-unix"].net ?? []);
     const missing = http.filter((n) => n !== "127.0.0.1:8787" && !uds.has(n));
     expect(missing).toEqual([]);
+  });
+});
+
+describe("loadConfig daily budget env override", () => {
+  test("DYFJ_BUDGET_DAILY_USD overrides the file layer in loadConfig", async () => {
+    const { loadConfig } = await import("./config");
+    const config = await loadConfig({
+      env: {
+        get: (key: string) =>
+          key === "DYFJ_BUDGET_DAILY_USD" ? "40" : undefined,
+      },
+      readTextFile: async () => "stub",
+      parseToml: () => ({ budget: { daily_limit_usd: 10.0 } }),
+    });
+    expect(config.defaultDailyBudgetUsd).toBe(40);
+  });
+
+  test("the file layer sets the daily envelope when env is silent", async () => {
+    const { loadConfig } = await import("./config");
+    const config = await loadConfig({
+      env: { get: () => undefined },
+      readTextFile: async () => "stub",
+      parseToml: () => ({ budget: { daily_limit_usd: 10.0 } }),
+    });
+    expect(config.defaultDailyBudgetUsd).toBe(10);
   });
 });

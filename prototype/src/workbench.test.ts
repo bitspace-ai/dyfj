@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { resetCeilingConfirmations } from "./budget";
 import {
   type BudgetTallyInput,
   buildBudgetTallyLine,
@@ -51,6 +52,8 @@ const runtimeMocks = vi.hoisted(() => {
 });
 
 vi.mock("./utils", () => ({
+  // Spend-baseline rollup: no prior spend on the books in unit tests.
+  doltQuery: async () => [{ session_spent: "0", session_today: "0", daily_others: "0" }],
   generateULID: () => `01TEST${String(++runtimeMocks.ulid).padStart(20, "0")}`,
   generateTraceId: () => "0123456789abcdef0123456789abcdef",
   generateSpanId: () => "0123456789abcdef",
@@ -166,6 +169,8 @@ vi.mock("./sessions", () => ({
 }));
 
 beforeEach(() => {
+  // Ceiling confirmations persist per scope by design; tests need isolation.
+  resetCeilingConfirmations();
   runtimeMocks.ulid = 0;
   runtimeMocks.writtenEvents.length = 0;
   runtimeMocks.sessions.length = 0;

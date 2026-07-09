@@ -1,4 +1,4 @@
-import type { ConfirmBudgetCeiling } from "./budget";
+import type { ConfirmBudgetCeiling, SpendBaselines } from "./budget";
 import { BudgetCeilingDeclinedError } from "./budget";
 import type { WorkbenchRoutingOptions } from "./provider";
 import type { WorkbenchCallTimings } from "./provider";
@@ -173,6 +173,7 @@ export interface WorkbenchRuntimeInput {
    */
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
+  defaultDailyBudgetUsd?: number;
   /**
    * Per-turn budget-limit overrides. Absent → the default limits above
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
@@ -181,6 +182,12 @@ export interface WorkbenchRuntimeInput {
    */
   sessionLimitUsd?: number;
   perCallLimitUsd?: number;
+  dailyLimitUsd?: number;
+  /**
+   * Test seam for the events-table spend rollup that seeds the session/daily
+   * envelopes; the default queries Dolt (fetchSpendBaselines).
+   */
+  fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
 }
 
 export type WorkbenchRuntimeEvent =
@@ -698,6 +705,7 @@ export function resolveRuntimeEnvDefaults(): Pick<
   | "budgetTallyMode"
   | "defaultSessionBudgetUsd"
   | "defaultPerCallBudgetUsd"
+  | "defaultDailyBudgetUsd"
 > {
   // process.env adapter so the declared resolvers (config.ts) read the same
   // environment as the rest of this boundary.
@@ -709,6 +717,7 @@ export function resolveRuntimeEnvDefaults(): Pick<
     budgetTallyMode: parseBudgetTallyMode(process.env.DYFJ_BUDGET_TALLY),
     defaultSessionBudgetUsd: budget.sessionLimitUsd,
     defaultPerCallBudgetUsd: budget.perCallLimitUsd,
+    defaultDailyBudgetUsd: budget.dailyLimitUsd,
   };
 }
 
@@ -1032,9 +1041,12 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
-  const { BudgetTracker, createTurnBudgetCeilingGate } = await import(
-    "./budget"
-  );
+  const {
+    BudgetTracker,
+    ceilingConfirmationStoreFor,
+    createTurnBudgetCeilingGate,
+    fetchSpendBaselines,
+  } = await import("./budget");
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
@@ -1094,12 +1106,20 @@ export async function runWorkbenchRuntime(
       runtimeInput.defaultSessionBudgetUsd ?? BUDGET_DEFAULTS.sessionLimitUsd,
     perCallLimitUsd: runtimeInput.perCallLimitUsd ??
       runtimeInput.defaultPerCallBudgetUsd ?? BUDGET_DEFAULTS.perCallLimitUsd,
+    dailyLimitUsd: runtimeInput.dailyLimitUsd ??
+      runtimeInput.defaultDailyBudgetUsd ?? BUDGET_DEFAULTS.dailyLimitUsd,
   };
+  // Seed the envelopes with spend already on the books: this session's prior
+  // turns and today's spend across all sessions. Injectable for tests.
+  const fetchBaselines = runtimeInput.fetchSpendBaselines ??
+    fetchSpendBaselines;
+  const spendBaselines = await fetchBaselines(sessionId);
   const budget = new BudgetTracker(
     sessionId,
     traceId,
     budgetConfig,
     principalId,
+    spendBaselines,
   );
   // Direct CLI invocation is authenticated by the local OS session; transport
   // layers (HTTP bearer auth) override this with the caller's real context.
@@ -1421,8 +1441,12 @@ export async function runWorkbenchRuntime(
       selected.costInput,
       estimatedInputTokens,
     );
+    // Scope-persistent store: a confirmed overrun raises the envelope for its
+    // scope (session marks per session id, the daily mark per local day)
+    // instead of re-prompting next turn.
     const budgetCeilingGate = createTurnBudgetCeilingGate(
       runtimeInput.confirmBudgetCeiling,
+      ceilingConfirmationStoreFor(sessionId),
     );
 
     await budgetCeilingGate.ensureAllowed(preCall);
@@ -1479,6 +1503,13 @@ export async function runWorkbenchRuntime(
       // enforced before each one and usage recorded after each one (paid
       // consent and ceiling confirmation are granted once per turn above;
       // per-call + session limits and MAX_TOOL_STEPS bound loop spend).
+      if (selected.tier > 0) {
+        // Fresh cross-session daily figure before every paid call, so
+        // concurrent sessions see each other's completed spend (in-flight
+        // calls remain invisible; the overshoot shows in receipts).
+        const fresh = await fetchBaselines(sessionId);
+        budget.refreshDailyOtherSessions(fresh.dailyOtherSessionsUsd);
+      }
       const callPre = budget.checkPreCall(
         selected.tier,
         selected.costInput,

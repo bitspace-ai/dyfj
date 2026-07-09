@@ -68,6 +68,7 @@ export interface WorkbenchRuntimeStatus {
   approvePaidDefault: boolean;
   defaultSessionBudgetUsd: number;
   defaultPerCallBudgetUsd: number;
+  defaultDailyBudgetUsd: number;
   models: { total: number; local: number; hosted: number };
 }
 
@@ -101,6 +102,7 @@ export interface WorkbenchUnixServerOptions {
     | "approvePaidDefault"
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
+    | "defaultDailyBudgetUsd"
   >;
 }
 
@@ -152,6 +154,7 @@ function runtimeStatus(
     defaultSessionBudgetUsd: options.engineConfig?.defaultSessionBudgetUsd ?? 1,
     defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
       0.1,
+    defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ?? 25,
     models: {
       total: models.length,
       local: models.filter((model) => model.tier === 0).length,

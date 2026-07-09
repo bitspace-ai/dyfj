@@ -428,6 +428,7 @@ interface RuntimeStatusPayload {
     approvePaidDefault?: boolean;
     defaultSessionBudgetUsd?: number;
     defaultPerCallBudgetUsd?: number;
+    defaultDailyBudgetUsd?: number;
     models?: { total?: number; local?: number; hosted?: number };
     methods?: string[];
   };
@@ -737,8 +738,8 @@ export function formatRuntimeStatus(
       runtime.approvePaidDefault === true ? "yes" : "no"
     }`,
     `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
-      (runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)
-    } per call`,
+      (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
+    } day · $${(runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)} per call`,
     `methods: ${methods.length}`,
   ].join("\n");
 }
