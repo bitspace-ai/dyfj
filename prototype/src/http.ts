@@ -8,6 +8,7 @@ import {
 import {
   defaultLocalWorkbenchModels,
   loadWorkbenchModels,
+  modelHasCatalogPricing,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
 } from "./provider";
@@ -129,7 +130,14 @@ export function createWorkbenchHttpHandler(
       if ("error" in resolved) {
         return jsonResponse({ error: resolved.error }, resolved.status);
       }
-      return jsonResponse({ models: await loadModels() });
+      // `routable` is computed server-side (single source: modelHasCatalogPricing)
+      // so the picker can mark unpriced rows without duplicating the pricing rule.
+      return jsonResponse({
+        models: (await loadModels()).map((model) => ({
+          ...model,
+          routable: modelHasCatalogPricing(model),
+        })),
+      });
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       const resolved = await resolveWorkbenchAuth(
@@ -1509,6 +1517,9 @@ function renderWorkbenchIndex(): string {
           opt.value = m.slug;
           opt.textContent = m.displayName + " · T" + m.tier + " · " +
             m.provider + " · " + modelCostLabel(m);
+          // Server says this row cannot route (unpriced paid model): show it,
+          // but don't let it be picked only to fail at selection.
+          if (m.routable === false) opt.disabled = true;
           modelSelect.append(opt);
         }
         // Preserve the prior choice if it still passes the filter; otherwise fall
@@ -1520,7 +1531,10 @@ function renderWorkbenchIndex(): string {
       }
 
       function modelCostLabel(m) {
-        if (m.tier === 0 || (!m.costInput && !m.costOutput)) return "free";
+        // A paid row without prices is unpriced, never "free" — the server's
+        // routable flag is authoritative and such a model will not route.
+        if (m.routable === false) return "unpriced — not routable";
+        if (m.tier === 0) return "free";
         return "$" + m.costInput + "/" + m.costOutput;
       }
 

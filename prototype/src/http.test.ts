@@ -785,6 +785,31 @@ describe("GET /api/models", () => {
     });
   });
 
+  test("marks an unpriced paid row unroutable so the picker cannot call it free", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.resolve(runtimeResult()),
+      loadModels: () =>
+        Promise.resolve([
+          ...pickerModels,
+          { ...pickerModels[1], slug: "gpt-6-preview", costInput: 0, costOutput: 0 },
+        ]),
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1:8787/api/models"),
+    );
+    const body = await response.json();
+    expect(
+      body.models.map((m: { slug: string; routable: boolean }) => [
+        m.slug,
+        m.routable,
+      ]),
+    ).toEqual([
+      ["mlx-community/Qwen3.5-4B-8bit", true], // tier 0: free IS priced
+      ["claude-opus-4-8", true],
+      ["gpt-6-preview", false], // paid + zero cost = unpriced
+    ]);
+  });
+
   test("rejects non-loopback hosts", async () => {
     const handler = createWorkbenchHttpHandler({
       runRuntime: () => Promise.resolve(runtimeResult()),

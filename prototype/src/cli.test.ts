@@ -830,6 +830,51 @@ describe("models/sessions over UDS", () => {
     expect(stdout.join("")).toContain("Gemma 4");
   });
 
+  test("runModels annotates rows the server marked unroutable", async () => {
+    const { io, stdout } = fakeIo();
+    const code = await runModels(
+      cfg(),
+      io,
+      fakeConnect({
+        "models/list": {
+          models: [
+            {
+              slug: "gemma4",
+              tier: 0,
+              provider: "ollama",
+              displayName: "Gemma 4",
+              routable: true,
+            },
+            {
+              slug: "gpt-6-preview",
+              tier: 2,
+              provider: "openai",
+              displayName: "GPT-6 Preview",
+              routable: false,
+            },
+            // Older server: no flag — must not be smeared as unpriced.
+            {
+              slug: "claude-opus-4-8",
+              tier: 2,
+              provider: "anthropic",
+              displayName: "Claude Opus 4.8",
+            },
+          ],
+        },
+      }),
+    );
+    expect(code).toBe(0);
+    const out = stdout.join("");
+    const lines = out.split("\n");
+    expect(lines.find((l) => l.includes("gpt-6-preview"))).toContain(
+      "[unpriced — not routable]",
+    );
+    expect(lines.find((l) => l.includes("gemma4"))).not.toContain("unpriced");
+    expect(lines.find((l) => l.includes("claude-opus-4-8"))).not.toContain(
+      "unpriced",
+    );
+  });
+
   test("runSessions groups by project", async () => {
     const { io, stdout } = fakeIo();
     const code = await runSessions(
