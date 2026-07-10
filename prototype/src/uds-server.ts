@@ -8,6 +8,7 @@
 import {
   defaultLocalWorkbenchModels,
   loadWorkbenchModels,
+  modelHasCatalogPricing,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
 } from "./provider";
@@ -221,7 +222,14 @@ export function buildWorkbenchHandlers(
       } satisfies WorkbenchSurfaceSnapshot;
     },
 
-    "models/list": async () => ({ models: await loadModels() }),
+    // `routable` is computed server-side (single source: modelHasCatalogPricing)
+    // so clients can annotate unpriced rows without duplicating the pricing rule.
+    "models/list": async () => ({
+      models: (await loadModels()).map((model) => ({
+        ...model,
+        routable: modelHasCatalogPricing(model),
+      })),
+    }),
 
     "tools/list": async (params) => ({ tools: buildToolCatalog(params) }),
 

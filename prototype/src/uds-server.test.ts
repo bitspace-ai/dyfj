@@ -61,11 +61,25 @@ const fakes: WorkbenchUnixServerOptions = {
 const anyVal = (v: unknown): any => v;
 
 describe("serveWorkbenchUnix read methods", () => {
-  test("models/list returns the loaded models", async () => {
-    const client = await connectClient(await startServer(fakes));
-    expect(await client.request("models/list")).toEqual({
-      models: [{ slug: "local-x" }],
-    });
+  test("models/list returns the loaded models with a server-computed routable flag", async () => {
+    const client = await connectClient(await startServer({
+      ...fakes,
+      loadModels: async () =>
+        anyVal([
+          { slug: "local-x", tier: 0, costInput: 0, costOutput: 0 },
+          { slug: "hosted-priced", tier: 2, costInput: 15, costOutput: 75 },
+          { slug: "hosted-unpriced", tier: 2, costInput: 0, costOutput: 0 },
+        ]),
+    }));
+    const { models } = anyVal(await client.request("models/list"));
+    expect(models.map((m: { slug: string; routable: boolean }) => [
+      m.slug,
+      m.routable,
+    ])).toEqual([
+      ["local-x", true],
+      ["hosted-priced", true],
+      ["hosted-unpriced", false],
+    ]);
   });
 
   test("sessions/list passes the project filter through", async () => {
