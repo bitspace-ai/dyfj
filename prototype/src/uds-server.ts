@@ -313,16 +313,19 @@ function toApprovalVerdict(response: unknown): ToolApprovalVerdict {
   };
 }
 
-function toBudgetCeilingVerdict(response: unknown): BudgetCeilingVerdict {
+// Shared by the budget-ceiling and runaway-anomaly approvals: same verdict
+// shape, but a reasonless denial must name the gate that was declined.
+function toBudgetCeilingVerdict(
+  response: unknown,
+  fallbackReason = "operator declined the budget ceiling",
+): BudgetCeilingVerdict {
   const r = typeof response === "object" && response !== null
     ? response as Record<string, unknown>
     : {};
   if (r.decision === "approve") return { decision: "approve" };
   return {
     decision: "deny",
-    reason: typeof r.reason === "string"
-      ? r.reason
-      : "operator declined the budget ceiling",
+    reason: typeof r.reason === "string" ? r.reason : fallbackReason,
   };
 }
 
@@ -388,7 +391,11 @@ export function buildTurnHandlers(
           ),
         confirmRunawayAnomaly: (warning) =>
           ctx.request("approval", runawayAnomalyApprovalRequest(warning)).then(
-            toBudgetCeilingVerdict,
+            (response) =>
+              toBudgetCeilingVerdict(
+                response,
+                "operator declined the anomaly halt",
+              ),
             (): BudgetCeilingVerdict => ({
               decision: "deny",
               reason: "anomaly halt approval failed (no client approver?)",

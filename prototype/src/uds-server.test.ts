@@ -387,6 +387,39 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
     );
     expect(result.verdict.decision).toBe("deny");
   });
+
+  test("a reasonless anomaly-halt denial names the anomaly gate, not the budget ceiling", async () => {
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      const verdict = await input.confirmRunawayAnomaly?.({
+        kind: "runaway_anomaly",
+        trigger: "turn_spend",
+        spentUsd: 0.35,
+        haltUsd: 0.30,
+        turnSpentUsd: 0.35,
+        turnHaltUsd: 0.30,
+        sessionSpentUsd: 0.35,
+        sessionHaltUsd: 2,
+        dailySpentUsd: 0.35,
+        dailyHaltUsd: 50,
+        turnMultiple: 3,
+        scopeMultiple: 2,
+        authzBasis: "policy:halt:runaway-anomaly",
+        approvalAuthzBasis: "policy:allow:operator-confirmed-anomaly",
+      });
+      return anyVal({ verdict });
+    };
+    const server = await startServer({ ...fakes, runRuntime });
+    const client = await connectClient(server, {
+      approval: () => ({ decision: "deny" }), // no reason supplied
+    });
+    const result = anyVal(
+      await client.request("turn", { prompt: "spend" }),
+    );
+    expect(result.verdict).toEqual({
+      decision: "deny",
+      reason: "operator declined the anomaly halt",
+    });
+  });
 });
 
 describe("socket bind safety", () => {

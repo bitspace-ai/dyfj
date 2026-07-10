@@ -36,6 +36,18 @@ level = "strict"
 # for its scope — the session, or the whole day — instead of re-prompting.
 # daily_limit_usd = 25.0
 
+[anomaly]
+# Runaway-anomaly hard-stop multiples, applied to ACTUAL recorded spend (never
+# estimates) before every paid call. Unlike the soft ceilings above, an
+# approval here admits only the next call — nothing is raised, further
+# anomalous spend prompts again, and non-interactive callers fail closed.
+# Multiples must be strictly positive; there is no disable knob and no
+# per-request override lane.
+#   turn halt:  turn_multiple  × per_call_limit_usd of real spend in one turn
+#   scope halt: scope_multiple × the session/daily envelope
+# turn_multiple = 3.0
+# scope_multiple = 2.0
+
 # The full configuration surface is declared in src/config.ts (CONFIG_SCHEMA),
 # split into engine vs client domains, with secret keys held as POINTERS (op:// /
 # keychain / env-var name), never plaintext. Keys above have a config-FILE layer;
