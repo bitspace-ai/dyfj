@@ -1,4 +1,8 @@
-import type { ConfirmBudgetCeiling, SpendBaselines } from "./budget";
+import type {
+  ConfirmBudgetCeiling,
+  ConfirmRunawayAnomaly,
+  SpendBaselines,
+} from "./budget";
 import { BudgetCeilingDeclinedError } from "./budget";
 import type { WorkbenchRoutingOptions } from "./provider";
 import type { WorkbenchCallTimings } from "./provider";
@@ -8,7 +12,9 @@ import type { AskContextProfile } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
 import {
+  ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
+  resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
 } from "./config";
@@ -122,6 +128,13 @@ export interface WorkbenchRuntimeInput {
    */
   confirmBudgetCeiling?: ConfirmBudgetCeiling;
   /**
+   * Confirm handler for a runaway-anomaly hard stop (actual spend past the
+   * anomaly multiples). Unlike the ceiling handler, an approval admits the
+   * next call only and never raises an envelope; without a handler the
+   * runtime fails closed at the halt.
+   */
+  confirmRunawayAnomaly?: ConfirmRunawayAnomaly;
+  /**
    * Approval handler for mutating tools. When a tool's policy is
    * "ask", the runtime calls this for an approve/deny verdict; the default (no
    * handler) denies, fail-closed. The UDS transport asks the operator over the
@@ -174,6 +187,16 @@ export interface WorkbenchRuntimeInput {
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
   defaultDailyBudgetUsd?: number;
+  /**
+   * Runaway-anomaly hard-stop multiples (startup posture), resolved at the
+   * boundary like the budget defaults. Deliberately config-only — no per-turn
+   * override field for the multiples themselves. The dollar thresholds they
+   * produce scale with the effective budget config, so an explicit loopback
+   * per-turn budget override moves them with the envelope it raises; the gate
+   * always binds at multiple × the envelope in force.
+   */
+  anomalyTurnMultiple?: number;
+  anomalyScopeMultiple?: number;
   /**
    * Per-turn budget-limit overrides. Absent → the default limits above
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
@@ -706,11 +729,14 @@ export function resolveRuntimeEnvDefaults(): Pick<
   | "defaultSessionBudgetUsd"
   | "defaultPerCallBudgetUsd"
   | "defaultDailyBudgetUsd"
+  | "anomalyTurnMultiple"
+  | "anomalyScopeMultiple"
 > {
   // process.env adapter so the declared resolvers (config.ts) read the same
   // environment as the rest of this boundary.
   const env = { get: (key: string): string | undefined => process.env[key] };
   const budget = resolveBudgetDefaultsFromEnv(env);
+  const anomaly = resolveAnomalyDefaultsFromEnv(env);
   return {
     principalId: resolvePrincipalId(env),
     rootOverride: Deno.env.get("DYFJ_ROOT") ?? undefined,
@@ -718,6 +744,8 @@ export function resolveRuntimeEnvDefaults(): Pick<
     defaultSessionBudgetUsd: budget.sessionLimitUsd,
     defaultPerCallBudgetUsd: budget.perCallLimitUsd,
     defaultDailyBudgetUsd: budget.dailyLimitUsd,
+    anomalyTurnMultiple: anomaly.turnMultiple,
+    anomalyScopeMultiple: anomaly.scopeMultiple,
   };
 }
 
@@ -1044,6 +1072,7 @@ export async function runWorkbenchRuntime(
   const {
     BudgetTracker,
     ceilingConfirmationStoreFor,
+    createRunawayAnomalyGate,
     createTurnBudgetCeilingGate,
     fetchSpendBaselines,
   } = await import("./budget");
@@ -1108,6 +1137,17 @@ export async function runWorkbenchRuntime(
       runtimeInput.defaultPerCallBudgetUsd ?? BUDGET_DEFAULTS.perCallLimitUsd,
     dailyLimitUsd: runtimeInput.dailyLimitUsd ??
       runtimeInput.defaultDailyBudgetUsd ?? BUDGET_DEFAULTS.dailyLimitUsd,
+  };
+  // The multiples have no per-turn override lane (boundary-resolved config or
+  // the declared defaults only); the dollar thresholds derive from
+  // budgetConfig above, so they track the envelope in force — including an
+  // explicit loopback per-turn budget override, which is the operator
+  // speaking, not a request weakening the gate relative to the envelopes.
+  const anomalyConfig = {
+    turnMultiple: runtimeInput.anomalyTurnMultiple ??
+      ANOMALY_DEFAULTS.turnMultiple,
+    scopeMultiple: runtimeInput.anomalyScopeMultiple ??
+      ANOMALY_DEFAULTS.scopeMultiple,
   };
   // Seed the envelopes with spend already on the books: this session's prior
   // turns and today's spend across all sessions. Injectable for tests.
@@ -1448,7 +1488,20 @@ export async function runWorkbenchRuntime(
       runtimeInput.confirmBudgetCeiling,
       ceilingConfirmationStoreFor(sessionId),
     );
+    // Turn-scoped: an approval covers the spend level it was shown (the entry
+    // check and the first call's check see identical actuals); any recorded
+    // increment re-prompts, and nothing survives the turn.
+    const anomalyGate = createRunawayAnomalyGate(
+      runtimeInput.confirmRunawayAnomaly,
+    );
 
+    // Hard stop BEFORE the soft ceiling confirm: a turn entered in an
+    // anomalous state must halt first — otherwise the ceiling prompt records
+    // its scope-period confirmation before the operator ever sees the halt,
+    // and an aborted turn leaves that confirmation behind.
+    await anomalyGate.ensureAllowed(
+      budget.checkAnomaly(selected.tier, anomalyConfig),
+    );
     await budgetCeilingGate.ensureAllowed(preCall);
     estimatedCostUsd = preCall.estimatedCost;
 
@@ -1510,6 +1563,13 @@ export async function runWorkbenchRuntime(
         const fresh = await fetchBaselines(sessionId);
         budget.refreshDailyOtherSessions(fresh.dailyOtherSessionsUsd);
       }
+      // Runaway-anomaly hard stop FIRST, on actual recorded spend — it holds
+      // where the estimate-based ceiling below is blind (multi-call turn
+      // accumulation, spend a scope confirmation already covered). An approval
+      // admits the spend level it was shown; recorded spend past it re-prompts.
+      await anomalyGate.ensureAllowed(
+        budget.checkAnomaly(selected.tier, anomalyConfig),
+      );
       const callPre = budget.checkPreCall(
         selected.tier,
         selected.costInput,

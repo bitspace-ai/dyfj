@@ -269,3 +269,95 @@ describe("loadConfig daily budget env override", () => {
     expect(config.defaultDailyBudgetUsd).toBe(10);
   });
 });
+
+describe("anomaly multiples config surface", () => {
+  test("declared defaults: turn 3×, scope 2×", async () => {
+    const { ANOMALY_DEFAULTS, CONFIG_DEFAULTS } = await import("./config");
+    expect(ANOMALY_DEFAULTS.turnMultiple).toBe(3.0);
+    expect(ANOMALY_DEFAULTS.scopeMultiple).toBe(2.0);
+    expect(CONFIG_DEFAULTS.anomalyTurnMultiple).toBe(3.0);
+    expect(CONFIG_DEFAULTS.anomalyScopeMultiple).toBe(2.0);
+  });
+
+  test("the [anomaly] file layer sets the multiples", async () => {
+    const { loadConfig } = await import("./config");
+    const config = await loadConfig({
+      env: { get: () => undefined },
+      readTextFile: async () => "stub",
+      parseToml: () => ({ anomaly: { turn_multiple: 4, scope_multiple: 1.5 } }),
+    });
+    expect(config.anomalyTurnMultiple).toBe(4);
+    expect(config.anomalyScopeMultiple).toBe(1.5);
+  });
+
+  test("env overrides the file layer", async () => {
+    const { loadConfig } = await import("./config");
+    const config = await loadConfig({
+      env: {
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? "5" : undefined,
+      },
+      readTextFile: async () => "stub",
+      parseToml: () => ({ anomaly: { turn_multiple: 4 } }),
+    });
+    expect(config.anomalyTurnMultiple).toBe(5);
+  });
+
+  test("a zero or negative multiple fails loud (no degenerate hard stop)", async () => {
+    const { loadConfig } = await import("./config");
+    await expect(loadConfig({
+      env: { get: () => undefined },
+      readTextFile: async () => "stub",
+      parseToml: () => ({ anomaly: { turn_multiple: 0 } }),
+    })).rejects.toThrow(/positive/);
+    await expect(loadConfig({
+      env: {
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "-2" : undefined,
+      },
+      readTextFile: async () => {
+        throw new Deno.errors.NotFound();
+      },
+      parseToml: () => ({}),
+    })).rejects.toThrow(/positive/);
+  });
+
+  test("resolveAnomalyDefaultsFromEnv: defaults → env precedence", async () => {
+    const { resolveAnomalyDefaultsFromEnv } = await import("./config");
+    expect(resolveAnomalyDefaultsFromEnv({ get: () => undefined })).toEqual({
+      turnMultiple: 3.0,
+      scopeMultiple: 2.0,
+    });
+    expect(
+      resolveAnomalyDefaultsFromEnv({
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "2.5" : undefined,
+      }).scopeMultiple,
+    ).toBe(2.5);
+  });
+});
+
+describe("anomaly env parsing strictness", () => {
+  test("trailing junk fails loud instead of half-parsing ('2x' is not 2)", async () => {
+    const { resolveAnomalyDefaultsFromEnv } = await import("./config");
+    expect(() =>
+      resolveAnomalyDefaultsFromEnv({
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? "2x" : undefined,
+      })
+    ).toThrow(/positive/);
+    expect(() =>
+      resolveAnomalyDefaultsFromEnv({
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "1e2junk" : undefined,
+      })
+    ).toThrow(/positive/);
+    // Plain and scientific forms still parse.
+    expect(
+      resolveAnomalyDefaultsFromEnv({
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? " 2.5 " : undefined,
+      }).turnMultiple,
+    ).toBe(2.5);
+  });
+});

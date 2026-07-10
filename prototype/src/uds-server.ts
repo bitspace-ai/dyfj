@@ -25,6 +25,7 @@ import type { PermissionLevel, WorkbenchConfig } from "./config";
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
+  runawayAnomalyApprovalRequest,
 } from "./budget";
 import type { TurnStreamFrame } from "./turn-contract";
 import {
@@ -94,7 +95,7 @@ export interface WorkbenchUnixServerOptions {
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config); the seam is always loopback. */
   permissionLevel?: PermissionLevel;
-  /** Loaded engine config (companion, posture, budget defaults). */
+  /** Loaded engine config (companion, posture, budget defaults, anomaly multiples). */
   engineConfig?: Pick<
     WorkbenchConfig,
     | "defaultCompanionModel"
@@ -103,6 +104,8 @@ export interface WorkbenchUnixServerOptions {
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
+    | "anomalyTurnMultiple"
+    | "anomalyScopeMultiple"
   >;
 }
 
@@ -310,16 +313,19 @@ function toApprovalVerdict(response: unknown): ToolApprovalVerdict {
   };
 }
 
-function toBudgetCeilingVerdict(response: unknown): BudgetCeilingVerdict {
+// Shared by the budget-ceiling and runaway-anomaly approvals: same verdict
+// shape, but a reasonless denial must name the gate that was declined.
+function toBudgetCeilingVerdict(
+  response: unknown,
+  fallbackReason = "operator declined the budget ceiling",
+): BudgetCeilingVerdict {
   const r = typeof response === "object" && response !== null
     ? response as Record<string, unknown>
     : {};
   if (r.decision === "approve") return { decision: "approve" };
   return {
     decision: "deny",
-    reason: typeof r.reason === "string"
-      ? r.reason
-      : "operator declined the budget ceiling",
+    reason: typeof r.reason === "string" ? r.reason : fallbackReason,
   };
 }
 
@@ -381,6 +387,18 @@ export function buildTurnHandlers(
             (): BudgetCeilingVerdict => ({
               decision: "deny",
               reason: "budget ceiling approval failed (no client approver?)",
+            }),
+          ),
+        confirmRunawayAnomaly: (warning) =>
+          ctx.request("approval", runawayAnomalyApprovalRequest(warning)).then(
+            (response) =>
+              toBudgetCeilingVerdict(
+                response,
+                "operator declined the anomaly halt",
+              ),
+            (): BudgetCeilingVerdict => ({
+              decision: "deny",
+              reason: "anomaly halt approval failed (no client approver?)",
             }),
           ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a
