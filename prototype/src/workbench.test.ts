@@ -1439,6 +1439,9 @@ describe("runWorkbenchRuntime runaway anomaly gate", () => {
     const prevCost = runtimeMocks.model.costInput;
     (runtimeMocks.model as { tier: number }).tier = 1;
     runtimeMocks.model.costInput = 0;
+    const confirmBudgetCeiling = vi.fn(async () => ({
+      decision: "approve" as const,
+    }));
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await expect(runWorkbenchRuntime({
@@ -1458,9 +1461,55 @@ describe("runWorkbenchRuntime runaway anomaly gate", () => {
         // The ceiling handler approving is exactly the blind spot: the
         // anomaly halt must fire regardless, and fail closed without its own
         // handler.
-        confirmBudgetCeiling: async () => ({ decision: "approve" as const }),
+        confirmBudgetCeiling,
       })).rejects.toThrow("Runaway spend anomaly");
       expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+      // Ordering: the hard stop fires at turn entry BEFORE the soft ceiling
+      // confirm, so the aborted turn leaves no scope-period ceiling
+      // confirmation behind.
+      expect(confirmBudgetCeiling).not.toHaveBeenCalled();
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+
+  test("an approved entry halt does not re-prompt the identical state at the first call", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 0;
+    const confirmRunawayAnomaly = vi.fn(async () => ({
+      decision: "approve" as const,
+    }));
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      ...paidBase(),
+      text: "done",
+      stopReason: "stop",
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        defaultSessionBudgetUsd: 1.0,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        fetchSpendBaselines: async () => ({
+          sessionSpentUsd: 2.5,
+          sessionSpentTodayUsd: 2.5,
+          dailyOtherSessionsUsd: 0,
+        }),
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        confirmBudgetCeiling: async () => ({ decision: "approve" as const }),
+        confirmRunawayAnomaly,
+      });
+      expect(result.text).toBe("done");
+      // Entry check and first-call check see identical actuals ($2.50): one
+      // prompt, not two — the same-state dedupe, not scope-period coverage.
+      expect(confirmRunawayAnomaly).toHaveBeenCalledTimes(1);
     } finally {
       (runtimeMocks.model as { tier: number }).tier = prevTier;
       runtimeMocks.model.costInput = prevCost;

@@ -710,6 +710,40 @@ export async function ensureAnomalyAllowed(
   }
 }
 
+export interface RunawayAnomalyGate {
+  /** Enforce the hard stop for one check; see createRunawayAnomalyGate. */
+  ensureAllowed(check: AnomalyCheck): Promise<void>;
+}
+
+/**
+ * Turn-scoped wrapper over ensureAnomalyAllowed. An approval covers exactly
+ * the actual-spend level it was shown — the turn-entry check and the first
+ * call's check see identical actuals, and one anomalous state should prompt
+ * once, not twice. Any recorded spend after an approval raises the level past
+ * what was approved, so every anomalous INCREMENT still re-prompts fresh, and
+ * nothing survives the gate instance (one turn): no scope-period coverage,
+ * unlike the ceiling gate's persistent store.
+ */
+export function createRunawayAnomalyGate(
+  confirm?: ConfirmRunawayAnomaly,
+): RunawayAnomalyGate {
+  const approvedLevel: Partial<Record<AnomalyTrigger, number>> = {};
+  return {
+    async ensureAllowed(check: AnomalyCheck): Promise<void> {
+      if (!check.halted || check.trigger === undefined) return;
+      const spent = check.trigger === "daily_scope"
+        ? check.dailySpentUsd
+        : check.trigger === "session_scope"
+        ? check.sessionSpentUsd
+        : check.turnSpentUsd;
+      const prior = approvedLevel[check.trigger];
+      if (prior !== undefined && spent <= prior) return;
+      await ensureAnomalyAllowed(check, confirm);
+      approvedLevel[check.trigger] = spent;
+    },
+  };
+}
+
 export interface BudgetSummary {
   totalCostUsd: number;
   totalTokensInput: number;

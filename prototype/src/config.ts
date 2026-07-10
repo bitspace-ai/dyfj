@@ -639,8 +639,10 @@ function readPositiveMultiple(
   fallback: number,
 ): number {
   const raw = env.get(envVar);
-  if (raw === undefined || raw === "") return fallback;
-  const value = Number.parseFloat(raw);
+  if (raw === undefined || raw.trim() === "") return fallback;
+  // Number(), not parseFloat(): "2x" must fail loud, not silently become 2 —
+  // a mis-set hard-stop knob should never half-parse into a different stop.
+  const value = Number(raw.trim());
   return validatePositiveMultiple(value, envVar);
 }
 

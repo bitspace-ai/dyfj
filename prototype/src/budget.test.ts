@@ -1103,3 +1103,57 @@ describe("runaway anomaly warning formatting", () => {
     );
   });
 });
+
+describe("createRunawayAnomalyGate", () => {
+  const ANOMALY = { turnMultiple: 3, scopeMultiple: 2 };
+
+  function trackerPast(turnSpent: number) {
+    const t = makeTracker();
+    t.record(makeUsage(1000, 100, turnSpent), 2);
+    return t;
+  }
+
+  test("one anomalous state prompts once: the same spend level re-checks silently", async () => {
+    const { createRunawayAnomalyGate } = await import("./budget");
+    const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
+    const gate = createRunawayAnomalyGate(confirm);
+    const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
+    await gate.ensureAllowed(check); // turn entry
+    await gate.ensureAllowed(check); // first call, identical actuals
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  test("recorded spend past the approved level re-prompts", async () => {
+    const { createRunawayAnomalyGate } = await import("./budget");
+    const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
+    const gate = createRunawayAnomalyGate(confirm);
+    const t = trackerPast(0.35);
+    await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY)); // $0.35 approved
+    t.record(makeUsage(1000, 100, 0.10), 2); // increment → $0.45
+    await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  test("approvals do not survive the gate instance (one turn)", async () => {
+    const { createRunawayAnomalyGate } = await import("./budget");
+    const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
+    const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
+    await createRunawayAnomalyGate(confirm).ensureAllowed(check);
+    await createRunawayAnomalyGate(confirm).ensureAllowed(check); // next turn
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  test("fails closed without a handler and records no approval level", async () => {
+    const { createRunawayAnomalyGate, RunawayAnomalyHaltError } = await import(
+      "./budget"
+    );
+    const gate = createRunawayAnomalyGate();
+    const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
+    await expect(gate.ensureAllowed(check)).rejects.toThrow(
+      RunawayAnomalyHaltError,
+    );
+    await expect(gate.ensureAllowed(check)).rejects.toThrow(
+      RunawayAnomalyHaltError,
+    );
+  });
+});

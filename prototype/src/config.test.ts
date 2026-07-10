@@ -336,3 +336,28 @@ describe("anomaly multiples config surface", () => {
     ).toBe(2.5);
   });
 });
+
+describe("anomaly env parsing strictness", () => {
+  test("trailing junk fails loud instead of half-parsing ('2x' is not 2)", async () => {
+    const { resolveAnomalyDefaultsFromEnv } = await import("./config");
+    expect(() =>
+      resolveAnomalyDefaultsFromEnv({
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? "2x" : undefined,
+      })
+    ).toThrow(/positive/);
+    expect(() =>
+      resolveAnomalyDefaultsFromEnv({
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "1e2junk" : undefined,
+      })
+    ).toThrow(/positive/);
+    // Plain and scientific forms still parse.
+    expect(
+      resolveAnomalyDefaultsFromEnv({
+        get: (key: string) =>
+          key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? " 2.5 " : undefined,
+      }).turnMultiple,
+    ).toBe(2.5);
+  });
+});

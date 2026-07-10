@@ -1069,8 +1069,8 @@ export async function runWorkbenchRuntime(
   const {
     BudgetTracker,
     ceilingConfirmationStoreFor,
+    createRunawayAnomalyGate,
     createTurnBudgetCeilingGate,
-    ensureAnomalyAllowed,
     fetchSpendBaselines,
   } = await import("./budget");
   const {
@@ -1482,7 +1482,20 @@ export async function runWorkbenchRuntime(
       runtimeInput.confirmBudgetCeiling,
       ceilingConfirmationStoreFor(sessionId),
     );
+    // Turn-scoped: an approval covers the spend level it was shown (the entry
+    // check and the first call's check see identical actuals); any recorded
+    // increment re-prompts, and nothing survives the turn.
+    const anomalyGate = createRunawayAnomalyGate(
+      runtimeInput.confirmRunawayAnomaly,
+    );
 
+    // Hard stop BEFORE the soft ceiling confirm: a turn entered in an
+    // anomalous state must halt first — otherwise the ceiling prompt records
+    // its scope-period confirmation before the operator ever sees the halt,
+    // and an aborted turn leaves that confirmation behind.
+    await anomalyGate.ensureAllowed(
+      budget.checkAnomaly(selected.tier, anomalyConfig),
+    );
     await budgetCeilingGate.ensureAllowed(preCall);
     estimatedCostUsd = preCall.estimatedCost;
 
@@ -1547,10 +1560,9 @@ export async function runWorkbenchRuntime(
       // Runaway-anomaly hard stop FIRST, on actual recorded spend — it holds
       // where the estimate-based ceiling below is blind (multi-call turn
       // accumulation, spend a scope confirmation already covered). An approval
-      // admits this one call; the next call re-checks fresh.
-      await ensureAnomalyAllowed(
+      // admits the spend level it was shown; recorded spend past it re-prompts.
+      await anomalyGate.ensureAllowed(
         budget.checkAnomaly(selected.tier, anomalyConfig),
-        runtimeInput.confirmRunawayAnomaly,
       );
       const callPre = budget.checkPreCall(
         selected.tier,
