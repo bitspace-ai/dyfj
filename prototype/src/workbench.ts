@@ -190,7 +190,10 @@ export interface WorkbenchRuntimeInput {
   /**
    * Runaway-anomaly hard-stop multiples (startup posture), resolved at the
    * boundary like the budget defaults. Deliberately config-only — no per-turn
-   * override field, so a request can never loosen the hard stop.
+   * override field for the multiples themselves. The dollar thresholds they
+   * produce scale with the effective budget config, so an explicit loopback
+   * per-turn budget override moves them with the envelope it raises; the gate
+   * always binds at multiple × the envelope in force.
    */
   anomalyTurnMultiple?: number;
   anomalyScopeMultiple?: number;
@@ -1135,8 +1138,11 @@ export async function runWorkbenchRuntime(
     dailyLimitUsd: runtimeInput.dailyLimitUsd ??
       runtimeInput.defaultDailyBudgetUsd ?? BUDGET_DEFAULTS.dailyLimitUsd,
   };
-  // Anomaly multiples have no per-turn override lane: boundary-resolved config
-  // or the declared defaults only, so a request can never loosen the hard stop.
+  // The multiples have no per-turn override lane (boundary-resolved config or
+  // the declared defaults only); the dollar thresholds derive from
+  // budgetConfig above, so they track the envelope in force — including an
+  // explicit loopback per-turn budget override, which is the operator
+  // speaking, not a request weakening the gate relative to the envelopes.
   const anomalyConfig = {
     turnMultiple: runtimeInput.anomalyTurnMultiple ??
       ANOMALY_DEFAULTS.turnMultiple,

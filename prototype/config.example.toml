@@ -41,8 +41,11 @@ level = "strict"
 # estimates) before every paid call. Unlike the soft ceilings above, an
 # approval here admits only the next call — nothing is raised, further
 # anomalous spend prompts again, and non-interactive callers fail closed.
-# Multiples must be strictly positive; there is no disable knob and no
-# per-request override lane.
+# Multiples must be strictly positive and there is no disable knob. The
+# multiples are config-only (no per-request field); the dollar thresholds
+# they produce scale with the budget envelope in force, including an explicit
+# loopback per-turn budget override — the gate always binds at
+# multiple × the effective limit.
 #   turn halt:  turn_multiple  × per_call_limit_usd of real spend in one turn
 #   scope halt: scope_multiple × the session/daily envelope
 # turn_multiple = 3.0
