@@ -11,9 +11,15 @@
  * to memory: bet on the protocol (MCP), keep vendor optionality.
  *
  * Config (environment; an unset URL disables the capability entirely):
- *   DYFJ_MEMORY_MCP_URL    the external memory MCP endpoint
- *   DYFJ_MEMORY_MCP_TOOL   the search tool to call on it (default "search")
- *   DYFJ_MEMORY_MCP_TOKEN  optional bearer for the endpoint
+ *   DYFJ_MEMORY_MCP_URL           the external memory MCP endpoint
+ *   DYFJ_MEMORY_MCP_TOOL          the search tool to call on it (default "search")
+ *   DYFJ_MEMORY_MCP_TOKEN         optional token for the endpoint
+ *   DYFJ_MEMORY_MCP_TOKEN_HEADER  optional header name to carry the token; when
+ *                                 unset the token is sent as `Authorization:
+ *                                 Bearer <token>`, when set the raw token is
+ *                                 sent under the named header (backends that
+ *                                 authenticate with a custom header stay a
+ *                                 config change, not a code change)
  *
  * Read-only: this invokes a search tool and returns its text. Capture/write
  * flows should use separate capability contracts.
@@ -26,8 +32,14 @@ export interface MemorySearchConfig {
   url: string;
   /** The search tool to call on that server (lowest-common-denominator: takes a query). */
   tool: string;
-  /** Optional bearer token for the endpoint. */
+  /** Optional token for the endpoint. */
   token?: string;
+  /**
+   * Optional header name to carry the token. Unset → `Authorization: Bearer
+   * <token>`; set → the raw token under this header. Meaningless without a
+   * token.
+   */
+  tokenHeader?: string;
 }
 
 /** A bound recall function: natural-language query → formatted results text. */
@@ -43,11 +55,29 @@ export function memorySearchConfigFromEnv(
 ): MemorySearchConfig | null {
   const url = env.DYFJ_MEMORY_MCP_URL;
   if (url === undefined || url === "") return null;
+  const tokenHeader = env.DYFJ_MEMORY_MCP_TOKEN_HEADER;
   return {
     url,
     tool: env.DYFJ_MEMORY_MCP_TOOL ?? "search",
     token: env.DYFJ_MEMORY_MCP_TOKEN,
+    tokenHeader: tokenHeader === "" ? undefined : tokenHeader,
   };
+}
+
+/**
+ * The auth headers a recall connection sends: nothing without a token, the
+ * standard `Authorization: Bearer` scheme by default, or the raw token under
+ * the operator-configured header name when the backend authenticates with a
+ * custom header.
+ */
+export function memoryAuthHeaders(
+  config: MemorySearchConfig,
+): Record<string, string> | undefined {
+  if (config.token === undefined || config.token === "") return undefined;
+  if (config.tokenHeader !== undefined) {
+    return { [config.tokenHeader]: config.token };
+  }
+  return { Authorization: `Bearer ${config.token}` };
 }
 
 /**
@@ -67,10 +97,9 @@ export function buildMemorySearch(config: MemorySearchConfig): MemorySearch {
     const { StreamableHTTPClientTransport } = await import(
       "npm:@modelcontextprotocol/sdk@1.29.0/client/streamableHttp"
     );
+    const headers = memoryAuthHeaders(config);
     const transport = new StreamableHTTPClientTransport(new URL(config.url), {
-      requestInit: config.token
-        ? { headers: { Authorization: `Bearer ${config.token}` } }
-        : undefined,
+      requestInit: headers ? { headers } : undefined,
     });
     const client = new Client({
       name: "dyfj-workbench-recall",
