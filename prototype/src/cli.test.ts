@@ -22,6 +22,9 @@ import {
   runRepl,
   runSessions,
   buildServeUnixArgs,
+  envFileVar,
+  memoryMcpNetGrant,
+  readMemoryMcpNetGrant,
   readServeUnixNetGrants,
   runStart,
   runStatus,
@@ -1049,6 +1052,90 @@ describe("runtime lifecycle commands", () => {
       "/run/wb.sock",
     );
     expect(args[3]).toBe("--allow-net=unix:/run/wb.sock");
+  });
+
+  test("buildServeUnixArgs appends the launch-resolved memory endpoint grant", () => {
+    const args = buildServeUnixArgs(
+      ["127.0.0.1:3306"],
+      "/run/wb.sock",
+      "memory.example:443",
+    );
+    expect(args[3]).toBe(
+      "--allow-net=127.0.0.1:3306,unix:/run/wb.sock,memory.example:443",
+    );
+  });
+
+  test("buildServeUnixArgs adds no memory grant when recall is unconfigured", () => {
+    const args = buildServeUnixArgs(["127.0.0.1:3306"], "/run/wb.sock", null);
+    expect(args[3]).toBe("--allow-net=127.0.0.1:3306,unix:/run/wb.sock");
+  });
+
+  test("buildServeUnixArgs does not duplicate an already-granted memory host", () => {
+    const args = buildServeUnixArgs(
+      ["memory.example:443"],
+      "/run/wb.sock",
+      "memory.example:443",
+    );
+    expect(args[3]).toBe(
+      "--allow-net=memory.example:443,unix:/run/wb.sock",
+    );
+  });
+
+  test("memoryMcpNetGrant derives host:port, defaulting the scheme port", () => {
+    expect(memoryMcpNetGrant(undefined)).toBeNull();
+    expect(memoryMcpNetGrant("")).toBeNull();
+    expect(memoryMcpNetGrant("https://memory.example/mcp")).toBe(
+      "memory.example:443",
+    );
+    expect(memoryMcpNetGrant("http://memory.example/mcp")).toBe(
+      "memory.example:80",
+    );
+    expect(memoryMcpNetGrant("https://memory.example:8443/mcp")).toBe(
+      "memory.example:8443",
+    );
+  });
+
+  test("memoryMcpNetGrant fails at launch on a malformed endpoint", () => {
+    // Misconfiguration surfaces at `dyfj start`, not as NotCapable mid-recall.
+    expect(() => memoryMcpNetGrant("not a url")).toThrow("not a valid URL");
+    expect(() => memoryMcpNetGrant("ftp://memory.example/mcp")).toThrow(
+      "http(s)",
+    );
+  });
+
+  test("envFileVar reads the dotenv shapes --env-file accepts", () => {
+    const text = [
+      "# comment",
+      "",
+      "OTHER=1",
+      'export DYFJ_MEMORY_MCP_URL="https://memory.example/mcp"',
+    ].join("\n");
+    expect(envFileVar(text, "DYFJ_MEMORY_MCP_URL")).toBe(
+      "https://memory.example/mcp",
+    );
+    expect(envFileVar(text, "OTHER")).toBe("1");
+    expect(envFileVar("A='x'\n", "A")).toBe("x");
+    expect(envFileVar(text, "MISSING")).toBeUndefined();
+  });
+
+  test("readMemoryMcpNetGrant resolves the grant from the runtime env file", async () => {
+    const grant = await readMemoryMcpNetGrant(
+      "/proto",
+      (path) => {
+        expect(path).toBe("/proto/.env");
+        return Promise.resolve("DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n");
+      },
+    );
+    expect(grant).toBe("memory.example:443");
+  });
+
+  test("readMemoryMcpNetGrant is null without an env file or endpoint", async () => {
+    expect(
+      await readMemoryMcpNetGrant("/proto", () => Promise.reject(new Error("ENOENT"))),
+    ).toBeNull();
+    expect(
+      await readMemoryMcpNetGrant("/proto", () => Promise.resolve("OTHER=1\n")),
+    ).toBeNull();
   });
 
   test("readServeUnixNetGrants reads the real profile", async () => {
