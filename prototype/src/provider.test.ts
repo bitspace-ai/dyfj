@@ -1418,3 +1418,99 @@ describe("fetchWithHeaderTimeout", () => {
     ).rejects.toThrow("connection refused");
   });
 });
+
+// ── catalog-row routability ───────────────────────────────────────────────────
+
+describe("unpriced models are unroutable", () => {
+  const unpriced: WorkbenchModel = {
+    slug: "gpt-6-preview",
+    displayName: "GPT-6 Preview",
+    provider: "openai",
+    api: "openai-completions",
+    baseUrl: "https://api.openai.com/v1",
+    tier: 2,
+    costInput: 0, // schema default — nobody priced the row
+    costOutput: 0,
+    capabilities: ["text", "code"],
+  };
+
+  test("modelHasCatalogPricing: tier 0 zero-cost is priced (free by declaration)", async () => {
+    const { modelHasCatalogPricing } = await import("./provider");
+    expect(modelHasCatalogPricing(models[0])).toBe(true); // tier 0, $0
+    expect(modelHasCatalogPricing(models[2])).toBe(true); // tier 1, priced
+    expect(modelHasCatalogPricing(unpriced)).toBe(false); // tier 2, $0
+    expect(modelHasCatalogPricing({ ...unpriced, costInput: 15 })).toBe(false); // half-priced
+    expect(modelHasCatalogPricing({ ...unpriced, costInput: 15, costOutput: 75 }))
+      .toBe(true);
+  });
+
+  test("explicit modelId selection of an unpriced paid model throws the named error", async () => {
+    const { WorkbenchModelNotRoutableError } = await import("./provider");
+    expect(() =>
+      selectWorkbenchModel([...models, unpriced], { modelId: "gpt-6-preview" })
+    ).toThrow(WorkbenchModelNotRoutableError);
+    expect(() =>
+      selectWorkbenchModel([...models, unpriced], { modelId: "gpt-6-preview" })
+    ).toThrow(/no catalog pricing/);
+  });
+
+  test("configured default companion that is unpriced throws instead of routing", async () => {
+    const { WorkbenchModelNotRoutableError } = await import("./provider");
+    expect(() =>
+      selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview")
+    ).toThrow(WorkbenchModelNotRoutableError);
+  });
+
+  test("tier routing skips unpriced candidates and picks a priced one", () => {
+    const pricedTier2: WorkbenchModel = {
+      ...unpriced,
+      slug: "claude-opus-4-8",
+      displayName: "Claude Opus 4.8",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      costInput: 15,
+      costOutput: 75,
+    };
+    const selection = selectWorkbenchModel(
+      [...models, unpriced, pricedTier2],
+      { tier: 2 },
+    );
+    expect(selection.selected.slug).toBe("claude-opus-4-8");
+    expect(selection.considered).toEqual(["claude-opus-4-8"]); // unpriced not considered
+  });
+
+  test("a tier whose only candidates are unpriced names the catalog problem", async () => {
+    const { WorkbenchModelNotRoutableError } = await import("./provider");
+    expect(() => selectWorkbenchModel([...models, unpriced], { tier: 2 }))
+      .toThrow(WorkbenchModelNotRoutableError);
+    expect(() => selectWorkbenchModel([...models, unpriced], { tier: 2 }))
+      .toThrow(/all candidates unpriced: gpt-6-preview/);
+    // An empty tier is still a not-found, not a pricing complaint.
+    expect(() => selectWorkbenchModel(models, { tier: 2 }))
+      .toThrow(/not found|tier:2/);
+  });
+
+  test("tier 0 routing is unaffected (free models stay routable)", () => {
+    expect(selectWorkbenchModel([...models, unpriced], {}).selected.tier)
+      .toBe(0);
+  });
+
+  test("malformed catalog costs parse to the unpriced bucket, never NaN", () => {
+    const parsed = parseModelRegistryRows([
+      {
+        slug: "broken",
+        display_name: "Broken Row",
+        provider: "openai",
+        api: "openai-completions",
+        base_url: "https://api.openai.com/v1",
+        tier: "2",
+        cost_input: "garbage",
+        cost_output: "-5",
+        capabilities: "text",
+      },
+    ]);
+    expect(parsed[0].costInput).toBe(0);
+    expect(parsed[0].costOutput).toBe(0);
+    expect(Number.isNaN(parsed[0].costInput)).toBe(false);
+  });
+});

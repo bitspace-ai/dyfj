@@ -671,9 +671,14 @@ export async function runModels(
     0,
   );
   for (const m of models) {
+    // Server-computed flag; only an explicit false marks a row (older servers
+    // omit the field, and absence must not smear "unpriced" over the list).
+    const unroutable = (m as { routable?: boolean }).routable === false
+      ? "  [unpriced — not routable]"
+      : "";
     io.out(
       `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
-        `${(m.provider ?? "").padEnd(10)} ${m.displayName ?? ""}\n`,
+        `${(m.provider ?? "").padEnd(10)} ${m.displayName ?? ""}${unroutable}\n`,
     );
   }
   return 0;

@@ -213,11 +213,45 @@ export function parseModelRegistryRows(
       api: row.api,
       baseUrl: row.base_url ?? "",
       tier,
-      costInput: Number(row.cost_input || "0"),
-      costOutput: Number(row.cost_output || "0"),
+      costInput: toCatalogCost(row.cost_input),
+      costOutput: toCatalogCost(row.cost_output),
       capabilities: parseCapabilities(row.capabilities),
     };
   });
+}
+
+/**
+ * A malformed catalog cost must land in the unpriced bucket (0), never as NaN:
+ * NaN fails every budget comparison open — estimates, envelopes, and the
+ * anomaly gate would all silently pass.
+ */
+function toCatalogCost(value: string | undefined): number {
+  const cost = Number(value || "0");
+  return Number.isFinite(cost) && cost >= 0 ? cost : 0;
+}
+
+/**
+ * Whether a model carries the catalog pricing the cost posture requires to
+ * route it. Tier 0 is free by declaration — zero IS its price. For a paid
+ * tier, zero/absent cost means nobody priced the row (the schema default),
+ * and an unpriced paid model is invisible to every spend control: estimates,
+ * recorded actuals, the envelopes, and the anomaly hard stop all derive from
+ * these numbers.
+ */
+export function modelHasCatalogPricing(model: WorkbenchModel): boolean {
+  if (model.tier === 0) return true;
+  return model.costInput > 0 && model.costOutput > 0;
+}
+
+export class WorkbenchModelNotRoutableError extends Error {
+  constructor(public readonly ref: string) {
+    super(
+      `Model not routable [${ref}]: no catalog pricing row. ` +
+        `Paid spend cannot be estimated, recorded, or bounded without prices; ` +
+        `set cost_input and cost_output on the models row to route it.`,
+    );
+    this.name = "WorkbenchModelNotRoutableError";
+  }
 }
 
 function parseCapabilities(value: string | undefined): string[] {
@@ -288,18 +322,31 @@ export function selectWorkbenchModel(
   if (options.modelId !== undefined) {
     const selected = models.find((model) => model.slug === options.modelId);
     if (!selected) throw new WorkbenchModelNotFoundError(options.modelId);
+    if (!modelHasCatalogPricing(selected)) {
+      throw new WorkbenchModelNotRoutableError(selected.slug);
+    }
     return { selected, considered: [], reason: "explicit_model_id" };
   }
 
   if (options.tier !== undefined) {
     const tierModels = models.filter((model) => model.tier === options.tier);
-    const selected = preferredModelFrom(tierModels);
+    const routable = tierModels.filter(modelHasCatalogPricing);
+    const selected = preferredModelFrom(routable);
     if (!selected) {
+      // Distinguish "no models at this tier" from "models exist but none are
+      // priced" — the second needs a catalog fix, not a different request.
+      if (tierModels.length > 0) {
+        throw new WorkbenchModelNotRoutableError(
+          `tier:${options.tier} — all candidates unpriced: ${
+            tierModels.map((model) => model.slug).join(", ")
+          }`,
+        );
+      }
       throw new WorkbenchModelNotFoundError(`tier:${options.tier}`);
     }
     return {
       selected,
-      considered: tierModels.map((model) => model.slug),
+      considered: routable.map((model) => model.slug),
       reason: "explicit_tier",
     };
   }
@@ -316,6 +363,9 @@ export function selectWorkbenchModel(
   ) {
     const selected = models.find((model) => model.slug === defaultModelId);
     if (!selected) throw new WorkbenchModelNotFoundError(defaultModelId);
+    if (!modelHasCatalogPricing(selected)) {
+      throw new WorkbenchModelNotRoutableError(selected.slug);
+    }
     return { selected, considered: [], reason: "default_config" };
   }
 
