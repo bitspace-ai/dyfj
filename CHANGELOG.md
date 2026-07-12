@@ -83,7 +83,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Security
 
-- Recall endpoints must be https off-box. A configured `DYFJ_MEMORY_MCP_URL` using plain http is rejected unless the host is loopback, enforced at both seams: config resolution (the runtime fails closed before any request is built) and the launcher's net-grant derivation (a cleartext destination is never granted). The recall token rides a request header and the query is private data — neither crosses the network unencrypted.
+- Recall endpoints must be https off-box, and recall requests refuse redirects. A configured `DYFJ_MEMORY_MCP_URL` using plain http is rejected unless the host is genuinely loopback (`localhost`, IPv6 loopback, or a strict dotted-quad in `127.0.0.0/8` — a DNS name merely starting with `127.` does not qualify), enforced at both seams: config resolution (the runtime fails closed before any request is built) and the launcher's net-grant derivation (a cleartext destination is never granted). Every recall request carries `redirect: "error"`, so an accepted https endpoint answering a 307/308 downgrade fails loudly instead of being followed — fetch preserves custom headers across redirects, and following one could ship the token header and query body in cleartext. The recall token rides a request header and the query is private data; neither crosses the network unencrypted.
 
 ## [2026-06-12]
 

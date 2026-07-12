@@ -119,6 +119,20 @@ export function memoryAuthHeaders(
 }
 
 /**
+ * The fetch init every recall request uses. `redirect: "error"` is
+ * load-bearing: fetch follows redirects by default and preserves CUSTOM
+ * headers (only `Authorization` is stripped cross-origin), so an accepted
+ * https endpoint answering 307/308 to an http URL would ship the token header
+ * and the query body in cleartext — while staying inside the derived host
+ * grant when only the scheme changes. The endpoint is operator-configured and
+ * direct; a redirecting endpoint fails loudly and the operator fixes the URL.
+ */
+export function recallRequestInit(config: MemorySearchConfig): RequestInit {
+  const headers = memoryAuthHeaders(config);
+  return { redirect: "error", ...(headers ? { headers } : {}) };
+}
+
+/**
  * Build a recall function bound to the given config. Connects per call (stateless
  * and robust — no long-lived session to reconcile across turns) to the external
  * memory MCP server and invokes its configured search tool with `{ query }`,
@@ -138,9 +152,8 @@ export function buildMemorySearch(config: MemorySearchConfig): MemorySearch {
     const { StreamableHTTPClientTransport } = await import(
       "npm:@modelcontextprotocol/sdk@1.29.0/client/streamableHttp.js"
     );
-    const headers = memoryAuthHeaders(config);
     const transport = new StreamableHTTPClientTransport(new URL(config.url), {
-      requestInit: headers ? { headers } : undefined,
+      requestInit: recallRequestInit(config),
     });
     const client = new Client({
       name: "dyfj-workbench-recall",

@@ -7,7 +7,11 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { memoryAuthHeaders, memorySearchConfigFromEnv } from "./memory-search";
+import {
+  memoryAuthHeaders,
+  memorySearchConfigFromEnv,
+  recallRequestInit,
+} from "./memory-search";
 
 describe("memorySearchConfigFromEnv", () => {
   test("returns null when no endpoint is configured (capability disabled)", () => {
@@ -122,5 +126,60 @@ describe("memoryAuthHeaders", () => {
         tokenHeader: "x-fixture-key",
       }),
     ).toEqual({ "x-fixture-key": "fixture-token" });
+  });
+});
+
+describe("recallRequestInit", () => {
+  const base = { url: "https://memory.example/mcp", tool: "search" };
+
+  test("always refuses redirects, with or without a token", () => {
+    // fetch preserves CUSTOM headers across redirects (only Authorization is
+    // stripped cross-origin), so following a 307/308 https→http downgrade
+    // would ship the token header and query body in cleartext. Every recall
+    // request must carry redirect: "error".
+    expect(recallRequestInit(base).redirect).toBe("error");
+    expect(
+      recallRequestInit({
+        ...base,
+        token: "fixture-token",
+        tokenHeader: "x-fixture-key",
+      }),
+    ).toEqual({
+      redirect: "error",
+      headers: { "x-fixture-key": "fixture-token" },
+    });
+  });
+
+  test("a redirecting endpoint rejects instead of being followed (live fetch)", async () => {
+    // Regression for the https→http 307 downgrade: a loopback server answers
+    // 307 to a same-host http URL; a fetch carrying the exact init recall
+    // sends must reject rather than follow. (The full SDK transport path can't
+    // run here — npm: specifiers don't resolve under the node-based runner —
+    // but the redirect policy is enforced by fetch itself, which this
+    // exercises for real.)
+    const server = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      (req) =>
+        new Response(null, {
+          status: 307,
+          headers: { location: new URL(req.url).href },
+        }),
+    );
+    const { port } = server.addr as Deno.NetAddr;
+    try {
+      await expect(
+        fetch(`http://127.0.0.1:${port}/mcp`, {
+          ...recallRequestInit({
+            ...base,
+            token: "fixture-token",
+            tokenHeader: "x-fixture-key",
+          }),
+          method: "POST",
+          body: JSON.stringify({ query: "fixture" }),
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await server.shutdown();
+    }
   });
 });
