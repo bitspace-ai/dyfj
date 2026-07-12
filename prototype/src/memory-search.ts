@@ -45,16 +45,46 @@ export interface MemorySearchConfig {
 /** A bound recall function: natural-language query → formatted results text. */
 export type MemorySearch = (query: string) => Promise<string>;
 
+/** Loopback hosts, the only place plain-http recall is tolerable. */
+export function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "::1" ||
+    hostname === "[::1]" || hostname.startsWith("127.");
+}
+
+/**
+ * Reject any recall endpoint that would carry the token and the private
+ * queries in cleartext: https everywhere, plain http only to loopback. Throws
+ * so misconfiguration fails closed and loudly — the alternative is silently
+ * shipping a credential over the network.
+ */
+export function assertSecureMemoryUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("DYFJ_MEMORY_MCP_URL is not a valid URL");
+  }
+  if (parsed.protocol === "https:") return;
+  if (parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname)) {
+    return;
+  }
+  throw new Error(
+    "DYFJ_MEMORY_MCP_URL must be https (plain http is allowed only for loopback hosts)",
+  );
+}
+
 /**
  * Resolve recall config from the environment. Returns null when no endpoint is
  * configured, which disables the capability (the tool is never registered) —
  * so DYFJ carries no external-memory dependency until an operator opts in.
+ * A configured-but-insecure endpoint throws instead of resolving.
  */
 export function memorySearchConfigFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): MemorySearchConfig | null {
   const url = env.DYFJ_MEMORY_MCP_URL;
   if (url === undefined || url === "") return null;
+  assertSecureMemoryUrl(url);
   const tokenHeader = env.DYFJ_MEMORY_MCP_TOKEN_HEADER;
   return {
     url,

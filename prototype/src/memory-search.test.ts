@@ -39,6 +39,26 @@ describe("memorySearchConfigFromEnv", () => {
     expect(cfg?.token).toBe("fixture-token");
   });
 
+  test("refuses an endpoint that would carry the token in cleartext", () => {
+    // https anywhere; plain http only to loopback. Fail-closed at config
+    // resolution, before any request could ship the token.
+    expect(() =>
+      memorySearchConfigFromEnv({
+        DYFJ_MEMORY_MCP_URL: "http://memory.example/mcp",
+      })
+    ).toThrow("https");
+    expect(
+      memorySearchConfigFromEnv({
+        DYFJ_MEMORY_MCP_URL: "http://127.0.0.1:8080/mcp",
+      })?.url,
+    ).toBe("http://127.0.0.1:8080/mcp");
+    expect(
+      memorySearchConfigFromEnv({
+        DYFJ_MEMORY_MCP_URL: "http://localhost:8080/mcp",
+      })?.url,
+    ).toBe("http://localhost:8080/mcp");
+  });
+
   test("resolves the token header name; empty means unset", () => {
     const named = memorySearchConfigFromEnv({
       DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",

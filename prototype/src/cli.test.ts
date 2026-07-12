@@ -1087,19 +1087,26 @@ describe("runtime lifecycle commands", () => {
     expect(memoryMcpNetGrant("https://memory.example/mcp")).toBe(
       "memory.example:443",
     );
-    expect(memoryMcpNetGrant("http://memory.example/mcp")).toBe(
-      "memory.example:80",
-    );
     expect(memoryMcpNetGrant("https://memory.example:8443/mcp")).toBe(
       "memory.example:8443",
     );
+    // Plain http is loopback-only; the default port still derives.
+    expect(memoryMcpNetGrant("http://127.0.0.1:8080/mcp")).toBe(
+      "127.0.0.1:8080",
+    );
+    expect(memoryMcpNetGrant("http://localhost/mcp")).toBe("localhost:80");
   });
 
-  test("memoryMcpNetGrant fails at launch on a malformed endpoint", () => {
-    // Misconfiguration surfaces at `dyfj start`, not as NotCapable mid-recall.
+  test("memoryMcpNetGrant fails at launch on a malformed or insecure endpoint", () => {
+    // Misconfiguration surfaces at `dyfj start`, not as NotCapable mid-recall —
+    // and a grant is never derived for a destination that would carry the
+    // token in cleartext off-box.
     expect(() => memoryMcpNetGrant("not a url")).toThrow("not a valid URL");
     expect(() => memoryMcpNetGrant("ftp://memory.example/mcp")).toThrow(
-      "http(s)",
+      "https",
+    );
+    expect(() => memoryMcpNetGrant("http://memory.example/mcp")).toThrow(
+      "https",
     );
   });
 

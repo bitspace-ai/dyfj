@@ -22,6 +22,7 @@ import {
   type UnixClientOptions,
 } from "./uds-client";
 import { resolveSocketPath } from "./uds-path";
+import { assertSecureMemoryUrl } from "./memory-search";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 
 // ── Seam contract (shared with the server) ──────────────────────────
@@ -840,15 +841,11 @@ export function buildServeUnixArgs(
  */
 export function memoryMcpNetGrant(url: string | undefined): string | null {
   if (url === undefined || url === "") return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`DYFJ_MEMORY_MCP_URL is not a valid URL`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`DYFJ_MEMORY_MCP_URL must be an http(s) URL`);
-  }
+  // Same rule the runtime enforces at config resolution: https everywhere,
+  // plain http only to loopback — never grant a destination that would carry
+  // the token in cleartext.
+  assertSecureMemoryUrl(url);
+  const parsed = new URL(url);
   const port = parsed.port !== ""
     ? parsed.port
     : parsed.protocol === "http:"
