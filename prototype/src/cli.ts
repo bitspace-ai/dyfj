@@ -890,8 +890,12 @@ export async function readMemoryMcpNetGrant(
   readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
   env: { get(name: string): string | undefined } = Deno.env,
 ): Promise<string | null> {
+  // Any DEFINED ambient value is authoritative — including empty: --env-file
+  // does not fill an explicitly empty inherited var, so the child sees "" and
+  // disables recall; granting the .env host anyway would be an unnecessary
+  // grant with no consumer.
   const ambient = env.get("DYFJ_MEMORY_MCP_URL");
-  if (ambient !== undefined && ambient !== "") {
+  if (ambient !== undefined) {
     return memoryMcpNetGrant(ambient);
   }
   let raw: string;

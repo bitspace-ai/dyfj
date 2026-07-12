@@ -1183,13 +1183,15 @@ describe("runtime lifecycle commands", () => {
     expect(grant).toBe("ambient.example:443");
   });
 
-  test("readMemoryMcpNetGrant falls through an empty ambient value to the env file", async () => {
+  test("readMemoryMcpNetGrant treats an empty ambient value as authoritative", async () => {
+    // --env-file does not fill an explicitly empty inherited var: the child
+    // sees "" and disables recall, so no grant may be derived from the file.
     const grant = await readMemoryMcpNetGrant(
       "/proto",
       () => Promise.resolve("DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n"),
       { get: (name) => (name === "DYFJ_MEMORY_MCP_URL" ? "" : undefined) },
     );
-    expect(grant).toBe("memory.example:443");
+    expect(grant).toBeNull();
   });
 
   test("every dyfj CLI surface may read the memory endpoint URL", async () => {
