@@ -94,8 +94,11 @@ export function buildMemorySearch(config: MemorySearchConfig): MemorySearch {
     const { Client } = await import(
       "npm:@modelcontextprotocol/sdk@1.29.0/client"
     );
+    // The .js suffix is load-bearing: the SDK's exports map is a bare
+    // `./*` → `./dist/esm/*` wildcard, so an extensionless subpath resolves
+    // to a file that does not exist (ERR_MODULE_NOT_FOUND at recall time).
     const { StreamableHTTPClientTransport } = await import(
-      "npm:@modelcontextprotocol/sdk@1.29.0/client/streamableHttp"
+      "npm:@modelcontextprotocol/sdk@1.29.0/client/streamableHttp.js"
     );
     const headers = memoryAuthHeaders(config);
     const transport = new StreamableHTTPClientTransport(new URL(config.url), {
