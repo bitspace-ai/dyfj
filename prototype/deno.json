@@ -7,7 +7,7 @@
     "workbench-http": "deno run --no-prompt -P=workbench-http --env-file=.env --sloppy-imports src/http.ts",
     "cli": "scripts/dyfj-launcher.sh",
     "serve-unix": "deno run --no-prompt -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
-    "compile-cli": "deno compile --allow-env=DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,NO_COLOR --allow-read --allow-write --allow-run=deno --allow-net=127.0.0.1,localhost,unix:$HOME/.dyfj/run/workbench.sock --sloppy-imports -o dist/dyfj-bin src/cli.ts && cp scripts/dyfj-launcher.sh dist/dyfj && chmod +x dist/dyfj dist/dyfj-bin",
+    "compile-cli": "deno compile --allow-env=DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,DYFJ_MEMORY_MCP_URL,NO_COLOR --allow-read --allow-write --allow-run=deno --allow-net=127.0.0.1,localhost,unix:$HOME/.dyfj/run/workbench.sock --sloppy-imports -o dist/dyfj-bin src/cli.ts && cp scripts/dyfj-launcher.sh dist/dyfj && chmod +x dist/dyfj dist/dyfj-bin",
     "context-size-response": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/context-size-response.ts",
     "model-response-modes": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/model-response-modes.ts",
     "structured-output": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output.ts",
@@ -165,6 +165,7 @@
         "DYFJ_WORKBENCH_HINT",
         "DYFJ_WORKBENCH_TIER",
         "DYFJ_UNIX",
+        "DYFJ_MEMORY_MCP_URL",
         "NO_COLOR"
       ],
       "net": [

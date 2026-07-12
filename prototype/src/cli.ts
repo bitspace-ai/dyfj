@@ -881,15 +881,22 @@ export function envFileVar(text: string, name: string): string | undefined {
 }
 
 /**
- * Resolve the memory MCP net grant from the runtime's env file. The spawned
- * runtime reads its config from `<cwd>/.env` (--env-file), so the launcher
- * derives the grant from the same file; no env file or no configured endpoint
- * means no grant (recall stays disabled).
+ * Resolve the memory MCP net grant the way the spawned runtime will resolve
+ * the URL itself: ambient environment first (--env-file does NOT override
+ * already-set process env, and the child inherits ours), then `<cwd>/.env`.
+ * Anything else lets the two diverge — recall configured without its grant, or
+ * a grant for the wrong host. No value anywhere means no grant (recall stays
+ * disabled).
  */
 export async function readMemoryMcpNetGrant(
   cwd: string,
   readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  env: { get(name: string): string | undefined } = Deno.env,
 ): Promise<string | null> {
+  const ambient = env.get("DYFJ_MEMORY_MCP_URL");
+  if (ambient !== undefined && ambient !== "") {
+    return memoryMcpNetGrant(ambient);
+  }
   let raw: string;
   try {
     raw = await readTextFile(`${cwd}/.env`);

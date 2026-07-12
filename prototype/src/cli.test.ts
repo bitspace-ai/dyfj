@@ -1118,6 +1118,8 @@ describe("runtime lifecycle commands", () => {
     expect(envFileVar(text, "MISSING")).toBeUndefined();
   });
 
+  const noAmbient = { get: () => undefined };
+
   test("readMemoryMcpNetGrant resolves the grant from the runtime env file", async () => {
     const grant = await readMemoryMcpNetGrant(
       "/proto",
@@ -1125,17 +1127,63 @@ describe("runtime lifecycle commands", () => {
         expect(path).toBe("/proto/.env");
         return Promise.resolve("DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n");
       },
+      noAmbient,
     );
     expect(grant).toBe("memory.example:443");
   });
 
   test("readMemoryMcpNetGrant is null without an env file or endpoint", async () => {
     expect(
-      await readMemoryMcpNetGrant("/proto", () => Promise.reject(new Error("ENOENT"))),
+      await readMemoryMcpNetGrant(
+        "/proto",
+        () => Promise.reject(new Error("ENOENT")),
+        noAmbient,
+      ),
     ).toBeNull();
     expect(
-      await readMemoryMcpNetGrant("/proto", () => Promise.resolve("OTHER=1\n")),
+      await readMemoryMcpNetGrant(
+        "/proto",
+        () => Promise.resolve("OTHER=1\n"),
+        noAmbient,
+      ),
     ).toBeNull();
+  });
+
+  test("readMemoryMcpNetGrant prefers ambient env, as --env-file does in the child", async () => {
+    // The spawned runtime inherits ambient env and --env-file does not override
+    // it; the launcher must grant the host the child will actually dial.
+    const grant = await readMemoryMcpNetGrant(
+      "/proto",
+      () => Promise.resolve("DYFJ_MEMORY_MCP_URL=https://stale.example/mcp\n"),
+      { get: (name) => (name === "DYFJ_MEMORY_MCP_URL" ? "https://ambient.example/mcp" : undefined) },
+    );
+    expect(grant).toBe("ambient.example:443");
+  });
+
+  test("readMemoryMcpNetGrant falls through an empty ambient value to the env file", async () => {
+    const grant = await readMemoryMcpNetGrant(
+      "/proto",
+      () => Promise.resolve("DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n"),
+      { get: (name) => (name === "DYFJ_MEMORY_MCP_URL" ? "" : undefined) },
+    );
+    expect(grant).toBe("memory.example:443");
+  });
+
+  test("every dyfj CLI surface may read the memory endpoint URL", async () => {
+    // The launcher derives the child's net grant from DYFJ_MEMORY_MCP_URL, so
+    // all three CLI permission surfaces (profile, compiled binary, launcher
+    // script) must stay in lockstep on the env grant.
+    const raw = await Deno.readTextFile("deno.json");
+    const parsed = JSON.parse(raw) as {
+      tasks: Record<string, string>;
+      permissions: Record<string, { env?: string[] | boolean }>;
+    };
+    expect(parsed.permissions["cli"].env).toContain("DYFJ_MEMORY_MCP_URL");
+    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)?.[1];
+    expect(compileEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
+    const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
+    const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
+    expect(launcherEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
   });
 
   test("readServeUnixNetGrants reads the real profile", async () => {
