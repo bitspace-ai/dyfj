@@ -1097,6 +1097,15 @@ describe("runtime lifecycle commands", () => {
     expect(memoryMcpNetGrant("http://localhost/mcp")).toBe("localhost:80");
   });
 
+  test("memoryMcpNetGrant keeps IPv6 hosts bracketed, as Deno grants require", () => {
+    // WHATWG URL.hostname returns IPv6 literals WITH brackets (unlike legacy
+    // url.parse), which is exactly the shape --allow-net expects.
+    expect(memoryMcpNetGrant("http://[::1]:8443/mcp")).toBe("[::1]:8443");
+    expect(memoryMcpNetGrant("https://[2001:db8::1]/mcp")).toBe(
+      "[2001:db8::1]:443",
+    );
+  });
+
   test("memoryMcpNetGrant fails at launch on a malformed or insecure endpoint", () => {
     // Misconfiguration surfaces at `dyfj start`, not as NotCapable mid-recall —
     // and a grant is never derived for a destination that would carry the
