@@ -1117,6 +1117,13 @@ describe("runtime lifecycle commands", () => {
     expect(() => memoryMcpNetGrant("http://memory.example/mcp")).toThrow(
       "https",
     );
+    // A DNS name that merely starts with "127." is routable, not loopback.
+    expect(() => memoryMcpNetGrant("http://127.attacker.example/mcp")).toThrow(
+      "https",
+    );
+    expect(() => memoryMcpNetGrant("http://127.example.com/mcp")).toThrow(
+      "https",
+    );
   });
 
   test("envFileVar reads the dotenv shapes --env-file accepts", () => {

@@ -47,8 +47,16 @@ export type MemorySearch = (query: string) => Promise<string>;
 
 /** Loopback hosts, the only place plain-http recall is tolerable. */
 export function isLoopbackHostname(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "::1" ||
-    hostname === "[::1]" || hostname.startsWith("127.");
+  if (
+    hostname === "localhost" || hostname === "::1" || hostname === "[::1]"
+  ) {
+    return true;
+  }
+  // 127.0.0.0/8 as a strict dotted-quad parse: a DNS name that merely STARTS
+  // with "127." (127.attacker.example) must never classify as loopback — it
+  // would license cleartext transport to an attacker-controlled host.
+  const quad = hostname.match(/^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  return quad !== null && quad.slice(1).every((octet) => Number(octet) <= 255);
 }
 
 /**

@@ -59,6 +59,29 @@ describe("memorySearchConfigFromEnv", () => {
     ).toBe("http://localhost:8080/mcp");
   });
 
+  test("a DNS name that merely starts with 127. is not loopback", () => {
+    // 127/8 must be a strict IPv4 parse — 127.attacker.example is a routable
+    // hostname, and classifying it loopback would license cleartext transport.
+    for (
+      const host of [
+        "127.attacker.example",
+        "127.example.com",
+        "127.0.0.1.evil.example",
+      ]
+    ) {
+      expect(() =>
+        memorySearchConfigFromEnv({
+          DYFJ_MEMORY_MCP_URL: `http://${host}/mcp`,
+        })
+      ).toThrow("https");
+    }
+    expect(
+      memorySearchConfigFromEnv({
+        DYFJ_MEMORY_MCP_URL: "http://127.1.2.3:9/mcp",
+      })?.url,
+    ).toBe("http://127.1.2.3:9/mcp");
+  });
+
   test("resolves the token header name; empty means unset", () => {
     const named = memorySearchConfigFromEnv({
       DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
