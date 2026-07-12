@@ -22,6 +22,7 @@ import {
   type UnixClientOptions,
 } from "./uds-client";
 import { resolveSocketPath } from "./uds-path";
+import { assertSecureMemoryUrl } from "./memory-search";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 
 // ── Seam contract (shared with the server) ──────────────────────────
@@ -798,16 +799,23 @@ function defaultPrototypeRoot(): string {
  * grant (deno.json commits no host paths), and a spawned child cannot prompt
  * for it (the CLI holds stdin in raw mode). So `dyfj start` passes an explicit
  * --allow-net that reproduces the profile's net list plus the one resolved
- * socket path; -P still supplies every other permission category.
+ * socket path — and, when an external memory endpoint is configured, its
+ * launch-resolved host grant (same reasoning: an operator-private hostname
+ * never belongs in the committed profile); -P still supplies every other
+ * permission category.
  */
 export function buildServeUnixArgs(
   netGrants: string[],
   socketPath: string,
+  memoryMcpGrant?: string | null,
 ): string[] {
   const socketGrant = `unix:${socketPath}`;
-  const net = netGrants.includes(socketGrant)
+  let net = netGrants.includes(socketGrant)
     ? netGrants
     : [...netGrants, socketGrant];
+  if (memoryMcpGrant != null && !net.includes(memoryMcpGrant)) {
+    net = [...net, memoryMcpGrant];
+  }
   return [
     "run",
     // A server must never interactively prompt: ungranted access throws
@@ -820,6 +828,83 @@ export function buildServeUnixArgs(
     "--sloppy-imports",
     "src/uds-serve.ts",
   ];
+}
+
+/**
+ * Derive the --allow-net grant for the external memory MCP endpoint from its
+ * configured URL. The endpoint host is operator-private, so it must never be
+ * committed to deno.json's net lists; like the `unix:<socket>` grant above, it
+ * is resolved at launch and appended to the explicit --allow-net. Returns null
+ * when no endpoint is configured (recall disabled — no grant to add); throws on
+ * a malformed value so misconfiguration surfaces at `dyfj start`, not as a
+ * NotCapable deep inside a recall turn.
+ */
+export function memoryMcpNetGrant(url: string | undefined): string | null {
+  if (url === undefined || url === "") return null;
+  // Same rule the runtime enforces at config resolution: https everywhere,
+  // plain http only to loopback — never grant a destination that would carry
+  // the token in cleartext.
+  assertSecureMemoryUrl(url);
+  const parsed = new URL(url);
+  const port = parsed.port !== ""
+    ? parsed.port
+    : parsed.protocol === "http:"
+    ? "80"
+    : "443";
+  return `${parsed.hostname}:${port}`;
+}
+
+/**
+ * Read one variable from env-file text (KEY=VALUE lines; `export` prefix,
+ * surrounding quotes, comments, and blank lines tolerated). Just enough of the
+ * dotenv shape for the launcher to resolve the same value the spawned runtime
+ * will read via --env-file=.env.
+ */
+export function envFileVar(text: string, name: string): string | undefined {
+  for (const line of text.split("\n")) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (match === null || match[1] !== name) continue;
+    let value = match[2].trim();
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      value = value.slice(1, -1);
+    }
+    return value;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the memory MCP net grant the way the spawned runtime will resolve
+ * the URL itself: ambient environment first (--env-file does NOT override
+ * already-set process env, and the child inherits ours), then `<cwd>/.env`.
+ * Anything else lets the two diverge — recall configured without its grant, or
+ * a grant for the wrong host. No value anywhere means no grant (recall stays
+ * disabled).
+ */
+export async function readMemoryMcpNetGrant(
+  cwd: string,
+  readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  env: { get(name: string): string | undefined } = Deno.env,
+): Promise<string | null> {
+  // Any DEFINED ambient value is authoritative — including empty: --env-file
+  // does not fill an explicitly empty inherited var, so the child sees "" and
+  // disables recall; granting the .env host anyway would be an unnecessary
+  // grant with no consumer.
+  const ambient = env.get("DYFJ_MEMORY_MCP_URL");
+  if (ambient !== undefined) {
+    return memoryMcpNetGrant(ambient);
+  }
+  let raw: string;
+  try {
+    raw = await readTextFile(`${cwd}/.env`);
+  } catch {
+    return null;
+  }
+  return memoryMcpNetGrant(envFileVar(raw, "DYFJ_MEMORY_MCP_URL"));
 }
 
 /** Read the serve-unix profile's declared net grants from deno.json. */
@@ -844,8 +929,9 @@ export async function startLocalRuntime(
   const command = options.command ?? "deno";
   const cwd = options.cwd ?? defaultPrototypeRoot();
   const netGrants = await readServeUnixNetGrants(cwd);
+  const memoryMcpGrant = await readMemoryMcpNetGrant(cwd);
   const child = new Deno.Command(command, {
-    args: buildServeUnixArgs(netGrants, config.socket),
+    args: buildServeUnixArgs(netGrants, config.socket, memoryMcpGrant),
     cwd,
     stdin: "inherit",
     stdout: "inherit",

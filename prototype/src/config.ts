@@ -180,6 +180,8 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   { key: "doltDatabase", envVar: "DOLT_DATABASE", domain: "engine", type: "string", kind: "value" },
   { key: "memoryMcpUrl", envVar: "DYFJ_MEMORY_MCP_URL", domain: "engine", type: "string", kind: "value" },
   { key: "memoryMcpTool", envVar: "DYFJ_MEMORY_MCP_TOOL", domain: "engine", type: "string", kind: "value" },
+  // Header NAME only (the token itself stays a secret pointer below).
+  { key: "memoryMcpTokenHeader", envVar: "DYFJ_MEMORY_MCP_TOKEN_HEADER", domain: "engine", type: "string", kind: "value" },
   // ── engine: HTTP-transport-specific (only the workbench-http profile) ──
   { key: "httpHost", envVar: "DYFJ_WORKBENCH_HTTP_HOST", domain: "engine", type: "string", kind: "value" },
   { key: "httpPort", envVar: "DYFJ_WORKBENCH_HTTP_PORT", domain: "engine", type: "string", kind: "value" },
