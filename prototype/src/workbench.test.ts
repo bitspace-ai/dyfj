@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { resetCeilingConfirmations } from "./budget";
+import { LENGTH_CONTINUATION_NUDGE } from "./length-recovery";
 import {
   type BudgetTallyInput,
   buildBudgetTallyLine,
@@ -37,6 +38,8 @@ const runtimeMocks = vi.hoisted(() => {
     costInput: 0,
     costOutput: 0,
     capabilities: ["text", "reasoning"],
+    contextWindow: undefined as number | undefined,
+    maxOutputTokens: undefined as number | undefined,
   };
   return {
     ulid: 0,
@@ -1196,6 +1199,315 @@ describe("runWorkbenchRuntime observer events", () => {
       );
     } finally {
       warn.mockRestore();
+    }
+  });
+});
+
+describe("runWorkbenchRuntime length-stop recovery", () => {
+  const turnBase = () => ({
+    model: runtimeMocks.model,
+    selection: {
+      selected: runtimeMocks.model,
+      considered: [runtimeMocks.model.slug],
+      reason: "default",
+    },
+    usage: {
+      input: 42,
+      output: 7,
+      cost: { total: 0 },
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    timings: { responseHeadersMs: 3, generationMs: 9, totalMs: 12 },
+  });
+
+  test("output-budget truncation runs one continuation retry and merges the text", async () => {
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce({
+        ...turnBase(),
+        text: "first half ",
+        stopReason: "length",
+      })
+      .mockResolvedValueOnce({
+        ...turnBase(),
+        text: "second half",
+        stopReason: "stop",
+      });
+    const events: Array<Record<string, unknown>> = [];
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "write a long report",
+      routingOptions: {},
+      onRuntimeEvent: (event) => {
+        events.push(event as unknown as Record<string, unknown>);
+      },
+    });
+
+    expect(result.text).toBe("first half second half");
+    expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(2);
+    // The retry is a continuation: same transcript + the partial assistant
+    // turn + the nudge (the live transcript itself is not mutated).
+    const retryParams = runtimeMocks.runWorkbenchTurn.mock.calls[1][0] as {
+      messages: Array<Record<string, unknown>>;
+    };
+    expect(retryParams.messages.at(-2)).toEqual({
+      role: "assistant",
+      content: "first half ",
+    });
+    expect(retryParams.messages.at(-1)).toEqual({
+      role: "user",
+      content: LENGTH_CONTINUATION_NUDGE,
+    });
+    // No catalog limits on the test model: classification falls back to
+    // output-budget exhaustion (overflow needs positive window evidence).
+    expect(events.find((e) => e.type === "lengthStopDetected")).toMatchObject({
+      classification: "output_budget_exhausted",
+      severity: "warn",
+      modelSlug: "laguna-xs.2",
+      inputTokens: 42,
+      outputTokens: 7,
+    });
+    expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+      .toMatchObject({ outcome: "recovered", retriesUsed: 1 });
+    expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+    const modelResponse = runtimeMocks.writtenEvents.find(
+      (e) => e.event_type === "model_response",
+    );
+    expect(modelResponse?.stop_reason).toBe("stop");
+  });
+
+  test("a retry that is still truncated stops after exactly one retry and returns the merged partial", async () => {
+    runtimeMocks.runWorkbenchTurn.mockResolvedValue({
+      ...turnBase(),
+      text: "part ",
+      stopReason: "length",
+    });
+    const events: Array<Record<string, unknown>> = [];
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "write a long report",
+      routingOptions: {},
+      onRuntimeEvent: (event) => {
+        events.push(event as unknown as Record<string, unknown>);
+      },
+    });
+
+    // Bounded: one retry, never a third call, and the turn still completes
+    // with the merged partial output marked truncated on the audit log.
+    expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(2);
+    expect(result.text).toBe("part part ");
+    expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+      .toMatchObject({ outcome: "still_truncated", retriesUsed: 1 });
+    expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+    const modelResponse = runtimeMocks.writtenEvents.find(
+      (e) => e.event_type === "model_response",
+    );
+    expect(modelResponse?.stop_reason).toBe("length");
+  });
+
+  test("a retry the budget envelope refuses is skipped and the truncated turn is delivered", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 0; // estimate 0; the session limit catches recorded cost
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+        ...turnBase(),
+        usage: {
+          input: 42,
+          output: 7,
+          cost: { total: 0.03 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        text: "truncated answer",
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "write a long report",
+        routingOptions: {},
+        // The first call's recorded $0.03 exceeds the $0.02 session envelope,
+        // so the retry's pre-call gate fails closed (no ceiling handler).
+        defaultSessionBudgetUsd: 0.02,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      });
+
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+      expect(result.text).toBe("truncated answer");
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "retry_refused_budget", retriesUsed: 0 });
+      // The refusal downgrades the retry, not the turn.
+      expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+    }
+  });
+
+  test("context overflow fails the turn with the structured operator message and a clean event trail", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 100;
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+        ...turnBase(),
+        usage: {
+          input: 90,
+          output: 9,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        text: "cut off",
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      })).rejects.toThrow("Context window overflow");
+
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+      expect(events.find((e) => e.type === "lengthStopDetected")).toMatchObject(
+        {
+          classification: "context_overflow",
+          severity: "error",
+          contextWindow: 100,
+        },
+      );
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "overflow_failed", retriesUsed: 0 });
+      expect(events.at(-1)).toMatchObject({
+        type: "turnFailed",
+        errorName: "ContextWindowOverflowError",
+      });
+      // Session state stays consistent: the failure is on the audit log with
+      // the length stop it came from, no half-turn model_response exists for
+      // resume to replay, and the session is properly closed.
+      const types = runtimeMocks.writtenEvents.map((e) => e.event_type);
+      expect(types).not.toContain("model_response");
+      expect(types).toContain("session_end");
+      const errorEvent = runtimeMocks.writtenEvents.find(
+        (e) => e.event_type === "error",
+      );
+      expect(errorEvent?.stop_reason).toBe("length");
+      expect(String(errorEvent?.content)).toContain("/model");
+      expect(String(errorEvent?.content)).toContain("fresh session");
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
+    }
+  });
+
+  test("an injected overflow recovery plan buys exactly one retry (the compressor seam)", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 100;
+    try {
+      runtimeMocks.runWorkbenchTurn
+        .mockResolvedValueOnce({
+          ...turnBase(),
+          usage: {
+            input: 95,
+            output: 4,
+            cost: { total: 0 },
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          text: "cut off",
+          stopReason: "length",
+        })
+        .mockResolvedValueOnce({
+          ...turnBase(),
+          text: "recovered answer",
+          stopReason: "stop",
+        });
+      const events: Array<Record<string, unknown>> = [];
+      const recoverContextOverflow = vi.fn().mockResolvedValue({
+        messages: [{ role: "user", content: "compressed history" }],
+      });
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        recoverContextOverflow,
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      });
+
+      expect(result.text).toBe("recovered answer");
+      expect(recoverContextOverflow).toHaveBeenCalledTimes(1);
+      expect(recoverContextOverflow.mock.calls[0][0]).toMatchObject({
+        modelSlug: "laguna-xs.2",
+        contextWindow: 100,
+        usage: { input: 95, output: 4 },
+      });
+      const retryParams = runtimeMocks.runWorkbenchTurn.mock.calls[1][0] as {
+        messages: unknown;
+      };
+      expect(retryParams.messages).toEqual([
+        { role: "user", content: "compressed history" },
+      ]);
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "recovered", retriesUsed: 1 });
+      expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
+    }
+  });
+
+  test("a recovery-plan retry that still overflows fails structured — the hook never loops", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 100;
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValue({
+        ...turnBase(),
+        usage: {
+          input: 95,
+          output: 4,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        text: "cut off",
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+      const recoverContextOverflow = vi.fn().mockResolvedValue({
+        messages: [{ role: "user", content: "compressed history" }],
+      });
+
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        recoverContextOverflow,
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      })).rejects.toThrow("Context window overflow");
+
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(2);
+      expect(recoverContextOverflow).toHaveBeenCalledTimes(1);
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "overflow_failed", retriesUsed: 1 });
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
     }
   });
 });

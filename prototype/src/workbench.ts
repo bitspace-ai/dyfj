@@ -11,6 +11,17 @@ import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
+import type {
+  ContextOverflowRecoverer,
+  LengthRecoveryOutcome,
+  LengthStopClassification,
+} from "./length-recovery";
+import {
+  buildContinuationMessages,
+  classifyLengthStop,
+  ContextWindowOverflowError,
+  isBudgetRefusal,
+} from "./length-recovery";
 import {
   ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
@@ -213,6 +224,14 @@ export interface WorkbenchRuntimeInput {
    * envelopes; the default queries Dolt (fetchSpendBaselines).
    */
   fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
+  /**
+   * Context-overflow recovery hook (the compressor seam). When a provider
+   * call length-stops and classifies as context overflow, the loop consults
+   * this before failing: a returned plan buys exactly one retry with the
+   * plan's transcript; absent/null — or a retry that still overflows — fails
+   * the turn with ContextWindowOverflowError. Never loops.
+   */
+  recoverContextOverflow?: ContextOverflowRecoverer;
 }
 
 export type WorkbenchRuntimeEvent =
@@ -266,6 +285,31 @@ export type WorkbenchRuntimeEvent =
     durationMs: number;
     errorName?: string;
     errorMessage?: string;
+  }
+  | {
+    /**
+     * A provider call stopped with stopReason "length", classified from the
+     * catalog limits + reported usage. severity is "warn" for output-budget
+     * exhaustion (a bounded retry follows) and "error" for context overflow
+     * (the turn is about to fail unless a recovery hook supplies a plan).
+     */
+    type: "lengthStopDetected";
+    sessionId: string;
+    modelSlug: string;
+    classification: LengthStopClassification;
+    severity: "warn" | "error";
+    inputTokens: number;
+    outputTokens: number;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+  }
+  | {
+    /** Terminal outcome of length recovery for one provider call. */
+    type: "lengthRecoveryFinished";
+    sessionId: string;
+    modelSlug: string;
+    outcome: LengthRecoveryOutcome;
+    retriesUsed: number;
   }
   | { type: "turnCompleted"; sessionId: string; traceId: string }
   | {
@@ -1601,6 +1645,126 @@ export async function runWorkbenchRuntime(
       });
       return turn;
     };
+    // Length-stop recovery around every provider call: classify a
+    // stopReason "length" result (catalog limits + reported usage), then
+    // either run ONE bounded continuation retry (output budget exhausted) or
+    // fail structured (context overflow) — with the overflow-recovery hook
+    // given one shot first when injected. All retries go back through
+    // runObservedTurn, so the budget gates and usage recording hold for them.
+    const runRecoveredTurn = async (
+      params: Parameters<typeof runWorkbenchTurn>[0],
+      request: { modelSlug: string; estimatedInputCount: number },
+    ): Promise<Awaited<ReturnType<typeof runWorkbenchTurn>>> => {
+      const turn = await runObservedTurn(params, request);
+      if (turn.stopReason !== "length") return turn;
+      const classification = classifyLengthStop(turn.model, turn.usage);
+      const emitRecovery = (
+        outcome: LengthRecoveryOutcome,
+        retriesUsed: number,
+      ) =>
+        emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+          type: "lengthRecoveryFinished",
+          sessionId,
+          modelSlug: turn.model.slug,
+          outcome,
+          retriesUsed,
+        });
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "lengthStopDetected",
+        sessionId,
+        modelSlug: turn.model.slug,
+        classification,
+        severity: classification === "context_overflow" ? "error" : "warn",
+        inputTokens: turn.usage.input,
+        outputTokens: turn.usage.output,
+        contextWindow: turn.model.contextWindow,
+        maxOutputTokens: turn.model.maxOutputTokens,
+      });
+
+      if (classification === "context_overflow") {
+        const details = {
+          modelSlug: turn.model.slug,
+          contextWindow: turn.model.contextWindow,
+          inputTokens: turn.usage.input,
+          outputTokens: turn.usage.output,
+        };
+        const plan = await runtimeInput.recoverContextOverflow?.({
+          sessionId,
+          modelSlug: turn.model.slug,
+          contextWindow: turn.model.contextWindow,
+          usage: { input: turn.usage.input, output: turn.usage.output },
+          systemPrompt: params.systemPrompt,
+          messages: params.messages ?? [],
+        }) ?? null;
+        if (plan !== null) {
+          const retried = await runObservedTurn(
+            { ...params, messages: plan.messages },
+            {
+              modelSlug: request.modelSlug,
+              estimatedInputCount: estimateRuntimeInputCount(
+                transcriptEstimateText(params.systemPrompt, plan.messages),
+              ),
+            },
+          );
+          if (retried.stopReason !== "length") {
+            await emitRecovery("recovered", 1);
+            return retried;
+          }
+          await emitRecovery("overflow_failed", 1);
+          throw new ContextWindowOverflowError(details);
+        }
+        await emitRecovery("overflow_failed", 0);
+        throw new ContextWindowOverflowError(details);
+      }
+
+      // Output budget exhausted: one continuation retry on a COPY of the
+      // transcript (the loop's live `messages` array stays untouched, so a
+      // refused/failed retry leaves turn state exactly as it was). The merged
+      // text keeps the streamed view consistent: the partial already went out
+      // through onTextDelta; the retry streams only its continuation.
+      const continuation = buildContinuationMessages(
+        params.messages ?? [{ role: "user", content: params.prompt }],
+        turn.text,
+      );
+      let retried;
+      try {
+        retried = await runObservedTurn(
+          { ...params, messages: continuation },
+          {
+            modelSlug: request.modelSlug,
+            estimatedInputCount: estimateRuntimeInputCount(
+              transcriptEstimateText(params.systemPrompt, continuation),
+            ),
+          },
+        );
+      } catch (err) {
+        if (isBudgetRefusal(err)) {
+          // The envelope refused the retry, not the turn: the paid partial
+          // output already streamed to the operator, so deliver it truncated
+          // rather than discarding it. First-call budget errors still fail
+          // the turn through the normal path.
+          await emitRecovery("retry_refused_budget", 0);
+          log(
+            `\n[response truncated at the output limit; retry skipped: ${
+              (err as Error).message
+            }]`,
+          );
+          return turn;
+        }
+        throw err;
+      }
+      const merged = { ...retried, text: turn.text + retried.text };
+      if (retried.stopReason === "length") {
+        await emitRecovery("still_truncated", 1);
+        log(
+          "\n[response still truncated after one continuation retry; " +
+            "not retrying further]",
+        );
+        return merged;
+      }
+      await emitRecovery("recovered", 1);
+      return merged;
+    };
     let streamedText = false;
     // The OpenAI-compatible wire path streams text AND captures tool calls from
     // the same SSE stream, so tool-offering calls can stream live there; the
@@ -1621,7 +1785,7 @@ export async function runWorkbenchRuntime(
       ...(!usesRepoAskContext ? runtimeInput.conversationMessages ?? [] : []),
       { role: "user", content: modelPrompt },
     ];
-    let turn = await runObservedTurn({
+    let turn = await runRecoveredTurn({
       systemPrompt,
       prompt: modelPrompt,
       messages,
@@ -1773,7 +1937,7 @@ export async function runWorkbenchRuntime(
         transcriptEstimateText(systemPrompt, messages),
       );
       streamedText = false;
-      turn = await runObservedTurn({
+      turn = await runRecoveredTurn({
         systemPrompt,
         prompt: modelPrompt,
         messages,
@@ -1928,6 +2092,34 @@ export async function runWorkbenchRuntime(
           duration_ms: Date.now() - sessionStart,
         }), BEST_EFFORT);
       log(`\nBudget exceeded: ${(err as Error).message}`);
+    } else if (name === "ContextWindowOverflowError") {
+      // Expected operational condition, not an "Unexpected error": record it
+      // on the audit log with the length stop it came from, show the operator
+      // the condition + options, and propagate so every transport reports a
+      // failed turn. No model_response event was written, so a resumed
+      // transcript carries no half-turn from this failure.
+      await writeMaybe(() =>
+        writeEvent({
+          event_id: generateULID(),
+          session_id: sessionId,
+          event_type: "error",
+          trace_id: traceId,
+          span_id: generateSpanId(),
+          principal_id: principalId,
+          principal_type: "agent",
+          action: "invoke",
+          resource: selectedForEvents?.slug ?? "workbench_model",
+          authz_basis: "policy:local-default",
+          model_id: selectedForEvents?.slug ?? null,
+          provider: selectedForEvents?.provider ?? null,
+          api: selectedForEvents?.api ?? null,
+          ...authnEventFields,
+          content: (err as Error).message,
+          stop_reason: "length",
+          duration_ms: Date.now() - sessionStart,
+        }), BEST_EFFORT);
+      log(`\n${(err as Error).message}`);
+      turnError = err;
     } else if (name === "BudgetCeilingDeclinedError") {
       const detail = (err as BudgetCeilingDeclinedError).reason;
       log(

@@ -329,6 +329,26 @@ describe("buildConversationMessages", () => {
     expect(buildConversationMessages([event("session_end", null)])).toEqual([]);
   });
 
+  test("a failed turn (error event, no model_response) rebuilds without a half-turn", () => {
+    // e.g. a context-window overflow: the turn fails structured, so the event
+    // trail carries the prompt and the error but no model_response. Resume
+    // must see the prompt as a plain user turn — no fabricated assistant
+    // content — and stay valid for the next turn.
+    const messages = buildConversationMessages([
+      event("session_start", "What is DYFJ?"),
+      event("model_response", "A local-first workbench."),
+      event("session_end", null),
+      event("session_start", "one more question"),
+      event("error", "Context window overflow: ..."),
+      event("session_end", null),
+    ]);
+    expect(messages).toEqual([
+      { role: "user", content: "What is DYFJ?" },
+      { role: "assistant", content: "A local-first workbench." },
+      { role: "user", content: "one more question" },
+    ]);
+  });
+
   test("keeps only the most recent maxTurns exchanges, whole turns intact", () => {
     const events = Array.from({ length: 50 }, (_, i) => [
       event("session_start", `prompt ${i}`),
