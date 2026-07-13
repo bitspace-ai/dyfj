@@ -138,7 +138,46 @@ Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama r
 
 Hosted models are never the default path. Selecting one (for example `--model claude-haiku-4-5`) goes through the budget preflight and an interactive consent prompt before any tokens are spent, and the call is receipted with cost and prompt-cache telemetry.
 
-Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), and Google Gemini (`GEMINI_API_KEY`). Project the key at process start from your secret manager rather than exporting it ambiently or committing it to `.env`:
+Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), and Google Gemini (`GEMINI_API_KEY`). The **pointer** mechanism keeps secret values off the config file: for a declared secret env var you write a `[secrets.pointers]` *pointer* (an `op://` ref, etc.), never the value, and it is resolved at process start. (The separate `[secrets.env]` map, below, is a plaintext surface for *non-secret* resolver env — do not put a credential there.)
+
+**Recommended: declare secret pointers in `~/.dyfj/config.toml`.** With a `[secrets]` section, `dyfj start` alone yields a fully capable runtime — the engine resolves each declared pointer at boot by invoking a vendor-neutral resolver command, so hosted turns work without a separate wrapper:
+
+```toml
+[secrets]
+# The resolver command is vendor-neutral: `op read` is one choice; any command
+# that prints the secret to stdout works. The pointer is passed as the final arg.
+# NOTE: this is a trusted executable, not inert data — the engine grants it
+# --allow-run and executes it at boot. See the trust-boundary note below.
+command = ["op", "read"]
+# The command runs with stdin closed (no terminal prompt) and a timeout that
+# SIGKILLs the immediate resolver process, so a stalled/locked resolver degrades
+# fail-closed rather than hanging (a descendant it spawned may outlive the kill).
+# NOTE: closing stdin does not stop a GUI-integrated manager (e.g. the 1Password
+# app) from raising a biometric prompt out-of-band — see session-first below.
+# Milliseconds; default 10000.
+timeout_ms = 10000
+
+# Pointers keyed by the declared secret env var (only secret-pointer keys are accepted).
+[secrets.pointers]
+ANTHROPIC_API_KEY = "op://<vault>/<item>/credential"
+OPENAI_API_KEY    = "op://<vault>/<item>/credential"
+GEMINI_API_KEY    = "op://<vault>/<item>/credential"
+# Also resolvable this way: DYFJ_MEMORY_MCP_TOKEN, DOLT_PASSWORD, DYFJ_WORKBENCH_API_KEY.
+```
+
+**`config.toml` is a trust boundary.** `[secrets].command` is trusted executable configuration, not inert data: the launcher grants that binary `--allow-run` and the engine runs it automatically at boot. A shell or interpreter there (`["bash", "-c", …]`) runs arbitrary code. So protect `~/.dyfj/config.toml` with the same care as executable policy — restrictive file permissions, no untrusted writers. Pointer strings are passed to the command as process arguments, so vault/item identifiers may be visible to local process inspection (`ps`); that's metadata, not the secret value — prefer opaque vault/item names if that matters to you.
+
+**The resolver runs in an isolated environment.** It is spawned with a cleared environment, receiving only a minimal non-secret base (`PATH`, `HOME`, `USER`, `XDG_RUNTIME_DIR`), plus `[secrets.env]`, plus whatever you name in `[secrets].inherit_env`. It does **not** inherit the runtime's other secrets — provider keys, `DOLT_PASSWORD`, the memory token — so trusting a command to resolve one pointer does not hand it every credential the runtime holds; a compromised or misconfigured resolver's blast radius is bounded to what you forward. If your resolver needs a launch-scope secret to authenticate (e.g. a service-account token exported into the runtime's environment), forward it by name: `inherit_env = ["OP_SERVICE_ACCOUNT_TOKEN"]` (declared secret env vars and `PATH`/`HOME`/linker names are rejected there).
+
+Resolution is presence-only: the boot log reports `secret <NAME>: resolved | already-set | unavailable (<reason>)` and never echoes a value, a captured output, or the resolver's path. An already-set env var wins and its pointer is not consulted, so projecting a key ambiently still works and overrides the pointer. Blast radius follows the session-first order: a *non-probe* pointer's failure leaves only its own provider unavailable, whereas failure of the *session probe* (the first pending pointer) also skips every remaining unresolved pointer for that boot (see below). Either way it fails closed with a clear message at point of use; local-first inference is unaffected.
+
+The resolver is **session-first**: the first declared pointer is resolved alone to warm the resolver command's auth session, then — *only if that probe succeeds* — the rest resolve concurrently. If the probe fails (timeout, a declined unlock, or a bad first pointer), the remaining pointers are skipped fail-closed, bounded by a single timeout. This is a **best-effort** measure, not a guarantee the generic command protocol can enforce: for a resolver whose auth caches after the first unlock, it reduces the interactive unlocks toward one rather than one per pointer; a resolver that re-authenticates per invocation could still prompt more than once. The hard guarantees are the ones the engine controls: no unbounded hang, and per-provider fail-closed degradation.
+
+**What "fail-closed on timeout" guarantees — precisely.** It is *result-level*: on a timeout the engine guarantees the env var is **never set**, so the provider gets no key and fails closed, and it sends `SIGKILL` to the *immediate* resolver process. It does **not** reap the resolver's process *tree* — Deno exposes no process-group primitive — so a resolver configured as a **shell wrapper** can leave a descendant running past the timeout. That descendant **cannot inject into the runtime** (the env var is never set and the output pipe is abandoned), but it could keep a vault session unlocked or write bytes to a pipe no one reads. **Prefer a direct-binary resolver** — `op read` is a single process with no descendant tree; a shell-wrapper resolver is responsible for cleaning up its own children.
+
+**Unattended deployments.** App-biometric unlock is fine for interactive daily driving, but a headless surface (a launchd agent, a scheduled runner) must never block on a GUI unlock. For those, use a non-interactive resolver auth — e.g. a **1Password service account**. Its *token* is a secret and must not go in the config file: export it into the runtime's launch environment (prefer a **keychain-backed** source; a launchd plist's `EnvironmentVariables` stores it as **plaintext** in that file, weaker and a deliberate last resort; a shell-profile export is weaker still) and forward it to the resolver by name with **`inherit_env = ["OP_SERVICE_ACCOUNT_TOKEN"]`** — the resolver runs with a cleared environment, so it only receives what you forward. Any *non-secret* resolver knobs (an account name, a `--flag`, a non-interactive toggle) go in `[secrets.env]`, a **plaintext** surface (declared secret env vars are rejected there; keep other credentials out of it too — the engine can't know an arbitrary name is secret). With a service-account token the resolver authenticates non-interactively — it never touches the desktop app, so there is no biometric prompt to raise — and a missing or revoked token fails fast → fail-closed. (The engine itself only closes stdin and bounds the wait with a timeout; whether an out-of-band GUI prompt appears, and whether a spawned descendant survives the kill, depend on the resolver you configure — a non-interactive auth like a service account is what actually avoids the prompt.)
+
+**Alternative: project the key ambiently at process start**, without a `[secrets]` section:
 
 ```sh
 ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
