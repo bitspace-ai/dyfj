@@ -23,6 +23,8 @@ import {
 } from "./uds-client";
 import { resolveSocketPath } from "./uds-path";
 import { assertSecureMemoryUrl } from "./memory-search";
+import { loadSecretsConfig } from "./config";
+import { secretsRunGrant } from "./secrets";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 
 // ── Seam contract (shared with the server) ──────────────────────────
@@ -787,10 +789,47 @@ export async function runStatus(
   }
 }
 
+/**
+ * The prototype root whose `deno.json` (net/run grants) and `.env` the spawned
+ * runtime trusts — derived from a TRUSTED source, never the arbitrary cwd. A
+ * hostile cwd could seed a `deno.json` that grants broad net/run to the child;
+ * so `dyfj start` refuses to trust it. Precedence:
+ *   1. DYFJ_PROTOTYPE_ROOT — the launcher always sets it (compiled + deno routes).
+ *   2. The install root derived from this module's own file: URL (running
+ *      cli.ts directly from a checkout without the launcher).
+ *   3. Otherwise throw — better to fail closed than trust the current directory.
+ */
 function defaultPrototypeRoot(): string {
   const envRoot = Deno.env.get("DYFJ_PROTOTYPE_ROOT");
   if (envRoot && envRoot.length > 0) return envRoot;
-  return Deno.cwd();
+  const installRoot = installRootFromModuleUrl(import.meta.url);
+  if (installRoot !== null) return installRoot;
+  throw new Error(
+    "cannot determine the prototype root: set DYFJ_PROTOTYPE_ROOT or launch via " +
+      "the dyfj launcher. Refusing to trust the current working directory for " +
+      "the runtime's permission grants.",
+  );
+}
+
+/**
+ * Derive the prototype root from this module's URL: `.../prototype/src/cli.ts`
+ * → `.../prototype`. Only a `file:` URL is trusted (the code's real on-disk
+ * home); a remote (`https:`) module has no trustworthy local install root, so
+ * this returns null and the caller fails closed.
+ */
+export function installRootFromModuleUrl(moduleUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(moduleUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "file:") return null;
+  const path = decodeURIComponent(url.pathname);
+  // .../prototype/src/cli.ts → strip the trailing `/src/<file>` to reach root.
+  const match = path.match(/^(.*)\/src\/[^/]+$/);
+  if (match === null) return null;
+  return match[1];
 }
 
 /**
@@ -808,6 +847,8 @@ export function buildServeUnixArgs(
   netGrants: string[],
   socketPath: string,
   memoryMcpGrant?: string | null,
+  runGrants?: string[] | null,
+  envGrants?: string[] | null,
 ): string[] {
   const socketGrant = `unix:${socketPath}`;
   let net = netGrants.includes(socketGrant)
@@ -824,10 +865,51 @@ export function buildServeUnixArgs(
     "--no-prompt",
     "-P=serve-unix",
     `--allow-net=${net.join(",")}`,
+    // An explicit --allow-run REPLACES the profile's run list, so runGrants
+    // must already carry the profile's own grants plus the resolver binary.
+    // Omitted (null) when no [secrets] resolver is configured, so -P supplies
+    // the profile's run grants unchanged — a plain local-only start is untouched.
+    ...(runGrants != null ? [`--allow-run=${runGrants.join(",")}`] : []),
+    // An explicit --allow-env likewise REPLACES the profile's env list, so
+    // envGrants must carry the profile's own env plus the [secrets].inherit_env
+    // names the runtime must READ to forward them into the resolver. Omitted
+    // (null) when inherit_env is empty. The forwarded VALUES never enter the
+    // committed profile — only launch-resolved from the operator's config.
+    ...(envGrants != null ? [`--allow-env=${envGrants.join(",")}`] : []),
     "--env-file=.env",
     "--sloppy-imports",
     "src/uds-serve.ts",
   ];
+}
+
+/** Read the serve-unix profile's declared env grants from deno.json. */
+export async function readServeUnixEnvGrants(cwd: string): Promise<string[]> {
+  const raw = await Deno.readTextFile(`${cwd}/deno.json`);
+  const parsed = JSON.parse(raw) as {
+    permissions?: { "serve-unix"?: { env?: unknown } };
+  };
+  const env = parsed.permissions?.["serve-unix"]?.env;
+  if (!Array.isArray(env) || !env.every((e) => typeof e === "string")) {
+    throw new Error(
+      `serve-unix permission profile in ${cwd}/deno.json has no env grant list`,
+    );
+  }
+  return env;
+}
+
+/** Read the serve-unix profile's declared run grants from deno.json. */
+export async function readServeUnixRunGrants(cwd: string): Promise<string[]> {
+  const raw = await Deno.readTextFile(`${cwd}/deno.json`);
+  const parsed = JSON.parse(raw) as {
+    permissions?: { "serve-unix"?: { run?: unknown } };
+  };
+  const run = parsed.permissions?.["serve-unix"]?.run;
+  if (!Array.isArray(run) || !run.every((r) => typeof r === "string")) {
+    throw new Error(
+      `serve-unix permission profile in ${cwd}/deno.json has no run grant list`,
+    );
+  }
+  return run;
 }
 
 /**
@@ -907,6 +989,42 @@ export async function readMemoryMcpNetGrant(
   return memoryMcpNetGrant(envFileVar(raw, "DYFJ_MEMORY_MCP_URL"));
 }
 
+/**
+ * Load the `[secrets]` config the SAME way the spawned child will locate it, so
+ * the launcher's `--allow-run` grant matches the resolver the runtime actually
+ * invokes. The config file lives at `$DYFJ_ROOT/config.toml` (else
+ * `$HOME/.dyfj/config.toml`). The child reads `--env-file=.env`, which only
+ * supplies a var that is NOT already in the ambient environment — so `DYFJ_ROOT`
+ * is taken from `.env` ONLY when it is ambiently UNSET. An ambient empty string
+ * (`DYFJ_ROOT=""`) is left as-is and treated as absent by `configFilePath`,
+ * exactly as the child sees it (its `--env-file` cannot override the empty
+ * value). Reading `.env` on `""` too would make the launcher and child pick
+ * different configs and mis-grant `--allow-run`.
+ */
+export async function readLauncherSecretsConfig(
+  cwd: string,
+  readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  env: { get(name: string): string | undefined } = Deno.env,
+  parseToml?: (raw: string) => Record<string, unknown> | Promise<
+    Record<string, unknown>
+  >,
+): Promise<Awaited<ReturnType<typeof loadSecretsConfig>>> {
+  let root = env.get("DYFJ_ROOT");
+  if (root === undefined) {
+    try {
+      root = envFileVar(await readTextFile(`${cwd}/.env`), "DYFJ_ROOT");
+    } catch {
+      root = undefined;
+    }
+  }
+  const home = env.get("HOME");
+  const configEnv = {
+    get: (name: string): string | undefined =>
+      name === "DYFJ_ROOT" ? root : name === "HOME" ? home : undefined,
+  };
+  return loadSecretsConfig({ env: configEnv, readTextFile, parseToml });
+}
+
 /** Read the serve-unix profile's declared net grants from deno.json. */
 export async function readServeUnixNetGrants(cwd: string): Promise<string[]> {
   const raw = await Deno.readTextFile(`${cwd}/deno.json`);
@@ -930,8 +1048,39 @@ export async function startLocalRuntime(
   const cwd = options.cwd ?? defaultPrototypeRoot();
   const netGrants = await readServeUnixNetGrants(cwd);
   const memoryMcpGrant = await readMemoryMcpNetGrant(cwd);
+  // When a [secrets] resolver is configured, the child runtime must be granted
+  // --allow-run for the resolver binary (operator-private, so never committed
+  // to the serve-unix profile — same launch-resolved posture as the socket and
+  // memory-host net grants). No resolver → null → -P supplies the run grants.
+  const secretsCfg = await readLauncherSecretsConfig(cwd);
+  const resolverBin = secretsRunGrant(secretsCfg);
+  let runGrants: string[] | null = null;
+  if (resolverBin !== null) {
+    const profileRun = await readServeUnixRunGrants(cwd);
+    runGrants = profileRun.includes(resolverBin)
+      ? profileRun
+      : [...profileRun, resolverBin];
+  }
+  // The resolver spawns with a cleared env and forwards only a minimal base plus
+  // [secrets].inherit_env. The runtime must be able to READ those inherit_env
+  // vars to forward them, so grant --allow-env for names not already in the
+  // profile (launch-resolved: an operator-private var like a service-account
+  // token never enters the committed profile). No inherit_env → null → -P's env.
+  let envGrants: string[] | null = null;
+  const inheritEnv = secretsCfg?.inheritEnv ?? [];
+  if (inheritEnv.length > 0) {
+    const profileEnv = await readServeUnixEnvGrants(cwd);
+    const extra = inheritEnv.filter((name) => !profileEnv.includes(name));
+    envGrants = extra.length > 0 ? [...profileEnv, ...extra] : null;
+  }
   const child = new Deno.Command(command, {
-    args: buildServeUnixArgs(netGrants, config.socket, memoryMcpGrant),
+    args: buildServeUnixArgs(
+      netGrants,
+      config.socket,
+      memoryMcpGrant,
+      runGrants,
+      envGrants,
+    ),
     cwd,
     stdin: "inherit",
     stdout: "inherit",
