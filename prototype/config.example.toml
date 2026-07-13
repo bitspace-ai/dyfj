@@ -51,6 +51,75 @@ level = "strict"
 # turn_multiple = 3.0
 # scope_multiple = 2.0
 
+[secrets]
+# Declared secret POINTERS, resolved into the process environment at boot so
+# `dyfj start` alone yields a fully capable runtime (hosted + local). A declared
+# secret's VALUE never lands here via the pointer mechanism — only the pointer
+# does — nor in logs or error messages. (The [secrets.env] map below is a
+# separate PLAINTEXT surface for non-secret resolver env; keep credentials out.)
+#
+# TRUST BOUNDARY: `command` is a trusted EXECUTABLE, not inert data — the
+# launcher grants that binary --allow-run and the engine runs it automatically
+# at boot (in an ISOLATED env — see below). A shell/interpreter
+# (["bash","-c",...]) runs arbitrary code. So protect THIS FILE like executable
+# policy: restrictive permissions, no untrusted writers. `command` is
+# vendor-neutral (`op read` is one choice; any command that prints the secret to
+# stdout works); the pointer is appended as its final argument (so vault/item
+# names may be visible to local process inspection — metadata, not the value).
+# command = ["op", "read"]
+#
+# The command runs with stdin closed (no terminal prompt) and this timeout
+# bounds the wait. Fail-closed on timeout is RESULT-LEVEL: the env var is never
+# set (the provider gets no key) and the IMMEDIATE resolver process is SIGKILLed.
+# The engine does NOT reap the resolver's process tree (Deno has no process-group
+# primitive), so a shell-wrapper resolver can leave a descendant running past the
+# timeout — it cannot inject into the runtime, but may keep a vault unlocked.
+# PREFER A DIRECT-BINARY RESOLVER (`op read` has no descendant tree). Closing
+# stdin also does NOT stop a GUI-integrated manager from raising a biometric
+# prompt out-of-band. Milliseconds; default 10000.
+# timeout_ms = 10000
+
+# Pointers keyed by the declared secret env var. Only keys declared as
+# secret-pointer in src/config.ts (CONFIG_SCHEMA) are accepted; anything else
+# fails the boot loudly. env WINS — an already-set var is left alone and its
+# pointer is not consulted, so `op run` / ambient projection still overrides.
+# SESSION-FIRST (best-effort, not a guarantee): the FIRST pointer declared here
+# is resolved alone to warm the resolver's auth session; only if it succeeds do
+# the rest resolve concurrently. For a resolver that caches auth after the first
+# unlock, that reduces the interactive unlocks toward one rather than one per
+# pointer; a resolver that re-authenticates per invocation could still prompt
+# more. Any probe failure (timeout / declined unlock / bad first ref) skips the
+# rest fail-closed. Put a reliable pointer first. Prefer opaque vault/item names
+# in pointers — they travel in the resolver's argv (visible to `ps`).
+# [secrets.pointers]
+# ANTHROPIC_API_KEY     = "op://<vault>/<item>/credential"
+# OPENAI_API_KEY        = "op://<vault>/<item>/credential"
+# GEMINI_API_KEY        = "op://<vault>/<item>/credential"
+# DYFJ_MEMORY_MCP_TOKEN = "op://<vault>/<item>/credential"
+# DOLT_PASSWORD         = "op://<vault>/<item>/credential"
+
+# ISOLATED RESOLVER ENV. The resolver runs with a CLEARED environment — it sees
+# only a minimal non-secret base (PATH, HOME, USER, XDG_RUNTIME_DIR), [secrets.env]
+# below, and the names in inherit_env — NOT the runtime's other secrets (provider
+# keys, DOLT_PASSWORD, the memory token). Trusting a command to resolve one
+# pointer does not hand it every credential the runtime holds.
+
+# [secrets.env] — NON-SECRET plaintext env set only on the spawned resolver
+# command. For non-secret resolver knobs (an account name, a --flag, a toggle).
+# Declared secret env vars are REJECTED here; keep other credentials out too —
+# the engine can't know an arbitrary name is secret.
+# [secrets.env]
+# OP_ACCOUNT = "my.1password.com"
+
+# [secrets].inherit_env — names of AMBIENT vars to FORWARD into the resolver's
+# cleared environment. This is how a launch-scope resolver secret (e.g. a service-
+# account TOKEN, exported into the runtime env from a keychain-backed source — a
+# launchd plist stores it as plaintext, a last resort) reaches the resolver
+# WITHOUT the resolver also inheriting the runtime's other secrets. Same denylist
+# + declared-secret rules as [secrets.env]. Interactive daily driving needs none
+# of this: app-biometric is fine.
+# inherit_env = ["OP_SERVICE_ACCOUNT_TOKEN"]
+
 # The full configuration surface is declared in src/config.ts (CONFIG_SCHEMA),
 # split into engine vs client domains, with secret keys held as POINTERS (op:// /
 # keychain / env-var name), never plaintext. Keys above have a config-FILE layer;

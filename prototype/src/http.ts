@@ -22,7 +22,8 @@ import {
 } from "./sessions";
 import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
 import type { WorkbenchConfig } from "./config";
-import { loadConfig } from "./config";
+import { loadConfig, loadSecretsConfig } from "./config";
+import { resolveSecretsIntoEnv } from "./secrets";
 import {
   engineConfigToTurnDeps,
   executeTurn,
@@ -1779,6 +1780,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 if (import.meta.main) {
   const engineConfig = await loadConfig();
+  // Resolve declared secret pointers into the process env before serving, so a
+  // paid turn finds its provider key. env wins; presence-only; a locked pointer
+  // degrades that provider fail-closed. No-op without a [secrets] section.
+  await resolveSecretsIntoEnv(await loadSecretsConfig());
   const port = Number(Deno.env.get("DYFJ_WORKBENCH_HTTP_PORT") ?? "8787");
   const hostnames = (Deno.env.get("DYFJ_WORKBENCH_HTTP_HOST") ?? "127.0.0.1")
     .split(",")

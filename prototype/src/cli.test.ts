@@ -23,9 +23,13 @@ import {
   runSessions,
   buildServeUnixArgs,
   envFileVar,
+  installRootFromModuleUrl,
   memoryMcpNetGrant,
+  readLauncherSecretsConfig,
   readMemoryMcpNetGrant,
+  readServeUnixEnvGrants,
   readServeUnixNetGrants,
+  readServeUnixRunGrants,
   runStart,
   runStatus,
   socketTurn,
@@ -1373,5 +1377,173 @@ describe("normalizeSessionRef", () => {
     expect(() => normalizeSessionRef("not-a-session")).toThrow(
       /dyfj sessions/,
     );
+  });
+});
+
+describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
+  test("derives the prototype root from a file: cli.ts URL", () => {
+    expect(
+      installRootFromModuleUrl("file:///Users/x/projects/dyfj/prototype/src/cli.ts"),
+    ).toBe("/Users/x/projects/dyfj/prototype");
+  });
+
+  test("decodes percent-encoded path segments", () => {
+    expect(
+      installRootFromModuleUrl("file:///Users/x/My%20Code/prototype/src/cli.ts"),
+    ).toBe("/Users/x/My Code/prototype");
+  });
+
+  test("returns null for a non-file (remote) module — no trustworthy local root", () => {
+    expect(
+      installRootFromModuleUrl("https://example.com/prototype/src/cli.ts"),
+    ).toBeNull();
+  });
+
+  test("returns null when the URL is not the expected src/<file> shape", () => {
+    expect(installRootFromModuleUrl("file:///weird/path.ts")).toBeNull();
+    expect(installRootFromModuleUrl("not a url")).toBeNull();
+  });
+});
+
+describe("readServeUnixRunGrants", () => {
+  test("reads the serve-unix run grant list from the real profile", async () => {
+    const grants = await readServeUnixRunGrants(".");
+    expect(grants).toContain("bash");
+  });
+});
+
+describe("buildServeUnixArgs with a resolver run grant", () => {
+  const NET = ["127.0.0.1:3306"];
+  const SOCK = "/run/dyfj/workbench.sock";
+
+  test("omits --allow-run when no resolver is configured (null)", () => {
+    const args = buildServeUnixArgs(NET, SOCK, null, null);
+    expect(args.some((a) => a.startsWith("--allow-run"))).toBe(false);
+    // -P still supplies the profile's run grants unchanged.
+    expect(args).toContain("-P=serve-unix");
+  });
+
+  test("appends --allow-run with the profile grants plus the resolver binary", () => {
+    const args = buildServeUnixArgs(NET, SOCK, null, ["bash", "op"]);
+    expect(args).toContain("--allow-run=bash,op");
+  });
+
+  test("the socket grant is still present alongside the run grant", () => {
+    const args = buildServeUnixArgs(NET, SOCK, null, ["bash", "op"]);
+    const net = args.find((a) => a.startsWith("--allow-net="));
+    expect(net).toContain(`unix:${SOCK}`);
+  });
+
+  test("omits --allow-env when no inherit_env grant is needed (null)", () => {
+    const args = buildServeUnixArgs(NET, SOCK, null, null, null);
+    expect(args.some((a) => a.startsWith("--allow-env"))).toBe(false);
+  });
+
+  test("appends --allow-env with the profile env plus the inherit_env names", () => {
+    const args = buildServeUnixArgs(NET, SOCK, null, null, [
+      "PATH",
+      "HOME",
+      "OP_SERVICE_ACCOUNT_TOKEN",
+    ]);
+    expect(args).toContain("--allow-env=PATH,HOME,OP_SERVICE_ACCOUNT_TOKEN");
+  });
+});
+
+describe("readServeUnixEnvGrants", () => {
+  test("reads the serve-unix env grant list from the real profile", async () => {
+    const grants = await readServeUnixEnvGrants(".");
+    expect(grants).toContain("PATH");
+    expect(grants).toContain("HOME");
+  });
+});
+
+describe("every dyfj CLI surface may read DYFJ_ROOT", () => {
+  test("profile, compiled binary, and launcher stay in lockstep on DYFJ_ROOT", async () => {
+    // dyfj start reads ~/.dyfj/config.toml (located via DYFJ_ROOT) to derive the
+    // child's --allow-run resolver-binary grant, so all three CLI permission
+    // surfaces must grant DYFJ_ROOT.
+    const raw = await Deno.readTextFile("deno.json");
+    const parsed = JSON.parse(raw) as {
+      tasks: Record<string, string>;
+      permissions: Record<string, { env?: string[] | boolean }>;
+    };
+    expect(parsed.permissions["cli"].env).toContain("DYFJ_ROOT");
+    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)?.[1];
+    expect(compileEnv?.split(",")).toContain("DYFJ_ROOT");
+    const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
+    const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
+    expect(launcherEnv?.split(",")).toContain("DYFJ_ROOT");
+  });
+});
+
+describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
+  // Inject a parser (the real @std/toml jsr specifier can't load under the node
+  // test runner). readTextFile returns this marker for the config file; the
+  // parser maps it to a [secrets] table.
+  const TOML = "(toml)";
+  const parse = () => ({
+    secrets: {
+      command: ["op", "read"],
+      pointers: { ANTHROPIC_API_KEY: "op://v/a/credential" },
+    },
+  });
+
+  test("ambient DYFJ_ROOT wins and locates config.toml there", async () => {
+    const reads: string[] = [];
+    const readTextFile = (path: string) => {
+      reads.push(path);
+      if (path === "/ambient/config.toml") return Promise.resolve(TOML);
+      return Promise.reject(new Deno.errors.NotFound());
+    };
+    const env = {
+      get: (n: string) =>
+        n === "DYFJ_ROOT" ? "/ambient" : n === "HOME" ? "/home/x" : undefined,
+    };
+    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    expect(cfg?.command).toEqual(["op", "read"]);
+    // Ambient root is used directly; .env is not consulted for the root.
+    expect(reads).toContain("/ambient/config.toml");
+  });
+
+  test("falls back to .env DYFJ_ROOT when ambient is unset (mirrors the child)", async () => {
+    const readTextFile = (path: string) => {
+      if (path === "/cwd/.env") return Promise.resolve("DYFJ_ROOT=/from-env\n");
+      if (path === "/from-env/config.toml") return Promise.resolve(TOML);
+      return Promise.reject(new Deno.errors.NotFound());
+    };
+    const env = { get: (n: string) => (n === "HOME" ? "/home/x" : undefined) };
+    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    expect(cfg?.pointers.ANTHROPIC_API_KEY).toBe("op://v/a/credential");
+  });
+
+  test("falls back to HOME/.dyfj when neither ambient nor .env set the root", async () => {
+    const readTextFile = (path: string) => {
+      if (path === "/home/x/.dyfj/config.toml") return Promise.resolve(TOML);
+      return Promise.reject(new Deno.errors.NotFound());
+    };
+    const env = { get: (n: string) => (n === "HOME" ? "/home/x" : undefined) };
+    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    expect(cfg?.command).toEqual(["op", "read"]);
+  });
+
+  test("empty ambient DYFJ_ROOT is treated as absent, NOT read from .env (mirrors the child)", async () => {
+    const readPaths: string[] = [];
+    const readTextFile = (path: string) => {
+      readPaths.push(path);
+      // A .env that DOES set DYFJ_ROOT — the launcher must ignore it here,
+      // because the child's --env-file can't override the empty ambient value.
+      if (path === "/cwd/.env") return Promise.resolve("DYFJ_ROOT=/from-env\n");
+      if (path === "/home/x/.dyfj/config.toml") return Promise.resolve(TOML);
+      return Promise.reject(new Deno.errors.NotFound());
+    };
+    const env = {
+      get: (n: string) =>
+        n === "DYFJ_ROOT" ? "" : n === "HOME" ? "/home/x" : undefined,
+    };
+    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    expect(cfg?.command).toEqual(["op", "read"]);
+    // Resolved against HOME, and .env was never consulted for the root.
+    expect(readPaths).toContain("/home/x/.dyfj/config.toml");
+    expect(readPaths).not.toContain("/cwd/.env");
   });
 });

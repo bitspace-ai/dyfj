@@ -217,6 +217,24 @@ export function declaredEnvVars(domain: ConfigDomain): readonly string[] {
   ];
 }
 
+/**
+ * The env vars declared as secret POINTERS in a domain (deduped) — the only
+ * keys a `[secrets.pointers]` table may name. The resolver resolves these from
+ * their configured pointer at point of use; the config surface never holds the
+ * value.
+ */
+export function declaredSecretEnvVars(
+  domain: ConfigDomain = "engine",
+): readonly string[] {
+  return [
+    ...new Set(
+      CONFIG_SCHEMA.filter((spec) =>
+        spec.domain === domain && spec.kind === "secret-pointer"
+      ).map((spec) => spec.envVar),
+    ),
+  ];
+}
+
 function schemaSpecForKey(key: string): ConfigKeySpec {
   const spec = CONFIG_SCHEMA.find((s) => s.key === key);
   if (spec === undefined) {
@@ -300,8 +318,28 @@ export type TomlParser = (
 ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
 export function configFilePath(env: ConfigEnv = Deno.env): string {
-  const root = env.get("DYFJ_ROOT") ?? `${env.get("HOME") ?? "."}/.dyfj`;
+  // Treat an EMPTY DYFJ_ROOT as absent, not as "/" — otherwise an explicitly
+  // empty value would resolve `/config.toml`. This also keeps the child in step
+  // with the launcher's `readLauncherSecretsConfig`, which already treats "" as
+  // absent; a divergence there would silently disable the child's resolver while
+  // the launcher still grants its binary.
+  const rootEnv = env.get("DYFJ_ROOT");
+  const root = rootEnv !== undefined && rootEnv !== ""
+    ? rootEnv
+    : `${env.get("HOME") ?? "."}/.dyfj`;
   return `${root}/config.toml`;
+}
+
+/**
+ * A stable, public-safe label for the config file in error messages — the
+ * basename only. Config-load/validation errors reach boot stderr, and an
+ * absolute path commonly carries the local account name and private filesystem
+ * layout; that private-class detail must not egress there.
+ */
+function configLabel(path: string): string {
+  // Strip both POSIX and Windows separators so a backslash path can't slip the
+  // full absolute path (with account/private layout) through as the "basename".
+  return path.split(/[/\\]/).pop() || "config.toml";
 }
 
 export interface LoadConfigDeps {
@@ -334,7 +372,7 @@ export async function loadConfig(
     }
     const fileLevel = readString(table, "permissions", "level");
     if (fileLevel !== undefined) {
-      config.permissionLevel = validateLevel(fileLevel, path);
+      config.permissionLevel = validateLevel(fileLevel, configLabel(path));
     }
     const fileApprovePaid = readBoolean(table, "paid", "approve_paid_default");
     if (fileApprovePaid !== undefined) {
@@ -348,7 +386,7 @@ export async function loadConfig(
     if (fileSessionBudget !== undefined) {
       config.defaultSessionBudgetUsd = validatePositiveUsd(
         fileSessionBudget,
-        `${path} [budget].session_limit_usd`,
+        `${configLabel(path)} [budget].session_limit_usd`,
       );
     }
     const fileDailyBudget = readNumber(
@@ -359,7 +397,7 @@ export async function loadConfig(
     if (fileDailyBudget !== undefined) {
       config.defaultDailyBudgetUsd = validatePositiveUsd(
         fileDailyBudget,
-        `${path} [budget].daily_limit_usd`,
+        `${configLabel(path)} [budget].daily_limit_usd`,
       );
     }
     const filePerCallBudget = readNumber(
@@ -370,21 +408,21 @@ export async function loadConfig(
     if (filePerCallBudget !== undefined) {
       config.defaultPerCallBudgetUsd = validatePositiveUsd(
         filePerCallBudget,
-        `${path} [budget].per_call_limit_usd`,
+        `${configLabel(path)} [budget].per_call_limit_usd`,
       );
     }
     const fileTurnMultiple = readNumber(table, "anomaly", "turn_multiple");
     if (fileTurnMultiple !== undefined) {
       config.anomalyTurnMultiple = validatePositiveMultiple(
         fileTurnMultiple,
-        `${path} [anomaly].turn_multiple`,
+        `${configLabel(path)} [anomaly].turn_multiple`,
       );
     }
     const fileScopeMultiple = readNumber(table, "anomaly", "scope_multiple");
     if (fileScopeMultiple !== undefined) {
       config.anomalyScopeMultiple = validatePositiveMultiple(
         fileScopeMultiple,
-        `${path} [anomaly].scope_multiple`,
+        `${configLabel(path)} [anomaly].scope_multiple`,
       );
     }
   }
@@ -434,6 +472,282 @@ export async function loadConfig(
   return config;
 }
 
+// ── Secret pointers ([secrets] — resolved at boot, values never stored here) ───
+
+/** Default resolver timeout: a locked/unavailable pointer degrades, not hangs. */
+export const DEFAULT_SECRET_TIMEOUT_MS = 10_000;
+
+/**
+ * Env names `[secrets.env]` may NOT set: overriding these would either break the
+ * resolver (it needs the real PATH/HOME to find its binary and session) or be a
+ * code-injection vector. A real credential (e.g. a service-account token) is not
+ * on this list but must still live in the launch scope, not the config file.
+ */
+const SECRETS_ENV_DENYLIST: ReadonlySet<string> = new Set([
+  "PATH",
+  "HOME",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "DYLD_INSERT_LIBRARIES",
+  "DYLD_LIBRARY_PATH",
+]);
+
+/**
+ * A literal Unix environment-variable name. `inherit_env` names are serialized
+ * into the runtime's `--allow-env`, where a metacharacter like `*` is a Deno
+ * WILDCARD granting the whole environment — so only exact identifiers are
+ * allowed. `[secrets.env]` keys are held to the same shape for good measure.
+ */
+const ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * The `[secrets]` posture: a vendor-neutral resolver command and the pointers
+ * it resolves, keyed by declared secret env var. `op read` is one choice — which
+ * secret manager is a config choice, not hardcoded. But the command itself is a
+ * TRUSTED EXECUTABLE: the launcher grants its binary `--allow-run` and the engine
+ * runs it at boot, so `config.toml` is an executable-trust boundary (a shell
+ * command runs arbitrary code). The pointer is passed as the command's final
+ * argument; the command prints the secret value to stdout. Only env vars declared
+ * `secret-pointer` in `CONFIG_SCHEMA` may be named.
+ */
+export interface SecretsConfig {
+  /** Resolver command argv; the pointer is appended as the final argument. */
+  command: readonly string[];
+  /** Max ms to await the command before killing it (kept non-interactive). */
+  timeoutMs: number;
+  /** envVar → pointer string, restricted to declared secret env vars. */
+  pointers: Readonly<Record<string, string>>;
+  /**
+   * NON-secret env vars set only on the spawned resolver command, on top of the
+   * minimal isolated base. A plaintext surface — a real secret must not live
+   * here; it belongs in the launch scope, forwarded via `inheritEnv`. Empty when
+   * `[secrets.env]` is absent.
+   */
+  env: Readonly<Record<string, string>>;
+  /**
+   * Names of AMBIENT env vars to forward from the runtime into the resolver's
+   * otherwise-isolated environment (the resolver spawns with `clearEnv`, seeing
+   * only a minimal base + these + `env`). This is how a launch-scope resolver
+   * secret (e.g. a service-account token) reaches the resolver without the
+   * resolver also inheriting the runtime's provider keys / database password /
+   * memory token. Same denylist + declared-secret rules as `[secrets.env]`.
+   */
+  inheritEnv: readonly string[];
+}
+
+/**
+ * Parse and validate a `[secrets]` table. Returns null when the section is
+ * absent (no resolution — providers read whatever env supplies). A present but
+ * malformed section throws: a mis-declared secret resolver should fail the boot
+ * loudly, not silently leave a provider credential-less.
+ */
+export function parseSecretsConfig(
+  table: Record<string, unknown> | null,
+  path: string,
+): SecretsConfig | null {
+  if (!table) return null;
+  // Keep [secrets] validation errors PATH-FREE: they propagate to boot stderr,
+  // and an absolute config path commonly carries the local account name and
+  // private filesystem layout. Report a stable public-safe label instead.
+  const where = configLabel(path);
+  const sec = table["secrets"];
+  if (sec === undefined) return null;
+  if (typeof sec !== "object" || sec === null || Array.isArray(sec)) {
+    throw new Error(`config: [secrets] must be a table in ${where}`);
+  }
+  const section = sec as Record<string, unknown>;
+
+  // Reject unknown keys so a typo (e.g. `timeouts_ms`) fails loud rather than
+  // silently falling back to a default — matching the fail-loud posture.
+  const SECRETS_KEYS = new Set([
+    "command",
+    "timeout_ms",
+    "pointers",
+    "env",
+    "inherit_env",
+  ]);
+  for (const key of Object.keys(section)) {
+    if (!SECRETS_KEYS.has(key)) {
+      throw new Error(
+        `config: [secrets].${key} is not a recognized key (expected: command, ` +
+          `timeout_ms, pointers, env, inherit_env) in ${where}`,
+      );
+    }
+  }
+
+  const rawCommand = section["command"];
+  if (rawCommand === undefined) {
+    throw new Error(
+      `config: [secrets].command is required when [secrets] is present (${where})`,
+    );
+  }
+  if (
+    !Array.isArray(rawCommand) || rawCommand.length === 0 ||
+    !rawCommand.every((c) => typeof c === "string" && c.length > 0)
+  ) {
+    throw new Error(
+      `config: [secrets].command must be a non-empty array of non-empty strings (${where})`,
+    );
+  }
+  const command = rawCommand as string[];
+
+  let timeoutMs = DEFAULT_SECRET_TIMEOUT_MS;
+  const rawTimeout = section["timeout_ms"];
+  if (rawTimeout !== undefined) {
+    if (
+      typeof rawTimeout !== "number" || !Number.isFinite(rawTimeout) ||
+      rawTimeout <= 0
+    ) {
+      throw new Error(
+        `config: [secrets].timeout_ms must be a positive number (${where})`,
+      );
+    }
+    timeoutMs = rawTimeout;
+  }
+
+  const pointers: Record<string, string> = {};
+  const rawPointers = section["pointers"];
+  if (rawPointers !== undefined) {
+    if (
+      typeof rawPointers !== "object" || rawPointers === null ||
+      Array.isArray(rawPointers)
+    ) {
+      throw new Error(`config: [secrets.pointers] must be a table in ${where}`);
+    }
+    const allowed = new Set(declaredSecretEnvVars());
+    for (
+      const [envVar, ptr] of Object.entries(
+        rawPointers as Record<string, unknown>,
+      )
+    ) {
+      if (!allowed.has(envVar)) {
+        throw new Error(
+          `config: [secrets.pointers].${envVar} is not a declared secret env ` +
+            `var (expected one of: ${[...allowed].join(", ")}) in ${where}`,
+        );
+      }
+      if (typeof ptr !== "string" || ptr.length === 0) {
+        throw new Error(
+          `config: [secrets.pointers].${envVar} must be a non-empty string ` +
+            `pointer (${where})`,
+        );
+      }
+      pointers[envVar] = ptr;
+    }
+  }
+
+  // `[secrets.env]`: NON-secret env vars set only on the spawned resolver
+  // command (never the runtime env, never as a pointer). This is the declarative
+  // zero-prompt path for unattended surfaces — e.g. point the resolver at a
+  // service account / disable an interactive unlock — with no vendor-specific
+  // code in the engine. It is a PLAINTEXT surface: a real secret must NOT live
+  // here; it belongs in the launch scope, inherited by the resolver. The engine
+  // can only enforce this for names it KNOWS are secret (declared secret-pointer
+  // keys, rejected below) — the docs carry the rest of the contract.
+  const env: Record<string, string> = {};
+  const rawEnv = section["env"];
+  if (rawEnv !== undefined) {
+    if (
+      typeof rawEnv !== "object" || rawEnv === null || Array.isArray(rawEnv)
+    ) {
+      throw new Error(`config: [secrets.env] must be a table in ${where}`);
+    }
+    const declaredSecrets = new Set(declaredSecretEnvVars());
+    for (
+      const [name, value] of Object.entries(rawEnv as Record<string, unknown>)
+    ) {
+      if (typeof value !== "string") {
+        throw new Error(
+          `config: [secrets.env].${name} must be a string in ${where}`,
+        );
+      }
+      if (!ENV_VAR_NAME.test(name)) {
+        throw new Error(
+          `config: [secrets.env].${name} is not a valid environment variable ` +
+            `name in ${where}`,
+        );
+      }
+      if (SECRETS_ENV_DENYLIST.has(name)) {
+        throw new Error(
+          `config: [secrets.env].${name} is not allowed — it would override a ` +
+            `security-relevant inherited variable. Set it in the launch scope, ` +
+            `not the config file (${where})`,
+        );
+      }
+      if (declaredSecrets.has(name)) {
+        throw new Error(
+          `config: [secrets.env].${name} is a declared secret — put it in ` +
+            `[secrets.pointers] as a pointer, never as a plaintext value (${where})`,
+        );
+      }
+      env[name] = value;
+    }
+  }
+
+  // `[secrets].inherit_env`: names of ambient vars to forward into the resolver's
+  // otherwise-isolated environment. Same denylist + declared-secret rules as
+  // [secrets.env] — you can forward a launch-scope resolver secret by name, but
+  // not a runtime provider key / DB password / memory token.
+  const inheritEnv: string[] = [];
+  const rawInherit = section["inherit_env"];
+  if (rawInherit !== undefined) {
+    if (!Array.isArray(rawInherit)) {
+      throw new Error(
+        `config: [secrets].inherit_env must be an array of strings in ${where}`,
+      );
+    }
+    const declaredSecrets = new Set(declaredSecretEnvVars());
+    for (const name of rawInherit) {
+      if (typeof name !== "string" || name.length === 0) {
+        throw new Error(
+          `config: [secrets].inherit_env entries must be non-empty strings ` +
+            `in ${where}`,
+        );
+      }
+      if (!ENV_VAR_NAME.test(name)) {
+        // Reject metacharacters (e.g. `*`) that Deno's --allow-env would treat
+        // as a wildcard granting the whole environment.
+        throw new Error(
+          `config: [secrets].inherit_env entry ${JSON.stringify(name)} is not ` +
+            `a valid environment variable name in ${where}`,
+        );
+      }
+      if (SECRETS_ENV_DENYLIST.has(name)) {
+        throw new Error(
+          `config: [secrets].inherit_env may not name ${name} — it is part of ` +
+            `the resolver's isolated base or a code-injection vector (${where})`,
+        );
+      }
+      if (declaredSecrets.has(name)) {
+        throw new Error(
+          `config: [secrets].inherit_env may not name the declared secret ` +
+            `${name} — the resolver resolves it, it must not receive it (${where})`,
+        );
+      }
+      inheritEnv.push(name);
+    }
+  }
+
+  return { command, timeoutMs, pointers, env, inheritEnv };
+}
+
+/**
+ * Load the `[secrets]` posture from `~/.dyfj/config.toml`. Shares the file read
+ * and parser with `loadConfig`; a missing file (or absent section) yields null.
+ * The values are resolved later, at point of use, by the secrets resolver —
+ * this returns only the declared pointers, never a secret value.
+ */
+export async function loadSecretsConfig(
+  deps: LoadConfigDeps = {},
+): Promise<SecretsConfig | null> {
+  const env = deps.env ?? Deno.env;
+  const readTextFile = deps.readTextFile ?? Deno.readTextFile;
+  const parseToml = deps.parseToml ?? defaultParseToml;
+  const path = configFilePath(env);
+  const table = await readConfigFile(path, readTextFile, parseToml);
+  return parseSecretsConfig(table, path);
+}
+
 /** Lazy default parser: jsr import resolves under Deno, never runs under vitest. */
 async function defaultParseToml(raw: string): Promise<Record<string, unknown>> {
   const { parse } = await import("@std/toml");
@@ -450,12 +764,17 @@ async function readConfigFile(
     raw = await readTextFile(path);
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return null; // no file → defaults
-    throw new Error(`config: cannot read ${path}: ${(err as Error).message}`);
+    // Path-free: the error category, not the raw message (which repeats the path).
+    throw new Error(`config: cannot read ${configLabel(path)} (${(err as Error).name})`);
   }
   try {
     return await parseToml(raw);
   } catch (err) {
-    throw new Error(`config: failed to parse ${path}: ${(err as Error).message}`);
+    // The parser message describes the TOML syntax error, not the path; the
+    // leading label is path-free.
+    throw new Error(
+      `config: failed to parse ${configLabel(path)}: ${(err as Error).message}`,
+    );
   }
 }
 
