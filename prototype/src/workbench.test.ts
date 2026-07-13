@@ -51,6 +51,9 @@ const runtimeMocks = vi.hoisted(() => {
     // when set, event writes for this event_type throw, to test the
     // integrity-required vs best-effort write policy.
     failEventType: null as string | null,
+    // whether the mocked adapter honors params.messages (transcript retry);
+    // flip to false to exercise the Google-style no-retry path.
+    supportsTranscriptRetry: true,
   };
 });
 
@@ -88,7 +91,10 @@ vi.mock("./provider", () => {
     defaultLocalWorkbenchModels: () => [runtimeMocks.model],
     [estimateExport]: (text: string) => Math.ceil(text.length / 4),
     loadWorkbenchModels: async () => [runtimeMocks.model],
+    modelRequestedOutputCap: (model: { maxOutputTokens?: number }) =>
+      model.maxOutputTokens,
     modelStreamsToolCalls: () => true,
+    modelSupportsTranscriptRetry: () => runtimeMocks.supportsTranscriptRetry,
     runWorkbenchTurn: runtimeMocks.runWorkbenchTurn,
     selectWorkbenchModel: () => ({
       selected: runtimeMocks.model,
@@ -174,6 +180,7 @@ vi.mock("./sessions", () => ({
 beforeEach(() => {
   // Ceiling confirmations persist per scope by design; tests need isolation.
   resetCeilingConfirmations();
+  runtimeMocks.supportsTranscriptRetry = true;
   runtimeMocks.ulid = 0;
   runtimeMocks.writtenEvents.length = 0;
   runtimeMocks.sessions.length = 0;
@@ -1424,6 +1431,7 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
             cost: { total: 0 },
             cacheRead: 0,
             cacheWrite: 0,
+            reasoning: 6,
           },
           text: "cut off",
           stopReason: "length",
@@ -1450,10 +1458,13 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
 
       expect(result.text).toBe("recovered answer");
       expect(recoverContextOverflow).toHaveBeenCalledTimes(1);
+      // The hook ctx reports reasoning-inclusive output (4 visible + 6
+      // reasoning), consistent with classification — the compression consumer
+      // sizes its plan from true token pressure, not just visible output.
       expect(recoverContextOverflow.mock.calls[0][0]).toMatchObject({
         modelSlug: "laguna-xs.2",
         contextWindow: 100,
-        usage: { input: 95, output: 4 },
+        usage: { input: 95, output: 10 },
       });
       const retryParams = runtimeMocks.runWorkbenchTurn.mock.calls[1][0] as {
         messages: unknown;
@@ -1467,6 +1478,153 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
     } finally {
       (runtimeMocks.model as { contextWindow?: number }).contextWindow =
         prevWindow;
+    }
+  });
+
+  test("an adapter without transcript retry delivers the truncated partial instead of replaying the prompt", async () => {
+    runtimeMocks.supportsTranscriptRetry = false;
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      ...turnBase(),
+      text: "truncated answer",
+      toolCalls: [{ id: "c1", name: "list_files", arguments: {} }],
+      stopReason: "length",
+    });
+    const events: Array<Record<string, unknown>> = [];
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "write a long report",
+      routingOptions: {},
+      onRuntimeEvent: (event) => {
+        events.push(event as unknown as Record<string, unknown>);
+      },
+    });
+
+    expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+    expect(result.text).toBe("truncated answer");
+    expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+      .toMatchObject({ outcome: "retry_unsupported", retriesUsed: 0 });
+    // The cut-off tool-call plan is stripped: no tool step ran.
+    expect(events.some((e) => e.type === "toolStepStarted")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+  });
+
+  test("a runaway-anomaly halt on the retry fails the turn — never downgraded to a partial", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+        ...turnBase(),
+        usage: {
+          input: 42,
+          output: 7,
+          cost: { total: 0.03 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        text: "truncated answer",
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+
+      // Recorded $0.03 exceeds the turn halt (2 × $0.01 per-call limit); the
+      // retry's anomaly gate fails closed and the halt must surface, not be
+      // converted into a delivered partial.
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "write a long report",
+        routingOptions: {},
+        defaultPerCallBudgetUsd: 0.01,
+        anomalyTurnMultiple: 2,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      })).rejects.toThrow();
+
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "retry_errored" });
+      expect(events.at(-1)).toMatchObject({
+        type: "turnFailed",
+        errorName: "RunawayAnomalyHaltError",
+      });
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+    }
+  });
+
+  test("cached prompt tokens count toward the window: a cache-heavy overflow is not mistaken for exhaustion", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+        ...turnBase(),
+        usage: {
+          input: 20,
+          output: 4,
+          cost: { total: 0 },
+          cacheRead: 70,
+          cacheWrite: 5,
+        },
+        text: "cut off",
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      })).rejects.toThrow("Context window overflow");
+
+      // 20 + 70 + 5 prompt-side tokens + 4 output = 99 ≥ 98% of the window.
+      expect(events.find((e) => e.type === "lengthStopDetected")).toMatchObject(
+        { classification: "context_overflow", inputTokens: 95 },
+      );
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  test("a recovery hook that throws closes the recovery trail before the turn fails", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+        ...turnBase(),
+        usage: {
+          input: 95,
+          output: 4,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        text: "cut off",
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        recoverContextOverflow: () => {
+          throw new Error("compressor exploded");
+        },
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      })).rejects.toThrow("compressor exploded");
+
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "retry_errored", retriesUsed: 0 });
+      expect(events.at(-1)).toMatchObject({ type: "turnFailed" });
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
     }
   });
 
@@ -1508,6 +1666,185 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
     } finally {
       (runtimeMocks.model as { contextWindow?: number }).contextWindow =
         prevWindow;
+    }
+  });
+
+  test("thinking tokens count toward classification: a thinking-model cap hit near the window is exhaustion, not a false overflow", async () => {
+    // Gemini-shaped: non-retryable adapter, and thinking tokens (reported
+    // separately from visible output) drew from the output budget. Reported
+    // output (96) sits below the 150 cap and input+output (196) reaches the
+    // 200-token window's 98% line — so WITHOUT counting reasoning this would
+    // misclassify as context overflow and hard-fail. WITH reasoning, output is
+    // 96 + 60 = 156 ≥ 150 → output-budget exhaustion → truncated partial.
+    runtimeMocks.supportsTranscriptRetry = false;
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevMax = runtimeMocks.model.maxOutputTokens;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 200;
+    (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens = 150;
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+        ...turnBase(),
+        usage: {
+          input: 100,
+          output: 96,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+          reasoning: 60,
+        },
+        text: "truncated thinking-model answer",
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      });
+
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+      expect(result.text).toBe("truncated thinking-model answer");
+      expect(events.find((e) => e.type === "lengthStopDetected")).toMatchObject(
+        {
+          classification: "output_budget_exhausted",
+          severity: "warn",
+          // The event reports true consumption: 96 visible + 60 reasoning.
+          outputTokens: 156,
+        },
+      );
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "retry_unsupported", retriesUsed: 0 });
+      expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
+      (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens =
+        prevMax;
+    }
+  });
+
+  test("both cap and window bind: the continuation would overflow, so it is skipped and the capped partial delivered", async () => {
+    // Output cap hit (200 >= 200) → classified output-budget exhaustion by
+    // cap precedence, even though the window is also full. The continuation
+    // (original transcript + this long partial + nudge) cannot fit the
+    // 100-token window, so a retry would be a doomed over-window call: the
+    // feasibility pre-check must skip it and deliver the capped partial.
+    const partial = "x".repeat(600);
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevMax = runtimeMocks.model.maxOutputTokens;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 100;
+    (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens = 200;
+    try {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+        ...turnBase(),
+        usage: {
+          input: 50,
+          output: 200,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        text: partial,
+        toolCalls: [{ id: "c1", name: "list_files", arguments: {} }],
+        stopReason: "length",
+      });
+      const events: Array<Record<string, unknown>> = [];
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      });
+
+      // Exactly one provider call — the doomed continuation was not attempted.
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+      expect(result.text).toBe(partial);
+      expect(events.find((e) => e.type === "lengthStopDetected")).toMatchObject({
+        classification: "output_budget_exhausted",
+      });
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "retry_would_overflow", retriesUsed: 0 });
+      // Cut-off tool plan stripped; turn completes cleanly.
+      expect(events.some((e) => e.type === "toolStepStarted")).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
+      (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens =
+        prevMax;
+    }
+  });
+
+  test("compression resolves the overflow but the fresh answer hits its output cap: bounded truncation, not a false overflow", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevMax = runtimeMocks.model.maxOutputTokens;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 100;
+    (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens = 200;
+    try {
+      runtimeMocks.runWorkbenchTurn
+        // First attempt overflows the 100-token window (95 + 4 ≥ 98).
+        .mockResolvedValueOnce({
+          ...turnBase(),
+          usage: {
+            input: 95,
+            output: 4,
+            cost: { total: 0 },
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          text: "cut off",
+          stopReason: "length",
+        })
+        // Compressed retry fits the window but hits the 200-token output cap.
+        .mockResolvedValueOnce({
+          ...turnBase(),
+          usage: {
+            input: 2,
+            output: 200,
+            cost: { total: 0 },
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          text: "compressed but truncated answer",
+          toolCalls: [{ id: "c1", name: "list_files", arguments: {} }],
+          stopReason: "length",
+        });
+      const events: Array<Record<string, unknown>> = [];
+      const recoverContextOverflow = vi.fn().mockResolvedValue({
+        messages: [{ role: "user", content: "compressed history" }],
+      });
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        recoverContextOverflow,
+        onRuntimeEvent: (event) => {
+          events.push(event as unknown as Record<string, unknown>);
+        },
+      });
+
+      // The retry is reclassified against its OWN usage (output 200 ≥ cap 200
+      // → exhaustion), so the turn does NOT throw a stale context-overflow.
+      expect(result.text).toBe("compressed but truncated answer");
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(2);
+      expect(events.find((e) => e.type === "lengthRecoveryFinished"))
+        .toMatchObject({ outcome: "still_truncated", retriesUsed: 1 });
+      // Bounded terminal: cut-off tool plan stripped, turn completes cleanly.
+      expect(events.some((e) => e.type === "toolStepStarted")).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: "turnCompleted" });
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
+      (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens =
+        prevMax;
     }
   });
 });

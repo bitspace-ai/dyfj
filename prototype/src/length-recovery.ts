@@ -18,6 +18,18 @@ export type LengthRecoveryOutcome =
   | "recovered"
   | "still_truncated"
   | "retry_refused_budget"
+  /** The adapter cannot run a transcript retry (modelSupportsTranscriptRetry). */
+  | "retry_unsupported"
+  /**
+   * Both the output cap and the context window bound this stop: the
+   * continuation (original transcript + partial answer + nudge) no longer fits
+   * the window, so retrying would be a doomed over-window call. The capped
+   * partial is delivered instead. Upgrade site for a future compressor:
+   * compress-then-continue when both limits bind.
+   */
+  | "retry_would_overflow"
+  /** The recovery hook or the retry call threw; the error surfaces after this. */
+  | "retry_errored"
   | "overflow_failed";
 
 /**
@@ -140,7 +152,13 @@ export class ContextWindowOverflowError extends Error {
  * via WorkbenchRuntimeInput.recoverContextOverflow) before failing: a returned
  * plan buys exactly one retry with the plan's (e.g. compressed) transcript;
  * null — or a retry that still overflows — falls through to the structured
- * ContextWindowOverflowError. The hook never loops.
+ * ContextWindowOverflowError. The hook never loops. `messages` is a snapshot:
+ * mutating it does not touch the live agent-loop transcript.
+ *
+ * Known seam limitation for the compressor slice to own: text deltas from the
+ * overflowed attempt have already streamed when the hook runs, so a
+ * successful retry's answer replaces the partial in the result/audit trail
+ * while a streaming client saw both.
  */
 export interface ContextOverflowRecoveryContext {
   sessionId: string;
@@ -165,10 +183,14 @@ export type ContextOverflowRecoverer = (
  * a refused retry downgrades to returning the truncated turn instead of
  * failing it — the paid partial output already streamed to the operator.
  * First-call budget errors keep their existing turn-failing behavior.
+ *
+ * A RunawayAnomalyHaltError is deliberately NOT a refusal: the anomaly gate
+ * is a hard stop on runaway spend, and downgrading it to a delivered partial
+ * would erase the halt from callers and the audit trail. It propagates and
+ * fails the turn like any first-call halt.
  */
 export function isBudgetRefusal(err: unknown): boolean {
   const name = (err as Error)?.name;
   return name === "BudgetExceededError" ||
-    name === "BudgetCeilingDeclinedError" ||
-    name === "RunawayAnomalyHaltError";
+    name === "BudgetCeilingDeclinedError";
 }

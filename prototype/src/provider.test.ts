@@ -121,7 +121,7 @@ describe("parseModelRegistryRows", () => {
     expect(parsed[0].maxOutputTokens).toBe(8192);
   });
 
-  test("absent, zero, or malformed limits load as unknown, not as a tiny limit", () => {
+  test("absent, zero, fractional, or malformed limits load as unknown, not as a tiny limit", () => {
     const base = {
       slug: "gemma4",
       display_name: "Gemma 4 27B",
@@ -140,8 +140,12 @@ describe("parseModelRegistryRows", () => {
     const [garbage] = parseModelRegistryRows([
       { ...base, context_window: "lots", max_output_tokens: "-1" },
     ]);
+    // A fractional value must not floor into a defined zero-token limit.
+    const [fractional] = parseModelRegistryRows([
+      { ...base, context_window: "0.5", max_output_tokens: "0.9" },
+    ]);
 
-    for (const model of [absent, zero, garbage]) {
+    for (const model of [absent, zero, garbage, fractional]) {
       expect(model.contextWindow).toBeUndefined();
       expect(model.maxOutputTokens).toBeUndefined();
     }
@@ -912,6 +916,16 @@ describe("parseGeminiStreamLine", () => {
       'data: {"candidates":[{"content":{"parts":[{"text":"secret reasoning","thought":true},{"text":"the answer"}]}}]}',
     );
     expect(event?.textDelta).toBe("the answer");
+  });
+
+  test("surfaces thinking-token usage separately from visible output", () => {
+    const event = parseGeminiStreamLine(
+      'data: {"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":2,"thoughtsTokenCount":140}}',
+    );
+    // candidatesTokenCount is visible output; thoughtsTokenCount is the
+    // reasoning that also drew from the output budget.
+    expect(event?.outputTokens).toBe(2);
+    expect(event?.reasoningTokens).toBe(140);
   });
 });
 

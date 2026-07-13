@@ -141,13 +141,18 @@ describe("isBudgetRefusal", () => {
       const name of [
         "BudgetExceededError",
         "BudgetCeilingDeclinedError",
-        "RunawayAnomalyHaltError",
       ]
     ) {
       const err = new Error("refused");
       err.name = name;
       expect(isBudgetRefusal(err)).toBe(true);
     }
+  });
+
+  test("a runaway-anomaly halt is a hard stop, never a downgradeable refusal", () => {
+    const err = new Error("halted");
+    err.name = "RunawayAnomalyHaltError";
+    expect(isBudgetRefusal(err)).toBe(false);
   });
 
   test("anything else is not a budget refusal", () => {

@@ -43,6 +43,15 @@ export interface WorkbenchTurnResult {
     cost: { total: number };
     cacheRead: number;
     cacheWrite: number;
+    /**
+     * Provider-reported reasoning/thinking tokens, when the provider exposes
+     * them separately from visible output (e.g. Gemini's thoughtsTokenCount).
+     * These are drawn from the model's output budget but are not part of
+     * `output` (the visible answer). Used by length-stop classification to see
+     * the model's true output-budget and context-window consumption; recorded
+     * usage and cost intentionally ignore it. Absent/other providers => 0.
+     */
+    reasoning?: number;
   };
   stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
   timings: WorkbenchCallTimings;
@@ -232,12 +241,13 @@ export function parseModelRegistryRows(
 
 /**
  * A catalog token limit is a positive integer or unknown. Zero/absent/garbage
- * all load as undefined so nothing downstream mistakes "nobody filled the
- * column in" for a real (and absurdly small) limit.
+ * — and fractional values like "0.5", which would otherwise floor to a
+ * defined zero-token limit — all load as undefined, so nothing downstream
+ * mistakes "nobody filled the column in" for a real (and absurdly small) limit.
  */
 function toCatalogLimit(value: string | undefined): number | undefined {
   const limit = Number(value || "0");
-  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : undefined;
+  return Number.isSafeInteger(limit) && limit > 0 ? limit : undefined;
 }
 
 /**
@@ -604,6 +614,41 @@ export interface WorkbenchTurnParams {
 export function modelStreamsToolCalls(model: WorkbenchModel): boolean {
   return openAIHostedProviders.has(model.provider) ||
     openAICompatibleLocalProviders.has(model.provider);
+}
+
+/**
+ * Whether a turn for this model can be retried with a rewritten transcript.
+ * The OpenAI-compatible and Anthropic adapters build their wire request from
+ * `params.messages`; the Google adapter sends only the seed prompt, so a
+ * "retry" there would replay the original request verbatim. Length recovery
+ * uses this to decide whether a continuation / compressed-transcript retry is
+ * even possible.
+ */
+export function modelSupportsTranscriptRetry(model: WorkbenchModel): boolean {
+  return openAIHostedProviders.has(model.provider) ||
+    openAICompatibleLocalProviders.has(model.provider) ||
+    anthropicProviders.has(model.provider);
+}
+
+/**
+ * The output-token cap the request for this model actually carries — what a
+ * stopReason "length" is measured against. The Anthropic and Google adapters
+ * send fixed caps regardless of what the catalog row advertises the model can
+ * do, so classification must compare against the requested cap, not the
+ * catalog capability. The OpenAI-compatible path sends no explicit cap; the
+ * catalog limit is the best knowledge of the server-side default.
+ */
+export function modelRequestedOutputCap(
+  model: WorkbenchModel,
+): number | undefined {
+  const catalog = model.maxOutputTokens;
+  if (anthropicProviders.has(model.provider)) {
+    return Math.min(catalog ?? Infinity, ANTHROPIC_DEFAULT_MAX_TOKENS);
+  }
+  if (googleProviders.has(model.provider)) {
+    return Math.min(catalog ?? Infinity, GEMINI_DEFAULT_MAX_TOKENS);
+  }
+  return catalog;
 }
 
 export async function runWorkbenchTurn(
@@ -1273,6 +1318,7 @@ export interface GeminiStreamEvent {
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
 }
 
 export function buildGeminiRequest(
@@ -1314,6 +1360,7 @@ export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
     usageMetadata?: {
       promptTokenCount?: number;
       candidatesTokenCount?: number;
+      thoughtsTokenCount?: number;
     };
   };
   const candidate = json.candidates?.[0];
@@ -1328,6 +1375,9 @@ export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
     stopReason: candidate?.finishReason,
     inputTokens: json.usageMetadata?.promptTokenCount,
     outputTokens: json.usageMetadata?.candidatesTokenCount,
+    // Thinking tokens draw from maxOutputTokens but are not visible output;
+    // length-stop classification needs them to see true budget consumption.
+    reasoningTokens: json.usageMetadata?.thoughtsTokenCount,
   };
 }
 
@@ -1414,6 +1464,9 @@ async function runGoogleGenerativeAITurn(
       cost: { total: costTotal },
       cacheRead: 0,
       cacheWrite: 0,
+      // Thinking tokens are reported separately and drawn from the output
+      // budget; carried for length-stop classification, not for cost.
+      reasoning: result.reasoningTokens ?? 0,
     },
     stopReason: normaliseGeminiStopReason(result.stopReason),
     toolCalls: undefined,
@@ -1431,6 +1484,7 @@ async function readGeminiJson(
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
   timings: WorkbenchCallTimings;
 }> {
   const json = await response.json() as {
@@ -1441,6 +1495,7 @@ async function readGeminiJson(
     usageMetadata?: {
       promptTokenCount?: number;
       candidatesTokenCount?: number;
+      thoughtsTokenCount?: number;
     };
   };
   const completed = now();
@@ -1456,6 +1511,7 @@ async function readGeminiJson(
     stopReason: candidate?.finishReason,
     inputTokens: json.usageMetadata?.promptTokenCount,
     outputTokens: json.usageMetadata?.candidatesTokenCount,
+    reasoningTokens: json.usageMetadata?.thoughtsTokenCount,
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       totalMs: Math.round(completed - requestStarted),
@@ -1474,6 +1530,7 @@ async function readGeminiStream(
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
   timings: WorkbenchCallTimings;
 }> {
   if (!response.body) {
@@ -1487,6 +1544,7 @@ async function readGeminiStream(
   let stopReason: string | undefined;
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
+  let reasoningTokens: number | undefined;
   let firstTokenAt: number | undefined;
 
   const applyEvent = (event: GeminiStreamEvent) => {
@@ -1498,6 +1556,9 @@ async function readGeminiStream(
     if (event.stopReason) stopReason = event.stopReason;
     if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
     if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
+    if (event.reasoningTokens !== undefined) {
+      reasoningTokens = event.reasoningTokens;
+    }
   };
 
   while (true) {
@@ -1524,6 +1585,7 @@ async function readGeminiStream(
     stopReason,
     inputTokens,
     outputTokens,
+    reasoningTokens,
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       timeToFirstTokenMs: firstTokenAt === undefined
