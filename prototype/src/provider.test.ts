@@ -99,6 +99,53 @@ describe("parseModelRegistryRows", () => {
 
     expect(parsed[0].capabilities).toEqual(["text", "reasoning"]);
   });
+
+  test("parses catalog token limits when the row declares them", () => {
+    const parsed = parseModelRegistryRows([
+      {
+        slug: "gemma4",
+        display_name: "Gemma 4 27B",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        context_window: "131072",
+        max_output_tokens: "8192",
+      },
+    ]);
+
+    expect(parsed[0].contextWindow).toBe(131072);
+    expect(parsed[0].maxOutputTokens).toBe(8192);
+  });
+
+  test("absent, zero, or malformed limits load as unknown, not as a tiny limit", () => {
+    const base = {
+      slug: "gemma4",
+      display_name: "Gemma 4 27B",
+      provider: "ollama",
+      api: "openai-completions",
+      base_url: "http://localhost:11434/v1",
+      tier: "0",
+      cost_input: "0",
+      cost_output: "0",
+      capabilities: '["text"]',
+    };
+    const [absent] = parseModelRegistryRows([base]);
+    const [zero] = parseModelRegistryRows([
+      { ...base, context_window: "0", max_output_tokens: "0" },
+    ]);
+    const [garbage] = parseModelRegistryRows([
+      { ...base, context_window: "lots", max_output_tokens: "-1" },
+    ]);
+
+    for (const model of [absent, zero, garbage]) {
+      expect(model.contextWindow).toBeUndefined();
+      expect(model.maxOutputTokens).toBeUndefined();
+    }
+  });
 });
 
 describe("selectWorkbenchModel", () => {

@@ -10,6 +10,14 @@ export interface WorkbenchModel {
   costInput: number;
   costOutput: number;
   capabilities: string[];
+  /**
+   * Catalog limits, when the registry row declares them. `contextWindow` is
+   * the total token window (input + output); `maxOutputTokens` the per-response
+   * output cap. Absent/zero rows load as undefined — consumers must treat the
+   * limits as unknown, not unlimited.
+   */
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 export interface WorkbenchRoutingOptions {
@@ -216,8 +224,20 @@ export function parseModelRegistryRows(
       costInput: toCatalogCost(row.cost_input),
       costOutput: toCatalogCost(row.cost_output),
       capabilities: parseCapabilities(row.capabilities),
+      contextWindow: toCatalogLimit(row.context_window),
+      maxOutputTokens: toCatalogLimit(row.max_output_tokens),
     };
   });
+}
+
+/**
+ * A catalog token limit is a positive integer or unknown. Zero/absent/garbage
+ * all load as undefined so nothing downstream mistakes "nobody filled the
+ * column in" for a real (and absurdly small) limit.
+ */
+function toCatalogLimit(value: string | undefined): number | undefined {
+  const limit = Number(value || "0");
+  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : undefined;
 }
 
 /**
@@ -271,7 +291,8 @@ function parseCapabilities(value: string | undefined): string[] {
 export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
   const rows = await doltQuery(
     "SELECT slug, display_name, provider, api, base_url, tier, " +
-      "cost_input, cost_output, capabilities " +
+      "cost_input, cost_output, capabilities, " +
+      "context_window, max_output_tokens " +
       "FROM models WHERE active = TRUE ORDER BY tier, slug;",
   );
   return parseModelRegistryRows(rows);
