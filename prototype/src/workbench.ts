@@ -14,10 +14,12 @@ import type { PermissionLevel } from "./config";
 import {
   ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
+  loadSecretsConfig,
   resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
 } from "./config";
+import { resolveSecretsIntoEnv } from "./secrets";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 
@@ -2075,5 +2077,12 @@ export async function runWorkbenchRuntime(
 }
 
 if (import.meta.main) {
+  // Credential the process from declared secret pointers before any turn reads
+  // a provider key. env wins; presence-only; a locked/unavailable pointer
+  // degrades that provider fail-closed. (`deno task workbench` carries no
+  // dynamic --allow-run for the resolver binary, so a resolver that needs one
+  // simply reports unavailable and the operator projects the key ambiently or
+  // via .env — `dyfj start` is the credentialed daily-driver path.)
+  await resolveSecretsIntoEnv(await loadSecretsConfig());
   await runWorkbench();
 }

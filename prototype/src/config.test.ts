@@ -5,7 +5,11 @@ import {
   CONFIG_SCHEMA,
   configFilePath,
   declaredEnvVars,
+  declaredSecretEnvVars,
+  DEFAULT_SECRET_TIMEOUT_MS,
   loadConfig,
+  loadSecretsConfig,
+  parseSecretsConfig,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
 } from "./config";
@@ -79,6 +83,23 @@ describe("loadConfig", () => {
     ).rejects.toThrow(/invalid permission level/);
   });
 
+  test("an invalid permission level error is path-free (no absolute config path)", async () => {
+    await expect(
+      loadConfig({
+        env: env({ HOME: "/Users/private-account" }),
+        readTextFile: present,
+        parseToml: table({ permissions: { level: "yolo" } }),
+      }),
+    ).rejects.toThrow(/from config\.toml/);
+    await loadConfig({
+      env: env({ HOME: "/Users/private-account" }),
+      readTextFile: present,
+      parseToml: table({ permissions: { level: "yolo" } }),
+    }).catch((e: Error) => {
+      expect(e.message).not.toContain("private-account");
+    });
+  });
+
   test("rejects a wrong-typed value rather than silently coercing", async () => {
     await expect(
       loadConfig({
@@ -118,6 +139,12 @@ describe("configFilePath", () => {
 
   test("falls back to ~/.dyfj", () => {
     expect(configFilePath(env({ HOME: "/home/x" }))).toBe(
+      "/home/x/.dyfj/config.toml",
+    );
+  });
+
+  test("treats an EMPTY DYFJ_ROOT as absent (not '/'), matching the launcher", () => {
+    expect(configFilePath(env({ DYFJ_ROOT: "", HOME: "/home/x" }))).toBe(
       "/home/x/.dyfj/config.toml",
     );
   });
@@ -187,6 +214,20 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
   // Turn-running engine profiles: each runs the SAME turn, so each must grant
   // the whole engine env surface (minus HTTP-transport-specific vars).
   const ENGINE_PROFILES = ["workbench", "workbench-http", "serve-unix"] as const;
+
+  // Every engine entrypoint calls loadSecretsConfig() / resolveSecretsIntoEnv()
+  // at boot, which reads HOME (configFilePath fallback when DYFJ_ROOT is unset)
+  // and the resolver's minimal env base (PATH/HOME/USER/XDG_RUNTIME_DIR). An
+  // ungranted read throws NotCapable and crashes the entrypoint before startup —
+  // even with no [secrets] section. Assert all engine profiles grant the base.
+  for (const profile of ENGINE_PROFILES) {
+    test(`${profile} grants the resolver env base (so boot cannot NotCapable)`, () => {
+      const granted = profileEnv(profile);
+      for (const base of ["PATH", "HOME", "USER", "XDG_RUNTIME_DIR"]) {
+        expect(granted.has(base)).toBe(true);
+      }
+    });
+  }
 
   // Env legitimately present only in the workbench-http profile.
   const HTTP_ONLY = new Set([
@@ -359,5 +400,302 @@ describe("anomaly env parsing strictness", () => {
           key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? " 2.5 " : undefined,
       }).turnMultiple,
     ).toBe(2.5);
+  });
+});
+
+describe("declaredSecretEnvVars", () => {
+  test("lists exactly the engine secret-pointer env vars", () => {
+    const secrets = new Set(declaredSecretEnvVars());
+    // Every returned var is a declared engine secret-pointer.
+    for (const envVar of secrets) {
+      const spec = CONFIG_SCHEMA.find(
+        (s) => s.envVar === envVar && s.domain === "engine",
+      );
+      expect(spec?.kind).toBe("secret-pointer");
+    }
+    // Spot-check the providers and the recall token the resolver must cover.
+    expect(secrets.has("ANTHROPIC_API_KEY")).toBe(true);
+    expect(secrets.has("OPENAI_API_KEY")).toBe(true);
+    expect(secrets.has("GEMINI_API_KEY")).toBe(true);
+    expect(secrets.has("DYFJ_MEMORY_MCP_TOKEN")).toBe(true);
+    // A plain value key is never a secret pointer.
+    expect(secrets.has("DYFJ_MEMORY_MCP_URL")).toBe(false);
+  });
+});
+
+describe("parseSecretsConfig", () => {
+  const PATH = "/h/.dyfj/config.toml";
+
+  test("null table or absent [secrets] → null (no resolution)", () => {
+    expect(parseSecretsConfig(null, PATH)).toBeNull();
+    expect(parseSecretsConfig({ companion: {} }, PATH)).toBeNull();
+  });
+
+  test("parses command, timeout, and declared pointers", () => {
+    const cfg = parseSecretsConfig(
+      {
+        secrets: {
+          command: ["op", "read"],
+          timeout_ms: 5000,
+          pointers: {
+            ANTHROPIC_API_KEY: "op://v/anthropic/credential",
+            DYFJ_MEMORY_MCP_TOKEN: "op://v/brain/credential",
+          },
+        },
+      },
+      PATH,
+    );
+    expect(cfg).toEqual({
+      command: ["op", "read"],
+      timeoutMs: 5000,
+      pointers: {
+        ANTHROPIC_API_KEY: "op://v/anthropic/credential",
+        DYFJ_MEMORY_MCP_TOKEN: "op://v/brain/credential",
+      },
+      env: {},
+      inheritEnv: [],
+    });
+  });
+
+  test("defaults timeout, env, and inherit_env when omitted", () => {
+    const cfg = parseSecretsConfig(
+      { secrets: { command: ["op", "read"] } },
+      PATH,
+    );
+    expect(cfg?.timeoutMs).toBe(DEFAULT_SECRET_TIMEOUT_MS);
+    expect(cfg?.pointers).toEqual({});
+    expect(cfg?.env).toEqual({});
+    expect(cfg?.inheritEnv).toEqual([]);
+  });
+
+  test("parses [secrets].inherit_env as a forward-list of ambient var names", () => {
+    const cfg = parseSecretsConfig(
+      {
+        secrets: {
+          command: ["op", "read"],
+          inherit_env: ["OP_SERVICE_ACCOUNT_TOKEN", "OP_ACCOUNT"],
+        },
+      },
+      PATH,
+    );
+    expect(cfg?.inheritEnv).toEqual(["OP_SERVICE_ACCOUNT_TOKEN", "OP_ACCOUNT"]);
+  });
+
+  test("inherit_env rejects denylisted and declared-secret names", () => {
+    for (const name of ["PATH", "HOME", "LD_PRELOAD"]) {
+      expect(() =>
+        parseSecretsConfig(
+          { secrets: { command: ["op", "read"], inherit_env: [name] } },
+          PATH,
+        )
+      ).toThrow(/inherit_env may not name/);
+    }
+    expect(() =>
+      parseSecretsConfig(
+        {
+          secrets: { command: ["op", "read"], inherit_env: ["ANTHROPIC_API_KEY"] },
+        },
+        PATH,
+      )
+    ).toThrow(/inherit_env may not name the declared secret/);
+  });
+
+  test("inherit_env rejects a wildcard / metacharacter name (--allow-env=* bypass)", () => {
+    for (const name of ["*", "A=B", "FOO BAR", "1BAD", "A*"]) {
+      expect(() =>
+        parseSecretsConfig(
+          { secrets: { command: ["op", "read"], inherit_env: [name] } },
+          PATH,
+        )
+      ).toThrow(/not a valid environment variable name/);
+    }
+  });
+
+  test("[secrets.env] rejects an invalid environment variable name", () => {
+    expect(() =>
+      parseSecretsConfig(
+        { secrets: { command: ["op", "read"], env: { "*": "x" } } },
+        PATH,
+      )
+    ).toThrow(/not a valid environment variable name/);
+  });
+
+  test("inherit_env must be an array of non-empty strings", () => {
+    expect(() =>
+      parseSecretsConfig(
+        { secrets: { command: ["op", "read"], inherit_env: "OP_TOKEN" } },
+        PATH,
+      )
+    ).toThrow(/must be an array/);
+    expect(() =>
+      parseSecretsConfig(
+        { secrets: { command: ["op", "read"], inherit_env: [""] } },
+        PATH,
+      )
+    ).toThrow(/non-empty strings/);
+  });
+
+  test("parses [secrets.env] as a non-secret string map", () => {
+    const cfg = parseSecretsConfig(
+      {
+        secrets: {
+          command: ["op", "read"],
+          env: { OP_ACCOUNT: "my.1password.com", RESOLVER_FLAG: "1" },
+        },
+      },
+      PATH,
+    );
+    expect(cfg?.env).toEqual({
+      OP_ACCOUNT: "my.1password.com",
+      RESOLVER_FLAG: "1",
+    });
+  });
+
+  test("a non-string [secrets.env] value fails loud", () => {
+    expect(() =>
+      parseSecretsConfig(
+        { secrets: { command: ["op", "read"], env: { OP_DEBUG: true } } },
+        PATH,
+      )
+    ).toThrow(/\[secrets\.env\]\.OP_DEBUG must be a string/);
+  });
+
+  test("a security-relevant [secrets.env] name (PATH/HOME/linker) is rejected", () => {
+    for (const name of ["PATH", "HOME", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD"]) {
+      expect(() =>
+        parseSecretsConfig(
+          { secrets: { command: ["op", "read"], env: { [name]: "/evil" } } },
+          PATH,
+        )
+      ).toThrow(/is not allowed/);
+    }
+  });
+
+  test("a declared secret env var as a plaintext [secrets.env] value is rejected", () => {
+    // The engine can enforce the no-plaintext-credential boundary for names it
+    // knows are secret — a declared secret-pointer key must use a pointer.
+    for (const name of ["ANTHROPIC_API_KEY", "DYFJ_MEMORY_MCP_TOKEN"]) {
+      expect(() =>
+        parseSecretsConfig(
+          { secrets: { command: ["op", "read"], env: { [name]: "sk-plain" } } },
+          PATH,
+        )
+      ).toThrow(/is a declared secret/);
+    }
+  });
+
+  test("a missing command fails loud", () => {
+    expect(() => parseSecretsConfig({ secrets: { timeout_ms: 1000 } }, PATH))
+      .toThrow(/command is required/);
+  });
+
+  test("validation errors are path-free (no absolute config path on boot stderr)", () => {
+    const privatePath = "/Users/private-account/.dyfj/config.toml";
+    try {
+      parseSecretsConfig({ secrets: { timeout_ms: 1000 } }, privatePath);
+      throw new Error("expected a validation throw");
+    } catch (err) {
+      const msg = (err as Error).message;
+      expect(msg).toMatch(/command is required/);
+      expect(msg).not.toContain("private-account");
+      expect(msg).not.toContain(privatePath);
+      // The stable public-safe label is fine.
+      expect(msg).toContain("config.toml");
+    }
+  });
+
+  test("an empty or non-string command fails loud", () => {
+    expect(() => parseSecretsConfig({ secrets: { command: [] } }, PATH))
+      .toThrow(/non-empty array/);
+    expect(() => parseSecretsConfig({ secrets: { command: [""] } }, PATH))
+      .toThrow(/non-empty array/);
+    expect(() => parseSecretsConfig({ secrets: { command: "op read" } }, PATH))
+      .toThrow(/non-empty array/);
+  });
+
+  test("a non-positive timeout fails loud", () => {
+    expect(() =>
+      parseSecretsConfig(
+        { secrets: { command: ["op"], timeout_ms: 0 } },
+        PATH,
+      )
+    ).toThrow(/positive number/);
+  });
+
+  test("a pointer for an undeclared or non-secret key fails loud", () => {
+    expect(() =>
+      parseSecretsConfig(
+        {
+          secrets: {
+            command: ["op", "read"],
+            pointers: { NOT_A_SECRET: "op://x" },
+          },
+        },
+        PATH,
+      )
+    ).toThrow(/not a declared secret env var/);
+    // A declared VALUE key (not a secret pointer) is rejected too.
+    expect(() =>
+      parseSecretsConfig(
+        {
+          secrets: {
+            command: ["op", "read"],
+            pointers: { DYFJ_MEMORY_MCP_URL: "op://x" },
+          },
+        },
+        PATH,
+      )
+    ).toThrow(/not a declared secret env var/);
+  });
+
+  test("an empty pointer value fails loud", () => {
+    expect(() =>
+      parseSecretsConfig(
+        {
+          secrets: {
+            command: ["op", "read"],
+            pointers: { ANTHROPIC_API_KEY: "" },
+          },
+        },
+        PATH,
+      )
+    ).toThrow(/non-empty string/);
+  });
+});
+
+describe("loadSecretsConfig", () => {
+  test("shares the file read; a missing file yields null", async () => {
+    const cfg = await loadSecretsConfig({
+      env: { get: (k) => (k === "HOME" ? "/h" : undefined) },
+      readTextFile: () => Promise.reject(new Deno.errors.NotFound()),
+    });
+    expect(cfg).toBeNull();
+  });
+
+  test("parses the [secrets] section from the config file", async () => {
+    const cfg = await loadSecretsConfig({
+      env: { get: (k) => (k === "HOME" ? "/h" : undefined) },
+      readTextFile: () => Promise.resolve("(toml)"),
+      parseToml: () => ({
+        secrets: {
+          command: ["op", "read"],
+          pointers: { OPENAI_API_KEY: "op://v/openai/credential" },
+        },
+      }),
+    });
+    expect(cfg?.command).toEqual(["op", "read"]);
+    expect(cfg?.pointers.OPENAI_API_KEY).toBe("op://v/openai/credential");
+  });
+});
+
+describe("parseSecretsConfig — strict [secrets] keys", () => {
+  const PATH = "/h/.dyfj/config.toml";
+  test("an unknown [secrets] key (typo) fails loud", () => {
+    expect(() =>
+      parseSecretsConfig(
+        { secrets: { command: ["op", "read"], timeouts_ms: 5000 } },
+        PATH,
+      )
+    ).toThrow(/not a recognized key/);
   });
 });
