@@ -607,8 +607,8 @@ describe("handleTurnRuntimeEvent", () => {
     expect(stdout).toHaveLength(0);
   });
 
-  // Event frames are unvalidated JSON from the server: SSE and UDS both cast
-  // rather than parse, so a malformed frame must be dropped, not dereferenced.
+  // Both clients decode the transport JSON but never schema-validate the frame,
+  // so a malformed event payload must be dropped, not dereferenced.
   test.each([
     ["null", null],
     ["a number", 42],

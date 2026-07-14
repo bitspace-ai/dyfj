@@ -298,9 +298,8 @@ export function handleTurnRuntimeEvent(
     output.supersede();
     return;
   }
-  // Frames are unvalidated JSON from the server (SSE and UDS both cast rather
-  // than parse), so a malformed `event: null` or primitive must be dropped, not
-  // dereferenced.
+  // Both clients decode the transport JSON but never schema-validate the frame,
+  // so a malformed `event: null` or primitive must be dropped, not dereferenced.
   if (typeof event !== "object" || event === null) return;
   const line = formatRuntimeEvent(event as Record<string, unknown>);
   if (line !== null) io.err(line);
