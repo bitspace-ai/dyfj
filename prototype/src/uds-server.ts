@@ -29,6 +29,7 @@ import {
   runawayAnomalyApprovalRequest,
 } from "./budget";
 import type { TurnStreamFrame } from "./turn-contract";
+import { isSupersedingRetryStarted } from "./turn-contract";
 import {
   engineConfigToTurnDeps,
   executeTurn,
@@ -371,9 +372,21 @@ export function buildTurnHandlers(
       if ("error" in resolved) {
         throw new RpcError(RpcErrorCode.invalidParams, resolved.error);
       }
-      // Once a client drops mid-stream, every remaining delta notify rejects;
-      // log the failure once per turn rather than per delta.
-      let deltaNotifyFailureLogged = false;
+      // A client that drops mid-turn makes every subsequent notify reject.
+      // Deltas and status events are best-effort, so their send failures are
+      // swallowed and logged once per turn rather than once per frame (a
+      // tool-heavy turn would otherwise flood the log). The superseding-retry
+      // signal is the exception — handled fail-closed below.
+      let streamNotifyFailureLogged = false;
+      const noteStreamNotifyFailure = (err: unknown): void => {
+        if (streamNotifyFailureLogged) return;
+        streamNotifyFailureLogged = true;
+        console.warn(
+          `stream notify skipped — client likely disconnected; further sends this turn silenced: ${
+            (err as Error)?.message ?? err
+          }`,
+        );
+      };
       return await executeTurn(resolved, {
         authContext: UDS_LOOPBACK_AUTH,
         loopback: true,
@@ -413,35 +426,31 @@ export function buildTurnHandlers(
             }),
           ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a
-        // client can reuse one frame handler across both transports.
-        // Deltas stay best-effort — a dropped one costs some rendered text, not
-        // correctness like the superseding signal — but the notify promise is
-        // observed, not discarded: a rejecting send (e.g. the socket closed)
-        // would otherwise surface as an unhandled rejection.
+        // client can reuse one frame handler across both transports. Deltas are
+        // best-effort: a dropped one costs some rendered text, not correctness,
+        // so the notify promise is observed (not left to reject unhandled) but
+        // its failure is only logged, never surfaced to the runtime.
         onTextDelta: (text) => {
           ctx.notify(
             "stream",
             { t: "delta", text } satisfies TurnStreamFrame,
-          ).catch((err) => {
-            if (deltaNotifyFailureLogged) return;
-            deltaNotifyFailureLogged = true;
-            console.warn(
-              `stream delta notify skipped (further deltas this turn silenced): ${
-                (err as Error)?.message ?? err
-              }`,
-            );
-          });
+          ).catch(noteStreamNotifyFailure);
         },
-        // Returned, not voided: the runtime awaits this handler to decide
-        // whether the superseding-retry signal actually reached the client. A
-        // discarded promise would report success for a notification that never
-        // landed, letting a replacement reply stream to a consumer that never
-        // reset — and would strand the rejection as an unhandled one besides.
-        onRuntimeEvent: (event) =>
-          ctx.notify(
+        // The superseding-retry signal is the ONE event whose delivery the
+        // runtime must observe: its send failure is returned so the fail-closed
+        // path can abort the retry rather than stream an unmarked replacement.
+        // Every other runtime event is a fire-and-forget notification — a failed
+        // send is nothing to report, and returning its rejection would only make
+        // the runtime's best-effort emitter warn once per event (a flood on a
+        // tool-heavy turn after the client drops). So swallow those, logging once.
+        onRuntimeEvent: (event) => {
+          const sent = ctx.notify(
             "stream",
             { t: "event", event } satisfies TurnStreamFrame,
-          ),
+          );
+          if (isSupersedingRetryStarted(event)) return sent;
+          return sent.catch(noteStreamNotifyFailure);
+        },
       });
     },
   };

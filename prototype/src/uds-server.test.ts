@@ -330,6 +330,31 @@ describe("serveWorkbenchUnix turn method", () => {
     expect(sent).toEqual([{ t: "delta", text: "stale partial" }]);
   });
 
+  test("a rejected non-supersede event notification does not abort the turn", async () => {
+    // The asymmetry: only the supersede signal is fail-closed. A status event
+    // whose send fails (client gone) must stay best-effort — swallowed, not
+    // surfaced — so the turn runs to completion instead of failing on a dropped
+    // notification, and no per-event rejection floods back to the runtime.
+    let afterEventReached = false;
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      // A plain status event, not the superseding-retry signal.
+      await input.onRuntimeEvent?.(anyVal({ type: "toolCallStarted" }));
+      afterEventReached = true;
+      return anyVal({ receiptId: "r1" });
+    };
+    const ctx: RpcContext = {
+      notify: (_method, params) =>
+        (params as TurnStreamFrame).t === "event"
+          ? Promise.reject(new Error("client gone"))
+          : Promise.resolve(),
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    // Resolves (does not reject), and execution continued past the failed send.
+    await expect(handlers.turn({ prompt: "hi" }, ctx)).resolves.toBeDefined();
+    expect(afterEventReached).toBe(true);
+  });
+
   test("a turn without a prompt -> invalidParams", async () => {
     const runRuntime: WorkbenchHttpRuntime = async () => anyVal({});
     const client = await connectClient(
