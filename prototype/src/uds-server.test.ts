@@ -253,6 +253,36 @@ describe("serveWorkbenchUnix turn method", () => {
     ]);
   });
 
+  test("keeps the superseding-retry signal ordered between stale and replacement deltas", async () => {
+    // The reset contract only works if the seam preserves emission order: a
+    // consumer resets exactly at the signal, keeping everything after it.
+    const supersede = {
+      type: "supersedingRetryStarted",
+      sessionId: "01UDSSESSION0000000000000000",
+      modelSlug: "gemma4:e2b",
+      reason: "context_overflow_recovery",
+    };
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      input.onTextDelta?.("stale partial");
+      await input.onRuntimeEvent?.(anyVal(supersede));
+      input.onTextDelta?.("replacement answer");
+      return anyVal({ receiptId: "r1" });
+    };
+    const streamed: unknown[] = [];
+    const server = await startServer({ ...fakes, runRuntime });
+    const client = await connectClient(server, {
+      stream: (p) => {
+        streamed.push(p);
+      },
+    });
+    await client.request("turn", { prompt: "hi" });
+    expect(streamed).toEqual([
+      { t: "delta", text: "stale partial" },
+      { t: "event", event: supersede },
+      { t: "delta", text: "replacement answer" },
+    ]);
+  });
+
   test("a turn without a prompt -> invalidParams", async () => {
     const runRuntime: WorkbenchHttpRuntime = async () => anyVal({});
     const client = await connectClient(

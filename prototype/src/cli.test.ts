@@ -40,6 +40,7 @@ import {
 } from "./cli";
 import { serveWorkbenchUnix } from "./uds-server";
 import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client";
+import type { SupersedingRetryStartedEvent } from "./turn-contract";
 
 describe("readLineOrNull", () => {
   test("resolves the answered line", async () => {
@@ -120,14 +121,17 @@ type Frame =
   | { t: "done"; result: TurnResult }
   | { t: "error"; message: string };
 
-/** The wire shape of the superseding-retry signal (turn-contract.ts). */
+/**
+ * The wire shape of the superseding-retry signal — `satisfies` pins the
+ * fixture to the canonical contract type, so field drift breaks compile here.
+ */
 function supersedeEvent(): Record<string, unknown> {
   return {
     type: "supersedingRetryStarted",
     sessionId: "01CLISESSION0000000000000000",
     modelSlug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
     reason: "context_overflow_recovery",
-  };
+  } satisfies SupersedingRetryStartedEvent;
 }
 
 function sseResponse(frames: Frame[]): Response {
