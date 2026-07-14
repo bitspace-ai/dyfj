@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   assertSocketBindable,
+  buildTurnHandlers,
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
   type WorkbenchUnixServerOptions,
 } from "./uds-server";
 import { JsonRpcPeer } from "./jsonrpc-peer";
-import { RpcErrorCode, type RpcHandlers } from "./jsonrpc";
+import { RpcErrorCode, type RpcContext, type RpcHandlers } from "./jsonrpc";
 import type { WorkbenchHttpRuntime } from "./turn-runner";
+import type { TurnStreamFrame } from "./turn-contract";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -281,6 +283,51 @@ describe("serveWorkbenchUnix turn method", () => {
       { t: "event", event: supersede },
       { t: "delta", text: "replacement answer" },
     ]);
+  });
+
+  test("a rejected supersede notification prevents the replacement provider call", async () => {
+    // The seam must not merely await a handler that discards the notification:
+    // if the signal never reaches the client, the replacement text would be
+    // glued onto the stale text the client still has rendered. The runtime here
+    // mirrors the real one's fail-closed shape — await the signal, and only then
+    // run the replacement call.
+    const supersede = {
+      type: "supersedingRetryStarted",
+      sessionId: "01UDSSESSION0000000000000000",
+      modelSlug: "gemma4:e2b",
+      reason: "context_overflow_recovery",
+    };
+    let replacementProviderCalled = false;
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      input.onTextDelta?.("stale partial");
+      await input.onRuntimeEvent?.(anyVal(supersede));
+      replacementProviderCalled = true;
+      input.onTextDelta?.("replacement answer");
+      return anyVal({ receiptId: "r1" });
+    };
+
+    const sent: unknown[] = [];
+    const ctx: RpcContext = {
+      notify: (_method, params) => {
+        const frame = params as TurnStreamFrame;
+        if (frame.t === "event") {
+          // The client's stream channel died between the stale and replacement
+          // deltas — exactly when the reset signal must land.
+          return Promise.reject(new Error("stream channel lost"));
+        }
+        sent.push(params);
+        return Promise.resolve();
+      },
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    await expect(handlers.turn({ prompt: "hi" }, ctx)).rejects.toThrow(
+      "stream channel lost",
+    );
+
+    expect(replacementProviderCalled).toBe(false);
+    expect(sent).toEqual([{ t: "delta", text: "stale partial" }]);
   });
 
   test("a turn without a prompt -> invalidParams", async () => {

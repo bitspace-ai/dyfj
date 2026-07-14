@@ -416,8 +416,13 @@ export function buildTurnHandlers(
             "stream",
             { t: "delta", text } satisfies TurnStreamFrame,
           ),
+        // Returned, not voided: the runtime awaits this handler to decide
+        // whether the superseding-retry signal actually reached the client. A
+        // discarded promise would report success for a notification that never
+        // landed, letting a replacement reply stream to a consumer that never
+        // reset — and would strand the rejection as an unhandled one besides.
         onRuntimeEvent: (event) =>
-          void ctx.notify(
+          ctx.notify(
             "stream",
             { t: "event", event } satisfies TurnStreamFrame,
           ),
