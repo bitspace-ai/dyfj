@@ -606,6 +606,29 @@ describe("handleTurnRuntimeEvent", () => {
     expect(stderr).toContain("tool: bash started");
     expect(stdout).toHaveLength(0);
   });
+
+  // Event frames are unvalidated JSON from the server: SSE and UDS both cast
+  // rather than parse, so a malformed frame must be dropped, not dereferenced.
+  test.each([
+    ["null", null],
+    ["a number", 42],
+    ["a string", "supersedingRetryStarted"],
+    ["an array", []],
+  ])("drops a malformed event frame (%s) without throwing", (_label, event) => {
+    const { io, stdout, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    expect(() => handleTurnRuntimeEvent(event, output, io)).not.toThrow();
+    expect(stdout).toHaveLength(0);
+    expect(stderr).toHaveLength(0);
+  });
+
+  test("does not supersede on an event that only fakes the discriminator", () => {
+    const { io, stdout } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    // type matches but the pinned payload fields are absent: not a valid signal.
+    handleTurnRuntimeEvent({ type: "supersedingRetryStarted" }, output, io);
+    expect(stdout.join("")).not.toContain("retrying with recovered context");
+  });
 });
 
 describe("runExec over the socket (--unix)", () => {

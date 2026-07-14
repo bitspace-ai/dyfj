@@ -92,11 +92,28 @@ export type SupersedingRetryStartedEvent = {
   reason: "context_overflow_recovery";
 };
 
-/** Discriminator guard for consumers reading opaque event records. */
+/**
+ * Discriminator guard for consumers reading opaque event records.
+ *
+ * Takes `unknown`: event frames arrive as unvalidated JSON over SSE and the UDS
+ * seam, so a buggy or hostile producer can send `null` or a primitive. Reject
+ * those instead of throwing on a property read.
+ *
+ * `reason` is checked as a string rather than against today's single literal:
+ * it is an extensible union, and pinning it here would make a future producer's
+ * signal silently fail to reset the render — a missed reset is the corrupted
+ * output this contract exists to prevent, and is worse than the malformed frame
+ * being guarded against.
+ */
 export function isSupersedingRetryStarted(
-  event: Record<string, unknown>,
+  event: unknown,
 ): event is Record<string, unknown> & SupersedingRetryStartedEvent {
-  return event.type === "supersedingRetryStarted";
+  if (typeof event !== "object" || event === null) return false;
+  const record = event as Record<string, unknown>;
+  return record.type === "supersedingRetryStarted" &&
+    typeof record.sessionId === "string" &&
+    typeof record.modelSlug === "string" &&
+    typeof record.reason === "string";
 }
 
 /**

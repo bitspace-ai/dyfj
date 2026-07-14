@@ -290,7 +290,7 @@ export function createTurnOutputHandlers(
  * the frame shapes match, so honoring the contract once covers both.
  */
 export function handleTurnRuntimeEvent(
-  event: Record<string, unknown>,
+  event: unknown,
   output: ReturnType<typeof createTurnOutputHandlers>,
   io: Io,
 ): void {
@@ -298,7 +298,11 @@ export function handleTurnRuntimeEvent(
     output.supersede();
     return;
   }
-  const line = formatRuntimeEvent(event);
+  // Frames are unvalidated JSON from the server (SSE and UDS both cast rather
+  // than parse), so a malformed `event: null` or primitive must be dropped, not
+  // dereferenced.
+  if (typeof event !== "object" || event === null) return;
+  const line = formatRuntimeEvent(event as Record<string, unknown>);
   if (line !== null) io.err(line);
 }
 
