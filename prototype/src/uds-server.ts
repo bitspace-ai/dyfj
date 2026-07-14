@@ -371,6 +371,9 @@ export function buildTurnHandlers(
       if ("error" in resolved) {
         throw new RpcError(RpcErrorCode.invalidParams, resolved.error);
       }
+      // Once a client drops mid-stream, every remaining delta notify rejects;
+      // log the failure once per turn rather than per delta.
+      let deltaNotifyFailureLogged = false;
       return await executeTurn(resolved, {
         authContext: UDS_LOOPBACK_AUTH,
         loopback: true,
@@ -420,8 +423,12 @@ export function buildTurnHandlers(
             "stream",
             { t: "delta", text } satisfies TurnStreamFrame,
           ).catch((err) => {
+            if (deltaNotifyFailureLogged) return;
+            deltaNotifyFailureLogged = true;
             console.warn(
-              `stream delta notify skipped: ${(err as Error)?.message ?? err}`,
+              `stream delta notify skipped (further deltas this turn silenced): ${
+                (err as Error)?.message ?? err
+              }`,
             );
           });
         },
