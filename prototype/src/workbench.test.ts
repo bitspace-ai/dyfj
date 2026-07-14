@@ -1481,6 +1481,94 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
     }
   });
 
+  test("the overflow-recovery retry announces the supersede before any retry output exists", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 100;
+    try {
+      // One ordered trail of events AND provider calls: the supersede signal
+      // must land after the overflowed attempt but before the retry call runs
+      // (deltas stream from inside it), so an in-order stream consumer resets
+      // before the replacement text arrives.
+      const trail: string[] = [];
+      runtimeMocks.runWorkbenchTurn
+        .mockResolvedValueOnce({
+          ...turnBase(),
+          usage: {
+            input: 95,
+            output: 4,
+            cost: { total: 0 },
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          text: "cut off",
+          stopReason: "length",
+        })
+        .mockImplementationOnce(() => {
+          trail.push("retryProviderCall");
+          return Promise.resolve({
+            ...turnBase(),
+            text: "recovered answer",
+            stopReason: "stop",
+          });
+        });
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more question",
+        routingOptions: {},
+        recoverContextOverflow: () =>
+          Promise.resolve({
+            messages: [{ role: "user" as const, content: "compressed" }],
+          }),
+        onRuntimeEvent: (event) => {
+          trail.push(event.type);
+        },
+      });
+
+      expect(result.text).toBe("recovered answer");
+      const supersedeAt = trail.indexOf("supersedingRetryStarted");
+      expect(supersedeAt).toBeGreaterThan(trail.indexOf("lengthStopDetected"));
+      expect(supersedeAt).toBeLessThan(trail.indexOf("retryProviderCall"));
+      expect(trail.indexOf("retryProviderCall")).toBeLessThan(
+        trail.indexOf("lengthRecoveryFinished"),
+      );
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
+    }
+  });
+
+  test("a continuation retry never signals a supersede — its text extends the partial", async () => {
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce({
+        ...turnBase(),
+        text: "first half ",
+        stopReason: "length",
+      })
+      .mockResolvedValueOnce({
+        ...turnBase(),
+        text: "second half",
+        stopReason: "stop",
+      });
+    const events: Array<Record<string, unknown>> = [];
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "write a long report",
+      routingOptions: {},
+      onRuntimeEvent: (event) => {
+        events.push(event as unknown as Record<string, unknown>);
+      },
+    });
+
+    // Merged text: what streamed (partial + continuation) IS the answer, so a
+    // consumer resetting here would lose real output.
+    expect(result.text).toBe("first half second half");
+    expect(events.some((e) => e.type === "supersedingRetryStarted")).toBe(
+      false,
+    );
+  });
+
   test("an adapter without transcript retry delivers the truncated partial instead of replaying the prompt", async () => {
     runtimeMocks.supportsTranscriptRetry = false;
     runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({

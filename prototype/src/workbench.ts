@@ -11,6 +11,7 @@ import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
+import type { SupersedingRetryStartedEvent } from "./turn-contract";
 import type {
   ContextOverflowRecoverer,
   LengthRecoveryOutcome,
@@ -304,6 +305,13 @@ export type WorkbenchRuntimeEvent =
     contextWindow?: number;
     maxOutputTokens?: number;
   }
+  /**
+   * A superseding retry is starting: everything streamed for this turn so far
+   * is stale and the retry's answer replaces it. Shape pinned in the wire
+   * contract (turn-contract.ts) because streaming clients must act on it —
+   * reset the rendered buffer — not merely display it.
+   */
+  | SupersedingRetryStartedEvent
   | {
     /** Terminal outcome of length recovery for one provider call. */
     type: "lengthRecoveryFinished";
@@ -1738,6 +1746,21 @@ export async function runWorkbenchRuntime(
             });
             if (plan !== null) {
               retriesUsed = 1;
+              // The retry's answer REPLACES the partial that already streamed
+              // — announce the supersede before any retry deltas (deltas and
+              // events share one ordered channel on every streaming transport)
+              // so a rendering consumer can reset its buffer. The log note is
+              // the same signal for the in-process presenter, which renders
+              // deltas but has no event channel.
+              await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+                type: "supersedingRetryStarted",
+                sessionId,
+                modelSlug: turn.model.slug,
+                reason: "context_overflow_recovery",
+              });
+              log(
+                "\n[context recovered — retrying; the reply restarts below]",
+              );
               retried = await runObservedTurn(
                 { ...params, messages: plan.messages },
                 {

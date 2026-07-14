@@ -11,6 +11,7 @@ import {
   formatRuntimeStatus,
   friendlyError,
   handleReplModelCommand,
+  handleTurnRuntimeEvent,
   type Io,
   isLoopbackServerUrl,
   parseArgs,
@@ -118,6 +119,16 @@ type Frame =
   | { t: "event"; event: Record<string, unknown> }
   | { t: "done"; result: TurnResult }
   | { t: "error"; message: string };
+
+/** The wire shape of the superseding-retry signal (turn-contract.ts). */
+function supersedeEvent(): Record<string, unknown> {
+  return {
+    type: "supersedingRetryStarted",
+    sessionId: "01CLISESSION0000000000000000",
+    modelSlug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+    reason: "context_overflow_recovery",
+  };
+}
 
 function sseResponse(frames: Frame[]): Response {
   const body = frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join("");
@@ -503,6 +514,47 @@ describe("runExec", () => {
     expect(stdout.join("")).toBe("buffered answer\n");
   });
 
+  test("the superseding-retry signal resets the renderer mid-stream", async () => {
+    // The stale attempt opened a code fence that never closed; the signal
+    // must reset that parse state or the replacement's markdown would render
+    // verbatim as code-block lines.
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "delta", text: "```\nstale partial\n" },
+        { t: "event", event: supersedeEvent() },
+        { t: "delta", text: "**fresh** answer\n" },
+        { t: "done", result: result({ text: "**fresh** answer" }) },
+      ]),
+    ]);
+    const { io, stdout } = fakeIo();
+    const code = await runExec("long question", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    const out = stdout.join("");
+    const markerAt = out.indexOf("retrying with recovered context");
+    expect(markerAt).toBeGreaterThan(out.indexOf("stale partial"));
+    // Rendered fresh (bold markers consumed), exactly once, after the marker.
+    expect(out.indexOf("fresh answer")).toBeGreaterThan(markerAt);
+    expect(out).not.toContain("**fresh**");
+    expect(out.indexOf("fresh answer")).toBe(out.lastIndexOf("fresh answer"));
+  });
+
+  test("a superseding retry that streams no deltas still delivers the receipt text", async () => {
+    // The signal re-arms the buffered-text fallback: everything streamed
+    // before it is stale, so if nothing streams after, the authoritative
+    // receipt text must render rather than leaving only the stale partial.
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "delta", text: "stale partial" },
+        { t: "event", event: supersedeEvent() },
+        { t: "done", result: result({ text: "authoritative answer" }) },
+      ]),
+    ]);
+    const { io, stdout } = fakeIo();
+    const code = await runExec("x", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("authoritative answer");
+  });
+
   test("--json prints the buffered result and no receipt", async () => {
     const { fn } = recordingFetch([jsonResponse(result())]);
     const { io, stdout, stderr } = fakeIo();
@@ -530,6 +582,28 @@ describe("formatRuntimeEvent", () => {
   });
 });
 
+describe("handleTurnRuntimeEvent", () => {
+  test("routes the supersede signal to the renderer, not stderr", () => {
+    const { io, stdout, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(supersedeEvent(), output, io);
+    expect(stdout.join("")).toContain("retrying with recovered context");
+    expect(stderr).toHaveLength(0);
+  });
+
+  test("still renders tool progress lines to stderr", () => {
+    const { io, stdout, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(
+      { type: "toolCallStarted", commandId: "bash", callId: "c1" },
+      output,
+      io,
+    );
+    expect(stderr).toContain("tool: bash started");
+    expect(stdout).toHaveLength(0);
+  });
+});
+
 describe("runExec over the socket (--unix)", () => {
   test("streams text + receipt over the seam", async () => {
     const { io, stdout, stderr } = fakeIo();
@@ -544,6 +618,31 @@ describe("runExec over the socket (--unix)", () => {
     expect(code).toBe(0);
     expect(stdout.join("")).toBe("Hi\n");
     expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
+  });
+
+  test("honors the superseding-retry signal over the UDS seam too", async () => {
+    // Same frame shapes as SSE, so the reset contract holds across transports.
+    const { io, stdout } = fakeIo();
+    const code = await runExec(
+      "long question",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      fakeTurnConnect(
+        [
+          { t: "delta", text: "stale partial\n" },
+          { t: "event", event: supersedeEvent() },
+          { t: "delta", text: "fresh answer\n" },
+        ],
+        result({ text: "fresh answer" }),
+      ),
+    );
+    expect(code).toBe(0);
+    const out = stdout.join("");
+    const markerAt = out.indexOf("retrying with recovered context");
+    expect(markerAt).toBeGreaterThan(out.indexOf("stale partial"));
+    expect(out.indexOf("fresh answer")).toBeGreaterThan(markerAt);
   });
 
   test("an unreachable socket points the operator at dyfj start", async () => {

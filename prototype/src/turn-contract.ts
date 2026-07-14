@@ -54,7 +54,9 @@ export interface TurnReceipt {
  * SSE frame protocol, negotiated via `Accept: text/event-stream`. Each wire
  * frame is `data: <json>\n\n` carrying one of these, discriminated by `t`:
  *   delta  — incremental model text
- *   event  — a lifecycle record (opaque JSON; the typed record is the receipt)
+ *   event  — a lifecycle record (opaque JSON; the typed record is the receipt —
+ *            except the superseding-retry signal below, which is pinned here
+ *            because clients must ACT on it, not merely display it)
  *   done   — terminal success, carrying the full TurnReceipt
  *   error  — terminal failure
  */
@@ -63,6 +65,39 @@ export type TurnStreamFrame =
   | { t: "event"; event: Record<string, unknown> }
   | { t: "done"; result: TurnReceipt }
   | { t: "error"; message: string };
+
+/**
+ * The superseding-retry signal. Emitted between the deltas of an abandoned
+ * attempt and the deltas of the retry that replaces it — e.g. when
+ * context-overflow recovery re-runs a turn on a recovered (compressed)
+ * transcript. Everything streamed for this turn BEFORE the signal is stale:
+ * the retry's answer replaces it, it does not continue it. A rendering client
+ * must reset its rendered buffer for the turn; the authoritative text is
+ * whatever streams after, or the receipt's `text`.
+ *
+ * This is the one lifecycle event whose shape is part of the wire contract:
+ * deltas and events share one ordered channel on both transports (SSE frames,
+ * UDS `stream` notifications), so in-order delivery of the signal relative to
+ * the deltas around it is guaranteed. Continuation retries (output-cap
+ * recovery) never emit it — their retry streams only new text.
+ */
+// A type alias, not an interface: the transports forward events as
+// `Record<string, unknown>` frames, and only alias-declared object types are
+// assignable to that index signature.
+export type SupersedingRetryStartedEvent = {
+  type: "supersedingRetryStarted";
+  sessionId: string;
+  modelSlug: string;
+  /** What made the retry superseding (extensible union). */
+  reason: "context_overflow_recovery";
+};
+
+/** Discriminator guard for consumers reading opaque event records. */
+export function isSupersedingRetryStarted(
+  event: Record<string, unknown>,
+): event is Record<string, unknown> & SupersedingRetryStartedEvent {
+  return event.type === "supersedingRetryStarted";
+}
 
 /**
  * Buffered (non-streaming) JSON turn response: the receipt plus the batched
