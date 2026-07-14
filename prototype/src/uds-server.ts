@@ -29,6 +29,7 @@ import {
   runawayAnomalyApprovalRequest,
 } from "./budget";
 import type { TurnStreamFrame } from "./turn-contract";
+import { isSupersedingRetryStarted } from "./turn-contract";
 import {
   engineConfigToTurnDeps,
   executeTurn,
@@ -371,6 +372,25 @@ export function buildTurnHandlers(
       if ("error" in resolved) {
         throw new RpcError(RpcErrorCode.invalidParams, resolved.error);
       }
+      // A client that drops mid-turn makes every subsequent notify reject.
+      // Deltas and status events are best-effort, so their send failures are
+      // swallowed and logged once per turn rather than once per frame (a
+      // tool-heavy turn would otherwise flood the log). The superseding-retry
+      // signal is the exception — handled fail-closed below.
+      let streamNotifyFailureLogged = false;
+      const noteStreamNotifyFailure = (err: unknown): void => {
+        if (streamNotifyFailureLogged) return;
+        streamNotifyFailureLogged = true;
+        // Log the error's class, not its message: a Unix-socket write error can
+        // carry the socket path, and this warning channel is path-free by
+        // convention. Sends continue best-effort; only repeated warnings are
+        // suppressed this turn.
+        const kind = err instanceof Error ? err.name : "unknown";
+        console.warn(
+          `stream notify failed (${kind}) — client likely disconnected; ` +
+            `further failures this turn will not be logged`,
+        );
+      };
       return await executeTurn(resolved, {
         authContext: UDS_LOOPBACK_AUTH,
         loopback: true,
@@ -410,17 +430,31 @@ export function buildTurnHandlers(
             }),
           ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a
-        // client can reuse one frame handler across both transports.
-        onTextDelta: (text) =>
-          void ctx.notify(
+        // client can reuse one frame handler across both transports. Deltas are
+        // best-effort: a dropped one costs some rendered text, not correctness,
+        // so the notify promise is observed (not left to reject unhandled) but
+        // its failure is only logged, never surfaced to the runtime.
+        onTextDelta: (text) => {
+          ctx.notify(
             "stream",
             { t: "delta", text } satisfies TurnStreamFrame,
-          ),
-        onRuntimeEvent: (event) =>
-          void ctx.notify(
+          ).catch(noteStreamNotifyFailure);
+        },
+        // The superseding-retry signal is the ONE event whose delivery the
+        // runtime must observe: its send failure is returned so the fail-closed
+        // path can abort the retry rather than stream an unmarked replacement.
+        // Every other runtime event is a fire-and-forget notification — a failed
+        // send is nothing to report, and returning its rejection would only make
+        // the runtime's best-effort emitter warn once per event (a flood on a
+        // tool-heavy turn after the client drops). So swallow those, logging once.
+        onRuntimeEvent: (event) => {
+          const sent = ctx.notify(
             "stream",
             { t: "event", event } satisfies TurnStreamFrame,
-          ),
+          );
+          if (isSupersedingRetryStarted(event)) return sent;
+          return sent.catch(noteStreamNotifyFailure);
+        },
       });
     },
   };

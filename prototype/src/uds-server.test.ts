@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   assertSocketBindable,
+  buildTurnHandlers,
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
   type WorkbenchUnixServerOptions,
 } from "./uds-server";
 import { JsonRpcPeer } from "./jsonrpc-peer";
-import { RpcErrorCode, type RpcHandlers } from "./jsonrpc";
+import { RpcErrorCode, type RpcContext, type RpcHandlers } from "./jsonrpc";
 import type { WorkbenchHttpRuntime } from "./turn-runner";
+import type { TurnStreamFrame } from "./turn-contract";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -251,6 +253,106 @@ describe("serveWorkbenchUnix turn method", () => {
       { t: "delta", text: "world" },
       { t: "event", event: { kind: "tool-call", name: "noop" } },
     ]);
+  });
+
+  test("keeps the superseding-retry signal ordered between stale and replacement deltas", async () => {
+    // The reset contract only works if the seam preserves emission order: a
+    // consumer resets exactly at the signal, keeping everything after it.
+    const supersede = {
+      type: "supersedingRetryStarted",
+      sessionId: "01UDSSESSION0000000000000000",
+      modelSlug: "gemma4:e2b",
+      reason: "context_overflow_recovery",
+    };
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      input.onTextDelta?.("stale partial");
+      await input.onRuntimeEvent?.(anyVal(supersede));
+      input.onTextDelta?.("replacement answer");
+      return anyVal({ receiptId: "r1" });
+    };
+    const streamed: unknown[] = [];
+    const server = await startServer({ ...fakes, runRuntime });
+    const client = await connectClient(server, {
+      stream: (p) => {
+        streamed.push(p);
+      },
+    });
+    await client.request("turn", { prompt: "hi" });
+    expect(streamed).toEqual([
+      { t: "delta", text: "stale partial" },
+      { t: "event", event: supersede },
+      { t: "delta", text: "replacement answer" },
+    ]);
+  });
+
+  test("a rejected supersede notification prevents the replacement provider call", async () => {
+    // The seam must not merely await a handler that discards the notification:
+    // if the signal never reaches the client, the replacement text would be
+    // glued onto the stale text the client still has rendered. The runtime here
+    // mirrors the real one's fail-closed shape — await the signal, and only then
+    // run the replacement call.
+    const supersede = {
+      type: "supersedingRetryStarted",
+      sessionId: "01UDSSESSION0000000000000000",
+      modelSlug: "gemma4:e2b",
+      reason: "context_overflow_recovery",
+    };
+    let replacementProviderCalled = false;
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      input.onTextDelta?.("stale partial");
+      await input.onRuntimeEvent?.(anyVal(supersede));
+      replacementProviderCalled = true;
+      input.onTextDelta?.("replacement answer");
+      return anyVal({ receiptId: "r1" });
+    };
+
+    const sent: unknown[] = [];
+    const ctx: RpcContext = {
+      notify: (_method, params) => {
+        const frame = params as TurnStreamFrame;
+        if (frame.t === "event") {
+          // The client's stream channel died between the stale and replacement
+          // deltas — exactly when the reset signal must land.
+          return Promise.reject(new Error("stream channel lost"));
+        }
+        sent.push(params);
+        return Promise.resolve();
+      },
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    await expect(handlers.turn({ prompt: "hi" }, ctx)).rejects.toThrow(
+      "stream channel lost",
+    );
+
+    expect(replacementProviderCalled).toBe(false);
+    expect(sent).toEqual([{ t: "delta", text: "stale partial" }]);
+  });
+
+  test("a rejected non-supersede event notification does not abort the turn", async () => {
+    // The asymmetry: only the supersede signal is fail-closed. A status event
+    // whose send fails (client gone) must stay best-effort — swallowed, not
+    // surfaced — so the turn runs to completion instead of failing on a dropped
+    // notification, and no per-event rejection floods back to the runtime.
+    let afterEventReached = false;
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      // A plain status event, not the superseding-retry signal.
+      await input.onRuntimeEvent?.(anyVal({ type: "toolCallStarted" }));
+      afterEventReached = true;
+      return anyVal({ receiptId: "r1" });
+    };
+    const ctx: RpcContext = {
+      notify: (_method, params) =>
+        (params as TurnStreamFrame).t === "event"
+          ? Promise.reject(new Error("client gone"))
+          : Promise.resolve(),
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    // Resolves (does not reject), and execution continued past the failed send.
+    await expect(handlers.turn({ prompt: "hi" }, ctx)).resolves.toBeDefined();
+    expect(afterEventReached).toBe(true);
   });
 
   test("a turn without a prompt -> invalidParams", async () => {

@@ -54,7 +54,9 @@ export interface TurnReceipt {
  * SSE frame protocol, negotiated via `Accept: text/event-stream`. Each wire
  * frame is `data: <json>\n\n` carrying one of these, discriminated by `t`:
  *   delta  — incremental model text
- *   event  — a lifecycle record (opaque JSON; the typed record is the receipt)
+ *   event  — a lifecycle record (opaque JSON; the typed record is the receipt —
+ *            except the superseding-retry signal below, which is pinned here
+ *            because clients must ACT on it, not merely display it)
  *   done   — terminal success, carrying the full TurnReceipt
  *   error  — terminal failure
  */
@@ -63,6 +65,67 @@ export type TurnStreamFrame =
   | { t: "event"; event: Record<string, unknown> }
   | { t: "done"; result: TurnReceipt }
   | { t: "error"; message: string };
+
+/**
+ * The superseding-retry signal. Emitted between the deltas of an abandoned
+ * attempt and the deltas of the retry that replaces it — e.g. when
+ * context-overflow recovery re-runs a turn on a recovered (compressed)
+ * transcript. Everything streamed for this turn BEFORE the signal is stale:
+ * the retry's answer replaces it, it does not continue it. A rendering client
+ * must reset its rendered buffer for the turn; the authoritative text is
+ * whatever streams after, or the receipt's `text`.
+ *
+ * This is the one lifecycle event whose shape is part of the wire contract:
+ * deltas and events share one ordered channel on both transports (SSE frames,
+ * UDS `stream` notifications), so in-order delivery of the signal relative to
+ * the deltas around it is guaranteed. Continuation retries (output-cap
+ * recovery) never emit it — their retry streams only new text.
+ */
+// A type alias, not an interface: the transports forward events as
+// `Record<string, unknown>` frames, and only alias-declared object types are
+// assignable to that index signature.
+/**
+ * What made a retry superseding. Deliberately open: producers may add reasons,
+ * and a consumer that does not recognize one must still reset its render rather
+ * than ignore the signal. Known values are spelled out for autocomplete; the
+ * open arm keeps the type honest about what the guard actually accepts, so a
+ * consumer cannot narrow to a closed set that the wire does not guarantee.
+ */
+export type SupersedingRetryReason =
+  | "context_overflow_recovery"
+  | (string & {});
+
+export type SupersedingRetryStartedEvent = {
+  type: "supersedingRetryStarted";
+  sessionId: string;
+  modelSlug: string;
+  reason: SupersedingRetryReason;
+};
+
+/**
+ * Discriminator guard for consumers reading opaque event records.
+ *
+ * Takes `unknown`: event frames arrive as unvalidated JSON over SSE and the UDS
+ * seam, so a buggy or hostile producer can send `null` or a primitive. Reject
+ * those instead of throwing on a property read.
+ *
+ * `reason` is accepted as any non-empty string rather than pinned to today's
+ * single value: it is an open union (`SupersedingRetryReason`), and pinning it
+ * here would make a future producer's signal silently fail to reset the render —
+ * a missed reset is the corrupted output this contract exists to prevent, and is
+ * worse than the malformed frame being guarded against. The empty string is
+ * still rejected: every real reason names something.
+ */
+export function isSupersedingRetryStarted(
+  event: unknown,
+): event is Record<string, unknown> & SupersedingRetryStartedEvent {
+  if (typeof event !== "object" || event === null) return false;
+  const record = event as Record<string, unknown>;
+  return record.type === "supersedingRetryStarted" &&
+    typeof record.sessionId === "string" &&
+    typeof record.modelSlug === "string" &&
+    typeof record.reason === "string" && record.reason.length > 0;
+}
 
 /**
  * Buffered (non-streaming) JSON turn response: the receipt plus the batched

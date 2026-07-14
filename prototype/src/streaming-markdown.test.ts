@@ -120,6 +120,35 @@ describe("createStreamingMarkdownRenderer", () => {
     expect(chunks).toEqual(["line one\n", "line two\n"]);
   });
 
+  test("reset drops the buffered partial line", () => {
+    const chunks: string[] = [];
+    const r = createStreamingMarkdownRenderer({
+      out: (t) => chunks.push(t),
+      color: false,
+      columns: 80,
+    });
+    r.push("stale partial with no newline");
+    r.reset();
+    r.push("fresh line\n");
+    r.flush();
+    expect(chunks.join("")).toBe("fresh line\n");
+  });
+
+  test("reset closes a half-open code fence so replacement text parses fresh", () => {
+    const chunks: string[] = [];
+    const r = createStreamingMarkdownRenderer({
+      out: (t) => chunks.push(t),
+      color: false,
+      columns: 80,
+    });
+    // The stale stream opened a fence that never closed. Without reset the
+    // replacement's markdown would render verbatim as code-block lines.
+    r.push("```\nstale code\n");
+    r.reset();
+    r.push("**bold** replacement\n");
+    expect(chunks.join("")).toBe("stale code\nbold replacement\n");
+  });
+
   test("renders a typical companion shape end-to-end", () => {
     const chunks: string[] = [];
     const r = createStreamingMarkdownRenderer({

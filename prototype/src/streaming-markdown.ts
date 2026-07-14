@@ -15,6 +15,13 @@ export interface StreamingMarkdownOptions {
 export interface StreamingMarkdownRenderer {
   push(delta: string): void;
   flush(): void;
+  /**
+   * Discard buffered-but-unrendered input and re-arm the line state (fenced
+   * code toggling) for a fresh document. For the superseding-retry signal:
+   * the text that replaces the stale stream starts from a clean parse state,
+   * never inheriting a half-open code fence or partial line from it.
+   */
+  reset(): void;
 }
 
 const RESET = "\x1b[0m";
@@ -225,6 +232,10 @@ export function createStreamingMarkdownRenderer(
         emitLine(buffer);
         buffer = "";
       }
+    },
+    reset(): void {
+      buffer = "";
+      inCodeBlock = false;
     },
   };
 }

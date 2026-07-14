@@ -15,7 +15,11 @@
 
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
-import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
+import {
+  isSupersedingRetryStarted,
+  type TurnReceipt,
+  type TurnStreamFrame,
+} from "./turn-contract";
 import {
   connectUnixClient,
   type ToolApprovalVerdict,
@@ -30,8 +34,9 @@ import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
 // imported by both sides, so this thin client can never silently drift from
-// what the server sends. `import type` is erased at compile, keeping the binary
-// engine-free.
+// what the server sends. Type imports are erased at compile, and the one value
+// import (the superseding-retry guard) comes from that dependency-free
+// contract module, keeping the binary engine-free.
 
 /** The receipt a turn carries. Canonical definition: the shared seam contract. */
 export type TurnResult = TurnReceipt;
@@ -244,6 +249,7 @@ export function createTurnOutputHandlers(
   emitBufferedText: (text: string) => void;
   finish: () => void;
   streamed: () => boolean;
+  supersede: () => void;
 } {
   let sawDelta = false;
   const renderer = createStreamingMarkdownRenderer({
@@ -262,7 +268,41 @@ export function createTurnOutputHandlers(
     },
     finish: () => renderer.flush(),
     streamed: () => sawDelta,
+    // The superseding-retry signal: text rendered so far is stale. Already-
+    // printed lines may have scrolled beyond reach, so honest presentation is
+    // a visible marker plus a clean renderer — never silently gluing the
+    // replacement onto the stale text's parse state. sawDelta re-arms so a
+    // retry that ends up buffered still gets its text emitted from the receipt.
+    supersede: () => {
+      renderer.reset();
+      sawDelta = false;
+      const marker = "⟲ retrying with recovered context — " +
+        "the reply restarts below";
+      io.out(`\n${config.color ? `\x1b[2m${marker}\x1b[0m` : marker}\n\n`);
+    },
   };
+}
+
+/**
+ * Route one runtime event from a streaming turn: the superseding-retry signal
+ * resets the renderer (the contract every streaming client must honor); other
+ * events render as stderr status lines. Shared by the HTTP/SSE and UDS paths —
+ * the frame shapes match, so honoring the contract once covers both.
+ */
+export function handleTurnRuntimeEvent(
+  event: unknown,
+  output: ReturnType<typeof createTurnOutputHandlers>,
+  io: Io,
+): void {
+  if (isSupersedingRetryStarted(event)) {
+    output.supersede();
+    return;
+  }
+  // Both clients decode the transport JSON but never schema-validate the frame,
+  // so a malformed `event: null` or primitive must be dropped, not dereferenced.
+  if (typeof event !== "object" || event === null) return;
+  const line = formatRuntimeEvent(event as Record<string, unknown>);
+  if (line !== null) io.err(line);
 }
 
 export function formatReceipt(result: TurnResult, color: boolean): string {
@@ -312,10 +352,8 @@ export async function runExec(
       const output = createTurnOutputHandlers(config, io);
       const handlers = {
         onDelta: output.onDelta,
-        onEvent: (event: Record<string, unknown>) => {
-          const line = formatRuntimeEvent(event);
-          if (line !== null) io.err(line);
-        },
+        onEvent: (event: Record<string, unknown>) =>
+          handleTurnRuntimeEvent(event, output, io),
         onApproval,
       };
       const result = config.unix
@@ -375,10 +413,8 @@ export async function runRepl(
         const output = createTurnOutputHandlers(config, io);
         const handlers = {
           onDelta: output.onDelta,
-          onEvent: (event: Record<string, unknown>) => {
-            const line = formatRuntimeEvent(event);
-            if (line !== null) io.err(line);
-          },
+          onEvent: (event: Record<string, unknown>) =>
+            handleTurnRuntimeEvent(event, output, io),
           onApproval,
         };
         const body = buildTurnBody(prompt, config, sessionId);

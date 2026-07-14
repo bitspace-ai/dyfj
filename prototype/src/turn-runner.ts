@@ -292,7 +292,10 @@ export interface ExecuteTurnDeps {
   runRuntime: WorkbenchHttpRuntime;
   fetchSessionEvents: FetchSessionEvents;
   onTextDelta?: (delta: string) => void;
-  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void;
+  // Matches WorkbenchRuntimeInput.onRuntimeEvent: a transport handler may return
+  // a promise (the UDS seam returns its notify), so the runtime can await
+  // delivery where that matters (the fail-closed superseding-retry signal).
+  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   /**
    * Mutating-tool approval handler. The UDS transport supplies a
    * duplex round-trip; HTTP omits it, so the runtime defaults to deny.

@@ -259,6 +259,56 @@ describe("createWorkbenchHttpHandler", () => {
     expect(frames[frames.length - 1]).toMatchObject({ t: "done" });
   });
 
+  test("the SSE producer keeps the superseding-retry signal ordered between stale and replacement deltas", async () => {
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: async (input) => {
+        input.onTextDelta?.("stale partial");
+        await input.onRuntimeEvent?.({
+          type: "supersedingRetryStarted",
+          sessionId: "01HTTPSESSION00000000000000",
+          modelSlug: "gemma4:e2b",
+          reason: "context_overflow_recovery",
+        });
+        input.onTextDelta?.("replacement answer");
+        return runtimeResult();
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "text/event-stream",
+        },
+        body: JSON.stringify({
+          prompt: "hello",
+          mode: "turn",
+          routingOptions: {},
+        }),
+      }),
+    );
+
+    // The reset contract only works if the wire preserves emission order: a
+    // consumer resets exactly at the signal, keeping everything after it.
+    const frames = parseSseFrames(await response.text());
+    const staleAt = frames.findIndex(
+      (f) => f.t === "delta" && f.text === "stale partial",
+    );
+    const supersedeAt = frames.findIndex(
+      (f) =>
+        f.t === "event" &&
+        (f.event as Record<string, unknown>)?.type ===
+          "supersedingRetryStarted",
+    );
+    const freshAt = frames.findIndex(
+      (f) => f.t === "delta" && f.text === "replacement answer",
+    );
+    expect(staleAt).toBeGreaterThanOrEqual(0);
+    expect(supersedeAt).toBeGreaterThan(staleAt);
+    expect(freshAt).toBeGreaterThan(supersedeAt);
+  });
+
   test("locks the turn receipt contract: identical receipt across in-process, JSON, and SSE paths", async () => {
     // The result the runtime produces in-process is the fidelity reference.
     const inProcess = runtimeResult();
