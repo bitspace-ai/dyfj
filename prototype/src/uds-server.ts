@@ -381,10 +381,14 @@ export function buildTurnHandlers(
       const noteStreamNotifyFailure = (err: unknown): void => {
         if (streamNotifyFailureLogged) return;
         streamNotifyFailureLogged = true;
+        // Log the error's class, not its message: a Unix-socket write error can
+        // carry the socket path, and this warning channel is path-free by
+        // convention. Sends continue best-effort; only repeated warnings are
+        // suppressed this turn.
+        const kind = err instanceof Error ? err.name : "unknown";
         console.warn(
-          `stream notify skipped — client likely disconnected; further sends this turn silenced: ${
-            (err as Error)?.message ?? err
-          }`,
+          `stream notify failed (${kind}) — client likely disconnected; ` +
+            `further failures this turn will not be logged`,
         );
       };
       return await executeTurn(resolved, {

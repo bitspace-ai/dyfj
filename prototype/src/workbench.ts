@@ -120,6 +120,16 @@ export interface WorkbenchRuntimeInput {
    */
   conversationMessages?: WorkbenchMessage[];
   onTextDelta?: (delta: string) => void;
+  /**
+   * Runtime lifecycle events. A streaming caller (one that renders `onTextDelta`)
+   * MUST consume this to honor the superseding-retry reset contract: the
+   * `supersedingRetryStarted` event is what tells it to discard the deltas it has
+   * shown before a superseding retry replaces them. A caller that streams deltas
+   * with overflow recovery enabled but supplies no event channel here (and does
+   * not surface the recovery `log` note) cannot be signaled, and would render the
+   * stale and replacement deltas concatenated. Delivery of that one event is
+   * fail-closed only when this handler is present.
+   */
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   /**
    * Presentation sink for human-readable turn narration: context loading,
