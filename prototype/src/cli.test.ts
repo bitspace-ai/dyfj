@@ -629,6 +629,26 @@ describe("handleTurnRuntimeEvent", () => {
     handleTurnRuntimeEvent({ type: "supersedingRetryStarted" }, output, io);
     expect(stdout.join("")).not.toContain("retrying with recovered context");
   });
+
+  // reason is an open union: a consumer that does not recognize a future reason
+  // must still reset, or it renders the superseded attempt as the answer.
+  test("supersedes on an unrecognized reason", () => {
+    const { io, stdout } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(
+      { ...supersedeEvent(), reason: "some_future_reason" },
+      output,
+      io,
+    );
+    expect(stdout.join("")).toContain("retrying with recovered context");
+  });
+
+  test("does not supersede on an empty reason", () => {
+    const { io, stdout } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent({ ...supersedeEvent(), reason: "" }, output, io);
+    expect(stdout.join("")).not.toContain("retrying with recovered context");
+  });
 });
 
 describe("runExec over the socket (--unix)", () => {

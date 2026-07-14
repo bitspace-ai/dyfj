@@ -84,12 +84,22 @@ export type TurnStreamFrame =
 // A type alias, not an interface: the transports forward events as
 // `Record<string, unknown>` frames, and only alias-declared object types are
 // assignable to that index signature.
+/**
+ * What made a retry superseding. Deliberately open: producers may add reasons,
+ * and a consumer that does not recognize one must still reset its render rather
+ * than ignore the signal. Known values are spelled out for autocomplete; the
+ * open arm keeps the type honest about what the guard actually accepts, so a
+ * consumer cannot narrow to a closed set that the wire does not guarantee.
+ */
+export type SupersedingRetryReason =
+  | "context_overflow_recovery"
+  | (string & {});
+
 export type SupersedingRetryStartedEvent = {
   type: "supersedingRetryStarted";
   sessionId: string;
   modelSlug: string;
-  /** What made the retry superseding (extensible union). */
-  reason: "context_overflow_recovery";
+  reason: SupersedingRetryReason;
 };
 
 /**
@@ -99,11 +109,12 @@ export type SupersedingRetryStartedEvent = {
  * seam, so a buggy or hostile producer can send `null` or a primitive. Reject
  * those instead of throwing on a property read.
  *
- * `reason` is checked as a string rather than against today's single literal:
- * it is an extensible union, and pinning it here would make a future producer's
- * signal silently fail to reset the render — a missed reset is the corrupted
- * output this contract exists to prevent, and is worse than the malformed frame
- * being guarded against.
+ * `reason` is accepted as any non-empty string rather than pinned to today's
+ * single value: it is an open union (`SupersedingRetryReason`), and pinning it
+ * here would make a future producer's signal silently fail to reset the render —
+ * a missed reset is the corrupted output this contract exists to prevent, and is
+ * worse than the malformed frame being guarded against. The empty string is
+ * still rejected: every real reason names something.
  */
 export function isSupersedingRetryStarted(
   event: unknown,
@@ -113,7 +124,7 @@ export function isSupersedingRetryStarted(
   return record.type === "supersedingRetryStarted" &&
     typeof record.sessionId === "string" &&
     typeof record.modelSlug === "string" &&
-    typeof record.reason === "string";
+    typeof record.reason === "string" && record.reason.length > 0;
 }
 
 /**
