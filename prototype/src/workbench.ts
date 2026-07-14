@@ -1038,6 +1038,30 @@ async function emitRuntimeEvent(
   }
 }
 
+/**
+ * Deliver the superseding-retry signal WITHOUT the best-effort swallow the
+ * other runtime events get.
+ *
+ * Every other runtime event is a status line: losing one costs the consumer
+ * some progress detail. This one is the single event a consumer must *act* on —
+ * it is what tells a streaming client to discard the text it has already
+ * rendered. If it is dropped, the replacement deltas concatenate onto the stale
+ * ones and are presented as one answer, which is exactly the corruption this
+ * contract exists to prevent. So delivery is fail-closed: a throwing handler
+ * propagates, the caller's catch closes the recovery trail, and the turn fails
+ * instead of streaming a replacement the consumer cannot distinguish.
+ *
+ * No handler means no event channel at all (the in-process presenter): there is
+ * nothing to drop, and the recovery log note is that consumer's signal.
+ */
+async function deliverSupersedingRetrySignal(
+  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  event: WorkbenchRuntimeEvent,
+): Promise<void> {
+  if (!handler) return;
+  await handler(event);
+}
+
 function estimateRuntimeInputCount(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -1745,19 +1769,25 @@ export async function runWorkbenchRuntime(
               messages: structuredClone(params.messages ?? []),
             });
             if (plan !== null) {
-              retriesUsed = 1;
               // The retry's answer REPLACES the partial that already streamed
               // — announce the supersede before any retry deltas (deltas and
               // events share one ordered channel on every streaming transport)
               // so a rendering consumer can reset its buffer. The log note is
               // the same signal for the in-process presenter, which renders
               // deltas but has no event channel.
-              await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+              //
+              // Fail-closed, and deliberately BEFORE retriesUsed is counted: if
+              // the signal cannot be delivered, the retry must not start at all,
+              // because its deltas would concatenate onto the stale ones the
+              // consumer still has on screen. The throw lands in the catch below,
+              // which closes the recovery trail — and no retry was consumed.
+              await deliverSupersedingRetrySignal(runtimeInput.onRuntimeEvent, {
                 type: "supersedingRetryStarted",
                 sessionId,
                 modelSlug: turn.model.slug,
                 reason: "context_overflow_recovery",
               });
+              retriesUsed = 1;
               log(
                 "\n[context recovered — retrying; the reply restarts below]",
               );

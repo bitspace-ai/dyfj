@@ -1538,6 +1538,62 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
     }
   });
 
+  test("a failed supersede delivery aborts the retry instead of streaming an unmarked replacement", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    (runtimeMocks.model as { contextWindow?: number }).contextWindow = 100;
+    try {
+      const trail: string[] = [];
+      runtimeMocks.runWorkbenchTurn
+        .mockResolvedValueOnce({
+          ...turnBase(),
+          usage: {
+            input: 95,
+            output: 4,
+            cost: { total: 0 },
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+          text: "cut off",
+          stopReason: "length",
+        })
+        .mockImplementationOnce(() => {
+          trail.push("retryProviderCall");
+          return Promise.resolve({
+            ...turnBase(),
+            text: "recovered answer",
+            stopReason: "stop",
+          });
+        });
+
+      // The consumer's event channel is broken exactly when the supersede signal
+      // is delivered. Streaming the replacement anyway would glue it onto the
+      // stale text still on the consumer's screen, so the turn must fail instead.
+      await expect(
+        runWorkbenchRuntime({
+          mode: "turn",
+          prompt: "one more question",
+          routingOptions: {},
+          recoverContextOverflow: () =>
+            Promise.resolve({
+              messages: [{ role: "user" as const, content: "compressed" }],
+            }),
+          onRuntimeEvent: (event) => {
+            if (event.type === "supersedingRetryStarted") {
+              throw new Error("event channel closed");
+            }
+            trail.push(event.type);
+          },
+        }),
+      ).rejects.toThrow("event channel closed");
+
+      expect(trail).not.toContain("retryProviderCall");
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      (runtimeMocks.model as { contextWindow?: number }).contextWindow =
+        prevWindow;
+    }
+  });
+
   test("a continuation retry never signals a supersede — its text extends the partial", async () => {
     runtimeMocks.runWorkbenchTurn
       .mockResolvedValueOnce({
