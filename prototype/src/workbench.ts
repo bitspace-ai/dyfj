@@ -1056,7 +1056,7 @@ async function emitRuntimeEvent(
  */
 async function deliverSupersedingRetrySignal(
   handler: WorkbenchRuntimeInput["onRuntimeEvent"],
-  event: WorkbenchRuntimeEvent,
+  event: SupersedingRetryStartedEvent,
 ): Promise<void> {
   if (!handler) return;
   await handler(event);

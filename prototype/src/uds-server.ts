@@ -411,11 +411,20 @@ export function buildTurnHandlers(
           ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a
         // client can reuse one frame handler across both transports.
-        onTextDelta: (text) =>
-          void ctx.notify(
+        // Deltas stay best-effort — a dropped one costs some rendered text, not
+        // correctness like the superseding signal — but the notify promise is
+        // observed, not discarded: a rejecting send (e.g. the socket closed)
+        // would otherwise surface as an unhandled rejection.
+        onTextDelta: (text) => {
+          ctx.notify(
             "stream",
             { t: "delta", text } satisfies TurnStreamFrame,
-          ),
+          ).catch((err) => {
+            console.warn(
+              `stream delta notify skipped: ${(err as Error)?.message ?? err}`,
+            );
+          });
+        },
         // Returned, not voided: the runtime awaits this handler to decide
         // whether the superseding-retry signal actually reached the client. A
         // discarded promise would report success for a notification that never
