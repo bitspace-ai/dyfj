@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
-  fetchWithHeaderTimeout,
   buildAnthropicMessagesRequest,
   buildGeminiRequest,
   buildOpenAIChatRequest,
   defaultLocalWorkbenchModels,
   estimateTextTokens,
   extractTextToolCalls,
+  fetchWithHeaderTimeout,
   HostedProviderCredentialMissingError,
   parseAnthropicStreamLine,
   parseGeminiStreamLine,
@@ -528,6 +528,32 @@ describe("runWorkbenchTurn streaming", () => {
     );
     expect(result.model.provider).toBe("mlx-lm");
     expect(result.text).toBe("hello from mlx");
+  });
+
+  test("refuses redirects on the provider request (no off-box body egress via 307/308)", async () => {
+    let capturedRedirect: RequestRedirect | undefined;
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "laguna-xs.2" },
+      models: defaultLocalWorkbenchModels(),
+      fetchFn: (_input, init) => {
+        capturedRedirect = init?.redirect;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 1, completion_tokens: 1 },
+            }),
+            { status: 200 },
+          ),
+        );
+      },
+    });
+    // Only the initial base URL is validated as loopback; with redirect: "error"
+    // the platform fetch throws on a 307/308 instead of re-POSTing the (private)
+    // transcript body to the redirect target off loopback.
+    expect(capturedRedirect).toBe("error");
   });
 
   test("rejects local providers with non-loopback base URLs", async () => {
@@ -1453,27 +1479,30 @@ describe("explicit tier preference", () => {
 
 describe("fetchWithHeaderTimeout", () => {
   test("aborts a blackholed connection with a named error", async () => {
-    const blackhole = ((_url: string | URL | Request, init?: RequestInit) =>
-      new Promise<Response>((_, reject) => {
-        init?.signal?.addEventListener("abort", () => {
-          reject(new DOMException("aborted", "AbortError"));
-        });
-      })) as unknown as typeof fetch;
+    const blackhole =
+      ((_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        })) as unknown as typeof fetch;
     await expect(
       fetchWithHeaderTimeout(blackhole, "http://x/", {}, "anthropic/test", 30),
     ).rejects.toThrow(/anthropic\/test: no response headers within 30ms/);
   });
 
   test("passes a normal response through and clears the timer", async () => {
-    const ok = (() =>
-      Promise.resolve(new Response("hi"))) as unknown as typeof fetch;
+    const ok =
+      (() => Promise.resolve(new Response("hi"))) as unknown as typeof fetch;
     const response = await fetchWithHeaderTimeout(ok, "http://x/", {}, "l", 30);
     expect(await response.text()).toBe("hi");
   });
 
   test("non-abort failures pass through unchanged", async () => {
     const refused = (() =>
-      Promise.reject(new Error("connection refused"))) as unknown as typeof fetch;
+      Promise.reject(
+        new Error("connection refused"),
+      )) as unknown as typeof fetch;
     await expect(
       fetchWithHeaderTimeout(refused, "http://x/", {}, "l", 1000),
     ).rejects.toThrow("connection refused");
@@ -1501,7 +1530,9 @@ describe("unpriced models are unroutable", () => {
     expect(modelHasCatalogPricing(models[2])).toBe(true); // tier 1, priced
     expect(modelHasCatalogPricing(unpriced)).toBe(false); // tier 2, $0
     expect(modelHasCatalogPricing({ ...unpriced, costInput: 15 })).toBe(false); // half-priced
-    expect(modelHasCatalogPricing({ ...unpriced, costInput: 15, costOutput: 75 }))
+    expect(
+      modelHasCatalogPricing({ ...unpriced, costInput: 15, costOutput: 75 }),
+    )
       .toBe(true);
   });
 

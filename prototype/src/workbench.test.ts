@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { resetCeilingConfirmations } from "./budget";
 import { LENGTH_CONTINUATION_NUDGE } from "./length-recovery";
 import {
+  COMPRESSION_SECTIONS,
+  COMPRESSION_SYSTEM_PROMPT,
+  CONVERSATION_SUMMARY_MARKER,
+  SUMMARY_TRUST_POLICY,
+} from "./context-compression";
+import type { WorkbenchMessage } from "./provider";
+import {
   type BudgetTallyInput,
   buildBudgetTallyLine,
   buildNextWorkBrief,
@@ -10,6 +17,7 @@ import {
   buildWorkbenchRuntimeInput,
   buildWorkbenchShellBanner,
   buildWorkspaceGrounding,
+  ContextCompressionPersistenceUncertainError,
   formatMoney,
   isNextWorkMode,
   isWorkbenchShellExitCommand,
@@ -47,10 +55,19 @@ const runtimeMocks = vi.hoisted(() => {
     sessions: [] as Record<string, unknown>[],
     sessionUpdates: [] as Record<string, unknown>[],
     model,
+    // When set, the model registry the runtime loads; otherwise the single
+    // session model. Compression routing selects OVER this list, so a test can
+    // offer a local alternative alongside a hosted row.
+    registry: null as typeof model[] | null,
     runWorkbenchTurn: vi.fn(),
     // when set, event writes for this event_type throw, to test the
     // integrity-required vs best-effort write policy.
     failEventType: null as string | null,
+    // when true, a failed write STILL leaves its row durable — the ambiguous
+    // "committed, acknowledgment lost" case the durability probe resolves.
+    failedWriteLands: false,
+    // when true, the durability probe itself throws: genuinely uncertain.
+    failEventProbe: false,
     // whether the mocked adapter honors params.messages (transcript retry);
     // flip to false to exercise the Google-style no-retry path.
     supportsTranscriptRetry: true,
@@ -59,15 +76,25 @@ const runtimeMocks = vi.hoisted(() => {
 
 vi.mock("./utils", () => ({
   // Spend-baseline rollup: no prior spend on the books in unit tests.
-  doltQuery: async () => [{ session_spent: "0", session_today: "0", daily_others: "0" }],
+  doltQuery:
+    async () => [{ session_spent: "0", session_today: "0", daily_others: "0" }],
   generateULID: () => `01TEST${String(++runtimeMocks.ulid).padStart(20, "0")}`,
   generateTraceId: () => "0123456789abcdef0123456789abcdef",
   generateSpanId: () => "0123456789abcdef",
   writeEvent: async (event: Record<string, unknown>) => {
     if (event.event_type === runtimeMocks.failEventType) {
+      // Record what a rejected-but-committed write leaves behind, so the
+      // durability probe can find (or not find) the row by id.
+      if (runtimeMocks.failedWriteLands) runtimeMocks.writtenEvents.push(event);
       throw new Error(`simulated write failure: ${String(event.event_type)}`);
     }
     runtimeMocks.writtenEvents.push(event);
+  },
+  eventExists: async (eventId: string) => {
+    if (runtimeMocks.failEventProbe) {
+      throw new Error("simulated durability probe failure");
+    }
+    return runtimeMocks.writtenEvents.some((e) => e.event_id === eventId);
   },
   writeModelSelectedEvent: async (params: Record<string, unknown>) => {
     if (runtimeMocks.failEventType === "model_selected") {
@@ -90,17 +117,52 @@ vi.mock("./provider", () => {
   return {
     defaultLocalWorkbenchModels: () => [runtimeMocks.model],
     [estimateExport]: (text: string) => Math.ceil(text.length / 4),
-    loadWorkbenchModels: async () => [runtimeMocks.model],
+    loadWorkbenchModels: async () =>
+      runtimeMocks.registry ?? [runtimeMocks.model],
     modelRequestedOutputCap: (model: { maxOutputTokens?: number }) =>
       model.maxOutputTokens,
     modelStreamsToolCalls: () => true,
     modelSupportsTranscriptRetry: () => runtimeMocks.supportsTranscriptRetry,
     runWorkbenchTurn: runtimeMocks.runWorkbenchTurn,
-    selectWorkbenchModel: () => ({
-      selected: runtimeMocks.model,
-      considered: [runtimeMocks.model.slug],
-      reason: "default",
-    }),
+    // Tier selection must honor the CANDIDATE LIST it is handed and throw on an
+    // empty set, the way the real selector does — compression pre-filters that
+    // list to on-machine rows, so a mock that ignored it would make routing
+    // unobservable and pass under either behavior. Every other path keeps the
+    // previous stub: the session model.
+    selectWorkbenchModel: (
+      models: typeof runtimeMocks.model[],
+      options?: { tier?: number },
+    ) => {
+      if (options?.tier !== undefined) {
+        const candidates = (models ?? []).filter(
+          (candidate) => candidate.tier === options.tier,
+        );
+        const selected = candidates[0];
+        if (!selected) throw new Error(`no model found for tier:${options.tier}`);
+        return {
+          selected,
+          considered: candidates.map((candidate) => candidate.slug),
+          reason: "explicit_tier",
+        };
+      }
+      return {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      };
+    },
+    // Real-shaped locality predicate: local OpenAI-compatible provider on a
+    // loopback base URL. Lets the compression tests flip the model to a tier-0
+    // HOSTED row and prove compression declines rather than calling out.
+    isLocalWorkbenchModel: (model: { provider: string; baseUrl: string }) => {
+      if (!["ollama", "mlx-lm"].includes(model.provider)) return false;
+      try {
+        const host = new URL(model.baseUrl).hostname.toLowerCase();
+        return host === "localhost" || host === "127.0.0.1" || host === "::1";
+      } catch {
+        return false;
+      }
+    },
     withDefaultLocalWorkbenchModels: (models: unknown[]) => models,
   };
 });
@@ -1910,9 +1972,11 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
       // Exactly one provider call — the doomed continuation was not attempted.
       expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
       expect(result.text).toBe(partial);
-      expect(events.find((e) => e.type === "lengthStopDetected")).toMatchObject({
-        classification: "output_budget_exhausted",
-      });
+      expect(events.find((e) => e.type === "lengthStopDetected")).toMatchObject(
+        {
+          classification: "output_budget_exhausted",
+        },
+      );
       expect(events.find((e) => e.type === "lengthRecoveryFinished"))
         .toMatchObject({ outcome: "retry_would_overflow", retriesUsed: 0 });
       // Cut-off tool plan stripped; turn completes cleanly.
@@ -2307,6 +2371,520 @@ describe("runWorkbenchRuntime runaway anomaly gate", () => {
       (runtimeMocks.model as { tier: number }).tier = prevTier;
       runtimeMocks.model.costInput = prevCost;
       log.mockRestore();
+    }
+  });
+});
+
+describe("runWorkbenchRuntime proactive context compression", () => {
+  const validSummary = COMPRESSION_SECTIONS.map((s) => `## ${s}\n(none)`)
+    .join("\n\n");
+  // Four turns so that, with the K=2 verbatim tail, two elder turns remain to
+  // compress. Long content so the estimate crosses the 50%-of-window trigger.
+  const bigHistory: WorkbenchMessage[] = [
+    { role: "user", content: "old question ".repeat(80) },
+    { role: "assistant", content: "old answer ".repeat(80) },
+    { role: "user", content: "second question ".repeat(80) },
+    { role: "assistant", content: "second answer ".repeat(80) },
+    { role: "user", content: "third question ".repeat(80) },
+    { role: "assistant", content: "third answer ".repeat(80) },
+    { role: "user", content: "fourth question ".repeat(80) },
+    { role: "assistant", content: "fourth answer ".repeat(80) },
+  ];
+
+  // deno-lint-ignore no-explicit-any
+  type TurnParams = any;
+  const turnResult = (text: string) => ({
+    text,
+    model: runtimeMocks.model,
+    selection: {
+      selected: runtimeMocks.model,
+      considered: [runtimeMocks.model.slug],
+      reason: "default",
+    },
+    usage: {
+      input: 10,
+      output: 5,
+      cost: { total: 0 },
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    stopReason: "stop",
+    timings: { totalMs: 1, responseHeadersMs: 1 },
+  });
+
+  // Branch the shared turn mock: the compression call carries the compression
+  // system prompt; capture the messages the ACTUAL turn is given.
+  function wireCompressionMock(captured: { value?: WorkbenchMessage[] }) {
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        return Promise.resolve(turnResult(validSummary));
+      }
+      captured.value = params.messages;
+      return Promise.resolve(turnResult("runtime response"));
+    });
+  }
+
+  test("compresses elder turns when the transcript crosses ~50% of the window", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      const compressed = events.find((e) => e.type === "contextCompressed");
+      expect(compressed).toBeDefined();
+      expect(compressed?.trigger).toBe("proactive");
+      expect(compressed?.turnsCompressed).toBe(2);
+      const seen = captured.value ?? [];
+      expect(seen[0]?.content).toContain(CONVERSATION_SUMMARY_MARKER);
+      expect(JSON.stringify(seen)).not.toContain("old question");
+      expect(
+        runtimeMocks.writtenEvents.some((e) =>
+          e.event_type === "context_compressed"
+        ),
+      ).toBe(true);
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  test("does not compress below the trigger, and leaves the transcript intact", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 1_000_000;
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    const events: Array<{ type: string }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      expect(events.some((e) => e.type === "contextCompressed")).toBe(false);
+      expect(JSON.stringify(captured.value ?? [])).toContain("old question");
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  test("declines compression when its event cannot be persisted", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    const prevFail = runtimeMocks.failEventType;
+    // The durable event write fails: compression must decline, not proceed with
+    // an in-memory-only compression that resume could never reconstruct.
+    runtimeMocks.failEventType = "context_compressed";
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    const events: Array<{ type: string }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      // No compression surfaced, and the actual turn saw the uncompressed history.
+      expect(events.some((e) => e.type === "contextCompressed")).toBe(false);
+      expect(JSON.stringify(captured.value ?? [])).toContain("old question");
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      runtimeMocks.failEventType = prevFail;
+    }
+  });
+
+  // Moderate history in a large window: the pre-call estimate stays under the
+  // 50% proactive trigger (so proactive does not preempt), but the elder turns
+  // are larger than the summary, so the reactive compression is worthwhile. The
+  // overflow is driven by the model's REPORTED usage, independent of the
+  // estimate — that is what routes into the reactive recoverer.
+  const moderateHistory: WorkbenchMessage[] = [
+    { role: "user", content: "question ".repeat(25) },
+    { role: "assistant", content: "answer ".repeat(25) },
+    { role: "user", content: "again ".repeat(25) },
+    { role: "assistant", content: "response ".repeat(25) },
+    { role: "user", content: "more ".repeat(25) },
+    { role: "assistant", content: "reply ".repeat(25) },
+    { role: "user", content: "still ".repeat(25) },
+    { role: "assistant", content: "ok ".repeat(25) },
+  ];
+
+  test("an overflow with no injected recoverer compresses then retries", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 1000;
+    let realCall = 0;
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        return Promise.resolve(turnResult(validSummary));
+      }
+      realCall++;
+      if (realCall === 1) {
+        // First attempt overflows: reported input+output >= 0.98 * window.
+        return Promise.resolve({
+          ...turnResult("cut off"),
+          stopReason: "length",
+          usage: {
+            input: 975,
+            output: 10,
+            cost: { total: 0 },
+            cacheRead: 0,
+            cacheWrite: 0,
+          },
+        });
+      }
+      // The retry runs on the compressed transcript.
+      return Promise.resolve(turnResult("recovered answer"));
+    });
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more",
+        routingOptions: {},
+        conversationMessages: moderateHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      expect(result.text).toBe("recovered answer");
+      const compressed = events.find((e) => e.type === "contextCompressed");
+      expect(compressed?.trigger).toBe("context_overflow");
+      // Presented via the superseding-retry contract.
+      expect(events.some((e) => e.type === "supersedingRetryStarted")).toBe(
+        true,
+      );
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  test("the compression-consuming turn's system prompt carries the untrusted-summary policy", async () => {
+    const captured: { systemPrompt?: string } = {};
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      captured.systemPrompt = params.systemPrompt;
+      return Promise.resolve(turnResult("runtime response"));
+    });
+    await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "hello",
+      routingOptions: {},
+    });
+    // The trusted-channel backstop reaches the actual companion turn — not just
+    // the ask path — so a compressed summary is always covered by a system rule.
+    expect(captured.systemPrompt ?? "").toContain(SUMMARY_TRUST_POLICY);
+  });
+
+  test("declines compression on a tier-0 HOSTED model (locality, not tier)", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevProvider = runtimeMocks.model.provider;
+    const prevBaseUrl = runtimeMocks.model.baseUrl;
+    runtimeMocks.model.contextWindow = 100;
+    // Tier stays 0, but the row names a HOSTED provider on a hosted URL.
+    (runtimeMocks.model as { provider: string }).provider = "anthropic";
+    (runtimeMocks.model as { baseUrl: string }).baseUrl =
+      "https://api.anthropic.com";
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    let compressionCallMade = false;
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        compressionCallMade = true;
+      } else {
+        captured.value = params.messages;
+      }
+      return Promise.resolve(turnResult("runtime response"));
+    });
+    const events: Array<{ type: string }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      // No compression request left the machine, and none was surfaced.
+      expect(compressionCallMade).toBe(false);
+      expect(events.some((e) => e.type === "contextCompressed")).toBe(false);
+      expect(JSON.stringify(captured.value ?? [])).toContain("old question");
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      (runtimeMocks.model as { provider: string }).provider = prevProvider;
+      (runtimeMocks.model as { baseUrl: string }).baseUrl = prevBaseUrl;
+    }
+  });
+
+  test("the payload the proactive path actually emits replays byte-identical", async () => {
+    // THE integrated seam guard. A unit test that hand-writes a payload only
+    // proves the replay logic agrees with the test author's model of the runtime
+    // — it cannot catch the runtime emitting a different count than the author
+    // assumed. This asserts against the REAL emitted event: run the proactive
+    // path, take the context_compressed row it wrote, replay the resulting event
+    // stream through the real buildConversationMessages, and require the result
+    // to equal the messages the live turn was actually given.
+    const { buildConversationMessages } = await vi.importActual<
+      typeof import("./sessions")
+    >("./sessions");
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    runtimeMocks.writtenEvents.length = 0;
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+      });
+      const compressed = runtimeMocks.writtenEvents.find(
+        (e) => e.event_type === "context_compressed",
+      );
+      expect(compressed).toBeDefined();
+
+      // The event stream a resume would read: the prior turns, the current
+      // prompt (persisted before compression), then the compression event.
+      const ev = (eventType: string, content: string | null) => ({
+        eventId: "01E",
+        eventType,
+        traceId: "t",
+        principalId: "operator",
+        modelId: null,
+        provider: null,
+        content,
+        stopReason: null,
+        tokensInput: null,
+        tokensOutput: null,
+        costTotal: null,
+        toolName: null,
+        toolCallId: null,
+        toolArguments: null,
+        toolResult: null,
+        createdAt: "2026-01-01 00:00:00",
+      });
+      const resumed = buildConversationMessages([
+        ...bigHistory.map((m) =>
+          ev(m.role === "user" ? "session_start" : "model_response", m.content)
+        ),
+        ev("session_start", "new question"),
+        ev("context_compressed", compressed?.content as string),
+      ]);
+
+      // Byte-identical to what the model was actually given live.
+      expect(resumed).toEqual(captured.value);
+      // And specifically: the verbatim tail survived. The first retained turn is
+      // the one an off-by-one in the retained count silently eats.
+      expect(JSON.stringify(resumed)).toContain("third question");
+      expect(JSON.stringify(resumed)).toContain("fourth question");
+      expect(JSON.stringify(resumed)).not.toContain("old question");
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  // ─── Ambiguous write acknowledgment ────────────────────────────────────────
+  // A rejected INSERT cannot be told apart from "committed, ack lost", so the
+  // write probes by id. Three outcomes, three tests.
+
+  test("adopts compression when a rejected write turns out to be durable", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevFail = runtimeMocks.failEventType;
+    const prevLands = runtimeMocks.failedWriteLands;
+    runtimeMocks.model.contextWindow = 100;
+    // The write rejects, but the row IS durable. Resume will rebuild from it, so
+    // the live turn must use the compressed transcript — continuing uncompressed
+    // is exactly the divergence this resolves.
+    runtimeMocks.failEventType = "context_compressed";
+    runtimeMocks.failedWriteLands = true;
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    const events: Array<{ type: string }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      expect(events.some((e) => e.type === "contextCompressed")).toBe(true);
+      // The live turn saw the summary, not the elder turns it replaced.
+      expect(JSON.stringify(captured.value ?? [])).not.toContain("old question");
+      expect(JSON.stringify(captured.value ?? [])).toContain(
+        CONVERSATION_SUMMARY_MARKER,
+      );
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      runtimeMocks.failEventType = prevFail;
+      runtimeMocks.failedWriteLands = prevLands;
+    }
+  });
+
+  test("declines compression when a rejected write left no durable row", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevFail = runtimeMocks.failEventType;
+    const prevLands = runtimeMocks.failedWriteLands;
+    runtimeMocks.model.contextWindow = 100;
+    // Genuinely not persisted: the designed graceful fallback — continue on the
+    // uncompressed transcript rather than failing the turn.
+    runtimeMocks.failEventType = "context_compressed";
+    runtimeMocks.failedWriteLands = false;
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    const events: Array<{ type: string }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      expect(events.some((e) => e.type === "contextCompressed")).toBe(false);
+      expect(JSON.stringify(captured.value ?? [])).toContain("old question");
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      runtimeMocks.failEventType = prevFail;
+      runtimeMocks.failedWriteLands = prevLands;
+    }
+  });
+
+  test("fails the turn when durability cannot be determined", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevFail = runtimeMocks.failEventType;
+    const prevProbe = runtimeMocks.failEventProbe;
+    runtimeMocks.model.contextWindow = 100;
+    // Write rejected AND the probe failed: no safe choice, so the turn fails
+    // rather than risk a live transcript that diverges from resume.
+    runtimeMocks.failEventType = "context_compressed";
+    runtimeMocks.failEventProbe = true;
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+      })).rejects.toThrow(ContextCompressionPersistenceUncertainError);
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      runtimeMocks.failEventType = prevFail;
+      runtimeMocks.failEventProbe = prevProbe;
+    }
+  });
+
+  // A routable LOCAL tier-0 row that is not the session model — the fallback
+  // candidate compression must find when the session model is off-machine.
+  const localTier0 = {
+    ...runtimeMocks.model,
+    slug: "qwen3-local",
+    displayName: "Qwen3 Local",
+    provider: "ollama",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    tier: 0 as const,
+  };
+  // Free by tier, off-machine by provider/URL — the row tier alone would trust.
+  const hostedTier0 = {
+    ...runtimeMocks.model,
+    slug: "hosted-free",
+    displayName: "Hosted Free",
+    provider: "anthropic",
+    baseUrl: "https://api.anthropic.com",
+    tier: 0 as const,
+  };
+
+  // Capture which model the compression call actually routed to.
+  function wireCompressionRoutingMock(routed: { slug?: string | null }) {
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        routed.slug = params.routing?.modelId ?? null;
+        return Promise.resolve(turnResult(validSummary));
+      }
+      return Promise.resolve(turnResult("runtime response"));
+    });
+  }
+
+  test("a tier-0 HOSTED session model compresses via a local tier-0 row when one exists", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevProvider = runtimeMocks.model.provider;
+    const prevBaseUrl = runtimeMocks.model.baseUrl;
+    const prevRegistry = runtimeMocks.registry;
+    runtimeMocks.model.contextWindow = 100;
+    // Session model: tier 0 but HOSTED, so it must not self-select (locality is
+    // not tier). A routable local row IS in the registry, so compression must
+    // fall back to it rather than decline — declining here would lose graceful
+    // degradation on a misclassified tier-0 hosted row.
+    (runtimeMocks.model as { provider: string }).provider = "anthropic";
+    (runtimeMocks.model as { baseUrl: string }).baseUrl =
+      "https://api.anthropic.com";
+    runtimeMocks.registry = [runtimeMocks.model, localTier0];
+    const routed: { slug?: string | null } = {};
+    wireCompressionRoutingMock(routed);
+    const events: Array<{ type: string }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      // Compressed, and the request went to the LOCAL row — never the hosted
+      // session model.
+      expect(routed.slug).toBe("qwen3-local");
+      expect(events.some((e) => e.type === "contextCompressed")).toBe(true);
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      (runtimeMocks.model as { provider: string }).provider = prevProvider;
+      (runtimeMocks.model as { baseUrl: string }).baseUrl = prevBaseUrl;
+      runtimeMocks.registry = prevRegistry;
+    }
+  });
+
+  test("compression routes to a local tier-0 row even when a hosted tier-0 row is preferred", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevProvider = runtimeMocks.model.provider;
+    const prevBaseUrl = runtimeMocks.model.baseUrl;
+    const prevRegistry = runtimeMocks.registry;
+    runtimeMocks.model.contextWindow = 100;
+    // Session model is off-machine, so compression takes the registry fallback
+    // arm. (Kept at tier 0 so the session turn itself stays free — a paid
+    // session model would trip the escalation-consent gate, which is a different
+    // boundary than the one under test.)
+    (runtimeMocks.model as { provider: string }).provider = "anthropic";
+    (runtimeMocks.model as { baseUrl: string }).baseUrl =
+      "https://api.anthropic.com";
+    // The registry's PREFERRED tier-0 row is hosted and sits ahead of the local
+    // one: selecting by tier alone would pick it and then decline at the
+    // backstop, losing compression despite the routable local row behind it.
+    runtimeMocks.registry = [hostedTier0, localTier0];
+    const routed: { slug?: string | null } = {};
+    wireCompressionRoutingMock(routed);
+    const events: Array<{ type: string }> = [];
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        onRuntimeEvent: (event) => events.push(event),
+      });
+      expect(routed.slug).toBe("qwen3-local");
+      expect(events.some((e) => e.type === "contextCompressed")).toBe(true);
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      (runtimeMocks.model as { provider: string }).provider = prevProvider;
+      (runtimeMocks.model as { baseUrl: string }).baseUrl = prevBaseUrl;
+      runtimeMocks.registry = prevRegistry;
     }
   });
 });

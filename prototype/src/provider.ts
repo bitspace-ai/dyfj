@@ -718,6 +718,12 @@ async function executeOpenAICompatibleTurn(
     `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,
     {
       method: "POST",
+      // Refuse redirects: only the initial base URL is validated as loopback for
+      // local providers, so following a 307/308 could re-POST the (private)
+      // transcript body to an off-box target. A redirect on a completions POST
+      // is anomalous regardless of provider — fail closed, matching the recall
+      // path's redirect posture.
+      redirect: "error",
       headers: {
         "content-type": "application/json",
         ...(opts.authHeader ? { authorization: opts.authHeader } : {}),
@@ -813,6 +819,27 @@ function isAllowedLocalProviderBaseUrl(baseUrl: string): boolean {
   }
   if (parsed.protocol !== "http:") return false;
   return allowedLocalProviderHosts.has(parsed.hostname.toLowerCase());
+}
+
+/**
+ * Whether a model runs ON-MACHINE: a local OpenAI-compatible provider reached
+ * over a loopback base URL. Tier is only metadata and does not guarantee the
+ * request stays local (a tier-0 row could name a hosted provider), so locality
+ * is decided here rather than by pricing.
+ *
+ * What this bounds, precisely: the compression CALL routes only to a model that
+ * satisfies this, so GENERATING a summary is never a hosted request and never
+ * paid inference. It does NOT bound where the summary then goes — that re-enters
+ * the conversation and is sent to the ACTIVE session model like the turns it
+ * replaced, which may be hosted. Ordinarily that discloses nothing new, since
+ * those verbatim turns already went to that same model. Two honest caveats: the
+ * summary is pinned past the recent-turns cap, so its gist outlives the turns it
+ * replaced; and a mid-session model switch can carry that gist to a provider
+ * which never saw the originals.
+ */
+export function isLocalWorkbenchModel(model: WorkbenchModel): boolean {
+  return openAICompatibleLocalProviders.has(model.provider) &&
+    isAllowedLocalProviderBaseUrl(model.baseUrl);
 }
 
 function isAllowedHostedProviderBaseUrl(baseUrl: string): boolean {

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
+  CONVERSATION_SUMMARY_MARKER,
+  countTurns,
+  formatSummaryMessage,
+  partitionForCompression,
+  VERBATIM_TAIL_TURNS,
+} from "./context-compression";
+import {
   buildConversationMessages,
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
@@ -327,6 +334,176 @@ describe("buildConversationMessages", () => {
 
   test("returns an empty array for sessions with no transcript content", () => {
     expect(buildConversationMessages([event("session_end", null)])).toEqual([]);
+  });
+
+  test("a context_compressed event replaces the elder turns with the pinned summary", () => {
+    const summary = "## Session intent\ncompressed intent";
+    const messages = buildConversationMessages([
+      event("session_start", "old question one"),
+      event("model_response", "old answer one"),
+      // One elder turn compressed, nothing retained behind it.
+      event(
+        "context_compressed",
+        JSON.stringify({ summary, turnsRetained: 0 }),
+      ),
+      event("session_start", "fresh question"),
+      event("model_response", "fresh answer"),
+    ]);
+    // Byte-consistent with what the live session injected: the shared formatter.
+    expect(messages[0]).toEqual(formatSummaryMessage(summary));
+    expect(messages[0].content).toContain(CONVERSATION_SUMMARY_MARKER);
+    // Elder turns are gone; the recent turns after compression remain.
+    expect(JSON.stringify(messages)).not.toContain("old question one");
+    expect(messages).toContainEqual({
+      role: "user",
+      content: "fresh question",
+    });
+    expect(messages).toContainEqual({
+      role: "assistant",
+      content: "fresh answer",
+    });
+  });
+
+  test("resume keeps the verbatim tail and current prompt, dropping only elder", () => {
+    // Two elder turns, a K=2 verbatim tail, then the current turn: the live path
+    // used [summary, tail, current-prompt]; resume must reconstruct the same,
+    // not collapse to [summary, answer].
+    const summary = "## Session intent\nsummary of the elder turns";
+    const messages = buildConversationMessages([
+      event("session_start", "elder q1"),
+      event("model_response", "elder a1"),
+      event("session_start", "elder q2"),
+      event("model_response", "elder a2"),
+      event("session_start", "tail q1"),
+      event("model_response", "tail a1"),
+      event("session_start", "tail q2"),
+      event("model_response", "tail a2"),
+      event("session_start", "the current question"),
+      // Two elder turns compressed; the K=2 tail plus the current prompt — three
+      // turns — are what the live path kept.
+      event(
+        "context_compressed",
+        JSON.stringify({ summary, turnsRetained: 3 }),
+      ),
+      event("model_response", "the current answer"),
+    ]);
+    expect(messages[0].content).toContain(CONVERSATION_SUMMARY_MARKER);
+    const s = JSON.stringify(messages);
+    expect(s).not.toContain("elder q1");
+    expect(s).not.toContain("elder q2");
+    expect(messages).toContainEqual({ role: "user", content: "tail q1" });
+    expect(messages).toContainEqual({ role: "user", content: "tail q2" });
+    expect(messages).toContainEqual({
+      role: "user",
+      content: "the current question",
+    });
+    expect(messages).toContainEqual({
+      role: "assistant",
+      content: "the current answer",
+    });
+  });
+
+  test("the summary marker survives resume past the recent-turns cap", () => {
+    const events = [
+      event(
+        "context_compressed",
+        JSON.stringify({ summary: "pinned summary", turnsRetained: 0 }),
+      ),
+    ];
+    // Far more post-compression turns than maxTurns.
+    for (let i = 0; i < 20; i++) {
+      events.push(
+        event("session_start", `q${i}`),
+        event("model_response", `a${i}`),
+      );
+    }
+    const messages = buildConversationMessages(events, { maxTurns: 3 });
+    // The pinned summary is still at the head despite 20 following turns...
+    expect(messages[0].content).toContain(CONVERSATION_SUMMARY_MARKER);
+    // ...and only the most recent 3 turns follow it (summary user + 3 users).
+    expect(messages.filter((m) => m.role === "user")).toHaveLength(1 + 3);
+    expect(JSON.stringify(messages)).not.toContain("q0");
+  });
+
+  test("keeps prior turns when a context_compressed payload is unparseable", () => {
+    const messages = buildConversationMessages([
+      event("session_start", "keep me"),
+      event("context_compressed", "not json"),
+    ]);
+    expect(messages).toEqual([{ role: "user", content: "keep me" }]);
+  });
+
+  test("resumes uncompressed on a payload with no retained count", () => {
+    // An event written before the retained count existed carries only the
+    // compressed (leading) count, which is meaningless here — replay rebuilds
+    // the full history while that count was taken against a capped seed.
+    // Applying it would silently drop the wrong turns, so it must fall through
+    // the invalid-payload path and resume uncompressed rather than half-apply.
+    const messages = buildConversationMessages([
+      event("session_start", "elder q"),
+      event("model_response", "elder a"),
+      event("session_start", "recent q"),
+      event(
+        "context_compressed",
+        JSON.stringify({ summary: "## Session intent\nold shape", turnsCompressed: 1 }),
+      ),
+      event("model_response", "recent a"),
+    ]);
+    expect(JSON.stringify(messages)).not.toContain(CONVERSATION_SUMMARY_MARKER);
+    expect(messages).toEqual([
+      { role: "user", content: "elder q" },
+      { role: "assistant", content: "elder a" },
+      { role: "user", content: "recent q" },
+      { role: "assistant", content: "recent a" },
+    ]);
+  });
+
+  test("resume is byte-identical to the live transcript when history exceeds maxTurns", () => {
+    // THE seam regression. The live path seeds from a transcript already capped
+    // to the most recent `maxTurns` turns, then compresses within that window;
+    // replay rebuilds the FULL history. A leading (compressed) count would mean
+    // different things to each side — dropping the oldest turns replay knows
+    // about while leaving the summarized ones standing. The retained count is
+    // anchored to the tail, which is a suffix of both. This asserts the two
+    // paths agree exactly, on a history far longer than the cap.
+    const maxTurns = 10;
+    const priorEvents = [];
+    for (let i = 1; i <= 30; i++) {
+      priorEvents.push(
+        event("session_start", `question ${i}`),
+        event("model_response", `answer ${i}`),
+      );
+    }
+
+    // ── Live path, exactly as the runtime does it ──
+    // buildResume caps the seed to the most recent maxTurns turns (21..30)...
+    const seed = buildConversationMessages(priorEvents, { maxTurns });
+    expect(countTurns(seed)).toBe(maxTurns);
+    // ...and the compressor partitions THAT capped seed.
+    const { elder, tail } = partitionForCompression(seed, VERBATIM_TAIL_TURNS);
+    expect(countTurns(elder)).toBe(8);
+    expect(countTurns(tail)).toBe(2);
+    const summary = "## Session intent\nsummary of questions 21-28";
+    const liveTranscript = [formatSummaryMessage(summary), ...tail];
+
+    // ── Resume path ──
+    const resumed = buildConversationMessages([
+      ...priorEvents,
+      event(
+        "context_compressed",
+        JSON.stringify({ summary, turnsRetained: countTurns(tail) }),
+      ),
+    ], { maxTurns });
+
+    expect(resumed).toEqual(liveTranscript);
+    // The summarized turns must not ALSO survive verbatim — the exact corruption
+    // a leading count produced (turns 21-28 both summarized and replayed).
+    const resumedJson = JSON.stringify(resumed);
+    for (const i of [21, 22, 23, 24, 25, 26, 27, 28]) {
+      expect(resumedJson).not.toContain(`question ${i}`);
+    }
+    expect(resumed).toContainEqual({ role: "user", content: "question 29" });
+    expect(resumed).toContainEqual({ role: "user", content: "question 30" });
   });
 
   test("a failed turn (error event, no model_response) rebuilds without a half-turn", () => {

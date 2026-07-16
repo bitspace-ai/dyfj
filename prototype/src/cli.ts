@@ -605,6 +605,19 @@ export function formatRuntimeEvent(
       event.isError === true ? "failed" : "finished"
     }${duration}`;
   }
+  if (event.type === "contextCompressed") {
+    const turns = typeof event.turnsCompressed === "number"
+      ? event.turnsCompressed
+      : "?";
+    const before = typeof event.tokensBeforeEstimate === "number"
+      ? event.tokensBeforeEstimate
+      : "?";
+    const after = typeof event.tokensAfterEstimate === "number"
+      ? event.tokensAfterEstimate
+      : "?";
+    return `context: compressed ${turns} elder turn(s) ` +
+      `(~${before} → ~${after} tokens)`;
+  }
   return null;
 }
 
@@ -717,7 +730,9 @@ export async function runModels(
       : "";
     io.out(
       `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
-        `${(m.provider ?? "").padEnd(10)} ${m.displayName ?? ""}${unroutable}\n`,
+        `${(m.provider ?? "").padEnd(10)} ${
+          m.displayName ?? ""
+        }${unroutable}\n`,
     );
   }
   return 0;
@@ -980,7 +995,9 @@ export function memoryMcpNetGrant(url: string | undefined): string | null {
  */
 export function envFileVar(text: string, name: string): string | undefined {
   for (const line of text.split("\n")) {
-    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    const match = line.match(
+      /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/,
+    );
     if (match === null || match[1] !== name) continue;
     let value = match[2].trim();
     if (
@@ -1041,9 +1058,11 @@ export async function readLauncherSecretsConfig(
   cwd: string,
   readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
   env: { get(name: string): string | undefined } = Deno.env,
-  parseToml?: (raw: string) => Record<string, unknown> | Promise<
-    Record<string, unknown>
-  >,
+  parseToml?: (raw: string) =>
+    | Record<string, unknown>
+    | Promise<
+      Record<string, unknown>
+    >,
 ): Promise<Awaited<ReturnType<typeof loadSecretsConfig>>> {
   let root = env.get("DYFJ_ROOT");
   if (root === undefined) {
@@ -1200,8 +1219,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (arg === "--model") overrides.model = value;
       else if (arg === "--session") {
         overrides.sessionId = normalizeSessionRef(value);
-      }
-      else if (arg === "--workspace") overrides.workspace = value;
+      } else if (arg === "--workspace") overrides.workspace = value;
       else if (arg === "-p" || arg === "--print") printPrompt = value;
       else if (arg === "--mode") {
         if (value !== "turn" && value !== "ask" && value !== "next-work") {
