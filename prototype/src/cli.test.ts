@@ -24,6 +24,7 @@ import {
   readLauncherSecretsConfig,
   readLineOrNull,
   readMemoryMcpNetGrant,
+  replPrompt,
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
   readServeUnixRunGrants,
@@ -1936,5 +1937,31 @@ describe("runRepl spinner integration", () => {
     expect(secondTurnPaint).toBe(`${ERASE_LINE}⠋ working…`);
     expect(stdout.join("")).toContain("first");
     expect(stdout.join("")).toContain("second");
+  });
+});
+
+// ── REPL prompt gutter ───────────────────────────────────────────────────────
+
+describe("replPrompt", () => {
+  test("plain mode is byte-identical to the historical prompt", () => {
+    expect(replPrompt(false)).toBe("\ndyfj> ");
+  });
+
+  test("color mode carries a bold green gutter", () => {
+    expect(replPrompt(true)).toBe("\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m ");
+  });
+
+  test("runRepl prompts with the plain gutter when color is off", async () => {
+    const { fn } = recordingFetch([]);
+    const { io, prompts } = fakeIo([]);
+    await runRepl(cfg({ color: false }), io, fn);
+    expect(prompts).toEqual(["\ndyfj> "]);
+  });
+
+  test("runRepl prompts with the styled gutter when color is on", async () => {
+    const { fn } = recordingFetch([]);
+    const { io, prompts } = fakeIo([]);
+    await runRepl(cfg({ color: true }), io, fn);
+    expect(prompts).toEqual([replPrompt(true)]);
   });
 });

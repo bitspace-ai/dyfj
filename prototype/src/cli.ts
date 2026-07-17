@@ -359,6 +359,17 @@ export function handleTurnRuntimeEvent(
   if (line !== null) io.err(line);
 }
 
+/**
+ * The REPL entry prompt. On a color terminal the gutter is bold green — a hue
+ * the output renderer never uses (its palette: bright-cyan headers, cyan code,
+ * dim receipts/markers) — so in scrollback the operator's lines are exactly
+ * the ones carrying the green `dyfj ❯` gutter. Plain mode stays byte-identical
+ * to the historical `dyfj> ` prompt, so NO_COLOR/non-TTY behavior is unchanged.
+ */
+export function replPrompt(color: boolean): string {
+  return color ? "\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m " : "\ndyfj> ";
+}
+
 export function formatReceipt(result: TurnResult, color: boolean): string {
   const dim = (s: string) => (color ? `\x1b[2m${s}\x1b[0m` : s);
   const cost = result.cost.totalUsd > 0
@@ -457,7 +468,7 @@ export async function runRepl(
     promptMidTurnApproval(io, request, interactive);
   try {
     for (;;) {
-      const line = await io.readLine("\ndyfj> ");
+      const line = await io.readLine(replPrompt(config.color));
       if (line === null) break;
       const prompt = line.trim();
       if (prompt.length === 0) continue;
