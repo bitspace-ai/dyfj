@@ -1,36 +1,36 @@
 import { describe, expect, test } from "vitest";
 import {
-  normalizeSessionRef,
   bufferedTurn,
+  buildServeUnixArgs,
   buildTurnBody,
   type CliConfig,
   type ConnectFn,
   createTurnOutputHandlers,
+  envFileVar,
   formatReceipt,
   formatRuntimeEvent,
   formatRuntimeStatus,
   friendlyError,
   handleReplModelCommand,
   handleTurnRuntimeEvent,
+  installRootFromModuleUrl,
   type Io,
   isLoopbackServerUrl,
+  memoryMcpNetGrant,
+  normalizeSessionRef,
   parseArgs,
   promptToolApproval,
+  readLauncherSecretsConfig,
   readLineOrNull,
+  readMemoryMcpNetGrant,
+  readServeUnixEnvGrants,
+  readServeUnixNetGrants,
+  readServeUnixRunGrants,
   resolveConfig,
   runExec,
   runModels,
   runRepl,
   runSessions,
-  buildServeUnixArgs,
-  envFileVar,
-  installRootFromModuleUrl,
-  memoryMcpNetGrant,
-  readLauncherSecretsConfig,
-  readMemoryMcpNetGrant,
-  readServeUnixEnvGrants,
-  readServeUnixNetGrants,
-  readServeUnixRunGrants,
   runStart,
   runStatus,
   socketTurn,
@@ -605,6 +605,25 @@ describe("handleTurnRuntimeEvent", () => {
     );
     expect(stderr).toContain("tool: bash started");
     expect(stdout).toHaveLength(0);
+  });
+
+  test("renders a context-compression status line to stderr", () => {
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(
+      {
+        type: "contextCompressed",
+        sessionId: "s",
+        compressorModelSlug: "qwen3:local",
+        trigger: "proactive",
+        turnsCompressed: 4,
+        tokensBeforeEstimate: 900,
+        tokensAfterEstimate: 120,
+      },
+      output,
+      io,
+    );
+    expect(stderr.join("\n")).toContain("context: compressed 4 elder turn(s)");
   });
 
   // Both clients decode the transport JSON but never schema-validate the frame,
@@ -1298,7 +1317,9 @@ describe("runtime lifecycle commands", () => {
       "/proto",
       (path) => {
         expect(path).toBe("/proto/.env");
-        return Promise.resolve("DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n");
+        return Promise.resolve(
+          "DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n",
+        );
       },
       noAmbient,
     );
@@ -1328,7 +1349,13 @@ describe("runtime lifecycle commands", () => {
     const grant = await readMemoryMcpNetGrant(
       "/proto",
       () => Promise.resolve("DYFJ_MEMORY_MCP_URL=https://stale.example/mcp\n"),
-      { get: (name) => (name === "DYFJ_MEMORY_MCP_URL" ? "https://ambient.example/mcp" : undefined) },
+      {
+        get: (
+          name,
+        ) => (name === "DYFJ_MEMORY_MCP_URL"
+          ? "https://ambient.example/mcp"
+          : undefined),
+      },
     );
     expect(grant).toBe("ambient.example:443");
   });
@@ -1354,7 +1381,8 @@ describe("runtime lifecycle commands", () => {
       permissions: Record<string, { env?: string[] | boolean }>;
     };
     expect(parsed.permissions["cli"].env).toContain("DYFJ_MEMORY_MCP_URL");
-    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)?.[1];
+    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
+      ?.[1];
     expect(compileEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
     const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
@@ -1529,13 +1557,17 @@ describe("normalizeSessionRef", () => {
 describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
   test("derives the prototype root from a file: cli.ts URL", () => {
     expect(
-      installRootFromModuleUrl("file:///Users/x/projects/dyfj/prototype/src/cli.ts"),
+      installRootFromModuleUrl(
+        "file:///Users/x/projects/dyfj/prototype/src/cli.ts",
+      ),
     ).toBe("/Users/x/projects/dyfj/prototype");
   });
 
   test("decodes percent-encoded path segments", () => {
     expect(
-      installRootFromModuleUrl("file:///Users/x/My%20Code/prototype/src/cli.ts"),
+      installRootFromModuleUrl(
+        "file:///Users/x/My%20Code/prototype/src/cli.ts",
+      ),
     ).toBe("/Users/x/My Code/prototype");
   });
 
@@ -1614,7 +1646,8 @@ describe("every dyfj CLI surface may read DYFJ_ROOT", () => {
       permissions: Record<string, { env?: string[] | boolean }>;
     };
     expect(parsed.permissions["cli"].env).toContain("DYFJ_ROOT");
-    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)?.[1];
+    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
+      ?.[1];
     expect(compileEnv?.split(",")).toContain("DYFJ_ROOT");
     const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
@@ -1645,7 +1678,12 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       get: (n: string) =>
         n === "DYFJ_ROOT" ? "/ambient" : n === "HOME" ? "/home/x" : undefined,
     };
-    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    const cfg = await readLauncherSecretsConfig(
+      "/cwd",
+      readTextFile,
+      env,
+      parse,
+    );
     expect(cfg?.command).toEqual(["op", "read"]);
     // Ambient root is used directly; .env is not consulted for the root.
     expect(reads).toContain("/ambient/config.toml");
@@ -1658,7 +1696,12 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       return Promise.reject(new Deno.errors.NotFound());
     };
     const env = { get: (n: string) => (n === "HOME" ? "/home/x" : undefined) };
-    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    const cfg = await readLauncherSecretsConfig(
+      "/cwd",
+      readTextFile,
+      env,
+      parse,
+    );
     expect(cfg?.pointers.ANTHROPIC_API_KEY).toBe("op://v/a/credential");
   });
 
@@ -1668,7 +1711,12 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       return Promise.reject(new Deno.errors.NotFound());
     };
     const env = { get: (n: string) => (n === "HOME" ? "/home/x" : undefined) };
-    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    const cfg = await readLauncherSecretsConfig(
+      "/cwd",
+      readTextFile,
+      env,
+      parse,
+    );
     expect(cfg?.command).toEqual(["op", "read"]);
   });
 
@@ -1686,7 +1734,12 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       get: (n: string) =>
         n === "DYFJ_ROOT" ? "" : n === "HOME" ? "/home/x" : undefined,
     };
-    const cfg = await readLauncherSecretsConfig("/cwd", readTextFile, env, parse);
+    const cfg = await readLauncherSecretsConfig(
+      "/cwd",
+      readTextFile,
+      env,
+      parse,
+    );
     expect(cfg?.command).toEqual(["op", "read"]);
     // Resolved against HOME, and .env was never consulted for the root.
     expect(readPaths).toContain("/home/x/.dyfj/config.toml");

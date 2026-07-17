@@ -217,6 +217,25 @@ export async function writeEvent(
   await getDoltPool().execute(sql, values);
 }
 
+/**
+ * Whether an event row is durable, by its (caller-generated) id.
+ *
+ * `writeEvent` is a bare autocommit INSERT, so a rejection cannot be told apart
+ * from "committed, but the acknowledgment was lost". That ambiguity is harmless
+ * for an event that only records what happened, but not for one whose presence
+ * CHANGES how the transcript is later reconstructed: such a writer must be able
+ * to ask whether the row actually landed. Deliberately narrow — only the context
+ * compression write needs this today; generalizing it across every writer is a
+ * separate concern.
+ */
+export async function eventExists(eventId: string): Promise<boolean> {
+  const rows = await doltQuery(
+    "SELECT event_id FROM events WHERE event_id = ? LIMIT 1",
+    [eventId],
+  );
+  return rows.length > 0;
+}
+
 // ─── Telemetry helpers ────────────────────────────────────────────────────────
 
 export async function writeModelSelectedEvent(params: {

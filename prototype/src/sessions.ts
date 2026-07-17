@@ -1,5 +1,6 @@
 import { doltExec, doltQuery, generateULID, type SqlParam } from "./utils";
 import type { WorkbenchMessage } from "./provider";
+import { formatSummaryMessage } from "./context-compression";
 
 export type SessionExec = (sql: string, params: SqlParam[]) => Promise<void>;
 export type SessionQuery = (
@@ -310,8 +311,48 @@ export function buildConversationMessages(
 ): WorkbenchMessage[] {
   const maxTurns = options.maxTurns ?? 10;
   const messages: WorkbenchMessage[] = [];
+  // The pinned summary from the most recent context_compressed event, if any.
+  // It survives the recent-turns cap below, mirroring the live session where a
+  // compression replaced everything before it.
+  let pinnedSummary: WorkbenchMessage | null = null;
   for (const event of events) {
-    if (event.eventType === "session_start") {
+    if (event.eventType === "context_compressed") {
+      // Compression replaced the elder turns with one summary, keeping a
+      // verbatim tail. Rebuild the SAME marked summary the live session injected
+      // — via the shared formatter — and keep exactly the turns it kept, so a
+      // resumed transcript is [summary, tail, ...]: byte-consistent with what the
+      // model saw. Removing everything before the event instead would drop the
+      // tail and the current prompt too.
+      //
+      // Key on the RETAINED (trailing) count, never a compressed (leading) one:
+      // the live path counts against a seed already capped to the recent turns,
+      // while this rebuilds the FULL history, so a leading count would drop
+      // unrelated oldest turns and leave the summarized ones standing. A trailing
+      // count needs no shared base — see THE TURN-COUNTING INVARIANT on
+      // countTurns, whose turn semantics this must match.
+      //
+      // A missing or unparseable payload — including an event predating the
+      // retained count — keeps prior turns rather than losing history: that
+      // session resumes uncompressed.
+      if (event.content === null) continue;
+      let parsed: { summary?: unknown; turnsRetained?: unknown };
+      try {
+        parsed = JSON.parse(event.content);
+      } catch {
+        continue;
+      }
+      const { summary, turnsRetained } = parsed;
+      if (typeof summary !== "string" || summary.trim().length === 0) continue;
+      if (
+        typeof turnsRetained !== "number" ||
+        !Number.isInteger(turnsRetained) || turnsRetained < 0
+      ) {
+        continue;
+      }
+      keepTrailingTurns(messages, turnsRetained);
+      pinnedSummary = formatSummaryMessage(summary);
+      messages.unshift(pinnedSummary);
+    } else if (event.eventType === "session_start") {
       if (event.content === null) continue;
       messages.push({ role: "user", content: event.content });
     } else if (event.eventType === "model_response") {
@@ -340,6 +381,12 @@ export function buildConversationMessages(
       });
     }
   }
+  // Pin the summary past the recent-turns cap: keep it, then the most recent
+  // `maxTurns` turns that followed it. Without this a long post-compression run
+  // could slice the summary off and lose all the compressed history.
+  if (pinnedSummary !== null && messages[0] === pinnedSummary) {
+    return [pinnedSummary, ...sliceToRecentTurns(messages.slice(1), maxTurns)];
+  }
   return sliceToRecentTurns(messages, maxTurns);
 }
 
@@ -363,6 +410,30 @@ function parseToolArguments(raw: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+/**
+ * Keep only the most recent `turns` turns, mutating in place. Used on resume to
+ * retain exactly the verbatim tail a context_compressed event kept, counted per
+ * THE TURN-COUNTING INVARIANT (a turn begins at each user message — the same
+ * rule `countTurns` and `sliceToRecentTurns` use; they must not drift apart).
+ *
+ * Trailing rather than leading on purpose: the live path's tail is a suffix of
+ * the full history even though its seed was capped, so a trailing count means
+ * the same thing to both paths. `turns` of 0 keeps nothing; more turns than
+ * exist keeps everything.
+ */
+function keepTrailingTurns(messages: WorkbenchMessage[], turns: number): void {
+  if (turns <= 0) {
+    messages.splice(0, messages.length);
+    return;
+  }
+  const userIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === "user") userIndices.push(i);
+  }
+  if (userIndices.length <= turns) return;
+  messages.splice(0, userIndices[userIndices.length - turns]);
 }
 
 /**

@@ -14,7 +14,8 @@ CREATE TABLE events (
         'session_start',
         'session_end',
         'model_selected',
-        'budget_summary'
+        'budget_summary',
+        'context_compressed'
     ) NOT NULL,
     created_at                TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 
