@@ -35,6 +35,7 @@ import {
   runSessions,
   runStart,
   runStatus,
+  runtimeEventIsVisible,
   socketTurn,
   spinnerGuardedTurnHandlers,
   type StartRuntimeFn,
@@ -1825,7 +1826,7 @@ describe("spinnerGuardedTurnHandlers", () => {
     expect(stdout.join("")).toBe("hello\n");
   });
 
-  test("stops the spinner before a runtime-event status line", () => {
+  test("stops the spinner before a visible runtime-event status line", () => {
     const calls: string[] = [];
     const { io, stderr } = fakeIo();
     const output = createTurnOutputHandlers(cfg(), io);
@@ -1844,6 +1845,27 @@ describe("spinnerGuardedTurnHandlers", () => {
     handlers.onEvent({ type: "toolCallStarted", commandId: "read_file" });
     expect(calls[0]).toBe("stop");
     expect(stderr).toEqual(["tool: read_file started"]);
+  });
+
+  test("keeps spinning through an invisible event (modelSelected)", () => {
+    const calls: string[] = [];
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    const handlers = spinnerGuardedTurnHandlers(
+      stubSpinner(calls),
+      output,
+      io,
+      () => ({ decision: "deny" as const, reason: "n/a" }),
+    );
+    // Emitted right before the provider wait; it renders nothing, so the
+    // spinner must survive it — otherwise it vanishes before the wait it
+    // exists to cover.
+    handlers.onEvent({ type: "modelSelected", modelSlug: "x", tier: 0 });
+    expect(calls).toEqual([]);
+    expect(stderr).toEqual([]);
+    // …and still stops on the first delta that follows.
+    handlers.onDelta("hi\n");
+    expect(calls).toEqual(["stop"]);
   });
 
   test("stops the spinner before delegating a mid-turn approval", async () => {
@@ -1865,6 +1887,24 @@ describe("spinnerGuardedTurnHandlers", () => {
   });
 });
 
+describe("runtimeEventIsVisible", () => {
+  test("invisible bookkeeping events render nothing", () => {
+    expect(runtimeEventIsVisible({ type: "modelSelected", modelSlug: "x" }))
+      .toBe(false);
+    expect(runtimeEventIsVisible({ type: "unknownFutureEvent" })).toBe(false);
+    expect(runtimeEventIsVisible(null)).toBe(false);
+    expect(runtimeEventIsVisible("nope")).toBe(false);
+  });
+
+  test("status-line and supersede events are visible", () => {
+    expect(runtimeEventIsVisible({ type: "toolCallStarted", commandId: "x" }))
+      .toBe(true);
+    expect(runtimeEventIsVisible({ type: "toolStepStarted", step: 1 }))
+      .toBe(true);
+    expect(runtimeEventIsVisible(supersedeEvent())).toBe(true);
+  });
+});
+
 describe("runExec spinner integration", () => {
   test("paints at submit and erases before streamed output on a TTY", async () => {
     const { fn } = recordingFetch([
@@ -1879,6 +1919,25 @@ describe("runExec spinner integration", () => {
     expect(raw[0]).toBe(`${ERASE_LINE}⠋ working…`);
     expect(raw[raw.length - 1]).toBe(ERASE_LINE);
     expect(stdout.join("")).toContain("hi");
+  });
+
+  test("an invisible modelSelected event does not erase the spinner early", async () => {
+    // The real ordering: modelSelected arrives before the provider wait, then
+    // the first delta. The spinner must survive the event and be erased only
+    // once by the delta — never flicker off during the wait.
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "event", event: { type: "modelSelected", modelSlug: "x" } },
+        { t: "delta", text: "hi" },
+        { t: "done", result: result() },
+      ]),
+    ]);
+    const { io, raw } = fakeIo([], { errIsTerminal: true });
+    const code = await runExec("x", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    // Exactly one erase (from the delta), and it is the last spinner write.
+    expect(raw.filter((w) => w === ERASE_LINE)).toHaveLength(1);
+    expect(raw[raw.length - 1]).toBe(ERASE_LINE);
   });
 
   test("erases the spinner when the turn fails (no orphaned line)", async () => {

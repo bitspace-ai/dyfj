@@ -302,10 +302,24 @@ export function createTurnSpinner(config: CliConfig, io: Io): BusySpinner {
 }
 
 /**
- * Wrap the streaming-turn handlers so the spinner is erased before the first
- * output of any kind reaches the terminal — a delta, a runtime-event status
- * line, or a mid-turn approval prompt. stop() retires the spinner, so the
- * per-delta calls after the first are no-ops.
+ * True when routing this runtime event will actually put something on the
+ * terminal — a superseding-retry marker (rendered to stdout) or a status line
+ * (`formatRuntimeEvent` returns non-null). Invisible bookkeeping events (e.g.
+ * `modelSelected`, emitted right before the long provider wait) render nothing,
+ * so they must NOT retire the spinner — otherwise it vanishes before the wait
+ * it exists to cover.
+ */
+export function runtimeEventIsVisible(event: unknown): boolean {
+  if (isSupersedingRetryStarted(event)) return true;
+  if (typeof event !== "object" || event === null) return false;
+  return formatRuntimeEvent(event as Record<string, unknown>) !== null;
+}
+
+/**
+ * Wrap the streaming-turn handlers so the spinner is erased immediately before
+ * the first output that reaches the terminal — a delta, a runtime-event status
+ * line (but not an invisible event), or a mid-turn approval prompt. stop()
+ * retires the spinner, so calls after the first are no-ops.
  */
 export function spinnerGuardedTurnHandlers(
   spinner: BusySpinner,
@@ -327,7 +341,8 @@ export function spinnerGuardedTurnHandlers(
       output.onDelta(text);
     },
     onEvent: (event) => {
-      spinner.stop();
+      // Keep spinning through invisible events; the wait isn't over yet.
+      if (runtimeEventIsVisible(event)) spinner.stop();
       handleTurnRuntimeEvent(event, output, io);
     },
     onApproval: (request) => {
