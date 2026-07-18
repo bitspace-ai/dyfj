@@ -71,6 +71,11 @@ const runtimeMocks = vi.hoisted(() => {
     // whether the mocked adapter honors params.messages (transcript retry);
     // flip to false to exercise the Google-style no-retry path.
     supportsTranscriptRetry: true,
+    // When set, what the mocked invokeCommandWithEvent returns — lets a test
+    // exercise the loop's handling of a denied/failed tool call.
+    commandResult: null as
+      | null
+      | { decision: string; isError: boolean; reason?: string; result?: string },
   };
 });
 
@@ -217,11 +222,12 @@ vi.mock("./commands", () => ({
     list: () => [],
     projectTools: () => [],
   }),
-  invokeCommandWithEvent: async () => ({
-    decision: "allow",
-    isError: false,
-    result: "ok",
-  }),
+  invokeCommandWithEvent: async () =>
+    runtimeMocks.commandResult ?? {
+      decision: "allow",
+      isError: false,
+      result: "ok",
+    },
   registerCoreCommands: () => {},
 }));
 
@@ -243,6 +249,7 @@ beforeEach(() => {
   // Ceiling confirmations persist per scope by design; tests need isolation.
   resetCeilingConfirmations();
   runtimeMocks.supportsTranscriptRetry = true;
+  runtimeMocks.commandResult = null;
   runtimeMocks.ulid = 0;
   runtimeMocks.writtenEvents.length = 0;
   runtimeMocks.sessions.length = 0;
@@ -509,6 +516,36 @@ describe("toolStepToMessages", () => {
       toolCallId: "c2",
       content: "slug does not match required pattern",
     });
+  });
+
+  test("marks failed results isError so wire formats can flag them", () => {
+    const messages = toolStepToMessages(
+      "",
+      [{ id: "c1", name: "read_file", arguments: {} }],
+      [
+        {
+          commandId: "read_file",
+          callId: "c1",
+          isError: true,
+          result: "invalid arguments for read_file: missing required argument: path",
+        },
+      ],
+    );
+
+    expect(messages[1]).toMatchObject({
+      role: "tool",
+      toolCallId: "c1",
+      isError: true,
+      content:
+        "invalid arguments for read_file: missing required argument: path",
+    });
+    // Successful results carry no error mark at all (absent, not false).
+    const ok = toolStepToMessages(
+      "",
+      [{ id: "c2", name: "list_files", arguments: { path: "." } }],
+      [{ commandId: "list_files", callId: "c2", isError: false, result: "a" }],
+    );
+    expect("isError" in ok[1]).toBe(false);
   });
 });
 
@@ -980,6 +1017,76 @@ describe("runWorkbenchRuntime observer events", () => {
       // the repeat was detected (step 2) and tools dropped to force a conclusion
       const forcedCall = runtimeMocks.runWorkbenchTurn.mock.calls[2][0];
       expect(forcedCall.tools).toBeUndefined();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("a denied tool call's reason reaches the model verbatim on the next step, marked as an error", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "tool_use",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    // The exact denial shape the validation seam produces for read_file `{}` —
+    // the recorded empty-arguments failure. The loop must hand this text to the
+    // model unmodified: it is the model's only route to a corrected retry.
+    const denialReason = [
+      "invalid arguments for read_file: missing required argument: path",
+      'expected: {"path": string (required)}',
+      "  path — File path relative to the workspace root.",
+      "received keys: (none)",
+      "The call was rejected before execution. Call read_file again with " +
+      "arguments matching the expected shape.",
+    ].join("\n");
+    runtimeMocks.commandResult = {
+      decision: "deny",
+      isError: true,
+      reason: denialReason,
+    };
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce({
+        ...base,
+        text: "",
+        toolCalls: [{ id: "bad-1", name: "read_file", arguments: {} }],
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        text: "recovered",
+        stopReason: "stop",
+      });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "read the friction log",
+        routingOptions: {},
+      });
+      // The next model call's transcript carries the denial as a tool message:
+      // full corrective text, linked to the failed call, flagged as an error.
+      const followUp = runtimeMocks.runWorkbenchTurn.mock.calls[1][0];
+      const toolMessage = followUp.messages.find(
+        (m: { role: string }) => m.role === "tool",
+      );
+      expect(toolMessage).toMatchObject({
+        role: "tool",
+        toolCallId: "bad-1",
+        name: "read_file",
+        isError: true,
+        content: denialReason,
+      });
     } finally {
       log.mockRestore();
     }
@@ -2668,6 +2775,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         toolCallId: null,
         toolArguments: null,
         toolResult: null,
+        toolIsError: null,
         createdAt: "2026-01-01 00:00:00",
       });
       const resumed = buildConversationMessages([

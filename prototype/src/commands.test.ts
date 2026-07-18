@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   buildBashCommand,
   buildCommandToolCallEventPayload,
+  buildReadFileCommand,
+  buildWriteFileCommand,
   type CommandCall,
   type CommandDefinition,
   createCommandRegistry,
@@ -172,10 +174,12 @@ describe("evaluateCommandPolicy", () => {
       }),
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       decision: "deny",
       authzBasis: "policy:deny:invalid-arguments",
-      reason: "slug does not match required pattern",
+      reason: expect.stringContaining(
+        "invalid arguments for memory.read: slug does not match required pattern",
+      ),
     });
   });
 
@@ -203,13 +207,147 @@ describe("evaluateCommandPolicy", () => {
       rationale: "I promise this is safe and urgent.",
     });
 
-    const result = evaluateCommandPolicy(readCommand(), withRationale);
+    const result = evaluateCommandPolicy(readCommand(), withRationale) as {
+      decision: string;
+      authzBasis: string;
+      reason: string;
+    };
 
-    expect(result).toEqual({
-      decision: "deny",
-      authzBasis: "policy:deny:invalid-arguments",
-      reason: "unexpected argument: rationale",
-    });
+    expect(result.decision).toBe("deny");
+    expect(result.authzBasis).toBe("policy:deny:invalid-arguments");
+    expect(result.reason).toContain(
+      "invalid arguments for memory.read: unexpected argument not declared",
+    );
+    // The unrecognized name is untrusted model output and is never echoed —
+    // neither the name nor its persuasion text reaches the durable reason.
+    expect(result.reason).not.toContain("rationale");
+    expect(result.reason).not.toContain("safe and urgent");
+    expect(result.reason).toContain("1 not declared in the schema");
+  });
+});
+
+describe("invalid-arguments feedback", () => {
+  // Regression for the recorded read_file failure mode: the model emitted a
+  // literal `{}` and the bare verdict ("missing required argument: path")
+  // produced a verbatim retry instead of a corrected one. The denial reason
+  // must carry everything a model needs to self-correct on the next step.
+  test("a read_file call with empty arguments gets corrective feedback", () => {
+    const result = evaluateCommandPolicy(
+      buildReadFileCommand("/work"),
+      call({}, { commandId: "read_file" }),
+    ) as { decision: string; authzBasis: string; reason: string };
+
+    expect(result.decision).toBe("deny");
+    expect(result.authzBasis).toBe("policy:deny:invalid-arguments");
+    // Names the tool and the exact validation failure…
+    expect(result.reason).toContain(
+      "invalid arguments for read_file: missing required argument: path",
+    );
+    // …states the expected shape, with the schema's own description…
+    expect(result.reason).toContain('expected: {"path": string (required)}');
+    expect(result.reason).toContain(
+      "path — File path relative to the workspace root.",
+    );
+    // …reports what actually arrived…
+    expect(result.reason).toContain("received keys: (none)");
+    // …and instructs a corrected retry.
+    expect(result.reason).toContain(
+      "Call read_file again with arguments matching the expected shape.",
+    );
+  });
+
+  test("feedback names declared keys, never argument values", () => {
+    const result = evaluateCommandPolicy(
+      buildWriteFileCommand("/work"),
+      call(
+        { path: "notes/friction.md", content: 12345 },
+        { commandId: "write_file" },
+      ),
+    ) as { decision: string; reason: string };
+
+    expect(result.decision).toBe("deny");
+    expect(result.reason).toContain("content must be a string");
+    // Both keys are declared in write_file's schema, so both are named.
+    expect(result.reason).toContain('received keys: "path", "content"');
+    // Values may carry redact-marked payloads and the reason is persisted to
+    // the event trail — schema vocabulary only, never values.
+    expect(result.reason).not.toContain("12345");
+    expect(result.reason).not.toContain("notes/friction.md");
+  });
+
+  test("an unrecognized property name is never echoed into the reason", () => {
+    // A property NAME is untrusted model output and can itself carry a private
+    // path, token, or personal text. The denial reason is persisted to the
+    // durable event log and replayed to the provider, so an unrecognized name
+    // must be summarized as a count, never echoed verbatim (CWE-532).
+    const untrustedName = "/Users/example/private/api-key-placeholder";
+    const result = evaluateCommandPolicy(
+      buildReadFileCommand("/work"),
+      call(
+        { path: "README.md", [untrustedName]: "x" },
+        { commandId: "read_file" },
+      ),
+    ) as { decision: string; reason: string };
+
+    expect(result.decision).toBe("deny");
+    // The untrusted name appears nowhere in the model-visible / durable reason.
+    expect(result.reason).not.toContain(untrustedName);
+    expect(result.reason).not.toContain("placeholder");
+    // It is reported as a bare count instead, alongside the recognized key.
+    expect(result.reason).toContain('received keys: "path", 1 not declared');
+  });
+
+  test("prototype-chain property names do not read as declared or bypass validation", () => {
+    // `in` walks the prototype chain, so `constructor`/`toString`/`__proto__`
+    // would falsely count as declared properties — satisfying
+    // additionalProperties:false and echoing a model-controlled name. Own-key
+    // checks must deny and COUNT them, never name them.
+    for (const inherited of ["constructor", "toString", "__proto__"]) {
+      const result = evaluateCommandPolicy(
+        buildReadFileCommand("/work"),
+        call(
+          { path: "README.md", [inherited]: "x" },
+          { commandId: "read_file" },
+        ),
+      ) as { decision: string; authzBasis: string; reason: string };
+
+      expect(result.decision).toBe("deny");
+      expect(result.authzBasis).toBe("policy:deny:invalid-arguments");
+      expect(result.reason).toContain(
+        "unexpected argument not declared in the tool's schema",
+      );
+      expect(result.reason).not.toContain(inherited);
+      expect(result.reason).toContain('received keys: "path", 1 not declared');
+    }
+  });
+
+  test("the persisted tool_call event records the same corrective feedback", async () => {
+    const registry = createCommandRegistry([buildReadFileCommand("/work")]);
+    const events: Record<string, unknown>[] = [];
+
+    const result = await invokeCommandWithEvent(
+      registry,
+      call({}, { commandId: "read_file" }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        eventId: "01TESTEVENT0000000000000000",
+        spanId: "0123456789abcdef",
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    // The event trail shows the exact text the model saw, so a future
+    // diagnosis of this failure mode reads the true feedback.
+    const reason = result.isError ? result.reason : "";
+    expect(events[0].tool_result).toBe(reason);
+    expect(events[0].tool_is_error).toBe(true);
+    expect(reason).toContain(
+      "invalid arguments for read_file: missing required argument: path",
+    );
   });
 });
 
@@ -656,7 +794,7 @@ describe("registerCoreCommands", () => {
       decision: "deny",
       authzBasis: "policy:deny:invalid-arguments",
       isError: true,
-      reason: "slug does not match required pattern",
+      reason: expect.stringContaining("slug does not match required pattern"),
     });
     expect(executed).toBe(false);
   });

@@ -289,6 +289,35 @@ describe("fetchWorkbenchSessionEvents", () => {
       tokensOutput: 4,
     });
   });
+
+  test("maps tool_is_error to a boolean across driver round-trips", async () => {
+    // tinyint(1) reaches this mapper as a number (1/0) or a numeric string
+    // ("1"/"0") depending on the driver path; a failed tool_call must normalize
+    // to boolean true so resume replays it as an error, and absent stays null.
+    const rows = [
+      { event_id: "e1", event_type: "tool_call", tool_is_error: 1 },
+      { event_id: "e2", event_type: "tool_call", tool_is_error: "1" },
+      { event_id: "e3", event_type: "tool_call", tool_is_error: 0 },
+      { event_id: "e4", event_type: "tool_call", tool_is_error: "0" },
+      { event_id: "e5", event_type: "model_response", tool_is_error: null },
+    ].map((r) => ({
+      trace_id: "0123",
+      principal_id: "test-operator",
+      created_at: "2026-06-12 10:00:00",
+      ...r,
+    }));
+    const events = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      query: () => Promise.resolve(rows),
+    });
+    expect(events.map((e) => e.toolIsError)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      null,
+    ]);
+  });
 });
 
 describe("buildConversationMessages", () => {
@@ -300,6 +329,7 @@ describe("buildConversationMessages", () => {
       callId?: string;
       arguments?: string;
       result?: string;
+      isError?: boolean;
     } = {},
   ) => ({
     eventId: "01E",
@@ -317,6 +347,7 @@ describe("buildConversationMessages", () => {
     toolCallId: tool.callId ?? null,
     toolArguments: tool.arguments ?? null,
     toolResult: tool.result ?? null,
+    toolIsError: tool.isError ?? null,
     createdAt: "2026-06-12 10:00:00",
   });
 
@@ -578,6 +609,43 @@ describe("buildConversationMessages", () => {
     expect(prior.role === "assistant" && prior.toolCalls?.[0]?.id).toBe(
       "call_1",
     );
+  });
+
+  test("replays a failed tool_call with its error mark intact", () => {
+    // A resumed transcript must serialize a failed result as an error
+    // (Anthropic is_error) exactly like the live turn did — otherwise resume
+    // silently reclassifies corrective feedback as ordinary tool output.
+    const messages = buildConversationMessages([
+      event("session_start", "read the friction log"),
+      event("tool_call", "read_file denied: invalid arguments", {
+        name: "read_file",
+        callId: "call_bad",
+        arguments: "{}",
+        result: "invalid arguments for read_file: missing required argument: path",
+        isError: true,
+      }),
+      event("model_response", "Retrying with a path."),
+    ]);
+    expect(messages).toContainEqual({
+      role: "tool",
+      toolCallId: "call_bad",
+      name: "read_file",
+      content:
+        "invalid arguments for read_file: missing required argument: path",
+      isError: true,
+    });
+    // A successful replayed result stays unmarked (absent, not false).
+    const ok = buildConversationMessages([
+      event("session_start", "list"),
+      event("tool_call", "list_files allowed", {
+        name: "list_files",
+        callId: "call_ok",
+        arguments: "{}",
+        result: "README.md",
+      }),
+    ]);
+    const okTool = ok.find((m) => m.role === "tool");
+    expect(okTool && "isError" in okTool).toBe(false);
   });
 
   test("truncation never orphans a tool result from its call", () => {
