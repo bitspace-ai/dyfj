@@ -8,6 +8,8 @@ import {
   createTurnOutputHandlers,
   createTurnSpinner,
   envFileVar,
+  fetchSessionPosture,
+  formatPostureLine,
   formatReceipt,
   formatRuntimeEvent,
   formatRuntimeStatus,
@@ -784,6 +786,21 @@ describe("runRepl", () => {
     expect(calls).toHaveLength(2);
     expect(stderr.join("\n")).toContain("transient");
   });
+
+  test("receipts carry the running session total across turns", async () => {
+    const paid = (totalUsd: number) =>
+      result({ cost: { estimatedUsd: 0, totalUsd, paidInferenceUsed: true } });
+    const { fn } = recordingFetch([
+      sseResponse([{ t: "done", result: paid(0.01) }]),
+      sseResponse([{ t: "done", result: paid(0.02) }]),
+    ]);
+    const { io, stderr } = fakeIo(["one", "two"]);
+    await runRepl(cfg(), io, fn);
+    const text = stderr.join("\n");
+    // Each receipt shows the sum of every per-turn cost so far.
+    expect(text).toContain("session $0.0100");
+    expect(text).toContain("session $0.0300");
+  });
 });
 
 // ── parseArgs / resolveConfig / presentation ─────────────────────────────────
@@ -1151,6 +1168,34 @@ describe("runtime lifecycle commands", () => {
     expect(text).toContain("qwen-local");
     expect(text).toContain("3 total");
     expect(text).toContain("methods: 2");
+    // No server-resolved bare-turn route in the payload (older server) — the
+    // line is omitted rather than rendered with unknowns.
+    expect(text).not.toContain("bare-turn route");
+  });
+
+  test("formatRuntimeStatus shows the resolved bare-turn route when reported", () => {
+    const text = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
+      runtime: {
+        defaultCompanionModel: "claude-opus-4-8",
+        defaultTurnModel: { slug: "qwen-local", tier: 0, local: true },
+      },
+    });
+    // The configured default and the actual bare-turn route can differ under
+    // the local-by-default posture; status shows both.
+    expect(text).toContain("default model: claude-opus-4-8");
+    expect(text).toContain("bare-turn route: qwen-local (tier 0, local)");
+  });
+
+  test("formatRuntimeStatus renders an unavailable bare-turn route on explicit null", () => {
+    // The server resolved and found nothing routable — say so rather than
+    // silently omitting the line (omission is reserved for older servers
+    // that never sent the field).
+    const text = formatRuntimeStatus(cfg(), {
+      runtime: { defaultTurnModel: null },
+    });
+    expect(text).toContain(
+      "bare-turn route: unavailable (no routable local model)",
+    );
   });
 
   test("runStatus reports reachable runtime details", async () => {
@@ -1426,43 +1471,73 @@ describe("runtime lifecycle commands", () => {
 });
 
 describe("REPL /model", () => {
-  function fakeConnect(models: { slug: string }[]): ConnectFn {
+  function fakeConnect(
+    models: { slug: string; tier?: number; local?: boolean }[],
+    runtime: Record<string, unknown> = {},
+  ): ConnectFn {
     return () =>
       Promise.resolve({
         request: (method: string) =>
           method === "models/list"
             ? Promise.resolve({ models })
+            : method === "runtime/status"
+            ? Promise.resolve({ runtime })
             : Promise.resolve({}),
         close: () => {},
       });
   }
 
-  test("/model with no arg prints the active model and available slugs", async () => {
+  test("/model with no arg prints the active model, slugs, and posture", async () => {
     const { io, stderr } = fakeIo();
     const config = cfg({ model: "gpt-5.5" });
     const handled = await handleReplModelCommand(
       "/model",
       config,
       io,
-      fakeConnect([{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5" }]),
+      fakeConnect(
+        [{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5", tier: 2, local: false }],
+        { permissionLevel: "operator" },
+      ),
     );
     expect(handled).toBe(true);
     expect(stderr.join("\n")).toContain("active model: gpt-5.5");
     expect(stderr.join("\n")).toContain("claude-opus-4-8");
+    expect(stderr.join("\n")).toContain(
+      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator",
+    );
   });
 
-  test("/model <slug> switches the active model when the slug is known", async () => {
+  test("/model <slug> switches the active model and reprints the posture", async () => {
     const { io, stderr } = fakeIo();
     const config = cfg({ model: "claude-opus-4-8" });
     const handled = await handleReplModelCommand(
       "/model gpt-5.5",
       config,
       io,
-      fakeConnect([{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5" }]),
+      fakeConnect(
+        [{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5", tier: 2, local: false }],
+        { permissionLevel: "strict" },
+      ),
     );
     expect(handled).toBe(true);
     expect(config.model).toBe("gpt-5.5");
-    expect(stderr.join("\n")).toContain("model: gpt-5.5");
+    expect(stderr.join("\n")).toContain(
+      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict",
+    );
+  });
+
+  test("/model <slug> --approve-paid arms the session paid opt-in", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    await handleReplModelCommand(
+      "/model gpt-5.5 --approve-paid",
+      config,
+      io,
+      fakeConnect([{ slug: "gpt-5.5", tier: 2, local: false }]),
+    );
+    expect(config.model).toBe("gpt-5.5");
+    expect(config.approvePaid).toBe(true);
+    expect(stderr.join("\n")).toContain("paid approved (session)");
   });
 
   test("/model rejects an unknown slug and leaves the active model unchanged", async () => {
@@ -1476,6 +1551,166 @@ describe("REPL /model", () => {
     );
     expect(config.model).toBe("claude-opus-4-8");
     expect(stderr.join("\n")).toContain("unknown model");
+  });
+
+  test("a failed switch never arms paid inference as a side effect", async () => {
+    const { io } = fakeIo();
+    const config = cfg({ model: "claude-opus-4-8" });
+    await handleReplModelCommand(
+      "/model no-such-model --approve-paid",
+      config,
+      io,
+      fakeConnect([{ slug: "claude-opus-4-8" }]),
+    );
+    expect(config.model).toBe("claude-opus-4-8");
+    expect(config.approvePaid).toBeUndefined();
+  });
+});
+
+describe("session posture", () => {
+  test("formatPostureLine covers paid states and locality", () => {
+    expect(
+      formatPostureLine({
+        slug: "qwen-local",
+        tier: 0,
+        local: true,
+        approvePaidSession: false,
+        approvePaidDefault: false,
+        permissionLevel: "operator",
+      }),
+    ).toBe(
+      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator",
+    );
+    expect(
+      formatPostureLine({
+        slug: "claude-opus-4-8",
+        tier: 2,
+        local: false,
+        approvePaidSession: true,
+        permissionLevel: "strict",
+      }),
+    ).toBe(
+      "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (session) · permission strict",
+    );
+    expect(
+      formatPostureLine({
+        slug: "x",
+        approvePaidSession: false,
+        approvePaidDefault: true,
+      }),
+    ).toBe(
+      "posture: x · tier ? · locality unknown · paid approved (standing config) · permission unknown",
+    );
+  });
+
+  function postureConnect(
+    runtime: Record<string, unknown>,
+    models: unknown[] = [],
+  ): ConnectFn {
+    return () =>
+      Promise.resolve({
+        request: (method: string) =>
+          method === "runtime/status"
+            ? Promise.resolve({ runtime })
+            : method === "models/list"
+            ? Promise.resolve({ models })
+            : Promise.resolve({}),
+        close: () => {},
+      });
+  }
+
+  test("fetchSessionPosture uses the server-resolved bare-turn default", async () => {
+    const posture = await fetchSessionPosture(
+      cfg(),
+      postureConnect({
+        defaultTurnModel: { slug: "qwen-local", tier: 0, local: true },
+        approvePaidDefault: false,
+        permissionLevel: "operator",
+      }),
+    );
+    expect(posture).toEqual({
+      slug: "qwen-local",
+      tier: 0,
+      local: true,
+      approvePaidSession: false,
+      approvePaidDefault: false,
+      permissionLevel: "operator",
+    });
+  });
+
+  test("fetchSessionPosture resolves an explicit model from the model list", async () => {
+    const posture = await fetchSessionPosture(
+      cfg({ model: "claude-opus-4-8", approvePaid: true }),
+      postureConnect(
+        { permissionLevel: "strict" },
+        [{ slug: "claude-opus-4-8", tier: 2, local: false }],
+      ),
+    );
+    expect(posture).toMatchObject({
+      slug: "claude-opus-4-8",
+      tier: 2,
+      local: false,
+      approvePaidSession: true,
+      permissionLevel: "strict",
+    });
+  });
+
+  test("fetchSessionPosture names explicit tier/hint routing instead of the bare default", async () => {
+    // A session launched with --tier routes every turn explicitly, so the
+    // server's bare-turn default would misdescribe it.
+    const posture = await fetchSessionPosture(
+      cfg({ tier: 2 }),
+      postureConnect({
+        defaultTurnModel: { slug: "qwen-local", tier: 0, local: true },
+        permissionLevel: "operator",
+      }),
+    );
+    expect(posture).toMatchObject({
+      slug: "(tier 2 route)",
+      tier: 2,
+      local: undefined,
+    });
+
+    const hinted = await fetchSessionPosture(
+      cfg({ hint: "code" }),
+      postureConnect({ permissionLevel: "operator" }),
+    );
+    expect(hinted).toMatchObject({ slug: "(hint code route)" });
+  });
+
+  test("fetchSessionPosture reports an error when the seam is unreachable", async () => {
+    const posture = await fetchSessionPosture(
+      cfg(),
+      () => Promise.reject(new Error("connection refused")),
+    );
+    expect(posture).toHaveProperty("error");
+  });
+
+  test("runRepl prints the posture line at session start on the UDS seam", async () => {
+    const { io, stderr } = fakeIo([]);
+    await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      postureConnect({
+        defaultTurnModel: { slug: "qwen-local", tier: 0, local: true },
+        permissionLevel: "operator",
+      }),
+    );
+    expect(stderr.join("\n")).toContain(
+      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator",
+    );
+  });
+
+  test("runRepl still opens when the posture read fails", async () => {
+    const { io, stderr } = fakeIo([]);
+    await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      () => Promise.reject(new Error("connection refused")),
+    );
+    expect(stderr.join("\n")).not.toContain("posture:");
   });
 });
 
@@ -1536,6 +1771,34 @@ describe("presentation", () => {
     const s = formatReceipt(result(), false);
     expect(s).toContain("Qwen3 Coder 30B");
     expect(s).toContain("12→5 tok");
+  });
+  test("formatReceipt appends the running session total when given", () => {
+    const paid = result({
+      cost: { estimatedUsd: 0, totalUsd: 0.0123, paidInferenceUsed: true },
+    });
+    expect(formatReceipt(paid, false, 0.0456)).toContain(
+      "$0.0123 · session $0.0456",
+    );
+    // A free session shows an explicit $0 total, and one-shot receipts
+    // (no session figure passed) stay unchanged.
+    expect(formatReceipt(result(), false, 0)).toContain("session $0");
+    expect(formatReceipt(result(), false)).not.toContain("session");
+  });
+  test("formatReceipt shows reasoning tokens only when reported", () => {
+    const withReasoning = result({
+      tokens: {
+        input: 12,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        reasoning: 256,
+        totalCalls: 1,
+      },
+    });
+    expect(formatReceipt(withReasoning, false)).toContain(
+      "12→5 tok (+256 reasoning)",
+    );
+    expect(formatReceipt(result(), false)).not.toContain("reasoning");
   });
   test("friendlyError maps connection failures to a start hint", () => {
     const s = friendlyError(new TypeError("tcp connect error"), cfg());
