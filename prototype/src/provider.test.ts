@@ -994,6 +994,26 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
     })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
   });
 
+  test("an openai row never sends its key to another provider's https host", async () => {
+    // The credential contract pins the host, not just the scheme: catalog
+    // data must not be able to redirect OPENAI_API_KEY to a different
+    // (still-https) endpoint.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-cross-host" },
+      models: [{
+        ...gptModel,
+        slug: "gpt-cross-host",
+        baseUrl: "https://openrouter.ai/api/v1",
+      }],
+      getEnv: () => "sk-test-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+
   test("an openai row never reads another provider's key", async () => {
     // The per-provider map must not widen what satisfies the openai path:
     // an OpenRouter key alone leaves an openai row fail-closed.
@@ -1087,6 +1107,42 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       models: [{
         ...openRouterModel,
         baseUrl: "http://openrouter.ai/api/v1",
+      }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+
+  test("an openrouter row never sends its key to another provider's https host", async () => {
+    // A mis-catalogued row pairing provider "openrouter" with another
+    // provider's https base URL must fail closed before any request leaves.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "https://api.openai.com/v1",
+      }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+
+  test("rejects a pinned host on a non-default port before inference", async () => {
+    // openrouter.ai:8443 is not the pinned endpoint even though the hostname
+    // matches — the net grant and the contract both name port 443 only.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "https://openrouter.ai:8443/api/v1",
       }],
       getEnv: () => "sk-or-key",
       fetchFn: async () => {

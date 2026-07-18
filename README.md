@@ -159,9 +159,10 @@ timeout_ms = 10000
 
 # Pointers keyed by the declared secret env var (only secret-pointer keys are accepted).
 [secrets.pointers]
-ANTHROPIC_API_KEY = "op://<vault>/<item>/credential"
-OPENAI_API_KEY    = "op://<vault>/<item>/credential"
-GEMINI_API_KEY    = "op://<vault>/<item>/credential"
+ANTHROPIC_API_KEY  = "op://<vault>/<item>/credential"
+OPENAI_API_KEY     = "op://<vault>/<item>/credential"
+OPENROUTER_API_KEY = "op://<vault>/<item>/credential"
+GEMINI_API_KEY     = "op://<vault>/<item>/credential"
 # Also resolvable this way: DYFJ_MEMORY_MCP_TOKEN, DOLT_PASSWORD, DYFJ_WORKBENCH_API_KEY.
 ```
 

@@ -133,7 +133,9 @@ export class HostedProviderCredentialMissingError extends Error {
 
 export class WorkbenchHostedProviderBaseUrlError extends Error {
   constructor(public readonly slug: string, public readonly baseUrl: string) {
-    super(`Hosted provider baseUrl must be https for ${slug}: ${baseUrl}`);
+    super(
+      `Hosted provider baseUrl is not the provider's https endpoint for ${slug}: ${baseUrl}`,
+    );
     this.name = "WorkbenchHostedProviderBaseUrlError";
   }
 }
@@ -182,18 +184,24 @@ export async function fetchWithHeaderTimeout(
   }
 }
 /**
- * Hosted OpenAI-compatible providers and the env var each reads its bearer
- * key from. A static code-level map rather than a catalog column: the set of
- * env vars the runtime will ever project as a bearer token stays enumerable
- * in reviewed code, so a catalog row cannot pair an arbitrary env var with an
- * arbitrary base URL. Membership here is also what admits a provider to the
- * hosted OpenAI-compatible wire path at all.
+ * Hosted OpenAI-compatible providers: the env var each reads its bearer key
+ * from, and the exact https host that key may be sent to. A static code-level
+ * map rather than a catalog column: the set of env vars the runtime will ever
+ * project as a bearer token — and where each one may go — stays enumerable in
+ * reviewed code, so a catalog row cannot pair a credential with an arbitrary
+ * base URL: a mis-catalogued provider/base_url combination fails closed
+ * before any request, instead of sending one provider's key to another's
+ * (still-https) endpoint. Membership here is also what admits a provider to
+ * the hosted OpenAI-compatible wire path at all.
  */
-const openAIHostedProviderKeyEnvVars: ReadonlyMap<string, string> = new Map([
-  ["openai", "OPENAI_API_KEY"],
-  ["openrouter", "OPENROUTER_API_KEY"],
+const openAIHostedProviderContracts: ReadonlyMap<
+  string,
+  { keyEnvVar: string; host: string }
+> = new Map([
+  ["openai", { keyEnvVar: "OPENAI_API_KEY", host: "api.openai.com" }],
+  ["openrouter", { keyEnvVar: "OPENROUTER_API_KEY", host: "openrouter.ai" }],
 ]);
-const openAIHostedProviders = new Set(openAIHostedProviderKeyEnvVars.keys());
+const openAIHostedProviders = new Set(openAIHostedProviderContracts.keys());
 const anthropicProviders = new Set(["anthropic"]);
 const googleProviders = new Set(["google"]);
 const GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY";
@@ -726,19 +734,19 @@ export async function runWorkbenchTurn(
     return await runGoogleGenerativeAITurn(params, model, selection);
   }
 
-  const hostedKeyEnvVar = openAIHostedProviderKeyEnvVars.get(model.provider);
-  if (hostedKeyEnvVar !== undefined) {
+  const hostedContract = openAIHostedProviderContracts.get(model.provider);
+  if (hostedContract !== undefined) {
     // Hosted OpenAI-compatible reuses the local wire path; it differs only by
-    // requiring an https base URL and the provider's own bearer key.
-    if (!isAllowedHostedProviderBaseUrl(model.baseUrl)) {
+    // requiring the provider's pinned https host and its own bearer key.
+    if (!isAllowedHostedProviderBaseUrl(model.baseUrl, hostedContract.host)) {
       throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
     }
     const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
-    const apiKey = getEnv(hostedKeyEnvVar);
+    const apiKey = getEnv(hostedContract.keyEnvVar);
     if (!apiKey) {
       throw new HostedProviderCredentialMissingError(
         model.slug,
-        hostedKeyEnvVar,
+        hostedContract.keyEnvVar,
       );
     }
     return await executeOpenAICompatibleTurn(params, model, selection, {
@@ -899,14 +907,26 @@ export function isLocalWorkbenchModel(model: WorkbenchModel): boolean {
     isAllowedLocalProviderBaseUrl(model.baseUrl);
 }
 
-function isAllowedHostedProviderBaseUrl(baseUrl: string): boolean {
+/**
+ * Whether a hosted base URL is https — and, when the caller pins an expected
+ * host, exactly that host on the default port. The pin is what keeps a bearer
+ * key from traveling to a different (still-https) endpoint named by catalog
+ * data; `URL` normalizes an explicit `:443` to an empty port, so the port
+ * check rejects only genuinely non-default ports.
+ */
+function isAllowedHostedProviderBaseUrl(
+  baseUrl: string,
+  expectedHost?: string,
+): boolean {
   let parsed: URL;
   try {
     parsed = new URL(baseUrl);
   } catch {
     return false;
   }
-  return parsed.protocol === "https:";
+  if (parsed.protocol !== "https:") return false;
+  if (expectedHost === undefined) return true;
+  return parsed.hostname === expectedHost && parsed.port === "";
 }
 
 export interface AnthropicStreamEvent {
