@@ -26,7 +26,7 @@ mlx_lm.server \
 
 Workbench uses `http://127.0.0.1:18080/v1` for that MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the fallback explicitly.
 
-Hosted inference is explicit escalation: select a hosted model by slug (for example `--model claude-haiku-4-5`), pass the budget preflight and consent prompt, and the turn is receipted with cost and prompt-cache telemetry. Each hosted provider reads its key from the process environment and fails closed without it - Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), Google Gemini (`GEMINI_API_KEY`); project the key at process start (for example `op run`), never an ambient export.
+Hosted inference is explicit escalation: select a hosted model by slug (for example `--model claude-haiku-4-5`), pass the budget preflight and consent prompt, and the turn is receipted with cost and prompt-cache telemetry. Each hosted provider reads its key from the process environment and fails closed without it - Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), OpenRouter (`OPENROUTER_API_KEY`), Google Gemini (`GEMINI_API_KEY`); project the key at process start (for example `op run`), never an ambient export.
 
 For the barebones operator loop:
 

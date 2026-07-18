@@ -189,6 +189,7 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   // ── engine: secret POINTERS (resolved at point of use; never stored here) ──
   { key: "anthropicApiKey", envVar: "ANTHROPIC_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "openaiApiKey", envVar: "OPENAI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
+  { key: "openrouterApiKey", envVar: "OPENROUTER_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "geminiApiKey", envVar: "GEMINI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "doltPassword", envVar: "DOLT_PASSWORD", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "memoryMcpToken", envVar: "DYFJ_MEMORY_MCP_TOKEN", domain: "engine", type: "string", kind: "secret-pointer" },

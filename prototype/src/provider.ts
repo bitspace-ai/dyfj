@@ -181,10 +181,21 @@ export async function fetchWithHeaderTimeout(
     clearTimeout(timer);
   }
 }
-const openAIHostedProviders = new Set(["openai"]);
+/**
+ * Hosted OpenAI-compatible providers and the env var each reads its bearer
+ * key from. A static code-level map rather than a catalog column: the set of
+ * env vars the runtime will ever project as a bearer token stays enumerable
+ * in reviewed code, so a catalog row cannot pair an arbitrary env var with an
+ * arbitrary base URL. Membership here is also what admits a provider to the
+ * hosted OpenAI-compatible wire path at all.
+ */
+const openAIHostedProviderKeyEnvVars: ReadonlyMap<string, string> = new Map([
+  ["openai", "OPENAI_API_KEY"],
+  ["openrouter", "OPENROUTER_API_KEY"],
+]);
+const openAIHostedProviders = new Set(openAIHostedProviderKeyEnvVars.keys());
 const anthropicProviders = new Set(["anthropic"]);
 const googleProviders = new Set(["google"]);
-const OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY";
 const GEMINI_DEFAULT_MAX_TOKENS = 8192;
 // Gemini 3.x are thinking models and draw thinking tokens from maxOutputTokens
@@ -715,18 +726,19 @@ export async function runWorkbenchTurn(
     return await runGoogleGenerativeAITurn(params, model, selection);
   }
 
-  if (openAIHostedProviders.has(model.provider)) {
-    // Hosted OpenAI reuses the OpenAI-compatible wire path; it differs from
-    // the local path only by requiring an https base URL and a bearer key.
+  const hostedKeyEnvVar = openAIHostedProviderKeyEnvVars.get(model.provider);
+  if (hostedKeyEnvVar !== undefined) {
+    // Hosted OpenAI-compatible reuses the local wire path; it differs only by
+    // requiring an https base URL and the provider's own bearer key.
     if (!isAllowedHostedProviderBaseUrl(model.baseUrl)) {
       throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
     }
     const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
-    const apiKey = getEnv(OPENAI_API_KEY_ENV_VAR);
+    const apiKey = getEnv(hostedKeyEnvVar);
     if (!apiKey) {
       throw new HostedProviderCredentialMissingError(
         model.slug,
-        OPENAI_API_KEY_ENV_VAR,
+        hostedKeyEnvVar,
       );
     }
     return await executeOpenAICompatibleTurn(params, model, selection, {

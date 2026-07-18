@@ -138,7 +138,7 @@ Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama r
 
 Hosted models are never the default path. Selecting one (for example `--model claude-haiku-4-5`) goes through the budget preflight and an interactive consent prompt before any tokens are spent, and the call is receipted with cost and prompt-cache telemetry.
 
-Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), and Google Gemini (`GEMINI_API_KEY`). The **pointer** mechanism keeps secret values off the config file: for a declared secret env var you write a `[secrets.pointers]` *pointer* (an `op://` ref, etc.), never the value, and it is resolved at process start. (The separate `[secrets.env]` map, below, is a plaintext surface for *non-secret* resolver env — do not put a credential there.)
+Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), OpenRouter (`OPENROUTER_API_KEY`), and Google Gemini (`GEMINI_API_KEY`). The **pointer** mechanism keeps secret values off the config file: for a declared secret env var you write a `[secrets.pointers]` *pointer* (an `op://` ref, etc.), never the value, and it is resolved at process start. (The separate `[secrets.env]` map, below, is a plaintext surface for *non-secret* resolver env — do not put a credential there.)
 
 **Recommended: declare secret pointers in `~/.dyfj/config.toml`.** With a `[secrets]` section, `dyfj start` alone yields a fully capable runtime — the engine resolves each declared pointer at boot by invoking a vendor-neutral resolver command, so hosted turns work without a separate wrapper:
 

@@ -993,6 +993,107 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
       },
     })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
   });
+
+  test("an openai row never reads another provider's key", async () => {
+    // The per-provider map must not widen what satisfies the openai path:
+    // an OpenRouter key alone leaves an openai row fail-closed.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-test" },
+      models: [gptModel],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async () => {
+        throw new Error("fetch should not be called without a key");
+      },
+    })).rejects.toBeInstanceOf(HostedProviderCredentialMissingError);
+  });
+});
+
+describe("runWorkbenchTurn hosted OpenRouter", () => {
+  const openRouterModel: WorkbenchModel = {
+    slug: "z-ai/glm-5.2",
+    displayName: "GLM 5.2",
+    provider: "openrouter",
+    api: "openai-completions",
+    baseUrl: "https://openrouter.ai/api/v1",
+    tier: 1,
+    costInput: 0.2688,
+    costOutput: 0.8448,
+    capabilities: ["text", "code", "reasoning"],
+  };
+
+  test("calls OpenRouter with its own bearer key and meters cost from the row", async () => {
+    let requestUrl = "";
+    let authHeader: string | null = null;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async (input, init) => {
+        requestUrl = String(input);
+        authHeader = new Headers(init?.headers).get("authorization");
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from openrouter" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(authHeader).toBe("Bearer sk-or-key");
+    expect(result.model.provider).toBe("openrouter");
+    expect(result.text).toBe("hello from openrouter");
+    // 1M input * $0.2688 + 1M output * $0.8448, per-MTok rates.
+    expect(result.usage.cost.total).toBeCloseTo(1.1136, 5);
+  });
+
+  test("fails closed naming OPENROUTER_API_KEY — an OpenAI key does not satisfy it", async () => {
+    // Presence-only, per-provider: OPENAI_API_KEY being set must not leak
+    // onto an openrouter row, and the error names the missing env var (never
+    // a value).
+    const failure = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      getEnv: (name) => name === "OPENAI_API_KEY" ? "sk-openai-key" : undefined,
+      fetchFn: async () => {
+        throw new Error("fetch should not be called without a key");
+      },
+    }).then(() => undefined, (error) => error);
+
+    expect(failure).toBeInstanceOf(HostedProviderCredentialMissingError);
+    const missing = failure as HostedProviderCredentialMissingError;
+    expect(missing.envVar).toBe("OPENROUTER_API_KEY");
+    expect(missing.message).toContain("OPENROUTER_API_KEY");
+    expect(missing.message).not.toContain("sk-openai-key");
+  });
+
+  test("rejects a non-https OpenRouter base URL before inference", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "http://openrouter.ai/api/v1",
+      }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
 });
 
 describe("buildGeminiRequest", () => {
