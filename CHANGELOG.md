@@ -6,6 +6,10 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ## [Unreleased]
 
+### Changed
+
+- Local by default: a bare turn (no explicit model, tier, or hint) now always routes to the registry's local tier-0 default, even when the standing companion default names a hosted model. Hosted inference is a deliberate per-task escalation — explicit `--model`/`/model` or `--tier`, plus the existing per-turn paid-consent gate — never an ambient default inherited from standing config. A bare turn that bypassed a hosted configured default carries the distinct route reason `default_local` on its receipt, and a hosted turn without consent still fails closed exactly as before; a configured default that resolves to a local model is honored unchanged (`default_config`).
+
 ### Added
 
 - Operator input is visually distinct from model output in the `dyfj` REPL. On a color terminal the entry prompt becomes a bold green `dyfj ❯` gutter — a hue the streaming markdown renderer's output palette doesn't use (bright-cyan headers, cyan code, dim receipts/markers) — so in scrollback the operator's lines stand out as the ones carrying the green gutter, bounded below by the existing dim receipt line. With `NO_COLOR` or a non-TTY the prompt stays byte-identical to the previous `dyfj> `, so piped/scripted behavior is unchanged.

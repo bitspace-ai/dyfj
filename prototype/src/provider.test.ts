@@ -192,10 +192,111 @@ describe("selectWorkbenchModel", () => {
       .toThrow("Model not found: missing");
   });
 
-  test("uses the configured default model on a bare turn", () => {
-    const selection = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
-    expect(selection.selected.slug).toBe("claude-haiku-4-5");
+  test("uses a local configured default model on a bare turn", () => {
+    const selection = selectWorkbenchModel(models, {}, "gemma4:e2b");
+    expect(selection.selected.slug).toBe("gemma4:e2b");
     expect(selection.reason).toBe("default_config");
+  });
+
+  test("a hosted configured default never rides a bare turn — local by default", () => {
+    // Hosted inference is an explicit escalation (modelId/tier + paid consent);
+    // a hosted slug in standing config must not become the ambient default.
+    const selection = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
+    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.selected.tier).toBe(0);
+    expect(selection.reason).toBe("default_local");
+  });
+
+  test("a mis-tiered hosted row is never the ambient default", () => {
+    // Tier is catalog metadata; locality is decided by provider + loopback
+    // base URL. A tier-0 row naming a hosted provider must not ride the
+    // ambient default (tier-0 selection skips the paid-consent preflight).
+    const misTiered: WorkbenchModel = {
+      slug: "hosted-mistiered",
+      displayName: "Hosted Mis-tiered",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code"],
+    };
+    const selection = selectWorkbenchModel([misTiered, ...models], {});
+    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.considered).not.toContain("hosted-mistiered");
+
+    // With no genuinely local row at all, the ambient default fails closed
+    // rather than routing the mis-tiered hosted row without consent.
+    expect(() => selectWorkbenchModel([misTiered], {})).toThrow(
+      "Model not found: tier:0",
+    );
+  });
+
+  test("explicit tier 0 is locality-bounded too — a mis-tiered hosted row never routes", () => {
+    // Tier 0 is the LOCAL tier and its selections skip the paid-consent
+    // preflight, so even an explicit --tier 0 request must not land on a
+    // hosted provider: the local candidate wins, and with no local candidate
+    // the request fails closed instead of running hosted without consent.
+    const misTiered: WorkbenchModel = {
+      slug: "hosted-mistiered",
+      displayName: "Hosted Mis-tiered",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code"],
+    };
+    const selection = selectWorkbenchModel([misTiered, ...models], { tier: 0 });
+    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.reason).toBe("explicit_tier");
+    expect(selection.considered).not.toContain("hosted-mistiered");
+
+    expect(() => selectWorkbenchModel([misTiered], { tier: 0 })).toThrow(
+      "Model not found: tier:0",
+    );
+
+    // Hosted tiers stay tier-based: explicit tier 1 still routes the priced
+    // hosted row (and remains consent-gated downstream).
+    const hosted = selectWorkbenchModel([misTiered, ...models], { tier: 1 });
+    expect(hosted.selected.slug).toBe("claude-haiku-4-5");
+  });
+
+  test("hint routing is bounded by locality like the bare default", () => {
+    // A hint names a capability, not a model — it is ambient routing, not a
+    // hosted escalation, so a mis-tiered hosted row (tier 0, code-capable)
+    // must not satisfy it even when no local row carries the capability.
+    const misTieredCoder: WorkbenchModel = {
+      slug: "hosted-mistiered-coder",
+      displayName: "Hosted Mis-tiered Coder",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code"],
+    };
+    const noLocalCoder = models.filter((model) => model.slug === "gemma4:e2b");
+    const selection = selectWorkbenchModel(
+      [misTieredCoder, ...noLocalCoder],
+      { hint: "code" },
+    );
+    expect(selection.selected.slug).toBe("gemma4:e2b");
+    expect(selection.reason).toBe("hint_code_fallback_local");
+    expect(selection.considered).not.toContain("hosted-mistiered-coder");
+  });
+
+  test("a hosted configured default still routes when named explicitly", () => {
+    const selection = selectWorkbenchModel(
+      models,
+      { modelId: "claude-haiku-4-5" },
+      "claude-haiku-4-5",
+    );
+    expect(selection.selected.slug).toBe("claude-haiku-4-5");
+    expect(selection.reason).toBe("explicit_model_id");
   });
 
   test("explicit modelId beats the configured default", () => {
@@ -1594,11 +1695,13 @@ describe("unpriced models are unroutable", () => {
     ).toThrow(/no catalog pricing/);
   });
 
-  test("configured default companion that is unpriced throws instead of routing", async () => {
-    const { WorkbenchModelNotRoutableError } = await import("./provider");
-    expect(() =>
-      selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview")
-    ).toThrow(WorkbenchModelNotRoutableError);
+  test("an unpriced hosted configured default is bypassed, not routed", () => {
+    // Hosted configured defaults never ride a bare turn (local-by-default), so
+    // the pricing rule for this row binds only on explicit selection — which
+    // still throws, per the explicit-modelId test above.
+    const selection = selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview");
+    expect(selection.selected.tier).toBe(0);
+    expect(selection.reason).toBe("default_local");
   });
 
   test("tier routing skips unpriced candidates and picks a priced one", () => {
