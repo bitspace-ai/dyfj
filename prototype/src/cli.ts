@@ -385,15 +385,69 @@ export function replPrompt(color: boolean): string {
   return color ? "\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m " : "\ndyfj> ";
 }
 
-export function formatReceipt(result: TurnResult, color: boolean): string {
+function formatUsdShort(usd: number): string {
+  return usd > 0 ? `$${usd.toFixed(4)}` : "$0";
+}
+
+/**
+ * The per-turn receipt line. `sessionTotalUsd` (the REPL's running sum of
+ * per-turn costs) adds a `session $…` figure so spend is visible as it
+ * accumulates, not just per turn; one-shot exec passes none. Reasoning tokens
+ * appear only when the provider reported some — most report none.
+ */
+export function formatReceipt(
+  result: TurnResult,
+  color: boolean,
+  sessionTotalUsd?: number,
+): string {
   const dim = (s: string) => (color ? `\x1b[2m${s}\x1b[0m` : s);
-  const cost = result.cost.totalUsd > 0
-    ? `$${result.cost.totalUsd.toFixed(4)}`
-    : "$0";
-  const tokens = `${result.tokens.input}→${result.tokens.output} tok`;
+  const cost = formatUsdShort(result.cost.totalUsd);
+  const session = sessionTotalUsd !== undefined
+    ? ` · session ${formatUsdShort(sessionTotalUsd)}`
+    : "";
+  const reasoning = (result.tokens.reasoning ?? 0) > 0
+    ? ` (+${result.tokens.reasoning} reasoning)`
+    : "";
+  const tokens = `${result.tokens.input}→${result.tokens.output} tok${reasoning}`;
   return dim(
-    `— ${result.model.displayName} · ${cost} · ${tokens} · ${result.route.reason}`,
+    `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${result.route.reason}`,
   );
+}
+
+/** Inputs for the operator posture line (session start and /model switches). */
+export interface SessionPosture {
+  /** Active model slug, or the server-resolved bare-turn default. */
+  slug: string;
+  tier?: number;
+  /** true = on-machine local provider; false = hosted; undefined = unknown. */
+  local?: boolean;
+  /** This session opted into paid inference (--approve-paid / /model --approve-paid). */
+  approvePaidSession: boolean;
+  /** Standing paid posture from engine config (approve_paid_default). */
+  approvePaidDefault?: boolean;
+  permissionLevel?: string;
+}
+
+/**
+ * One plain stderr line stating the routing/spend/permission posture: model,
+ * tier, local vs hosted, paid posture, permission level. Printed at REPL start
+ * and after every /model switch; deliberately uncolored so NO_COLOR and
+ * non-TTY output carry the identical bytes.
+ */
+export function formatPostureLine(posture: SessionPosture): string {
+  const tier = posture.tier !== undefined ? `tier ${posture.tier}` : "tier ?";
+  const locality = posture.local === undefined
+    ? "locality unknown"
+    : posture.local
+    ? "local"
+    : "hosted";
+  const paid = posture.approvePaidSession
+    ? "paid approved (session)"
+    : posture.approvePaidDefault === true
+    ? "paid approved (standing config)"
+    : "paid off (hosted turns fail closed)";
+  return `posture: ${posture.slug} · ${tier} · ${locality} · ${paid} · ` +
+    `permission ${posture.permissionLevel ?? "unknown"}`;
 }
 
 export function friendlyError(error: unknown, config: CliConfig): string {
@@ -478,7 +532,21 @@ export async function runRepl(
       config.unix ? config.socket : config.serverUrl
     } · Ctrl-D or /exit to quit`,
   );
+  // Session-start posture line (UDS seam only — HTTP sessions have no status
+  // RPC). An unreachable runtime prints nothing here: the first turn already
+  // reports reachability loudly, and the REPL must still open. Interactive
+  // sessions only: with piped stdin, readline closes on EOF during any await
+  // that precedes the first readLine, so this fetch would silently swallow the
+  // piped input; scripted sessions keep main-line behavior byte-identical.
+  if (config.unix && interactive) {
+    const posture = await fetchSessionPosture(config, connect);
+    if (!("error" in posture)) io.err(formatPostureLine(posture));
+  }
   let sessionId = config.sessionId;
+  // Running spend across this REPL session: the sum of per-turn receipt costs,
+  // accumulated client-side so the displayed total always matches the receipts
+  // the operator has seen.
+  let sessionSpendUsd = 0;
   const onApproval = (request: unknown) =>
     promptMidTurnApproval(io, request, interactive);
   try {
@@ -522,7 +590,8 @@ export async function runRepl(
         } else {
           output.finish();
         }
-        io.err(formatReceipt(result, config.color));
+        sessionSpendUsd += result.cost.totalUsd;
+        io.err(formatReceipt(result, config.color, sessionSpendUsd));
         sessionId = result.sessionId;
       } catch (error) {
         io.err(
@@ -544,6 +613,8 @@ interface ModelRow {
   displayName?: string;
   provider?: string;
   tier?: number;
+  /** Server-computed locality (on-machine loopback provider); absent on older servers. */
+  local?: boolean;
 }
 interface SessionRow {
   slug?: string;
@@ -559,6 +630,14 @@ interface RuntimeStatusPayload {
     transport?: string;
     clearance?: string;
     defaultCompanionModel?: string | null;
+    /** Server-resolved bare-turn route; absent on older servers, null when unroutable. */
+    defaultTurnModel?: {
+      slug?: string;
+      displayName?: string;
+      tier?: number;
+      local?: boolean;
+      reason?: string;
+    } | null;
     permissionLevel?: string;
     approvePaidDefault?: boolean;
     defaultSessionBudgetUsd?: number;
@@ -766,6 +845,64 @@ export async function fetchModelSlugs(
   }
 }
 
+/**
+ * Resolve the posture line's inputs over the UDS seam: the runtime's standing
+ * config (permission level, paid default) plus the active model's tier and
+ * locality — the explicit `config.model` when set, else the server-resolved
+ * bare-turn default. One connection for the whole read.
+ */
+export async function fetchSessionPosture(
+  config: CliConfig,
+  connect: ConnectFn = connectUnixClient,
+): Promise<SessionPosture | { error: string }> {
+  try {
+    const client = await connect(config.socket);
+    try {
+      const { runtime } = await client.request(
+        "runtime/status",
+      ) as RuntimeStatusPayload;
+      let slug = config.model;
+      let tier: number | undefined;
+      let local: boolean | undefined;
+      if (slug !== undefined) {
+        const { models } = await client.request("models/list") as {
+          models: ModelRow[];
+        };
+        const row = models.find((m) => m.slug === slug);
+        tier = row?.tier;
+        local = row?.local;
+      } else if (config.tier !== undefined || config.hint !== undefined) {
+        // Explicit tier/hint routing rides every turn, so the server's
+        // bare-turn default does not describe this session; name the routing
+        // rather than showing a default the session never uses.
+        slug = config.tier !== undefined
+          ? `(tier ${config.tier} route)`
+          : `(hint ${config.hint} route)`;
+        tier = config.tier;
+      } else {
+        const resolved = runtime?.defaultTurnModel;
+        if (resolved != null && typeof resolved.slug === "string") {
+          slug = resolved.slug;
+          tier = resolved.tier;
+          local = resolved.local;
+        }
+      }
+      return {
+        slug: slug ?? "(registry default)",
+        tier,
+        local,
+        approvePaidSession: config.approvePaid === true,
+        approvePaidDefault: runtime?.approvePaidDefault,
+        permissionLevel: runtime?.permissionLevel,
+      };
+    } finally {
+      client.close();
+    }
+  } catch (error) {
+    return { error: socketError(error, config) };
+  }
+}
+
 export async function handleReplModelCommand(
   line: string,
   config: CliConfig,
@@ -774,6 +911,12 @@ export async function handleReplModelCommand(
 ): Promise<boolean> {
   const parts = line.trim().split(/\s+/);
   if (parts[0] !== "/model") return false;
+  // `--approve-paid` mirrors the launch flag: it arms the SESSION's existing
+  // per-turn paid opt-in (buildTurnBody sends it each turn), so escalating to a
+  // hosted model mid-session doesn't require relaunching. Consent stays with
+  // the engine: without it, hosted turns keep failing closed exactly as today.
+  const approvePaid = parts.includes("--approve-paid");
+  const args = parts.slice(1).filter((part) => part !== "--approve-paid");
 
   const listed = await fetchModelSlugs(config, connect);
   if ("error" in listed) {
@@ -781,15 +924,24 @@ export async function handleReplModelCommand(
     return true;
   }
 
-  if (parts.length === 1) {
+  const emitPosture = async () => {
+    const posture = await fetchSessionPosture(config, connect);
+    io.err("error" in posture ? posture.error : formatPostureLine(posture));
+  };
+
+  if (args.length === 0) {
+    // Bare `/model --approve-paid` arms paid inference without switching.
+    if (approvePaid) config.approvePaid = true;
     const active = config.model ?? "(registry default)";
     io.err(`active model: ${active}`);
     io.err(`available: ${listed.slugs.join(", ") || "(none)"}`);
+    await emitPosture();
     return true;
   }
 
-  const slug = parts[1];
+  const slug = args[0];
   if (!listed.slugs.includes(slug)) {
+    // A failed switch must not arm paid inference as a side effect.
     io.err(
       `dyfj: unknown model "${slug}". Available: ${
         listed.slugs.join(", ") || "(none)"
@@ -799,7 +951,8 @@ export async function handleReplModelCommand(
   }
 
   config.model = slug;
-  io.err(`model: ${slug}`);
+  if (approvePaid) config.approvePaid = true;
+  await emitPosture();
   return true;
 }
 
@@ -891,6 +1044,7 @@ export function formatRuntimeStatus(
   const runtime = payload.runtime ?? {};
   const models = runtime.models ?? {};
   const methods = runtime.methods ?? [];
+  const resolved = runtime.defaultTurnModel;
   return [
     `runtime: reachable`,
     `socket: ${config.socket}`,
@@ -898,6 +1052,29 @@ export function formatRuntimeStatus(
       runtime.clearance ?? "unknown"
     }`,
     `default model: ${runtime.defaultCompanionModel ?? "(registry default)"}`,
+    // The route a bare turn actually takes — under the local-by-default
+    // posture this can differ from the configured default model above. An
+    // explicit null (the server tried and bare-turn selection failed — no
+    // routable local model, a misconfigured or unpriced default, …) renders
+    // as an unavailable state rather than silently omitting the line; only an
+    // older server that never sent the field omits it. The wording stays
+    // cause-neutral because the null carries no failure reason.
+    ...(resolved != null && typeof resolved.slug === "string"
+      ? [
+        `bare-turn route: ${resolved.slug} (tier ${resolved.tier ?? "?"}, ${
+          resolved.local === undefined
+            ? "locality unknown"
+            : resolved.local
+            ? "local"
+            : "hosted"
+        })`,
+      ]
+      : resolved === null
+      ? [
+        "bare-turn route: unavailable (selection failed — check the model " +
+        "registry and default model)",
+      ]
+      : []),
     `models: ${models.total ?? 0} total · ${models.local ?? 0} local · ${
       models.hosted ?? 0
     } hosted`,
@@ -1459,7 +1636,9 @@ Usage:
   dyfj sessions             list sessions
 
 REPL commands:
-  /model [<slug>]           show or switch the active model (validated slugs)
+  /model [<slug>]           show or switch the active model (validated slugs);
+                            add --approve-paid to opt this session into paid
+                            (hosted) inference when escalating
   /session                  show the current session id (for --session resume)
   /exit, /quit              exit the REPL
 

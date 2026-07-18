@@ -7,8 +7,10 @@
 
 import {
   defaultLocalWorkbenchModels,
+  isLocalWorkbenchModel,
   loadWorkbenchModels,
   modelHasCatalogPricing,
+  selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
 } from "./provider";
@@ -61,12 +63,27 @@ export interface WorkbenchMethodSummary {
   kind: WorkbenchMethodKind;
 }
 
+/**
+ * What a bare turn (no model/tier/hint) would route to right now — the same
+ * selection the turn path runs, resolved server-side so an engine-free client
+ * can render an honest posture line without reimplementing routing.
+ */
+export interface WorkbenchDefaultTurnModel {
+  slug: string;
+  displayName: string;
+  tier: 0 | 1 | 2;
+  local: boolean;
+  reason: string;
+}
+
 export interface WorkbenchRuntimeStatus {
   transport: "uds";
   clearance: "loopback";
   methods: string[];
   methodCatalog: WorkbenchMethodSummary[];
   defaultCompanionModel: string | null;
+  /** Resolved bare-turn route; null when no model is currently routable. */
+  defaultTurnModel: WorkbenchDefaultTurnModel | null;
   permissionLevel: PermissionLevel;
   approvePaidDefault: boolean;
   defaultSessionBudgetUsd: number;
@@ -140,18 +157,44 @@ const METHOD_CATALOG = [
 
 const METHOD_IDS = METHOD_CATALOG.map((method) => method.id);
 
+function resolveDefaultTurnModel(
+  models: WorkbenchModel[],
+  defaultCompanionModel: string | null,
+): WorkbenchDefaultTurnModel | null {
+  try {
+    const { selected, reason } = selectWorkbenchModel(
+      models,
+      {},
+      defaultCompanionModel,
+    );
+    return {
+      slug: selected.slug,
+      displayName: selected.displayName,
+      tier: selected.tier,
+      local: isLocalWorkbenchModel(selected),
+      reason,
+    };
+  } catch {
+    // No routable bare-turn model (empty registry, misconfigured default) —
+    // status must still answer; the turn path reports the real error.
+    return null;
+  }
+}
+
 function runtimeStatus(
   options: WorkbenchUnixServerOptions,
   models: WorkbenchModel[],
 ): WorkbenchRuntimeStatus {
+  const defaultCompanionModel = options.engineConfig?.defaultCompanionModel ??
+    options.defaultCompanionModel ??
+    null;
   return {
     transport: "uds",
     clearance: "loopback",
     methods: [...METHOD_IDS],
     methodCatalog: METHOD_CATALOG.map((method) => ({ ...method })),
-    defaultCompanionModel: options.engineConfig?.defaultCompanionModel ??
-      options.defaultCompanionModel ??
-      null,
+    defaultCompanionModel,
+    defaultTurnModel: resolveDefaultTurnModel(models, defaultCompanionModel),
     permissionLevel: options.engineConfig?.permissionLevel ??
       options.permissionLevel ??
       "strict",
@@ -160,10 +203,13 @@ function runtimeStatus(
     defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
       0.1,
     defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ?? 25,
+    // Locality counts use the same provider+loopback classification as
+    // `models/list[].local` and the bare-turn route — never the tier label,
+    // which is catalog metadata a mis-tiered row can get wrong.
     models: {
       total: models.length,
-      local: models.filter((model) => model.tier === 0).length,
-      hosted: models.filter((model) => model.tier > 0).length,
+      local: models.filter(isLocalWorkbenchModel).length,
+      hosted: models.filter((model) => !isLocalWorkbenchModel(model)).length,
     },
   };
 }
@@ -223,12 +269,14 @@ export function buildWorkbenchHandlers(
       } satisfies WorkbenchSurfaceSnapshot;
     },
 
-    // `routable` is computed server-side (single source: modelHasCatalogPricing)
-    // so clients can annotate unpriced rows without duplicating the pricing rule.
+    // `routable` and `local` are computed server-side (single sources:
+    // modelHasCatalogPricing, isLocalWorkbenchModel) so clients can annotate
+    // rows without duplicating the pricing or locality rules.
     "models/list": async () => ({
       models: (await loadModels()).map((model) => ({
         ...model,
         routable: modelHasCatalogPricing(model),
+        local: isLocalWorkbenchModel(model),
       })),
     }),
 

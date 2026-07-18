@@ -372,15 +372,25 @@ export function selectWorkbenchModel(
 
   if (options.tier !== undefined) {
     const tierModels = models.filter((model) => model.tier === options.tier);
-    const routable = tierModels.filter(modelHasCatalogPricing);
+    // Tier 0 is the LOCAL tier: even when named explicitly, its candidates
+    // must be genuinely local (on-machine provider over loopback). Tier-0
+    // selection is exempt from the paid-consent preflight, so a mis-tiered
+    // hosted row here would run hosted inference without consent. Hosted
+    // tiers (1/2) stay tier-based and consent-gated as before.
+    const candidates = options.tier === 0
+      ? tierModels.filter(isLocalWorkbenchModel)
+      : tierModels;
+    const routable = candidates.filter(modelHasCatalogPricing);
     const selected = preferredModelFrom(routable);
     if (!selected) {
-      // Distinguish "no models at this tier" from "models exist but none are
-      // priced" — the second needs a catalog fix, not a different request.
-      if (tierModels.length > 0) {
+      // Distinguish "no eligible models at this tier" from "candidates exist
+      // but none are priced" — the second needs a catalog fix, not a
+      // different request. Tier-0 rows excluded for locality are treated as
+      // not found, never silently routed.
+      if (candidates.length > 0) {
         throw new WorkbenchModelNotRoutableError(
           `tier:${options.tier} — all candidates unpriced: ${
-            tierModels.map((model) => model.slug).join(", ")
+            candidates.map((model) => model.slug).join(", ")
           }`,
         );
       }
@@ -395,23 +405,43 @@ export function selectWorkbenchModel(
 
   // No explicit modelId or tier. If the request also gave no hint and the engine
   // has a configured default companion model (config ~/.dyfj/config.toml /
-  // DYFJ_WORKBENCH_MODEL), use it — the "bare turn" default, ahead of the
-  // registry's local fallback.
+  // DYFJ_WORKBENCH_MODEL), use it — but only when it resolves to an on-machine
+  // local model. The ambient default is local by design: hosted inference is a
+  // deliberate per-task escalation (explicit modelId/tier plus the paid-consent
+  // gate), never something a bare turn inherits from standing config. A hosted
+  // configured default therefore falls through to the registry's local default,
+  // with a distinct reason so receipts show the bypass.
+  let hostedDefaultBypassed = false;
   if (
     options.hint === undefined &&
     defaultModelId !== undefined &&
     defaultModelId !== null &&
     defaultModelId !== ""
   ) {
-    const selected = models.find((model) => model.slug === defaultModelId);
-    if (!selected) throw new WorkbenchModelNotFoundError(defaultModelId);
-    if (!modelHasCatalogPricing(selected)) {
-      throw new WorkbenchModelNotRoutableError(selected.slug);
+    const configured = models.find((model) => model.slug === defaultModelId);
+    if (!configured) throw new WorkbenchModelNotFoundError(defaultModelId);
+    if (isLocalWorkbenchModel(configured)) {
+      if (!modelHasCatalogPricing(configured)) {
+        throw new WorkbenchModelNotRoutableError(configured.slug);
+      }
+      return { selected: configured, considered: [], reason: "default_config" };
     }
-    return { selected, considered: [], reason: "default_config" };
+    hostedDefaultBypassed = true;
   }
 
-  const localModels = models.filter((model) => model.tier === 0);
+  // Ambient candidates — the bare default AND the hint paths below — must be
+  // genuinely local: tier 0 AND an on-machine provider over loopback (the same
+  // test the compression call uses). Tier alone is catalog metadata: a
+  // mis-tiered hosted row must never ride ambient routing, because tier-0
+  // selection is exempt from the paid-consent preflight and the ambient
+  // posture promises these turns stay on-machine. A hint names a capability,
+  // not a model — it is not a hosted escalation, so it gets the same locality
+  // bound as the bare default. Only explicit tier routing above stays
+  // tier-based: the operator named the tier, and those selections still pass
+  // the pricing/consent gates.
+  const localModels = models.filter(
+    (model) => model.tier === 0 && isLocalWorkbenchModel(model),
+  );
   const considered = localModels.map((model) => model.slug);
 
   if (options.hint === "code") {
@@ -433,7 +463,11 @@ export function selectWorkbenchModel(
 
   const selected = preferredModelFrom(localModels);
   if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
-  return { selected, considered, reason: "default" };
+  return {
+    selected,
+    considered,
+    reason: hostedDefaultBypassed ? "default_local" : "default",
+  };
 }
 
 // One preference chain for any "pick from this set" selection, so explicit

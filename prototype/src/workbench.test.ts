@@ -385,6 +385,22 @@ describe("buildWorkbenchReceipt", () => {
     expect(receipt).toContain("Calls:   2");
   });
 
+  test("reports reasoning tokens only when the provider reported some", () => {
+    // Absent/zero: no reasoning fragment — most providers never report them.
+    expect(buildWorkbenchReceipt(BASE_RECEIPT)).not.toContain("reasoning");
+    expect(
+      buildWorkbenchReceipt({ ...BASE_RECEIPT, totalReasoningTokens: 0 }),
+    ).not.toContain("reasoning");
+
+    const receipt = buildWorkbenchReceipt({
+      ...BASE_RECEIPT,
+      totalTokensInput: 3000,
+      totalTokensOutput: 1200,
+      totalReasoningTokens: 256,
+    });
+    expect(receipt).toContain("Tokens:  3000 in, 1200 out, 256 reasoning");
+  });
+
   test("includes model call timing breakdown when available", () => {
     const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 

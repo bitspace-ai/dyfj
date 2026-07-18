@@ -84,6 +84,91 @@ describe("serveWorkbenchUnix read methods", () => {
     ]);
   });
 
+  test("models/list marks locality server-side", async () => {
+    const client = await connectClient(await startServer({
+      ...fakes,
+      loadModels: async () =>
+        anyVal([
+          {
+            slug: "local-x",
+            provider: "ollama",
+            baseUrl: "http://127.0.0.1:11434/v1",
+            tier: 0,
+            costInput: 0,
+            costOutput: 0,
+          },
+          {
+            slug: "hosted-x",
+            provider: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            tier: 2,
+            costInput: 15,
+            costOutput: 75,
+          },
+        ]),
+    }));
+    const { models } = anyVal(await client.request("models/list"));
+    expect(models.map((m: { slug: string; local: boolean }) => [
+      m.slug,
+      m.local,
+    ])).toEqual([
+      ["local-x", true],
+      ["hosted-x", false],
+    ]);
+  });
+
+  test("runtime/status resolves the bare-turn route past a hosted configured default", async () => {
+    const client = await connectClient(await startServer({
+      ...fakes,
+      loadModels: async () =>
+        anyVal([
+          {
+            slug: "local-x",
+            displayName: "Local X",
+            provider: "ollama",
+            baseUrl: "http://127.0.0.1:11434/v1",
+            tier: 0,
+            costInput: 0,
+            costOutput: 0,
+          },
+          {
+            slug: "hosted-x",
+            displayName: "Hosted X",
+            provider: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            tier: 2,
+            costInput: 15,
+            costOutput: 75,
+          },
+        ]),
+      engineConfig: anyVal({
+        defaultCompanionModel: "hosted-x",
+        permissionLevel: "operator",
+        approvePaidDefault: false,
+      }),
+    }));
+    const { runtime } = anyVal(await client.request("runtime/status"));
+    // The configured default stays visible, but the resolved bare-turn route
+    // shows what a turn actually gets: the local default (hosted is an
+    // explicit escalation).
+    expect(runtime.defaultCompanionModel).toBe("hosted-x");
+    expect(runtime.defaultTurnModel).toMatchObject({
+      slug: "local-x",
+      tier: 0,
+      local: true,
+      reason: "default_local",
+    });
+    // Locality counts use the same provider+loopback classification as the
+    // per-row `local` flag, not the tier label.
+    expect(runtime.models).toEqual({ total: 2, local: 1, hosted: 1 });
+  });
+
+  test("runtime/status reports a null bare-turn route when nothing is routable", async () => {
+    const client = await connectClient(await startServer(fakes));
+    const { runtime } = anyVal(await client.request("runtime/status"));
+    expect(runtime.defaultTurnModel).toBeNull();
+  });
+
   test("sessions/list passes the project filter through", async () => {
     const client = await connectClient(await startServer(fakes));
     expect(await client.request("sessions/list", { project: "dyfj" })).toEqual({

@@ -67,6 +67,8 @@ export interface WorkbenchReceiptInput {
   totalTokensOutput: number;
   totalCacheReadTokens?: number;
   totalCacheWriteTokens?: number;
+  /** Provider-reported reasoning/thinking tokens, when reported (else 0). */
+  totalReasoningTokens?: number;
   totalCalls: number;
   contextBudget?: PackedContextSummary;
   contextProfile?: AskContextProfile;
@@ -395,6 +397,8 @@ export interface WorkbenchRuntimeResult {
     output: number;
     cacheRead: number;
     cacheWrite: number;
+    /** Provider-reported reasoning/thinking tokens across the turn (when reported). */
+    reasoning?: number;
     totalCalls: number;
   };
   context: {
@@ -741,7 +745,10 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     `Paid inference used: ${input.paidInferenceUsed ? "yes" : "no"}`,
     `Estimated cost: ${formatMoney(input.estimatedCostUsd ?? 0)}`,
     `Actual cost:    ${formatMoney(input.totalCostUsd)}`,
-    `Tokens:  ${input.totalTokensInput} in, ${input.totalTokensOutput} out`,
+    `Tokens:  ${input.totalTokensInput} in, ${input.totalTokensOutput} out` +
+      ((input.totalReasoningTokens ?? 0) > 0
+        ? `, ${input.totalReasoningTokens} reasoning`
+        : ""),
     `Cache:   ${input.totalCacheReadTokens ?? 0} read, ${
       input.totalCacheWriteTokens ?? 0
     } written`,
@@ -1438,6 +1445,10 @@ export async function runWorkbenchRuntime(
   let estimatedCostUsd = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
+  // Reasoning/thinking tokens when the provider reports them separately from
+  // visible output (e.g. Gemini). Surfaced on the receipt so the operator sees
+  // the model's true output-side consumption; cost/recorded usage unchanged.
+  let reasoningTokens = 0;
   // Per-turn aggregates across every provider call the agent loop makes, so
   // receipts/events count the whole turn, not just the final call.
   let turnInputTokens = 0;
@@ -1959,6 +1970,7 @@ export async function runWorkbenchRuntime(
       const turn = await runWorkbenchTurn(params);
       cacheReadTokens += turn.usage.cacheRead;
       cacheWriteTokens += turn.usage.cacheWrite;
+      reasoningTokens += turn.usage.reasoning ?? 0;
       turnInputTokens += turn.usage.input;
       turnOutputTokens += turn.usage.output;
       turnCostUsd += turn.usage.cost.total;
@@ -2687,6 +2699,7 @@ export async function runWorkbenchRuntime(
       totalTokensOutput: summary.totalTokensOutput,
       totalCacheReadTokens: cacheReadTokens,
       totalCacheWriteTokens: cacheWriteTokens,
+      totalReasoningTokens: reasoningTokens,
       totalCalls: summary.totalCalls,
       contextBudget,
       contextProfile,
@@ -2748,6 +2761,7 @@ export async function runWorkbenchRuntime(
         output: summary.totalTokensOutput,
         cacheRead: cacheReadTokens,
         cacheWrite: cacheWriteTokens,
+        reasoning: reasoningTokens,
         totalCalls: summary.totalCalls,
       },
       context: {
