@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { JsonRpcPeer } from "./jsonrpc-peer";
-import { RpcError, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
+import {
+  encodeFrame,
+  notification,
+  RpcError,
+  RpcErrorCode,
+  type RpcHandlers,
+} from "./jsonrpc";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -33,6 +39,28 @@ async function connectPair(
     }
   });
   return { server, client };
+}
+
+// A scripted inbound conn: read() serves the queued chunks in order, so a test
+// controls exactly where the byte stream splits — a real socket pair cannot
+// guarantee read-boundary placement. Honors the Deno.Reader contract: it never
+// writes past p.length, and a chunk larger than the caller's buffer is served
+// across successive reads rather than overflowing it.
+function scriptedConn(chunks: Uint8Array[]): Deno.Conn {
+  const queue = chunks.map((c) => c);
+  return {
+    read(p: Uint8Array): Promise<number | null> {
+      if (queue.length === 0) return Promise.resolve(null);
+      const chunk = queue[0];
+      const n = Math.min(chunk.length, p.length);
+      p.set(chunk.subarray(0, n));
+      if (n < chunk.length) queue[0] = chunk.subarray(n);
+      else queue.shift();
+      return Promise.resolve(n);
+    },
+    write: (p: Uint8Array) => Promise.resolve(p.length),
+    close() {},
+  } as unknown as Deno.Conn;
 }
 
 describe("JsonRpcPeer", () => {
@@ -139,6 +167,46 @@ describe("JsonRpcPeer", () => {
     const result = await client.request("big") as { payload: string };
     expect(result.payload.length).toBe(300_000);
     expect(result.payload).toBe(big);
+  });
+
+  test("a multibyte character bisected across two reads round-trips byte-for-byte", async () => {
+    const payload = "77→15 tok"; // → is E2 86 92
+    const bytes = encodeFrame(notification("stream", { delta: payload }));
+    const splitAt = bytes.indexOf(0xe2) + 1; // lead byte ends chunk one
+    expect(splitAt).toBeGreaterThan(0);
+    const seen: unknown[] = [];
+    const peer = new JsonRpcPeer(
+      scriptedConn([bytes.subarray(0, splitAt), bytes.subarray(splitAt)]),
+      {
+        handlers: {
+          stream: (p) => {
+            seen.push(p);
+          },
+        },
+      },
+    );
+    await peer.run();
+    expect(seen).toEqual([{ delta: payload }]);
+  });
+
+  test("EOF flush feeds the buffered decoder tail into the frame layer", async () => {
+    // With { stream: true } a partial multibyte tail stays in the TextDecoder;
+    // the final argument-less flush emits U+FFFD for it into FrameDecoder.push.
+    // A partial tail carries no frame terminator, so it is never delivered as a
+    // message — its only observable effect is on the frame-size bound. Here head
+    // is nine complete bytes and tail is the first two bytes of → (E2 86 92)
+    // with maxFrameBytes 9, so only the flushed U+FFFD tips the buffer past the
+    // bound and reaches onParseError. Without the flush those bytes never reach
+    // the frame layer at all, and no error fires.
+    const head = new TextEncoder().encode('{"x":"abc');
+    const tail = new Uint8Array([0xe2, 0x86]);
+    const errors: string[] = [];
+    const peer = new JsonRpcPeer(scriptedConn([head, tail]), {
+      maxFrameBytes: head.length, // 9 — exactly the complete bytes received
+      onParseError: (detail) => errors.push(detail),
+    });
+    await peer.run();
+    expect(errors).toEqual([`frame exceeds ${head.length} bytes`]);
   });
 
   test("pending requests reject when the connection closes", async () => {

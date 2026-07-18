@@ -109,23 +109,34 @@ export class JsonRpcPeer {
           break; // connection closed under us
         }
         if (n === null) break;
-        for (
-          const frame of this.#decoder.push(decoder.decode(buf.subarray(0, n)))
-        ) {
-          if (!frame.ok) {
-            this.#onParseError?.(frame.error ?? "parse error");
-            continue;
-          }
-          // Handle concurrently: never block the read loop on a slow handler, or
-          // a long-running `turn` would wedge `turn/cancel` and every other
-          // request on the connection. Writes stay serialized via #write.
-          void this.#handle(frame.message as JsonRpcMessage).catch((err) => {
-            this.#onParseError?.(`handler error: ${(err as Error)?.message}`);
-          });
-        }
+        // { stream: true }: a multibyte UTF-8 sequence that straddles a read
+        // boundary stays buffered in the decoder until its continuation bytes
+        // arrive, instead of each half mangling to U+FFFD.
+        this.#feed(decoder.decode(buf.subarray(0, n), { stream: true }));
       }
+      // EOF flush: finalize the streaming decoder. If the connection ended
+      // mid-character the buffered partial bytes become U+FFFD; lacking a frame
+      // terminator they stay buffered in the FrameDecoder and are discarded
+      // with the incomplete frame when the loop exits. The flush finalizes the
+      // decoder — it does not, on its own, surface the truncation.
+      this.#feed(decoder.decode());
     } finally {
       this.#failPending(new Error("connection closed"));
+    }
+  }
+
+  #feed(text: string): void {
+    for (const frame of this.#decoder.push(text)) {
+      if (!frame.ok) {
+        this.#onParseError?.(frame.error ?? "parse error");
+        continue;
+      }
+      // Handle concurrently: never block the read loop on a slow handler, or
+      // a long-running `turn` would wedge `turn/cancel` and every other
+      // request on the connection. Writes stay serialized via #write.
+      void this.#handle(frame.message as JsonRpcMessage).catch((err) => {
+        this.#onParseError?.(`handler error: ${(err as Error)?.message}`);
+      });
     }
   }
 
