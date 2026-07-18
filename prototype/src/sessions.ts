@@ -240,6 +240,7 @@ export interface WorkbenchSessionEvent {
   toolCallId: string | null;
   toolArguments: string | null;
   toolResult: string | null;
+  toolIsError: boolean | null;
   createdAt: string;
 }
 
@@ -270,7 +271,7 @@ export async function fetchWorkbenchSessionEvents(input: {
     `SELECT event_id, event_type, trace_id, principal_id, model_id, ` +
       `provider, content, stop_reason, tokens_input, tokens_output, ` +
       `cost_total, tool_name, tool_call_id, tool_arguments, tool_result, ` +
-      `created_at FROM events${asOfClause} ` +
+      `tool_is_error, created_at FROM events${asOfClause} ` +
       `WHERE session_id = ? ORDER BY created_at ASC;`,
     [input.sessionId],
   );
@@ -290,6 +291,12 @@ export async function fetchWorkbenchSessionEvents(input: {
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolArguments: normalizeToolArguments(row.tool_arguments),
     toolResult: row.tool_result ? String(row.tool_result) : null,
+    // tinyint(1) round-trips as a number or numeric string depending on the
+    // driver path; normalize either to a boolean, absent to null.
+    toolIsError: row.tool_is_error === null || row.tool_is_error === undefined ||
+        row.tool_is_error === ""
+      ? null
+      : Number(row.tool_is_error) === 1,
     createdAt: row.created_at,
   }));
 }
@@ -378,6 +385,9 @@ export function buildConversationMessages(
         toolCallId: event.toolCallId,
         name: event.toolName,
         content: event.toolResult ?? "",
+        // Replay the failure mark, so a resumed transcript serializes the
+        // result as an error (Anthropic is_error) exactly like the live turn.
+        ...(event.toolIsError ? { isError: true } : {}),
       });
     }
   }
