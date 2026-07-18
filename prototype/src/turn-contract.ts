@@ -44,6 +44,14 @@ export interface TurnReceipt {
     output: number;
     cacheRead: number;
     cacheWrite: number;
+    /**
+     * Provider-reported reasoning/thinking tokens across the turn, when the
+     * provider reports them separately from visible output (e.g. Gemini's
+     * thoughtsTokenCount). Optional and additive: older servers omit it, and
+     * clients must render it only when present and non-zero. Display-only —
+     * recorded usage and cost intentionally exclude these tokens.
+     */
+    reasoning?: number;
     totalCalls: number;
   };
   /** Context provenance — what fed the turn (memory + repo sources). */
