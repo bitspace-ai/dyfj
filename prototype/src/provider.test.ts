@@ -1231,6 +1231,54 @@ describe("anthropic provider adapter", () => {
     expect(body.messages).toHaveLength(3);
   });
 
+  test("buildAnthropicMessagesRequest flags failed tool results with is_error", () => {
+    const tools = [{
+      name: "read_file",
+      description: "Read a file",
+      parameters: { type: "object", properties: {} },
+    }];
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5",
+      "sys",
+      "seed",
+      false,
+      {
+        tools,
+        messages: [
+          { role: "user", content: "read the friction log" },
+          {
+            role: "assistant",
+            content: "",
+            toolCalls: [{ id: "tu-bad", name: "read_file", arguments: {} }],
+          },
+          {
+            role: "tool",
+            toolCallId: "tu-bad",
+            name: "read_file",
+            content:
+              "invalid arguments for read_file: missing required argument: path",
+            isError: true,
+          },
+        ],
+      },
+    );
+
+    // The denial travels as a tool_result the model reads as an ERROR — not as
+    // ordinary tool output — which is what invites a corrected retry.
+    expect(body.messages[2]).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "tu-bad",
+          content:
+            "invalid arguments for read_file: missing required argument: path",
+          is_error: true,
+        },
+      ],
+    });
+  });
+
   test("parseAnthropicStreamLine extracts deltas, usage, and stop reason", () => {
     expect(
       parseAnthropicStreamLine(

@@ -85,7 +85,18 @@ export interface WorkbenchToolCall {
 export type WorkbenchMessage =
   | { role: "user"; content: string }
   | { role: "assistant"; content: string; toolCalls?: WorkbenchToolCall[] }
-  | { role: "tool"; toolCallId: string; name: string; content: string };
+  | {
+    role: "tool";
+    toolCallId: string;
+    name: string;
+    content: string;
+    /**
+     * The call failed (validation denial, execution error). Wire formats that
+     * can mark a result as an error (Anthropic `is_error`) surface it, so the
+     * model reads the content as a failure to correct rather than as output.
+     */
+    isError?: boolean;
+  };
 
 export interface WorkbenchCallTimings {
   responseHeadersMs: number;
@@ -892,7 +903,12 @@ type AnthropicContentBlock =
     name: string;
     input: Record<string, unknown>;
   }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  | {
+    type: "tool_result";
+    tool_use_id: string;
+    content: string;
+    is_error?: boolean;
+  };
 
 type AnthropicWireMessage = {
   role: "user" | "assistant";
@@ -938,6 +954,7 @@ function toAnthropicWireMessages(
         type: "tool_result",
         tool_use_id: m.toolCallId,
         content: m.content,
+        ...(m.isError ? { is_error: true } : {}),
       };
       const last = wire[wire.length - 1];
       if (

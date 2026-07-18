@@ -566,6 +566,7 @@ export function toolStepToMessages(
       toolCallId: result.callId,
       name: result.commandId,
       content: result.result,
+      ...(result.isError ? { isError: true } : {}),
     });
   }
   return messages;
