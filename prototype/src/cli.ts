@@ -30,6 +30,7 @@ import { assertSecureMemoryUrl } from "./memory-search";
 import { loadSecretsConfig } from "./config";
 import { secretsRunGrant } from "./secrets";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
+import { type BusySpinner, createBusySpinner } from "./busy-spinner";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
@@ -89,6 +90,10 @@ export interface Io {
   out(text: string): void;
   /** Write a line to stderr (status, receipts, errors). */
   err(line: string): void;
+  /** Write to stderr with no implicit newline (spinner frames). Optional. */
+  errRaw?(text: string): void;
+  /** True when stderr is an interactive terminal (spinner may animate). */
+  errIsTerminal?: boolean;
   /** Prompt and read one line; null on EOF. */
   readLine(prompt: string): Promise<string | null>;
   close(): void;
@@ -284,6 +289,70 @@ export function createTurnOutputHandlers(
 }
 
 /**
+ * The turn-in-flight indicator: animates on stderr from submit until the
+ * turn's first output. Enabled only when the Io exposes a raw stderr writer
+ * AND stderr is an interactive terminal — piped stderr gets no control bytes.
+ */
+export function createTurnSpinner(config: CliConfig, io: Io): BusySpinner {
+  return createBusySpinner({
+    write: (text) => io.errRaw?.(text),
+    enabled: io.errRaw !== undefined && io.errIsTerminal === true,
+    color: config.color,
+  });
+}
+
+/**
+ * True when routing this runtime event will actually put something on the
+ * terminal — a superseding-retry marker (rendered to stdout) or a status line
+ * (`formatRuntimeEvent` returns non-null). Invisible bookkeeping events (e.g.
+ * `modelSelected`, emitted right before the long provider wait) render nothing,
+ * so they must NOT retire the spinner — otherwise it vanishes before the wait
+ * it exists to cover.
+ */
+export function runtimeEventIsVisible(event: unknown): boolean {
+  if (isSupersedingRetryStarted(event)) return true;
+  if (typeof event !== "object" || event === null) return false;
+  return formatRuntimeEvent(event as Record<string, unknown>) !== null;
+}
+
+/**
+ * Wrap the streaming-turn handlers so the spinner is erased immediately before
+ * the first output that reaches the terminal — a delta, a runtime-event status
+ * line (but not an invisible event), or a mid-turn approval prompt. stop()
+ * retires the spinner, so calls after the first are no-ops.
+ */
+export function spinnerGuardedTurnHandlers(
+  spinner: BusySpinner,
+  output: ReturnType<typeof createTurnOutputHandlers>,
+  io: Io,
+  onApproval: (
+    request: unknown,
+  ) => Promise<ToolApprovalVerdict> | ToolApprovalVerdict,
+): {
+  onDelta: (text: string) => void;
+  onEvent: (event: Record<string, unknown>) => void;
+  onApproval: (
+    request: unknown,
+  ) => Promise<ToolApprovalVerdict> | ToolApprovalVerdict;
+} {
+  return {
+    onDelta: (text) => {
+      spinner.stop();
+      output.onDelta(text);
+    },
+    onEvent: (event) => {
+      // Keep spinning through invisible events; the wait isn't over yet.
+      if (runtimeEventIsVisible(event)) spinner.stop();
+      handleTurnRuntimeEvent(event, output, io);
+    },
+    onApproval: (request) => {
+      spinner.stop();
+      return onApproval(request);
+    },
+  };
+}
+
+/**
  * Route one runtime event from a streaming turn: the superseding-retry signal
  * resets the renderer (the contract every streaming client must honor); other
  * events render as stderr status lines. Shared by the HTTP/SSE and UDS paths —
@@ -303,6 +372,17 @@ export function handleTurnRuntimeEvent(
   if (typeof event !== "object" || event === null) return;
   const line = formatRuntimeEvent(event as Record<string, unknown>);
   if (line !== null) io.err(line);
+}
+
+/**
+ * The REPL entry prompt. On a color terminal the gutter is bold green — a hue
+ * the output renderer never uses (its palette: bright-cyan headers, cyan code,
+ * dim receipts/markers) — so in scrollback the operator's lines are exactly
+ * the ones carrying the green `dyfj ❯` gutter. Plain mode stays byte-identical
+ * to the historical `dyfj> ` prompt, so NO_COLOR/non-TTY behavior is unchanged.
+ */
+export function replPrompt(color: boolean): string {
+  return color ? "\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m " : "\ndyfj> ";
 }
 
 export function formatReceipt(result: TurnResult, color: boolean): string {
@@ -350,15 +430,24 @@ export async function runExec(
       io.out(`${JSON.stringify(result, null, 2)}\n`);
     } else {
       const output = createTurnOutputHandlers(config, io);
-      const handlers = {
-        onDelta: output.onDelta,
-        onEvent: (event: Record<string, unknown>) =>
-          handleTurnRuntimeEvent(event, output, io),
+      const spinner = createTurnSpinner(config, io);
+      const handlers = spinnerGuardedTurnHandlers(
+        spinner,
+        output,
+        io,
         onApproval,
-      };
-      const result = config.unix
-        ? await socketTurn(config, body, handlers, connect)
-        : await streamTurn(config, body, handlers, fetchFn);
+      );
+      spinner.start();
+      let result: TurnResult;
+      try {
+        result = config.unix
+          ? await socketTurn(config, body, handlers, connect)
+          : await streamTurn(config, body, handlers, fetchFn);
+      } finally {
+        // Covers every non-streaming exit — turn failure, declined approval,
+        // buffered-only turns — so no orphaned spinner line survives the turn.
+        spinner.stop();
+      }
       // Some turns don't stream deltas (e.g. a first model call with tools);
       // the text still arrives with the receipt — render it so output is never empty.
       if (!output.streamed() && result.text.length > 0) {
@@ -394,7 +483,7 @@ export async function runRepl(
     promptMidTurnApproval(io, request, interactive);
   try {
     for (;;) {
-      const line = await io.readLine("\ndyfj> ");
+      const line = await io.readLine(replPrompt(config.color));
       if (line === null) break;
       const prompt = line.trim();
       if (prompt.length === 0) continue;
@@ -411,16 +500,23 @@ export async function runRepl(
       if (await handleReplModelCommand(prompt, config, io, connect)) continue;
       try {
         const output = createTurnOutputHandlers(config, io);
-        const handlers = {
-          onDelta: output.onDelta,
-          onEvent: (event: Record<string, unknown>) =>
-            handleTurnRuntimeEvent(event, output, io),
+        const spinner = createTurnSpinner(config, io);
+        const handlers = spinnerGuardedTurnHandlers(
+          spinner,
+          output,
+          io,
           onApproval,
-        };
+        );
         const body = buildTurnBody(prompt, config, sessionId);
-        const result = config.unix
-          ? await socketTurn(config, body, handlers, connect)
-          : await streamTurn(config, body, handlers, fetchFn);
+        spinner.start();
+        let result: TurnResult;
+        try {
+          result = config.unix
+            ? await socketTurn(config, body, handlers, connect)
+            : await streamTurn(config, body, handlers, fetchFn);
+        } finally {
+          spinner.stop();
+        }
         if (!output.streamed() && result.text.length > 0) {
           output.emitBufferedText(result.text);
         } else {
@@ -1422,6 +1518,10 @@ function realIo(): Io {
       Deno.stdout.writeSync(encoder.encode(text));
     },
     err: (line) => console.error(line),
+    errRaw: (text) => {
+      Deno.stderr.writeSync(encoder.encode(text));
+    },
+    errIsTerminal: Deno.stderr.isTerminal(),
     readLine: (prompt) => readLineOrNull(rl, prompt),
     close: () => rl.close(),
   };

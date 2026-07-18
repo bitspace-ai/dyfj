@@ -6,6 +6,7 @@ import {
   type CliConfig,
   type ConnectFn,
   createTurnOutputHandlers,
+  createTurnSpinner,
   envFileVar,
   formatReceipt,
   formatRuntimeEvent,
@@ -23,6 +24,7 @@ import {
   readLauncherSecretsConfig,
   readLineOrNull,
   readMemoryMcpNetGrant,
+  replPrompt,
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
   readServeUnixRunGrants,
@@ -33,7 +35,9 @@ import {
   runSessions,
   runStart,
   runStatus,
+  runtimeEventIsVisible,
   socketTurn,
+  spinnerGuardedTurnHandlers,
   type StartRuntimeFn,
   streamTurn,
   type TurnResult,
@@ -159,18 +163,27 @@ function recordingFetch(responses: Response[]) {
   return { fn, calls };
 }
 
-function fakeIo(lines: string[] = []) {
+function fakeIo(
+  lines: string[] = [],
+  opts: { errIsTerminal?: boolean } = {},
+) {
   const queue = [...lines];
   const stdout: string[] = [];
   const stderr: string[] = [];
+  const raw: string[] = [];
+  const prompts: string[] = [];
   const io: Io = {
     out: (text) => stdout.push(text),
     err: (line) => stderr.push(line),
-    readLine: (_prompt) =>
-      Promise.resolve(queue.length ? queue.shift()! : null),
+    errRaw: (text) => raw.push(text),
+    errIsTerminal: opts.errIsTerminal,
+    readLine: (prompt) => {
+      prompts.push(prompt);
+      return Promise.resolve(queue.length ? queue.shift()! : null);
+    },
     close: () => {},
   };
-  return { io, stdout, stderr };
+  return { io, stdout, stderr, raw, prompts };
 }
 
 // ── streamTurn / bufferedTurn ────────────────────────────────────────────────
@@ -1744,5 +1757,270 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
     // Resolved against HOME, and .env was never consulted for the root.
     expect(readPaths).toContain("/home/x/.dyfj/config.toml");
     expect(readPaths).not.toContain("/cwd/.env");
+  });
+});
+
+// ── Turn-in-flight spinner ───────────────────────────────────────────────────
+
+const ERASE_LINE = "\r\x1b[2K";
+
+describe("createTurnSpinner", () => {
+  test("animates only when the Io has a raw writer and a TTY stderr", () => {
+    const { io, raw } = fakeIo([], { errIsTerminal: true });
+    const spinner = createTurnSpinner(cfg(), io);
+    spinner.start();
+    spinner.stop();
+    expect(raw).toEqual([`${ERASE_LINE}⠋ working…`, ERASE_LINE]);
+  });
+
+  test("is a no-op when stderr is not a terminal", () => {
+    const { io, raw } = fakeIo();
+    const spinner = createTurnSpinner(cfg(), io);
+    spinner.start();
+    spinner.stop();
+    expect(raw).toEqual([]);
+  });
+
+  test("is a no-op when the Io exposes no raw stderr writer", () => {
+    const stderr: string[] = [];
+    const io: Io = {
+      out: () => {},
+      err: (line) => stderr.push(line),
+      readLine: () => Promise.resolve(null),
+      close: () => {},
+    };
+    const spinner = createTurnSpinner(cfg(), io);
+    spinner.start();
+    spinner.stop();
+    expect(stderr).toEqual([]);
+  });
+});
+
+describe("spinnerGuardedTurnHandlers", () => {
+  function stubSpinner(calls: string[]) {
+    return {
+      start: () => calls.push("start"),
+      stop: () => calls.push("stop"),
+    };
+  }
+
+  test("stops the spinner before rendering the first delta", () => {
+    const calls: string[] = [];
+    const { io, stdout } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), {
+      ...io,
+      out: (text) => {
+        calls.push("out");
+        stdout.push(text);
+      },
+    });
+    const handlers = spinnerGuardedTurnHandlers(
+      stubSpinner(calls),
+      output,
+      io,
+      () => ({ decision: "deny" as const, reason: "n/a" }),
+    );
+    handlers.onDelta("hello\n");
+    expect(calls[0]).toBe("stop");
+    expect(calls).toContain("out");
+    expect(stdout.join("")).toBe("hello\n");
+  });
+
+  test("stops the spinner before a visible runtime-event status line", () => {
+    const calls: string[] = [];
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    const handlers = spinnerGuardedTurnHandlers(
+      stubSpinner(calls),
+      output,
+      {
+        ...io,
+        err: (line) => {
+          calls.push("err");
+          stderr.push(line);
+        },
+      },
+      () => ({ decision: "deny" as const, reason: "n/a" }),
+    );
+    handlers.onEvent({ type: "toolCallStarted", commandId: "read_file" });
+    expect(calls[0]).toBe("stop");
+    expect(stderr).toEqual(["tool: read_file started"]);
+  });
+
+  test("keeps spinning through an invisible event (modelSelected)", () => {
+    const calls: string[] = [];
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    const handlers = spinnerGuardedTurnHandlers(
+      stubSpinner(calls),
+      output,
+      io,
+      () => ({ decision: "deny" as const, reason: "n/a" }),
+    );
+    // Emitted right before the provider wait; it renders nothing, so the
+    // spinner must survive it — otherwise it vanishes before the wait it
+    // exists to cover.
+    handlers.onEvent({ type: "modelSelected", modelSlug: "x", tier: 0 });
+    expect(calls).toEqual([]);
+    expect(stderr).toEqual([]);
+    // …and still stops on the first delta that follows.
+    handlers.onDelta("hi\n");
+    expect(calls).toEqual(["stop"]);
+  });
+
+  test("stops the spinner before delegating a mid-turn approval", async () => {
+    const calls: string[] = [];
+    const { io } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    const handlers = spinnerGuardedTurnHandlers(
+      stubSpinner(calls),
+      output,
+      io,
+      () => {
+        calls.push("approval");
+        return { decision: "approve" as const };
+      },
+    );
+    const verdict = await handlers.onApproval({ kind: "tool" });
+    expect(calls).toEqual(["stop", "approval"]);
+    expect(verdict).toEqual({ decision: "approve" });
+  });
+});
+
+describe("runtimeEventIsVisible", () => {
+  test("invisible bookkeeping events render nothing", () => {
+    expect(runtimeEventIsVisible({ type: "modelSelected", modelSlug: "x" }))
+      .toBe(false);
+    expect(runtimeEventIsVisible({ type: "unknownFutureEvent" })).toBe(false);
+    expect(runtimeEventIsVisible(null)).toBe(false);
+    expect(runtimeEventIsVisible("nope")).toBe(false);
+  });
+
+  test("status-line and supersede events are visible", () => {
+    expect(runtimeEventIsVisible({ type: "toolCallStarted", commandId: "x" }))
+      .toBe(true);
+    expect(runtimeEventIsVisible({ type: "toolStepStarted", step: 1 }))
+      .toBe(true);
+    expect(runtimeEventIsVisible(supersedeEvent())).toBe(true);
+  });
+});
+
+describe("runExec spinner integration", () => {
+  test("paints at submit and erases before streamed output on a TTY", async () => {
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "delta", text: "hi" },
+        { t: "done", result: result() },
+      ]),
+    ]);
+    const { io, raw, stdout } = fakeIo([], { errIsTerminal: true });
+    const code = await runExec("x", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    expect(raw[0]).toBe(`${ERASE_LINE}⠋ working…`);
+    expect(raw[raw.length - 1]).toBe(ERASE_LINE);
+    expect(stdout.join("")).toContain("hi");
+  });
+
+  test("an invisible modelSelected event does not erase the spinner early", async () => {
+    // The real ordering: modelSelected arrives before the provider wait, then
+    // the first delta. The spinner must survive the event and be erased only
+    // once by the delta — never flicker off during the wait.
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "event", event: { type: "modelSelected", modelSlug: "x" } },
+        { t: "delta", text: "hi" },
+        { t: "done", result: result() },
+      ]),
+    ]);
+    const { io, raw } = fakeIo([], { errIsTerminal: true });
+    const code = await runExec("x", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    // Exactly one erase (from the delta), and it is the last spinner write.
+    expect(raw.filter((w) => w === ERASE_LINE)).toHaveLength(1);
+    expect(raw[raw.length - 1]).toBe(ERASE_LINE);
+  });
+
+  test("erases the spinner when the turn fails (no orphaned line)", async () => {
+    const { fn } = recordingFetch([
+      sseResponse([{ t: "error", message: "boom" }]),
+    ]);
+    const { io, raw } = fakeIo([], { errIsTerminal: true });
+    const code = await runExec("x", cfg(), io, false, fn);
+    expect(code).toBe(1);
+    expect(raw[raw.length - 1]).toBe(ERASE_LINE);
+  });
+
+  test("--json turns never see spinner bytes", async () => {
+    const { fn } = recordingFetch([jsonResponse(result())]);
+    const { io, raw } = fakeIo([], { errIsTerminal: true });
+    const code = await runExec("x", cfg(), io, true, fn);
+    expect(code).toBe(0);
+    expect(raw).toEqual([]);
+  });
+
+  test("piped stderr sees no spinner bytes", async () => {
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "delta", text: "hi" },
+        { t: "done", result: result() },
+      ]),
+    ]);
+    const { io, raw } = fakeIo();
+    const code = await runExec("x", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    expect(raw).toEqual([]);
+  });
+});
+
+describe("runRepl spinner integration", () => {
+  test("each turn paints at submit and erases before output", async () => {
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "delta", text: "first" },
+        { t: "done", result: result() },
+      ]),
+      sseResponse([
+        { t: "delta", text: "second" },
+        { t: "done", result: result() },
+      ]),
+    ]);
+    const { io, raw, stdout } = fakeIo(["one", "two"], { errIsTerminal: true });
+    await runRepl(cfg(), io, fn);
+    // Two turns → two paint…erase runs, freshly armed per turn. Frame counts
+    // stay loose: the real interval timer may add repaints on a slow run.
+    const erases = raw.filter((write) => write === ERASE_LINE);
+    expect(erases).toHaveLength(2);
+    expect(raw[0]).toBe(`${ERASE_LINE}⠋ working…`);
+    expect(raw[raw.length - 1]).toBe(ERASE_LINE);
+    const secondTurnPaint = raw[raw.indexOf(ERASE_LINE) + 1];
+    expect(secondTurnPaint).toBe(`${ERASE_LINE}⠋ working…`);
+    expect(stdout.join("")).toContain("first");
+    expect(stdout.join("")).toContain("second");
+  });
+});
+
+// ── REPL prompt gutter ───────────────────────────────────────────────────────
+
+describe("replPrompt", () => {
+  test("plain mode is byte-identical to the historical prompt", () => {
+    expect(replPrompt(false)).toBe("\ndyfj> ");
+  });
+
+  test("color mode carries a bold green gutter", () => {
+    expect(replPrompt(true)).toBe("\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m ");
+  });
+
+  test("runRepl prompts with the plain gutter when color is off", async () => {
+    const { fn } = recordingFetch([]);
+    const { io, prompts } = fakeIo([]);
+    await runRepl(cfg({ color: false }), io, fn);
+    expect(prompts).toEqual(["\ndyfj> "]);
+  });
+
+  test("runRepl prompts with the styled gutter when color is on", async () => {
+    const { fn } = recordingFetch([]);
+    const { io, prompts } = fakeIo([]);
+    await runRepl(cfg({ color: true }), io, fn);
+    expect(prompts).toEqual([replPrompt(true)]);
   });
 });
