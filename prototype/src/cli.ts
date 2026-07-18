@@ -1054,9 +1054,11 @@ export function formatRuntimeStatus(
     `default model: ${runtime.defaultCompanionModel ?? "(registry default)"}`,
     // The route a bare turn actually takes — under the local-by-default
     // posture this can differ from the configured default model above. An
-    // explicit null (the server resolved and found nothing routable) renders
+    // explicit null (the server tried and bare-turn selection failed — no
+    // routable local model, a misconfigured or unpriced default, …) renders
     // as an unavailable state rather than silently omitting the line; only an
-    // older server that never sent the field omits it.
+    // older server that never sent the field omits it. The wording stays
+    // cause-neutral because the null carries no failure reason.
     ...(resolved != null && typeof resolved.slug === "string"
       ? [
         `bare-turn route: ${resolved.slug} (tier ${resolved.tier ?? "?"}, ${
@@ -1068,7 +1070,10 @@ export function formatRuntimeStatus(
         })`,
       ]
       : resolved === null
-      ? ["bare-turn route: unavailable (no routable local model)"]
+      ? [
+        "bare-turn route: unavailable (selection failed — check the model " +
+        "registry and default model)",
+      ]
       : []),
     `models: ${models.total ?? 0} total · ${models.local ?? 0} local · ${
       models.hosted ?? 0

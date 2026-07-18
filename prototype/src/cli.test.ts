@@ -1187,14 +1187,16 @@ describe("runtime lifecycle commands", () => {
   });
 
   test("formatRuntimeStatus renders an unavailable bare-turn route on explicit null", () => {
-    // The server resolved and found nothing routable — say so rather than
-    // silently omitting the line (omission is reserved for older servers
-    // that never sent the field).
+    // The server tried and bare-turn selection failed (any cause — the null
+    // carries no reason) — say so rather than silently omitting the line
+    // (omission is reserved for older servers that never sent the field).
     const text = formatRuntimeStatus(cfg(), {
       runtime: { defaultTurnModel: null },
     });
+    // The full line is contractual operator guidance — pin it verbatim.
     expect(text).toContain(
-      "bare-turn route: unavailable (no routable local model)",
+      "bare-turn route: unavailable (selection failed — check the model " +
+        "registry and default model)",
     );
   });
 

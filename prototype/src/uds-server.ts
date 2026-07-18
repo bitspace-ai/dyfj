@@ -203,10 +203,13 @@ function runtimeStatus(
     defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
       0.1,
     defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ?? 25,
+    // Locality counts use the same provider+loopback classification as
+    // `models/list[].local` and the bare-turn route — never the tier label,
+    // which is catalog metadata a mis-tiered row can get wrong.
     models: {
       total: models.length,
-      local: models.filter((model) => model.tier === 0).length,
-      hosted: models.filter((model) => model.tier > 0).length,
+      local: models.filter(isLocalWorkbenchModel).length,
+      hosted: models.filter((model) => !isLocalWorkbenchModel(model)).length,
     },
   };
 }

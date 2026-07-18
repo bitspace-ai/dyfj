@@ -158,6 +158,9 @@ describe("serveWorkbenchUnix read methods", () => {
       local: true,
       reason: "default_local",
     });
+    // Locality counts use the same provider+loopback classification as the
+    // per-row `local` flag, not the tier label.
+    expect(runtime.models).toEqual({ total: 2, local: 1, hosted: 1 });
   });
 
   test("runtime/status reports a null bare-turn route when nothing is routable", async () => {
