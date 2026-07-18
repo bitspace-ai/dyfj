@@ -1150,6 +1150,40 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       },
     })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
   });
+
+  test("accepts an explicit :443 on the pinned host — it is the default port", async () => {
+    // The pin passes only when URL normalizes the explicit :443 to an empty
+    // port; a row that spells the default port out must still route, or the
+    // check would reject a legitimate endpoint. Complements the :8443
+    // rejection above, which shares this normalization path.
+    let requestUrl = "";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "https://openrouter.ai:443/api/v1",
+      }],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async (input) => {
+        requestUrl = String(input);
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "ok" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe("https://openrouter.ai:443/api/v1/chat/completions");
+    expect(result.model.provider).toBe("openrouter");
+  });
 });
 
 describe("buildGeminiRequest", () => {
