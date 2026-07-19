@@ -993,6 +993,197 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
       },
     })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
   });
+
+  test("an openai row never sends its key to another provider's https host", async () => {
+    // The credential contract pins the host, not just the scheme: catalog
+    // data must not be able to redirect OPENAI_API_KEY to a different
+    // (still-https) endpoint.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-cross-host" },
+      models: [{
+        ...gptModel,
+        slug: "gpt-cross-host",
+        baseUrl: "https://openrouter.ai/api/v1",
+      }],
+      getEnv: () => "sk-test-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+
+  test("an openai row never reads another provider's key", async () => {
+    // The per-provider map must not widen what satisfies the openai path:
+    // an OpenRouter key alone leaves an openai row fail-closed.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-test" },
+      models: [gptModel],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async () => {
+        throw new Error("fetch should not be called without a key");
+      },
+    })).rejects.toBeInstanceOf(HostedProviderCredentialMissingError);
+  });
+});
+
+describe("runWorkbenchTurn hosted OpenRouter", () => {
+  const openRouterModel: WorkbenchModel = {
+    slug: "z-ai/glm-5.2",
+    displayName: "GLM 5.2",
+    provider: "openrouter",
+    api: "openai-completions",
+    baseUrl: "https://openrouter.ai/api/v1",
+    tier: 1,
+    costInput: 0.2688,
+    costOutput: 0.8448,
+    capabilities: ["text", "code", "reasoning"],
+  };
+
+  test("calls OpenRouter with its own bearer key and meters cost from the row", async () => {
+    let requestUrl = "";
+    let authHeader: string | null = null;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async (input, init) => {
+        requestUrl = String(input);
+        authHeader = new Headers(init?.headers).get("authorization");
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from openrouter" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(authHeader).toBe("Bearer sk-or-key");
+    expect(result.model.provider).toBe("openrouter");
+    expect(result.text).toBe("hello from openrouter");
+    // 1M input * $0.2688 + 1M output * $0.8448, per-MTok rates.
+    expect(result.usage.cost.total).toBeCloseTo(1.1136, 5);
+  });
+
+  test("fails closed naming OPENROUTER_API_KEY — an OpenAI key does not satisfy it", async () => {
+    // Presence-only, per-provider: OPENAI_API_KEY being set must not leak
+    // onto an openrouter row, and the error names the missing env var (never
+    // a value).
+    const failure = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      getEnv: (name) => name === "OPENAI_API_KEY" ? "sk-openai-key" : undefined,
+      fetchFn: async () => {
+        throw new Error("fetch should not be called without a key");
+      },
+    }).then(() => undefined, (error) => error);
+
+    expect(failure).toBeInstanceOf(HostedProviderCredentialMissingError);
+    const missing = failure as HostedProviderCredentialMissingError;
+    expect(missing.envVar).toBe("OPENROUTER_API_KEY");
+    expect(missing.message).toContain("OPENROUTER_API_KEY");
+    expect(missing.message).not.toContain("sk-openai-key");
+  });
+
+  test("rejects a non-https OpenRouter base URL before inference", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "http://openrouter.ai/api/v1",
+      }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+
+  test("an openrouter row never sends its key to another provider's https host", async () => {
+    // A mis-catalogued row pairing provider "openrouter" with another
+    // provider's https base URL must fail closed before any request leaves.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "https://api.openai.com/v1",
+      }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+
+  test("rejects a pinned host on a non-default port before inference", async () => {
+    // openrouter.ai:8443 is not the pinned endpoint even though the hostname
+    // matches — the net grant and the contract both name port 443 only.
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "https://openrouter.ai:8443/api/v1",
+      }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () => {
+        throw new Error("fetch should not be called");
+      },
+    })).rejects.toBeInstanceOf(WorkbenchHostedProviderBaseUrlError);
+  });
+
+  test("accepts an explicit :443 on the pinned host — it is the default port", async () => {
+    // The pin passes only when URL normalizes the explicit :443 to an empty
+    // port; a row that spells the default port out must still route, or the
+    // check would reject a legitimate endpoint. Complements the :8443
+    // rejection above, which shares this normalization path.
+    let requestUrl = "";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{
+        ...openRouterModel,
+        baseUrl: "https://openrouter.ai:443/api/v1",
+      }],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async (input) => {
+        requestUrl = String(input);
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "ok" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe("https://openrouter.ai:443/api/v1/chat/completions");
+    expect(result.model.provider).toBe("openrouter");
+  });
 });
 
 describe("buildGeminiRequest", () => {

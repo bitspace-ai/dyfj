@@ -106,6 +106,25 @@ INSERT INTO models (
         '["text","code","reasoning","vision","long-context"]',
         TRUE
     ),
+    -- OpenRouter row. Pricing: https://openrouter.ai/api/v1/models,
+    -- fetched 2026-07-18 (USD per MTok; cache-read from input_cache_read).
+    (
+        'deepseek/deepseek-v4-flash',
+        'DeepSeek V4 Flash',
+        'openrouter',
+        'openai-completions',
+        'https://openrouter.ai/api/v1',
+        1,
+        1048576,
+        0,
+        0.098000,
+        0.196000,
+        0.019600,
+        0.000000,
+        TRUE,
+        '["text","code","reasoning","long-context"]',
+        TRUE
+    ),
     (
         'gemini-2.5-flash',
         'Gemini 2.5 Flash',
@@ -310,6 +329,25 @@ INSERT INTO models (
         '["text","code","reasoning"]',
         FALSE
     ),
+    -- OpenRouter row. Pricing: https://openrouter.ai/api/v1/models,
+    -- fetched 2026-07-18 (USD per MTok; cache-read from input_cache_read).
+    (
+        'nvidia/nemotron-3-ultra-550b-a55b',
+        'Nemotron 3 Ultra',
+        'openrouter',
+        'openai-completions',
+        'https://openrouter.ai/api/v1',
+        1,
+        1000000,
+        0,
+        0.600000,
+        3.600000,
+        0.200000,
+        0.000000,
+        TRUE,
+        '["text","code","reasoning","long-context"]',
+        TRUE
+    ),
     (
         'qwen3:30b-a3b',
         'Qwen3 30B-A3B (MoE)',
@@ -342,5 +380,43 @@ INSERT INTO models (
         0.000000,
         TRUE,
         '["text","code","reasoning"]',
+        TRUE
+    ),
+    -- OpenRouter row. Pricing: https://openrouter.ai/api/v1/models,
+    -- fetched 2026-07-18 (USD per MTok; cache-read from input_cache_read).
+    (
+        'tencent/hy3',
+        'Tencent Hy3',
+        'openrouter',
+        'openai-completions',
+        'https://openrouter.ai/api/v1',
+        1,
+        262144,
+        131072,
+        0.200000,
+        0.800000,
+        0.050000,
+        0.000000,
+        TRUE,
+        '["text","code","reasoning","long-context"]',
+        TRUE
+    ),
+    -- OpenRouter row. Pricing: https://openrouter.ai/api/v1/models,
+    -- fetched 2026-07-18 (USD per MTok; cache-read from input_cache_read).
+    (
+        'z-ai/glm-5.2',
+        'GLM 5.2',
+        'openrouter',
+        'openai-completions',
+        'https://openrouter.ai/api/v1',
+        1,
+        1048576,
+        131072,
+        0.268800,
+        0.844800,
+        0.049920,
+        0.000000,
+        TRUE,
+        '["text","code","reasoning","long-context"]',
         TRUE
     );

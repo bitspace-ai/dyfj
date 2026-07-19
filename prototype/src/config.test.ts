@@ -416,6 +416,7 @@ describe("declaredSecretEnvVars", () => {
     // Spot-check the providers and the recall token the resolver must cover.
     expect(secrets.has("ANTHROPIC_API_KEY")).toBe(true);
     expect(secrets.has("OPENAI_API_KEY")).toBe(true);
+    expect(secrets.has("OPENROUTER_API_KEY")).toBe(true);
     expect(secrets.has("GEMINI_API_KEY")).toBe(true);
     expect(secrets.has("DYFJ_MEMORY_MCP_TOKEN")).toBe(true);
     // A plain value key is never a secret pointer.

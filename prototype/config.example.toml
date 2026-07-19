@@ -94,6 +94,7 @@ level = "strict"
 # [secrets.pointers]
 # ANTHROPIC_API_KEY     = "op://<vault>/<item>/credential"
 # OPENAI_API_KEY        = "op://<vault>/<item>/credential"
+# OPENROUTER_API_KEY    = "op://<vault>/<item>/credential"
 # GEMINI_API_KEY        = "op://<vault>/<item>/credential"
 # DYFJ_MEMORY_MCP_TOKEN = "op://<vault>/<item>/credential"
 # DOLT_PASSWORD         = "op://<vault>/<item>/credential"
