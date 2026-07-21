@@ -1,4 +1,5 @@
 import { doltQuery } from "./utils";
+import { DomainError, sanitizeBoundaryText } from "./turn-contract";
 
 export interface WorkbenchModel {
   slug: string;
@@ -106,43 +107,73 @@ export interface WorkbenchCallTimings {
   totalMs: number;
 }
 
-export class WorkbenchModelNotFoundError extends Error {
+// DomainError messages are trusted up to MAX_ERROR_SUMMARY_BYTES by
+// summarizeError, so every nonliteral field interpolated into one must be
+// bounded and inert at construction. Model slugs, env-var names, and base
+// URLs all originate in registry/config data — operator-authored in the
+// normal case, but "operator-authored" is not "safe to relay": a registry
+// row can carry an oversized identifier, control characters, or a
+// credential-bearing URL, and none of that may ride a trusted message onto
+// the wire, into runtime events, or into durable error rows.
+const MAX_ERROR_FIELD_BYTES = 120;
+
+function errorField(raw: string): string {
+  return sanitizeBoundaryText(raw, MAX_ERROR_FIELD_BYTES);
+}
+
+/**
+ * Describe a URL for an error message without relaying its sensitive parts:
+ * scheme + host only — userinfo (credentials), path, query, and fragment are
+ * all dropped structurally rather than pattern-matched. An unparseable value
+ * yields a fixed placeholder, never the raw string.
+ */
+function errorUrlField(raw: string): string {
+  try {
+    const url = new URL(raw);
+    return errorField(`${url.protocol}//${url.host}`);
+  } catch {
+    return "<unparseable url>";
+  }
+}
+
+export class WorkbenchModelNotFoundError extends DomainError {
   constructor(public readonly slug: string) {
-    super(`Model not found: ${slug}`);
+    super(`Model not found: ${errorField(slug)}`);
     this.name = "WorkbenchModelNotFoundError";
   }
 }
 
-export class HostedInferenceRequiresProviderError extends Error {
+export class HostedInferenceRequiresProviderError extends DomainError {
   constructor(public readonly slug: string) {
-    super(`Unsupported hosted inference provider: ${slug}`);
+    super(`Unsupported hosted inference provider: ${errorField(slug)}`);
     this.name = "HostedInferenceRequiresProviderError";
   }
 }
 
-export class HostedProviderCredentialMissingError extends Error {
+export class HostedProviderCredentialMissingError extends DomainError {
   constructor(public readonly slug: string, public readonly envVar: string) {
     super(
-      `Hosted provider credential missing for ${slug}: ` +
-        `${envVar} is not present in the process environment. ` +
+      `Hosted provider credential missing for ${errorField(slug)}: ` +
+        `${errorField(envVar)} is not present in the process environment. ` +
         `Project it narrowly (e.g. op run --env-file=...) at process start.`,
     );
     this.name = "HostedProviderCredentialMissingError";
   }
 }
 
-export class WorkbenchHostedProviderBaseUrlError extends Error {
+export class WorkbenchHostedProviderBaseUrlError extends DomainError {
   constructor(public readonly slug: string, public readonly baseUrl: string) {
     super(
-      `Hosted provider baseUrl is not the provider's https endpoint for ${slug}: ${baseUrl}`,
+      `Hosted provider baseUrl is not the provider's https endpoint for ` +
+        `${errorField(slug)}: ${errorUrlField(baseUrl)}`,
     );
     this.name = "WorkbenchHostedProviderBaseUrlError";
   }
 }
 
-export class WorkbenchLocalProviderBaseUrlError extends Error {
+export class WorkbenchLocalProviderBaseUrlError extends DomainError {
   constructor(public readonly slug: string, public readonly baseUrl: string) {
-    super(`Local provider baseUrl is not loopback-only for ${slug}`);
+    super(`Local provider baseUrl is not loopback-only for ${errorField(slug)}`);
     this.name = "WorkbenchLocalProviderBaseUrlError";
   }
 }
@@ -303,10 +334,10 @@ export function modelHasCatalogPricing(model: WorkbenchModel): boolean {
   return model.costInput > 0 && model.costOutput > 0;
 }
 
-export class WorkbenchModelNotRoutableError extends Error {
+export class WorkbenchModelNotRoutableError extends DomainError {
   constructor(public readonly ref: string) {
     super(
-      `Model not routable [${ref}]: no catalog pricing row. ` +
+      `Model not routable [${errorField(ref)}]: no catalog pricing row. ` +
         `Paid spend cannot be estimated, recorded, or bounded without prices; ` +
         `set cost_input and cost_output on the models row to route it.`,
     );

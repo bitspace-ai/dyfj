@@ -108,13 +108,35 @@ describe("dispatchRequest", () => {
     );
   });
 
-  test("a generic throw maps to internalError", async () => {
+  test("a generic (non-RpcError) throw maps to internalError, rendered as class + byte count — never the raw message", async () => {
+    // This is the original crash's exact path — a rejected
+    // event-log INSERT's driver error can embed the whole offending payload
+    // in its message. A plain Error is "foreign" (not a DomainError), so its
+    // message must never reach the wire, not even a short one.
     const res = await dispatchRequest(req("turn"), {
       turn: () => {
         throw new Error("boom");
       },
     });
-    expect(res).toEqual(failure(1, RpcErrorCode.internalError, "boom"));
+    expect(res).toEqual(
+      failure(1, RpcErrorCode.internalError, "[Error, 4 bytes]"),
+    );
+  });
+
+  test("a generic throw with an oversized message leaks no prefix of it", async () => {
+    const payload = "SELECT ".repeat(20_000); // well over 100KB
+    const res = await dispatchRequest(req("turn"), {
+      turn: () => {
+        throw new Error(payload);
+      },
+    });
+    const message = (res as { error: { message: string } }).error.message;
+    expect(message).not.toContain(payload.slice(0, 50));
+    expect(message).toContain("Error");
+    expect(message).toContain(
+      `${new TextEncoder().encode(payload).byteLength} bytes`,
+    );
+    expect(message.length).toBeLessThan(200);
   });
 });
 

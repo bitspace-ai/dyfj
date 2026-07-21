@@ -17,8 +17,14 @@ import {
   notification,
   type RpcContext,
   RpcError,
+  RpcErrorCode,
   type RpcHandlers,
 } from "./jsonrpc";
+import {
+  MAX_ERROR_SUMMARY_BYTES,
+  sanitizeBoundaryText,
+  summarizeError,
+} from "./turn-contract";
 
 export interface JsonRpcPeerOptions {
   /** Incoming requests (and matching notifications) are dispatched here. */
@@ -135,7 +141,10 @@ export class JsonRpcPeer {
       // a long-running `turn` would wedge `turn/cancel` and every other
       // request on the connection. Writes stay serialized via #write.
       void this.#handle(frame.message as JsonRpcMessage).catch((err) => {
-        this.#onParseError?.(`handler error: ${(err as Error)?.message}`);
+        // Provenance-summarized, never raw: a handler throw can be a foreign
+        // error whose message embeds payload content, and onParseError is an
+        // operational channel, not a debugger.
+        this.#onParseError?.(`handler error: ${summarizeError(err)}`);
       });
     }
   }
@@ -168,15 +177,51 @@ export class JsonRpcPeer {
         this.#pending.delete(response.id);
         if ("result" in response) {
           pending.resolve(response.result);
-        } else {
-          pending.reject(
-            new RpcError(
-              response.error.code,
-              response.error.message,
-              response.error.data,
-            ),
+          return;
+        }
+        // Once a response has correlated to a pending request, that promise
+        // MUST settle: request() has no timeout, so an unsettled promise is
+        // a permanent hang for the caller (the approval round-trip included).
+        // The wire is not a trust boundary, and that includes the error
+        // envelope's SHAPE, not just its content — a hostile or malformed
+        // peer can send `error: null`, a non-string message, or an object
+        // with throwing getters, and none of those may escape as a throw
+        // after the pending entry is removed. Malformed envelopes reject
+        // with a fixed, content-free protocol error.
+        let rpcError: RpcError;
+        try {
+          const err = response.error as
+            | { code?: unknown; message?: unknown; data?: unknown }
+            | null
+            | undefined;
+          if (
+            typeof err === "object" && err !== null &&
+            typeof err.code === "number" &&
+            typeof err.message === "string"
+          ) {
+            // The other end already ran its own message through
+            // summarizeError, but the wire itself is not a trust boundary —
+            // sanitize before this reconstructed RpcError (a DomainError)
+            // stamps the message as trusted, so a hostile or misbehaving
+            // peer can't ride RpcError's capped-passthrough treatment.
+            rpcError = new RpcError(
+              err.code,
+              sanitizeBoundaryText(err.message, MAX_ERROR_SUMMARY_BYTES),
+              err.data,
+            );
+          } else {
+            rpcError = new RpcError(
+              RpcErrorCode.internalError,
+              "malformed error envelope from peer",
+            );
+          }
+        } catch {
+          rpcError = new RpcError(
+            RpcErrorCode.internalError,
+            "malformed error envelope from peer",
           );
         }
+        pending.reject(rpcError);
         return;
       }
       case "notification": {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { resetCeilingConfirmations } from "./budget";
+import { BudgetExceededError, resetCeilingConfirmations } from "./budget";
 import { LENGTH_CONTINUATION_NUDGE } from "./length-recovery";
 import {
   COMPRESSION_SECTIONS,
@@ -17,6 +17,7 @@ import {
   buildWorkbenchRuntimeInput,
   buildWorkbenchShellBanner,
   buildWorkspaceGrounding,
+  classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
   formatMoney,
   isNextWorkMode,
@@ -24,6 +25,7 @@ import {
   isWorkbenchShellSessionCommand,
   MAX_TOOL_STEPS,
   maybeBuildPaidEscalationPreflightBanner,
+  PaidEscalationDeclinedError,
   type PaidEscalationPreflightInput,
   promptPaidEscalationTty,
   resolveWorkbenchInvocation,
@@ -34,6 +36,7 @@ import {
   type WorkbenchReceiptInput,
   workspaceRootForTransport,
 } from "./workbench";
+import { DomainError, MAX_REASON_FIELD_BYTES } from "./turn-contract";
 
 const runtimeMocks = vi.hoisted(() => {
   const model = {
@@ -63,6 +66,16 @@ const runtimeMocks = vi.hoisted(() => {
     // when set, event writes for this event_type throw, to test the
     // integrity-required vs best-effort write policy.
     failEventType: null as string | null,
+    // when set, the simulated write failure throws this message instead of
+    // the default templated one — lets a test mimic a driver rejection whose
+    // message embeds a huge/sensitive rejected value (e.g. Dolt's "value too
+    // large for column" error quoting the payload back).
+    failEventMessage: null as string | null,
+    // when set, the simulated write failure's thrown Error has its mutable
+    // .name overridden to this — lets a test prove a caller reads
+    // .constructor.name (real class identity) rather than the spoofable
+    // .name property.
+    failEventErrorName: null as string | null,
     // when true, a failed write STILL leaves its row durable — the ambiguous
     // "committed, acknowledgment lost" case the durability probe resolves.
     failedWriteLands: false,
@@ -76,6 +89,10 @@ const runtimeMocks = vi.hoisted(() => {
     commandResult: null as
       | null
       | { decision: string; isError: boolean; reason?: string; result?: string },
+    // When set, the mocked invokeCommandWithEvent throws this instead of
+    // returning — exercises the agent loop's toolCallCompleted error path
+    // (a call that fails outright, not merely a denied/errored result).
+    commandThrows: null as Error | null,
   };
 });
 
@@ -91,7 +108,14 @@ vi.mock("./utils", () => ({
       // Record what a rejected-but-committed write leaves behind, so the
       // durability probe can find (or not find) the row by id.
       if (runtimeMocks.failedWriteLands) runtimeMocks.writtenEvents.push(event);
-      throw new Error(`simulated write failure: ${String(event.event_type)}`);
+      const err = new Error(
+        runtimeMocks.failEventMessage ??
+          `simulated write failure: ${String(event.event_type)}`,
+      );
+      if (runtimeMocks.failEventErrorName) {
+        err.name = runtimeMocks.failEventErrorName;
+      }
+      throw err;
     }
     runtimeMocks.writtenEvents.push(event);
   },
@@ -117,9 +141,27 @@ vi.mock("./utils", () => ({
   closeDoltPool: async () => {},
 }));
 
-vi.mock("./provider", () => {
+vi.mock("./provider", async (importOriginal) => {
   const estimateExport = "estimateText" + "To" + "kens";
+  // Only the six pure, side-effect-free error classes stay real — workbench.ts
+  // imports them statically to build classifyErrorKind's known-class table.
+  // Deliberately no `...actual` spread: the full namespace would silently carry
+  // network-capable exports (fetchWithHeaderTimeout) into the mock.
+  const {
+    HostedInferenceRequiresProviderError,
+    HostedProviderCredentialMissingError,
+    WorkbenchHostedProviderBaseUrlError,
+    WorkbenchLocalProviderBaseUrlError,
+    WorkbenchModelNotFoundError,
+    WorkbenchModelNotRoutableError,
+  } = await importOriginal<typeof import("./provider")>();
   return {
+    HostedInferenceRequiresProviderError,
+    HostedProviderCredentialMissingError,
+    WorkbenchHostedProviderBaseUrlError,
+    WorkbenchLocalProviderBaseUrlError,
+    WorkbenchModelNotFoundError,
+    WorkbenchModelNotRoutableError,
     defaultLocalWorkbenchModels: () => [runtimeMocks.model],
     [estimateExport]: (text: string) => Math.ceil(text.length / 4),
     loadWorkbenchModels: async () =>
@@ -222,12 +264,29 @@ vi.mock("./commands", () => ({
     list: () => [],
     projectTools: () => [],
   }),
-  invokeCommandWithEvent: async () =>
-    runtimeMocks.commandResult ?? {
+  invokeCommandWithEvent: async (
+    _registry: unknown,
+    toolCall: { commandId: string; callId: string },
+    context: { writeEvent?: (event: Record<string, unknown>) => Promise<void> },
+  ) => {
+    if (runtimeMocks.commandThrows) throw runtimeMocks.commandThrows;
+    const result = runtimeMocks.commandResult ?? {
       decision: "allow",
       isError: false,
       result: "ok",
-    },
+    };
+    // Mirrors the real invokeCommandWithEvent (commands.ts): persists a
+    // tool_call event through the caller-supplied writeEvent, so tests can
+    // exercise the containment policy the agent loop applies to that write.
+    await context.writeEvent?.({
+      event_type: "tool_call",
+      tool_name: toolCall.commandId,
+      tool_call_id: toolCall.callId,
+      tool_is_error: result.isError,
+      tool_result: result.isError ? result.reason : result.result,
+    });
+    return result;
+  },
   registerCoreCommands: () => {},
 }));
 
@@ -250,6 +309,9 @@ beforeEach(() => {
   resetCeilingConfirmations();
   runtimeMocks.supportsTranscriptRetry = true;
   runtimeMocks.commandResult = null;
+  runtimeMocks.commandThrows = null;
+  runtimeMocks.failEventMessage = null;
+  runtimeMocks.failEventErrorName = null;
   runtimeMocks.ulid = 0;
   runtimeMocks.writtenEvents.length = 0;
   runtimeMocks.sessions.length = 0;
@@ -1352,6 +1414,11 @@ describe("runWorkbenchRuntime observer events", () => {
       // An unexpected provider error (e.g. a missing hosted credential) now
       // propagates to the caller instead of being swallowed into a benign empty
       // receipt; the turnFailed runtime event is still emitted before it surfaces.
+      // The re-thrown exception the caller sees carries the real message
+      // (asserted below); the wire-facing runtime event does not — a plain
+      // Error is "foreign" under the provenance policy (not a DomainError
+      // this codebase authored), so its errorMessage renders as class + byte
+      // count only.
       await expect(runWorkbenchRuntime({
         mode: "turn",
         prompt: "summarize",
@@ -1366,7 +1433,7 @@ describe("runWorkbenchRuntime observer events", () => {
         sessionId: "01TEST00000000000000000001",
         traceId: "0123456789abcdef0123456789abcdef",
         errorName: "Error",
-        errorMessage: "local model unavailable",
+        errorMessage: "[Error, 23 bytes]",
       });
     } finally {
       error.mockRestore();
@@ -1386,9 +1453,15 @@ describe("runWorkbenchRuntime observer events", () => {
       });
 
       expect(result.text).toBe("runtime response");
+      // Provenance-summarized, never raw: an observer failure is a foreign
+      // error, so the console line carries a fixed label + byte count, not
+      // the message (which can embed payload content).
       expect(warn).toHaveBeenCalledWith(
-        "Runtime observer skipped: observer sink down",
+        "Runtime observer skipped: [Error, 18 bytes]",
       );
+      for (const args of warn.mock.calls) {
+        expect(String(args[0])).not.toContain("observer sink down");
+      }
     } finally {
       warn.mockRestore();
     }
@@ -2281,6 +2354,192 @@ describe("runWorkbenchRuntime event-write integrity policy", () => {
       runtimeMocks.failEventType = null;
     }
   });
+
+  // The agent-loop tool_call event write used to be integrity-required
+  // (writeIntegrity), so any INSERT failure — including the receipted "value
+  // too large for column" rejection on an oversized tool result — failed the
+  // whole turn and left the client presenting a page of raw driver error text.
+  // It now goes through writeMaybe/BEST_EFFORT like its sibling events.
+  test("tool_call event write failure does not fail the tool step or turn (best-effort containment)", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "tool_use" as const,
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce({
+        ...base,
+        text: "",
+        toolCalls: [{ id: "c1", name: "list_files", arguments: { path: "." } }],
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        text: "done despite event-write failure",
+        stopReason: "stop",
+        toolCalls: [],
+      });
+    runtimeMocks.failEventType = "tool_call";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "list the repo",
+        routingOptions: {},
+      });
+      // The tool step ran, and the turn concluded normally — a per-call
+      // event-write failure never reaches the model, the tool result, or the
+      // turn's outcome.
+      expect(result.text).toBe("done despite event-write failure");
+      // The skip is on record...
+      const skippedCalls = warn.mock.calls.filter((args) =>
+        String(args[0]).includes("Event write skipped")
+      );
+      expect(skippedCalls.length).toBeGreaterThan(0);
+      // ...and class-only: the console line never carries the driver error's
+      // message (which, in the original defect, embedded the whole oversized
+      // payload) — only the error's class name.
+      for (const args of skippedCalls) {
+        expect(String(args[0])).not.toContain("simulated write failure");
+        expect(String(args[0])).toContain("Error");
+      }
+      // ...and loud on the operator surface: the receipt carries the skip
+      // count, so an audit-log gap is visible at session end rather than
+      // discoverable only by inspecting the event log. Best-effort never
+      // means silent.
+      expect(result.receipt).toContain("event write(s) failed");
+      expect(result.receipt).toContain("audit log has gaps");
+    } finally {
+      runtimeMocks.failEventType = null;
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  test("a clean session's receipt carries no audit-gap warning", async () => {
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "hello",
+      routingOptions: {},
+    });
+    expect(result.receipt).not.toContain("audit log has gaps");
+  });
+
+  // A failed model_response INTEGRITY write still fails the turn (that
+  // contract stands, untouched here), but its error's message can embed the
+  // whole rejected value (a Dolt "value too large for column" rejection
+  // quotes the offending content back), and that message must not fan out
+  // raw via the turnFailed runtime event (relayed verbatim to every
+  // connected client by uds-server.ts), the durable `error` event's
+  // `content` field, or the injected presenter's `log` call.
+  test("a failed model_response integrity write sanitizes its message before it reaches turnFailed, the durable error event, and the presenter", async () => {
+    const hugePayload = "SELECT ".repeat(20_000); // well over 100KB
+    runtimeMocks.failEventType = "model_response";
+    runtimeMocks.failEventMessage =
+      `insert failed: value '${hugePayload}' is too large for column 'content'`;
+    const runtimeEvents: Array<{ type: string; [k: string]: unknown }> = [];
+    const logged: string[] = [];
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "policy probe",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event as { type: string; [k: string]: unknown });
+        },
+        log: (...parts: unknown[]) => {
+          logged.push(parts.map(String).join(" "));
+        },
+      })).rejects.toThrow();
+
+      // The integrity contract is unchanged: the write failure still fails
+      // the turn (asserted above via rejects.toThrow).
+
+      const turnFailed = runtimeEvents.find((e) => e.type === "turnFailed");
+      expect(turnFailed).toBeDefined();
+      const wireMessage = String(turnFailed?.errorMessage);
+      expect(wireMessage).not.toContain(hugePayload);
+      expect(wireMessage.length).toBeLessThan(1000);
+
+      const errorEvent = runtimeMocks.writtenEvents.find(
+        (e) => e.event_type === "error",
+      );
+      expect(errorEvent).toBeDefined();
+      expect(String(errorEvent?.content)).not.toContain(hugePayload);
+
+      const presenterOutput = logged.join("\n");
+      expect(presenterOutput).not.toContain(hugePayload);
+    } finally {
+      runtimeMocks.failEventType = null;
+      runtimeMocks.failEventMessage = null;
+    }
+  });
+
+  // toolCallCompleted's errorMessage field: a tool call that throws outright
+  // (not merely returns a denied/errored result) must not forward the raw
+  // error to the runtime event.
+  test("a tool call that throws sanitizes toolCallCompleted's errorMessage", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "tool_use" as const,
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      ...base,
+      text: "",
+      toolCalls: [{ id: "c1", name: "list_files", arguments: { path: "." } }],
+    });
+    const hugePayload = "SELECT ".repeat(20_000);
+    runtimeMocks.commandThrows = new Error(hugePayload);
+    const runtimeEvents: Array<{ type: string; [k: string]: unknown }> = [];
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "list the repo",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event as { type: string; [k: string]: unknown });
+        },
+      })).rejects.toThrow();
+
+      const completed = runtimeEvents.find((e) =>
+        e.type === "toolCallCompleted" && e.isError === true
+      );
+      expect(completed).toBeDefined();
+      const message = String(completed?.errorMessage);
+      expect(message).not.toContain(hugePayload);
+      expect(message).toContain("Error");
+      expect(message).toContain(
+        `${new TextEncoder().encode(hugePayload).byteLength} bytes`,
+      );
+    } finally {
+      runtimeMocks.commandThrows = null;
+    }
+  });
 });
 
 describe("runWorkbenchRuntime reads runtime config from input, not env", () => {
@@ -2906,6 +3165,51 @@ describe("runWorkbenchRuntime proactive context compression", () => {
     }
   });
 
+  // The write-failure "kind" fed into
+  // ContextCompressionPersistenceUncertainError must come from the real
+  // prototype chain (classifyErrorKind's fixed-literal table), not the
+  // mutable .name property — otherwise a foreign error that happens to carry
+  // a familiar .name would misreport its own identity in the durable,
+  // content-free-by-convention message.
+  test("reports the write failure's real class, not a spoofed .name", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    const prevFail = runtimeMocks.failEventType;
+    const prevProbe = runtimeMocks.failEventProbe;
+    const prevErrorName = runtimeMocks.failEventErrorName;
+    runtimeMocks.model.contextWindow = 100;
+    runtimeMocks.failEventType = "context_compressed";
+    runtimeMocks.failEventProbe = true;
+    // A plain Error's constructor.name is "Error" regardless of what .name
+    // is set to — spoofing .name to something else must not change what the
+    // uncertain-persistence error reports as the write failure's kind.
+    runtimeMocks.failEventErrorName = "SpoofedClassName";
+    const captured: { value?: WorkbenchMessage[] } = {};
+    wireCompressionMock(captured);
+    try {
+      let caught: ContextCompressionPersistenceUncertainError | undefined;
+      try {
+        await runWorkbenchRuntime({
+          mode: "turn",
+          prompt: "new question",
+          routingOptions: {},
+          conversationMessages: bigHistory,
+        });
+      } catch (err) {
+        caught = err as ContextCompressionPersistenceUncertainError;
+      }
+      expect(caught).toBeInstanceOf(
+        ContextCompressionPersistenceUncertainError,
+      );
+      expect(caught?.writeErrorKind).toBe("Error");
+      expect(caught?.writeErrorKind).not.toBe("SpoofedClassName");
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+      runtimeMocks.failEventType = prevFail;
+      runtimeMocks.failEventProbe = prevProbe;
+      runtimeMocks.failEventErrorName = prevErrorName;
+    }
+  });
+
   // A routable LOCAL tier-0 row that is not the session model — the fallback
   // candidate compression must find when the session model is off-machine.
   const localTier0 = {
@@ -3009,6 +3313,171 @@ describe("runWorkbenchRuntime proactive context compression", () => {
       (runtimeMocks.model as { provider: string }).provider = prevProvider;
       (runtimeMocks.model as { baseUrl: string }).baseUrl = prevBaseUrl;
       runtimeMocks.registry = prevRegistry;
+    }
+  });
+});
+
+// ── PaidEscalationDeclinedError — reason field sanitization ──────────────────
+//
+// verdict.reason comes from the injected confirmPaidEscalation callback — an
+// operator's TTY answer today, potentially a remote approval peer tomorrow.
+// DomainError only certifies the message this constructor builds, so the
+// field is capped and control-char-stripped before it reaches either the
+// message or the stored `.verdict` (read directly by the catch block's log
+// branch, not just via .message).
+describe("PaidEscalationDeclinedError — verdict.reason sanitization", () => {
+  test("a short, ordinary reason passes through unchanged", () => {
+    const err = new PaidEscalationDeclinedError({
+      decision: "deny",
+      reason: "not now",
+    });
+    expect(err.verdict.reason).toBe("not now");
+    expect(err.message).toContain("not now");
+  });
+
+  test("caps an oversized reason, on both .message and the stored .verdict", () => {
+    const reason = "SELECT ".repeat(2_000);
+    const err = new PaidEscalationDeclinedError({
+      decision: "escalate",
+      reason,
+    });
+    expect(
+      new TextEncoder().encode(err.verdict.reason ?? "").byteLength,
+    ).toBeLessThanOrEqual(MAX_REASON_FIELD_BYTES);
+    expect(err.message).not.toContain(reason);
+  });
+
+  test("strips a terminal escape sequence from the reason", () => {
+    const esc = String.fromCharCode(27);
+    const err = new PaidEscalationDeclinedError({
+      decision: "deny",
+      reason: `${esc}[31mdanger${esc}[0m`,
+    });
+    expect(err.verdict.reason).not.toContain(esc);
+    expect(err.message).not.toContain(esc);
+  });
+});
+
+// ── classifyErrorKind ─────────────────────────────────────────────────────────
+//
+// Neither .name nor .constructor.name is safe to classify by: both are
+// ordinary, writable properties on any object (including a real Error, via
+// Object.defineProperty), so a crafted `{ constructor: { name: "..." } }`
+// reaches .constructor.name unchanged. classifyErrorKind never reads either
+// property; it classifies purely by instanceof against classes this codebase
+// controls.
+describe("classifyErrorKind", () => {
+  test("a real DomainError reports its own class", () => {
+    expect(
+      classifyErrorKind(new PaidEscalationDeclinedError({ decision: "deny" })),
+    ).toBe("PaidEscalationDeclinedError");
+  });
+
+  test("a real DomainError subclass with a shadowed .constructor still classifies to its real class, not the shadowed payload", () => {
+    // The subtlest form of the bug: instanceof DomainError alone
+    // does not make .constructor.name safe to read — instanceof walks the
+    // prototype chain, but .constructor is an independently-writable own
+    // property. A real BudgetExceededError with .constructor reassigned
+    // still passes `instanceof DomainError` (and `instanceof
+    // BudgetExceededError`), so it must classify via the fixed table entry,
+    // never via the (now-shadowed) .constructor.name.
+    const err = new BudgetExceededError("session_limit", 0.5, 1, 0.9);
+    Object.defineProperty(err, "constructor", {
+      value: { name: "FOREIGN_PAYLOAD" },
+    });
+    expect(err instanceof DomainError).toBe(true);
+    expect(err instanceof BudgetExceededError).toBe(true);
+    expect(classifyErrorKind(err)).toBe("BudgetExceededError");
+    expect(classifyErrorKind(err)).not.toBe("FOREIGN_PAYLOAD");
+  });
+
+  test("an unrecognized DomainError subclass still classifies safely, to the generic literal", () => {
+    class UnlistedDomainError extends DomainError {}
+    expect(classifyErrorKind(new UnlistedDomainError("x"))).toBe(
+      "DomainError",
+    );
+  });
+
+  test('a plain Error reports the fixed literal "Error", not any object-derived string', () => {
+    expect(classifyErrorKind(new Error("boom"))).toBe("Error");
+  });
+
+  test('a non-Error throw reports "unknown"', () => {
+    expect(classifyErrorKind("bare string throw")).toBe("unknown");
+    expect(classifyErrorKind(null)).toBe("unknown");
+  });
+
+  test('a foreign Error with a spoofed .constructor.name is still classified as plain "Error"', () => {
+    // Reproduces the exact probe from review: a real Error instance whose
+    // .constructor own-property is overridden to look like a familiar class.
+    // instanceof still sees the real prototype chain (still Error, not
+    // DomainError), so classifyErrorKind never reaches the spoofed property
+    // at all.
+    const spoofed = new Error("driver detail that must not leak");
+    Object.defineProperty(spoofed, "constructor", {
+      value: { name: "FOREIGN_PAYLOAD" },
+    });
+    expect(spoofed instanceof Error).toBe(true);
+    expect(classifyErrorKind(spoofed)).toBe("Error");
+    expect(classifyErrorKind(spoofed)).not.toBe("FOREIGN_PAYLOAD");
+  });
+
+  test("a plain object shaped like an error (spoofed .name AND .constructor.name) is not even instanceof Error", () => {
+    const fake = {
+      name: "ContextWindowOverflowError",
+      constructor: { name: "ContextWindowOverflowError" },
+      message: "not a real error",
+    };
+    expect(fake instanceof Error).toBe(false);
+    expect(classifyErrorKind(fake)).toBe("unknown");
+  });
+});
+
+// ── Catch-block instanceof, not mutable .name ────────────────────────────────
+//
+// The catch block used to branch on err.name — a plain mutable string any
+// Error can be given — and once matched, wrote the raw .message straight to
+// the durable event and the presenter. A foreign error simply naming itself
+// after one of these classes bypassed the whole containment policy. Now it
+// branches on instanceof, so a same-named foreign error falls through to the
+// generic branch instead (class + byte count only).
+describe("runWorkbenchRuntime catch block — instanceof, not spoofable .name", () => {
+  test("a foreign Error named after ContextWindowOverflowError does not get its raw message written", async () => {
+    const hugePayload = "SELECT ".repeat(20_000);
+    const spoofed = new Error(hugePayload);
+    spoofed.name = "ContextWindowOverflowError";
+    runtimeMocks.runWorkbenchTurn.mockRejectedValueOnce(spoofed);
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    const logged: string[] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(
+      () => {},
+    );
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "probe",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event as { type: string; [k: string]: unknown });
+        },
+        log: (...parts: unknown[]) => {
+          logged.push(parts.map(String).join(" "));
+        },
+      })).rejects.toThrow();
+
+      const errorEvent = runtimeMocks.writtenEvents.find(
+        (e) => e.event_type === "error",
+      );
+      expect(errorEvent).toBeDefined();
+      // A real ContextWindowOverflowError writes stop_reason "length"; the
+      // spoofed foreign error must fall through to the generic branch
+      // instead, which writes "error" — proof the instanceof check, not the
+      // spoofed name, decided the branch.
+      expect(errorEvent?.stop_reason).toBe("error");
+      expect(String(errorEvent?.content)).not.toContain(hugePayload);
+      expect(logged.join("\n")).not.toContain(hugePayload);
+    } finally {
+      consoleError.mockRestore();
     }
   });
 });
