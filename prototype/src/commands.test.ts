@@ -1231,7 +1231,7 @@ describe("buildCommandToolCallEventPayload — event copy size cap", () => {
   test("caps a maximally-truncated read_file-sized result below the TEXT column limit", () => {
     // Mirrors file-tools.ts's DEFAULT_MAX_BYTES (64 * 1024 characters) plus its
     // own truncation suffix — the exact shape that overflowed the column in
-    // the receipted tool-result overflow crash.
+    // the original tool-result overflow defect.
     const modelFacingResult = "a".repeat(64 * 1024) +
       "\n\n[truncated at 65536 characters]";
     const payload = buildCommandToolCallEventPayload(
@@ -1255,8 +1255,13 @@ describe("buildCommandToolCallEventPayload — event copy size cap", () => {
     expect(new TextEncoder().encode(toolResult).byteLength)
       .toBeLessThanOrEqual(EVENT_RESULT_MAX_BYTES);
     expect(toolResult).toContain("event-truncated");
-    // The marker records the true (uncapped) size, not the capped one.
-    expect(toolResult).toContain(`${modelFacingResult.length} bytes`);
+    // The marker records the true (uncapped) size in UTF-8 BYTES — assert in
+    // the same unit, not string .length (UTF-16 code units), which only
+    // coincides for an all-ASCII fixture and would let a unit regression
+    // slip through unnoticed.
+    expect(toolResult).toContain(
+      `${new TextEncoder().encode(modelFacingResult).byteLength} bytes`,
+    );
   });
 
   test("a result well under the cap is recorded verbatim (no marker, no data loss)", () => {
