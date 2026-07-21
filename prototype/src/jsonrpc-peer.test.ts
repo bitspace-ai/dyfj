@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { JsonRpcPeer } from "./jsonrpc-peer";
 import {
   encodeFrame,
+  FrameDecoder,
+  type JsonRpcMessage,
   notification,
   RpcError,
   RpcErrorCode,
@@ -128,6 +130,70 @@ describe("JsonRpcPeer", () => {
     expect(caught?.message.length).toBeLessThan(payload.length);
     expect(new TextEncoder().encode(caught?.message ?? "").byteLength)
       .toBeLessThan(1000);
+  });
+
+  test("a malformed error envelope rejects the pending request instead of orphaning it", async () => {
+    // A raw (non-JsonRpcPeer) peer answers with responses whose error
+    // envelope is malformed: a non-string message, then a null error object.
+    // The pending promise must settle by rejection in both cases — request()
+    // has no timeout, so a throw after the pending entry is removed would be
+    // a permanent hang for the caller.
+    const dir = await Deno.makeTempDir();
+    const sock = `${dir}/peer.sock`;
+    const listener = Deno.listen({ transport: "unix", path: sock });
+    const accepting = listener.accept();
+    const clientConn = await Deno.connect({ transport: "unix", path: sock });
+    const rawConn = await accepting;
+    listener.close();
+    const client = new JsonRpcPeer(clientConn, { handlers: {} });
+    void client.run();
+    cleanups.push(async () => {
+      client.close();
+      try {
+        rawConn.close();
+      } catch {
+        // already closed
+      }
+      try {
+        await Deno.remove(dir, { recursive: true });
+      } catch {
+        // already gone
+      }
+    });
+
+    const decoder = new FrameDecoder();
+    const buf = new Uint8Array(8192);
+    const readRequestId = async (): Promise<unknown> => {
+      while (true) {
+        const n = await rawConn.read(buf);
+        if (n === null) throw new Error("raw peer connection closed early");
+        for (
+          const frame of decoder.push(new TextDecoder().decode(buf.subarray(0, n)))
+        ) {
+          if (frame.ok) return (frame.message as { id?: unknown }).id;
+        }
+      }
+    };
+
+    // Case 1: non-string message — sanitizeBoundaryText would throw on it.
+    const req1 = client.request("turn");
+    const id1 = await readRequestId();
+    await rawConn.write(encodeFrame(
+      {
+        jsonrpc: "2.0",
+        id: id1,
+        error: { code: -32000, message: 42 },
+      } as unknown as JsonRpcMessage,
+    ));
+    await expect(req1).rejects.toThrow("malformed error envelope");
+
+    // Case 2: null error object — property access alone would throw.
+    const req2 = client.request("turn");
+    const id2 = await readRequestId();
+    await rawConn.write(encodeFrame(
+      { jsonrpc: "2.0", id: id2, error: null } as unknown as JsonRpcMessage,
+    ));
+    await expect(req2).rejects.toThrow("malformed error envelope");
   });
 
   test("notifications reach a matching handler fire-and-forget", async () => {

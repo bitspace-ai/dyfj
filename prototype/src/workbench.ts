@@ -2842,11 +2842,11 @@ export async function runWorkbenchRuntime(
         duration_ms: Date.now() - sessionStart,
       }), INTEGRITY);
 
-    // The count captured here reflects skips up to this point. The summary
-    // write itself and the later session-content write can still fail; those
-    // late skips reach the class-only console line, but land after this
-    // event's content and the receipt snapshot below, so they are visible on
-    // the console only.
+    // The count captured here reflects skips up to this point. If this
+    // summary write itself fails, its skip fires before the receipt is built
+    // below, so it reaches the console line AND the receipt — but not this
+    // event's own content. The later session-content write is the only skip
+    // that lands after every persisted surface: console line only.
     await writeMaybe(
       () => budget.writeSummaryEvent({ skippedEventWrites }),
       BEST_EFFORT,
