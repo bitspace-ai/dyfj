@@ -1453,9 +1453,15 @@ describe("runWorkbenchRuntime observer events", () => {
       });
 
       expect(result.text).toBe("runtime response");
+      // Provenance-summarized, never raw: an observer failure is a foreign
+      // error, so the console line carries a fixed label + byte count, not
+      // the message (which can embed payload content).
       expect(warn).toHaveBeenCalledWith(
-        "Runtime observer skipped: observer sink down",
+        "Runtime observer skipped: [Error, 18 bytes]",
       );
+      for (const args of warn.mock.calls) {
+        expect(String(args[0])).not.toContain("observer sink down");
+      }
     } finally {
       warn.mockRestore();
     }

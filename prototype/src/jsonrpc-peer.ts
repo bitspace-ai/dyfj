@@ -20,7 +20,11 @@ import {
   RpcErrorCode,
   type RpcHandlers,
 } from "./jsonrpc";
-import { MAX_ERROR_SUMMARY_BYTES, sanitizeBoundaryText } from "./turn-contract";
+import {
+  MAX_ERROR_SUMMARY_BYTES,
+  sanitizeBoundaryText,
+  summarizeError,
+} from "./turn-contract";
 
 export interface JsonRpcPeerOptions {
   /** Incoming requests (and matching notifications) are dispatched here. */
@@ -137,7 +141,10 @@ export class JsonRpcPeer {
       // a long-running `turn` would wedge `turn/cancel` and every other
       // request on the connection. Writes stay serialized via #write.
       void this.#handle(frame.message as JsonRpcMessage).catch((err) => {
-        this.#onParseError?.(`handler error: ${(err as Error)?.message}`);
+        // Provenance-summarized, never raw: a handler throw can be a foreign
+        // error whose message embeds payload content, and onParseError is an
+        // operational channel, not a debugger.
+        this.#onParseError?.(`handler error: ${summarizeError(err)}`);
       });
     }
   }

@@ -1217,8 +1217,9 @@ async function emitRuntimeEvent(
   try {
     await handler(event);
   } catch (err) {
-    const message = (err as Error)?.message ?? String(err);
-    console.warn(`Runtime observer skipped: ${message}`);
+    // Provenance-summarized, never raw: an observer failure can wrap a
+    // foreign error whose message embeds payload content.
+    console.warn(`Runtime observer skipped: ${summarizeError(err)}`);
   }
 }
 
@@ -1727,9 +1728,13 @@ export async function runWorkbenchRuntime(
       }
     } catch (err) {
       if (!usesRepoAskContext) throw err;
-      const message = (err as Error)?.message ?? String(err);
+      // Provenance-summarized, never raw: a registry failure is typically a
+      // driver error, and driver messages can embed registry data or
+      // rejected values.
       console.warn(
-        `Model registry unavailable; using static local Tier 0 default: ${message}`,
+        `Model registry unavailable; using static local Tier 0 default: ${
+          summarizeError(err)
+        }`,
       );
       models = defaultLocalWorkbenchModels();
     }
