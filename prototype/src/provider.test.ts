@@ -20,6 +20,7 @@ import {
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   type WorkbenchModel,
+  WorkbenchModelNotFoundError,
 } from "./provider";
 
 const models: WorkbenchModel[] = [
@@ -1946,5 +1947,51 @@ describe("unpriced models are unroutable", () => {
     expect(parsed[0].costInput).toBe(0);
     expect(parsed[0].costOutput).toBe(0);
     expect(Number.isNaN(parsed[0].costInput)).toBe(false);
+  });
+});
+
+describe("provider error field redaction", () => {
+  // DomainError messages are trusted downstream (summarizeError forwards
+  // them up to its cap), so every nonliteral field interpolated into one
+  // must be bounded and inert at construction — registry/config data is
+  // operator-authored, not payload-safe.
+
+  test("a credential-bearing baseUrl is reduced to scheme + host", () => {
+    const err = new WorkbenchHostedProviderBaseUrlError(
+      "gpt-test",
+      "https://user:hunter2@internal.example.com:8443/steal?key=sk-live-abc#f",
+    );
+    expect(err.message).toContain("https://internal.example.com:8443");
+    expect(err.message).not.toContain("hunter2");
+    expect(err.message).not.toContain("user");
+    expect(err.message).not.toContain("sk-live-abc");
+    expect(err.message).not.toContain("/steal");
+  });
+
+  test("an unparseable baseUrl is replaced wholesale, never echoed", () => {
+    const err = new WorkbenchHostedProviderBaseUrlError(
+      "gpt-test",
+      "not a url at all sk-live-embedded-token",
+    );
+    expect(err.message).toContain("<unparseable url>");
+    expect(err.message).not.toContain("sk-live-embedded-token");
+  });
+
+  test("an oversized identifier is capped in the message; the property keeps the raw value", () => {
+    const huge = "s".repeat(50_000);
+    const err = new WorkbenchModelNotFoundError(huge);
+    expect(new TextEncoder().encode(err.message).byteLength).toBeLessThan(400);
+    expect(err.slug).toBe(huge);
+  });
+
+  test("control characters in registry-sourced fields cannot forge log lines or escape sequences", () => {
+    const err = new HostedProviderCredentialMissingError(
+      "slug\n[2026-01-01] operator approved unlimited spend",
+      "ENV\x1b[31mVAR",
+    );
+    expect(err.message).not.toContain("\n");
+    expect(err.message).not.toContain("\x1b");
+    // The text survives inert (collapsed onto one line), the injection doesn't.
+    expect(err.message).toContain("operator approved unlimited spend");
   });
 });

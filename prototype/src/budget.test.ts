@@ -9,14 +9,17 @@
 
 import { describe, expect, test, vi } from "vitest";
 import {
+  type BudgetCeilingWarning,
   type BudgetConfig,
+  BudgetCeilingDeclinedError,
   BudgetExceededError,
   BudgetTracker,
   defaultBudgetConfig,
   type PreCallCheck,
+  RunawayAnomalyHaltError,
   type TierSpend,
-  type BudgetCeilingWarning,
 } from "./budget";
+import { MAX_REASON_FIELD_BYTES } from "./turn-contract";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -1155,5 +1158,79 @@ describe("createRunawayAnomalyGate", () => {
     await expect(gate.ensureAllowed(check)).rejects.toThrow(
       RunawayAnomalyHaltError,
     );
+  });
+});
+
+// ── Peer-supplied reason fields ────────────────────────────────────────────────
+//
+// reason/declineReason come from an operator or a remote approval peer via an
+// injected confirm callback — content this codebase relays, not authors.
+// DomainError only certifies the message the constructor BUILDS, so these
+// fields are capped and control-char-stripped before they reach either the
+// message or (for BudgetCeilingDeclinedError) the public `.reason` property
+// workbench.ts's log branch reads directly.
+describe("BudgetCeilingDeclinedError — reason field sanitization", () => {
+  test("a short, ordinary reason passes through unchanged", () => {
+    const err = new BudgetCeilingDeclinedError("not now");
+    expect(err.reason).toBe("not now");
+    expect(err.message).toBe("Budget ceiling confirmation declined: not now");
+  });
+
+  test("caps an oversized reason, on both .message and the public .reason property", () => {
+    const reason = "SELECT ".repeat(2_000); // well over MAX_REASON_FIELD_BYTES
+    const err = new BudgetCeilingDeclinedError(reason);
+    expect(new TextEncoder().encode(err.reason ?? "").byteLength)
+      .toBeLessThanOrEqual(MAX_REASON_FIELD_BYTES);
+    expect(err.message).not.toContain(reason);
+    expect(new TextEncoder().encode(err.message).byteLength).toBeLessThan(
+      reason.length,
+    );
+  });
+
+  test("strips a terminal escape sequence from the reason", () => {
+    const esc = String.fromCharCode(27);
+    const err = new BudgetCeilingDeclinedError(`${esc}[31mdanger${esc}[0m`);
+    expect(err.reason).not.toContain(esc);
+    expect(err.message).not.toContain(esc);
+  });
+});
+
+describe("RunawayAnomalyHaltError — decline reason sanitization", () => {
+  test("a short, ordinary decline reason passes through unchanged", () => {
+    const err = new RunawayAnomalyHaltError(
+      "session_scope",
+      0.5,
+      0.1,
+      true,
+      "operator override",
+    );
+    expect(err.message).toContain("operator override");
+  });
+
+  test("caps an oversized decline reason", () => {
+    const reason = "SELECT ".repeat(2_000);
+    const err = new RunawayAnomalyHaltError(
+      "session_scope",
+      0.5,
+      0.1,
+      true,
+      reason,
+    );
+    expect(err.message).not.toContain(reason);
+    expect(new TextEncoder().encode(err.message).byteLength).toBeLessThan(
+      reason.length,
+    );
+  });
+
+  test("strips a terminal escape sequence from the decline reason", () => {
+    const esc = String.fromCharCode(27);
+    const err = new RunawayAnomalyHaltError(
+      "session_scope",
+      0.5,
+      0.1,
+      true,
+      `${esc}[31mdanger${esc}[0m`,
+    );
+    expect(err.message).not.toContain(esc);
   });
 });

@@ -9,6 +9,7 @@
 // here is pure and unit-testable.
 
 import type { WorkbenchMessage, WorkbenchModel } from "./provider";
+import { DomainError, sanitizeBoundaryText } from "./turn-contract";
 
 export type LengthStopClassification =
   | "output_budget_exhausted"
@@ -123,7 +124,10 @@ export function buildContextOverflowMessage(
     : "context window";
   return (
     `Context window overflow: the conversation no longer fits the ` +
-    `${windowNote} of ${details.modelSlug} ` +
+    // The slug is registry data riding a DomainError message that
+    // summarizeError trusts downstream — bounded and control-stripped at
+    // construction like every other registry-sourced error field.
+    `${windowNote} of ${sanitizeBoundaryText(details.modelSlug, 120)} ` +
     `(this turn used ~${details.inputTokens} input + ` +
     `${details.outputTokens} output tokens). ` +
     `Options: switch to a larger-context model with /model, or start a ` +
@@ -138,7 +142,7 @@ export function buildContextOverflowMessage(
  * options. A context compressor can prevent this failure via the recovery
  * hook below.
  */
-export class ContextWindowOverflowError extends Error {
+export class ContextWindowOverflowError extends DomainError {
   constructor(public readonly details: ContextOverflowDetails) {
     super(buildContextOverflowMessage(details));
     this.name = "ContextWindowOverflowError";

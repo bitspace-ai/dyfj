@@ -21,6 +21,7 @@ import {
   type WorkbenchSessionEvent,
 } from "./sessions";
 import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
+import { summarizeError } from "./turn-contract";
 import type { WorkbenchConfig } from "./config";
 import { loadConfig, loadSecretsConfig } from "./config";
 import { resolveSecretsIntoEnv } from "./secrets";
@@ -478,8 +479,12 @@ async function handleJsonTurn(
     });
     return jsonResponse({ ...result, events });
   } catch (err) {
+    // Buffered JSON terminal path: an unexpected turn error can be a caught
+    // driver/dependency error whose message embeds an arbitrary payload
+    // (the original defect's exact shape), so it renders as class + byte
+    // count only unless it's a DomainError this codebase authored.
     return jsonResponse({
-      error: (err as Error)?.message ?? String(err),
+      error: summarizeError(err),
     }, 500);
   }
 }
@@ -535,7 +540,8 @@ async function handleStreamingTurn(
         });
         send({ t: "done", result });
       } catch (err) {
-        send({ t: "error", message: (err as Error)?.message ?? String(err) });
+        // SSE terminal path — same discipline as the buffered JSON path above.
+        send({ t: "error", message: summarizeError(err) });
       } finally {
         controller.close();
       }

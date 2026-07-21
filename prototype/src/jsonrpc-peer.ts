@@ -19,6 +19,7 @@ import {
   RpcError,
   type RpcHandlers,
 } from "./jsonrpc";
+import { MAX_ERROR_SUMMARY_BYTES, sanitizeBoundaryText } from "./turn-contract";
 
 export interface JsonRpcPeerOptions {
   /** Incoming requests (and matching notifications) are dispatched here. */
@@ -169,10 +170,18 @@ export class JsonRpcPeer {
         if ("result" in response) {
           pending.resolve(response.result);
         } else {
+          // The other end already ran its own message through
+          // summarizeError, but the wire itself is not a trust boundary —
+          // sanitize before this reconstructed RpcError (a DomainError)
+          // stamps the message as trusted, so a hostile or misbehaving peer
+          // can't ride RpcError's capped-passthrough treatment.
           pending.reject(
             new RpcError(
               response.error.code,
-              response.error.message,
+              sanitizeBoundaryText(
+                response.error.message,
+                MAX_ERROR_SUMMARY_BYTES,
+              ),
               response.error.data,
             ),
           );

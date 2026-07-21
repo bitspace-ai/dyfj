@@ -198,6 +198,70 @@ describe("createWorkbenchHttpHandler", () => {
     });
   });
 
+  // The buffered JSON terminal path previously forwarded
+  // err.message verbatim on any turn failure — the original crash's exact
+  // shape, where a rejected event-log INSERT's driver message embeds the
+  // whole offending payload.
+  test("a turn error on the buffered JSON path renders as class + byte count, never the raw message", async () => {
+    const payload = "SELECT ".repeat(20_000); // well over 100KB
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.reject(new Error(payload)),
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "summarize the repo",
+          mode: "turn",
+          routingOptions: {},
+        }),
+      }),
+    );
+    const body = await response.json() as { error: string };
+
+    expect(response.status).toBe(500);
+    expect(body.error).not.toContain(payload.slice(0, 50));
+    expect(body.error).toContain("Error");
+    expect(body.error).toContain(
+      `${new TextEncoder().encode(payload).byteLength} bytes`,
+    );
+    expect(body.error.length).toBeLessThan(200);
+  });
+
+  test("a turn error on the SSE path renders as class + byte count, never the raw message", async () => {
+    const payload = "x".repeat(200_000);
+    const handler = createWorkbenchHttpHandler({
+      runRuntime: () => Promise.reject(new Error(payload)),
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "accept": "text/event-stream",
+        },
+        body: JSON.stringify({
+          prompt: "hello",
+          mode: "turn",
+          routingOptions: {},
+        }),
+      }),
+    );
+    const frames = parseSseFrames(await response.text());
+    const errorFrame = frames.find((f) => f.t === "error") as
+      | { t: "error"; message: string }
+      | undefined;
+
+    expect(errorFrame).toBeDefined();
+    expect(errorFrame!.message).not.toContain(payload.slice(0, 50));
+    expect(errorFrame!.message).toContain("Error");
+    expect(errorFrame!.message).toContain(`${payload.length} bytes`);
+    expect(errorFrame!.message.length).toBeLessThan(200);
+  });
+
   test("streams a turn as SSE when the client accepts text/event-stream", async () => {
     const calls: WorkbenchRuntimeInput[] = [];
     const handler = createWorkbenchHttpHandler({

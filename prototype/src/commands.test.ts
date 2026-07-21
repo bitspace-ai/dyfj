@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   buildBashCommand,
   buildCommandToolCallEventPayload,
@@ -8,9 +8,11 @@ import {
   type CommandDefinition,
   createCommandRegistry,
   evaluateCommandPolicy,
+  EVENT_RESULT_MAX_BYTES,
   invokeCommand,
   invokeCommandWithEvent,
   registerCoreCommands,
+  truncateForEventColumn,
 } from "./commands";
 
 function readCommand(
@@ -1156,5 +1158,173 @@ describe("invokeCommandWithEvent", () => {
       tool_name: "memory.read",
       tool_is_error: true,
     });
+  });
+});
+
+// ── Event-copy size cap (tool-result overflow containment) ─────────────────────────────────────────────
+//
+// events.tool_result is a Dolt/MySQL TEXT column: 65,535 bytes. A tool result
+// can run right up to the model-facing 64KB cap (file-tools.ts), which
+// overflows the column once bytes (not chars) are counted. The event copy
+// must be capped independently of, and well below, the model-facing value.
+const DOLT_TEXT_COLUMN_MAX_BYTES = 65_535;
+
+describe("truncateForEventColumn", () => {
+  test("leaves a short string unchanged", () => {
+    expect(truncateForEventColumn("hello", 100)).toBe("hello");
+  });
+
+  test("caps an over-limit string and appends a marker with the original byte size", () => {
+    const original = "x".repeat(100_000);
+    const truncated = truncateForEventColumn(original, 60_000);
+    // The contract is output <= maxBytes INCLUDING the marker, not merely
+    // under the (much larger) Dolt column limit — a marker appended after an
+    // exact-maxBytes slice can itself push the total past maxBytes.
+    expect(new TextEncoder().encode(truncated).byteLength)
+      .toBeLessThanOrEqual(60_000);
+    expect(truncated).toContain("event-truncated");
+    expect(truncated).toContain("100000 bytes");
+  });
+
+  // Each "é" is 2 UTF-8 bytes; an odd byte cap forces the cut to land mid
+  // character. Asserting only "< the 65,535 Dolt column limit" would pass
+  // even for a regressed CHARACTER-based `text.slice(0, maxBytes)` — 12,345
+  // "é" chars is 24,690 bytes, still comfortably under 65,535. Pin the actual
+  // contract instead: output <= the maxBytes argument itself, and a clean
+  // decode (no U+FFFD replacement chars), which only a byte-safe boundary cut
+  // guarantees.
+  test("cuts on a byte boundary without crashing on multibyte characters", () => {
+    const original = "é".repeat(50_000);
+    const maxBytes = 12_345;
+    expect(() => truncateForEventColumn(original, maxBytes)).not.toThrow();
+    const truncated = truncateForEventColumn(original, maxBytes);
+    expect(new TextEncoder().encode(truncated).byteLength)
+      .toBeLessThanOrEqual(maxBytes);
+    expect(truncated).not.toContain("�");
+  });
+
+  test("reserves room for the marker itself, even when that leaves a mid-character excerpt boundary", () => {
+    // maxBytes (100) comfortably exceeds the marker's own size (~50 bytes)
+    // but not by much, so the excerpt budget after reserving the marker is
+    // small enough that an odd remainder still forces a mid-character cut.
+    const truncated = truncateForEventColumn("é".repeat(200), 100);
+    expect(new TextEncoder().encode(truncated).byteLength).toBeLessThanOrEqual(
+      100,
+    );
+    expect(truncated).not.toContain("�");
+    expect(truncated).toContain("event-truncated");
+  });
+});
+
+describe("buildCommandToolCallEventPayload — event copy size cap", () => {
+  test("caps a maximally-truncated read_file-sized result below the TEXT column limit", () => {
+    // Mirrors file-tools.ts's DEFAULT_MAX_BYTES (64 * 1024 characters) plus its
+    // own truncation suffix — the exact shape that overflowed the column in
+    // the receipted tool-result overflow crash.
+    const modelFacingResult = "a".repeat(64 * 1024) +
+      "\n\n[truncated at 65536 characters]";
+    const payload = buildCommandToolCallEventPayload(
+      call({ path: "workbench.ts" }, { commandId: "read_file" }),
+      {
+        decision: "allow",
+        authzBasis: "policy:allow:read-only-local",
+        isError: false,
+        result: modelFacingResult,
+      },
+      {
+        eventId: "01TESTEVENT0000000000000000",
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        spanId: "0123456789abcdef",
+        durationMs: 5,
+      },
+    );
+
+    const toolResult = payload.tool_result as string;
+    expect(new TextEncoder().encode(toolResult).byteLength)
+      .toBeLessThanOrEqual(EVENT_RESULT_MAX_BYTES);
+    expect(toolResult).toContain("event-truncated");
+    // The marker records the true (uncapped) size, not the capped one.
+    expect(toolResult).toContain(`${modelFacingResult.length} bytes`);
+  });
+
+  test("a result well under the cap is recorded verbatim (no marker, no data loss)", () => {
+    const payload = buildCommandToolCallEventPayload(
+      call({ path: "small.txt" }, { commandId: "read_file" }),
+      {
+        decision: "allow",
+        authzBasis: "policy:allow:read-only-local",
+        isError: false,
+        result: "small file contents",
+      },
+      {
+        eventId: "01TESTEVENT0000000000000000",
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        spanId: "0123456789abcdef",
+      },
+    );
+    expect(payload.tool_result).toBe("small file contents");
+  });
+});
+
+// ── read_file end-to-end containment (tool-result overflow acceptance test 1) ─────────────
+//
+// A real ≥64KB fixture through the real read_file executor and the real
+// invokeCommandWithEvent: the call must resolve (not throw), the persisted
+// event's tool_result must fit the Dolt TEXT column, and the model-facing
+// result — what actually goes back on the transcript — must be untouched by
+// this change (file-tools.ts's own truncation behavior is a non-goal here).
+describe("read_file → tool_call event containment", () => {
+  let root: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    root = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // One character over the model-facing 64KB cap so file-tools.ts's own
+    // truncation kicks in — the exact receipted trigger shape.
+    await Deno.writeTextFile(`${root}/big.txt`, "a".repeat(64 * 1024 + 500));
+  });
+
+  afterAll(async () => {
+    if (root) await Deno.remove(root, { recursive: true });
+  });
+
+  test("completes without throwing and records a capped event with a full-size marker", async () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: root });
+    const events: Record<string, unknown>[] = [];
+
+    const result = await invokeCommandWithEvent(
+      registry,
+      call({ path: "big.txt" }, { commandId: "read_file" }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        eventId: "01TESTEVENT0000000000000000",
+        spanId: "0123456789abcdef",
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    );
+
+    // The model-facing result keeps file-tools.ts's own 64KB-character cap —
+    // unchanged by this fix (non-goal).
+    expect(result.isError).toBe(false);
+    expect(result.result as string).toContain(
+      "[truncated at 65536 characters]",
+    );
+    const modelFacingBytes = new TextEncoder().encode(result.result as string)
+      .byteLength;
+    expect(modelFacingBytes).toBeGreaterThan(DOLT_TEXT_COLUMN_MAX_BYTES);
+
+    // The event copy is capped well below the column limit, independently of
+    // the model-facing value, with a marker recording the true size.
+    expect(events).toHaveLength(1);
+    const toolResult = events[0].tool_result as string;
+    expect(new TextEncoder().encode(toolResult).byteLength)
+      .toBeLessThanOrEqual(EVENT_RESULT_MAX_BYTES);
+    expect(toolResult).toContain("event-truncated");
   });
 });

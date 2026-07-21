@@ -717,6 +717,54 @@ export function redactCommandArguments(
   return redactedAny ? out : args;
 }
 
+// events.tool_result is a Dolt/MySQL TEXT column: 65,535 BYTES, not
+// characters. A tool result can run right up to the model-facing cap
+// (file-tools.ts's DEFAULT_MAX_BYTES, itself measured in characters), which
+// overflows the column once multibyte UTF-8 characters are counted in bytes —
+// before even accounting for the fact that char-count and byte-count aren't
+// the same limit. The event row is a durable audit copy, not the model's
+// working context, so it can be capped independently: keep a safe margin
+// under the column limit here, and let the model-facing tool result (what
+// actually goes back on the transcript) keep its own, separate limit.
+export const EVENT_RESULT_MAX_BYTES = 60_000;
+
+/**
+ * The largest prefix of `bytes` that is at most `maxBytes` long AND does not
+ * split a multi-byte UTF-8 character. A UTF-8 continuation byte has the top
+ * two bits `10`; walking `end` back while `bytes[end]` is a continuation byte
+ * lands the cut on the start of a character (or the end of the array), so the
+ * result decodes cleanly with zero replacement characters — unlike a naive
+ * `slice` + permissive decode, which can silently swap a clipped tail for a
+ * differently-sized replacement character and land past `maxBytes`.
+ */
+function utf8SafeByteSlice(bytes: Uint8Array, maxBytes: number): Uint8Array {
+  let end = Math.min(maxBytes, bytes.byteLength);
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.slice(0, end);
+}
+
+/**
+ * Cap `text` to `maxBytes` UTF-8 bytes for a TEXT event column, appending a
+ * marker with the untruncated size so the audit trail records that clipping
+ * happened — and by how much — rather than silently losing the tail. The
+ * excerpt is budgeted to leave room for the marker itself, so the total
+ * output never exceeds `maxBytes`.
+ */
+export function truncateForEventColumn(
+  text: string,
+  maxBytes: number = EVENT_RESULT_MAX_BYTES,
+): string {
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.byteLength <= maxBytes) return text;
+  const marker =
+    `\n\n[event-truncated: full result was ${encoded.byteLength} bytes]`;
+  const markerBytes = new TextEncoder().encode(marker).byteLength;
+  const excerptBudget = Math.max(0, maxBytes - markerBytes);
+  const excerpt = new TextDecoder("utf-8")
+    .decode(utf8SafeByteSlice(encoded, excerptBudget));
+  return `${excerpt}${marker}`;
+}
+
 export function buildCommandToolCallEventPayload(
   call: CommandCall,
   result: CommandInvocationResult,
@@ -747,7 +795,7 @@ export function buildCommandToolCallEventPayload(
     tool_name: call.commandId,
     tool_call_id: call.callId,
     tool_arguments: JSON.stringify(loggedArguments),
-    tool_result: resultText,
+    tool_result: truncateForEventColumn(resultText),
     tool_is_error: isError,
     content: isError
       ? `${call.commandId} denied: ${result.reason}`

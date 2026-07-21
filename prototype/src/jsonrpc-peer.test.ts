@@ -104,6 +104,32 @@ describe("JsonRpcPeer", () => {
     });
   });
 
+  // Reconstructing an RpcError from a wire response must not stamp whatever
+  // message arrived as DomainError-trusted content. The wire itself is not a
+  // trust boundary — a hostile or misbehaving peer's message must be capped
+  // and control-char-stripped before it rides RpcError's capped-passthrough
+  // treatment.
+  test("reconstructing an RpcError from an oversized/control-character wire message sanitizes it", async () => {
+    const esc = String.fromCharCode(27);
+    const payload = esc + "[31m" + "SELECT ".repeat(20_000);
+    const { client } = await connectPair({
+      turn: () => {
+        throw new RpcError(RpcErrorCode.internalError, payload);
+      },
+    });
+    let caught: RpcError | undefined;
+    try {
+      await client.request("turn");
+    } catch (err) {
+      caught = err as RpcError;
+    }
+    expect(caught).toBeInstanceOf(RpcError);
+    expect(caught?.message).not.toContain(esc);
+    expect(caught?.message.length).toBeLessThan(payload.length);
+    expect(new TextEncoder().encode(caught?.message ?? "").byteLength)
+      .toBeLessThan(1000);
+  });
+
   test("notifications reach a matching handler fire-and-forget", async () => {
     let seen: unknown;
     const { client } = await connectPair({

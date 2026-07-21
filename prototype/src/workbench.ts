@@ -3,7 +3,11 @@ import type {
   ConfirmRunawayAnomaly,
   SpendBaselines,
 } from "./budget";
-import { BudgetCeilingDeclinedError } from "./budget";
+import {
+  BudgetCeilingDeclinedError,
+  BudgetExceededError,
+  RunawayAnomalyHaltError,
+} from "./budget";
 import type { WorkbenchRoutingOptions } from "./provider";
 import type { WorkbenchCallTimings } from "./provider";
 import type {
@@ -11,11 +15,26 @@ import type {
   WorkbenchModel,
   WorkbenchToolCall,
 } from "./provider";
+import {
+  HostedInferenceRequiresProviderError,
+  HostedProviderCredentialMissingError,
+  WorkbenchHostedProviderBaseUrlError,
+  WorkbenchLocalProviderBaseUrlError,
+  WorkbenchModelNotFoundError,
+  WorkbenchModelNotRoutableError,
+} from "./provider";
+import { RpcError } from "./jsonrpc";
 import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
 import type { SupersedingRetryStartedEvent } from "./turn-contract";
+import {
+  DomainError,
+  MAX_REASON_FIELD_BYTES,
+  sanitizeBoundaryText,
+  summarizeError,
+} from "./turn-contract";
 import type {
   CompressionCompletion,
   CompressionOutcome,
@@ -79,6 +98,13 @@ export interface WorkbenchReceiptInput {
   workletId?: string;
   totalElapsedMs?: number;
   validation?: WorkbenchValidationSummary;
+  /**
+   * Best-effort event writes that failed this session. Zero renders nothing;
+   * any other value renders a warning line — an audit-log gap must be
+   * visible on the receipt, not discoverable only by inspecting the event
+   * log.
+   */
+  skippedEventWrites?: number;
 }
 
 export interface PaidEscalationPreflightInput {
@@ -471,22 +497,30 @@ export type PaidEscalationVerdict =
   | { decision: "deny"; reason?: string }
   | { decision: "escalate"; reason?: string };
 
-export class PaidEscalationDeclinedError extends Error {
+export class PaidEscalationDeclinedError extends DomainError {
+  readonly verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>;
+  // verdict.reason comes from the injected confirmPaidEscalation callback —
+  // an operator's TTY answer today, potentially a remote approval peer
+  // tomorrow. DomainError certifies the message THIS constructor builds, not
+  // that field's content, so it's capped and control-char-stripped before it
+  // reaches either the message or the stored `.verdict` (read directly by
+  // workbench.ts's log branch, not just via .message).
   constructor(
-    public readonly verdict: Exclude<
-      PaidEscalationVerdict,
-      { decision: "approve" }
-    >,
+    verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>,
   ) {
+    const safeReason = verdict.reason === undefined
+      ? undefined
+      : sanitizeBoundaryText(verdict.reason, MAX_REASON_FIELD_BYTES);
     super(
       verdict.decision === "escalate"
         ? `Paid inference escalation required${
-          verdict.reason ? `: ${verdict.reason}` : ""
+          safeReason ? `: ${safeReason}` : ""
         }`
         : `Paid inference consent declined${
-          verdict.reason ? `: ${verdict.reason}` : ""
+          safeReason ? `: ${safeReason}` : ""
         }`,
     );
+    this.verdict = { ...verdict, reason: safeReason };
     this.name = "PaidEscalationDeclinedError";
   }
 }
@@ -500,7 +534,7 @@ export class PaidEscalationDeclinedError extends Error {
  * only error CLASS names: this path handles a payload containing the summary,
  * and messages can quote it.
  */
-export class ContextCompressionPersistenceUncertainError extends Error {
+export class ContextCompressionPersistenceUncertainError extends DomainError {
   constructor(
     public readonly writeErrorKind: string,
     public readonly probeErrorKind: string,
@@ -513,6 +547,64 @@ export class ContextCompressionPersistenceUncertainError extends Error {
     );
     this.name = "ContextCompressionPersistenceUncertainError";
   }
+}
+
+// Every DomainError subclass this codebase defines, paired with a fixed
+// string literal — one WE wrote, never one read off an instance — that
+// classifyErrorKind returns for it. `instanceof DomainError` alone is not
+// enough to safely read `.constructor.name`: instanceof walks the prototype
+// chain, but `.constructor` is an ordinary, independently-writable property
+// — a real DomainError subclass instance with `.constructor` reassigned
+// (`Object.defineProperty(e, "constructor", { value: { name: "..." } })`)
+// still passes `instanceof DomainError` and then yields the shadowed name.
+// So no branch anywhere in classifyErrorKind reads a string off the
+// candidate; every returned value is a literal, selected purely by which
+// instanceof check matched. Extend this table when a new DomainError
+// subclass is added — an unlisted one still classifies safely, to the
+// generic "DomainError" literal below, just without per-class fidelity.
+const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
+  // deno-lint-ignore no-explicit-any
+  readonly [new (...args: any[]) => DomainError, string]
+> = [
+  [BudgetExceededError, "BudgetExceededError"],
+  [BudgetCeilingDeclinedError, "BudgetCeilingDeclinedError"],
+  [RunawayAnomalyHaltError, "RunawayAnomalyHaltError"],
+  [ContextWindowOverflowError, "ContextWindowOverflowError"],
+  [PaidEscalationDeclinedError, "PaidEscalationDeclinedError"],
+  [
+    ContextCompressionPersistenceUncertainError,
+    "ContextCompressionPersistenceUncertainError",
+  ],
+  [RpcError, "RpcError"],
+  [WorkbenchModelNotFoundError, "WorkbenchModelNotFoundError"],
+  [
+    HostedInferenceRequiresProviderError,
+    "HostedInferenceRequiresProviderError",
+  ],
+  [
+    HostedProviderCredentialMissingError,
+    "HostedProviderCredentialMissingError",
+  ],
+  [WorkbenchHostedProviderBaseUrlError, "WorkbenchHostedProviderBaseUrlError"],
+  [WorkbenchLocalProviderBaseUrlError, "WorkbenchLocalProviderBaseUrlError"],
+  [WorkbenchModelNotRoutableError, "WorkbenchModelNotRoutableError"],
+];
+
+/**
+ * Classify `candidate` for a content-free-by-convention diagnostic string
+ * (e.g. ContextCompressionPersistenceUncertainError's writeErrorKind),
+ * WITHOUT ever reading a string property off the candidate itself — see
+ * KNOWN_DOMAIN_ERROR_CLASSES above for why `.constructor.name` is not safe
+ * even behind an `instanceof DomainError` check. Every returned value is a
+ * fixed literal this function selects; none is derived from the candidate.
+ */
+export function classifyErrorKind(candidate: unknown): string {
+  for (const [cls, label] of KNOWN_DOMAIN_ERROR_CLASSES) {
+    if (candidate instanceof cls) return label;
+  }
+  if (candidate instanceof DomainError) return "DomainError";
+  if (candidate instanceof Error) return "Error";
+  return "unknown";
 }
 
 export function formatMoney(value: number): string {
@@ -754,6 +846,12 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     } written`,
     `Calls:   ${input.totalCalls}`,
   );
+  if ((input.skippedEventWrites ?? 0) > 0) {
+    lines.push(
+      `WARNING: ${input.skippedEventWrites} event write(s) failed — ` +
+        `the session's audit log has gaps`,
+    );
+  }
   if (input.totalElapsedMs !== undefined) {
     lines.push(`Total elapsed: ${input.totalElapsedMs}ms`);
   }
@@ -1088,13 +1186,26 @@ export async function promptPaidEscalationTty(
 async function writeMaybe(
   operation: () => Promise<void>,
   bestEffort: boolean,
+  onSkip?: () => void,
 ): Promise<void> {
   try {
     await operation();
   } catch (err) {
     if (!bestEffort) throw err;
-    const message = (err as Error)?.message ?? String(err);
-    console.warn(`Event write skipped: ${message}`);
+    // Best-effort is deliberately loud, never silent: every skipped write is
+    // counted by the session (surfaced on the receipt and in the budget
+    // summary) so an audit-log gap is visible instead of discoverable only
+    // by diffing the event log against reality.
+    onSkip?.();
+    // Class only, never the message: a rejected event INSERT (e.g. Dolt's
+    // "value too large for column" error) embeds the full offending value in
+    // its message, so logging it verbatim here would leak onto the server
+    // console exactly the payload this best-effort skip exists to keep durable
+    // (or not) without surfacing (CWE-532; mirrors the turn-error discipline
+    // at the [turn-error] console.error below). The label comes from the
+    // fixed-literal class table, never `.constructor.name` — that is an
+    // ordinary writable property a foreign error can shadow with a payload.
+    console.warn(`Event write skipped: ${classifyErrorKind(err)}`);
   }
 }
 
@@ -1369,6 +1480,13 @@ export async function runWorkbenchRuntime(
   // mode. These are the `bestEffort` argument to writeMaybe().
   const INTEGRITY = false;
   const BEST_EFFORT = true;
+  // Every best-effort event write that fails is counted here and surfaced on
+  // the session receipt and in the budget_summary content: turns never die
+  // for audit reasons, but an audit gap must never be silent either.
+  let skippedEventWrites = 0;
+  const noteSkippedEventWrite = () => {
+    skippedEventWrites++;
+  };
   // Integrity writes that run inside the broad runtime try below would otherwise
   // throw, be caught by the catch, and then be masked by the `finally` returning
   // a normal receipt — so a successful turn could be handed back with a missing
@@ -1493,7 +1611,7 @@ export async function runWorkbenchRuntime(
           tool_is_error: false,
           content: JSON.stringify({ sources: contextSourceLines }),
           duration_ms: Date.now() - sessionStart,
-        }), BEST_EFFORT);
+        }), BEST_EFFORT, noteSkippedEventWrite);
 
       const companionBasePrompt = await loadCompanionBasePrompt();
       systemPrompt = buildAskSystemPrompt(companionBasePrompt, repoContext);
@@ -1701,7 +1819,7 @@ export async function runWorkbenchRuntime(
         api: selected.api,
         durationMs: Date.now() - sessionStart,
         authnFields: authnEventFields,
-      }), BEST_EFFORT);
+      }), BEST_EFFORT, noteSkippedEventWrite);
     await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
       type: "modelSelected",
       sessionId,
@@ -1847,9 +1965,14 @@ export async function runWorkbenchRuntime(
         });
       } catch (err) {
         // Log the error CLASS, not its message: the failing write carries the
-        // conversation summary, and a DB/serialization error can quote it — this
-        // channel is content-free by convention.
-        const kind = err instanceof Error ? err.name : "unknown";
+        // conversation summary, and a DB/serialization error can quote it —
+        // this channel is content-free by convention. classifyErrorKind
+        // never reads a string OFF the candidate (.name and .constructor.name
+        // are both ordinary, attacker-shapeable properties — a crafted
+        // `{constructor: {name: "..."}}` spoofs constructor.name exactly like
+        // a plain object spoofs .name) — classification comes from instanceof
+        // against classes this codebase controls, full stop.
+        const kind = classifyErrorKind(err);
         // A rejected INSERT does NOT mean "not persisted": the row may have
         // committed and only the acknowledgment been lost. Continuing
         // uncompressed on that assumption would let a durable event resurface on
@@ -1863,9 +1986,7 @@ export async function runWorkbenchRuntime(
           // no choice here is safe: continuing uncompressed may diverge from a
           // resume that applies the event, and adopting may pin a summary that
           // was never stored. Ambiguity is the one case that fails the turn.
-          const probeKind = probeErr instanceof Error
-            ? probeErr.name
-            : "unknown";
+          const probeKind = classifyErrorKind(probeErr);
           throw new ContextCompressionPersistenceUncertainError(kind, probeKind);
         }
         if (!landed) {
@@ -2371,9 +2492,18 @@ export async function runWorkbenchRuntime(
             {
               sessionId,
               traceId,
-              // Agent-loop tool calls (call + result) are the conversation's audit
-              // backbone — integrity-required in every mode.
-              writeEvent: (event) => writeIntegrity(() => writeEvent(event)),
+              // Agent-loop tool calls (call + result) are audit-relevant, but
+              // BEST_EFFORT rather than integrity-required, unlike session_start
+              // and model_response: a tool result's size is bounded only by the
+              // model-facing tool cap (file-tools.ts), not by anything this loop
+              // controls, so the event copy (capped below the TEXT column limit
+              // in buildCommandToolCallEventPayload, but still one INSERT per
+              // tool call) can fail for reasons unrelated to whether the tool
+              // call itself succeeded. A per-tool-call event-write failure must
+              // not fail an otherwise-successful tool step or turn — the model
+              // already has the real result on the transcript either way.
+              writeEvent: (event) =>
+                writeMaybe(() => writeEvent(event), BEST_EFFORT, noteSkippedEventWrite),
             },
             runtimeInput.confirmToolApproval,
             {
@@ -2392,6 +2522,12 @@ export async function runWorkbenchRuntime(
             durationMs: Date.now() - toolStartedAt,
           });
         } catch (err) {
+          // errorMessage crosses the wire like turnFailed does — sanitized
+          // the same way. Tool RESULTS (the model-facing text on a completed
+          // call) are a separate, untouched product surface; this is only
+          // the runtime-event error field for a call that threw outright
+          // (invokeCommandWithEvent's own executors don't throw — see
+          // commands.ts — so anything reaching here is already unexpected).
           await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
             type: "toolCallCompleted",
             sessionId,
@@ -2399,8 +2535,10 @@ export async function runWorkbenchRuntime(
             callId: toolCall.id,
             isError: true,
             durationMs: Date.now() - toolStartedAt,
-            errorName: err instanceof Error ? err.name : undefined,
-            errorMessage: err instanceof Error ? err.message : String(err),
+            // Fixed literal from the class table — `.name` is a writable
+            // property a foreign error can shadow with a payload.
+            errorName: classifyErrorKind(err),
+            errorMessage: summarizeError(err),
           });
           throw err;
         }
@@ -2555,16 +2693,33 @@ export async function runWorkbenchRuntime(
       traceId,
     });
   } catch (err: unknown) {
-    const name = (err as Error)?.name ?? "Error";
+    // errorName crosses the wire too, so it gets the same discipline as
+    // errorMessage: a fixed literal from the class table, never `.name` —
+    // that is a plain writable string property, so a foreign error could
+    // carry an arbitrary or oversized payload in it.
+    const name = classifyErrorKind(err);
+    // errorMessage crosses the wire verbatim (uds-server.ts relays every
+    // runtime event to the connected client): an integrity write's failure
+    // can be a rejected event-log INSERT whose driver message embeds the
+    // whole offending value (e.g. a huge turn.text), so this must never carry
+    // the raw message — summarizeError applies the same cap the client side
+    // enforces defensively, at the point of origin instead.
     await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
       type: "turnFailed",
       sessionId,
       traceId,
       errorName: name,
-      errorMessage: (err as Error)?.message ?? String(err),
+      errorMessage: summarizeError(err),
     });
-    if (name === "PaidEscalationDeclinedError") {
-      const verdict = (err as PaidEscalationDeclinedError).verdict;
+    // instanceof, never `name` — name is a plain mutable string property any
+    // Error can be given, so branching on it would let a foreign error simply
+    // claim one of these class names and ride its raw-.message treatment
+    // straight past the whole policy. instanceof checks the real prototype
+    // chain instead.
+    if (err instanceof PaidEscalationDeclinedError) {
+      // verdict.reason is already sanitized at construction (see the class),
+      // so it's safe to read directly here.
+      const verdict = err.verdict;
       const detail = verdict.reason ? ` (${verdict.reason})` : "";
       log(
         verdict.decision === "escalate"
@@ -2572,7 +2727,7 @@ export async function runWorkbenchRuntime(
           : `\nPaid inference declined - no model call made${detail}.`,
       );
       turnError = err;
-    } else if (name === "BudgetExceededError") {
+    } else if (err instanceof BudgetExceededError) {
       await writeMaybe(() =>
         writeEvent({
           event_id: generateULID(),
@@ -2589,12 +2744,14 @@ export async function runWorkbenchRuntime(
           provider: selectedForEvents?.provider ?? null,
           api: selectedForEvents?.api ?? null,
           ...authnEventFields,
-          content: (err as Error).message,
+          // summarizeError, not raw .message: a confirmed DomainError still
+          // only gets the shared 500-byte cap, never an unbounded pass-through.
+          content: summarizeError(err),
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
-        }), BEST_EFFORT);
-      log(`\nBudget exceeded: ${(err as Error).message}`);
-    } else if (name === "ContextWindowOverflowError") {
+        }), BEST_EFFORT, noteSkippedEventWrite);
+      log(`\nBudget exceeded: ${summarizeError(err)}`);
+    } else if (err instanceof ContextWindowOverflowError) {
       // Expected operational condition, not an "Unexpected error": record it
       // on the audit log with the length stop it came from, show the operator
       // the condition + options, and propagate so every transport reports a
@@ -2616,14 +2773,15 @@ export async function runWorkbenchRuntime(
           provider: selectedForEvents?.provider ?? null,
           api: selectedForEvents?.api ?? null,
           ...authnEventFields,
-          content: (err as Error).message,
+          content: summarizeError(err),
           stop_reason: "length",
           duration_ms: Date.now() - sessionStart,
-        }), BEST_EFFORT);
-      log(`\n${(err as Error).message}`);
+        }), BEST_EFFORT, noteSkippedEventWrite);
+      log(`\n${summarizeError(err)}`);
       turnError = err;
-    } else if (name === "BudgetCeilingDeclinedError") {
-      const detail = (err as BudgetCeilingDeclinedError).reason;
+    } else if (err instanceof BudgetCeilingDeclinedError) {
+      // Already sanitized at construction — safe to read directly.
+      const detail = err.reason;
       log(
         `\nBudget ceiling confirmation declined${
           detail ? `: ${detail}` : ""
@@ -2647,20 +2805,24 @@ export async function runWorkbenchRuntime(
           provider: selectedForEvents?.provider ?? null,
           api: selectedForEvents?.api ?? null,
           ...authnEventFields,
-          content: (err as Error)?.message ?? String(err),
+          // Sanitized, not the raw message: this branch also catches a failed
+          // INTEGRITY write (e.g. model_response), whose driver error can
+          // embed the entire rejected value (turn.text). That value already
+          // failed to persist in its own event; echoing it into this one
+          // durable row gains no audit signal and risks writing the exact
+          // oversized/sensitive payload this issue exists to keep contained.
+          content: summarizeError(err),
           stop_reason: "error",
           duration_ms: Date.now() - sessionStart,
-        }), BEST_EFFORT);
-      // Full detail is already on the audit log (the error event above) and
-      // goes to the injected presenter; the server console gets the error
-      // class only, so an exception message that quotes turn content cannot
-      // leak there.
-      log("\nUnexpected error:", err);
-      console.error(
-        `[turn-error] ${
-          err instanceof Error ? err.constructor.name : typeof err
-        }`,
-      );
+        }), BEST_EFFORT, noteSkippedEventWrite);
+      // Sanitized here too: the injected presenter (e.g. the in-process
+      // CLI's `log: console.log`) would otherwise print the raw error —
+      // including any driver-embedded turn content — before the class-only
+      // console.error below even runs.
+      log("\nUnexpected error:", summarizeError(err));
+      // Fixed literal from the class table — `.constructor.name` is a
+      // writable property a foreign error can shadow with a payload.
+      console.error(`[turn-error] ${classifyErrorKind(err)}`);
       turnError = err;
     }
   } finally {
@@ -2680,7 +2842,16 @@ export async function runWorkbenchRuntime(
         duration_ms: Date.now() - sessionStart,
       }), INTEGRITY);
 
-    await writeMaybe(() => budget.writeSummaryEvent(), BEST_EFFORT);
+    // The count captured here reflects skips up to this point. The summary
+    // write itself and the later session-content write can still fail; those
+    // late skips reach the class-only console line, but land after this
+    // event's content and the receipt snapshot below, so they are visible on
+    // the console only.
+    await writeMaybe(
+      () => budget.writeSummaryEvent({ skippedEventWrites }),
+      BEST_EFFORT,
+      noteSkippedEventWrite,
+    );
 
     const summary = budget.getSummary();
     const paidInferenceUsed = ((summary.byTier["1"]?.calls ?? 0) +
@@ -2710,6 +2881,7 @@ export async function runWorkbenchRuntime(
       workletId,
       totalElapsedMs: Date.now() - sessionStart,
       validation,
+      skippedEventWrites,
     });
     await writeMaybe(() =>
       updateWorkbenchSession({
@@ -2721,7 +2893,7 @@ export async function runWorkbenchRuntime(
           contextSources: contextSourceLines,
           receipt,
         }),
-      }), BEST_EFFORT);
+      }), BEST_EFFORT, noteSkippedEventWrite);
     log("");
     log(receipt);
     // the runtime no longer closes the shared Dolt pool. A long-running
@@ -2729,7 +2901,7 @@ export async function runWorkbenchRuntime(
     // per-turn close would end the pool out from under an in-flight turn and
     // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
     // closes it in a finally; the server keeps it for the process lifetime).
-    // review fix: if an integrity audit/transcript write failed inside
+    // If an integrity audit/transcript write failed inside
     // the try above, surface it to the caller instead of masking it behind a
     // normal receipt (session_end + best-effort cleanup above still ran).
     // An unexpected turn error (credential missing, provider failure) must reach

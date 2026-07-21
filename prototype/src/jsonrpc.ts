@@ -5,6 +5,8 @@
 // transport-agnostic — the UDS server peer, the CLI client, and the WS path all
 // build on this. The wire shape and error codes follow the transport-seam contract.
 
+import { DomainError, summarizeError } from "./turn-contract";
+
 export const JSONRPC_VERSION = "2.0";
 
 export type JsonRpcId = string | number;
@@ -63,8 +65,12 @@ export const RpcErrorCode = {
 } as const;
 
 // A typed error a method handler can throw; dispatchRequest maps it to a
-// JSON-RPC error response carrying the same code/data.
-export class RpcError extends Error {
+// JSON-RPC error response carrying the same code/data. Every construction
+// site passes an app-composed message (a validation reason, an unknown-tool
+// name, an upstream error already sanitized by its own producer) — never a
+// caught driver/dependency error's raw message — so it extends DomainError:
+// summarizeError trusts its message enough to forward it.
+export class RpcError extends DomainError {
   readonly code: number;
   readonly data?: unknown;
   constructor(code: number, message: string, data?: unknown) {
@@ -207,12 +213,23 @@ export async function dispatchRequest(
     return success(req.id, await handler(req.params, ctx));
   } catch (err) {
     if (err instanceof RpcError) {
-      return failure(req.id, err.code, err.message, err.data);
+      // RpcError is a DomainError, so this is the capped-passthrough branch
+      // of summarizeError, not the foreign one — existing short messages are
+      // returned byte-identical; an unusually long one still gets the same
+      // 500-byte cap every other DomainError gets, rather than bypassing it.
+      return failure(req.id, err.code, summarizeError(err), err.data);
     }
+    // A non-RpcError throw is, by definition, an error this handler did not
+    // construct deliberately — a caught driver/dependency error whose
+    // message can embed an arbitrary payload (the original defect's exact
+    // shape: a rejected event-log INSERT's message quoting the whole
+    // rejected value back). summarizeError renders it as class + byte count
+    // only; a genuine internal error still gets a response, just not one
+    // that can leak.
     return failure(
       req.id,
       RpcErrorCode.internalError,
-      (err as Error)?.message ?? "internal error",
+      summarizeError(err),
     );
   }
 }

@@ -38,6 +38,7 @@ import {
   runStart,
   runStatus,
   runtimeEventIsVisible,
+  socketError,
   socketTurn,
   spinnerGuardedTurnHandlers,
   type StartRuntimeFn,
@@ -46,6 +47,7 @@ import {
 } from "./cli";
 import { serveWorkbenchUnix } from "./uds-server";
 import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client";
+import { DomainError } from "./turn-contract";
 import type { SupersedingRetryStartedEvent } from "./turn-contract";
 
 describe("readLineOrNull", () => {
@@ -1259,6 +1261,23 @@ describe("runtime lifecycle commands", () => {
     expect(stderr.join("\n")).toContain("deno task serve-unix");
   });
 
+  // Every client error printer must share one discipline: runStart's printer
+  // needs the same oversized-case pin friendlyError/socketError carry.
+  test("runStart truncates an oversized runtime-start error the same way as friendlyError", async () => {
+    const payload = "x".repeat(200_000);
+    const { io, stderr } = fakeIo();
+    const code = await runStart(cfg(), io, () => {
+      throw new Error(payload);
+    });
+    expect(code).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).not.toContain(payload);
+    const errorLine = stderr.find((line) => line.includes("could not start"))!;
+    expect(errorLine).toContain("Error");
+    expect(errorLine).toContain(`${payload.length} bytes`);
+    expect(errorLine.length).toBeLessThan(1000);
+  });
+
   test("buildServeUnixArgs grants the resolved socket alongside the profile net list", () => {
     const args = buildServeUnixArgs(
       ["127.0.0.1:3306", "localhost:18080"],
@@ -1806,6 +1825,121 @@ describe("presentation", () => {
     const s = friendlyError(new TypeError("tcp connect error"), cfg());
     expect(s).toContain("not reachable");
     expect(s).toContain("workbench-http");
+  });
+
+  // dispatchRequest (jsonrpc.ts) forwards a server error's message to
+  // the client verbatim, and a rejected event-log INSERT can embed the whole
+  // offending payload in that message (the original defect quoted pages of
+  // source code this way). The client must never render that raw payload.
+  test("friendlyError truncates an oversized message to a fixed label + byte-count, never the raw payload", () => {
+    const payload = "SELECT ".repeat(20_000); // well over 100KB
+    const s = friendlyError(new RangeError(payload), cfg());
+    expect(s.length).toBeLessThan(1000);
+    expect(s).not.toContain(payload);
+    // The label is the fixed literal "Error", not the subclass name — the
+    // subclass name would come off the object (`.constructor.name`), a
+    // writable property and therefore a payload channel.
+    expect(s).toContain("[Error,");
+    expect(s).not.toContain("RangeError");
+    expect(s).toContain(
+      `${new TextEncoder().encode(payload).byteLength} bytes`,
+    );
+  });
+
+  test("friendlyError renders a short DomainError message unchanged — trusted by provenance", () => {
+    const s = friendlyError(
+      new DomainError("missing required argument: path"),
+      cfg(),
+    );
+    expect(s).toBe("dyfj: missing required argument: path");
+  });
+
+  test("friendlyError never passes a plain Error's message through, even a short one", () => {
+    // A plain Error is exactly what a reconstructed network/fetch failure
+    // looks like — provenance unknown — so no size threshold makes it safe.
+    const message = "missing required argument: path";
+    const s = friendlyError(new Error(message), cfg());
+    expect(s).not.toContain(message);
+    expect(s).toBe(
+      `dyfj: [Error, ${new TextEncoder().encode(message).byteLength} bytes]`,
+    );
+  });
+
+  test("friendlyError trusts an honest server-relayed error, through the real bufferedTurn reconstruction", async () => {
+    // Through the real wire path (not a directly-constructed DomainError,
+    // which can't catch a regression in the reconstruction itself): a normal
+    // server error message survives byte-identical.
+    const { fn } = recordingFetch([
+      jsonResponse({ error: "session not found" }, 404),
+    ]);
+    let thrown: unknown;
+    try {
+      await bufferedTurn(cfg(), { prompt: "x" }, fn);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    expect(friendlyError(thrown, cfg())).toBe("dyfj: session not found");
+  });
+
+  // A wire-reconstructed error becomes a DomainError, and DomainError gets
+  // the capped-PASSTHROUGH treatment (unlike a foreign error, which gets
+  // zero content) — so these assert bounded length and no control/escape
+  // bytes, not "no prefix survives": a capped prefix surviving is the
+  // intended behavior here, by design ("bounded", not
+  // "eliminated"). The escape-sequence check is what actually proves
+  // sanitizeBoundaryText ran, since a capped-but-unsanitized prefix would
+  // still start with the payload's own leading bytes either way.
+  test("bufferedTurn sanitizes an oversized or control-character-laden wire message before it becomes a DomainError", async () => {
+    // config.serverUrl is operator-configurable, so the wire is not a trust
+    // boundary — a hostile or misbehaving peer's response body must not ride
+    // DomainError's capped-passthrough treatment unsanitized.
+    const escapePrefix = String.fromCharCode(27) + "[31m";
+    const payload = escapePrefix + "SELECT ".repeat(20_000); // well over 100KB
+    const { fn } = recordingFetch([jsonResponse({ error: payload }, 500)]);
+    let thrown: unknown;
+    try {
+      await bufferedTurn(cfg(), { prompt: "x" }, fn);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    const rendered = friendlyError(thrown, cfg());
+    expect(rendered.length).toBeLessThan(1000);
+    expect(rendered.length).toBeLessThan(payload.length);
+    expect(rendered).not.toContain(String.fromCharCode(27));
+  });
+
+  test("streamTurn sanitizes an oversized SSE error frame the same way", async () => {
+    // Same adversarial leading-ESC shape as the buffered test above: without
+    // it, this test can't distinguish SSE-path sanitization from downstream
+    // capping alone (a capped-but-unsanitized prefix and a capped-and-
+    // sanitized prefix both satisfy a length-only assertion).
+    const escapePrefix = String.fromCharCode(27) + "[31m";
+    const payload = escapePrefix + "SELECT ".repeat(20_000);
+    const { fn } = recordingFetch([
+      sseResponse([{ t: "error", message: payload }]),
+    ]);
+    let thrown: unknown;
+    try {
+      await streamTurn(cfg(), { prompt: "x" }, { onDelta: () => {} }, fn);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(DomainError);
+    const rendered = friendlyError(thrown, cfg());
+    expect(rendered.length).toBeLessThan(1000);
+    expect(rendered.length).toBeLessThan(payload.length);
+    expect(rendered).not.toContain(String.fromCharCode(27));
+  });
+
+  test("socketError truncates an oversized message the same way as friendlyError", () => {
+    const payload = "x".repeat(200_000);
+    const s = socketError(new Error(payload), cfg());
+    expect(s.length).toBeLessThan(1000);
+    expect(s).not.toContain(payload);
+    expect(s).toContain("Error");
+    expect(s).toContain(`${payload.length} bytes`);
   });
 });
 

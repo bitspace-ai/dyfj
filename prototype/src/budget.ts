@@ -26,6 +26,11 @@
 
 import { doltQuery, generateSpanId, generateULID, writeEvent } from "./utils";
 import { resolveBudgetDefaultsFromEnv } from "./config";
+import {
+  DomainError,
+  MAX_REASON_FIELD_BYTES,
+  sanitizeBoundaryText,
+} from "./turn-contract";
 import process from "node:process";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -252,13 +257,24 @@ export function budgetCeilingApprovalRequest(
   };
 }
 
-export class BudgetCeilingDeclinedError extends Error {
-  constructor(public readonly reason?: string) {
+export class BudgetCeilingDeclinedError extends DomainError {
+  readonly reason?: string;
+  // DomainError only certifies the MESSAGE this constructor builds — reason
+  // itself is an operator/approval-peer-supplied decline comment, not
+  // authored by this codebase, so it's capped and control-char-stripped
+  // before either the message or the public `.reason` property (read
+  // directly by workbench.ts's log branch, not just via .message) can carry
+  // it.
+  constructor(reason?: string) {
+    const safeReason = reason === undefined
+      ? undefined
+      : sanitizeBoundaryText(reason, MAX_REASON_FIELD_BYTES);
     super(
-      reason
-        ? `Budget ceiling confirmation declined: ${reason}`
+      safeReason
+        ? `Budget ceiling confirmation declined: ${safeReason}`
         : "Budget ceiling confirmation declined",
     );
+    this.reason = safeReason;
     this.name = "BudgetCeilingDeclinedError";
   }
 }
@@ -658,19 +674,25 @@ export function runawayAnomalyApprovalRequest(
   };
 }
 
-export class RunawayAnomalyHaltError extends Error {
+export class RunawayAnomalyHaltError extends DomainError {
   constructor(
     public readonly trigger: AnomalyTrigger,
     public readonly spentUsd: number,
     public readonly haltUsd: number,
     public readonly declined: boolean = false,
+    // Approval-peer-supplied decline comment, not authored by this codebase
+    // — capped and control-char-stripped before it reaches the message
+    // (not stored on the instance, so this is the only sanitizing point).
     declineReason?: string,
   ) {
+    const safeDeclineReason = declineReason === undefined
+      ? undefined
+      : sanitizeBoundaryText(declineReason, MAX_REASON_FIELD_BYTES);
     super(
       declined
         ? `Runaway spend anomaly halt declined [${trigger}]: ` +
           `actual $${spentUsd.toFixed(6)} past halt $${haltUsd.toFixed(6)}` +
-          (declineReason ? ` (${declineReason})` : "")
+          (safeDeclineReason ? ` (${safeDeclineReason})` : "")
         : `Runaway spend anomaly [${trigger}]: ` +
           `actual $${spentUsd.toFixed(6)} past halt $${haltUsd.toFixed(6)}` +
           " (no confirmation channel; failing closed)",
@@ -756,7 +778,7 @@ export interface BudgetSummary {
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
-export class BudgetExceededError extends Error {
+export class BudgetExceededError extends DomainError {
   constructor(
     public readonly reason: BudgetLimitReason,
     public readonly estimatedCost: number,
@@ -983,6 +1005,7 @@ export class BudgetTracker {
    */
   buildSummaryEventPayload(
     overrides: { eventId?: string; spanId?: string } = {},
+    extra: Record<string, unknown> = {},
   ): Record<string, unknown> {
     const summary = this.getSummary();
     return {
@@ -999,7 +1022,12 @@ export class BudgetTracker {
       tokens_input: summary.totalTokensInput || null,
       tokens_output: summary.totalTokensOutput || null,
       cost_total: summary.totalCostUsd || null,
-      content: JSON.stringify(summary),
+      // `extra` carries session-level operational counters that belong in
+      // the durable summary but are not the budget's own (e.g.
+      // skippedEventWrites — the count of best-effort event writes that
+      // failed, so an audit-log gap is durably on record, not just a
+      // scrolled-away console line).
+      content: JSON.stringify({ ...summary, ...extra }),
     };
   }
 
@@ -1007,7 +1035,7 @@ export class BudgetTracker {
    * Write the budget_summary event to Dolt.
    * Call once at session end, after the session_end lifecycle event.
    */
-  async writeSummaryEvent(): Promise<void> {
-    await writeEvent(this.buildSummaryEventPayload());
+  async writeSummaryEvent(extra: Record<string, unknown> = {}): Promise<void> {
+    await writeEvent(this.buildSummaryEventPayload({}, extra));
   }
 }

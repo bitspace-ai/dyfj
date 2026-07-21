@@ -16,7 +16,11 @@
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import {
+  DomainError,
   isSupersedingRetryStarted,
+  MAX_ERROR_SUMMARY_BYTES,
+  sanitizeBoundaryText,
+  summarizeError,
   type TurnReceipt,
   type TurnStreamFrame,
 } from "./turn-contract";
@@ -187,7 +191,20 @@ export async function streamTurn(
     body: JSON.stringify(body),
   });
   if (!response.ok || !response.body) {
-    throw new Error(await readErrorMessage(response));
+    // A well-behaved server already ran this through summarizeError (or it's
+    // a plain "HTTP <status>" fallback) before it hit the wire — DomainError,
+    // not a fresh unbounded local Error, so friendlyError doesn't re-collapse
+    // an already-safe message down to class + byte count a second time. But
+    // config.serverUrl is operator-configurable, so the wire itself is not a
+    // trust boundary: sanitizeBoundaryText caps and control-char-strips
+    // whatever arrived before it's stamped as trusted — a no-op for honest
+    // content, a bound on a hostile or misbehaving peer's.
+    throw new DomainError(
+      sanitizeBoundaryText(
+        await readErrorMessage(response),
+        MAX_ERROR_SUMMARY_BYTES,
+      ),
+    );
   }
 
   const reader = response.body.getReader();
@@ -215,8 +232,16 @@ export async function streamTurn(
     }
   }
 
-  if (streamError !== undefined) throw new Error(streamError);
-  if (result === undefined) throw new Error("stream ended without a result");
+  // Same reasoning as above: the wire is not a trust boundary even though
+  // http.ts's SSE error frame already crossed its own sanitizing step.
+  if (streamError !== undefined) {
+    throw new DomainError(
+      sanitizeBoundaryText(streamError, MAX_ERROR_SUMMARY_BYTES),
+    );
+  }
+  if (result === undefined) {
+    throw new DomainError("stream ended without a result");
+  }
   return result;
 }
 
@@ -231,7 +256,14 @@ export async function bufferedTurn(
     headers: buildHeaders(config, false),
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) {
+    throw new DomainError(
+      sanitizeBoundaryText(
+        await readErrorMessage(response),
+        MAX_ERROR_SUMMARY_BYTES,
+      ),
+    );
+  }
   return await response.json() as TurnResult;
 }
 
@@ -450,6 +482,18 @@ export function formatPostureLine(posture: SessionPosture): string {
     `permission ${posture.permissionLevel ?? "unknown"}`;
 }
 
+// A server-side error message can embed the full offending payload (e.g. a
+// rejected event-log INSERT quoting the oversized value back in the driver
+// error), and dispatchRequest (jsonrpc.ts) forwards err.message verbatim to
+// the client. The server console already logs class-only for exactly this
+// reason (workbench.ts's [turn-error] line, and every joint that forwards a
+// turn error toward a client — see summarizeError in turn-contract.ts, the
+// shared discipline this client and the server both apply); the client had no
+// equivalent discipline, so an unbounded server message printed pages of raw
+// payload to the operator's terminal. summarizeError caps what any client
+// error printer renders: a sane excerpt plus the error class and full byte
+// count, never a multi-KB dump.
+
 export function friendlyError(error: unknown, config: CliConfig): string {
   const message = error instanceof Error ? error.message : String(error);
   if (
@@ -459,7 +503,7 @@ export function friendlyError(error: unknown, config: CliConfig): string {
     return `dyfj: runtime not reachable at ${config.serverUrl}. ` +
       `Start it with: deno task workbench-http`;
   }
-  return `dyfj: ${message}`;
+  return `dyfj: ${summarizeError(error)}`;
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -809,7 +853,7 @@ function formatApprovalArgs(args: unknown): string {
   return lines.join("\n");
 }
 
-function socketError(error: unknown, config: CliConfig): string {
+export function socketError(error: unknown, config: CliConfig): string {
   const message = error instanceof Error ? error.message : String(error);
   if (
     /no such file|not found|connection refused|enoent|os error 2|os error 61/i
@@ -818,7 +862,7 @@ function socketError(error: unknown, config: CliConfig): string {
     return `dyfj: runtime not reachable at ${config.socket}. ` +
       `Start it with: dyfj start`;
   }
-  return `dyfj: ${message}`;
+  return `dyfj: ${summarizeError(error)}`;
 }
 
 export async function fetchModelSlugs(
@@ -1428,8 +1472,7 @@ export async function runStart(
   try {
     return await startRuntime(config);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    io.err(`dyfj: could not start local runtime: ${message}`);
+    io.err(`dyfj: could not start local runtime: ${summarizeError(error)}`);
     io.err(`dyfj: fallback command: cd prototype && deno task serve-unix`);
     return 1;
   }
