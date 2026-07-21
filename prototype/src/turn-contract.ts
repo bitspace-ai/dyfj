@@ -196,26 +196,33 @@ export const MAX_ERROR_SUMMARY_BYTES = 500;
  * label themselves.
  */
 export function summarizeError(error: unknown): string {
-  // Message extraction is best-effort: a hostile object's `message` getter
-  // or `toString` can throw, and this function must not.
-  let message: string;
   try {
-    message = error instanceof Error ? error.message : String(error);
+    // Message extraction is best-effort: a hostile object's `message` getter
+    // or `toString` can throw, and this function must not.
+    let message: string;
+    try {
+      message = error instanceof Error ? error.message : String(error);
+    } catch {
+      message = "";
+    }
+    const encoded = new TextEncoder().encode(message);
+    const label = error instanceof Error ? "Error" : typeof error;
+    if (!(error instanceof DomainError)) {
+      return `[${label}, ${encoded.byteLength} bytes]`;
+    }
+    if (encoded.byteLength <= MAX_ERROR_SUMMARY_BYTES) return message;
+    // fatal: false — a byte-boundary cut can land mid multi-byte sequence;
+    // decode permissively (U+FFFD for the partial tail) since this is a
+    // display excerpt, not the value itself.
+    const excerpt = new TextDecoder("utf-8", { fatal: false })
+      .decode(encoded.slice(0, MAX_ERROR_SUMMARY_BYTES));
+    return `${excerpt}… [truncated; DomainError, ${encoded.byteLength} bytes]`;
   } catch {
-    message = "";
+    // Even summarization can fail — encoding a near-limit string can throw
+    // on allocation. The never-throws contract survives on a fixed literal
+    // that carries no content at all.
+    return "[unrepresentable error]";
   }
-  const encoded = new TextEncoder().encode(message);
-  const label = error instanceof Error ? "Error" : typeof error;
-  if (!(error instanceof DomainError)) {
-    return `[${label}, ${encoded.byteLength} bytes]`;
-  }
-  if (encoded.byteLength <= MAX_ERROR_SUMMARY_BYTES) return message;
-  // fatal: false — a byte-boundary cut can land mid multi-byte sequence;
-  // decode permissively (U+FFFD for the partial tail) since this is a
-  // display excerpt, not the value itself.
-  const excerpt = new TextDecoder("utf-8", { fatal: false })
-    .decode(encoded.slice(0, MAX_ERROR_SUMMARY_BYTES));
-  return `${excerpt}… [truncated; DomainError, ${encoded.byteLength} bytes]`;
 }
 
 // A "short" cap for a single field interpolated into a larger DomainError

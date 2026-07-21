@@ -758,8 +758,15 @@ export function truncateForEventColumn(
   if (encoded.byteLength <= maxBytes) return text;
   const marker =
     `\n\n[event-truncated: full result was ${encoded.byteLength} bytes]`;
-  const markerBytes = new TextEncoder().encode(marker).byteLength;
-  const excerptBudget = Math.max(0, maxBytes - markerBytes);
+  const markerEncoded = new TextEncoder().encode(marker);
+  // A limit smaller than the marker itself degrades to a byte-safe slice of
+  // the marker — the <= maxBytes guarantee holds for every input, not just
+  // the production column budget.
+  if (markerEncoded.byteLength >= maxBytes) {
+    return new TextDecoder("utf-8")
+      .decode(utf8SafeByteSlice(markerEncoded, maxBytes));
+  }
+  const excerptBudget = maxBytes - markerEncoded.byteLength;
   const excerpt = new TextDecoder("utf-8")
     .decode(utf8SafeByteSlice(encoded, excerptBudget));
   return `${excerpt}${marker}`;

@@ -1203,6 +1203,17 @@ describe("truncateForEventColumn", () => {
     expect(truncated).not.toContain("�");
   });
 
+  test("a limit smaller than the marker still yields output within the limit", () => {
+    // The <= maxBytes contract must hold for EVERY input, not just the
+    // production column budget: when the marker alone exceeds maxBytes, the
+    // function degrades to a byte-safe slice of the marker rather than
+    // returning a marker larger than the promised cap.
+    const truncated = truncateForEventColumn("x".repeat(1000), 10);
+    expect(new TextEncoder().encode(truncated).byteLength)
+      .toBeLessThanOrEqual(10);
+    expect(truncated).not.toContain("�");
+  });
+
   test("reserves room for the marker itself, even when that leaves a mid-character excerpt boundary", () => {
     // maxBytes (100) comfortably exceeds the marker's own size (~50 bytes)
     // but not by much, so the excerpt budget after reserving the marker is
