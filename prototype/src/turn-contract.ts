@@ -211,11 +211,13 @@ export function summarizeError(error: unknown): string {
       return `[${label}, ${encoded.byteLength} bytes]`;
     }
     if (encoded.byteLength <= MAX_ERROR_SUMMARY_BYTES) return message;
-    // fatal: false — a byte-boundary cut can land mid multi-byte sequence;
-    // decode permissively (U+FFFD for the partial tail) since this is a
-    // display excerpt, not the value itself.
-    const excerpt = new TextDecoder("utf-8", { fatal: false })
-      .decode(encoded.slice(0, MAX_ERROR_SUMMARY_BYTES));
+    // Byte-safe boundary: walk the cut back over UTF-8 continuation bytes
+    // (top two bits `10`) so it lands on a character start — the excerpt is
+    // genuinely at most MAX_ERROR_SUMMARY_BYTES, with no replacement
+    // character inflating it past the stated bound.
+    let end = MAX_ERROR_SUMMARY_BYTES;
+    while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
+    const excerpt = new TextDecoder("utf-8").decode(encoded.slice(0, end));
     return `${excerpt}… [truncated; DomainError, ${encoded.byteLength} bytes]`;
   } catch {
     // Even summarization can fail — encoding a near-limit string can throw

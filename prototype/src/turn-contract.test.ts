@@ -138,6 +138,20 @@ describe("summarizeError — adversarial candidates (no string is ever read off 
     expect(summarizeError(hostile)).toBe("[object, 0 bytes]");
   });
 
+  test("a multibyte DomainError message truncates on a byte-safe boundary within the stated cap", () => {
+    // Each "é" is 2 UTF-8 bytes; 500 is even, but shift the boundary with a
+    // leading ASCII byte so the cut lands mid-character. The excerpt must be
+    // genuinely <= MAX_ERROR_SUMMARY_BYTES — a permissive decode would swap
+    // the clipped tail for a 3-byte replacement character and exceed the
+    // publicly stated bound.
+    const s = summarizeError(new TestDomainError("x" + "é".repeat(5_000)));
+    const excerpt = s.slice(0, s.indexOf("…"));
+    expect(new TextEncoder().encode(excerpt).byteLength)
+      .toBeLessThanOrEqual(MAX_ERROR_SUMMARY_BYTES);
+    expect(s).not.toContain("�");
+    expect(s).toContain("truncated; DomainError");
+  });
+
   test("an oversized DomainError with a shadowed constructor keeps the fixed marker", () => {
     const err = new TestDomainError("y".repeat(10_000));
     Object.defineProperty(err, "constructor", {
