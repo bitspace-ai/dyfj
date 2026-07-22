@@ -1,6 +1,7 @@
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import {
+  AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
   AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
   buildAskSystemPrompt,
   buildContextSourceLines,
@@ -307,7 +308,38 @@ describe("loadAgentsInstructions", () => {
       expect(result).not.toBeNull();
       expect(estimateContextTokens(result!.body))
         .toBeLessThanOrEqual(AGENTS_INSTRUCTIONS_TOKEN_LIMIT + 50);
-      expect(result!.body).toContain("[AGENTS.md truncated at");
+      expect(result!.body).toContain("[AGENTS.md truncated");
+      expect(result!.source).toEqual({
+        kind: "file",
+        label: "AGENTS.md excerpt",
+        path: "AGENTS.md",
+      });
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("flags truncation when the byte-bound read clips inside a whitespace run", async () => {
+    // Adversarial shape: short real content, then a whitespace run spanning
+    // the 64KB read bound, then more content past it. The token slice lands
+    // inside the whitespace, so `trimEnd()` makes the capped and read bodies
+    // agree — the string comparison alone would report the full file while
+    // the content past the byte bound was silently dropped. The loader must
+    // flag the clipped read itself.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-ws-" });
+    try {
+      const head = "# Rules before the whitespace run\n";
+      const padding = "\n".repeat(AGENTS_INSTRUCTIONS_MAX_READ_BYTES);
+      const tail = "# Rules past the read bound\n";
+      await Deno.writeTextFile(
+        path.join(dir, "AGENTS.md"),
+        head + padding + tail,
+      );
+
+      const result = await loadAgentsInstructions(dir);
+      expect(result).not.toBeNull();
+      expect(result!.body).toContain("[AGENTS.md truncated");
+      expect(result!.body).not.toContain("past the read bound");
       expect(result!.source).toEqual({
         kind: "file",
         label: "AGENTS.md excerpt",

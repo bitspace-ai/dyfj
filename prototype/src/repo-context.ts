@@ -266,7 +266,10 @@ async function readBoundedTextFrom(
 // - The body is read through a bounded buffer and token-truncated; an
 //   over-budget body carries an explicit marker and the source label flips to
 //   "AGENTS.md excerpt" (the compact-profile precedent) so the receipt
-//   reports what actually entered the prompt.
+//   reports what actually entered the prompt. A read clipped at the byte
+//   bound is flagged as truncation in its own right: when the clipped window
+//   ends in a whitespace run, the token slice and `trimEnd()` alone would
+//   report the full file while content past the bound was dropped.
 export async function loadAgentsInstructions(
   startDir: string,
 ): Promise<AgentsInstructions | null> {
@@ -293,6 +296,7 @@ export async function loadAgentsInstructions(
   try {
     const file = await Deno.open(candidate, { read: true });
     let body: string;
+    let readClipped: boolean;
     try {
       // TOCTOU guard: the no-follow lstat above and this open are two
       // operations on a PATHNAME, and a concurrent swap between them could
@@ -311,6 +315,11 @@ export async function loadAgentsInstructions(
         );
         return null;
       }
+      // The verified handle's size says whether the bounded read dropped
+      // bytes. The string comparison below cannot detect this on its own:
+      // if the clipped window ends in a whitespace run, `trimEnd()` erases
+      // the evidence and the loader would report the full file.
+      readClipped = opened.size > AGENTS_INSTRUCTIONS_MAX_READ_BYTES;
       body = await readBoundedTextFrom(
         file,
         AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
@@ -323,15 +332,17 @@ export async function loadAgentsInstructions(
       body,
       AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
     );
-    if (capped === body.trimEnd()) {
+    if (!readClipped && capped === body.trimEnd()) {
       return {
         body,
         source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
       };
     }
+    // The marker states the excerpt's budget, not the cut location — the cut
+    // may be the token cap or the byte bound, and both land here.
     return {
       body:
-        `${capped}\n\n[AGENTS.md truncated at ~${AGENTS_INSTRUCTIONS_TOKEN_LIMIT} tokens; read AGENTS.md in the workspace for the rest]`,
+        `${capped}\n\n[AGENTS.md truncated to the ~${AGENTS_INSTRUCTIONS_TOKEN_LIMIT}-token instructions budget; read AGENTS.md in the workspace for the rest]`,
       source: { kind: "file", label: "AGENTS.md excerpt", path: "AGENTS.md" },
     };
   } catch (err) {
