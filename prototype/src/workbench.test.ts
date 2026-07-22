@@ -93,6 +93,12 @@ const runtimeMocks = vi.hoisted(() => {
     // returning — exercises the agent loop's toolCallCompleted error path
     // (a call that fails outright, not merely a denied/errored result).
     commandThrows: null as Error | null,
+    agentsInstructions: null as
+      | null
+      | {
+        body: string;
+        source: { kind: "file"; label: string; path: string };
+      },
   };
 });
 
@@ -221,7 +227,9 @@ vi.mock("./prompts", () => ({
 
 vi.mock("./repo-context", () => ({
   buildAskSystemPrompt: () => "repo system prompt",
-  buildContextSourceLines: () => ["README.md Section 1 <README.md#section-1>"],
+  buildContextSourceLines: (sources: Array<{ label: string; path: string }>) =>
+    sources.map((source) => `${source.label} <${source.path}>`),
+  loadAgentsInstructions: async () => runtimeMocks.agentsInstructions,
   loadAskRepoContext: async () => ({
     sources: [{
       kind: "file",
@@ -310,6 +318,7 @@ beforeEach(() => {
   runtimeMocks.supportsTranscriptRetry = true;
   runtimeMocks.commandResult = null;
   runtimeMocks.commandThrows = null;
+  runtimeMocks.agentsInstructions = null;
   runtimeMocks.failEventMessage = null;
   runtimeMocks.failEventErrorName = null;
   runtimeMocks.ulid = 0;
@@ -1465,6 +1474,66 @@ describe("runWorkbenchRuntime observer events", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  describe("agent-mode AGENTS.md injection", () => {
+    test("injects the workspace AGENTS.md source when present", async () => {
+      runtimeMocks.agentsInstructions = {
+        body: "# Repo Rules\n\nLog friction to the pilot register.",
+        source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+      };
+      const { runWorkbenchRuntime } = await import("./workbench");
+      const events: unknown[] = [];
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "hello",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      expect(result.text).toBe("runtime response");
+      const contextBuilt = events.find(
+        (event) => (event as { type: string }).type === "contextBuilt",
+      ) as Record<string, unknown> | undefined;
+      expect(contextBuilt).toBeDefined();
+      expect(contextBuilt?.sourceCount).toBe(3);
+
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalled();
+      const params = runtimeMocks.runWorkbenchTurn.mock
+        .calls[0][0] as Record<string, unknown>;
+      expect(params.systemPrompt).toContain(
+        "## AGENTS.md\n# Repo Rules\n\nLog friction to the pilot register.",
+      );
+    });
+
+    test("omits the AGENTS.md source gracefully when absent", async () => {
+      const { runWorkbenchRuntime } = await import("./workbench");
+      const events: unknown[] = [];
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "hello",
+        routingOptions: {},
+        onRuntimeEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      expect(result.text).toBe("runtime response");
+      const contextBuilt = events.find(
+        (event) => (event as { type: string }).type === "contextBuilt",
+      ) as Record<string, unknown> | undefined;
+      expect(contextBuilt).toBeDefined();
+      expect(contextBuilt?.sourceCount).toBe(2);
+
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalled();
+      const params = runtimeMocks.runWorkbenchTurn.mock
+        .calls[0][0] as Record<string, unknown>;
+      expect(params.systemPrompt).not.toContain("## AGENTS.md");
+    });
   });
 });
 

@@ -210,6 +210,31 @@ function truncateSectionBody(
   return body.slice(0, bodyTokenLimit * 4).trimEnd();
 }
 
+export interface AgentsInstructions {
+  body: string;
+  source: ContextSource;
+}
+
+// Agent-mode (companion) injection: reuse the same walk-up discovery as
+// ask-mode (findRepoRoot requires AGENTS.md + README.md sibling markers),
+// but return only the AGENTS.md body — no README section, no notes, no
+// profile/budget packing. Returns null when no AGENTS.md exists at/above
+// startDir so callers can omit the source gracefully.
+export async function loadAgentsInstructions(
+  startDir: string,
+): Promise<AgentsInstructions | null> {
+  try {
+    const repoRoot = await findRepoRoot(startDir);
+    const body = await readRepoFile(repoRoot, "AGENTS.md");
+    return {
+      body,
+      source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function findRepoRoot(startDir = Deno.cwd()): Promise<string> {
   let current = path.resolve(startDir);
   while (true) {

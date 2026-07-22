@@ -26,6 +26,7 @@ import {
 import { RpcError } from "./jsonrpc";
 import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
+import { loadAgentsInstructions } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
 import type { SupersedingRetryStartedEvent } from "./turn-contract";
@@ -1686,6 +1687,13 @@ export async function runWorkbenchRuntime(
       });
       commandTools = commandRegistry.projectTools();
       systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
+      const agentsInstructions = await loadAgentsInstructions(workspaceRoot);
+      if (agentsInstructions) {
+        systemPrompt += `\n\n## AGENTS.md\n${agentsInstructions.body.trim()}`;
+        contextSourceLines.push(
+          ...buildContextSourceLines([agentsInstructions.source]),
+        );
+      }
       if (commandTools.length > 0) {
         systemPrompt += buildWorkspaceGrounding();
       }
@@ -1697,7 +1705,8 @@ export async function runWorkbenchRuntime(
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "contextBuilt",
         sessionId,
-        sourceCount: coreMemories.length + memoryIndex.length,
+        sourceCount: coreMemories.length + memoryIndex.length +
+          (agentsInstructions ? 1 : 0),
       });
     }
 

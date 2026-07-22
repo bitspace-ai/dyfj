@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   buildAskSystemPrompt,
@@ -7,6 +8,7 @@ import {
   DEFAULT_CONTEXT_BUDGET,
   estimateContextTokens,
   extractReadmeSection1,
+  loadAgentsInstructions,
   type LoadedRepoContext,
   packContextSections,
 } from "./repo-context";
@@ -213,5 +215,45 @@ describe("packContextSections", () => {
 describe("estimateContextTokens", () => {
   test("uses the same four-character approximation as model preflight", () => {
     expect(estimateContextTokens("12345678")).toBe(2);
+  });
+});
+
+describe("loadAgentsInstructions", () => {
+  test("discovers AGENTS.md by walking up from a nested start dir", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-" });
+    try {
+      await Deno.writeTextFile(
+        path.join(dir, "AGENTS.md"),
+        "# Repo Rules\n\nLog friction to the pilot register.\n",
+      );
+      await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+      const nested = path.join(dir, "a", "b");
+      await Deno.mkdir(nested, { recursive: true });
+
+      const result = await loadAgentsInstructions(nested);
+      expect(result).not.toBeNull();
+      expect(result?.body).toContain("Log friction to the pilot register.");
+      expect(result?.source).toEqual({
+        kind: "file",
+        label: "AGENTS.md",
+        path: "AGENTS.md",
+      });
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("discovers AGENTS.md at the start dir itself", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-flat-" });
+    try {
+      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Flat Rules\n");
+      await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+
+      const result = await loadAgentsInstructions(dir);
+      expect(result?.body.trim()).toBe("# Flat Rules");
+      expect(result?.source.label).toBe("AGENTS.md");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
   });
 });
