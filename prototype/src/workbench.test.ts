@@ -87,6 +87,9 @@ const runtimeMocks = vi.hoisted(() => {
     // When set, the workspace path the session row hands back on resume —
     // exercises the persisted-workspace resolution path.
     sessionWorkspace: null as string | null,
+    // When true, the resume-time workspace lookup throws — exercises the
+    // lookup-error path, which must suppress elevation, not fall open.
+    sessionWorkspaceThrows: false,
     // When set, what the mocked invokeCommandWithEvent returns — lets a test
     // exercise the loop's handling of a denied/failed tool call.
     commandResult: null as
@@ -316,7 +319,12 @@ vi.mock("./sessions", () => ({
   createWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessions.push(input);
   },
-  fetchWorkbenchSessionWorkspace: async () => runtimeMocks.sessionWorkspace,
+  fetchWorkbenchSessionWorkspace: async () => {
+    if (runtimeMocks.sessionWorkspaceThrows) {
+      throw new Error("session row unreadable");
+    }
+    return runtimeMocks.sessionWorkspace;
+  },
   updateWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessionUpdates.push(input);
   },
@@ -330,6 +338,7 @@ beforeEach(() => {
   runtimeMocks.commandThrows = null;
   runtimeMocks.agentsInstructions = null;
   runtimeMocks.sessionWorkspace = null;
+  runtimeMocks.sessionWorkspaceThrows = false;
   runtimeMocks.failEventMessage = null;
   runtimeMocks.failEventErrorName = null;
   runtimeMocks.ulid = 0;
@@ -1732,6 +1741,42 @@ describe("runWorkbenchRuntime observer events", () => {
       const systemPrompt = String(params.systemPrompt);
       expect(systemPrompt).not.toContain("## AGENTS.md");
       expect(systemPrompt).not.toContain("Fallback-root rules");
+    });
+
+    test("a failed resume workspace lookup suppresses elevation — unknown is not 'no workspace'", async () => {
+      // The session may have a selected workspace we could not read; that is
+      // NOT the same as a session that stored none. The lookup-error path
+      // must suppress elevation like a failed resolution, never fall open
+      // to the fallback root's instructions.
+      runtimeMocks.agentsInstructions = {
+        body: "# Fallback-root rules that must not be elevated",
+        source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+      };
+      runtimeMocks.sessionWorkspaceThrows = true;
+      const { runWorkbenchRuntime } = await import("./workbench");
+      const events: unknown[] = [];
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "hello",
+        routingOptions: {},
+        trustWorkspaceInstructions: true,
+        sessionId: "01TEST00000000000000000001",
+        onRuntimeEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      expect(result.text).toBe("runtime response");
+      const params = runtimeMocks.runWorkbenchTurn.mock
+        .calls[0][0] as Record<string, unknown>;
+      const systemPrompt = String(params.systemPrompt);
+      expect(systemPrompt).not.toContain("## AGENTS.md");
+      expect(systemPrompt).not.toContain("Fallback-root rules");
+      const contextBuilt = events.find(
+        (event) => (event as { type: string }).type === "contextBuilt",
+      ) as Record<string, unknown> | undefined;
+      expect(contextBuilt?.sourceCount).toBe(2);
     });
 
     test("omits the AGENTS.md source gracefully when absent", async () => {

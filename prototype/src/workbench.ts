@@ -1499,12 +1499,18 @@ export async function runWorkbenchRuntime(
   // the process cwd when no root was supplied.
   const fallbackRoot = runtimeInput.rootOverride ?? Deno.cwd();
   let requestedWorkspace = runtimeInput.workspaceRoot;
+  // A stored null means "this session never selected a workspace" and the
+  // default root is legitimately its root. A FAILED lookup means the
+  // session's selected workspace is unknown — the file tools still fall
+  // back, but instruction elevation must treat it like a failed resolution
+  // rather than silently rebinding authority to the fallback root.
+  let workspaceLookupFailed = false;
   if (resumingSession && requestedWorkspace === undefined) {
     try {
       requestedWorkspace =
         (await fetchWorkbenchSessionWorkspace({ sessionId })) ?? undefined;
     } catch {
-      // Session row unreadable — fall back to the default root.
+      workspaceLookupFailed = true;
     }
   }
   const honoredWorkspace = workspaceRootForTransport(
@@ -1710,7 +1716,10 @@ export async function runWorkbenchRuntime(
       // resolve, and elevating the fallback root's AGENTS.md in its place
       // would grant system-prompt authority — and possible hosted egress —
       // to instructions from a root the operator never selected.
-      let workspaceResolutionFailed = false;
+      let workspaceResolutionFailed = workspaceLookupFailed;
+      if (workspaceLookupFailed) {
+        log("Session workspace lookup failed; using default root.");
+      }
       // Selection-time identity anchor for instruction elevation: the loader
       // re-verifies that the root it reads is the directory verified HERE,
       // so a root swapped between selection and read is refused rather than
