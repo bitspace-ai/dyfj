@@ -255,11 +255,20 @@ async function readBoundedTextFrom(
 //   that is a subdirectory of a larger repo degrades to graceful absence;
 //   richer boundary semantics are a separate design question (walk-up vs
 //   fence), not this loader's.
-// - The root is canonicalized and the candidate is checked with lstat (a
-//   symlinked AGENTS.md is rejected), and the check is coupled to the read:
-//   the opened handle's device+inode must match the checked identity, so a
-//   path swapped between check and open is refused. The receipt's
-//   workspace-local provenance is verified, not assumed.
+// - The root is canonicalized and its directory identity (device+inode) is
+//   anchored — at workspace-selection time when the caller passes the
+//   identity it verified, else at load time — and re-verified by pathname
+//   after the read, so a root or ancestor replacement that persists across
+//   the load window is detected and refused. The candidate is checked with
+//   lstat (a symlinked AGENTS.md is rejected) and the check is coupled to
+//   the read: the opened handle's device+inode must match the checked
+//   identity, so a leaf swapped between check and open is refused. NOT
+//   closed: a transient swap that lands and reverts entirely between two
+//   verifications. Closing it needs an atomic no-follow directory-relative
+//   open (openat-style), which the platform API does not currently expose;
+//   the residual requires a concurrent local process with write access to
+//   the workspace path, and is named in the changelog rather than claimed
+//   away.
 // - Absence (no file) is silent null. Any OTHER failure — an unresolvable
 //   workspace root, permissions, I/O — also returns null so the session
 //   proceeds, but logs a summarized warning: a failure must not masquerade
@@ -271,8 +280,14 @@ async function readBoundedTextFrom(
 //   bound is flagged as truncation in its own right: when the clipped window
 //   ends in a whitespace run, the token slice and `trimEnd()` alone would
 //   report the full file while content past the bound was dropped.
+export interface WorkspaceRootIdentity {
+  dev: number | null;
+  ino: number | null;
+}
+
 export async function loadAgentsInstructions(
   startDir: string,
+  selectionIdentity?: WorkspaceRootIdentity,
 ): Promise<AgentsInstructions | null> {
   // Root resolution fails loudly, never silently: only a missing AGENTS.md
   // is absence. A workspace root that cannot be resolved is a discovery
@@ -284,6 +299,39 @@ export async function loadAgentsInstructions(
   } catch (err) {
     console.warn(
       `AGENTS.md skipped: workspace root not resolvable: ${
+        summarizeError(err)
+      }`,
+    );
+    return null;
+  }
+  // Root identity anchor: the leaf guard below cannot see an ancestor swap —
+  // both pathname operations resolve consistently through a replaced root.
+  // Anchor the root directory's identity (to the caller's selection-time
+  // identity when provided, else to this load-time stat) and re-verify it
+  // after the read; identity unavailable fails closed like the leaf check.
+  let anchor: WorkspaceRootIdentity;
+  try {
+    const rootInfo = await Deno.stat(root);
+    if (!rootInfo.isDirectory) {
+      console.warn("AGENTS.md skipped: workspace root is not a directory");
+      return null;
+    }
+    anchor = selectionIdentity ?? { dev: rootInfo.dev, ino: rootInfo.ino };
+    if (anchor.dev === null || anchor.ino === null) {
+      console.warn(
+        "AGENTS.md skipped: workspace root identity unavailable on this platform",
+      );
+      return null;
+    }
+    if (rootInfo.dev !== anchor.dev || rootInfo.ino !== anchor.ino) {
+      console.warn(
+        "AGENTS.md skipped: workspace root is not the selected directory",
+      );
+      return null;
+    }
+  } catch (err) {
+    console.warn(
+      `AGENTS.md skipped: workspace root not verifiable: ${
         summarizeError(err)
       }`,
     );
@@ -343,6 +391,27 @@ export async function loadAgentsInstructions(
       );
     } finally {
       file.close();
+    }
+    // Re-verify the root anchor after the read: a root or ancestor swap
+    // that persisted across the load window resolves this pathname to a
+    // different directory identity and the instructions are refused. A
+    // transient swap that reverted in between remains undetectable without
+    // an atomic directory-relative open (see the contract comment above).
+    try {
+      const rootAfter = await Deno.stat(root);
+      if (rootAfter.dev !== anchor.dev || rootAfter.ino !== anchor.ino) {
+        console.warn(
+          "AGENTS.md skipped: workspace root changed during the read",
+        );
+        return null;
+      }
+    } catch (err) {
+      console.warn(
+        `AGENTS.md skipped: workspace root not re-verifiable: ${
+          summarizeError(err)
+        }`,
+      );
+      return null;
     }
     const capped = truncateSectionBody(
       "AGENTS.md",

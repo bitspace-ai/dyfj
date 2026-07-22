@@ -27,6 +27,7 @@ import { RpcError } from "./jsonrpc";
 import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import { loadAgentsInstructions } from "./repo-context";
+import type { WorkspaceRootIdentity } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
 import type { SupersedingRetryStartedEvent } from "./turn-contract";
@@ -1710,11 +1711,18 @@ export async function runWorkbenchRuntime(
       // would grant system-prompt authority — and possible hosted egress —
       // to instructions from a root the operator never selected.
       let workspaceResolutionFailed = false;
+      // Selection-time identity anchor for instruction elevation: the loader
+      // re-verifies that the root it reads is the directory verified HERE,
+      // so a root swapped between selection and read is refused rather than
+      // silently elevated.
+      let workspaceRootIdentity: WorkspaceRootIdentity | undefined;
       if (honoredWorkspace) {
         try {
           const real = await Deno.realPath(honoredWorkspace);
-          if ((await Deno.stat(real)).isDirectory) {
+          const rootInfo = await Deno.stat(real);
+          if (rootInfo.isDirectory) {
             workspaceRoot = real;
+            workspaceRootIdentity = { dev: rootInfo.dev, ino: rootInfo.ino };
           } else {
             workspaceResolutionFailed = true;
             log(
@@ -1763,7 +1771,7 @@ export async function runWorkbenchRuntime(
       }
       const agentsInstructions =
         workspaceTrustEligible && !workspaceResolutionFailed
-          ? await loadAgentsInstructions(workspaceRoot)
+          ? await loadAgentsInstructions(workspaceRoot, workspaceRootIdentity)
           : null;
       if (agentsInstructions) {
         // Repository instructions enter the trusted channel because the

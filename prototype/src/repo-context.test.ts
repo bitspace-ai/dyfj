@@ -293,6 +293,65 @@ describe("loadAgentsInstructions", () => {
     }
   });
 
+  test("a root whose identity differs from the selection anchor is refused", async () => {
+    // The adversarial root-replacement shape, pinned via its constructible
+    // half: the caller anchors the identity of the directory it verified at
+    // selection time; if discovery resolves the same pathname to a DIFFERENT
+    // directory (a persisted root/ancestor swap), the loader refuses. The
+    // live mid-read race itself cannot be scheduled deterministically in a
+    // test; this pins the detection branch both sides of the read share.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-swap-" });
+    try {
+      await Deno.writeTextFile(
+        path.join(dir, "AGENTS.md"),
+        "# Swapped-in rules — must not load\n",
+      );
+      const real = await Deno.stat(await Deno.realPath(dir));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const result = await loadAgentsInstructions(dir, {
+          dev: real.dev,
+          ino: real.ino === null ? 1 : real.ino + 1,
+        });
+        expect(result).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          "AGENTS.md skipped: workspace root is not the selected directory",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("a matching selection anchor loads normally; a null-identity anchor fails closed", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-anc2-" });
+    try {
+      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Anchored\n");
+      const real = await Deno.stat(await Deno.realPath(dir));
+
+      const loaded = await loadAgentsInstructions(dir, {
+        dev: real.dev,
+        ino: real.ino,
+      });
+      expect(loaded?.body.trim()).toBe("# Anchored");
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await loadAgentsInstructions(dir, { dev: null, ino: null }))
+          .toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          "AGENTS.md skipped: workspace root identity unavailable on this platform",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
   test("an unresolvable workspace root warns — it is a discovery failure, not absence", async () => {
     // Only a missing AGENTS.md is silent. A root that cannot be resolved
     // must not masquerade as "this workspace has no instructions": the
