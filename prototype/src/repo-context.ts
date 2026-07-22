@@ -260,9 +260,10 @@ async function readBoundedTextFrom(
 //   the opened handle's device+inode must match the checked identity, so a
 //   path swapped between check and open is refused. The receipt's
 //   workspace-local provenance is verified, not assumed.
-// - Absence (no file) is silent null. Any OTHER failure — permissions, I/O —
-//   also returns null so the session proceeds, but logs a summarized warning:
-//   a failure must not masquerade as "this workspace has no instructions".
+// - Absence (no file) is silent null. Any OTHER failure — an unresolvable
+//   workspace root, permissions, I/O — also returns null so the session
+//   proceeds, but logs a summarized warning: a failure must not masquerade
+//   as "this workspace has no instructions".
 // - The body is read through a bounded buffer and token-truncated; an
 //   over-budget body carries an explicit marker and the source label flips to
 //   "AGENTS.md excerpt" (the compact-profile precedent) so the receipt
@@ -273,11 +274,24 @@ async function readBoundedTextFrom(
 export async function loadAgentsInstructions(
   startDir: string,
 ): Promise<AgentsInstructions | null> {
-  let candidate: string;
+  // Root resolution fails loudly, never silently: only a missing AGENTS.md
+  // is absence. A workspace root that cannot be resolved is a discovery
+  // failure — folding its NotFound into the silent-absence path would make a
+  // mis-resolved workspace look like "this workspace has no instructions".
+  let root: string;
+  try {
+    root = await Deno.realPath(startDir);
+  } catch (err) {
+    console.warn(
+      `AGENTS.md skipped: workspace root not resolvable: ${
+        summarizeError(err)
+      }`,
+    );
+    return null;
+  }
+  const candidate = path.join(root, "AGENTS.md");
   let checked: Deno.FileInfo;
   try {
-    const root = await Deno.realPath(startDir);
-    candidate = path.join(root, "AGENTS.md");
     checked = await Deno.lstat(candidate);
     if (!checked.isFile) {
       // A symlink (or anything else non-regular) named AGENTS.md could point

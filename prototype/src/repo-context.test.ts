@@ -293,6 +293,30 @@ describe("loadAgentsInstructions", () => {
     }
   });
 
+  test("an unresolvable workspace root warns — it is a discovery failure, not absence", async () => {
+    // Only a missing AGENTS.md is silent. A root that cannot be resolved
+    // must not masquerade as "this workspace has no instructions": the
+    // operator elevated trust expecting instructions from a workspace that
+    // does not exist as named.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-mrr-" });
+    try {
+      const missingRoot = path.join(dir, "does-not-exist");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await loadAgentsInstructions(missingRoot)).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "AGENTS.md skipped: workspace root not resolvable",
+          ),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
   test("caps an oversized AGENTS.md with a marker and an excerpt-labeled source", async () => {
     // The system prompt is never compressed, so the injected body must be
     // bounded here — and the receipt must say an excerpt entered the prompt,
