@@ -86,6 +86,7 @@ export interface WorkbenchRuntimeStatus {
   defaultTurnModel: WorkbenchDefaultTurnModel | null;
   permissionLevel: PermissionLevel;
   approvePaidDefault: boolean;
+  trustWorkspaceInstructions: boolean;
   defaultSessionBudgetUsd: number;
   defaultPerCallBudgetUsd: number;
   defaultDailyBudgetUsd: number;
@@ -120,6 +121,7 @@ export interface WorkbenchUnixServerOptions {
     | "defaultCompanionModel"
     | "permissionLevel"
     | "approvePaidDefault"
+    | "trustWorkspaceInstructions"
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
@@ -199,6 +201,8 @@ function runtimeStatus(
       options.permissionLevel ??
       "strict",
     approvePaidDefault: options.engineConfig?.approvePaidDefault ?? false,
+    trustWorkspaceInstructions:
+      options.engineConfig?.trustWorkspaceInstructions ?? false,
     defaultSessionBudgetUsd: options.engineConfig?.defaultSessionBudgetUsd ?? 1,
     defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
       0.1,

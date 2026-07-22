@@ -1,5 +1,8 @@
-import { describe, expect, test } from "vitest";
+import path from "node:path";
+import { describe, expect, test, vi } from "vitest";
 import {
+  AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
+  AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
   buildAskSystemPrompt,
   buildContextSourceLines,
   COMPACT_CONTEXT_BUDGET,
@@ -7,6 +10,7 @@ import {
   DEFAULT_CONTEXT_BUDGET,
   estimateContextTokens,
   extractReadmeSection1,
+  loadAgentsInstructions,
   type LoadedRepoContext,
   packContextSections,
 } from "./repo-context";
@@ -213,5 +217,219 @@ describe("packContextSections", () => {
 describe("estimateContextTokens", () => {
   test("uses the same four-character approximation as model preflight", () => {
     expect(estimateContextTokens("12345678")).toBe(2);
+  });
+});
+
+describe("loadAgentsInstructions", () => {
+  test("loads AGENTS.md at the workspace root; no sibling markers required", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-flat-" });
+    try {
+      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Flat Rules\n");
+
+      const result = await loadAgentsInstructions(dir);
+      expect(result?.body.trim()).toBe("# Flat Rules");
+      expect(result?.source).toEqual({
+        kind: "file",
+        label: "AGENTS.md",
+        path: "AGENTS.md",
+      });
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("does NOT discover an ancestor's AGENTS.md — discovery is contained to the workspace root", async () => {
+    // The containment contract: content from outside the operator-selected
+    // workspace must never enter the model request. An ancestor carrying the
+    // old walk-up markers (AGENTS.md + README.md) is exactly the escape this
+    // pins shut; a subdirectory workspace degrades to graceful absence.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-anc-" });
+    try {
+      await Deno.writeTextFile(
+        path.join(dir, "AGENTS.md"),
+        "# Ancestor Rules — must not leak\n",
+      );
+      await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+      const nested = path.join(dir, "a", "b");
+      await Deno.mkdir(nested, { recursive: true });
+
+      expect(await loadAgentsInstructions(nested)).toBeNull();
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("rejects a non-regular-file AGENTS.md — the lstat guard never follows links", async () => {
+    // Sandbox constraint, disclosed: Deno.symlink() requires unscoped
+    // read+write, which the path-scoped test profile deliberately refuses,
+    // so a literal symlink fixture cannot be constructed here. The guard
+    // under test is `lstat` + `!isFile`, which rejects a symlink, a
+    // directory, or a FIFO through the identical branch — lstat never
+    // follows links by definition — so a directory fixture pins the same
+    // containment behavior with a constructible fixture.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-nrf-" });
+    try {
+      await Deno.mkdir(path.join(dir, "AGENTS.md"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await loadAgentsInstructions(dir)).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          "AGENTS.md skipped: not a regular file in the workspace root",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("returns null for a workspace with no AGENTS.md", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-none-" });
+    try {
+      expect(await loadAgentsInstructions(dir)).toBeNull();
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("a root whose identity differs from the selection anchor is refused", async () => {
+    // The adversarial root-replacement shape, pinned via its constructible
+    // half: the caller anchors the identity of the directory it verified at
+    // selection time; if discovery resolves the same pathname to a DIFFERENT
+    // directory (a persisted root/ancestor swap), the loader refuses. The
+    // live mid-read race itself cannot be scheduled deterministically in a
+    // test; this pins the detection branch both sides of the read share.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-swap-" });
+    try {
+      await Deno.writeTextFile(
+        path.join(dir, "AGENTS.md"),
+        "# Swapped-in rules — must not load\n",
+      );
+      const real = await Deno.stat(await Deno.realPath(dir));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const result = await loadAgentsInstructions(dir, {
+          dev: real.dev,
+          ino: real.ino === null ? 1 : real.ino + 1,
+        });
+        expect(result).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          "AGENTS.md skipped: workspace root is not the selected directory",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("a matching selection anchor loads normally; a null-identity anchor fails closed", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-anc2-" });
+    try {
+      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Anchored\n");
+      const real = await Deno.stat(await Deno.realPath(dir));
+
+      const loaded = await loadAgentsInstructions(dir, {
+        dev: real.dev,
+        ino: real.ino,
+      });
+      expect(loaded?.body.trim()).toBe("# Anchored");
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await loadAgentsInstructions(dir, { dev: null, ino: null }))
+          .toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          "AGENTS.md skipped: workspace root identity unavailable on this platform",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("an unresolvable workspace root warns — it is a discovery failure, not absence", async () => {
+    // Only a missing AGENTS.md is silent. A root that cannot be resolved
+    // must not masquerade as "this workspace has no instructions": the
+    // operator elevated trust expecting instructions from a workspace that
+    // does not exist as named.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-mrr-" });
+    try {
+      const missingRoot = path.join(dir, "does-not-exist");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await loadAgentsInstructions(missingRoot)).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining(
+            "AGENTS.md skipped: workspace root not resolvable",
+          ),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("caps an oversized AGENTS.md with a marker and an excerpt-labeled source", async () => {
+    // The system prompt is never compressed, so the injected body must be
+    // bounded here — and the receipt must say an excerpt entered the prompt,
+    // not the whole file.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-big-" });
+    try {
+      const oversized = "# Giant Rules\n\n" +
+        "All work must be receipted. ".repeat(10_000); // ~70K tokens
+      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), oversized);
+      await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+
+      const result = await loadAgentsInstructions(dir);
+      expect(result).not.toBeNull();
+      expect(estimateContextTokens(result!.body))
+        .toBeLessThanOrEqual(AGENTS_INSTRUCTIONS_TOKEN_LIMIT + 50);
+      expect(result!.body).toContain("[AGENTS.md truncated");
+      expect(result!.source).toEqual({
+        kind: "file",
+        label: "AGENTS.md excerpt",
+        path: "AGENTS.md",
+      });
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("flags truncation when the byte-bound read clips inside a whitespace run", async () => {
+    // Adversarial shape: short real content, then a whitespace run spanning
+    // the 64KB read bound, then more content past it. The token slice lands
+    // inside the whitespace, so `trimEnd()` makes the capped and read bodies
+    // agree — the string comparison alone would report the full file while
+    // the content past the byte bound was silently dropped. The loader must
+    // flag the clipped read itself.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-ws-" });
+    try {
+      const head = "# Rules before the whitespace run\n";
+      const padding = "\n".repeat(AGENTS_INSTRUCTIONS_MAX_READ_BYTES);
+      const tail = "# Rules past the read bound\n";
+      await Deno.writeTextFile(
+        path.join(dir, "AGENTS.md"),
+        head + padding + tail,
+      );
+
+      const result = await loadAgentsInstructions(dir);
+      expect(result).not.toBeNull();
+      expect(result!.body).toContain("[AGENTS.md truncated");
+      expect(result!.body).not.toContain("past the read bound");
+      expect(result!.source).toEqual({
+        kind: "file",
+        label: "AGENTS.md excerpt",
+        path: "AGENTS.md",
+      });
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
   });
 });

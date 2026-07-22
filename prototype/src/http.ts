@@ -73,6 +73,7 @@ export interface WorkbenchHttpHandlerOptions {
     | "defaultCompanionModel"
     | "permissionLevel"
     | "approvePaidDefault"
+    | "trustWorkspaceInstructions"
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"

@@ -158,7 +158,11 @@ function buildRuntimeInputFromJson(
 export function parseBudgetOverride(
   value: unknown,
 ):
-  | { sessionLimitUsd?: number; perCallLimitUsd?: number; dailyLimitUsd?: number }
+  | {
+    sessionLimitUsd?: number;
+    perCallLimitUsd?: number;
+    dailyLimitUsd?: number;
+  }
   | { error: string } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { error: "budget must be an object" };
@@ -170,7 +174,11 @@ export function parseBudgetOverride(
     dailyLimitUsd?: number;
   } = {};
   for (
-    const key of ["sessionLimitUsd", "perCallLimitUsd", "dailyLimitUsd"] as const
+    const key of [
+      "sessionLimitUsd",
+      "perCallLimitUsd",
+      "dailyLimitUsd",
+    ] as const
   ) {
     const raw = record[key];
     if (raw === undefined) continue;
@@ -310,6 +318,11 @@ export interface ExecuteTurnDeps {
   permissionLevel?: PermissionLevel;
   /** Standing paid posture (config), applied when the request omits opt-in. */
   approvePaidDefault?: boolean;
+  /**
+   * Standing operator elevation of workspace AGENTS.md instructions
+   * (config, default off). Loopback only — remote transports never inherit.
+   */
+  trustWorkspaceInstructions?: boolean;
   /** Engine budget defaults (config), resolved once at the boundary. */
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
@@ -337,6 +350,7 @@ export function engineConfigToTurnDeps(
     | "defaultCompanionModel"
     | "permissionLevel"
     | "approvePaidDefault"
+    | "trustWorkspaceInstructions"
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
@@ -348,6 +362,7 @@ export function engineConfigToTurnDeps(
   | "defaultCompanionModel"
   | "permissionLevel"
   | "approvePaidDefault"
+  | "trustWorkspaceInstructions"
   | "defaultSessionBudgetUsd"
   | "defaultPerCallBudgetUsd"
   | "defaultDailyBudgetUsd"
@@ -358,6 +373,7 @@ export function engineConfigToTurnDeps(
     defaultCompanionModel: config.defaultCompanionModel,
     permissionLevel: config.permissionLevel,
     approvePaidDefault: config.approvePaidDefault,
+    trustWorkspaceInstructions: config.trustWorkspaceInstructions,
     defaultSessionBudgetUsd: config.defaultSessionBudgetUsd,
     defaultPerCallBudgetUsd: config.defaultPerCallBudgetUsd,
     defaultDailyBudgetUsd: config.defaultDailyBudgetUsd,
@@ -415,6 +431,12 @@ function runExecuteTurn(
     ...resolveRuntimeEnvDefaults(),
     // engine default companion model, resolved once at the boundary from config
     defaultCompanionModel: deps.defaultCompanionModel,
+    // workspace-instructions elevation: an explicit standing operator
+    // decision (config, default off), honored for loopback turns only —
+    // selecting a workspace alone never grants its AGENTS.md authority.
+    trustWorkspaceInstructions: deps.loopback
+      ? deps.trustWorkspaceInstructions ?? false
+      : false,
     // operator permission posture, resolved once at the boundary from config
     permissionLevel: deps.permissionLevel,
     // config-file budget defaults override the env-only boundary resolver

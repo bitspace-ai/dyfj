@@ -1,4 +1,5 @@
 import path from "node:path";
+import { summarizeError } from "./turn-contract";
 
 export interface ContextSource {
   kind: "file" | "command";
@@ -208,6 +209,232 @@ function truncateSectionBody(
   const titleTokens = estimateContextTokens(`## ${title}\n`);
   const bodyTokenLimit = Math.max(0, limitTokens - titleTokens);
   return body.slice(0, bodyTokenLimit * 4).trimEnd();
+}
+
+export interface AgentsInstructions {
+  body: string;
+  source: ContextSource;
+}
+
+// The agent-mode instructions budget. Unlike ask-mode — where AGENTS.md rides
+// the packed-section machinery under a shared ContextBudget — the companion
+// injection is a single section, so it carries its own cap. The system prompt
+// is never compressed (the compressor's contract covers conversation turns
+// only), so an unbounded body here would be a silent per-turn tax for the
+// session's whole life. 4,000 tokens (~16KB) passes real instruction files
+// with room to spare; it exists to bound pathology, not to trim normal repos.
+export const AGENTS_INSTRUCTIONS_TOKEN_LIMIT = 4_000;
+
+// The read bound (advisory to the token cap): the file is read through a
+// fixed-size buffer, never whole-file, so a pathological AGENTS.md cannot
+// consume unbounded memory before truncation. 64KB is 4x the token cap's
+// worst-case character count; a permissive-decode artifact at the clip
+// boundary cannot survive, because the token truncation slices far below it.
+export const AGENTS_INSTRUCTIONS_MAX_READ_BYTES = 64 * 1024;
+
+async function readBoundedTextFrom(
+  file: Deno.FsFile,
+  maxBytes: number,
+): Promise<string> {
+  const buf = new Uint8Array(maxBytes);
+  let filled = 0;
+  while (filled < buf.length) {
+    const n = await file.read(buf.subarray(filled));
+    if (n === null) break;
+    filled += n;
+  }
+  return new TextDecoder("utf-8").decode(buf.subarray(0, filled));
+}
+
+// Agent-mode (companion) instructions discovery — CONTAINED to the selected
+// workspace root, deliberately narrower than ask-mode's repo walk-up:
+//
+// - No upward discovery. Only `<workspaceRoot>/AGENTS.md` is considered, so
+//   content from outside the operator-selected workspace (an unrelated
+//   marker-bearing ancestor) can never enter the model request. A workspace
+//   that is a subdirectory of a larger repo degrades to graceful absence;
+//   richer boundary semantics are a separate design question (walk-up vs
+//   fence), not this loader's.
+// - The root is canonicalized and its directory identity (device+inode) is
+//   anchored — at workspace-selection time when the caller passes the
+//   identity it verified, else at load time — and re-verified by pathname
+//   after the read, so a root or ancestor replacement that persists across
+//   the load window is detected and refused. The candidate is checked with
+//   lstat (a symlinked AGENTS.md is rejected) and the check is coupled to
+//   the read: the opened handle's device+inode must match the checked
+//   identity, so a leaf swapped between check and open is refused. NOT
+//   closed: a transient swap that lands and reverts entirely between two
+//   verifications. Closing it needs an atomic no-follow directory-relative
+//   open (openat-style), which the platform API does not currently expose;
+//   the residual requires a concurrent local process with write access to
+//   the workspace path, and is named in the changelog rather than claimed
+//   away.
+// - Absence (no file) is silent null. Any OTHER failure — an unresolvable
+//   workspace root, permissions, I/O — also returns null so the session
+//   proceeds, but logs a summarized warning: a failure must not masquerade
+//   as "this workspace has no instructions".
+// - The body is read through a bounded buffer and token-truncated; an
+//   over-budget body carries an explicit marker and the source label flips to
+//   "AGENTS.md excerpt" (the compact-profile precedent) so the receipt
+//   reports what actually entered the prompt. A read clipped at the byte
+//   bound is flagged as truncation in its own right: when the clipped window
+//   ends in a whitespace run, the token slice and `trimEnd()` alone would
+//   report the full file while content past the bound was dropped.
+export interface WorkspaceRootIdentity {
+  dev: number | null;
+  ino: number | null;
+}
+
+export async function loadAgentsInstructions(
+  startDir: string,
+  selectionIdentity?: WorkspaceRootIdentity,
+): Promise<AgentsInstructions | null> {
+  // Root resolution fails loudly, never silently: only a missing AGENTS.md
+  // is absence. A workspace root that cannot be resolved is a discovery
+  // failure — folding its NotFound into the silent-absence path would make a
+  // mis-resolved workspace look like "this workspace has no instructions".
+  let root: string;
+  try {
+    root = await Deno.realPath(startDir);
+  } catch (err) {
+    console.warn(
+      `AGENTS.md skipped: workspace root not resolvable: ${
+        summarizeError(err)
+      }`,
+    );
+    return null;
+  }
+  // Root identity anchor: the leaf guard below cannot see an ancestor swap —
+  // both pathname operations resolve consistently through a replaced root.
+  // Anchor the root directory's identity (to the caller's selection-time
+  // identity when provided, else to this load-time stat) and re-verify it
+  // after the read; identity unavailable fails closed like the leaf check.
+  let anchor: WorkspaceRootIdentity;
+  try {
+    const rootInfo = await Deno.stat(root);
+    if (!rootInfo.isDirectory) {
+      console.warn("AGENTS.md skipped: workspace root is not a directory");
+      return null;
+    }
+    anchor = selectionIdentity ?? { dev: rootInfo.dev, ino: rootInfo.ino };
+    if (anchor.dev === null || anchor.ino === null) {
+      console.warn(
+        "AGENTS.md skipped: workspace root identity unavailable on this platform",
+      );
+      return null;
+    }
+    if (rootInfo.dev !== anchor.dev || rootInfo.ino !== anchor.ino) {
+      console.warn(
+        "AGENTS.md skipped: workspace root is not the selected directory",
+      );
+      return null;
+    }
+  } catch (err) {
+    console.warn(
+      `AGENTS.md skipped: workspace root not verifiable: ${
+        summarizeError(err)
+      }`,
+    );
+    return null;
+  }
+  const candidate = path.join(root, "AGENTS.md");
+  let checked: Deno.FileInfo;
+  try {
+    checked = await Deno.lstat(candidate);
+    if (!checked.isFile) {
+      // A symlink (or anything else non-regular) named AGENTS.md could point
+      // outside the workspace; refusing it keeps discovery contained and the
+      // receipt's workspace-local provenance honest.
+      console.warn(
+        "AGENTS.md skipped: not a regular file in the workspace root",
+      );
+      return null;
+    }
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return null;
+    console.warn(`AGENTS.md discovery failed: ${summarizeError(err)}`);
+    return null;
+  }
+  try {
+    const file = await Deno.open(candidate, { read: true });
+    let body: string;
+    let readClipped: boolean;
+    try {
+      // TOCTOU guard: the no-follow lstat above and this open are two
+      // operations on a PATHNAME, and a concurrent swap between them could
+      // replace the checked regular file with a symlink the open would
+      // follow. So the check is coupled to the opened file: the OPEN
+      // HANDLE's identity (device + inode) must match what lstat checked,
+      // or the file is refused. Identity unavailable (non-POSIX) also
+      // refuses — fail closed rather than read an unverified file.
+      const opened = await file.stat();
+      if (checked.dev === null || checked.ino === null) {
+        console.warn(
+          "AGENTS.md skipped: file identity unavailable on this platform",
+        );
+        return null;
+      }
+      if (opened.dev !== checked.dev || opened.ino !== checked.ino) {
+        console.warn(
+          "AGENTS.md skipped: file identity changed between check and open",
+        );
+        return null;
+      }
+      // The verified handle's size says whether the bounded read dropped
+      // bytes. The string comparison below cannot detect this on its own:
+      // if the clipped window ends in a whitespace run, `trimEnd()` erases
+      // the evidence and the loader would report the full file.
+      readClipped = opened.size > AGENTS_INSTRUCTIONS_MAX_READ_BYTES;
+      body = await readBoundedTextFrom(
+        file,
+        AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
+      );
+    } finally {
+      file.close();
+    }
+    // Re-verify the root anchor after the read: a root or ancestor swap
+    // that persisted across the load window resolves this pathname to a
+    // different directory identity and the instructions are refused. A
+    // transient swap that reverted in between remains undetectable without
+    // an atomic directory-relative open (see the contract comment above).
+    try {
+      const rootAfter = await Deno.stat(root);
+      if (rootAfter.dev !== anchor.dev || rootAfter.ino !== anchor.ino) {
+        console.warn(
+          "AGENTS.md skipped: workspace root changed during the read",
+        );
+        return null;
+      }
+    } catch (err) {
+      console.warn(
+        `AGENTS.md skipped: workspace root not re-verifiable: ${
+          summarizeError(err)
+        }`,
+      );
+      return null;
+    }
+    const capped = truncateSectionBody(
+      "AGENTS.md",
+      body,
+      AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
+    );
+    if (!readClipped && capped === body.trimEnd()) {
+      return {
+        body,
+        source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+      };
+    }
+    // The marker states the excerpt's budget, not the cut location — the cut
+    // may be the token cap or the byte bound, and both land here.
+    return {
+      body:
+        `${capped}\n\n[AGENTS.md truncated to the ~${AGENTS_INSTRUCTIONS_TOKEN_LIMIT}-token instructions budget; read AGENTS.md in the workspace for the rest]`,
+      source: { kind: "file", label: "AGENTS.md excerpt", path: "AGENTS.md" },
+    };
+  } catch (err) {
+    console.warn(`AGENTS.md read failed: ${summarizeError(err)}`);
+    return null;
+  }
 }
 
 export async function findRepoRoot(startDir = Deno.cwd()): Promise<string> {

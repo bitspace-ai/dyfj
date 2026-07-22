@@ -150,6 +150,14 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
     default: false,
   },
+  {
+    key: "trustWorkspaceInstructions",
+    envVar: "DYFJ_TRUST_WORKSPACE_INSTRUCTIONS",
+    domain: "engine",
+    type: "boolean",
+    kind: "value",
+    default: false,
+  },
   // ── engine: runaway-anomaly hard-stop multiples (applied to ACTUAL spend) ──
   {
     key: "anomalyTurnMultiple",
@@ -282,6 +290,18 @@ export interface WorkbenchConfig {
    * per-turn opt-in/out always wins). Non-loopback transports never inherit it.
    */
   approvePaidDefault: boolean;
+  /**
+   * Standing elevation of workspace AGENTS.md instructions into the
+   * agent-mode system prompt. Default off: selecting a workspace does NOT
+   * by itself grant its instructions system-channel authority — setting
+   * this is the operator's explicit trust decision ([workspace]
+   * trust_instructions / DYFJ_TRUST_WORKSPACE_INSTRUCTIONS). Loopback
+   * turns only; remote transports never inherit it. Process-wide once set:
+   * it applies to every loopback-selected workspace, and the injected
+   * content rides the system prompt to whatever model the session selects —
+   * including hosted providers, under the existing paid/hosted consent.
+   */
+  trustWorkspaceInstructions: boolean;
   /** Default max total USD spend across a session (startup posture). */
   defaultSessionBudgetUsd: number;
   /** Default max USD spend for a single API call (startup posture). */
@@ -302,6 +322,9 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultCompanionModel: null,
   permissionLevel: "strict",
   approvePaidDefault: schemaBooleanDefault("approvePaidDefault"),
+  trustWorkspaceInstructions: schemaBooleanDefault(
+    "trustWorkspaceInstructions",
+  ),
   defaultSessionBudgetUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
   defaultPerCallBudgetUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
   defaultDailyBudgetUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
@@ -379,6 +402,14 @@ export async function loadConfig(
     if (fileApprovePaid !== undefined) {
       config.approvePaidDefault = fileApprovePaid;
     }
+    const fileTrustInstructions = readBoolean(
+      table,
+      "workspace",
+      "trust_instructions",
+    );
+    if (fileTrustInstructions !== undefined) {
+      config.trustWorkspaceInstructions = fileTrustInstructions;
+    }
     const fileSessionBudget = readNumber(
       table,
       "budget",
@@ -442,6 +473,15 @@ export async function loadConfig(
     config.approvePaidDefault = parseBooleanEnv(
       envApprovePaid,
       schemaEnvVar("approvePaidDefault"),
+    );
+  }
+  const envTrustInstructions = env.get(
+    schemaEnvVar("trustWorkspaceInstructions"),
+  );
+  if (envTrustInstructions !== undefined && envTrustInstructions !== "") {
+    config.trustWorkspaceInstructions = parseBooleanEnv(
+      envTrustInstructions,
+      schemaEnvVar("trustWorkspaceInstructions"),
     );
   }
   config.defaultSessionBudgetUsd = readPositiveUsd(
@@ -918,6 +958,23 @@ function readPositiveUsd(
  * (defaults → env). This is the boundary resolver the runtime entrypoints use so
  * the core reads no env; the config-FILE layer for budget is the next slice.
  */
+/**
+ * Strict env-only resolver for the standing workspace-instructions trust
+ * posture, for boundaries that resolve config from the environment rather
+ * than the TOML file (the standalone in-process entrypoint). Unset or empty
+ * means default off; a malformed value fails loud like every other boolean
+ * env binding.
+ */
+export function resolveTrustWorkspaceInstructionsFromEnv(
+  env: { get(key: string): string | undefined },
+): boolean {
+  const raw = env.get(schemaEnvVar("trustWorkspaceInstructions"));
+  if (raw === undefined || raw === "") {
+    return schemaBooleanDefault("trustWorkspaceInstructions");
+  }
+  return parseBooleanEnv(raw, schemaEnvVar("trustWorkspaceInstructions"));
+}
+
 export function resolveBudgetDefaultsFromEnv(
   env: ConfigEnv = Deno.env,
 ): BudgetDefaults {

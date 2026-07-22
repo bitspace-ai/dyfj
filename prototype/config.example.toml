@@ -19,6 +19,18 @@
 #                write) on a loopback operator turn; paid/networked/exec still prompt
 level = "strict"
 
+[workspace]
+# Standing trust posture for workspace instructions. When enabled, agent-mode
+# (companion) sessions load `<workspace root>/AGENTS.md` into the system
+# prompt — loopback turns only, and only when the selected workspace resolves
+# (a failed selection suppresses injection rather than elevating the fallback
+# root's file). Default off: without it the file is never read at all. The
+# posture is process-wide — it applies to every loopback-selected workspace —
+# and elevated instructions travel with the prompt to whatever model the
+# session selects, including hosted providers, so enable it with that in
+# mind. Env override: DYFJ_TRUST_WORKSPACE_INSTRUCTIONS.
+# trust_instructions = true
+
 [paid]
 # Standing paid-inference posture on loopback turns. When a request omits the
 # per-turn approvePaidInference flag, the engine falls back to this default.
