@@ -67,8 +67,8 @@ import {
   loadSecretsConfig,
   resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
-  resolveTrustWorkspaceInstructionsFromEnv,
   resolvePrincipalId,
+  resolveTrustWorkspaceInstructionsFromEnv,
 } from "./config";
 import { resolveSecretsIntoEnv } from "./secrets";
 import process from "node:process";
@@ -1737,7 +1737,12 @@ export async function runWorkbenchRuntime(
       // Gated on the operator's standing elevation (config, default off):
       // without it the loader is never even called, so an unelevated
       // workspace's AGENTS.md structurally cannot reach the model request.
-      const agentsInstructions = runtimeInput.trustWorkspaceInstructions
+      // The transport check is a structural backstop: the turn-runner wrapper
+      // already forces the flag off for non-loopback callers, but the
+      // loopback-only contract must hold even for a future direct caller of
+      // the runtime core that passes the flag itself.
+      const agentsInstructions = authContext.transport === "loopback" &&
+          runtimeInput.trustWorkspaceInstructions
         ? await loadAgentsInstructions(workspaceRoot)
         : null;
       if (agentsInstructions) {
