@@ -1,5 +1,5 @@
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
   buildAskSystemPrompt,
@@ -220,20 +220,13 @@ describe("estimateContextTokens", () => {
 });
 
 describe("loadAgentsInstructions", () => {
-  test("discovers AGENTS.md by walking up from a nested start dir", async () => {
-    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-" });
+  test("loads AGENTS.md at the workspace root; no sibling markers required", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-flat-" });
     try {
-      await Deno.writeTextFile(
-        path.join(dir, "AGENTS.md"),
-        "# Repo Rules\n\nLog friction to the pilot register.\n",
-      );
-      await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
-      const nested = path.join(dir, "a", "b");
-      await Deno.mkdir(nested, { recursive: true });
+      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Flat Rules\n");
 
-      const result = await loadAgentsInstructions(nested);
-      expect(result).not.toBeNull();
-      expect(result?.body).toContain("Log friction to the pilot register.");
+      const result = await loadAgentsInstructions(dir);
+      expect(result?.body.trim()).toBe("# Flat Rules");
       expect(result?.source).toEqual({
         kind: "file",
         label: "AGENTS.md",
@@ -244,15 +237,56 @@ describe("loadAgentsInstructions", () => {
     }
   });
 
-  test("discovers AGENTS.md at the start dir itself", async () => {
-    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-flat-" });
+  test("does NOT discover an ancestor's AGENTS.md — discovery is contained to the workspace root", async () => {
+    // The containment contract: content from outside the operator-selected
+    // workspace must never enter the model request. An ancestor carrying the
+    // old walk-up markers (AGENTS.md + README.md) is exactly the escape this
+    // pins shut; a subdirectory workspace degrades to graceful absence.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-anc-" });
     try {
-      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Flat Rules\n");
+      await Deno.writeTextFile(
+        path.join(dir, "AGENTS.md"),
+        "# Ancestor Rules — must not leak\n",
+      );
       await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+      const nested = path.join(dir, "a", "b");
+      await Deno.mkdir(nested, { recursive: true });
 
-      const result = await loadAgentsInstructions(dir);
-      expect(result?.body.trim()).toBe("# Flat Rules");
-      expect(result?.source.label).toBe("AGENTS.md");
+      expect(await loadAgentsInstructions(nested)).toBeNull();
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("rejects a non-regular-file AGENTS.md — the lstat guard never follows links", async () => {
+    // Sandbox constraint, disclosed: Deno.symlink() requires unscoped
+    // read+write, which the path-scoped test profile deliberately refuses,
+    // so a literal symlink fixture cannot be constructed here. The guard
+    // under test is `lstat` + `!isFile`, which rejects a symlink, a
+    // directory, or a FIFO through the identical branch — lstat never
+    // follows links by definition — so a directory fixture pins the same
+    // containment behavior with a constructible fixture.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-nrf-" });
+    try {
+      await Deno.mkdir(path.join(dir, "AGENTS.md"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(await loadAgentsInstructions(dir)).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          "AGENTS.md skipped: not a regular file in the workspace root",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("returns null for a workspace with no AGENTS.md", async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-none-" });
+    try {
+      expect(await loadAgentsInstructions(dir)).toBeNull();
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

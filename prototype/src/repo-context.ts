@@ -1,4 +1,5 @@
 import path from "node:path";
+import { summarizeError } from "./turn-contract";
 
 export interface ContextSource {
   kind: "file" | "command";
@@ -224,20 +225,79 @@ export interface AgentsInstructions {
 // with room to spare; it exists to bound pathology, not to trim normal repos.
 export const AGENTS_INSTRUCTIONS_TOKEN_LIMIT = 4_000;
 
-// Agent-mode (companion) injection: reuse the same walk-up discovery as
-// ask-mode (findRepoRoot requires AGENTS.md + README.md sibling markers),
-// but return only the AGENTS.md body — no README section, no notes, no
-// profile/budget packing. Returns null when no AGENTS.md exists at/above
-// startDir so callers can omit the source gracefully. An over-budget body is
-// truncated with an explicit marker, and the source label flips to
-// "AGENTS.md excerpt" (the compact-profile precedent) so the receipt reports
-// what actually entered the prompt.
+// The read bound (advisory to the token cap): the file is read through a
+// fixed-size buffer, never whole-file, so a pathological AGENTS.md cannot
+// consume unbounded memory before truncation. 64KB is 4x the token cap's
+// worst-case character count; a permissive-decode artifact at the clip
+// boundary cannot survive, because the token truncation slices far below it.
+export const AGENTS_INSTRUCTIONS_MAX_READ_BYTES = 64 * 1024;
+
+async function readBoundedText(
+  filePath: string,
+  maxBytes: number,
+): Promise<string> {
+  const file = await Deno.open(filePath, { read: true });
+  try {
+    const buf = new Uint8Array(maxBytes);
+    let filled = 0;
+    while (filled < buf.length) {
+      const n = await file.read(buf.subarray(filled));
+      if (n === null) break;
+      filled += n;
+    }
+    return new TextDecoder("utf-8").decode(buf.subarray(0, filled));
+  } finally {
+    file.close();
+  }
+}
+
+// Agent-mode (companion) instructions discovery — CONTAINED to the selected
+// workspace root, deliberately narrower than ask-mode's repo walk-up:
+//
+// - No upward discovery. Only `<workspaceRoot>/AGENTS.md` is considered, so
+//   content from outside the operator-selected workspace (an unrelated
+//   marker-bearing ancestor) can never enter the model request. A workspace
+//   that is a subdirectory of a larger repo degrades to graceful absence;
+//   richer boundary semantics are a separate design question (walk-up vs
+//   fence), not this loader's.
+// - The root is canonicalized and the candidate is checked with lstat: a
+//   symlinked AGENTS.md is rejected, so the file that is read is a regular
+//   file physically inside the workspace — provenance in the receipt
+//   ("AGENTS.md" in this workspace) is true by construction.
+// - Absence (no file) is silent null. Any OTHER failure — permissions, I/O —
+//   also returns null so the session proceeds, but logs a summarized warning:
+//   a failure must not masquerade as "this workspace has no instructions".
+// - The body is read through a bounded buffer and token-truncated; an
+//   over-budget body carries an explicit marker and the source label flips to
+//   "AGENTS.md excerpt" (the compact-profile precedent) so the receipt
+//   reports what actually entered the prompt.
 export async function loadAgentsInstructions(
   startDir: string,
 ): Promise<AgentsInstructions | null> {
+  let candidate: string;
   try {
-    const repoRoot = await findRepoRoot(startDir);
-    const body = await readRepoFile(repoRoot, "AGENTS.md");
+    const root = await Deno.realPath(startDir);
+    candidate = path.join(root, "AGENTS.md");
+    const info = await Deno.lstat(candidate);
+    if (!info.isFile) {
+      // A symlink (or anything else non-regular) named AGENTS.md could point
+      // outside the workspace; refusing it keeps discovery contained and the
+      // receipt's workspace-local provenance honest.
+      console.warn(
+        "AGENTS.md skipped: not a regular file in the workspace root",
+      );
+      return null;
+    }
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return null;
+    console.warn(`AGENTS.md discovery failed: ${summarizeError(err)}`);
+    return null;
+  }
+  try {
+    const body = await readBoundedText(
+      candidate,
+      AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
+    );
     const capped = truncateSectionBody(
       "AGENTS.md",
       body,
@@ -250,10 +310,12 @@ export async function loadAgentsInstructions(
       };
     }
     return {
-      body: `${capped}\n\n[AGENTS.md truncated at ~${AGENTS_INSTRUCTIONS_TOKEN_LIMIT} tokens; read AGENTS.md in the workspace for the rest]`,
+      body:
+        `${capped}\n\n[AGENTS.md truncated at ~${AGENTS_INSTRUCTIONS_TOKEN_LIMIT} tokens; read AGENTS.md in the workspace for the rest]`,
       source: { kind: "file", label: "AGENTS.md excerpt", path: "AGENTS.md" },
     };
-  } catch {
+  } catch (err) {
+    console.warn(`AGENTS.md read failed: ${summarizeError(err)}`);
     return null;
   }
 }
