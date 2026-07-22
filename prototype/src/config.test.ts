@@ -12,6 +12,7 @@ import {
   parseSecretsConfig,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
+  resolveTrustWorkspaceInstructionsFromEnv,
 } from "./config";
 
 function env(map: Record<string, string> = {}) {
@@ -19,16 +20,46 @@ function env(map: Record<string, string> = {}) {
 }
 const HOME = { HOME: "/h" };
 const notFound = () => Promise.reject(new Deno.errors.NotFound());
-const present = () => Promise.resolve("(toml text — parsed by the injected parser)");
+const present = () =>
+  Promise.resolve("(toml text — parsed by the injected parser)");
 // Inject the parsed table directly: we test the precedence/validation logic,
 // not @std/toml (which can't load under the node test runner anyway).
 const table = (t: Record<string, unknown>) => () => t;
+
+describe("resolveTrustWorkspaceInstructionsFromEnv", () => {
+  const envOf = (v?: string) => ({
+    get: (key: string) =>
+      key === "DYFJ_TRUST_WORKSPACE_INSTRUCTIONS" ? v : undefined,
+  });
+
+  test("defaults off when unset or empty", () => {
+    expect(resolveTrustWorkspaceInstructionsFromEnv(envOf(undefined))).toBe(
+      false,
+    );
+    expect(resolveTrustWorkspaceInstructionsFromEnv(envOf(""))).toBe(false);
+  });
+
+  test("honors an explicit true — the standalone entrypoint's binding", () => {
+    expect(resolveTrustWorkspaceInstructionsFromEnv(envOf("true"))).toBe(true);
+    expect(resolveTrustWorkspaceInstructionsFromEnv(envOf("false"))).toBe(
+      false,
+    );
+  });
+
+  test("rejects a malformed value loudly like every boolean binding", () => {
+    expect(() => resolveTrustWorkspaceInstructionsFromEnv(envOf("definitely")))
+      .toThrow();
+  });
+});
 
 describe("loadConfig", () => {
   test("returns defaults when there is no file and no env", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
     expect(cfg).toEqual(CONFIG_DEFAULTS);
     expect(cfg.approvePaidDefault).toBe(false);
+    // Workspace-instruction elevation defaults OFF: selecting a workspace is
+    // not a trust decision; setting this posture is.
+    expect(cfg.trustWorkspaceInstructions).toBe(false);
     expect(cfg.defaultSessionBudgetUsd).toBe(BUDGET_DEFAULTS.sessionLimitUsd);
   });
 
@@ -40,12 +71,14 @@ describe("loadConfig", () => {
         companion: { default_model: "claude-opus-4-8" },
         permissions: { level: "operator" },
         paid: { approve_paid_default: true },
+        workspace: { trust_instructions: true },
         budget: { session_limit_usd: 2.5, per_call_limit_usd: 0.25 },
       }),
     });
     expect(cfg.defaultCompanionModel).toBe("claude-opus-4-8");
     expect(cfg.permissionLevel).toBe("operator");
     expect(cfg.approvePaidDefault).toBe(true);
+    expect(cfg.trustWorkspaceInstructions).toBe(true);
     expect(cfg.defaultSessionBudgetUsd).toBe(2.5);
     expect(cfg.defaultPerCallBudgetUsd).toBe(0.25);
   });
@@ -57,6 +90,7 @@ describe("loadConfig", () => {
         DYFJ_WORKBENCH_MODEL: "env-model",
         DYFJ_PERMISSION_LEVEL: "operator",
         DYFJ_APPROVE_PAID_DEFAULT: "true",
+        DYFJ_TRUST_WORKSPACE_INSTRUCTIONS: "true",
         DYFJ_BUDGET_SESSION_USD: "3",
       }),
       readTextFile: present,
@@ -64,12 +98,14 @@ describe("loadConfig", () => {
         companion: { default_model: "file-model" },
         permissions: { level: "strict" },
         paid: { approve_paid_default: false },
+        workspace: { trust_instructions: false },
         budget: { session_limit_usd: 9 },
       }),
     });
     expect(cfg.defaultCompanionModel).toBe("env-model");
     expect(cfg.permissionLevel).toBe("operator");
     expect(cfg.approvePaidDefault).toBe(true);
+    expect(cfg.trustWorkspaceInstructions).toBe(true);
     expect(cfg.defaultSessionBudgetUsd).toBe(3);
   });
 
@@ -187,7 +223,9 @@ describe("resolveBudgetDefaultsFromEnv", () => {
 
 describe("resolvePrincipalId", () => {
   test("prefers DYFJ_PRINCIPAL_ID, then USER, then 'user'", () => {
-    expect(resolvePrincipalId(env({ DYFJ_PRINCIPAL_ID: "p", USER: "u" }))).toBe("p");
+    expect(resolvePrincipalId(env({ DYFJ_PRINCIPAL_ID: "p", USER: "u" }))).toBe(
+      "p",
+    );
     expect(resolvePrincipalId(env({ USER: "u" }))).toBe("u");
     expect(resolvePrincipalId(env())).toBe("user");
   });
@@ -213,7 +251,11 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
 
   // Turn-running engine profiles: each runs the SAME turn, so each must grant
   // the whole engine env surface (minus HTTP-transport-specific vars).
-  const ENGINE_PROFILES = ["workbench", "workbench-http", "serve-unix"] as const;
+  const ENGINE_PROFILES = [
+    "workbench",
+    "workbench-http",
+    "serve-unix",
+  ] as const;
 
   // Every engine entrypoint calls loadSecretsConfig() / resolveSecretsIntoEnv()
   // at boot, which reads HOME (configFilePath fallback when DYFJ_ROOT is unset)
@@ -257,7 +299,8 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
       const granted = profileEnv(profile);
       const missing = engineEnv.filter(
         (e) =>
-          !granted.has(e) && !(profile !== "workbench-http" && HTTP_ONLY.has(e)),
+          !granted.has(e) &&
+          !(profile !== "workbench-http" && HTTP_ONLY.has(e)),
       );
       expect(missing).toEqual([]);
     });
@@ -494,7 +537,10 @@ describe("parseSecretsConfig", () => {
     expect(() =>
       parseSecretsConfig(
         {
-          secrets: { command: ["op", "read"], inherit_env: ["ANTHROPIC_API_KEY"] },
+          secrets: {
+            command: ["op", "read"],
+            inherit_env: ["ANTHROPIC_API_KEY"],
+          },
         },
         PATH,
       )
@@ -562,7 +608,9 @@ describe("parseSecretsConfig", () => {
   });
 
   test("a security-relevant [secrets.env] name (PATH/HOME/linker) is rejected", () => {
-    for (const name of ["PATH", "HOME", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD"]) {
+    for (
+      const name of ["PATH", "HOME", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD"]
+    ) {
       expect(() =>
         parseSecretsConfig(
           { secrets: { command: ["op", "read"], env: { [name]: "/evil" } } },

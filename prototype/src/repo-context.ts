@@ -232,23 +232,18 @@ export const AGENTS_INSTRUCTIONS_TOKEN_LIMIT = 4_000;
 // boundary cannot survive, because the token truncation slices far below it.
 export const AGENTS_INSTRUCTIONS_MAX_READ_BYTES = 64 * 1024;
 
-async function readBoundedText(
-  filePath: string,
+async function readBoundedTextFrom(
+  file: Deno.FsFile,
   maxBytes: number,
 ): Promise<string> {
-  const file = await Deno.open(filePath, { read: true });
-  try {
-    const buf = new Uint8Array(maxBytes);
-    let filled = 0;
-    while (filled < buf.length) {
-      const n = await file.read(buf.subarray(filled));
-      if (n === null) break;
-      filled += n;
-    }
-    return new TextDecoder("utf-8").decode(buf.subarray(0, filled));
-  } finally {
-    file.close();
+  const buf = new Uint8Array(maxBytes);
+  let filled = 0;
+  while (filled < buf.length) {
+    const n = await file.read(buf.subarray(filled));
+    if (n === null) break;
+    filled += n;
   }
+  return new TextDecoder("utf-8").decode(buf.subarray(0, filled));
 }
 
 // Agent-mode (companion) instructions discovery — CONTAINED to the selected
@@ -260,10 +255,11 @@ async function readBoundedText(
 //   that is a subdirectory of a larger repo degrades to graceful absence;
 //   richer boundary semantics are a separate design question (walk-up vs
 //   fence), not this loader's.
-// - The root is canonicalized and the candidate is checked with lstat: a
-//   symlinked AGENTS.md is rejected, so the file that is read is a regular
-//   file physically inside the workspace — provenance in the receipt
-//   ("AGENTS.md" in this workspace) is true by construction.
+// - The root is canonicalized and the candidate is checked with lstat (a
+//   symlinked AGENTS.md is rejected), and the check is coupled to the read:
+//   the opened handle's device+inode must match the checked identity, so a
+//   path swapped between check and open is refused. The receipt's
+//   workspace-local provenance is verified, not assumed.
 // - Absence (no file) is silent null. Any OTHER failure — permissions, I/O —
 //   also returns null so the session proceeds, but logs a summarized warning:
 //   a failure must not masquerade as "this workspace has no instructions".
@@ -275,11 +271,12 @@ export async function loadAgentsInstructions(
   startDir: string,
 ): Promise<AgentsInstructions | null> {
   let candidate: string;
+  let checked: Deno.FileInfo;
   try {
     const root = await Deno.realPath(startDir);
     candidate = path.join(root, "AGENTS.md");
-    const info = await Deno.lstat(candidate);
-    if (!info.isFile) {
+    checked = await Deno.lstat(candidate);
+    if (!checked.isFile) {
       // A symlink (or anything else non-regular) named AGENTS.md could point
       // outside the workspace; refusing it keeps discovery contained and the
       // receipt's workspace-local provenance honest.
@@ -294,10 +291,33 @@ export async function loadAgentsInstructions(
     return null;
   }
   try {
-    const body = await readBoundedText(
-      candidate,
-      AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
-    );
+    const file = await Deno.open(candidate, { read: true });
+    let body: string;
+    try {
+      // TOCTOU guard: the no-follow lstat above and this open are two
+      // operations on a PATHNAME, and a concurrent swap between them could
+      // replace the checked regular file with a symlink the open would
+      // follow. So the check is coupled to the opened file: the OPEN
+      // HANDLE's identity (device + inode) must match what lstat checked,
+      // or the file is refused. Identity unavailable (non-POSIX) also
+      // refuses — fail closed rather than read an unverified file.
+      const opened = await file.stat();
+      if (
+        checked.dev === null || checked.ino === null ||
+        opened.dev !== checked.dev || opened.ino !== checked.ino
+      ) {
+        console.warn(
+          "AGENTS.md skipped: file identity changed between check and open",
+        );
+        return null;
+      }
+      body = await readBoundedTextFrom(
+        file,
+        AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
+      );
+    } finally {
+      file.close();
+    }
     const capped = truncateSectionBody(
       "AGENTS.md",
       body,
