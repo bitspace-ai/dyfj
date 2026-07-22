@@ -1507,6 +1507,14 @@ describe("runWorkbenchRuntime observer events", () => {
       expect(params.systemPrompt).toContain(
         "## AGENTS.md\n# Repo Rules\n\nLog friction to the pilot register.",
       );
+
+      // The receipt surface agrees with the prompt: the session record's
+      // context sources carry the AGENTS.md line, not just a bumped count.
+      expect(runtimeMocks.sessions.length).toBeGreaterThan(0);
+      const sessionContent = String(
+        (runtimeMocks.sessions[0] as { content?: unknown }).content ?? "",
+      );
+      expect(sessionContent).toContain("AGENTS.md <AGENTS.md>");
     });
 
     test("omits the AGENTS.md source gracefully when absent", async () => {

@@ -215,20 +215,43 @@ export interface AgentsInstructions {
   source: ContextSource;
 }
 
+// The agent-mode instructions budget. Unlike ask-mode — where AGENTS.md rides
+// the packed-section machinery under a shared ContextBudget — the companion
+// injection is a single section, so it carries its own cap. The system prompt
+// is never compressed (the compressor's contract covers conversation turns
+// only), so an unbounded body here would be a silent per-turn tax for the
+// session's whole life. 4,000 tokens (~16KB) passes real instruction files
+// with room to spare; it exists to bound pathology, not to trim normal repos.
+export const AGENTS_INSTRUCTIONS_TOKEN_LIMIT = 4_000;
+
 // Agent-mode (companion) injection: reuse the same walk-up discovery as
 // ask-mode (findRepoRoot requires AGENTS.md + README.md sibling markers),
 // but return only the AGENTS.md body — no README section, no notes, no
 // profile/budget packing. Returns null when no AGENTS.md exists at/above
-// startDir so callers can omit the source gracefully.
+// startDir so callers can omit the source gracefully. An over-budget body is
+// truncated with an explicit marker, and the source label flips to
+// "AGENTS.md excerpt" (the compact-profile precedent) so the receipt reports
+// what actually entered the prompt.
 export async function loadAgentsInstructions(
   startDir: string,
 ): Promise<AgentsInstructions | null> {
   try {
     const repoRoot = await findRepoRoot(startDir);
     const body = await readRepoFile(repoRoot, "AGENTS.md");
-    return {
+    const capped = truncateSectionBody(
+      "AGENTS.md",
       body,
-      source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+      AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
+    );
+    if (capped === body.trimEnd()) {
+      return {
+        body,
+        source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+      };
+    }
+    return {
+      body: `${capped}\n\n[AGENTS.md truncated at ~${AGENTS_INSTRUCTIONS_TOKEN_LIMIT} tokens; read AGENTS.md in the workspace for the rest]`,
+      source: { kind: "file", label: "AGENTS.md excerpt", path: "AGENTS.md" },
     };
   } catch {
     return null;

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
   buildAskSystemPrompt,
   buildContextSourceLines,
   COMPACT_CONTEXT_BUDGET,
@@ -252,6 +253,32 @@ describe("loadAgentsInstructions", () => {
       const result = await loadAgentsInstructions(dir);
       expect(result?.body.trim()).toBe("# Flat Rules");
       expect(result?.source.label).toBe("AGENTS.md");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("caps an oversized AGENTS.md with a marker and an excerpt-labeled source", async () => {
+    // The system prompt is never compressed, so the injected body must be
+    // bounded here — and the receipt must say an excerpt entered the prompt,
+    // not the whole file.
+    const dir = await Deno.makeTempDir({ prefix: "agents-instructions-big-" });
+    try {
+      const oversized = "# Giant Rules\n\n" +
+        "All work must be receipted. ".repeat(10_000); // ~70K tokens
+      await Deno.writeTextFile(path.join(dir, "AGENTS.md"), oversized);
+      await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+
+      const result = await loadAgentsInstructions(dir);
+      expect(result).not.toBeNull();
+      expect(estimateContextTokens(result!.body))
+        .toBeLessThanOrEqual(AGENTS_INSTRUCTIONS_TOKEN_LIMIT + 50);
+      expect(result!.body).toContain("[AGENTS.md truncated at");
+      expect(result!.source).toEqual({
+        kind: "file",
+        label: "AGENTS.md excerpt",
+        path: "AGENTS.md",
+      });
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
