@@ -306,10 +306,13 @@ export async function loadAgentsInstructions(
       // or the file is refused. Identity unavailable (non-POSIX) also
       // refuses — fail closed rather than read an unverified file.
       const opened = await file.stat();
-      if (
-        checked.dev === null || checked.ino === null ||
-        opened.dev !== checked.dev || opened.ino !== checked.ino
-      ) {
+      if (checked.dev === null || checked.ino === null) {
+        console.warn(
+          "AGENTS.md skipped: file identity unavailable on this platform",
+        );
+        return null;
+      }
+      if (opened.dev !== checked.dev || opened.ino !== checked.ino) {
         console.warn(
           "AGENTS.md skipped: file identity changed between check and open",
         );
