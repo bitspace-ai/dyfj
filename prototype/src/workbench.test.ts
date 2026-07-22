@@ -84,6 +84,9 @@ const runtimeMocks = vi.hoisted(() => {
     // whether the mocked adapter honors params.messages (transcript retry);
     // flip to false to exercise the Google-style no-retry path.
     supportsTranscriptRetry: true,
+    // When set, the workspace path the session row hands back on resume —
+    // exercises the persisted-workspace resolution path.
+    sessionWorkspace: null as string | null,
     // When set, what the mocked invokeCommandWithEvent returns — lets a test
     // exercise the loop's handling of a denied/failed tool call.
     commandResult: null as
@@ -313,7 +316,7 @@ vi.mock("./sessions", () => ({
   createWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessions.push(input);
   },
-  fetchWorkbenchSessionWorkspace: async () => null,
+  fetchWorkbenchSessionWorkspace: async () => runtimeMocks.sessionWorkspace,
   updateWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessionUpdates.push(input);
   },
@@ -326,6 +329,7 @@ beforeEach(() => {
   runtimeMocks.commandResult = null;
   runtimeMocks.commandThrows = null;
   runtimeMocks.agentsInstructions = null;
+  runtimeMocks.sessionWorkspace = null;
   runtimeMocks.failEventMessage = null;
   runtimeMocks.failEventErrorName = null;
   runtimeMocks.ulid = 0;
@@ -1659,6 +1663,75 @@ describe("runWorkbenchRuntime observer events", () => {
         (runtimeMocks.sessions[0] as { content?: unknown }).content ?? "",
       );
       expect(sessionContent).not.toContain("AGENTS.md <AGENTS.md>");
+    });
+
+    test("a failed explicit workspace request suppresses instruction elevation from the fallback root", async () => {
+      // The operator's trust names a workspace; when that workspace fails
+      // resolution the file tools may fall back to the default root, but
+      // instructions must NOT: elevating the fallback root's AGENTS.md
+      // would grant system-prompt authority — and possible hosted egress —
+      // to a root the operator never selected, under a receipt that cannot
+      // tell the difference.
+      runtimeMocks.agentsInstructions = {
+        body: "# Fallback-root rules that must not be elevated",
+        source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+      };
+      const { runWorkbenchRuntime } = await import("./workbench");
+      const events: unknown[] = [];
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "hello",
+        routingOptions: {},
+        trustWorkspaceInstructions: true,
+        workspaceRoot: "/nonexistent-workspace-for-elevation-test",
+        onRuntimeEvent: (event) => {
+          events.push(event);
+        },
+      });
+
+      expect(result.text).toBe("runtime response");
+      const params = runtimeMocks.runWorkbenchTurn.mock
+        .calls[0][0] as Record<string, unknown>;
+      const systemPrompt = String(params.systemPrompt);
+      expect(systemPrompt).not.toContain("## AGENTS.md");
+      expect(systemPrompt).not.toContain("Fallback-root rules");
+      const contextBuilt = events.find(
+        (event) => (event as { type: string }).type === "contextBuilt",
+      ) as Record<string, unknown> | undefined;
+      expect(contextBuilt?.sourceCount).toBe(2);
+      const sessionContent = String(
+        (runtimeMocks.sessions[0] as { content?: unknown }).content ?? "",
+      );
+      expect(sessionContent).not.toContain("AGENTS.md <AGENTS.md>");
+    });
+
+    test("a stale resumed workspace suppresses instruction elevation (resume path)", async () => {
+      // Same contract through the session row: a workspace persisted at
+      // creation can be deleted or unmounted by resume time. The stale path
+      // fails resolution, so elevation is suppressed rather than silently
+      // rebound to the fallback root.
+      runtimeMocks.agentsInstructions = {
+        body: "# Fallback-root rules that must not be elevated",
+        source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
+      };
+      runtimeMocks.sessionWorkspace = "/nonexistent-workspace-for-resume-test";
+      const { runWorkbenchRuntime } = await import("./workbench");
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "hello",
+        routingOptions: {},
+        trustWorkspaceInstructions: true,
+        sessionId: "01TEST00000000000000000001",
+      });
+
+      expect(result.text).toBe("runtime response");
+      const params = runtimeMocks.runWorkbenchTurn.mock
+        .calls[0][0] as Record<string, unknown>;
+      const systemPrompt = String(params.systemPrompt);
+      expect(systemPrompt).not.toContain("## AGENTS.md");
+      expect(systemPrompt).not.toContain("Fallback-root rules");
     });
 
     test("omits the AGENTS.md source gracefully when absent", async () => {

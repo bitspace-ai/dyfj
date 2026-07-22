@@ -1703,17 +1703,26 @@ export async function runWorkbenchRuntime(
       // else fall back to the server default. Containment within the root is
       // enforced per call by the file tools regardless of which root wins here.
       let workspaceRoot = fallbackRoot;
+      // A failed EXPLICIT workspace request poisons instruction elevation:
+      // the file tools may fall back to the default root (containment is
+      // per-call), but the operator's trust named a workspace that did not
+      // resolve, and elevating the fallback root's AGENTS.md in its place
+      // would grant system-prompt authority — and possible hosted egress —
+      // to instructions from a root the operator never selected.
+      let workspaceResolutionFailed = false;
       if (honoredWorkspace) {
         try {
           const real = await Deno.realPath(honoredWorkspace);
           if ((await Deno.stat(real)).isDirectory) {
             workspaceRoot = real;
           } else {
+            workspaceResolutionFailed = true;
             log(
               "Requested workspace is not a directory; using default.",
             );
           }
         } catch {
+          workspaceResolutionFailed = true;
           log("Requested workspace not accessible; using default.");
         }
       }
@@ -1740,11 +1749,22 @@ export async function runWorkbenchRuntime(
       // The transport check is a structural backstop: the turn-runner wrapper
       // already forces the flag off for non-loopback callers, but the
       // loopback-only contract must hold even for a future direct caller of
-      // the runtime core that passes the flag itself.
-      const agentsInstructions = authContext.transport === "loopback" &&
-          runtimeInput.trustWorkspaceInstructions
-        ? await loadAgentsInstructions(workspaceRoot)
-        : null;
+      // the runtime core that passes the flag itself. A failed explicit
+      // workspace request suppresses injection entirely (see above): trust
+      // binds to the workspace the operator selected, never to whatever
+      // root the tools fell back to.
+      const workspaceTrustEligible = authContext.transport === "loopback" &&
+        runtimeInput.trustWorkspaceInstructions === true;
+      if (workspaceTrustEligible && workspaceResolutionFailed) {
+        log(
+          "AGENTS.md skipped: the requested workspace failed resolution; " +
+            "instructions are not loaded from the fallback root.\n",
+        );
+      }
+      const agentsInstructions =
+        workspaceTrustEligible && !workspaceResolutionFailed
+          ? await loadAgentsInstructions(workspaceRoot)
+          : null;
       if (agentsInstructions) {
         // Repository instructions enter the trusted channel because the
         // operator's standing posture elevates workspace instructions —
