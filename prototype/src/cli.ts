@@ -458,13 +458,15 @@ export interface SessionPosture {
   /** Standing paid posture from engine config (approve_paid_default). */
   approvePaidDefault?: boolean;
   permissionLevel?: string;
+  /** Standing workspace-instruction trust from engine config (trust_workspace_instructions). */
+  trustWorkspaceInstructions?: boolean;
 }
 
 /**
  * One plain stderr line stating the routing/spend/permission posture: model,
- * tier, local vs hosted, paid posture, permission level. Printed at REPL start
- * and after every /model switch; deliberately uncolored so NO_COLOR and
- * non-TTY output carry the identical bytes.
+ * tier, local vs hosted, paid posture, permission level, and whether workspace
+ * instructions are trusted. Printed at REPL start and after every /model switch;
+ * deliberately uncolored so NO_COLOR and non-TTY output carry the identical bytes.
  */
 export function formatPostureLine(posture: SessionPosture): string {
   const tier = posture.tier !== undefined ? `tier ${posture.tier}` : "tier ?";
@@ -478,8 +480,12 @@ export function formatPostureLine(posture: SessionPosture): string {
     : posture.approvePaidDefault === true
     ? "paid approved (standing config)"
     : "paid off (hosted turns fail closed)";
+  const workspace = posture.trustWorkspaceInstructions === true
+    ? "trusted"
+    : "off";
   return `posture: ${posture.slug} · ${tier} · ${locality} · ${paid} · ` +
-    `permission ${posture.permissionLevel ?? "unknown"}`;
+    `permission ${posture.permissionLevel ?? "unknown"} · ` +
+    `workspace instructions: ${workspace}`;
 }
 
 // A server-side error message can embed the full offending payload (e.g. a
@@ -684,6 +690,7 @@ interface RuntimeStatusPayload {
     } | null;
     permissionLevel?: string;
     approvePaidDefault?: boolean;
+    trustWorkspaceInstructions?: boolean;
     defaultSessionBudgetUsd?: number;
     defaultPerCallBudgetUsd?: number;
     defaultDailyBudgetUsd?: number;
@@ -938,6 +945,7 @@ export async function fetchSessionPosture(
         approvePaidSession: config.approvePaid === true,
         approvePaidDefault: runtime?.approvePaidDefault,
         permissionLevel: runtime?.permissionLevel,
+        trustWorkspaceInstructions: runtime?.trustWorkspaceInstructions,
       };
     } finally {
       client.close();
@@ -1125,6 +1133,9 @@ export function formatRuntimeStatus(
     `permission: ${runtime.permissionLevel ?? "unknown"}`,
     `approve paid default: ${
       runtime.approvePaidDefault === true ? "yes" : "no"
+    }`,
+    `workspace instructions: ${
+      runtime.trustWorkspaceInstructions === true ? "trusted" : "off"
     }`,
     `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
       (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
