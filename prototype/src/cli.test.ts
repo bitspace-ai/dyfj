@@ -26,10 +26,10 @@ import {
   readLauncherSecretsConfig,
   readLineOrNull,
   readMemoryMcpNetGrant,
-  replPrompt,
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
   readServeUnixRunGrants,
+  replPrompt,
   resolveConfig,
   runExec,
   runModels,
@@ -1170,9 +1170,49 @@ describe("runtime lifecycle commands", () => {
     expect(text).toContain("qwen-local");
     expect(text).toContain("3 total");
     expect(text).toContain("methods: 2");
+    // The runtime omits the trust field here (older/incomplete response), so the
+    // stance is unknown — never asserted "off" without evidence.
+    expect(text).toContain("workspace instructions: unknown");
     // No server-resolved bare-turn route in the payload (older server) — the
     // line is omitted rather than rendered with unknowns.
     expect(text).not.toContain("bare-turn route");
+  });
+
+  test("formatRuntimeStatus reports the workspace-instruction trust state", () => {
+    const render = (trust?: boolean) =>
+      formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
+        runtime: {
+          transport: "uds",
+          clearance: "loopback",
+          ...(trust === undefined ? {} : { trustWorkspaceInstructions: trust }),
+        },
+      });
+    expect(render(true)).toContain("workspace instructions: trusted");
+    // Literal false pins "off" to real evidence, never inferred from absence.
+    expect(render(false)).toContain("workspace instructions: off");
+    expect(render(undefined)).toContain("workspace instructions: unknown");
+  });
+
+  test("malformed trust values render unknown on both surfaces — literal booleans only", () => {
+    // The wire value is unvalidated JSON: the TypeScript type says boolean,
+    // but a drifted or buggy runtime can send anything. A stringly "false" is
+    // truthy, and null/0 are falsy-but-not-false — none of them are evidence,
+    // and none may render as a confirmed posture.
+    const malformed: unknown[] = [null, "false", "true", 0, 1, {}, []];
+    for (const value of malformed) {
+      const statusText = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
+        runtime: {
+          trustWorkspaceInstructions: value as unknown as boolean,
+        },
+      });
+      expect(statusText).toContain("workspace instructions: unknown");
+      const postureLine = formatPostureLine({
+        slug: "x",
+        approvePaidSession: false,
+        trustWorkspaceInstructions: value as unknown as boolean,
+      });
+      expect(postureLine).toContain("workspace instructions: unknown");
+    }
   });
 
   test("formatRuntimeStatus shows the resolved bare-turn route when reported", () => {
@@ -1516,7 +1556,11 @@ describe("REPL /model", () => {
       config,
       io,
       fakeConnect(
-        [{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5", tier: 2, local: false }],
+        [{ slug: "claude-opus-4-8" }, {
+          slug: "gpt-5.5",
+          tier: 2,
+          local: false,
+        }],
         { permissionLevel: "operator" },
       ),
     );
@@ -1524,7 +1568,7 @@ describe("REPL /model", () => {
     expect(stderr.join("\n")).toContain("active model: gpt-5.5");
     expect(stderr.join("\n")).toContain("claude-opus-4-8");
     expect(stderr.join("\n")).toContain(
-      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator",
+      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
     );
   });
 
@@ -1536,14 +1580,18 @@ describe("REPL /model", () => {
       config,
       io,
       fakeConnect(
-        [{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5", tier: 2, local: false }],
+        [{ slug: "claude-opus-4-8" }, {
+          slug: "gpt-5.5",
+          tier: 2,
+          local: false,
+        }],
         { permissionLevel: "strict" },
       ),
     );
     expect(handled).toBe(true);
     expect(config.model).toBe("gpt-5.5");
     expect(stderr.join("\n")).toContain(
-      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict",
+      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict · workspace instructions: unknown",
     );
   });
 
@@ -1600,7 +1648,7 @@ describe("session posture", () => {
         permissionLevel: "operator",
       }),
     ).toBe(
-      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator",
+      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
     );
     expect(
       formatPostureLine({
@@ -1611,7 +1659,7 @@ describe("session posture", () => {
         permissionLevel: "strict",
       }),
     ).toBe(
-      "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (session) · permission strict",
+      "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (session) · permission strict · workspace instructions: unknown",
     );
     expect(
       formatPostureLine({
@@ -1620,8 +1668,34 @@ describe("session posture", () => {
         approvePaidDefault: true,
       }),
     ).toBe(
-      "posture: x · tier ? · locality unknown · paid approved (standing config) · permission unknown",
+      "posture: x · tier ? · locality unknown · paid approved (standing config) · permission unknown · workspace instructions: unknown",
     );
+  });
+
+  test("formatPostureLine surfaces the workspace-instruction trust state", () => {
+    // The operator must see the trust stance on the same line they read at
+    // session start — never discover a permissive stance after the fact. The
+    // three states are distinct: an absent field is missing evidence
+    // ("unknown"), not a confirmed-off stance.
+    const base = {
+      slug: "qwen-local",
+      tier: 0,
+      local: true,
+      approvePaidSession: false,
+      approvePaidDefault: false,
+      permissionLevel: "operator",
+    };
+    const line = "posture: qwen-local · tier 0 · local · " +
+      "paid off (hosted turns fail closed) · permission operator · " +
+      "workspace instructions: ";
+    expect(
+      formatPostureLine({ ...base, trustWorkspaceInstructions: true }),
+    ).toBe(`${line}trusted`);
+    // Literal false pins "off" to real evidence, never inferred from absence.
+    expect(
+      formatPostureLine({ ...base, trustWorkspaceInstructions: false }),
+    ).toBe(`${line}off`);
+    expect(formatPostureLine(base)).toBe(`${line}unknown`);
   });
 
   function postureConnect(
@@ -1656,7 +1730,20 @@ describe("session posture", () => {
       approvePaidSession: false,
       approvePaidDefault: false,
       permissionLevel: "operator",
+      trustWorkspaceInstructions: undefined,
     });
+  });
+
+  test("fetchSessionPosture carries the runtime's workspace-instruction trust", async () => {
+    const posture = await fetchSessionPosture(
+      cfg(),
+      postureConnect({
+        defaultTurnModel: { slug: "qwen-local", tier: 0, local: true },
+        permissionLevel: "operator",
+        trustWorkspaceInstructions: true,
+      }),
+    );
+    expect(posture).toMatchObject({ trustWorkspaceInstructions: true });
   });
 
   test("fetchSessionPosture resolves an explicit model from the model list", async () => {
@@ -1719,7 +1806,7 @@ describe("session posture", () => {
       }),
     );
     expect(stderr.join("\n")).toContain(
-      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator",
+      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
     );
   });
 

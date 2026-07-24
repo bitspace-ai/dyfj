@@ -440,7 +440,8 @@ export function formatReceipt(
   const reasoning = (result.tokens.reasoning ?? 0) > 0
     ? ` (+${result.tokens.reasoning} reasoning)`
     : "";
-  const tokens = `${result.tokens.input}→${result.tokens.output} tok${reasoning}`;
+  const tokens =
+    `${result.tokens.input}→${result.tokens.output} tok${reasoning}`;
   return dim(
     `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${result.route.reason}`,
   );
@@ -458,13 +459,15 @@ export interface SessionPosture {
   /** Standing paid posture from engine config (approve_paid_default). */
   approvePaidDefault?: boolean;
   permissionLevel?: string;
+  /** Standing workspace-instruction trust from engine config (trust_workspace_instructions). */
+  trustWorkspaceInstructions?: boolean;
 }
 
 /**
  * One plain stderr line stating the routing/spend/permission posture: model,
- * tier, local vs hosted, paid posture, permission level. Printed at REPL start
- * and after every /model switch; deliberately uncolored so NO_COLOR and
- * non-TTY output carry the identical bytes.
+ * tier, local vs hosted, paid posture, permission level, and whether workspace
+ * instructions are trusted. Printed at REPL start and after every /model switch;
+ * deliberately uncolored so NO_COLOR and non-TTY output carry the identical bytes.
  */
 export function formatPostureLine(posture: SessionPosture): string {
   const tier = posture.tier !== undefined ? `tier ${posture.tier}` : "tier ?";
@@ -478,8 +481,20 @@ export function formatPostureLine(posture: SessionPosture): string {
     : posture.approvePaidDefault === true
     ? "paid approved (standing config)"
     : "paid off (hosted turns fail closed)";
+  // Three states, mirroring the locality/permission convention above: an absent
+  // field is missing evidence, not a confirmed-off stance — say "unknown" rather
+  // than overclaiming a reassuring "off" the runtime never reported.
+  // Strict classification: the wire value is unvalidated JSON, so "trusted"
+  // and "off" require the literal booleans — every other shape (absent, null,
+  // a stringly "false", 0) is missing evidence and renders "unknown".
+  const workspace = posture.trustWorkspaceInstructions === true
+    ? "trusted"
+    : posture.trustWorkspaceInstructions === false
+    ? "off"
+    : "unknown";
   return `posture: ${posture.slug} · ${tier} · ${locality} · ${paid} · ` +
-    `permission ${posture.permissionLevel ?? "unknown"}`;
+    `permission ${posture.permissionLevel ?? "unknown"} · ` +
+    `workspace instructions: ${workspace}`;
 }
 
 // A server-side error message can embed the full offending payload (e.g. a
@@ -684,6 +699,7 @@ interface RuntimeStatusPayload {
     } | null;
     permissionLevel?: string;
     approvePaidDefault?: boolean;
+    trustWorkspaceInstructions?: boolean;
     defaultSessionBudgetUsd?: number;
     defaultPerCallBudgetUsd?: number;
     defaultDailyBudgetUsd?: number;
@@ -938,6 +954,7 @@ export async function fetchSessionPosture(
         approvePaidSession: config.approvePaid === true,
         approvePaidDefault: runtime?.approvePaidDefault,
         permissionLevel: runtime?.permissionLevel,
+        trustWorkspaceInstructions: runtime?.trustWorkspaceInstructions,
       };
     } finally {
       client.close();
@@ -1126,6 +1143,14 @@ export function formatRuntimeStatus(
     `approve paid default: ${
       runtime.approvePaidDefault === true ? "yes" : "no"
     }`,
+    `workspace instructions: ${
+      // Strict, matching formatPostureLine: literal booleans only; any other
+      // wire shape is missing evidence, not a confirmed posture.
+      runtime.trustWorkspaceInstructions === true
+        ? "trusted"
+        : runtime.trustWorkspaceInstructions === false
+        ? "off"
+        : "unknown"}`,
     `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
       (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
     } day · $${(runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)} per call`,
