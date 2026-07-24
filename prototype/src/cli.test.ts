@@ -26,10 +26,10 @@ import {
   readLauncherSecretsConfig,
   readLineOrNull,
   readMemoryMcpNetGrant,
-  replPrompt,
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
   readServeUnixRunGrants,
+  replPrompt,
   resolveConfig,
   runExec,
   runModels,
@@ -1193,6 +1193,28 @@ describe("runtime lifecycle commands", () => {
     expect(render(undefined)).toContain("workspace instructions: unknown");
   });
 
+  test("malformed trust values render unknown on both surfaces — literal booleans only", () => {
+    // The wire value is unvalidated JSON: the TypeScript type says boolean,
+    // but a drifted or buggy runtime can send anything. A stringly "false" is
+    // truthy, and null/0 are falsy-but-not-false — none of them are evidence,
+    // and none may render as a confirmed posture.
+    const malformed: unknown[] = [null, "false", "true", 0, 1, {}, []];
+    for (const value of malformed) {
+      const statusText = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
+        runtime: {
+          trustWorkspaceInstructions: value as unknown as boolean,
+        },
+      });
+      expect(statusText).toContain("workspace instructions: unknown");
+      const postureLine = formatPostureLine({
+        slug: "x",
+        approvePaidSession: false,
+        trustWorkspaceInstructions: value as unknown as boolean,
+      });
+      expect(postureLine).toContain("workspace instructions: unknown");
+    }
+  });
+
   test("formatRuntimeStatus shows the resolved bare-turn route when reported", () => {
     const text = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
       runtime: {
@@ -1534,7 +1556,11 @@ describe("REPL /model", () => {
       config,
       io,
       fakeConnect(
-        [{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5", tier: 2, local: false }],
+        [{ slug: "claude-opus-4-8" }, {
+          slug: "gpt-5.5",
+          tier: 2,
+          local: false,
+        }],
         { permissionLevel: "operator" },
       ),
     );
@@ -1554,7 +1580,11 @@ describe("REPL /model", () => {
       config,
       io,
       fakeConnect(
-        [{ slug: "claude-opus-4-8" }, { slug: "gpt-5.5", tier: 2, local: false }],
+        [{ slug: "claude-opus-4-8" }, {
+          slug: "gpt-5.5",
+          tier: 2,
+          local: false,
+        }],
         { permissionLevel: "strict" },
       ),
     );

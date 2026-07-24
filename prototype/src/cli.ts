@@ -440,7 +440,8 @@ export function formatReceipt(
   const reasoning = (result.tokens.reasoning ?? 0) > 0
     ? ` (+${result.tokens.reasoning} reasoning)`
     : "";
-  const tokens = `${result.tokens.input}→${result.tokens.output} tok${reasoning}`;
+  const tokens =
+    `${result.tokens.input}→${result.tokens.output} tok${reasoning}`;
   return dim(
     `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${result.route.reason}`,
   );
@@ -483,11 +484,14 @@ export function formatPostureLine(posture: SessionPosture): string {
   // Three states, mirroring the locality/permission convention above: an absent
   // field is missing evidence, not a confirmed-off stance — say "unknown" rather
   // than overclaiming a reassuring "off" the runtime never reported.
-  const workspace = posture.trustWorkspaceInstructions === undefined
-    ? "unknown"
-    : posture.trustWorkspaceInstructions
+  // Strict classification: the wire value is unvalidated JSON, so "trusted"
+  // and "off" require the literal booleans — every other shape (absent, null,
+  // a stringly "false", 0) is missing evidence and renders "unknown".
+  const workspace = posture.trustWorkspaceInstructions === true
     ? "trusted"
-    : "off";
+    : posture.trustWorkspaceInstructions === false
+    ? "off"
+    : "unknown";
   return `posture: ${posture.slug} · ${tier} · ${locality} · ${paid} · ` +
     `permission ${posture.permissionLevel ?? "unknown"} · ` +
     `workspace instructions: ${workspace}`;
@@ -1140,12 +1144,13 @@ export function formatRuntimeStatus(
       runtime.approvePaidDefault === true ? "yes" : "no"
     }`,
     `workspace instructions: ${
-      runtime.trustWorkspaceInstructions === undefined
-        ? "unknown"
-        : runtime.trustWorkspaceInstructions
+      // Strict, matching formatPostureLine: literal booleans only; any other
+      // wire shape is missing evidence, not a confirmed posture.
+      runtime.trustWorkspaceInstructions === true
         ? "trusted"
-        : "off"
-    }`,
+        : runtime.trustWorkspaceInstructions === false
+        ? "off"
+        : "unknown"}`,
     `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
       (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
     } day · $${(runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)} per call`,
