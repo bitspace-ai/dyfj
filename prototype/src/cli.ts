@@ -480,7 +480,12 @@ export function formatPostureLine(posture: SessionPosture): string {
     : posture.approvePaidDefault === true
     ? "paid approved (standing config)"
     : "paid off (hosted turns fail closed)";
-  const workspace = posture.trustWorkspaceInstructions === true
+  // Three states, mirroring the locality/permission convention above: an absent
+  // field is missing evidence, not a confirmed-off stance — say "unknown" rather
+  // than overclaiming a reassuring "off" the runtime never reported.
+  const workspace = posture.trustWorkspaceInstructions === undefined
+    ? "unknown"
+    : posture.trustWorkspaceInstructions
     ? "trusted"
     : "off";
   return `posture: ${posture.slug} · ${tier} · ${locality} · ${paid} · ` +
@@ -1135,7 +1140,11 @@ export function formatRuntimeStatus(
       runtime.approvePaidDefault === true ? "yes" : "no"
     }`,
     `workspace instructions: ${
-      runtime.trustWorkspaceInstructions === true ? "trusted" : "off"
+      runtime.trustWorkspaceInstructions === undefined
+        ? "unknown"
+        : runtime.trustWorkspaceInstructions
+        ? "trusted"
+        : "off"
     }`,
     `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
       (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)

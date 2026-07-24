@@ -1170,22 +1170,27 @@ describe("runtime lifecycle commands", () => {
     expect(text).toContain("qwen-local");
     expect(text).toContain("3 total");
     expect(text).toContain("methods: 2");
-    // Trust defaults to the fail-closed stance when the runtime reports it off.
-    expect(text).toContain("workspace instructions: off");
+    // The runtime omits the trust field here (older/incomplete response), so the
+    // stance is unknown — never asserted "off" without evidence.
+    expect(text).toContain("workspace instructions: unknown");
     // No server-resolved bare-turn route in the payload (older server) — the
     // line is omitted rather than rendered with unknowns.
     expect(text).not.toContain("bare-turn route");
   });
 
-  test("formatRuntimeStatus reports trusted workspace instructions", () => {
-    const text = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
-      runtime: {
-        transport: "uds",
-        clearance: "loopback",
-        trustWorkspaceInstructions: true,
-      },
-    });
-    expect(text).toContain("workspace instructions: trusted");
+  test("formatRuntimeStatus reports the workspace-instruction trust state", () => {
+    const render = (trust?: boolean) =>
+      formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
+        runtime: {
+          transport: "uds",
+          clearance: "loopback",
+          ...(trust === undefined ? {} : { trustWorkspaceInstructions: trust }),
+        },
+      });
+    expect(render(true)).toContain("workspace instructions: trusted");
+    // Literal false pins "off" to real evidence, never inferred from absence.
+    expect(render(false)).toContain("workspace instructions: off");
+    expect(render(undefined)).toContain("workspace instructions: unknown");
   });
 
   test("formatRuntimeStatus shows the resolved bare-turn route when reported", () => {
@@ -1537,7 +1542,7 @@ describe("REPL /model", () => {
     expect(stderr.join("\n")).toContain("active model: gpt-5.5");
     expect(stderr.join("\n")).toContain("claude-opus-4-8");
     expect(stderr.join("\n")).toContain(
-      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator · workspace instructions: off",
+      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
     );
   });
 
@@ -1556,7 +1561,7 @@ describe("REPL /model", () => {
     expect(handled).toBe(true);
     expect(config.model).toBe("gpt-5.5");
     expect(stderr.join("\n")).toContain(
-      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict · workspace instructions: off",
+      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict · workspace instructions: unknown",
     );
   });
 
@@ -1613,7 +1618,7 @@ describe("session posture", () => {
         permissionLevel: "operator",
       }),
     ).toBe(
-      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: off",
+      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
     );
     expect(
       formatPostureLine({
@@ -1624,7 +1629,7 @@ describe("session posture", () => {
         permissionLevel: "strict",
       }),
     ).toBe(
-      "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (session) · permission strict · workspace instructions: off",
+      "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (session) · permission strict · workspace instructions: unknown",
     );
     expect(
       formatPostureLine({
@@ -1633,26 +1638,34 @@ describe("session posture", () => {
         approvePaidDefault: true,
       }),
     ).toBe(
-      "posture: x · tier ? · locality unknown · paid approved (standing config) · permission unknown · workspace instructions: off",
+      "posture: x · tier ? · locality unknown · paid approved (standing config) · permission unknown · workspace instructions: unknown",
     );
   });
 
-  test("formatPostureLine surfaces trusted workspace instructions", () => {
+  test("formatPostureLine surfaces the workspace-instruction trust state", () => {
     // The operator must see the trust stance on the same line they read at
-    // session start — never discover a permissive stance after the fact.
+    // session start — never discover a permissive stance after the fact. The
+    // three states are distinct: an absent field is missing evidence
+    // ("unknown"), not a confirmed-off stance.
+    const base = {
+      slug: "qwen-local",
+      tier: 0,
+      local: true,
+      approvePaidSession: false,
+      approvePaidDefault: false,
+      permissionLevel: "operator",
+    };
+    const line = "posture: qwen-local · tier 0 · local · " +
+      "paid off (hosted turns fail closed) · permission operator · " +
+      "workspace instructions: ";
     expect(
-      formatPostureLine({
-        slug: "qwen-local",
-        tier: 0,
-        local: true,
-        approvePaidSession: false,
-        approvePaidDefault: false,
-        permissionLevel: "operator",
-        trustWorkspaceInstructions: true,
-      }),
-    ).toBe(
-      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: trusted",
-    );
+      formatPostureLine({ ...base, trustWorkspaceInstructions: true }),
+    ).toBe(`${line}trusted`);
+    // Literal false pins "off" to real evidence, never inferred from absence.
+    expect(
+      formatPostureLine({ ...base, trustWorkspaceInstructions: false }),
+    ).toBe(`${line}off`);
+    expect(formatPostureLine(base)).toBe(`${line}unknown`);
   });
 
   function postureConnect(
@@ -1763,7 +1776,7 @@ describe("session posture", () => {
       }),
     );
     expect(stderr.join("\n")).toContain(
-      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: off",
+      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
     );
   });
 
