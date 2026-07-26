@@ -246,7 +246,13 @@ describe("invalid-arguments feedback", () => {
       "invalid arguments for read_file: missing required argument: path",
     );
     // …states the expected shape, with the schema's own description…
-    expect(result.reason).toContain('expected: {"path": string (required)}');
+    // read_file gained optional offset/limit (ranged reads). The corrective
+    // feedback advertises them, which is the point: the model learns the
+    // affordance exists from the error it just caused.
+    expect(result.reason).toContain(
+      'expected: {"path": string (required), "offset": number (optional), ' +
+        '"limit": number (optional)}',
+    );
     expect(result.reason).toContain(
       "path — File path relative to the workspace root.",
     );
@@ -366,6 +372,8 @@ describe("registerCoreCommands", () => {
     expect(registry.list().map((c) => c.id).sort()).toEqual([
       "bash",
       "edit_file",
+      "glob_files",
+      "grep_files",
       "list_files",
       "memory.read",
       "read_file",
@@ -1342,5 +1350,46 @@ describe("read_file → tool_call event containment", () => {
     expect(new TextEncoder().encode(toolResult).byteLength)
       .toBeLessThanOrEqual(EVENT_RESULT_MAX_BYTES);
     expect(toolResult).toContain("event-truncated");
+  });
+});
+
+describe("registerCoreCommands wiring", () => {
+  // Regression for a real miss: the grep_files/glob_files builders existed, the
+  // executors were unit-tested, and evaluateCommandPolicy was probed directly —
+  // but the registration lines were never added, so the tools were absent from
+  // the model's toolset and UAT showed the model still shelling out to grep.
+  // Unit tests and direct policy probes both bypass registerCoreCommands. The
+  // toolset assertion above is the guard; these two check what it cannot —
+  // that the tools reach the MODEL, and that they auto-approve once registered.
+  test("the search tools reach the model as projected tools", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+
+    const names = registry.projectTools().map((t) => t.name);
+    expect(names).toContain("grep_files");
+    expect(names).toContain("glob_files");
+  });
+
+  test("registered search tools auto-approve; bash still asks", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+
+    for (const id of ["grep_files", "glob_files"]) {
+      const cmd = registry.lookup(id)!;
+      const result = evaluateCommandPolicy(
+        cmd,
+        call({ pattern: "x" }, { commandId: id }),
+      );
+      expect(result.decision).toBe("allow");
+      expect(result.authzBasis).toBe("policy:allow:read-only-local");
+    }
+
+    const bash = registry.lookup("bash")!;
+    expect(
+      evaluateCommandPolicy(
+        bash,
+        call({ command: "ls" }, { commandId: "bash" }),
+      ).decision,
+    ).toBe("ask");
   });
 });

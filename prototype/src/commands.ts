@@ -2,6 +2,8 @@ import { executeReadMemory } from "./memory";
 import type { PermissionLevel } from "./config";
 import {
   executeEditFile,
+  executeGlobFiles,
+  executeGrepFiles,
   executeListFiles,
   executeReadFile,
   executeWriteFile,
@@ -478,6 +480,16 @@ export function buildReadFileCommand(root: string): CommandDefinition<string> {
           type: "string",
           description: "File path relative to the workspace root.",
         },
+        offset: {
+          type: "number",
+          description:
+            "1-based line to start at. Use with limit to read a large file in " +
+            "pieces instead of shelling out to sed/head/tail.",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of lines to return, starting at offset.",
+        },
       },
       additionalProperties: false,
     },
@@ -489,7 +501,15 @@ export function buildReadFileCommand(root: string): CommandDefinition<string> {
       filesystem: "read",
       cost: "none",
     },
-    executor: (call) => executeReadFile(root, String(call.arguments.path)),
+    executor: (call) =>
+      executeReadFile(root, String(call.arguments.path), undefined, {
+        offset: call.arguments.offset === undefined
+          ? undefined
+          : Number(call.arguments.offset),
+        limit: call.arguments.limit === undefined
+          ? undefined
+          : Number(call.arguments.limit),
+      }),
   };
 }
 
@@ -524,6 +544,103 @@ export function buildListFilesCommand(root: string): CommandDefinition<string> {
         root,
         call.arguments.path === undefined ? "." : String(call.arguments.path),
       ),
+  };
+}
+
+export function buildGrepFilesCommand(root: string): CommandDefinition<string> {
+  return {
+    id: "grep_files",
+    title: "Search File Contents",
+    description:
+      "Search workspace file contents with a regular expression. Returns " +
+      "`path:line:text` rows. Prefer this over running grep/rg through bash: " +
+      "it is read-only, needs no approval, and stays inside the workspace. " +
+      "Symlinked directories, .git and node_modules are skipped.",
+    inputSchema: {
+      type: "object",
+      required: ["pattern"],
+      properties: {
+        pattern: {
+          type: "string",
+          description: "JavaScript regular expression, matched line by line.",
+        },
+        path: {
+          type: "string",
+          description:
+            "Directory to search, relative to the workspace root; defaults to the root.",
+        },
+        include: {
+          type: "string",
+          description:
+            "Optional glob limiting which files are searched, e.g. `**/*.ts`.",
+        },
+        maxMatches: {
+          type: "number",
+          description: "Maximum rows to return (default 200).",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      effects: ["read.filesystem", "emit.event"],
+      defaultDecision: "allow",
+      resources: ["file:read"],
+      network: "none",
+      filesystem: "read",
+      cost: "none",
+    },
+    executor: (call) =>
+      executeGrepFiles(root, String(call.arguments.pattern), {
+        path: call.arguments.path === undefined
+          ? undefined
+          : String(call.arguments.path),
+        include: call.arguments.include === undefined
+          ? undefined
+          : String(call.arguments.include),
+        maxMatches: call.arguments.maxMatches === undefined
+          ? undefined
+          : Number(call.arguments.maxMatches),
+      }),
+  };
+}
+
+export function buildGlobFilesCommand(root: string): CommandDefinition<string> {
+  return {
+    id: "glob_files",
+    title: "Find Files By Pattern",
+    description:
+      "Find workspace files whose relative path matches a glob, e.g. " +
+      "`**/*.test.ts`. Read-only; prefer this over running find/ls through bash.",
+    inputSchema: {
+      type: "object",
+      required: ["pattern"],
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Glob matched against the workspace-relative path.",
+        },
+        path: {
+          type: "string",
+          description:
+            "Directory to search, relative to the workspace root; defaults to the root.",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      effects: ["read.filesystem", "emit.event"],
+      defaultDecision: "allow",
+      resources: ["file:read"],
+      network: "none",
+      filesystem: "read",
+      cost: "none",
+    },
+    executor: (call) =>
+      executeGlobFiles(root, String(call.arguments.pattern), {
+        path: call.arguments.path === undefined
+          ? undefined
+          : String(call.arguments.path),
+      }),
   };
 }
 
@@ -680,6 +797,8 @@ export function registerCoreCommands(
   if (deps.workspaceRoot !== undefined) {
     registry.register(buildReadFileCommand(deps.workspaceRoot));
     registry.register(buildListFilesCommand(deps.workspaceRoot));
+    registry.register(buildGrepFilesCommand(deps.workspaceRoot));
+    registry.register(buildGlobFilesCommand(deps.workspaceRoot));
     registry.register(buildWriteFileCommand(deps.workspaceRoot));
     registry.register(buildEditFileCommand(deps.workspaceRoot));
     registry.register(buildBashCommand(deps.workspaceRoot));

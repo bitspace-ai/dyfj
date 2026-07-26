@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   executeEditFile,
+  executeGlobFiles,
+  globToRegExp,
+  matchesGlobPath,
+  executeGrepFiles,
   executeListFiles,
   executeReadFile,
   executeWriteFile,
@@ -215,5 +219,170 @@ describe("executeEditFile", () => {
     );
     expect(out).toMatch(/refusing to write through a symlink/);
     expect(await Deno.readTextFile(`${root}/edit-link.txt`)).toBe("before");
+  });
+});
+
+
+// ── Search affordances (grep_files / glob_files / ranged read) ────────────────
+//
+// These exist so read-only questions do not have to route through bash, which
+// always requires operator approval. The tests below pin the two properties
+// that make that safe: the walk never leaves the workspace, and every traversal
+// is bounded.
+
+let sroot: string;
+
+beforeAll(async () => {
+  await Deno.mkdir(".vitest-tmp", { recursive: true });
+  sroot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+  await Deno.writeTextFile(`${sroot}/alpha.ts`, "const a = 1;\nneedle here\nconst b = 2;\n");
+  await Deno.writeTextFile(`${sroot}/beta.md`, "# doc\nneedle in markdown\n");
+  await Deno.mkdir(`${sroot}/pkg`);
+  await Deno.writeTextFile(`${sroot}/pkg/gamma.ts`, "no match on this line\n");
+  await Deno.mkdir(`${sroot}/.git`);
+  await Deno.writeTextFile(`${sroot}/.git/config`, "needle should be skipped\n");
+  await Deno.writeTextFile(`${sroot}/binary.bin`, "abc\u0000needle\n");
+  await Deno.writeTextFile(
+    `${sroot}/many.txt`,
+    Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n"),
+  );
+});
+
+afterAll(async () => {
+  if (sroot) await Deno.remove(sroot, { recursive: true });
+});
+
+describe("executeGrepFiles", () => {
+  test("finds matches with path:line:text rows", async () => {
+    const out = await executeGrepFiles(sroot, "needle");
+    expect(out).toContain("alpha.ts:2:needle here");
+    expect(out).toContain("beta.md:2:needle in markdown");
+  });
+  test("skips .git and binary files", async () => {
+    const out = await executeGrepFiles(sroot, "needle");
+    expect(out).not.toContain(".git");
+    expect(out).not.toContain("binary.bin");
+  });
+  test("include glob narrows the file set", async () => {
+    const out = await executeGrepFiles(sroot, "needle", { include: "**/*.ts" });
+    expect(out).toContain("alpha.ts");
+    expect(out).not.toContain("beta.md");
+  });
+  test("reports no matches distinctly from an error", async () => {
+    expect(await executeGrepFiles(sroot, "zzz-absent")).toBe("(no matches)");
+  });
+  test("rejects an invalid regex without throwing", async () => {
+    const out = await executeGrepFiles(sroot, "(unclosed");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("invalid pattern");
+  });
+  test("rejects an empty pattern", async () => {
+    expect(await executeGrepFiles(sroot, "")).toContain("error:");
+  });
+  test("refuses to search outside the workspace root", async () => {
+    const out = await executeGrepFiles(sroot, "needle", { path: "../.." });
+    expect(out.startsWith("error:")).toBe(true);
+  });
+  test("caps matches and says so", async () => {
+    const out = await executeGrepFiles(sroot, "line", { maxMatches: 3 });
+    expect(out.split("\n").filter((l) => l.includes("many.txt")).length).toBe(3);
+    expect(out).toContain("match limit 3 reached");
+  });
+});
+
+describe("executeGlobFiles", () => {
+  test("matches by relative path glob", async () => {
+    const out = await executeGlobFiles(sroot, "**/*.ts");
+    expect(out).toContain("alpha.ts");
+    expect(out).toContain("pkg/gamma.ts");
+    expect(out).not.toContain("beta.md");
+  });
+  test("reports no matches distinctly", async () => {
+    expect(await executeGlobFiles(sroot, "**/*.nope")).toBe("(no matches)");
+  });
+  test("refuses to search outside the workspace root", async () => {
+    const out = await executeGlobFiles(sroot, "**/*", { path: "../.." });
+    expect(out.startsWith("error:")).toBe(true);
+  });
+});
+
+describe("executeReadFile ranged reads", () => {
+  test("returns a line window", async () => {
+    const out = await executeReadFile(sroot, "many.txt", undefined, {
+      offset: 3,
+      limit: 2,
+    });
+    expect(out).toContain("line 3");
+    expect(out).toContain("line 4");
+    expect(out).not.toContain("line 5");
+  });
+  test("annotates how much remains", async () => {
+    const out = await executeReadFile(sroot, "many.txt", undefined, {
+      offset: 1,
+      limit: 2,
+    });
+    expect(out).toContain("lines 1-2 of 40");
+  });
+  test("reads to end when limit is omitted", async () => {
+    const out = await executeReadFile(sroot, "many.txt", undefined, {
+      offset: 39,
+    });
+    expect(out).toContain("line 40");
+  });
+  test("rejects an offset past end of file", async () => {
+    const out = await executeReadFile(sroot, "many.txt", undefined, {
+      offset: 999,
+    });
+    expect(out).toContain("past end");
+  });
+  test("rejects a non-positive offset", async () => {
+    const out = await executeReadFile(sroot, "many.txt", undefined, {
+      offset: 0,
+    });
+    expect(out).toContain("error:");
+  });
+  test("unranged read is unchanged", async () => {
+    const out = await executeReadFile(sroot, "alpha.ts");
+    expect(out).toBe("const a = 1;\nneedle here\nconst b = 2;\n");
+  });
+});
+
+
+// ── globToRegExp / matchesGlobPath (pure) ────────────────────────────────────
+//
+// Pure and dependency-free by design: node:path's matchesGlob needs --allow-env
+// (minimatch reads process.env), and the runtime profiles grant env by explicit
+// allowlist — so that dependency would have thrown NotCapable in production
+// while passing tests, because the test profile grants env=true.
+
+describe("matchesGlobPath", () => {
+  test("* does not cross a path separator", () => {
+    expect(matchesGlobPath("a.ts", "*.ts")).toBe(true);
+    expect(matchesGlobPath("pkg/a.ts", "*.ts")).toBe(false);
+  });
+  test("** crosses separators and matches zero directories", () => {
+    expect(matchesGlobPath("a.ts", "**/*.ts")).toBe(true);
+    expect(matchesGlobPath("pkg/deep/a.ts", "**/*.ts")).toBe(true);
+  });
+  test("? matches exactly one non-separator character", () => {
+    expect(matchesGlobPath("ab.ts", "a?.ts")).toBe(true);
+    expect(matchesGlobPath("a/b.ts", "a?b.ts")).toBe(false);
+  });
+  test("character classes work", () => {
+    expect(matchesGlobPath("a1.ts", "a[0-9].ts")).toBe(true);
+    expect(matchesGlobPath("ax.ts", "a[0-9].ts")).toBe(false);
+  });
+  test("dots are literal, not regex wildcards", () => {
+    expect(matchesGlobPath("axts", "*.ts")).toBe(false);
+  });
+  test("anchors the whole path", () => {
+    expect(matchesGlobPath("src/a.ts.bak", "**/*.ts")).toBe(false);
+  });
+  test("an unparsable class degrades to no match rather than throwing", () => {
+    expect(() => matchesGlobPath("a.ts", "a[.ts")).not.toThrow();
+  });
+  test("globToRegExp is anchored", () => {
+    expect(globToRegExp("*.ts").source.startsWith("^")).toBe(true);
+    expect(globToRegExp("*.ts").source.endsWith("$")).toBe(true);
   });
 });
