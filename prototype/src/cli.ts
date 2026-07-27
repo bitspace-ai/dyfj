@@ -1059,7 +1059,7 @@ export function normalizeSessionRef(value: string): string {
   const candidate = slugMatch ? slugMatch[1] : value;
   if (!ULID.test(candidate)) {
     throw new Error(
-      `dyfj: --session expects a session id or a slug as listed by 'dyfj sessions', got: ${value}`,
+      `--session expects a session id or a slug as listed by 'dyfj sessions', got: ${value}`,
     );
   }
   return candidate.toUpperCase();
@@ -1559,7 +1559,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (arg === "--key") overrides.key = value;
       else if (arg === "--model") overrides.model = value;
       else if (arg === "--session") {
-        overrides.sessionId = normalizeSessionRef(value);
+        // normalizeSessionRef throws on garbage; route it through the standard
+        // usage-error path (exit 2) instead of an uncaught stack trace.
+        try {
+          overrides.sessionId = normalizeSessionRef(value);
+        } catch (thrown) {
+          return error(
+            thrown instanceof Error ? thrown.message : String(thrown),
+          );
+        }
       } else if (arg === "--workspace") overrides.workspace = value;
       else if (arg === "-p" || arg === "--print") printPrompt = value;
       else if (arg === "--mode") {
