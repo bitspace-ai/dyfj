@@ -220,7 +220,7 @@ describe("autostart classification is position-aware and socket-coherent", () =>
 });
 
 describe("prompt values cannot become launcher control input", () => {
-  // The reviewer's exploit shapes: an argument in a value slot that LOOKS like
+  // Adversarial argument shapes: an argument in a value slot that LOOKS like
   // a launcher flag must be data, never control.
   test("a -p prompt of --socket does not capture the next arg as a socket", async () => {
     const { sock, autostart } = await dryRun({ HOME: "/home/c" }, [
@@ -308,4 +308,15 @@ describe("autostart requires an absolute private log home", () => {
     expect(err).toContain("absolute HOME");
     await Deno.remove(cwd, { recursive: true });
   }, 30_000);
+});
+
+describe("an invocation the client will reject never triggers autostart", () => {
+  test("a value flag with no value declines autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--socket"]);
+    expect(autostart).toBe("no");
+  });
+  test("a bare -p declines autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p"]);
+    expect(autostart).toBe("no");
+  });
 });

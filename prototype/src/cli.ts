@@ -1688,8 +1688,9 @@ export function resolveConfig(
 
 const HELP = `dyfj — Workbench daily-driver client
 
-Talks to the local runtime (start it with: dyfj start) over the UDS
-seam by default. Permission posture (strict | operator) is engine config in
+Talks to the local runtime over the UDS seam by default; a bare invocation
+starts the runtime itself if none is answering (see Launcher lifecycle
+below), and \`dyfj start\` still runs one in the foreground by hand. Permission posture (strict | operator) is engine config in
 ~/.dyfj/config.toml, not a flag here. Use --server <url> to reach a remote HTTP
 runtime instead.
 
@@ -1700,14 +1701,14 @@ Usage:
   dyfj -p "<prompt>"        one-shot turn (alias)
   dyfj status               check the local runtime and socket
   dyfj start                foreground the local runtime (Ctrl-C to stop)
+  dyfj models               list available model slugs
+  dyfj sessions             list sessions
 
 Launcher lifecycle (the dyfj wrapper script, local UDS seam only):
   a REPL or one-shot turn probes the socket first and, when no runtime
-  answers, starts one detached (output to ~/.dyfj/log/) and waits for it;
-  'start', 'status', and help are never auto-started for. Opt out per call
+  answers, starts one detached (output to ~/.dyfj/log/) and waits for it.
+  'start', 'status', and help never trigger autostart. Opt out per call
   with --no-autostart, or standing with DYFJ_AUTOSTART=0.
-  dyfj models               list available model slugs
-  dyfj sessions             list sessions
 
 REPL commands:
   /model [<slug>]           show or switch the active model (validated slugs);

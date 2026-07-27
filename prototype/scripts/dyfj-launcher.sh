@@ -71,6 +71,7 @@ LAUNCHER_SUBCOMMAND=""
 LAUNCHER_SAW_SERVER=0
 LAUNCHER_SAW_UNIX=0
 LAUNCHER_SAW_HELP=0
+LAUNCHER_ARGS_INVALID=0
 
 # Flags that consume the next argument — mirrors cli.ts's VALUE_FLAGS so the
 # parse below never reads a flag VALUE as launcher control input.
@@ -111,6 +112,12 @@ parse_launcher_args() {
           SOCKET_FLAG_VALUE="${args[$((i + 1))]}"
         fi
         CLIENT_ARGS+=("${args[$((i + 1))]}")
+      else
+        # A value flag with no value is an invocation the client will reject.
+        # Autostart must not probe, spawn, or create a log on the way to that
+        # usage error — the invocation is forwarded so the client's canonical
+        # message is what the operator sees.
+        LAUNCHER_ARGS_INVALID=1
       fi
       i=$((i + 2))
       continue
@@ -142,6 +149,7 @@ parse_launcher_args() {
 autostart_applies() {
   [[ "${DYFJ_AUTOSTART:-1}" == "0" ]] && return 1
   [[ "$AUTOSTART_OPTOUT" == "1" ]] && return 1
+  [[ "$LAUNCHER_ARGS_INVALID" == "1" ]] && return 1
   uses_unix_transport || return 1
   [[ "$LAUNCHER_SAW_HELP" == "1" ]] && return 1
   case "$LAUNCHER_SUBCOMMAND" in
