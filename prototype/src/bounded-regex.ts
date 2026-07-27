@@ -44,10 +44,16 @@ export class RegexBudgetExceeded extends Error {
   }
 }
 
-/** The matching worker could not be started, so nothing was matched. */
+/**
+ * The matching worker could not be started, so nothing was matched.
+ *
+ * Deliberately carries no cause text: the underlying failure names the worker
+ * module's absolute path, and this message reaches both the model and the
+ * durable event transcript.
+ */
 export class RegexUnavailable extends Error {
-  constructor(cause: string) {
-    super(`regex matcher unavailable: ${cause}`);
+  constructor() {
+    super("regex matcher unavailable");
     this.name = "RegexUnavailable";
   }
 }
@@ -69,7 +75,7 @@ function defaultWorkerSpecifier(): string {
   if (typeof meta.url === "string") {
     return new URL("./regex-worker.ts", meta.url).href;
   }
-  throw new RegexUnavailable("cannot locate the matcher module");
+  throw new RegexUnavailable();
 }
 
 export class BoundedMatcher {
@@ -155,7 +161,7 @@ export class BoundedMatcher {
           // surfaces as an unhandled global error and can take down the host.
           event.preventDefault?.();
           this.close();
-          reject(new RegexUnavailable(event.message || "worker error"));
+          reject(new RegexUnavailable());
         };
         worker.postMessage({ id, pattern: this.#pattern, lines });
       });
@@ -181,9 +187,7 @@ export class BoundedMatcher {
       this.#worker = new Worker(specifier, { type: "module" });
     } catch (err) {
       this.#dead = true;
-      throw err instanceof RegexUnavailable
-        ? err
-        : new RegexUnavailable((err as Error).message);
+      throw err instanceof RegexUnavailable ? err : new RegexUnavailable();
     }
     return this.#worker;
   }

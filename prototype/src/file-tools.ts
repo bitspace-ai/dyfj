@@ -38,6 +38,28 @@ const DEFAULT_MAX_ENTRIES = 500;
 const HARD_MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 /**
+ * A stable, path-free description of a filesystem failure.
+ *
+ * Deno's exception messages embed the absolute path they failed on — home
+ * directory, username, workspace layout. These executors hand their result to
+ * the model AND to the durable event transcript, so passing the raw message
+ * through publishes private paths on every missing file. The caller already
+ * knows which workspace-relative path it asked about; the class of failure is
+ * the only part worth adding.
+ */
+export function safeErrorReason(err: unknown): string {
+  if (err instanceof Deno.errors.NotFound) return "not found";
+  if (err instanceof Deno.errors.PermissionDenied) return "permission denied";
+  if (err instanceof Deno.errors.NotADirectory) return "not a directory";
+  if (err instanceof Deno.errors.IsADirectory) return "is a directory";
+  if (err instanceof Deno.errors.NotCapable) {
+    return "not permitted by the runtime sandbox";
+  }
+  if (err instanceof Deno.errors.FilesystemLoop) return "symlink loop";
+  return "unavailable";
+}
+
+/**
  * Resolve `p` within `root` and return the absolute path, or throw if it
  * escapes the root. Pure (no I/O) so it's directly testable.
  */
@@ -86,6 +108,7 @@ export async function executeReadFile(
   try {
     abs = resolveWorkspacePath(root, p);
   } catch (err) {
+    // resolveWorkspacePath's message carries only the caller-supplied path.
     return `error: ${(err as Error).message}`;
   }
   try {
@@ -124,7 +147,7 @@ export async function executeReadFile(
     }
     return text;
   } catch (err) {
-    return `error: cannot read ${p}: ${(err as Error).message}`;
+    return `error: cannot read ${p}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -233,7 +256,13 @@ async function readContainedFile(
   } = {},
 ): Promise<
   | { ok: true; bytes: Uint8Array; canonical: string }
-  | { ok: false; reason: string; oversized?: boolean; excluded?: boolean }
+  | {
+    ok: false;
+    reason: string;
+    oversized?: boolean;
+    excluded?: boolean;
+    changed?: boolean;
+  }
 > {
   const realPath = options.realPath ?? Deno.realPath;
   let before: Deno.FileInfo;
@@ -301,6 +330,18 @@ async function readContainedFile(
       if (n === null) break;
       read += n;
     }
+    // Re-stat the same descriptor after reading. Size and mtime were captured
+    // before the read; if either moved, the file changed underneath us and the
+    // bytes are a torn or partial view. Callers promise that a result with no
+    // note covered its scope in full, which is only true if a read that did not
+    // see the whole file is reported rather than passed off as content.
+    const settled = await file.stat();
+    if (
+      settled.size !== after.size ||
+      settled.mtime?.getTime() !== after.mtime?.getTime()
+    ) {
+      return { ok: false, reason: "changed while being read", changed: true };
+    }
     return {
       ok: true,
       canonical,
@@ -349,6 +390,7 @@ export async function executeListFiles(
   try {
     abs = resolveWorkspacePath(root, p);
   } catch (err) {
+    // resolveWorkspacePath's message carries only the caller-supplied path.
     return `error: ${(err as Error).message}`;
   }
   try {
@@ -370,7 +412,7 @@ export async function executeListFiles(
     }
     return entries.join("\n");
   } catch (err) {
-    return `error: cannot list ${p}: ${(err as Error).message}`;
+    return `error: cannot list ${p}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -396,6 +438,7 @@ export async function executeWriteFile(
   try {
     abs = resolveWorkspacePath(root, p);
   } catch (err) {
+    // resolveWorkspacePath's message carries only the caller-supplied path.
     return `error: ${(err as Error).message}`;
   }
   try {
@@ -415,7 +458,7 @@ export async function executeWriteFile(
       }
     } catch (err) {
       if (!(err instanceof Deno.errors.NotFound)) {
-        return `error: cannot write ${p}: ${(err as Error).message}`;
+        return `error: cannot write ${p}: ${safeErrorReason(err)}`;
       }
       // NotFound — the target does not exist yet; the parent containment governs.
     }
@@ -424,7 +467,7 @@ export async function executeWriteFile(
     // a payload-size signal into the event log + session replay (CWE-532).
     return `wrote ${p}`;
   } catch (err) {
-    return `error: cannot write ${p}: ${(err as Error).message}`;
+    return `error: cannot write ${p}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -454,6 +497,7 @@ export async function executeEditFile(
   try {
     abs = resolveWorkspacePath(root, p);
   } catch (err) {
+    // resolveWorkspacePath's message carries only the caller-supplied path.
     return `error: ${(err as Error).message}`;
   }
   let text: string;
@@ -471,7 +515,7 @@ export async function executeEditFile(
     if (err instanceof Deno.errors.NotFound) {
       return `error: cannot edit ${p}: file not found`;
     }
-    return `error: cannot read ${p}: ${(err as Error).message}`;
+    return `error: cannot read ${p}: ${safeErrorReason(err)}`;
   }
   const first = text.indexOf(oldString);
   if (first === -1) {
@@ -546,10 +590,12 @@ export async function executeEditFile(
 //     every search of every repository would carry a .git note and the note
 //     would stop meaning anything. Everything else that goes unexamined IS an
 //     omission and is counted: binary files, over-long lines, oversized files,
-//     unreadable directories, symlinks, non-regular files, raced paths, and
-//     every ceiling. "(no matches)" with no trailing note therefore means the
-//     defined scope was examined in full — an incomplete search read as proof
-//     of absence is a worse failure than a truncated one.
+//     unreadable directories, symlinks, non-regular files, raced paths, files
+//     that changed while being read, and every ceiling. "(no matches)" with no
+//     trailing note therefore means the defined scope was examined in full — an
+//     incomplete search read as proof of absence is a worse failure than a
+//     truncated one. A file mutated mid-read is detected by re-stating the same
+//     descriptor afterwards and reported rather than returned torn.
 
 const DEFAULT_MAX_ENTRIES_VISITED = 5_000;
 const DEFAULT_MAX_MATCHES = 200;
@@ -1028,7 +1074,7 @@ async function searchRoot(
     }
     return { rootReal, startReal: contained };
   } catch (err) {
-    return `error: cannot search ${sub}: ${(err as Error).message}`;
+    return `error: cannot search ${sub}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -1111,6 +1157,7 @@ export async function executeGrepFiles(
   let excludedRaced = 0;
   let skippedLongLines = 0;
   let lineCappedFiles = 0;
+  let changedDuringRead = 0;
 
   try {
     walk:
@@ -1132,6 +1179,7 @@ export async function executeGrepFiles(
       if (!read.ok) {
         if (read.oversized === true) skippedLarge++;
         else if (read.excluded === true) excludedRaced++;
+        else if (read.changed === true) changedDuringRead++;
         else skippedUnreadable++;
         continue;
       }
@@ -1163,7 +1211,7 @@ export async function executeGrepFiles(
           if (err instanceof RegexUnavailable) {
             return `error: ${(err as Error).message}`;
           }
-          return `error: cannot match pattern: ${(err as Error).message}`;
+          return `error: cannot match pattern: ${safeErrorReason(err)}`;
         }
         for (const hit of hits) {
           if (rows.length >= maxMatches) {
@@ -1208,6 +1256,9 @@ export async function executeGrepFiles(
     notes.push(`${skippedUnreadable} file(s) unreadable or changed mid-search`);
   }
   if (skippedBinary > 0) notes.push(`${skippedBinary} binary file(s) skipped`);
+  if (changedDuringRead > 0) {
+    notes.push(`${changedDuringRead} file(s) changed while being read`);
+  }
   if (globBudgetExhausted(globBudget)) {
     notes.push(`include-glob matching budget exhausted`);
   }

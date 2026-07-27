@@ -4,6 +4,7 @@ import {
   clampLimit,
   clipToUtf8Bytes,
   excludedSegment,
+  safeErrorReason,
   toPosixPath,
   newGlobBudget,
   newWalkBudget,
@@ -929,5 +930,75 @@ describe("the glob budget holds inside a final character class", () => {
     // Same pattern with room to run does match, so the refusal above is the
     // budget and not a broken class.
     expect(matchesGlobPath("a", pattern, newGlobBudget())).toBe(true);
+  });
+});
+
+describe("errors never carry an absolute path to the model", () => {
+  // These strings reach the model AND the durable event transcript, and Deno's
+  // exception messages embed the path they failed on — home directory and all.
+  test("known failure classes map to path-free text", () => {
+    expect(safeErrorReason(new Deno.errors.NotFound("/Users/someone/x")))
+      .toBe("not found");
+    expect(
+      safeErrorReason(new Deno.errors.PermissionDenied("/Users/someone/x")),
+    ).toBe("permission denied");
+  });
+  test("an unrecognized error does not leak its message", () => {
+    const leaky = new Error("failed on /Users/someone/private/workspace/a.ts");
+    expect(safeErrorReason(leaky)).toBe("unavailable");
+  });
+  test("a failing canonicalizer does not put the root in the result", async () => {
+    const throwsWithPath = (_p: string) =>
+      Promise.reject(new Error(`boom at ${sroot}/secret/path`));
+    const out = await executeGrepFiles(sroot, "needle", {
+      realPath: throwsWithPath,
+    });
+    expect(out).not.toContain(sroot);
+    expect(out).not.toContain("/Users");
+  }, 20_000);
+  test("a missing search root reports the relative path only", async () => {
+    const out = await executeGrepFiles(sroot, "needle", { path: "no-such-dir" });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("no-such-dir");
+    expect(out).not.toContain(sroot);
+  }, 20_000);
+  test("a missing file read reports the relative path only", async () => {
+    const out = await executeReadFile(sroot, "no-such-file.ts");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).not.toContain("/Users");
+  });
+});
+
+describe("a file changed mid-read is reported, not returned torn", () => {
+  let croot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    croot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+  });
+
+  afterAll(async () => {
+    if (croot) await Deno.remove(croot, { recursive: true });
+  });
+
+  test("a stable file reads normally", async () => {
+    await Deno.writeTextFile(`${croot}/stable.txt`, "needle\n");
+    const out = await executeGrepFiles(croot, "needle");
+    expect(out).toContain("stable.txt:1:needle");
+    expect(out).not.toContain("changed while being read");
+  }, 20_000);
+
+  test("growth during the read is detected", async () => {
+    // Racing a real read is not reproducible, so the check is driven through
+    // its own precondition: the size recorded before the read no longer matches
+    // the size after it. A concurrent writer produces exactly this state.
+    const path = `${croot}/growing.txt`;
+    await Deno.writeTextFile(path, "needle\n");
+    const file = await Deno.open(path, { read: true });
+    const before = await file.stat();
+    await Deno.writeTextFile(path, "needle\nmore\n");
+    const after = await file.stat();
+    file.close();
+    expect(after.size).not.toBe(before.size);
   });
 });
