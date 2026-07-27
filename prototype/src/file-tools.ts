@@ -19,7 +19,7 @@
  * failure as a tool result and can recover, rather than crashing the turn.
  */
 
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   BoundedMatcher,
   RegexBudgetExceeded,
@@ -67,7 +67,11 @@ export function resolveWorkspacePath(root: string, p: string): string {
   const rootAbs = resolve(root);
   const abs = resolve(rootAbs, p);
   const rel = relative(rootAbs, abs);
-  if (rel.startsWith("..") || rel.startsWith("/")) {
+  // isAbsolute, not startsWith("/"): on Windows, `relative` between different
+  // drives (or a UNC share) returns the ABSOLUTE target — `C:\evil` — which
+  // starts with neither ".." nor "/", so a prefix check reads an out-of-root
+  // path as contained. On POSIX the two checks are equivalent.
+  if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`path escapes the workspace root: ${sanitizeOutputText(p)}`);
   }
   return abs;
@@ -161,9 +165,10 @@ function countLines(text: string): number {
 }
 
 /**
- * The 1-based inclusive line window `[offset, offset + limit)` as ONE slice of
- * the original string, plus the totals the caller reports. Null when `offset`
- * is past the end.
+ * A window of `limit` lines starting at 1-based line `offset` — lines `offset`
+ * through `offset + limit - 1` inclusive — as ONE slice of the original
+ * string, plus the totals the caller reports. Null when `offset` is past the
+ * end; an omitted `limit` means "to the end of the file".
  *
  * Deliberately not `split("\n").slice(...)`: a 4 MiB file of newlines splits
  * into four million strings, and doing that to hand back twenty lines is a
@@ -388,7 +393,9 @@ async function containedRealPath(
  */
 export function isWithinRoot(rootReal: string, targetReal: string): boolean {
   const rel = relative(rootReal, targetReal);
-  return !(rel.startsWith("..") || rel.startsWith("/"));
+  // isAbsolute for the same reason as resolveWorkspacePath: a cross-drive
+  // `relative` on Windows returns an absolute path, not a "../" prefix.
+  return !(rel.startsWith("..") || isAbsolute(rel));
 }
 
 /** List directory entries (one per line; directories suffixed with /). */

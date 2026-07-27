@@ -39,6 +39,17 @@ describe("resolveWorkspacePath", () => {
       "escapes",
     );
   });
+  // The Windows cross-drive case — relative("D:\\ws", "C:\\evil") returning
+  // an absolute path with no ".." prefix — cannot be reproduced from POSIX,
+  // where node:path speaks posix semantics. The containment checks use
+  // isAbsolute(rel) so that shape is rejected there; these lock the POSIX
+  // equivalence so the swap cannot regress what is testable here.
+  test("isAbsolute-based rejection matches the POSIX prefix check", () => {
+    expect(() => resolveWorkspacePath("/work", "/other/root")).toThrow(
+      "escapes",
+    );
+    expect(isWithinRoot("/work", "/other/root")).toBe(false);
+  });
   test("rejects sneaky traversal that climbs out", () => {
     expect(() => resolveWorkspacePath("/work", "a/../../etc")).toThrow(
       "escapes",
