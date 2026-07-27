@@ -488,13 +488,15 @@ export async function executeEditFile(
 //   - Content is read through `readContainedFile`, which verifies the opened
 //     descriptor's identity, so a file swapped for a symlink between the walk
 //     and the read is refused rather than followed.
-//   - A search that hit a ceiling or skipped anything says so, including when
-//     it found nothing: "(no matches)" on its own means the whole requested
-//     scope was actually examined. Binary files, over-long lines, oversized
-//     files, unreadable directories and raced paths are all omissions, and all
-//     of them are counted and reported rather than quietly dropped — an
-//     incomplete search read as proof of absence is a worse failure than a
-//     truncated one.
+//   - "Scope" is defined, not implied: the excluded directories above are
+//     outside it by contract and are not reported as omissions — otherwise
+//     every search of every repository would carry a .git note and the note
+//     would stop meaning anything. Everything else that goes unexamined IS an
+//     omission and is counted: binary files, over-long lines, oversized files,
+//     unreadable directories, symlinks, non-regular files, raced paths, and
+//     every ceiling. "(no matches)" with no trailing note therefore means the
+//     defined scope was examined in full — an incomplete search read as proof
+//     of absence is a worse failure than a truncated one.
 
 const DEFAULT_MAX_ENTRIES_VISITED = 5_000;
 const DEFAULT_MAX_MATCHES = 200;
@@ -544,7 +546,13 @@ export function clampLimit(
 
 // ── Glob matching (no RegExp) ────────────────────────────────────────────────
 
-/** Does `ch` fall in a `[...]` class body (leading `!` or `^` negates)? */
+/**
+ * Does `ch` fall in a `[...]` class body (leading `!` or `^` negates)?
+ *
+ * The caller charges `body.length` before calling: this scan is proportional to
+ * the class body, so leaving it uncharged would let `*[bbbb…c]` do ~500
+ * comparisons per counted step and slip the aggregate budget by that factor.
+ */
 function matchClass(body: string, ch: string): boolean {
   let negate = false;
   let i = 0;
@@ -564,18 +572,32 @@ function matchClass(body: string, ch: string): boolean {
   return negate ? !hit : hit;
 }
 
-/** The pattern token starting at `p`: how many chars it spans, and its test. */
+/**
+ * The pattern token starting at `p`: how many chars it spans, and its test.
+ *
+ * Both the delimiter search and the class test are charged to the budget, so
+ * every character the matcher actually examines is counted — not just the outer
+ * loop iterations, which is what an aggregate bound has to mean.
+ */
 function tokenAt(
   pat: string,
   p: number,
+  budget: GlobBudget,
 ): { len: number; test: (ch: string) => boolean } {
   const c = pat[p];
   if (c === "?") return { len: 1, test: () => true };
   if (c === "[") {
     const end = pat.indexOf("]", p + 1);
+    budget.steps += end === -1 ? pat.length - p : end - p;
     if (end !== -1) {
       const body = pat.slice(p + 1, end);
-      return { len: end - p + 1, test: (ch) => matchClass(body, ch) };
+      return {
+        len: end - p + 1,
+        test: (ch) => {
+          budget.steps += body.length;
+          return matchClass(body, ch);
+        },
+      };
     }
     return { len: 1, test: (ch) => ch === "[" }; // unterminated: literal
   }
@@ -604,7 +626,7 @@ function matchSegment(name: string, pat: string, budget: GlobBudget): boolean {
       continue;
     }
     if (p < pat.length) {
-      const tok = tokenAt(pat, p);
+      const tok = tokenAt(pat, p, budget);
       if (tok.test(name[n])) {
         n++;
         p += tok.len;
@@ -721,19 +743,30 @@ function looksBinary(bytes: Uint8Array): boolean {
  * walk can come up short travels here, because an executor that cannot see the
  * omission will report a partial search as an empty one.
  */
-interface WalkBudget {
+export interface WalkBudget {
   visited: number;
   cap: number;
   depthClipped: boolean;
   unreadableDirs: number;
+  /** Symlinks refused on sight — a safety skip the caller cannot predict. */
+  skippedSymlinks: number;
+  /** Sockets, devices, fifos: neither file nor directory, silently unsearchable. */
+  skippedNonRegular: number;
 }
 
-function newWalkBudget(cap: number): WalkBudget {
-  return { visited: 0, cap, depthClipped: false, unreadableDirs: 0 };
+export function newWalkBudget(cap: number): WalkBudget {
+  return {
+    visited: 0,
+    cap,
+    depthClipped: false,
+    unreadableDirs: 0,
+    skippedSymlinks: 0,
+    skippedNonRegular: 0,
+  };
 }
 
 /** Notes describing every way a completed walk fell short of its scope. */
-function walkNotes(budget: WalkBudget): string[] {
+export function walkNotes(budget: WalkBudget): string[] {
   const notes: string[] = [];
   if (budget.visited >= budget.cap) {
     notes.push(`entry limit ${budget.cap} reached`);
@@ -743,6 +776,12 @@ function walkNotes(budget: WalkBudget): string[] {
   }
   if (budget.unreadableDirs > 0) {
     notes.push(`${budget.unreadableDirs} unreadable director(ies) skipped`);
+  }
+  if (budget.skippedSymlinks > 0) {
+    notes.push(`${budget.skippedSymlinks} symlink(s) skipped`);
+  }
+  if (budget.skippedNonRegular > 0) {
+    notes.push(`${budget.skippedNonRegular} non-regular file(s) skipped`);
   }
   return notes;
 }
@@ -788,7 +827,12 @@ async function* walkFiles(
     if (budget.visited >= budget.cap) return;
     budget.visited++;
     const abs = resolve(start, entry.name);
-    if (entry.isSymlink) continue; // never follow: escape and cycle defense
+    if (entry.isSymlink) {
+      // Never follow: escape and cycle defense. Counted, because refusing to
+      // look somewhere is an omission the caller has no way to anticipate.
+      budget.skippedSymlinks++;
+      continue;
+    }
     if (entry.isDirectory) {
       if (SKIP_DIRS.has(entry.name)) continue;
       // DirEntry is a snapshot taken by readDir; re-check with a no-follow
@@ -806,7 +850,10 @@ async function* walkFiles(
       yield* walkFiles(rootReal, abs, budget, depth + 1);
       continue;
     }
-    if (!entry.isFile) continue;
+    if (!entry.isFile) {
+      budget.skippedNonRegular++;
+      continue;
+    }
     if (!isWithinRoot(rootReal, abs)) continue;
     yield relative(rootReal, abs);
   }

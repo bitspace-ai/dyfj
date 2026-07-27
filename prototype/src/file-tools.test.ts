@@ -4,6 +4,8 @@ import {
   clampLimit,
   clipToUtf8Bytes,
   newGlobBudget,
+  newWalkBudget,
+  walkNotes,
   executeGlobFiles,
   matchesGlobPath,
   executeGrepFiles,
@@ -751,5 +753,52 @@ describe("glob matching is bounded across the whole call", () => {
 
   test("an exhausted budget stops matching rather than matching everything", () => {
     expect(matchesGlobPath("a.ts", "*.ts", { steps: 0, cap: 1 })).toBe(false);
+  });
+});
+
+describe("every non-scope omission reaches the completeness note", () => {
+  // The sandbox cannot create symlinks or non-regular files (Deno.symlink needs
+  // unscoped read+write), so the counters are driven directly. What matters is
+  // that no omission class can reach walkNotes and produce nothing.
+  test("a symlink skip is disclosed", () => {
+    const budget = newWalkBudget(100);
+    budget.skippedSymlinks = 2;
+    expect(walkNotes(budget).join("; ")).toContain("2 symlink(s) skipped");
+  });
+  test("a non-regular file skip is disclosed", () => {
+    const budget = newWalkBudget(100);
+    budget.skippedNonRegular = 1;
+    expect(walkNotes(budget).join("; ")).toContain("1 non-regular file(s)");
+  });
+  test("an untouched walk produces no note at all", () => {
+    expect(walkNotes(newWalkBudget(100))).toEqual([]);
+  });
+  test("contract-excluded directories are not reported as omissions", async () => {
+    // sroot contains .git; searching it must still read as complete, or the
+    // note fires on every repository and stops carrying information.
+    const out = await executeGlobFiles(sroot, "**/*.ts");
+    expect(out).not.toContain(".git");
+    expect(out).not.toContain("[");
+  });
+});
+
+describe("glob character classes are charged to the budget", () => {
+  test("a long failing class cannot outrun the aggregate bound", async () => {
+    // Uncharged, each counted step hid ~500 class comparisons; charged, the
+    // budget drains in proportion to the work actually done.
+    const classPattern = "**/*[" + "b".repeat(495) + "c]";
+    expect(classPattern.length).toBeLessThanOrEqual(512);
+    const started = performance.now();
+    const out = await executeGlobFiles(sroot, classPattern);
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(typeof out).toBe("string");
+  }, 30_000);
+
+  test("the class scan itself costs budget", () => {
+    const bare = newGlobBudget();
+    matchesGlobPath("abcdefghij.ts", "*.ts", bare);
+    const classy = newGlobBudget();
+    matchesGlobPath("abcdefghij.ts", "*[" + "b".repeat(400) + "c].ts", classy);
+    expect(classy.steps).toBeGreaterThan(bare.steps * 100);
   });
 });

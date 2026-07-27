@@ -555,10 +555,11 @@ export function buildGrepFilesCommand(root: string): CommandDefinition<string> {
       "Search workspace file contents with a regular expression. Returns " +
       "`path:line:text` rows. Prefer this over running grep/rg through bash: " +
       "it is read-only and needs no approval. Every path it returns is " +
-      "verified to resolve inside the workspace; symlinks, .git and " +
-      "node_modules are skipped. A result that hit a limit or skipped a file " +
-      "says so in a trailing note — treat a search without one as complete " +
-      "and any other as partial.",
+      "verified to resolve inside the workspace. Scope excludes node_modules, " +
+      ".git, .jj, .hg and .svn by contract — searching those requires bash. " +
+      "Anything ELSE left unexamined (a ceiling, a skipped binary or symlink, " +
+      "an unreadable directory) is reported in a trailing note, so a result " +
+      "with no note covered that scope in full and one with a note did not.",
     inputSchema: {
       type: "object",
       required: ["pattern"],
@@ -620,8 +621,10 @@ export function buildGlobFilesCommand(root: string): CommandDefinition<string> {
     description:
       "Find workspace files whose relative path matches a glob, e.g. " +
       "`**/*.test.ts`. Read-only; prefer this over running find/ls through " +
-      "bash. Returns only paths verified to resolve inside the workspace, and " +
-      "notes any limit it hit rather than reporting a partial result as empty.",
+      "bash. Returns only paths verified to resolve inside the workspace. " +
+      "Scope excludes node_modules, .git, .jj, .hg and .svn by contract; " +
+      "anything else left unexamined is reported in a trailing note, so a " +
+      "result with no note covered that scope in full.",
     inputSchema: {
       type: "object",
       required: ["pattern"],
