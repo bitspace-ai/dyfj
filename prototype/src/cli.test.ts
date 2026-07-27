@@ -19,6 +19,7 @@ import {
   installRootFromModuleUrl,
   type Io,
   isLoopbackServerUrl,
+  main,
   memoryMcpNetGrant,
   normalizeSessionRef,
   parseArgs,
@@ -848,6 +849,19 @@ describe("parseArgs", () => {
   });
   test("rejects an unknown flag", () => {
     expect(parseArgs(["--wat"]).error).toContain("unknown flag");
+  });
+  test("canonicalizes a valid --session value", () => {
+    expect(
+      parseArgs(["--session", "workbench-01ktz1xwcn7jmgs5e8kakfezkr"])
+        .overrides.sessionId,
+    ).toBe("01KTZ1XWCN7JMGS5E8KAKFEZKR");
+  });
+  test("rejects a garbage --session as a parse error, not a throw", () => {
+    const p = parseArgs(["--session", "garbage-value"]);
+    expect(p.command).toBe("help");
+    expect(p.error).toContain("dyfj sessions");
+    // main prefixes "dyfj: "; the parse error must not carry its own.
+    expect(p.error).not.toMatch(/^dyfj:/);
   });
   test("--help asks for help", () => {
     expect(parseArgs(["--help"]).command).toBe("help");
@@ -2050,6 +2064,18 @@ describe("normalizeSessionRef", () => {
     expect(() => normalizeSessionRef("not-a-session")).toThrow(
       /dyfj sessions/,
     );
+  });
+});
+
+describe("main usage errors", () => {
+  test("a garbage --session exits 2 via the usage-error path", async () => {
+    const { io, stderr } = fakeIo();
+    const code = await main(["--session", "garbage-value"], io);
+    expect(code).toBe(2);
+    expect(stderr[0]).toMatch(/^dyfj: --session /);
+    expect(stderr[0]).toContain("dyfj sessions");
+    // The tidy path: usage message + help, never a stack trace.
+    expect(stderr.join("\n")).not.toMatch(/^\s+at /m);
   });
 });
 
