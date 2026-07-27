@@ -1241,7 +1241,7 @@ describe("buildCommandToolCallEventPayload — event copy size cap", () => {
     // own truncation suffix — the exact shape that overflowed the column in
     // the original tool-result overflow defect.
     const modelFacingResult = "a".repeat(64 * 1024) +
-      "\n\n[truncated at 65536 characters]";
+      "\n\n[truncated at 65536 bytes]";
     const payload = buildCommandToolCallEventPayload(
       call({ path: "workbench.ts" }, { commandId: "read_file" }),
       {
@@ -1337,7 +1337,7 @@ describe("read_file → tool_call event containment", () => {
     // unchanged by this fix (non-goal).
     expect(result.isError).toBe(false);
     expect(result.result as string).toContain(
-      "[truncated at 65536 characters]",
+      "[truncated at 65536 bytes]",
     );
     const modelFacingBytes = new TextEncoder().encode(result.result as string)
       .byteLength;
@@ -1354,13 +1354,12 @@ describe("read_file → tool_call event containment", () => {
 });
 
 describe("registerCoreCommands wiring", () => {
-  // Regression for a real miss: the grep_files/glob_files builders existed, the
-  // executors were unit-tested, and evaluateCommandPolicy was probed directly —
-  // but the registration lines were never added, so the tools were absent from
-  // the model's toolset and UAT showed the model still shelling out to grep.
-  // Unit tests and direct policy probes both bypass registerCoreCommands. The
-  // toolset assertion above is the guard; these two check what it cannot —
-  // that the tools reach the MODEL, and that they auto-approve once registered.
+  // A command can be fully built, unit-tested, and policy-probed and still be
+  // absent from the model's toolset, because unit tests and direct policy
+  // probes both bypass registerCoreCommands — registration is a separate step
+  // with nothing else asserting it. These two cover what the executor and
+  // policy tests cannot: that the tools reach the MODEL, and that they
+  // auto-approve once registered.
   test("the search tools reach the model as projected tools", () => {
     const registry = createCommandRegistry();
     registerCoreCommands(registry, { workspaceRoot: "/work" });

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   executeEditFile,
   clampLimit,
+  clipToUtf8Bytes,
   executeGlobFiles,
   matchesGlobPath,
   executeGrepFiles,
@@ -93,7 +94,7 @@ describe("executeReadFile", () => {
   });
   test("truncates oversized content at the byte cap", async () => {
     const out = await executeReadFile(root, "hello.txt", 5);
-    expect(out).toContain("[truncated at 5 characters]");
+    expect(out).toContain("[truncated at 5 bytes]");
     expect(out.startsWith("hello")).toBe(true);
   });
 });
@@ -568,4 +569,78 @@ describe("grep_files resource bounds", () => {
     });
     expect(out.startsWith("error:")).toBe(true);
   }, 20_000);
+});
+
+// ── Containment and completeness ─────────────────────────────────────────────
+
+describe("clipToUtf8Bytes", () => {
+  test("returns null when the text already fits", () => {
+    expect(clipToUtf8Bytes("abc", 10)).toBeNull();
+  });
+  test("measures bytes, not UTF-16 code units", () => {
+    // 10 three-byte characters: 10 code units, 30 bytes.
+    const text = "\u4e2d".repeat(10);
+    expect(text.length).toBe(10);
+    expect(clipToUtf8Bytes(text, 12)).not.toBeNull();
+  });
+  test("cuts on a character boundary, never mid-sequence", () => {
+    const clipped = clipToUtf8Bytes("\u4e2d".repeat(10), 10)!;
+    expect(clipped).not.toContain("\ufffd");
+    expect(new TextEncoder().encode(clipped).byteLength).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("ancestor replacement cannot leak a file out of the workspace", () => {
+  // The sandbox cannot create real symlinks, so the canonicalizer is the seam:
+  // a pathname that is lexically in-root but canonically outside it is exactly
+  // what an ancestor directory swapped for a symlink leaves behind.
+  const outside = (_p: string) => Promise.resolve("/elsewhere/decoy.ts");
+
+  test("grep_files refuses content whose canonical path escapes", async () => {
+    const out = await executeGrepFiles(sroot, "needle", { realPath: outside });
+    expect(out).not.toContain("alpha.ts:");
+    expect(out).toContain("(no matches)");
+  }, 20_000);
+
+  test("glob_files refuses names whose canonical path escapes", async () => {
+    const out = await executeGlobFiles(sroot, "**/*.ts", { realPath: outside });
+    expect(out).not.toContain("alpha.ts");
+    expect(out).toContain("resolved outside the workspace root");
+  });
+
+  test("the normal canonicalizer still returns in-root files", async () => {
+    const out = await executeGlobFiles(sroot, "**/*.ts");
+    expect(out).toContain("alpha.ts");
+  });
+});
+
+describe("an incomplete walk is never reported as a complete one", () => {
+  let droot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    droot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    let dir = droot;
+    for (let i = 0; i < 40; i++) {
+      dir = `${dir}/d${i}`;
+      await Deno.mkdir(dir);
+    }
+    await Deno.writeTextFile(`${dir}/buried.txt`, "needle\n");
+  });
+
+  afterAll(async () => {
+    if (droot) await Deno.remove(droot, { recursive: true });
+  });
+
+  test("grep_files flags content omitted by the depth cap", async () => {
+    const out = await executeGrepFiles(droot, "needle");
+    expect(out).toContain("(no matches)");
+    expect(out).toContain("directory depth limit");
+  }, 20_000);
+
+  test("glob_files flags content omitted by the depth cap", async () => {
+    const out = await executeGlobFiles(droot, "**/*.txt");
+    expect(out).toContain("(no matches)");
+    expect(out).toContain("directory depth limit");
+  });
 });

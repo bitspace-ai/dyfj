@@ -58,10 +58,12 @@ export function resolveWorkspacePath(root: string, p: string): string {
  * in pieces without shelling out to sed/head/tail — each of which would route
  * through operator approval. The byte cap still applies to the selected window.
  *
- * `maxBytes` caps the text handed back to the model. It does NOT cap the read
- * itself: the whole file is decoded before a window is sliced out of it. The
- * memory bound is the separate `stat` check against HARD_MAX_FILE_BYTES below,
- * which the model cannot raise.
+ * `maxBytes` caps the text handed back to the model, in encoded UTF-8 bytes —
+ * `.length` would count UTF-16 code units and let a multibyte file return up to
+ * three times the named ceiling. It does NOT cap the read itself: the whole
+ * file is decoded before a window is sliced out of it. The memory bound is the
+ * separate size check against HARD_MAX_FILE_BYTES, which the model cannot
+ * raise.
  */
 export async function executeReadFile(
   root: string,
@@ -95,7 +97,8 @@ export async function executeReadFile(
     if (info.isDirectory) {
       return `error: ${p} is a directory; use list_files`;
     }
-    const read = await readContainedFile(target, HARD_MAX_FILE_BYTES);
+    const rootReal = await Deno.realPath(resolve(root));
+    const read = await readContainedFile(target, HARD_MAX_FILE_BYTES, rootReal);
     if (!read.ok) {
       return `error: cannot read ${p}: ${read.reason}`;
     }
@@ -115,15 +118,29 @@ export async function executeReadFile(
         text = `${text}\n\n[lines ${offset}-${end} of ${lines.length}; ${more} more]`;
       }
     }
-    if (text.length > maxBytes) {
-      return `${
-        text.slice(0, maxBytes)
-      }\n\n[truncated at ${maxBytes} characters]`;
+    const clipped = clipToUtf8Bytes(text, maxBytes);
+    if (clipped !== null) {
+      return `${clipped}\n\n[truncated at ${maxBytes} bytes]`;
     }
     return text;
   } catch (err) {
     return `error: cannot read ${p}: ${(err as Error).message}`;
   }
+}
+
+/**
+ * `text` cut to at most `maxBytes` encoded UTF-8 bytes, or null when it already
+ * fits. The cut walks back off UTF-8 continuation bytes (top bits `10`) so it
+ * lands on a character boundary: a naive slice can swap a clipped tail for a
+ * differently-sized replacement character and end up past the ceiling it was
+ * enforcing.
+ */
+export function clipToUtf8Bytes(text: string, maxBytes: number): string | null {
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.byteLength <= maxBytes) return null;
+  let end = Math.min(maxBytes, encoded.byteLength);
+  while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
+  return new TextDecoder().decode(encoded.subarray(0, end));
 }
 
 /**
@@ -137,6 +154,14 @@ export async function executeReadFile(
  * read. Every read tool here is auto-approved, so the name it was handed is the
  * only thing standing between the model and the rest of the filesystem.
  *
+ * Leaf identity alone is not containment, though: it proves we opened the
+ * object we checked, not that the object sits inside the workspace. An ANCESTOR
+ * directory swapped for a symlink mid-walk leaves a pathname that is lexically
+ * in-root and canonically outside it, with a perfectly stable file at the end
+ * of it. So the canonical path is resolved after opening, checked against the
+ * root, and correlated back to the open descriptor — the traversal is not
+ * prevented from wandering, but nothing that wandered is returned.
+ *
  * Limits worth stating plainly: inode reuse could in principle defeat the
  * comparison, and platforms that report a null `ino`/`dev` (Windows) cannot be
  * verified at all — those are refused rather than read on trust.
@@ -144,6 +169,10 @@ export async function executeReadFile(
 async function readContainedFile(
   abs: string,
   maxBytes: number,
+  rootReal: string,
+  // Test seam: the sandbox cannot create real symlinks, so the ancestor-swap
+  // rejection is exercised with a canonicalizer that reports an outside path.
+  realPath: (p: string) => Promise<string> = Deno.realPath,
 ): Promise<
   | { ok: true; bytes: Uint8Array }
   | { ok: false; reason: string; oversized?: boolean }
@@ -185,6 +214,16 @@ async function readContainedFile(
         reason: `${after.size} bytes is over the ${maxBytes}-byte limit`,
         oversized: true,
       };
+    }
+    const canonical = await realPath(abs);
+    if (!isWithinRoot(rootReal, canonical)) {
+      return { ok: false, reason: "resolves outside the workspace root" };
+    }
+    const canonicalInfo = await Deno.lstat(canonical);
+    if (
+      canonicalInfo.ino !== after.ino || canonicalInfo.dev !== after.dev
+    ) {
+      return { ok: false, reason: "file identity changed while opening it" };
     }
     const bytes = new Uint8Array(after.size);
     let read = 0;
@@ -382,9 +421,9 @@ export async function executeEditFile(
 //
 // `grep_files` and `glob_files` exist so the model does not have to reach for
 // `bash` to answer read-only questions. Every bash call routes to operator
-// approval (the no-exec invariant), so a missing search tool showed up as
-// approval fatigue rather than as a missing feature: read-heavy turns were
-// running ~8 approvals, overwhelmingly read-only sed/grep/cat.
+// approval (the no-exec invariant), so without a native search tool a purely
+// read-only turn spends approvals on grep, sed and cat — prompts that carry no
+// decision, and that train the operator to approve without reading.
 //
 // Both tools are AUTO-APPROVED, so every limit here has to hold against
 // arguments the model chose — including a model steered by workspace file
@@ -603,6 +642,37 @@ function looksBinary(bytes: Uint8Array): boolean {
 }
 
 /**
+ * Traversal budget and the completeness state that goes with it. Every way the
+ * walk can come up short travels here, because an executor that cannot see the
+ * omission will report a partial search as an empty one.
+ */
+interface WalkBudget {
+  visited: number;
+  cap: number;
+  depthClipped: boolean;
+  unreadableDirs: number;
+}
+
+function newWalkBudget(cap: number): WalkBudget {
+  return { visited: 0, cap, depthClipped: false, unreadableDirs: 0 };
+}
+
+/** Notes describing every way a completed walk fell short of its scope. */
+function walkNotes(budget: WalkBudget): string[] {
+  const notes: string[] = [];
+  if (budget.visited >= budget.cap) {
+    notes.push(`entry limit ${budget.cap} reached`);
+  }
+  if (budget.depthClipped) {
+    notes.push(`directory depth limit ${HARD_MAX_DEPTH} reached`);
+  }
+  if (budget.unreadableDirs > 0) {
+    notes.push(`${budget.unreadableDirs} unreadable director(ies) skipped`);
+  }
+  return notes;
+}
+
+/**
  * Yield workspace-relative file paths under `start`, depth-first and sorted for
  * deterministic output. Symlinks are never followed. `budget.visited` counts
  * every entry seen — directories included — so the cap bounds the walk itself
@@ -611,10 +681,13 @@ function looksBinary(bytes: Uint8Array): boolean {
 async function* walkFiles(
   rootReal: string,
   start: string,
-  budget: { visited: number; cap: number },
+  budget: WalkBudget,
   depth = 0,
 ): AsyncGenerator<string> {
-  if (depth > HARD_MAX_DEPTH) return;
+  if (depth > HARD_MAX_DEPTH) {
+    budget.depthClipped = true;
+    return;
+  }
   const room = budget.cap - budget.visited;
   if (room <= 0) return;
   // Stop consuming readDir at the remaining budget rather than buffering the
@@ -630,7 +703,10 @@ async function* walkFiles(
       if (entries.length >= room) break;
     }
   } catch {
-    return; // unreadable directory: skip rather than fail the whole search
+    // Skipping an unreadable directory beats failing the whole search, but it
+    // is still a hole in the answer, so it is counted and reported.
+    budget.unreadableDirs++;
+    return;
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
@@ -700,11 +776,12 @@ export async function executeGrepFiles(
     maxFiles?: number;
     maxBytes?: number;
     budgetMs?: number;
-    // Test-only seam, for exercising the fail-closed path when no matcher can
-    // start. `buildGrepFilesCommand` never sets it, so nothing the model sends
-    // can reach it — and it must stay that way: an overridden worker runs with
-    // the host's inherited permissions.
+    // Test-only seams. `buildGrepFilesCommand` sets neither, so nothing the
+    // model sends can reach them — and that must stay true: an overridden
+    // worker runs with the host's inherited permissions, and an overridden
+    // canonicalizer is what decides containment.
     workerSpecifier?: string;
+    realPath?: (p: string) => Promise<string>;
   } = {},
 ): Promise<string> {
   if (pattern === "") return "error: pattern must be non-empty";
@@ -748,7 +825,7 @@ export async function executeGrepFiles(
   const { rootReal, startReal } = start;
 
   const rows: string[] = [];
-  const budget = { visited: 0, cap: maxEntries };
+  const budget = newWalkBudget(maxEntries);
   let resultBytes = 0;
   let truncated = false;
   let byteCapped = false;
@@ -769,7 +846,12 @@ export async function executeGrepFiles(
       const abs = resolve(rootReal, rel);
       // Identity-verified read: the size is checked before any content is
       // loaded, and a pathname repointed since the walk saw it is refused.
-      const read = await readContainedFile(abs, maxBytes);
+      const read = await readContainedFile(
+        abs,
+        maxBytes,
+        rootReal,
+        options.realPath,
+      );
       if (!read.ok) {
         if (read.oversized === true) skippedLarge++;
         else skippedUnreadable++;
@@ -837,9 +919,7 @@ export async function executeGrepFiles(
   if (truncated) notes.push(`match limit ${maxMatches} reached`);
   if (byteCapped) notes.push(`result size limit reached`);
   if (budgetExhausted) notes.push(`pattern matching budget exhausted`);
-  if (budget.visited >= budget.cap) {
-    notes.push(`entry limit ${budget.cap} reached`);
-  }
+  notes.push(...walkNotes(budget));
   if (skippedLarge > 0) notes.push(`${skippedLarge} file(s) over the size cap`);
   if (skippedUnreadable > 0) {
     notes.push(`${skippedUnreadable} file(s) unreadable or changed mid-search`);
@@ -855,7 +935,13 @@ export async function executeGrepFiles(
 export async function executeGlobFiles(
   root: string,
   pattern: string,
-  options: { path?: string; maxResults?: number; maxFiles?: number } = {},
+  options: {
+    path?: string;
+    maxResults?: number;
+    maxFiles?: number;
+    // Test-only seam; see executeGrepFiles.
+    realPath?: (p: string) => Promise<string>;
+  } = {},
 ): Promise<string> {
   const patternError = globPatternError(pattern);
   if (patternError !== null) return `error: ${patternError}`;
@@ -876,12 +962,26 @@ export async function executeGlobFiles(
   const { rootReal, startReal } = start;
 
   const hits: string[] = [];
-  const budget = { visited: 0, cap: maxEntries };
+  const budget = newWalkBudget(maxEntries);
   let resultBytes = 0;
   let truncated = false;
   let byteCapped = false;
+  let escaped = 0;
+  const realPath = options.realPath ?? Deno.realPath;
   for await (const rel of walkFiles(rootReal, startReal, budget)) {
     if (!matchesGlobPath(rel, pattern)) continue;
+    // glob_files returns names without opening anything, so it gets the same
+    // ancestor-replacement check by canonicalizing before it emits: a path
+    // that resolves outside the root is a name the model should never see.
+    try {
+      if (!isWithinRoot(rootReal, await realPath(resolve(rootReal, rel)))) {
+        escaped++;
+        continue;
+      }
+    } catch {
+      escaped++;
+      continue;
+    }
     if (hits.length >= maxResults) {
       truncated = true;
       break;
@@ -897,8 +997,9 @@ export async function executeGlobFiles(
   const notes: string[] = [];
   if (truncated) notes.push(`result limit ${maxResults} reached`);
   if (byteCapped) notes.push(`result size limit reached`);
-  if (budget.visited >= budget.cap) {
-    notes.push(`entry limit ${budget.cap} reached`);
+  notes.push(...walkNotes(budget));
+  if (escaped > 0) {
+    notes.push(`${escaped} path(s) resolved outside the workspace root`);
   }
   const body = hits.length === 0 ? "(no matches)" : hits.join("\n");
   return notes.length === 0 ? body : `${body}\n[${notes.join("; ")}]`;
