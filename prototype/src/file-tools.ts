@@ -599,16 +599,22 @@ export async function executeEditFile(
 //   - "Scope" is defined, not implied: the excluded directories above are
 //     outside it by contract and are not reported as omissions — otherwise
 //     every search of every repository would carry a .git note and the note
-//     would stop meaning anything. Everything else that goes unexamined IS an
-//     omission and is counted: binary files, over-long lines, oversized files,
+//     would stop meaning anything. Everything the search DOES observe and then
+//     decline is counted: binary files, over-long lines, oversized files,
 //     unreadable directories, symlinks, non-regular files, raced paths, files
-//     that changed while being read, and every ceiling. "(no matches)" with no
-//     trailing note therefore means the defined scope was examined in full — an
-//     incomplete search read as proof of absence is a worse failure than a
-//     truncated one. A file mutated mid-read is caught by re-stating the same
-//     descriptor afterwards and reported rather than returned torn — best
-//     effort, on size and mtime: an in-place edit of identical length inside the
-//     filesystem's mtime granularity is the case this does not see.
+//     that changed while being read, and every ceiling. A trailing note is
+//     therefore reliable in one direction only, and that limit is the honest
+//     part: a note means something was left out; the absence of one means the
+//     search skipped nothing IT SAW. It is not proof the tree held still.
+//     Deno has no snapshotting or descriptor-relative directory read, so
+//     traversal walks a live filesystem by pathname — a directory replaced
+//     between the check and the descent moves content out of view without ever
+//     being observed, and nothing can count what was never enumerated. Content
+//     that is reached is still verified at the point of use, so a raced path
+//     cannot be RETURNED; it can only be missed. Same shape one level down: a
+//     file mutated mid-read is caught by re-stating the descriptor, best effort
+//     on size and mtime, so an in-place edit of identical length inside the
+//     filesystem's mtime granularity goes unseen.
 
 const DEFAULT_MAX_ENTRIES_VISITED = 5_000;
 const DEFAULT_MAX_MATCHES = 200;
@@ -1096,21 +1102,31 @@ async function searchRoot(
 const encoder = new TextEncoder();
 
 /**
- * Escape control characters before text goes into a result row.
+ * Escape characters that could restructure a result row.
  *
  * Results are newline-separated `path:line:text` rows, and both the filename
  * and the matched line come from the workspace: a file named
  * `a\nb.ts:1:fake` would print as two rows, one of them fabricated, and a name
  * carrying the note delimiters could forge a completeness note. Matched text
- * cannot contain a newline — that is what the lines were split on — but a bare
- * carriage return or escape sequence still rewrites what the reader sees, so
- * both go through the same escaping.
+ * cannot contain a newline — that is what the lines were split on — but a
+ * carriage return, an escape sequence, or a bidi override still rewrites what
+ * the reader sees, so both fields go through the same escaping.
+ *
+ * Covered: C0 and DEL, C1, the Unicode line/paragraph separators (U+2028,
+ * U+2029, U+0085) which several renderers treat as line breaks, and the bidi
+ * overrides that can visually reorder a row. This is about structural and
+ * display integrity, not about producing a canonical encoding.
  */
-function sanitizeOutputText(p: string): string {
+export function sanitizeOutputText(p: string): string {
   // deno-lint-ignore no-control-regex
   return p.replace(
-    /[\x00-\x1f\x7f]/g,
-    (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`,
+    /[\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+    (c) => {
+      const code = c.charCodeAt(0);
+      return code <= 0xff
+        ? `\\x${code.toString(16).padStart(2, "0")}`
+        : `\\u${code.toString(16).padStart(4, "0")}`;
+    },
   );
 }
 

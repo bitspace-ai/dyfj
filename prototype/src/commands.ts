@@ -557,9 +557,11 @@ export function buildGrepFilesCommand(root: string): CommandDefinition<string> {
       "it is read-only and needs no approval. Every path it returns is " +
       "verified to resolve inside the workspace. Scope excludes node_modules, " +
       ".git, .jj, .hg and .svn by contract — searching those requires bash. " +
-      "Anything ELSE left unexamined (a ceiling, a skipped binary or symlink, " +
-      "an unreadable directory) is reported in a trailing note, so a result " +
-      "with no note covered that scope in full and one with a note did not.",
+      "Anything ELSE the search saw and declined (a ceiling, a skipped binary " +
+      "or symlink, an unreadable directory) is reported in a trailing note. A " +
+      "note means content was left out; no note means nothing seen was " +
+      "skipped, which is weaker than proof of absence if the tree is changing " +
+      "underneath the search.",
     inputSchema: {
       type: "object",
       required: ["pattern"],
@@ -623,8 +625,9 @@ export function buildGlobFilesCommand(root: string): CommandDefinition<string> {
       "`**/*.test.ts`. Read-only; prefer this over running find/ls through " +
       "bash. Returns only paths verified to resolve inside the workspace. " +
       "Scope excludes node_modules, .git, .jj, .hg and .svn by contract; " +
-      "anything else left unexamined is reported in a trailing note, so a " +
-      "result with no note covered that scope in full.",
+      "anything else the search saw and declined is reported in a trailing " +
+      "note. No note means nothing seen was skipped, not that the tree held " +
+      "still while it looked.",
     inputSchema: {
       type: "object",
       required: ["pattern"],

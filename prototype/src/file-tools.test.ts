@@ -6,6 +6,7 @@ import {
   excludedSegment,
   safeErrorReason,
   sameFileVersion,
+  sanitizeOutputText,
   toPosixPath,
   newGlobBudget,
   newWalkBudget,
@@ -1119,4 +1120,28 @@ describe("matched text cannot rewrite what the reader sees", () => {
     expect(out).toContain("\\x0d");
     expect(out).toContain("\\x1b");
   }, 20_000);
+});
+
+describe("display-control characters cannot restructure a row", () => {
+  test("Unicode line separators are escaped", () => {
+    expect(sanitizeOutputText("a\u2028b")).toBe("a\\u2028b");
+    expect(sanitizeOutputText("a\u2029b")).toBe("a\\u2029b");
+    expect(sanitizeOutputText("a\u0085b")).toBe("a\\x85b");
+  });
+  test("bidi overrides are escaped", () => {
+    expect(sanitizeOutputText("a\u202eb")).toBe("a\\u202eb");
+    expect(sanitizeOutputText("a\u2066b")).toBe("a\\u2066b");
+  });
+  test("C1 controls are escaped", () => {
+    expect(sanitizeOutputText("a\u009bb")).toBe("a\\x9bb");
+  });
+  test("ordinary text is left alone", () => {
+    expect(sanitizeOutputText("src/pkg/a.ts")).toBe("src/pkg/a.ts");
+    expect(sanitizeOutputText("héllo — ok")).toBe("héllo — ok");
+  });
+  test("a tab is escaped too — the rule is structural, not aesthetic", () => {
+    // Escaped rather than preserved: it is a C0 control, and carving out
+    // exceptions is how an escaping rule grows holes.
+    expect(sanitizeOutputText("a\tb")).toBe("a\\x09b");
+  });
 });
