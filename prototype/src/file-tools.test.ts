@@ -354,7 +354,7 @@ describe("executeReadFile ranged reads", () => {
     f.close();
     const out = await executeReadFile(sroot, "huge.bin");
     expect(out.startsWith("error:")).toBe(true);
-    expect(out).toContain("read limit");
+    expect(out).toContain("over the 4194304-byte limit");
     await Deno.remove(huge);
   });
 });
@@ -408,11 +408,10 @@ describe("matchesGlobPath", () => {
 
 // ── Enforced bounds on the auto-approved search tools ────────────────────────
 //
-// These are the regression tests for the two blocking findings in the
-// 2026-07-27 publish gate: an arbitrary regex could wedge the event loop, and
-// the "every traversal is bounded" comment was not backed by the code. Both
-// tools auto-approve, so each bound is exercised against arguments a model
-// could actually send.
+// Regression coverage for the resource ceilings on grep_files and glob_files.
+// Nothing prompts the operator before these run, so each bound is exercised
+// against arguments a model could actually send — an inflated limit, a
+// catastrophic regex, a tree shaped to slip past a file-only budget.
 
 describe("clampLimit", () => {
   test("falls back when the value is absent or unusable", () => {
@@ -479,6 +478,38 @@ describe("grep_files resource bounds", () => {
     // counted only files would have descended all the way to buried.txt.
     const out = await executeGrepFiles(broot, "needle", { maxFiles: 5 });
     expect(out).not.toContain("buried.txt");
+    expect(out).toContain("entry limit 5 reached");
+  }, 20_000);
+
+  test("a truncated search says so even when it found nothing", async () => {
+    const out = await executeGrepFiles(broot, "zzz-absent", { maxFiles: 5 });
+    expect(out).toContain("(no matches)");
+    expect(out).toContain("entry limit 5 reached");
+  }, 20_000);
+
+  test("a flat directory larger than the cap does not buffer past it", async () => {
+    const flat = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    for (let i = 0; i < 60; i++) {
+      await Deno.writeTextFile(`${flat}/f${i}.txt`, "needle\n");
+    }
+    const out = await executeGlobFiles(flat, "**/*.txt", { maxFiles: 10 });
+    expect(out.split("\n").filter((l) => l.endsWith(".txt")).length)
+      .toBeLessThanOrEqual(10);
+    expect(out).toContain("entry limit 10 reached");
+    await Deno.remove(flat, { recursive: true });
+  }, 20_000);
+
+  test("an over-long include glob is rejected, not silently unmatchable", async () => {
+    const out = await executeGrepFiles(broot, "needle", {
+      include: "*".repeat(600),
+    });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("include");
+  }, 20_000);
+
+  test("an over-long pattern is rejected before compilation", async () => {
+    const out = await executeGrepFiles(broot, "a".repeat(2000));
+    expect(out.startsWith("error:")).toBe(true);
   }, 20_000);
 
   test("the walk stops at the depth cap", async () => {

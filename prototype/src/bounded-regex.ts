@@ -21,6 +21,13 @@
 /** Default wall clock for one whole `grep_files` call, across every file. */
 export const DEFAULT_REGEX_BUDGET_MS = 2_000;
 
+/**
+ * Longest accepted pattern. The worker budget bounds *execution*; compilation
+ * happens on the main thread before any worker exists, so parsing cost is
+ * bounded by refusing long patterns rather than by the clock.
+ */
+export const MAX_PATTERN_LENGTH = 1_024;
+
 /** The pattern used its whole time budget. The matcher is dead afterwards. */
 export class RegexBudgetExceeded extends Error {
   constructor(budgetMs: number) {
@@ -67,14 +74,21 @@ export class BoundedMatcher {
   #dead = false;
 
   /**
-   * Compiling the pattern here, in-process, is deliberate: compilation is cheap
-   * and cannot backtrack, so an invalid pattern fails fast and synchronously
-   * without paying for a worker. Only *execution* needs the budget.
+   * Compiling the pattern here, in-process, is deliberate: compilation cannot
+   * backtrack, so an invalid pattern fails fast and synchronously without
+   * paying for a worker. Only *execution* needs the budget — but compilation
+   * is not free either, and it happens before the worker exists, so the length
+   * ceiling above is what bounds it.
    */
   constructor(
     pattern: string,
     options: { budgetMs?: number; specifier?: string } = {},
   ) {
+    if (pattern.length > MAX_PATTERN_LENGTH) {
+      throw new Error(
+        `pattern is longer than ${MAX_PATTERN_LENGTH} characters`,
+      );
+    }
     new RegExp(pattern);
     this.#pattern = pattern;
     this.#budgetMs = options.budgetMs ?? DEFAULT_REGEX_BUDGET_MS;

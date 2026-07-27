@@ -95,10 +95,11 @@ export async function executeReadFile(
     if (info.isDirectory) {
       return `error: ${p} is a directory; use list_files`;
     }
-    if (info.size > HARD_MAX_FILE_BYTES) {
-      return `error: ${p} is ${info.size} bytes, over the ${HARD_MAX_FILE_BYTES}-byte read limit`;
+    const read = await readContainedFile(target, HARD_MAX_FILE_BYTES);
+    if (!read.ok) {
+      return `error: cannot read ${p}: ${read.reason}`;
     }
-    const full = await Deno.readTextFile(target);
+    const full = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes);
     let text = full;
     if (hasRange) {
       const lines = full.split("\n");
@@ -122,6 +123,84 @@ export async function executeReadFile(
     return text;
   } catch (err) {
     return `error: cannot read ${p}: ${(err as Error).message}`;
+  }
+}
+
+/**
+ * Read a file through a descriptor whose identity has been verified.
+ *
+ * `lstat` → `open` → `fstat`, comparing (dev, ino): if the pathname was swapped
+ * — for a symlink, or anything else — between the check and the open, the
+ * opened object is not the one that was approved and the read is refused. That
+ * race is the reason a pathname check is not sufficient on its own: containment
+ * is decided against a name, and a name can be repointed before the content is
+ * read. Every read tool here is auto-approved, so the name it was handed is the
+ * only thing standing between the model and the rest of the filesystem.
+ *
+ * Limits worth stating plainly: inode reuse could in principle defeat the
+ * comparison, and platforms that report a null `ino`/`dev` (Windows) cannot be
+ * verified at all — those are refused rather than read on trust.
+ */
+async function readContainedFile(
+  abs: string,
+  maxBytes: number,
+): Promise<
+  | { ok: true; bytes: Uint8Array }
+  | { ok: false; reason: string; oversized?: boolean }
+> {
+  let before: Deno.FileInfo;
+  try {
+    before = await Deno.lstat(abs);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  if (before.isSymlink) return { ok: false, reason: "path is a symlink" };
+  if (!before.isFile) return { ok: false, reason: "not a regular file" };
+  if (before.ino === null || before.dev === null) {
+    return { ok: false, reason: "cannot verify file identity on this platform" };
+  }
+  if (before.size > maxBytes) {
+    return {
+      ok: false,
+      reason: `${before.size} bytes is over the ${maxBytes}-byte limit`,
+      oversized: true,
+    };
+  }
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(abs, { read: true });
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  try {
+    const after = await file.stat();
+    if (
+      !after.isFile || after.ino !== before.ino || after.dev !== before.dev
+    ) {
+      return { ok: false, reason: "file identity changed while opening it" };
+    }
+    if (after.size > maxBytes) {
+      return {
+        ok: false,
+        reason: `${after.size} bytes is over the ${maxBytes}-byte limit`,
+        oversized: true,
+      };
+    }
+    const bytes = new Uint8Array(after.size);
+    let read = 0;
+    while (read < bytes.length) {
+      const n = await file.read(bytes.subarray(read));
+      if (n === null) break;
+      read += n;
+    }
+    return {
+      ok: true,
+      bytes: read === bytes.length ? bytes : bytes.subarray(0, read),
+    };
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  } finally {
+    file.close();
   }
 }
 
@@ -332,15 +411,18 @@ export async function executeEditFile(
 //     one long line is enough for a catastrophic pattern — so lines over
 //     MAX_LINE_LENGTH are skipped outright and the budget, not the pattern,
 //     is what bounds the cost. If the worker cannot start, the search fails
-//     closed rather than matching on the main thread.
+//     closed rather than matching on the main thread. Compilation runs on the
+//     main thread ahead of the worker and is bounded by a pattern-length cap
+//     instead of by the clock.
 //   - Glob matching does not go through RegExp at all: `matchesGlobPath` is a
 //     segment-wise wildcard matcher using the standard star-backtrack trick,
 //     worst-case quadratic over inputs that are themselves length-capped.
-//
-// Not defended here: a regular file swapped for a symlink between enumeration
-// and read. The walk rejects symlinks as it sees them, but the later read
-// reopens by pathname, so a concurrent replacement wins the race. Single
-// operator, single trust domain — recorded rather than fixed.
+//   - Content is read through `readContainedFile`, which verifies the opened
+//     descriptor's identity, so a file swapped for a symlink between the walk
+//     and the read is refused rather than followed.
+//   - A search that hit a ceiling or skipped anything says so, including when
+//     it found nothing: "(no matches)" on its own means the whole requested
+//     scope was actually examined.
 
 const DEFAULT_MAX_ENTRIES_VISITED = 5_000;
 const DEFAULT_MAX_MATCHES = 200;
@@ -493,8 +575,22 @@ function matchSegments(path: string[], glob: string[]): boolean {
  * matched — the length cap is what keeps the quadratic worst case small.
  */
 export function matchesGlobPath(path: string, glob: string): boolean {
-  if (glob.length === 0 || glob.length > MAX_GLOB_LENGTH) return false;
+  if (globPatternError(glob) !== null) return false;
   return matchSegments(path.split("/"), glob.split("/"));
+}
+
+/**
+ * Why a glob is unusable, or null when it is fine. Callers reject explicitly
+ * rather than leaning on `matchesGlobPath` returning false for everything: a
+ * silently unmatchable pattern reads as "nothing here" when it means "I did not
+ * look".
+ */
+export function globPatternError(glob: string): string | null {
+  if (glob.length === 0) return "pattern must be non-empty";
+  if (glob.length > MAX_GLOB_LENGTH) {
+    return `pattern is longer than ${MAX_GLOB_LENGTH} characters`;
+  }
+  return null;
 }
 
 // ── Traversal ────────────────────────────────────────────────────────────────
@@ -519,10 +615,20 @@ async function* walkFiles(
   depth = 0,
 ): AsyncGenerator<string> {
   if (depth > HARD_MAX_DEPTH) return;
-  let entries: Deno.DirEntry[];
+  const room = budget.cap - budget.visited;
+  if (room <= 0) return;
+  // Stop consuming readDir at the remaining budget rather than buffering the
+  // directory and checking afterwards: one enormous flat directory would
+  // otherwise allocate and sort without limit before the cap ever applied,
+  // which is precisely what the cap exists to prevent. The consequence is that
+  // an overflowing directory keeps readDir order instead of sorted order —
+  // output stops being deterministic exactly when it also stops being complete.
+  const entries: Deno.DirEntry[] = [];
   try {
-    entries = [];
-    for await (const e of Deno.readDir(start)) entries.push(e);
+    for await (const e of Deno.readDir(start)) {
+      entries.push(e);
+      if (entries.length >= room) break;
+    }
   } catch {
     return; // unreadable directory: skip rather than fail the whole search
   }
@@ -583,6 +689,10 @@ export async function executeGrepFiles(
   } = {},
 ): Promise<string> {
   if (pattern === "") return "error: pattern must be non-empty";
+  if (options.include !== undefined) {
+    const globError = globPatternError(options.include);
+    if (globError !== null) return `error: include ${globError}`;
+  }
 
   let matcher: BoundedMatcher;
   try {
@@ -625,6 +735,7 @@ export async function executeGrepFiles(
   let byteCapped = false;
   let budgetExhausted = false;
   let skippedLarge = 0;
+  let skippedUnreadable = 0;
   let skippedLongLines = 0;
 
   try {
@@ -637,28 +748,17 @@ export async function executeGrepFiles(
         continue;
       }
       const abs = resolve(rootReal, rel);
-      // stat before read: this is the memory bound, not the length check that
-      // used to sit after readFile.
-      let info: Deno.FileInfo;
-      try {
-        info = await Deno.stat(abs);
-      } catch {
+      // Identity-verified read: the size is checked before any content is
+      // loaded, and a pathname repointed since the walk saw it is refused.
+      const read = await readContainedFile(abs, maxBytes);
+      if (!read.ok) {
+        if (read.oversized === true) skippedLarge++;
+        else skippedUnreadable++;
         continue;
       }
-      if (!info.isFile) continue;
-      if (info.size > maxBytes) {
-        skippedLarge++;
-        continue;
-      }
-      let bytes: Uint8Array;
-      try {
-        bytes = await Deno.readFile(abs);
-      } catch {
-        continue;
-      }
-      if (looksBinary(bytes)) continue;
+      if (looksBinary(read.bytes)) continue;
       const lines = new TextDecoder("utf-8", { fatal: false })
-        .decode(bytes)
+        .decode(read.bytes)
         .split("\n");
 
       // Over-long lines never reach the matcher: line-by-line matching narrows
@@ -708,12 +808,12 @@ export async function executeGrepFiles(
     matcher.close();
   }
 
-  if (rows.length === 0) {
-    if (budgetExhausted) {
-      return `error: pattern is too expensive to run (matching budget exhausted); simplify it`;
-    }
-    return "(no matches)";
+  if (rows.length === 0 && budgetExhausted) {
+    return `error: pattern is too expensive to run (matching budget exhausted); simplify it`;
   }
+  // Every ceiling and skip is reported even when nothing matched: a bare
+  // "(no matches)" has to mean the requested scope was fully examined, or the
+  // model will read an incomplete search as a definitive answer.
   const notes: string[] = [];
   if (truncated) notes.push(`match limit ${maxMatches} reached`);
   if (byteCapped) notes.push(`result size limit reached`);
@@ -722,12 +822,14 @@ export async function executeGrepFiles(
     notes.push(`entry limit ${budget.cap} reached`);
   }
   if (skippedLarge > 0) notes.push(`${skippedLarge} file(s) over the size cap`);
+  if (skippedUnreadable > 0) {
+    notes.push(`${skippedUnreadable} file(s) unreadable or changed mid-search`);
+  }
   if (skippedLongLines > 0) {
     notes.push(`${skippedLongLines} line(s) over ${MAX_LINE_LENGTH} chars`);
   }
-  return notes.length === 0
-    ? rows.join("\n")
-    : `${rows.join("\n")}\n[${notes.join("; ")}]`;
+  const body = rows.length === 0 ? "(no matches)" : rows.join("\n");
+  return notes.length === 0 ? body : `${body}\n[${notes.join("; ")}]`;
 }
 
 /** Find workspace-relative file paths matching a glob pattern. */
@@ -736,10 +838,8 @@ export async function executeGlobFiles(
   pattern: string,
   options: { path?: string; maxResults?: number; maxFiles?: number } = {},
 ): Promise<string> {
-  if (pattern === "") return "error: pattern must be non-empty";
-  if (pattern.length > MAX_GLOB_LENGTH) {
-    return `error: pattern is longer than ${MAX_GLOB_LENGTH} characters`;
-  }
+  const patternError = globPatternError(pattern);
+  if (patternError !== null) return `error: ${patternError}`;
   const maxResults = clampLimit(
     options.maxResults,
     DEFAULT_MAX_ENTRIES,
@@ -775,14 +875,12 @@ export async function executeGlobFiles(
     resultBytes += relBytes;
     hits.push(rel);
   }
-  if (hits.length === 0) return "(no matches)";
   const notes: string[] = [];
   if (truncated) notes.push(`result limit ${maxResults} reached`);
   if (byteCapped) notes.push(`result size limit reached`);
   if (budget.visited >= budget.cap) {
     notes.push(`entry limit ${budget.cap} reached`);
   }
-  return notes.length === 0
-    ? hits.join("\n")
-    : `${hits.join("\n")}\n[${notes.join("; ")}]`;
+  const body = hits.length === 0 ? "(no matches)" : hits.join("\n");
+  return notes.length === 0 ? body : `${body}\n[${notes.join("; ")}]`;
 }
