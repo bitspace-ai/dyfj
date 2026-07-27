@@ -1791,7 +1791,14 @@ export async function main(argv: string[], io: Io): Promise<number> {
   // instead of mirroring it in shell — an invocation this parser would reject
   // must not spawn a runtime on its way to the usage error.
   if (argv[0] === "--parse-check") {
-    return parseArgs(argv.slice(1)).error ? 2 : 0;
+    try {
+      return parseArgs(argv.slice(1)).error ? 2 : 0;
+    } catch {
+      // parseArgs can throw on some invalid values (session refs) rather than
+      // returning a parse error; parse-check's contract is 0/2 regardless of
+      // which shape the rejection takes.
+      return 2;
+    }
   }
   const parsed = parseArgs(argv);
   if (parsed.error) io.err(`dyfj: ${parsed.error}`);

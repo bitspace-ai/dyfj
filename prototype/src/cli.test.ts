@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  main,
   bufferedTurn,
   buildServeUnixArgs,
   buildTurnBody,
@@ -2508,5 +2509,30 @@ describe("replPrompt", () => {
     const { io, prompts } = fakeIo([]);
     await runRepl(cfg({ color: true }), io, fn);
     expect(prompts).toEqual([replPrompt(true)]);
+  });
+});
+
+// ── --parse-check (launcher validity contract) ───────────────────────────────
+
+describe("main --parse-check", () => {
+  const silentIo = {
+    out: () => {},
+    err: () => {},
+    readLine: () => Promise.resolve(null),
+    close: () => {},
+  };
+  test("a valid invocation exits 0", async () => {
+    expect(await main(["--parse-check", "status"], silentIo)).toBe(0);
+    expect(await main(["--parse-check"], silentIo)).toBe(0);
+  });
+  test("a parser rejection exits 2", async () => {
+    expect(await main(["--parse-check", "--bogus"], silentIo)).toBe(2);
+    expect(await main(["--parse-check", "--tier", "3"], silentIo)).toBe(2);
+  });
+  test("a parser THROW also exits 2 — the contract is 0/2, not 0/2/crash", async () => {
+    // normalizeSessionRef throws on an invalid ref rather than returning a
+    // parse error; parse-check absorbs either rejection shape.
+    expect(await main(["--parse-check", "--session", "garbage-value"], silentIo))
+      .toBe(2);
   });
 });
