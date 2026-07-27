@@ -872,3 +872,62 @@ describe("separator normalization keeps the exclusions real off POSIX", () => {
       .toBe(true);
   });
 });
+
+describe("a ranged read costs file size, not line count", () => {
+  let rroot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    rroot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // ~3.9 MiB of newlines, just under the hard read ceiling: split up front
+    // this is ~2 million strings to hand back twenty lines.
+    await Deno.writeTextFile(`${rroot}/dense.txt`, "a\n".repeat(1_950_000));
+  });
+
+  afterAll(async () => {
+    if (rroot) await Deno.remove(rroot, { recursive: true });
+  });
+
+  test("a small window out of a newline-dense file returns promptly", async () => {
+    const started = performance.now();
+    const out = await executeReadFile(rroot, "dense.txt", undefined, {
+      offset: 1_000_000,
+      limit: 20,
+    });
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(5_000);
+    expect(out.split("\n").filter((l) => l === "a").length).toBe(20);
+    expect(out).toContain("of 1950001;");
+  }, 30_000);
+
+  test("the window still matches the whole-file line numbering", async () => {
+    const out = await executeReadFile(sroot, "many.txt", undefined, {
+      offset: 3,
+      limit: 2,
+    });
+    expect(out).toContain("line 3");
+    expect(out).toContain("line 4");
+    expect(out).not.toContain("line 5");
+    expect(out).not.toContain("line 2");
+  });
+
+  test("an offset past the end still reports the true total", async () => {
+    const out = await executeReadFile(sroot, "many.txt", undefined, {
+      offset: 999,
+    });
+    expect(out).toContain("past end");
+    expect(out).toContain("(40 lines)");
+  });
+});
+
+describe("the glob budget holds inside a final character class", () => {
+  test("a long class cannot match after crossing the cap", () => {
+    // One-character path, one long class: the token charges more than the cap,
+    // so the check at the top of the loop never sees it.
+    const pattern = "[" + "b".repeat(400) + "a]";
+    expect(matchesGlobPath("a", pattern, { steps: 0, cap: 5 })).toBe(false);
+    // Same pattern with room to run does match, so the refusal above is the
+    // budget and not a broken class.
+    expect(matchesGlobPath("a", pattern, newGlobBudget())).toBe(true);
+  });
+});

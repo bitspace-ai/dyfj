@@ -105,17 +105,17 @@ export async function executeReadFile(
     const full = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes);
     let text = full;
     if (hasRange) {
-      const lines = full.split("\n");
-      if (offset > lines.length) {
-        return `error: offset ${offset} is past end of ${p} (${lines.length} lines)`;
+      const window = lineWindow(full, offset, range.limit);
+      if (window === null) {
+        return `error: offset ${offset} is past end of ${p} (${
+          countLines(full)
+        } lines)`;
       }
-      const end = range.limit === undefined
-        ? lines.length
-        : Math.min(lines.length, offset - 1 + range.limit);
-      text = lines.slice(offset - 1, end).join("\n");
-      const more = lines.length - end;
+      text = window.text;
+      const more = window.totalLines - window.endLine;
       if (more > 0) {
-        text = `${text}\n\n[lines ${offset}-${end} of ${lines.length}; ${more} more]`;
+        text =
+          `${text}\n\n[lines ${offset}-${window.endLine} of ${window.totalLines}; ${more} more]`;
       }
     }
     const clipped = clipToUtf8Bytes(text, maxBytes);
@@ -126,6 +126,59 @@ export async function executeReadFile(
   } catch (err) {
     return `error: cannot read ${p}: ${(err as Error).message}`;
   }
+}
+
+/** Total lines, counted the way `split("\n")` would, without allocating them. */
+function countLines(text: string): number {
+  let lines = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
+    lines++;
+  }
+  return lines;
+}
+
+/**
+ * The 1-based inclusive line window `[offset, offset + limit)` as ONE slice of
+ * the original string, plus the totals the caller reports. Null when `offset`
+ * is past the end.
+ *
+ * Deliberately not `split("\n").slice(...)`: a 4 MiB file of newlines splits
+ * into four million strings, and doing that to hand back twenty lines is a
+ * large transient allocation on a tool nothing prompts for. One pass over the
+ * text finds the window's bounds and counts the rest, so cost tracks file size
+ * rather than line count.
+ */
+function lineWindow(
+  text: string,
+  offset: number,
+  limit: number | undefined,
+): { text: string; totalLines: number; endLine: number } | null {
+  const lastWanted = limit === undefined
+    ? Number.POSITIVE_INFINITY
+    : offset + limit - 1;
+  let totalLines = 0;
+  let startIndex = -1;
+  let endIndex = -1;
+  let endLine = 0;
+  let pos = 0;
+  while (pos <= text.length) {
+    totalLines++;
+    if (totalLines === offset) startIndex = pos;
+    const nl = text.indexOf("\n", pos);
+    const lineEnd = nl === -1 ? text.length : nl;
+    if (totalLines === lastWanted) {
+      endIndex = lineEnd;
+      endLine = totalLines;
+    }
+    if (nl === -1) break;
+    pos = nl + 1;
+  }
+  if (startIndex === -1) return null; // offset past end
+  if (endIndex === -1) {
+    endIndex = text.length;
+    endLine = totalLines;
+  }
+  return { text: text.slice(startIndex, endIndex), totalLines, endLine };
 }
 
 /**
@@ -630,8 +683,14 @@ function matchSegment(name: string, pat: string, budget: GlobBudget): boolean {
       continue;
     }
     if (p < pat.length) {
+      // Checked around the token too, not just at the top of the loop: a class
+      // token charges its own scan, so a long final class could cross the cap
+      // and still return a match.
       const tok = tokenAt(pat, p, budget);
-      if (tok.test(name[n])) {
+      if (budget.steps > budget.cap) return false;
+      const matched = tok.test(name[n]);
+      if (budget.steps > budget.cap) return false;
+      if (matched) {
         n++;
         p += tok.len;
         continue;
