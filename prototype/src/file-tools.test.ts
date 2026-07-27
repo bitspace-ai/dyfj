@@ -5,6 +5,7 @@ import {
   clipToUtf8Bytes,
   excludedSegment,
   safeErrorReason,
+  sameFileVersion,
   toPosixPath,
   newGlobBudget,
   newWalkBudget,
@@ -988,10 +989,11 @@ describe("a file changed mid-read is reported, not returned torn", () => {
     expect(out).not.toContain("changed while being read");
   }, 20_000);
 
-  test("growth during the read is detected", async () => {
-    // Racing a real read is not reproducible, so the check is driven through
-    // its own precondition: the size recorded before the read no longer matches
-    // the size after it. A concurrent writer produces exactly this state.
+  test("real growth makes the version check reject", async () => {
+    // Racing a live read is not reproducible, so the rejection rule is applied
+    // to genuine before/after stats of a file that grew — the same two values
+    // readContainedFile compares, produced the same way a concurrent writer
+    // would produce them.
     const path = `${croot}/growing.txt`;
     await Deno.writeTextFile(path, "needle\n");
     const file = await Deno.open(path, { read: true });
@@ -999,7 +1001,27 @@ describe("a file changed mid-read is reported, not returned torn", () => {
     await Deno.writeTextFile(path, "needle\nmore\n");
     const after = await file.stat();
     file.close();
-    expect(after.size).not.toBe(before.size);
+    expect(sameFileVersion(before, after)).toBe(false);
+  });
+
+  test("an unchanged file passes the version check", async () => {
+    const path = `${croot}/still.txt`;
+    await Deno.writeTextFile(path, "needle\n");
+    const file = await Deno.open(path, { read: true });
+    const before = await file.stat();
+    const after = await file.stat();
+    file.close();
+    expect(sameFileVersion(before, after)).toBe(true);
+  });
+
+  test("the check is size and mtime only, and says so", () => {
+    // The documented residual: an in-place edit of identical length whose mtime
+    // is unchanged is invisible here. Asserted so the limitation cannot quietly
+    // become a stronger claim.
+    const stamp = new Date(1_000_000);
+    const a = { size: 10, mtime: stamp } as Deno.FileInfo;
+    const b = { size: 10, mtime: new Date(1_000_000) } as Deno.FileInfo;
+    expect(sameFileVersion(a, b)).toBe(true);
   });
 });
 
@@ -1051,5 +1073,50 @@ describe("a filename cannot forge a result row", () => {
     const rows = out.split("\n").filter((l) => l.includes("planted"));
     expect(rows.length).toBe(1);
     expect(rows[0]).toContain("\\x0a");
+  }, 20_000);
+});
+
+describe("the matcher worker is not a file the workspace can rewrite", () => {
+  test("the worker runs from an immutable in-memory snapshot", async () => {
+    // grep_files is auto-approved and write_file is workspace-scoped. If the
+    // worker were a module on disk and the workspace were this source tree,
+    // an approved edit would become execution on the next search. A blob URL
+    // has no path for a write to reach.
+    const sources = await executeGlobFiles(
+      `${Deno.cwd()}/src`,
+      "**/regex-worker.ts",
+    );
+    expect(sources).toBe("(no matches)");
+  });
+
+  test("matching still works, so the snapshot is the live path", async () => {
+    const out = await executeGrepFiles(sroot, "needle");
+    expect(out).toContain("alpha.ts:2:needle here");
+  }, 20_000);
+});
+
+describe("matched text cannot rewrite what the reader sees", () => {
+  let mroot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    mroot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // A carriage return and an escape sequence inside the matched line itself.
+    await Deno.writeTextFile(
+      `${mroot}/tricky.txt`,
+      "needle\r[nothing skipped]\u001b[2K\n",
+    );
+  });
+
+  afterAll(async () => {
+    if (mroot) await Deno.remove(mroot, { recursive: true });
+  });
+
+  test("control characters in the matched line are escaped", async () => {
+    const out = await executeGrepFiles(mroot, "needle");
+    expect(out).not.toContain("\r");
+    expect(out).not.toContain("\u001b");
+    expect(out).toContain("\\x0d");
+    expect(out).toContain("\\x1b");
   }, 20_000);
 });

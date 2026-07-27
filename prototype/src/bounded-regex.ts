@@ -14,11 +14,11 @@
  *
  * This is NOT a permission sandbox. Deno's `deno.permissions` worker option
  * still requires --unstable-worker-options, so the worker inherits the host's
- * permissions. On the model-facing path it runs one fixed module of ours that
- * performs no I/O, so those permissions go unused — but `specifier` is an
- * override the tests use, and anything passed there runs with the same
- * inherited permissions. Do not read the worker boundary as isolation, and do
- * not wire `specifier` to anything a caller outside this repo can choose.
+ * permissions. What it runs is therefore the thing that matters, and it runs a
+ * source string embedded below — not a file on disk that an approved workspace
+ * edit could rewrite between searches. `specifier` overrides that for tests
+ * only; anything passed there runs with the same inherited permissions, so do
+ * not wire it to a value any caller outside this repo can choose.
  */
 
 /**
@@ -59,23 +59,50 @@ export class RegexUnavailable extends Error {
 }
 
 /**
- * Locate the worker module. `import.meta.resolve` is the right call under Deno,
- * but the vitest SSR transform rewrites `import.meta` to an object that has
- * only `url` — so resolve defensively rather than shipping a matcher that works
- * in tests and not at runtime, or the reverse.
+ * The worker's entire source, embedded rather than loaded from disk.
+ *
+ * This started as a sibling module and had to stop being one. `grep_files` is
+ * auto-approved, `write_file` and `edit_file` are workspace-scoped, and when
+ * the workspace IS this source tree those two facts compose badly: an approved
+ * edit to a worker file on disk would become arbitrary execution on the next
+ * search, with the host's inherited permissions and no second prompt. Approving
+ * an edit is not approving its execution. A string constant travels with the
+ * loaded module, so what runs here is fixed once the runtime has started and no
+ * workspace write can reach it.
+ *
+ * Plain JavaScript on purpose — a Blob URL gets no TypeScript transform. Keep
+ * it small enough to read in one sitting; it should never grow past matching.
  */
+const WORKER_SOURCE = `
+let compiled = null;
+self.onmessage = (event) => {
+  const { id, pattern, lines } = event.data;
+  try {
+    if (compiled === null || compiled.pattern !== pattern) {
+      compiled = { pattern, re: new RegExp(pattern) };
+    }
+    const hits = [];
+    for (let i = 0; i < lines.length; i++) {
+      // The pattern is compiled without /g, so lastIndex never carries over.
+      if (compiled.re.test(lines[i])) hits.push(i);
+    }
+    self.postMessage({ id, hits });
+  } catch (err) {
+    self.postMessage({ id, error: String(err && err.message) });
+  }
+};
+`;
+
+let cachedWorkerUrl: string | null = null;
+
+/** Blob URL for the embedded source, created once and reused. */
 function defaultWorkerSpecifier(): string {
-  const meta = import.meta as unknown as {
-    resolve?: (specifier: string) => string;
-    url?: string;
-  };
-  if (typeof meta.resolve === "function") {
-    return meta.resolve("./regex-worker.ts");
+  if (cachedWorkerUrl === null) {
+    cachedWorkerUrl = URL.createObjectURL(
+      new Blob([WORKER_SOURCE], { type: "application/javascript" }),
+    );
   }
-  if (typeof meta.url === "string") {
-    return new URL("./regex-worker.ts", meta.url).href;
-  }
-  throw new RegexUnavailable();
+  return cachedWorkerUrl;
 }
 
 export class BoundedMatcher {

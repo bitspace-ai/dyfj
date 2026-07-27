@@ -220,6 +220,25 @@ export function clipToUtf8Bytes(text: string, maxBytes: number): string | null {
 }
 
 /**
+ * Best-effort check that a descriptor still holds the same file contents it did
+ * before the read: same size, same mtime.
+ *
+ * Best-effort is the honest word. An in-place edit that preserves byte length
+ * and lands inside the filesystem's mtime granularity — or one that restores
+ * the old mtime deliberately — passes this check. It catches the ordinary case
+ * (a file growing, shrinking, or being rewritten during a search) and does not
+ * pretend to be a version counter. Exported so the rule behind the omission
+ * note is directly testable rather than only reachable through a real race.
+ */
+export function sameFileVersion(
+  before: Deno.FileInfo,
+  after: Deno.FileInfo,
+): boolean {
+  return before.size === after.size &&
+    before.mtime?.getTime() === after.mtime?.getTime();
+}
+
+/**
  * Read a file through a descriptor whose identity has been verified.
  *
  * `lstat` → `open` → `fstat`, comparing (dev, ino): if the pathname was swapped
@@ -330,16 +349,8 @@ async function readContainedFile(
       if (n === null) break;
       read += n;
     }
-    // Re-stat the same descriptor after reading. Size and mtime were captured
-    // before the read; if either moved, the file changed underneath us and the
-    // bytes are a torn or partial view. Callers promise that a result with no
-    // note covered its scope in full, which is only true if a read that did not
-    // see the whole file is reported rather than passed off as content.
     const settled = await file.stat();
-    if (
-      settled.size !== after.size ||
-      settled.mtime?.getTime() !== after.mtime?.getTime()
-    ) {
+    if (!sameFileVersion(after, settled)) {
       return { ok: false, reason: "changed while being read", changed: true };
     }
     return {
@@ -594,8 +605,10 @@ export async function executeEditFile(
 //     that changed while being read, and every ceiling. "(no matches)" with no
 //     trailing note therefore means the defined scope was examined in full — an
 //     incomplete search read as proof of absence is a worse failure than a
-//     truncated one. A file mutated mid-read is detected by re-stating the same
-//     descriptor afterwards and reported rather than returned torn.
+//     truncated one. A file mutated mid-read is caught by re-stating the same
+//     descriptor afterwards and reported rather than returned torn — best
+//     effort, on size and mtime: an in-place edit of identical length inside the
+//     filesystem's mtime granularity is the case this does not see.
 
 const DEFAULT_MAX_ENTRIES_VISITED = 5_000;
 const DEFAULT_MAX_MATCHES = 200;
@@ -1083,16 +1096,17 @@ async function searchRoot(
 const encoder = new TextEncoder();
 
 /**
- * Escape control characters in a path before it goes into a result row.
+ * Escape control characters before text goes into a result row.
  *
- * Results are newline-separated `path:line:text` rows, and a filename is
- * attacker-controllable in a way the rest of the row is not: a file literally
- * named `a\nsrc/b.ts:1:fake` would print as two rows, one of them fabricated,
- * and a name containing the note delimiters could forge a completeness note.
- * Matched line text needs no equivalent treatment — it cannot contain a newline,
- * because that is what the lines were split on.
+ * Results are newline-separated `path:line:text` rows, and both the filename
+ * and the matched line come from the workspace: a file named
+ * `a\nb.ts:1:fake` would print as two rows, one of them fabricated, and a name
+ * carrying the note delimiters could forge a completeness note. Matched text
+ * cannot contain a newline — that is what the lines were split on — but a bare
+ * carriage return or escape sequence still rewrites what the reader sees, so
+ * both go through the same escaping.
  */
-function sanitizeOutputPath(p: string): string {
+function sanitizeOutputText(p: string): string {
   // deno-lint-ignore no-control-regex
   return p.replace(
     /[\x00-\x1f\x7f]/g,
@@ -1238,8 +1252,8 @@ export async function executeGrepFiles(
             if (tally.lineCapped) lineCappedFiles++;
             break walk;
           }
-          const row = `${sanitizeOutputPath(rel)}:${chunk.numbers[hit]}:${
-            chunk.lines[hit].trimEnd()
+          const row = `${sanitizeOutputText(rel)}:${chunk.numbers[hit]}:${
+            sanitizeOutputText(chunk.lines[hit].trimEnd())
           }`;
           const rowBytes = encoder.encode(row).byteLength + 1;
           if (resultBytes + rowBytes > HARD_MAX_RESULT_BYTES) {
@@ -1359,13 +1373,16 @@ export async function executeGlobFiles(
       truncated = true;
       break;
     }
-    const relBytes = encoder.encode(rel).byteLength + 1;
+    // Measure what is actually emitted: escaping can lengthen the string, so
+    // charging the raw path would let the byte ceiling be quietly overshot.
+    const emitted = sanitizeOutputText(rel);
+    const relBytes = encoder.encode(emitted).byteLength + 1;
     if (resultBytes + relBytes > HARD_MAX_RESULT_BYTES) {
       byteCapped = true;
       break;
     }
     resultBytes += relBytes;
-    hits.push(sanitizeOutputPath(rel));
+    hits.push(emitted);
   }
   const notes: string[] = [];
   if (truncated) notes.push(`result limit ${maxResults} reached`);
