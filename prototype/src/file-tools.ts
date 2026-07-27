@@ -913,7 +913,9 @@ async function* walkFiles(
       continue;
     }
     if (!isWithinRoot(rootReal, abs)) continue;
-    yield relative(rootReal, abs);
+    // Normalized here, once, so every consumer — glob matching, the exclusion
+    // check, and the paths handed back to the model — sees "/" separators.
+    yield toPosixPath(relative(rootReal, abs));
   }
 }
 
@@ -927,8 +929,25 @@ async function* walkFiles(
  * the canonicalized start, so an in-root symlink pointing at `.git` is caught
  * with it.
  */
-function excludedSegment(rootReal: string, canonical: string): string | null {
-  return relative(rootReal, canonical)
+/**
+ * Workspace-relative paths in `/` form, whatever the platform produced.
+ *
+ * `node:path`'s `relative` is platform-sensitive: on Windows it hands back
+ * `pkg\\.git\\config`, which splits on "/" into ONE segment and therefore
+ * matches nothing in SKIP_DIRS — turning the excluded-directory contract into a
+ * no-op on that platform. The same assumption runs through glob matching, which
+ * splits patterns and paths on "/". One normalization at the boundary keeps
+ * every separator-sensitive decision downstream honest.
+ */
+export function toPosixPath(p: string): string {
+  return p.replaceAll("\\", "/");
+}
+
+export function excludedSegment(
+  rootReal: string,
+  canonical: string,
+): string | null {
+  return toPosixPath(relative(rootReal, canonical))
     .split("/")
     .find((segment) => SKIP_DIRS.has(segment)) ?? null;
 }

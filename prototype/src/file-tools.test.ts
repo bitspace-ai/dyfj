@@ -3,6 +3,8 @@ import {
   executeEditFile,
   clampLimit,
   clipToUtf8Bytes,
+  excludedSegment,
+  toPosixPath,
   newGlobBudget,
   newWalkBudget,
   walkNotes,
@@ -844,5 +846,29 @@ describe("a raced entry type change is disclosed", () => {
     const budget = newWalkBudget(100);
     budget.skippedRaced = 3;
     expect(walkNotes(budget).join("; ")).toContain("3 entr(ies) changed type");
+  });
+});
+
+describe("separator normalization keeps the exclusions real off POSIX", () => {
+  // node:path's `relative` returns backslashes on Windows, so splitting on "/"
+  // yielded one segment and SKIP_DIRS matched nothing. Backslash is an ordinary
+  // character on this platform, which is what makes the Windows shape testable
+  // here at all.
+  test("a backslash path normalizes to segments", () => {
+    expect(toPosixPath("pkg\\.git\\config")).toBe("pkg/.git/config");
+  });
+  test("a Windows-shaped nested .git is still excluded", () => {
+    expect(excludedSegment("/r", "/r/pkg\\.git\\config")).toBe(".git");
+  });
+  test("a Windows-shaped nested node_modules is still excluded", () => {
+    expect(excludedSegment("/r", "/r/a\\node_modules\\dep\\i.js"))
+      .toBe("node_modules");
+  });
+  test("an ordinary nested path is not excluded", () => {
+    expect(excludedSegment("/r", "/r/src/pkg/a.ts")).toBeNull();
+  });
+  test("glob matching sees normalized separators", () => {
+    expect(matchesGlobPath(toPosixPath("src\\pkg\\a.ts"), "**/*.ts"))
+      .toBe(true);
   });
 });
