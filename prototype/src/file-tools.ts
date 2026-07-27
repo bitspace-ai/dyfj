@@ -269,7 +269,7 @@ async function readContainedFile(
   try {
     before = await Deno.lstat(abs);
   } catch (err) {
-    return { ok: false, reason: (err as Error).message };
+    return { ok: false, reason: safeErrorReason(err) };
   }
   if (before.isSymlink) return { ok: false, reason: "path is a symlink" };
   if (!before.isFile) return { ok: false, reason: "not a regular file" };
@@ -287,7 +287,7 @@ async function readContainedFile(
   try {
     file = await Deno.open(abs, { read: true });
   } catch (err) {
-    return { ok: false, reason: (err as Error).message };
+    return { ok: false, reason: safeErrorReason(err) };
   }
   try {
     const after = await file.stat();
@@ -348,7 +348,7 @@ async function readContainedFile(
       bytes: read === bytes.length ? bytes : bytes.subarray(0, read),
     };
   } catch (err) {
-    return { ok: false, reason: (err as Error).message };
+    return { ok: false, reason: safeErrorReason(err) };
   } finally {
     file.close();
   }
@@ -1083,6 +1083,24 @@ async function searchRoot(
 const encoder = new TextEncoder();
 
 /**
+ * Escape control characters in a path before it goes into a result row.
+ *
+ * Results are newline-separated `path:line:text` rows, and a filename is
+ * attacker-controllable in a way the rest of the row is not: a file literally
+ * named `a\nsrc/b.ts:1:fake` would print as two rows, one of them fabricated,
+ * and a name containing the note delimiters could forge a completeness note.
+ * Matched line text needs no equivalent treatment — it cannot contain a newline,
+ * because that is what the lines were split on.
+ */
+function sanitizeOutputPath(p: string): string {
+  // deno-lint-ignore no-control-regex
+  return p.replace(
+    /[\x00-\x1f\x7f]/g,
+    (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`,
+  );
+}
+
+/**
  * Search file contents for `pattern` (a JavaScript regular expression), scoped
  * to the workspace root. Returns `path:line:text` rows.
  */
@@ -1220,8 +1238,9 @@ export async function executeGrepFiles(
             if (tally.lineCapped) lineCappedFiles++;
             break walk;
           }
-          const row =
-            `${rel}:${chunk.numbers[hit]}:${chunk.lines[hit].trimEnd()}`;
+          const row = `${sanitizeOutputPath(rel)}:${chunk.numbers[hit]}:${
+            chunk.lines[hit].trimEnd()
+          }`;
           const rowBytes = encoder.encode(row).byteLength + 1;
           if (resultBytes + rowBytes > HARD_MAX_RESULT_BYTES) {
             byteCapped = true;
@@ -1346,7 +1365,7 @@ export async function executeGlobFiles(
       break;
     }
     resultBytes += relBytes;
-    hits.push(rel);
+    hits.push(sanitizeOutputPath(rel));
   }
   const notes: string[] = [];
   if (truncated) notes.push(`result limit ${maxResults} reached`);

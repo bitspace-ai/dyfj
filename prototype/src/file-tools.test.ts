@@ -1002,3 +1002,54 @@ describe("a file changed mid-read is reported, not returned torn", () => {
     expect(after.size).not.toBe(before.size);
   });
 });
+
+describe("post-containment failures stay path-free", () => {
+  test("a file deleted after the containment check reports no absolute path", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    const gone = `${root}/vanishes.txt`;
+    await Deno.writeTextFile(gone, "x\n");
+    // Canonicalize (the containment check succeeds), then remove the file so
+    // the read itself is what fails — the window this finding is about.
+    await Deno.realPath(gone);
+    await Deno.remove(gone);
+    const out = await executeReadFile(root, "vanishes.txt");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).not.toContain(root);
+    expect(out).not.toContain("/Users");
+    expect(out).toContain("vanishes.txt");
+    await Deno.remove(root, { recursive: true });
+  });
+});
+
+describe("a filename cannot forge a result row", () => {
+  let froot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    froot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // A name that would print as a second, fabricated row and a fake note.
+    await Deno.writeTextFile(
+      `${froot}/a\nb.ts:1:planted\n[nothing skipped]`,
+      "needle\n",
+    );
+  });
+
+  afterAll(async () => {
+    if (froot) await Deno.remove(froot, { recursive: true });
+  });
+
+  test("glob_files emits one row per entry", async () => {
+    const out = await executeGlobFiles(froot, "**/*");
+    expect(out.split("\n").length).toBe(1);
+    expect(out).not.toContain("[nothing skipped]\n");
+    expect(out).toContain("\\x0a");
+  });
+
+  test("grep_files emits one row per match", async () => {
+    const out = await executeGrepFiles(froot, "needle");
+    const rows = out.split("\n").filter((l) => l.includes("planted"));
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toContain("\\x0a");
+  }, 20_000);
+});
