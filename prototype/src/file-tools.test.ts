@@ -306,6 +306,36 @@ describe("executeGlobFiles", () => {
   });
 });
 
+// An excluded directory is only ever a *child* during the walk, so naming one
+// as the starting point was a way around the exclusion — and .git holds
+// remotes, reflogs, and identities that would land in the durable transcript
+// with no approval in front of them.
+describe("excluded directories cannot be searched by naming them", () => {
+  test("grep_files refuses an explicit .git start", async () => {
+    const out = await executeGrepFiles(sroot, "needle", { path: ".git" });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("excluded from search");
+  }, 20_000);
+  test("glob_files refuses an explicit .git start", async () => {
+    const out = await executeGlobFiles(sroot, "**/*", { path: ".git" });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("excluded from search");
+  });
+  test("a nested excluded directory is refused too", async () => {
+    await Deno.mkdir(`${sroot}/pkg/node_modules/dep`, { recursive: true });
+    await Deno.writeTextFile(`${sroot}/pkg/node_modules/dep/i.js`, "needle\n");
+    const out = await executeGlobFiles(sroot, "**/*", {
+      path: "pkg/node_modules/dep",
+    });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("excluded from search");
+  });
+  test("a normal sibling directory still searches", async () => {
+    const out = await executeGlobFiles(sroot, "**/*.ts", { path: "pkg" });
+    expect(out).toContain("gamma.ts");
+  });
+});
+
 describe("executeReadFile ranged reads", () => {
   test("returns a line window", async () => {
     const out = await executeReadFile(sroot, "many.txt", undefined, {

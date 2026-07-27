@@ -649,7 +649,16 @@ async function* walkFiles(
   }
 }
 
-/** Resolve the search start, or return an `error: …` string. */
+/**
+ * Resolve the search start, or return an `error: …` string.
+ *
+ * SKIP_DIRS is enforced here as well as in the walk. The walk only ever sees a
+ * skipped directory as a *child*, so naming one as the starting point — `path:
+ * ".git"` — used to begin inside it and traverse freely, handing back exactly
+ * the repository metadata the exclusion exists to withhold. The check runs on
+ * the canonicalized start, so an in-root symlink pointing at `.git` is caught
+ * with it.
+ */
 async function searchRoot(
   root: string,
   sub: string,
@@ -660,6 +669,12 @@ async function searchRoot(
     const contained = await containedRealPath(root, abs);
     if (contained === null) {
       return `error: path escapes the workspace root: ${sub}`;
+    }
+    const excluded = relative(rootReal, contained)
+      .split("/")
+      .find((segment) => SKIP_DIRS.has(segment));
+    if (excluded !== undefined) {
+      return `error: ${excluded} is excluded from search`;
     }
     return { rootReal, startReal: contained };
   } catch (err) {
@@ -685,6 +700,10 @@ export async function executeGrepFiles(
     maxFiles?: number;
     maxBytes?: number;
     budgetMs?: number;
+    // Test-only seam, for exercising the fail-closed path when no matcher can
+    // start. `buildGrepFilesCommand` never sets it, so nothing the model sends
+    // can reach it — and it must stay that way: an overridden worker runs with
+    // the host's inherited permissions.
     workerSpecifier?: string;
   } = {},
 ): Promise<string> {

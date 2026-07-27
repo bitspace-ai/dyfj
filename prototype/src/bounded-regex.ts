@@ -14,11 +14,19 @@
  *
  * This is NOT a permission sandbox. Deno's `deno.permissions` worker option
  * still requires --unstable-worker-options, so the worker inherits the host's
- * permissions. It runs one fixed module of ours that performs no I/O, so those
- * permissions go unused; do not read it as isolation.
+ * permissions. On the model-facing path it runs one fixed module of ours that
+ * performs no I/O, so those permissions go unused — but `specifier` is an
+ * override the tests use, and anything passed there runs with the same
+ * inherited permissions. Do not read the worker boundary as isolation, and do
+ * not wire `specifier` to anything a caller outside this repo can choose.
  */
 
-/** Default wall clock for one whole `grep_files` call, across every file. */
+/**
+ * Cumulative wall clock for regex *matching* across every file in one
+ * `grep_files` call. It does not cover traversal, `stat`, reads, decoding, or
+ * result assembly — those are bounded by the entry, size, and output ceilings
+ * in file-tools.ts, not by this clock.
+ */
 export const DEFAULT_REGEX_BUDGET_MS = 2_000;
 
 /**
