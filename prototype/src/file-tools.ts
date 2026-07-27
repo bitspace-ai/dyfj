@@ -47,7 +47,18 @@ const HARD_MAX_FILE_BYTES = 4 * 1024 * 1024;
  * knows which workspace-relative path it asked about; the class of failure is
  * the only part worth adding.
  */
+/** The anchored workspace root no longer matches what the path resolves to. */
+export class WorkspaceRootChangedError extends Error {
+  constructor() {
+    super("workspace root identity changed; refusing to proceed");
+    this.name = "WorkspaceRootChangedError";
+  }
+}
+
 export function safeErrorReason(err: unknown): string {
+  if (err instanceof WorkspaceRootChangedError) {
+    return "workspace root identity changed";
+  }
   if (err instanceof Deno.errors.NotFound) return "not found";
   if (err instanceof Deno.errors.PermissionDenied) return "permission denied";
   if (err instanceof Deno.errors.NotADirectory) return "not a directory";
@@ -57,6 +68,53 @@ export function safeErrorReason(err: unknown): string {
   }
   if (err instanceof Deno.errors.FilesystemLoop) return "symlink loop";
   return "unavailable";
+}
+
+/**
+ * The workspace root's identity, anchored on first use and verified on every
+ * subsequent one.
+ *
+ * Every executor used to re-canonicalize the root PATHNAME per call and trust
+ * whatever it resolved to — so renaming the workspace directory away and
+ * placing another directory (or a symlink) at the same path silently redefined
+ * the auto-approved read boundary: the replacement became the root, and the
+ * search tools would recursively enumerate and read it without a prompt. The
+ * anchor pins the canonical path and, where the platform reports it, the
+ * directory's (dev, ino) identity, the first time a tool touches the root;
+ * every later call re-resolves and must match or fails closed with a path-free
+ * error. First use is when trust begins — a replacement before any tool has
+ * run is indistinguishable from configuration — and the verify-then-use gap is
+ * narrowed, not closed, like every other pathname race in this file. On
+ * platforms reporting null dev/ino the anchor holds the canonical path alone,
+ * a weaker pin, stated rather than hidden.
+ */
+const rootAnchors = new Map<
+  string,
+  { real: string; dev: number | null; ino: number | null }
+>();
+
+async function verifiedRootReal(root: string): Promise<string> {
+  const key = resolve(root);
+  const real = await Deno.realPath(key);
+  const info = await Deno.lstat(real);
+  const anchor = rootAnchors.get(key);
+  if (anchor === undefined) {
+    rootAnchors.set(key, { real, dev: info.dev, ino: info.ino });
+    return real;
+  }
+  const identityHolds = anchor.dev === null || anchor.ino === null
+    ? anchor.real === real
+    : anchor.real === real && anchor.dev === info.dev &&
+      anchor.ino === info.ino;
+  if (!identityHolds) {
+    throw new WorkspaceRootChangedError();
+  }
+  return real;
+}
+
+/** Test-only: forget an anchor so a temp root can be re-anchored. */
+export function resetRootAnchor(root: string): void {
+  rootAnchors.delete(resolve(root));
 }
 
 /**
@@ -137,7 +195,7 @@ export async function executeReadFile(
     if (info.isDirectory) {
       return `error: ${sanitizeOutputText(p)} is a directory; use list_files`;
     }
-    const rootReal = await Deno.realPath(resolve(root));
+    const rootReal = await verifiedRootReal(root);
     const read = await readContainedFile(target, HARD_MAX_FILE_BYTES, rootReal);
     if (!read.ok) {
       return `error: cannot read ${sanitizeOutputText(p)}: ${read.reason}`;
@@ -394,7 +452,7 @@ async function containedRealPath(
   root: string,
   abs: string,
 ): Promise<string | null> {
-  const rootReal = await Deno.realPath(resolve(root));
+  const rootReal = await verifiedRootReal(root);
   const targetReal = await Deno.realPath(abs);
   return isWithinRoot(rootReal, targetReal) ? targetReal : null;
 }
@@ -473,7 +531,7 @@ export async function executeWriteFile(
     return `error: ${(err as Error).message}`;
   }
   try {
-    const rootReal = await Deno.realPath(resolve(root));
+    const rootReal = await verifiedRootReal(root);
     const parentReal = await Deno.realPath(dirname(abs));
     if (!isWithinRoot(rootReal, parentReal)) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
@@ -1146,7 +1204,7 @@ async function searchRoot(
   }
   try {
     const abs = resolveWorkspacePath(root, sub);
-    const rootReal = await Deno.realPath(resolve(root));
+    const rootReal = await verifiedRootReal(root);
     const contained = await containedRealPath(root, abs);
     if (contained === null) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(sub)}`;

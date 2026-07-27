@@ -3,6 +3,7 @@ import { resolve as resolvePath } from "node:path";
 import {
   executeEditFile,
   clampLimit,
+  resetRootAnchor,
   clipToUtf8Bytes,
   excludedSegment,
   safeErrorReason,
@@ -261,9 +262,11 @@ describe("executeEditFile", () => {
 // ── Search affordances (grep_files / glob_files / ranged read) ────────────────
 //
 // These exist so read-only questions do not have to route through bash, which
-// always requires operator approval. The tests below pin the two properties
-// that make that safe: the walk never leaves the workspace, and every traversal
-// is bounded.
+// always requires operator approval. The tests below pin the properties that
+// make that safe: nothing that resolves outside the workspace is ever
+// RETURNED (containment is enforced at the point of use — a live-tree race can
+// redirect traversal, so what is emitted is checked, not the walk itself), and
+// every traversal is bounded.
 
 let sroot: string;
 
@@ -1315,4 +1318,37 @@ describe("an in-root absolute path never reaches a tool result", () => {
     expect(out.startsWith("error:")).toBe(true);
     expect(out).not.toContain(absRoot());
   });
+});
+
+describe("a replaced workspace root is refused, not adopted", () => {
+  test("rename-and-replace after first use fails closed", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const base = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    const root = `${base}/ws`;
+    await Deno.mkdir(root);
+    await Deno.writeTextFile(`${root}/a.txt`, "needle\n");
+    // First use anchors the root's canonical path and directory identity.
+    expect(await executeGrepFiles(root, "needle")).toContain("a.txt:1:needle");
+    // Replace the directory at the same pathname — the attack shape: the
+    // pathname still resolves, but to a different directory.
+    await Deno.rename(root, `${base}/moved-away`);
+    await Deno.mkdir(root);
+    await Deno.writeTextFile(`${root}/planted.txt`, "needle\n");
+    const out = await executeGrepFiles(root, "needle");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("workspace root identity changed");
+    expect(out).not.toContain("planted");
+    // read_file goes through the same anchor.
+    const read = await executeReadFile(root, "planted.txt");
+    expect(read.startsWith("error:")).toBe(true);
+    await Deno.remove(base, { recursive: true });
+    resetRootAnchor(root);
+  }, 20_000);
+
+  test("an unchanged root keeps working across calls", async () => {
+    const out1 = await executeGrepFiles(sroot, "needle");
+    const out2 = await executeGrepFiles(sroot, "needle");
+    expect(out1).toContain("alpha.ts:2:needle here");
+    expect(out2).toContain("alpha.ts:2:needle here");
+  }, 20_000);
 });
