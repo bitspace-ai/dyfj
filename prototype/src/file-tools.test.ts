@@ -802,3 +802,47 @@ describe("glob character classes are charged to the budget", () => {
     expect(classy.steps).toBeGreaterThan(bare.steps * 100);
   });
 });
+
+describe("dense short-line files stay bounded", () => {
+  let droot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    droot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // ~2 MiB of one-character lines: 1,000,000 lines that all match. Split up
+    // front this materialises a million strings and clones them into the
+    // worker before any row limit applies. The default per-file cap is 64 KiB,
+    // so these searches raise maxBytes to reach the worst case at all.
+    await Deno.writeTextFile(`${droot}/dense.txt`, "a\n".repeat(1_000_000));
+  });
+
+  afterAll(async () => {
+    if (droot) await Deno.remove(droot, { recursive: true });
+  });
+
+  test("a million matching lines return promptly and within the row cap", async () => {
+    const started = performance.now();
+    const out = await executeGrepFiles(droot, "a", { maxBytes: 4 * 1024 * 1024 });
+    const elapsed = performance.now() - started;
+    const rows = out.split("\n").filter((l) => l.startsWith("dense.txt:"));
+    expect(rows.length).toBeLessThanOrEqual(200);
+    expect(out).toContain("match limit 200 reached");
+    expect(elapsed).toBeLessThan(10_000);
+  }, 30_000);
+
+  test("the per-file line cap is disclosed when nothing matches", async () => {
+    const out = await executeGrepFiles(droot, "zzz-absent", {
+      maxBytes: 4 * 1024 * 1024,
+    });
+    expect(out).toContain("(no matches)");
+    expect(out).toContain("truncated at 200000 lines");
+  }, 30_000);
+});
+
+describe("a raced entry type change is disclosed", () => {
+  test("walkNotes reports it", () => {
+    const budget = newWalkBudget(100);
+    budget.skippedRaced = 3;
+    expect(walkNotes(budget).join("; ")).toContain("3 entr(ies) changed type");
+  });
+});

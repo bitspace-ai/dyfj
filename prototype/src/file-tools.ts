@@ -510,6 +510,10 @@ const HARD_MAX_DEPTH = 32;
 const HARD_MAX_RESULT_BYTES = 128 * 1024;
 /** Lines longer than this are never handed to the matcher. */
 const MAX_LINE_LENGTH = 4_096;
+/** Lines one file may spend, however small each of them is. */
+const HARD_MAX_LINES_PER_FILE = 200_000;
+/** Lines per worker round trip: bounds the structured clone and the accumulator. */
+const MATCH_CHUNK_LINES = 2_000;
 /** Glob patterns longer than this are refused rather than matched. */
 const MAX_GLOB_LENGTH = 512;
 /**
@@ -731,6 +735,49 @@ export function globPatternError(glob: string): string | null {
 
 // ── Traversal ────────────────────────────────────────────────────────────────
 
+/**
+ * Yield bounded chunks of matchable lines, walking the text rather than
+ * splitting it. `split("\\n")` on a multi-megabyte file of short lines
+ * materialises every line at once, which is unbounded work in service of a
+ * bounded answer; `indexOf` walks it a chunk at a time and the caller can stop
+ * as soon as its row limits are met. `tally` carries out what was omitted so
+ * the completeness note stays honest.
+ */
+function* chunkLines(
+  text: string,
+  tally: { longLines: number; lineCapped: boolean },
+): Generator<{ lines: string[]; numbers: number[] }> {
+  let lines: string[] = [];
+  let numbers: number[] = [];
+  let start = 0;
+  let lineNumber = 1;
+  let scanned = 0;
+  while (start <= text.length) {
+    if (scanned >= HARD_MAX_LINES_PER_FILE) {
+      tally.lineCapped = true;
+      break;
+    }
+    const nl = text.indexOf("\n", start);
+    const line = text.slice(start, nl === -1 ? text.length : nl);
+    scanned++;
+    if (line.length > MAX_LINE_LENGTH) {
+      tally.longLines++;
+    } else {
+      lines.push(line);
+      numbers.push(lineNumber);
+      if (lines.length >= MATCH_CHUNK_LINES) {
+        yield { lines, numbers };
+        lines = [];
+        numbers = [];
+      }
+    }
+    lineNumber++;
+    if (nl === -1) break;
+    start = nl + 1;
+  }
+  if (lines.length > 0) yield { lines, numbers };
+}
+
 /** True when the buffer looks binary (NUL byte in the first 8KB). */
 function looksBinary(bytes: Uint8Array): boolean {
   const n = Math.min(bytes.length, 8192);
@@ -752,6 +799,8 @@ export interface WalkBudget {
   skippedSymlinks: number;
   /** Sockets, devices, fifos: neither file nor directory, silently unsearchable. */
   skippedNonRegular: number;
+  /** Entries whose type changed between enumeration and descent. */
+  skippedRaced: number;
 }
 
 export function newWalkBudget(cap: number): WalkBudget {
@@ -762,6 +811,7 @@ export function newWalkBudget(cap: number): WalkBudget {
     unreadableDirs: 0,
     skippedSymlinks: 0,
     skippedNonRegular: 0,
+    skippedRaced: 0,
   };
 }
 
@@ -782,6 +832,9 @@ export function walkNotes(budget: WalkBudget): string[] {
   }
   if (budget.skippedNonRegular > 0) {
     notes.push(`${budget.skippedNonRegular} non-regular file(s) skipped`);
+  }
+  if (budget.skippedRaced > 0) {
+    notes.push(`${budget.skippedRaced} entr(ies) changed type mid-search`);
   }
   return notes;
 }
@@ -846,7 +899,12 @@ async function* walkFiles(
         budget.unreadableDirs++;
         continue;
       }
-      if (current.isSymlink || !current.isDirectory) continue;
+      if (current.isSymlink || !current.isDirectory) {
+        // It was a directory when readDir looked and is not one now: a raced
+        // change, and an omission the caller cannot see unless it is counted.
+        budget.skippedRaced++;
+        continue;
+      }
       yield* walkFiles(rootReal, abs, budget, depth + 1);
       continue;
     }
@@ -974,6 +1032,7 @@ export async function executeGrepFiles(
   let skippedBinary = 0;
   let excludedRaced = 0;
   let skippedLongLines = 0;
+  let lineCappedFiles = 0;
 
   try {
     walk:
@@ -1002,52 +1061,54 @@ export async function executeGrepFiles(
         skippedBinary++;
         continue;
       }
-      const lines = new TextDecoder("utf-8", { fatal: false })
-        .decode(read.bytes)
-        .split("\n");
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes);
 
-      // Over-long lines never reach the matcher: line-by-line matching narrows
-      // the input but does not bound backtracking on any one line.
-      const candidates: string[] = [];
-      const sourceIndex: number[] = [];
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].length > MAX_LINE_LENGTH) {
-          skippedLongLines++;
-          continue;
+      // Lines are walked and matched in chunks rather than split up front. A
+      // 4 MiB file of newlines splits into four million strings — built, held,
+      // and structured-cloned into the worker — before the 1,000-row limit gets
+      // a chance to apply, so the row ceilings were bounding the answer while
+      // nothing bounded the work. Chunking keeps the worker message small, caps
+      // the lines any one file can spend, and stops the moment the row limits
+      // are met instead of after the whole file.
+      const tally = { longLines: 0, lineCapped: false };
+      for (const chunk of chunkLines(text, tally)) {
+        let hits: number[];
+        try {
+          hits = await matcher.matchLines(chunk.lines);
+        } catch (err) {
+          skippedLongLines += tally.longLines;
+          if (tally.lineCapped) lineCappedFiles++;
+          if (err instanceof RegexBudgetExceeded) {
+            budgetExhausted = true;
+            break walk;
+          }
+          if (err instanceof RegexUnavailable) {
+            return `error: ${(err as Error).message}`;
+          }
+          return `error: cannot match pattern: ${(err as Error).message}`;
         }
-        candidates.push(lines[i]);
-        sourceIndex.push(i);
+        for (const hit of hits) {
+          if (rows.length >= maxMatches) {
+            truncated = true;
+            skippedLongLines += tally.longLines;
+            if (tally.lineCapped) lineCappedFiles++;
+            break walk;
+          }
+          const row =
+            `${rel}:${chunk.numbers[hit]}:${chunk.lines[hit].trimEnd()}`;
+          const rowBytes = encoder.encode(row).byteLength + 1;
+          if (resultBytes + rowBytes > HARD_MAX_RESULT_BYTES) {
+            byteCapped = true;
+            skippedLongLines += tally.longLines;
+            if (tally.lineCapped) lineCappedFiles++;
+            break walk;
+          }
+          resultBytes += rowBytes;
+          rows.push(row);
+        }
       }
-
-      let hits: number[];
-      try {
-        hits = await matcher.matchLines(candidates);
-      } catch (err) {
-        if (err instanceof RegexBudgetExceeded) {
-          budgetExhausted = true;
-          break;
-        }
-        if (err instanceof RegexUnavailable) {
-          return `error: ${(err as Error).message}`;
-        }
-        return `error: cannot match pattern: ${(err as Error).message}`;
-      }
-
-      for (const hit of hits) {
-        if (rows.length >= maxMatches) {
-          truncated = true;
-          break walk;
-        }
-        const i = sourceIndex[hit];
-        const row = `${rel}:${i + 1}:${lines[i].trimEnd()}`;
-        const rowBytes = encoder.encode(row).byteLength + 1;
-        if (resultBytes + rowBytes > HARD_MAX_RESULT_BYTES) {
-          byteCapped = true;
-          break walk;
-        }
-        resultBytes += rowBytes;
-        rows.push(row);
-      }
+      skippedLongLines += tally.longLines;
+      if (tally.lineCapped) lineCappedFiles++;
     }
   } finally {
     matcher.close();
@@ -1077,6 +1138,11 @@ export async function executeGrepFiles(
   }
   if (skippedLongLines > 0) {
     notes.push(`${skippedLongLines} line(s) over ${MAX_LINE_LENGTH} chars`);
+  }
+  if (lineCappedFiles > 0) {
+    notes.push(
+      `${lineCappedFiles} file(s) truncated at ${HARD_MAX_LINES_PER_FILE} lines`,
+    );
   }
   const body = rows.length === 0 ? "(no matches)" : rows.join("\n");
   return notes.length === 0 ? body : `${body}\n[${notes.join("; ")}]`;
