@@ -1345,6 +1345,34 @@ describe("a replaced workspace root is refused, not adopted", () => {
     resetRootAnchor(root);
   }, 20_000);
 
+  test("a MID-CALL root replacement is detected before results return", async () => {
+    // Deterministic mid-call race: the canonicalizer seam fires during the
+    // walk, after the entry verification — the swap it performs is exactly the
+    // window the exit re-verification exists to close.
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const base = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    const root = `${base}/ws`;
+    await Deno.mkdir(root);
+    await Deno.writeTextFile(`${root}/a.txt`, "x\n");
+    let swapped = false;
+    const swapMidCall = async (q: string) => {
+      if (!swapped) {
+        swapped = true;
+        await Deno.rename(root, `${base}/away`);
+        await Deno.mkdir(root);
+        await Deno.writeTextFile(`${root}/planted.txt`, "x\n");
+      }
+      return await Deno.realPath(q);
+    };
+    const out = await executeGlobFiles(root, "**/*", { realPath: swapMidCall });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("workspace root identity changed");
+    expect(out).not.toContain("planted");
+    await Deno.remove(base, { recursive: true });
+    await Deno.remove(`${base}`, { recursive: true }).catch(() => {});
+    resetRootAnchor(root);
+  }, 20_000);
+
   test("an unchanged root keeps working across calls", async () => {
     const out1 = await executeGrepFiles(sroot, "needle");
     const out2 = await executeGrepFiles(sroot, "needle");

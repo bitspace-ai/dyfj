@@ -112,6 +112,24 @@ async function verifiedRootReal(root: string): Promise<string> {
   return real;
 }
 
+
+/**
+ * Re-verify the root anchor after a call's filesystem work, before its results
+ * are returned. The entry check rejects a replacement already in place when
+ * the call starts; this exit check rejects one that arrived mid-call. What
+ * survives both is a replace-AND-restore landing entirely between the two
+ * verifications — the unavoidable pathname race, retained and stated rather
+ * than claimed away. Returns an `error: …` string, or null when the root held.
+ */
+async function rootStillAnchored(root: string): Promise<string | null> {
+  try {
+    await verifiedRootReal(root);
+    return null;
+  } catch (err) {
+    return `error: ${safeErrorReason(err)}`;
+  }
+}
+
 /** Test-only: forget an anchor so a temp root can be re-anchored. */
 export function resetRootAnchor(root: string): void {
   rootAnchors.delete(resolve(root));
@@ -216,6 +234,8 @@ export async function executeReadFile(
           `${text}\n\n[lines ${offset}-${window.endLine} of ${window.totalLines}; ${more} more]`;
       }
     }
+    const rootLost = await rootStillAnchored(root);
+    if (rootLost !== null) return rootLost;
     const clipped = clipToUtf8Bytes(text, maxBytes);
     if (clipped !== null) {
       return `${clipped}\n\n[truncated at ${maxBytes} bytes]`;
@@ -491,6 +511,8 @@ export async function executeListFiles(
     for await (const entry of Deno.readDir(target)) {
       entries.push(entry.isDirectory ? `${entry.name}/` : entry.name);
     }
+    const rootLost = await rootStillAnchored(root);
+    if (rootLost !== null) return rootLost;
     if (entries.length === 0) return "(empty directory)";
     entries.sort();
     if (entries.length > maxEntries) {
@@ -1469,6 +1491,8 @@ export async function executeGrepFiles(
     matcher.close();
   }
 
+  const rootLost = await rootStillAnchored(root);
+  if (rootLost !== null) return rootLost;
   if (rows.length === 0 && budgetExhausted) {
     return `error: pattern is too expensive to run (matching budget exhausted); simplify it`;
   }
@@ -1588,6 +1612,8 @@ export async function executeGlobFiles(
     resultBytes += relBytes;
     hits.push(emitted);
   }
+  const rootLost = await rootStillAnchored(root);
+  if (rootLost !== null) return rootLost;
   const notes: string[] = [];
   if (truncated) notes.push(`result limit ${maxResults} reached`);
   if (byteCapped) notes.push(`result size limit reached`);
