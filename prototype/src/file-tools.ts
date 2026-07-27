@@ -19,7 +19,7 @@
  * failure as a tool result and can recover, rather than crashing the turn.
  */
 
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import {
   BoundedMatcher,
   RegexBudgetExceeded,
@@ -974,18 +974,25 @@ export function walkNotes(budget: WalkBudget): string[] {
   return notes;
 }
 
+/** One walked file: the absolute path to OPEN, and the display path to SHOW. */
+interface WalkEntry {
+  abs: string;
+  rel: string;
+}
+
 /**
- * Yield workspace-relative file paths under `start`, depth-first and sorted for
- * deterministic output. Symlinks are never followed. `budget.visited` counts
- * every entry seen — directories included — so the cap bounds the walk itself
- * and not merely the files it yields.
+ * Yield walked files under `start`, depth-first and sorted for deterministic
+ * output. Symlinks are never followed. `budget.visited` counts every entry
+ * seen — directories included — so the cap bounds the walk itself and not
+ * merely the files it yields.
  */
 async function* walkFiles(
   rootReal: string,
   start: string,
   budget: WalkBudget,
   depth = 0,
-): AsyncGenerator<string> {
+  relSegments: string[] = [],
+): AsyncGenerator<WalkEntry> {
   if (depth > HARD_MAX_DEPTH) {
     budget.depthClipped = true;
     return;
@@ -1040,7 +1047,10 @@ async function* walkFiles(
         budget.skippedRaced++;
         continue;
       }
-      yield* walkFiles(rootReal, abs, budget, depth + 1);
+      yield* walkFiles(rootReal, abs, budget, depth + 1, [
+        ...relSegments,
+        entry.name,
+      ]);
       continue;
     }
     if (!entry.isFile) {
@@ -1048,10 +1058,48 @@ async function* walkFiles(
       continue;
     }
     if (!isWithinRoot(rootReal, abs)) continue;
-    // Normalized here, once, so every consumer — glob matching, the exclusion
-    // check, and the paths handed back to the model — sees "/" separators.
-    yield toPosixPath(relative(rootReal, abs));
+    // `rel` is built by joining ENTRY NAMES with "/", never by splitting a
+    // platform path back apart. The distinction is load-bearing on POSIX,
+    // where backslash is a legal filename character: normalizing a derived
+    // relative path turned a file literally named `..\private\secret.txt`
+    // into the traversal `../private/secret.txt`, and reopening from that
+    // display string redirected the read to a different file. A separator can
+    // never appear inside an entry name on either platform, so the join is
+    // unambiguous — and `abs` stays the one true filesystem identity; the
+    // display path is never resolved back into a path to open.
+    yield { abs, rel: [...relSegments, entry.name].join("/") };
   }
+}
+
+/**
+ * Backslashes rewritten to `/`. Used ONLY inside excludedSegment, whose input
+ * comes from `node:path`'s platform-sensitive `relative` — on Windows that
+ * returns `pkg\\.git\\config`, which splits on "/" into one segment and made
+ * the exclusion contract a no-op there. On POSIX the rewrite can only ADD
+ * segment boundaries, so its error direction is over-exclusion, which fails
+ * closed.
+ *
+ * Never use this on a path that will be opened, matched, or displayed: on
+ * POSIX a backslash is an ordinary filename character, and normalizing one
+ * into a separator turns a filename like `..\\private\\secret.txt` into a
+ * traversal. Traversal builds its paths from entry names instead.
+ */
+export function toPosixPath(p: string): string {
+  return p.replaceAll("\\", "/");
+}
+
+/**
+ * On POSIX a filename may itself contain backslashes, and normalizing them
+ * here can only ADD "/" boundaries — so the error direction is over-exclusion,
+ * which fails closed. Filesystem access never goes through this string.
+ */
+export function excludedSegment(
+  rootReal: string,
+  canonical: string,
+): string | null {
+  return toPosixPath(relative(rootReal, canonical))
+    .split("/")
+    .find((segment) => SKIP_DIRS.has(segment)) ?? null;
 }
 
 /**
@@ -1064,33 +1112,12 @@ async function* walkFiles(
  * the canonicalized start, so an in-root symlink pointing at `.git` is caught
  * with it.
  */
-/**
- * Workspace-relative paths in `/` form, whatever the platform produced.
- *
- * `node:path`'s `relative` is platform-sensitive: on Windows it hands back
- * `pkg\\.git\\config`, which splits on "/" into ONE segment and therefore
- * matches nothing in SKIP_DIRS — turning the excluded-directory contract into a
- * no-op on that platform. The same assumption runs through glob matching, which
- * splits patterns and paths on "/". One normalization at the boundary keeps
- * every separator-sensitive decision downstream honest.
- */
-export function toPosixPath(p: string): string {
-  return p.replaceAll("\\", "/");
-}
-
-export function excludedSegment(
-  rootReal: string,
-  canonical: string,
-): string | null {
-  return toPosixPath(relative(rootReal, canonical))
-    .split("/")
-    .find((segment) => SKIP_DIRS.has(segment)) ?? null;
-}
-
 async function searchRoot(
   root: string,
   sub: string,
-): Promise<{ rootReal: string; startReal: string } | string> {
+): Promise<
+  { rootReal: string; startReal: string; startSegments: string[] } | string
+> {
   try {
     const abs = resolveWorkspacePath(root, sub);
     const rootReal = await Deno.realPath(resolve(root));
@@ -1102,7 +1129,13 @@ async function searchRoot(
     if (excluded !== null) {
       return `error: ${excluded} is excluded from search`;
     }
-    return { rootReal, startReal: contained };
+    // Split on the PLATFORM separator: on Windows that divides the real
+    // directory names; on POSIX it is "/", so a start directory whose name
+    // contains a literal backslash keeps it inside one segment rather than
+    // being misread as nesting. Display-only — opening always uses startReal.
+    const startRel = relative(rootReal, contained);
+    const startSegments = startRel === "" ? [] : startRel.split(sep);
+    return { rootReal, startReal: contained, startSegments };
   } catch (err) {
     return `error: cannot search ${sanitizeOutputText(sub)}: ${safeErrorReason(err)}`;
   }
@@ -1132,11 +1165,39 @@ export function sanitizeOutputText(p: string): string {
   // deno-lint-ignore no-control-regex
   return p.replace(
     /[\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+    escapeChar,
+  );
+}
+
+function escapeChar(c: string): string {
+  const code = c.charCodeAt(0);
+  return code <= 0xff
+    ? `\\x${code.toString(16).padStart(2, "0")}`
+    : `\\u${code.toString(16).padStart(4, "0")}`;
+}
+
+/**
+ * Injective encoding for the PATH field of a `path:line:text` row.
+ *
+ * The path field sits ahead of two delimiters, so it needs more than display
+ * safety: a POSIX filename may contain `:` (mimicking the field separator) or
+ * `\` (mimicking this function's own escapes). Both are escaped along with
+ * everything sanitizeOutputText covers, in one pass — backslash first in the
+ * class, so an escape in the output can only have come from this function.
+ * That makes the encoding decodable: `\\` is a literal backslash, `\x3a` a
+ * literal colon, and a bare `:` is really the delimiter. Matched line text
+ * keeps the lighter escaping — it is the final field, so delimiters inside it
+ * are unambiguous, and mangling every backslash in source code would cost more
+ * readability than it buys.
+ */
+export function sanitizeOutputPathField(p: string): string {
+  // deno-lint-ignore no-control-regex
+  return p.replace(
+    /[\\:\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
     (c) => {
-      const code = c.charCodeAt(0);
-      return code <= 0xff
-        ? `\\x${code.toString(16).padStart(2, "0")}`
-        : `\\u${code.toString(16).padStart(4, "0")}`;
+      if (c === "\\") return "\\\\";
+      if (c === ":") return "\\x3a";
+      return escapeChar(c);
     },
   );
 }
@@ -1214,7 +1275,7 @@ export async function executeGrepFiles(
     matcher.close();
     return start;
   }
-  const { rootReal, startReal } = start;
+  const { rootReal, startReal, startSegments } = start;
 
   const rows: string[] = [];
   const budget = newWalkBudget(maxEntries);
@@ -1235,7 +1296,10 @@ export async function executeGrepFiles(
 
   try {
     walk:
-    for await (const rel of walkFiles(rootReal, startReal, budget)) {
+    for await (
+      const entry of walkFiles(rootReal, startReal, budget, 0, startSegments)
+    ) {
+      const { abs, rel } = entry;
       if (globBudgetExhausted(globBudget)) break;
       if (totalReadBytes >= maxTotalReadBytes) {
         readBudgetExhausted = true;
@@ -1247,8 +1311,9 @@ export async function executeGrepFiles(
       ) {
         continue;
       }
-      const abs = resolve(rootReal, rel);
-      // Identity-verified read: the size is checked before any content is
+      // Identity-verified read of the ENUMERATED absolute path — never a path
+      // rebuilt from the display string, which a backslash-bearing filename
+      // could turn into a traversal. The size is checked before any content is
       // loaded, and a pathname repointed since the walk saw it is refused.
       const read = await readContainedFile(abs, maxBytes, rootReal, {
         realPath: options.realPath,
@@ -1299,7 +1364,7 @@ export async function executeGrepFiles(
             if (tally.lineCapped) lineCappedFiles++;
             break walk;
           }
-          const row = `${sanitizeOutputText(rel)}:${chunk.numbers[hit]}:${
+          const row = `${sanitizeOutputPathField(rel)}:${chunk.numbers[hit]}:${
             sanitizeOutputText(chunk.lines[hit].trimEnd())
           }`;
           const rowBytes = encoder.encode(row).byteLength + 1;
@@ -1388,7 +1453,7 @@ export async function executeGlobFiles(
 
   const start = await searchRoot(root, sub);
   if (typeof start === "string") return start;
-  const { rootReal, startReal } = start;
+  const { rootReal, startReal, startSegments } = start;
 
   const hits: string[] = [];
   const budget = newWalkBudget(maxEntries);
@@ -1399,14 +1464,19 @@ export async function executeGlobFiles(
   let escaped = 0;
   let excludedRaced = 0;
   const realPath = options.realPath ?? Deno.realPath;
-  for await (const rel of walkFiles(rootReal, startReal, budget)) {
+  for await (
+    const entry of walkFiles(rootReal, startReal, budget, 0, startSegments)
+  ) {
+    const { abs, rel } = entry;
     if (globBudgetExhausted(globBudget)) break;
     if (!matchesGlobPath(rel, pattern, globBudget)) continue;
     // glob_files returns names without opening anything, so it gets the same
     // ancestor-replacement check by canonicalizing before it emits: a path
     // that resolves outside the root is a name the model should never see.
+    // Canonicalized from the enumerated absolute path, not one rebuilt from
+    // the display string.
     try {
-      const canonical = await realPath(resolve(rootReal, rel));
+      const canonical = await realPath(abs);
       if (!isWithinRoot(rootReal, canonical)) {
         escaped++;
         continue;
@@ -1425,7 +1495,7 @@ export async function executeGlobFiles(
     }
     // Measure what is actually emitted: escaping can lengthen the string, so
     // charging the raw path would let the byte ceiling be quietly overshot.
-    const emitted = sanitizeOutputText(rel);
+    const emitted = sanitizeOutputPathField(rel);
     const relBytes = encoder.encode(emitted).byteLength + 1;
     if (resultBytes + relBytes > HARD_MAX_RESULT_BYTES) {
       byteCapped = true;

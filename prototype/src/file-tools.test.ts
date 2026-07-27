@@ -6,6 +6,7 @@ import {
   excludedSegment,
   safeErrorReason,
   sameFileVersion,
+  sanitizeOutputPathField,
   sanitizeOutputText,
   toPosixPath,
   newGlobBudget,
@@ -1200,4 +1201,66 @@ describe("error results get the same structural escaping as rows", () => {
     expect(out).toContain("invalid pattern");
     expect(out).not.toContain("\u001b");
   }, 20_000);
+});
+
+describe("a backslash filename cannot redirect a read (POSIX)", () => {
+  let proot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    proot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    await Deno.mkdir(`${proot}/public`);
+    await Deno.mkdir(`${proot}/private`);
+    await Deno.writeTextFile(`${proot}/private/secret.txt`, "the-secret\n");
+    // Backslash is a legal POSIX filename character. Normalized into
+    // separators, this name reads as `../private/secret.txt` — and a read
+    // rebuilt from that display string opens the real secret instead.
+    await Deno.writeTextFile(
+      `${proot}/public/..\\private\\secret.txt`,
+      "decoy-content\n",
+    );
+  });
+
+  afterAll(async () => {
+    if (proot) await Deno.remove(proot, { recursive: true });
+  });
+
+  test("grep of public/ returns the decoy's content, not the secret's", async () => {
+    const out = await executeGrepFiles(proot, "decoy-content|the-secret", {
+      path: "public",
+    });
+    expect(out).toContain("decoy-content");
+    expect(out).not.toContain("the-secret");
+  }, 20_000);
+
+  test("glob of public/ attributes the entry to public/", async () => {
+    const out = await executeGlobFiles(proot, "**/*", { path: "public" });
+    // The display path is escaped, so the backslashes are visible as \\ and
+    // the row cannot be mistaken for a traversal.
+    expect(out).toContain("public/..\\\\private\\\\secret.txt");
+    expect(out.split("\n").filter((l) => l.includes("secret")).length).toBe(1);
+  });
+
+  test("a search rooted at the whole tree finds the real secret at its real path", async () => {
+    const out = await executeGrepFiles(proot, "the-secret");
+    expect(out).toContain("private/secret.txt:1:the-secret");
+  }, 20_000);
+});
+
+describe("the path field encoding is injective", () => {
+  test("a literal backslash is distinguishable from an escape", () => {
+    // A file literally named `a\x0ab.ts` (6 chars, no newline) must not render
+    // identically to a file whose name contains a real newline.
+    expect(sanitizeOutputPathField("a\\x0ab.ts")).toBe("a\\\\x0ab.ts");
+    expect(sanitizeOutputPathField("a\nb.ts")).toBe("a\\x0ab.ts");
+    expect(sanitizeOutputPathField("a\\x0ab.ts")).not.toBe(
+      sanitizeOutputPathField("a\nb.ts"),
+    );
+  });
+  test("a colon in a filename cannot mimic the field delimiter", () => {
+    expect(sanitizeOutputPathField("a:1:fake.ts")).toBe("a\\x3a1\\x3afake.ts");
+  });
+  test("ordinary paths pass through untouched", () => {
+    expect(sanitizeOutputPathField("src/pkg/a.ts")).toBe("src/pkg/a.ts");
+  });
 });
