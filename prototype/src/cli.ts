@@ -1728,6 +1728,7 @@ Options:
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
   --no-autostart   launcher only: do not auto-start a runtime for this call (env DYFJ_AUTOSTART=0)
+  --parse-check    launcher-internal, first argument only: validate the rest and exit 0/2
   --json           one-shot only: print the full result as JSON
   -h, --help       show this help`;
 
@@ -1783,6 +1784,15 @@ function realIo(): Io {
 }
 
 export async function main(argv: string[], io: Io): Promise<number> {
+  // Launcher-internal: `--parse-check <args…>` validates the remaining
+  // arguments against this client's own parser and exits 0 (valid) or 2
+  // (rejected), silently, touching nothing else. It exists so the launcher's
+  // autostart decision can share THIS parser as its single validity contract
+  // instead of mirroring it in shell — an invocation this parser would reject
+  // must not spawn a runtime on its way to the usage error.
+  if (argv[0] === "--parse-check") {
+    return parseArgs(argv.slice(1)).error ? 2 : 0;
+  }
   const parsed = parseArgs(argv);
   if (parsed.error) io.err(`dyfj: ${parsed.error}`);
   if (parsed.command === "help") {

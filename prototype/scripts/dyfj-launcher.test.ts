@@ -30,9 +30,20 @@ async function dryRun(
   env: Record<string, string>,
   args: string[] = [],
 ): Promise<{ route: string; sock: string; autostart: string }> {
+  // parse-check spawns a deno child that derives its cache dir from HOME;
+  // with the fake HOME these tests set, pin DENO_DIR to the real cache so
+  // validity — not cache writability — is what the child reports.
+  const realHome = Deno.env.get("HOME") ?? "";
+  const denoDir = Deno.env.get("DENO_DIR") ??
+    `${realHome}/Library/Caches/deno`;
   const proc = new Deno.Command("bash", {
     args: [LAUNCHER, ...args],
-    env: { ...Deno.env.toObject(), DYFJ_LAUNCHER_DRY_RUN: "1", ...env },
+    env: {
+      ...Deno.env.toObject(),
+      DYFJ_LAUNCHER_DRY_RUN: "1",
+      DENO_DIR: denoDir,
+      ...env,
+    },
     stdout: "piped",
     stderr: "piped",
   });
@@ -140,14 +151,24 @@ describe("dyfj launcher autostart classification", () => {
     expect(autostart).toBe("yes");
   });
   test("an exec prompt autostarts", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["hello there"]);
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "exec",
+      "hello there",
+    ]);
     expect(autostart).toBe("yes");
   });
   test("a prompt merely containing the word start still autostarts", async () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "exec",
       "how do I start the runtime",
     ]);
     expect(autostart).toBe("yes");
+  });
+  test("a bare positional prompt is an unknown command and declines", async () => {
+    // `dyfj "hello"` is not a valid invocation — the client requires `exec`
+    // or -p — so the parse-check contract correctly refuses to spawn for it.
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["hello there"]);
+    expect(autostart).toBe("no");
   });
   test("`start` never autostarts (it IS the start)", async () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, ["start"]);
@@ -210,9 +231,12 @@ describe("autostart classification is position-aware and socket-coherent", () =>
     const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p", "start"]);
     expect(autostart).toBe("yes");
   });
-  test("a --session value named status is a value, not a subcommand", async () => {
+  test("a --model value named status is a value, not a subcommand", async () => {
+    // --model takes an arbitrary slug, so this pins value-position handling
+    // without tripping the client's session-ref validation (a --session value
+    // of "status" is genuinely invalid there, and correctly declines).
     const { autostart } = await dryRun({ HOME: "/home/c" }, [
-      "--session",
+      "--model",
       "status",
     ]);
     expect(autostart).toBe("yes");
@@ -310,7 +334,19 @@ describe("autostart requires an absolute private log home", () => {
   }, 30_000);
 });
 
-describe("an invocation the client will reject never triggers autostart", () => {
+describe("an invocation the client's parser rejects never triggers autostart", () => {
+  test("an unknown flag declines autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--bogus"]);
+    expect(autostart).toBe("no");
+  });
+  test("an invalid enum value declines autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--tier", "3"]);
+    expect(autostart).toBe("no");
+  });
+  test("an explicitly empty --socket declines autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--socket", ""]);
+    expect(autostart).toBe("no");
+  });
   test("a value flag with no value declines autostart", async () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, ["--socket"]);
     expect(autostart).toBe("no");

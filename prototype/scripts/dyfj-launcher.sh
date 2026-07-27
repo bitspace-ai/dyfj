@@ -12,7 +12,7 @@ set -euo pipefail
 SOCKET_FLAG_VALUE=""
 
 resolve_socket_path() {
-  if [[ -n "$SOCKET_FLAG_VALUE" ]]; then
+  if [[ "$SOCKET_FLAG_SET" == "1" && -n "$SOCKET_FLAG_VALUE" ]]; then
     printf '%s' "$SOCKET_FLAG_VALUE"
     return
   fi
@@ -72,6 +72,7 @@ LAUNCHER_SAW_SERVER=0
 LAUNCHER_SAW_UNIX=0
 LAUNCHER_SAW_HELP=0
 LAUNCHER_ARGS_INVALID=0
+SOCKET_FLAG_SET=0
 
 # Flags that consume the next argument — mirrors cli.ts's VALUE_FLAGS so the
 # parse below never reads a flag VALUE as launcher control input.
@@ -109,7 +110,15 @@ parse_launcher_args() {
       fi
       if [[ $((i + 1)) -lt ${#args[@]} ]]; then
         if [[ "$arg" == "--socket" ]]; then
+          SOCKET_FLAG_SET=1
           SOCKET_FLAG_VALUE="${args[$((i + 1))]}"
+          if [[ -z "$SOCKET_FLAG_VALUE" ]]; then
+            # An explicitly EMPTY socket cannot drive resolution and cannot be
+            # meaningfully probed or started against: presence and value are
+            # tracked separately, and empty presence declines autostart so the
+            # incoherence surfaces as the client's own connect error.
+            LAUNCHER_ARGS_INVALID=1
+          fi
         fi
         CLIENT_ARGS+=("${args[$((i + 1))]}")
       else
@@ -164,8 +173,31 @@ autostart_applies() {
 # the client does; parse_launcher_args owns the capture.
 socket_forward_args() {
   SOCKET_ARGS=()
-  if [[ -n "$SOCKET_FLAG_VALUE" ]]; then
+  if [[ "$SOCKET_FLAG_SET" == "1" && -n "$SOCKET_FLAG_VALUE" ]]; then
     SOCKET_ARGS=(--socket "$SOCKET_FLAG_VALUE")
+  fi
+}
+
+# The client's own parser is the validity contract: run it in --parse-check
+# mode over exactly the arguments the client will receive. Unknown flags,
+# invalid enum values, missing values — whatever the client would reject must
+# not spawn a runtime or create a log on the way to its usage error. The
+# launcher never mirrors the contract; it asks.
+client_parse_check() {
+  local route
+  route="$(route_cli "${CLIENT_ARGS[@]}")"
+  if [[ "$route" == "compiled" ]]; then
+    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)" \
+      --parse-check "${CLIENT_ARGS[@]}" >/dev/null 2>&1
+  else
+    local proto
+    proto="$(prototype_root)"
+    DYFJ_PROTOTYPE_ROOT="$proto" deno run \
+      --allow-env="$(cli_env_allowlist)" \
+      --allow-read \
+      --sloppy-imports \
+      "${proto}/src/cli.ts" \
+      --parse-check "${CLIENT_ARGS[@]}" >/dev/null 2>&1
   fi
 }
 
@@ -315,7 +347,7 @@ main() {
   socket_forward_args
   local route autostart
   route="$(route_cli "${CLIENT_ARGS[@]}")"
-  if autostart_applies "${CLIENT_ARGS[@]}"; then
+  if autostart_applies "${CLIENT_ARGS[@]}" && client_parse_check; then
     autostart="yes"
   else
     autostart="no"
