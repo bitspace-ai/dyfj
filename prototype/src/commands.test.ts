@@ -1237,7 +1237,7 @@ describe("truncateForEventColumn", () => {
 
 describe("buildCommandToolCallEventPayload — event copy size cap", () => {
   test("caps a maximally-truncated read_file-sized result below the TEXT column limit", () => {
-    // Mirrors file-tools.ts's DEFAULT_MAX_BYTES (64 * 1024 characters) plus its
+    // Mirrors file-tools.ts's DEFAULT_MAX_BYTES (64 * 1024 encoded bytes) plus its
     // own truncation suffix — the exact shape that overflowed the column in
     // the original tool-result overflow defect.
     const modelFacingResult = "a".repeat(64 * 1024) +
@@ -1333,7 +1333,7 @@ describe("read_file → tool_call event containment", () => {
       },
     );
 
-    // The model-facing result keeps file-tools.ts's own 64KB-character cap —
+    // The model-facing result keeps file-tools.ts's own 64KB byte cap —
     // unchanged by this fix (non-goal).
     expect(result.isError).toBe(false);
     expect(result.result as string).toContain(

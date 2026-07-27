@@ -170,13 +170,19 @@ async function readContainedFile(
   abs: string,
   maxBytes: number,
   rootReal: string,
-  // Test seam: the sandbox cannot create real symlinks, so the ancestor-swap
-  // rejection is exercised with a canonicalizer that reports an outside path.
-  realPath: (p: string) => Promise<string> = Deno.realPath,
+  options: {
+    // Test seam: the sandbox cannot create real symlinks, so the ancestor-swap
+    // rejection is exercised with a canonicalizer that reports another path.
+    realPath?: (p: string) => Promise<string>;
+    // Search enforces SKIP_DIRS against the canonical path; read_file does not,
+    // because naming .git/config explicitly is a legitimate request there.
+    enforceExclusions?: boolean;
+  } = {},
 ): Promise<
-  | { ok: true; bytes: Uint8Array }
-  | { ok: false; reason: string; oversized?: boolean }
+  | { ok: true; bytes: Uint8Array; canonical: string }
+  | { ok: false; reason: string; oversized?: boolean; excluded?: boolean }
 > {
+  const realPath = options.realPath ?? Deno.realPath;
   let before: Deno.FileInfo;
   try {
     before = await Deno.lstat(abs);
@@ -219,6 +225,16 @@ async function readContainedFile(
     if (!isWithinRoot(rootReal, canonical)) {
       return { ok: false, reason: "resolves outside the workspace root" };
     }
+    if (options.enforceExclusions === true) {
+      const excluded = excludedSegment(rootReal, canonical);
+      if (excluded !== null) {
+        return {
+          ok: false,
+          reason: `resolves into ${excluded}, which is excluded from search`,
+          excluded: true,
+        };
+      }
+    }
     const canonicalInfo = await Deno.lstat(canonical);
     if (
       canonicalInfo.ino !== after.ino || canonicalInfo.dev !== after.dev
@@ -234,6 +250,7 @@ async function readContainedFile(
     }
     return {
       ok: true,
+      canonical,
       bytes: read === bytes.length ? bytes : bytes.subarray(0, read),
     };
   } catch (err) {
@@ -429,9 +446,18 @@ export async function executeEditFile(
 // arguments the model chose — including a model steered by workspace file
 // content it just read. What is actually enforced, and what is not:
 //
-//   - The walk never follows symlinks, so it cannot leave the root and cannot
-//     cycle. .git/.jj/node_modules are skipped by name: large, uninteresting,
-//     and .git holds packed objects that read as binary.
+//   - The walk refuses symlinks on sight and re-checks each directory with a
+//     no-follow stat before descending. That is NOT race-safe descent: Deno
+//     exposes no openat-style API, so recursion is ultimately by pathname and a
+//     directory replaced between the check and the descent can still redirect
+//     the traversal. The guarantee is therefore enforced where it can be — at
+//     the point of use. Every emitted path is canonicalized and rejected if it
+//     resolves outside the root or into an excluded directory, so a raced alias
+//     changes which files get walked, not which ones come back.
+//   - .git/.jj/node_modules are skipped by name and by canonical path, whether
+//     they are met as a child or named as the search root: large, uninteresting,
+//     and .git holds remotes, reflogs and identities that would otherwise reach
+//     the durable transcript with no approval in front of them.
 //   - The traversal budget counts EVERY directory entry visited, not only the
 //     files that survive filtering, and recursion stops at HARD_MAX_DEPTH. A
 //     directory-only or deeply nested tree therefore exhausts the budget the
@@ -461,7 +487,11 @@ export async function executeEditFile(
 //     and the read is refused rather than followed.
 //   - A search that hit a ceiling or skipped anything says so, including when
 //     it found nothing: "(no matches)" on its own means the whole requested
-//     scope was actually examined.
+//     scope was actually examined. Binary files, over-long lines, oversized
+//     files, unreadable directories and raced paths are all omissions, and all
+//     of them are counted and reported rather than quietly dropped — an
+//     incomplete search read as proof of absence is a worse failure than a
+//     truncated one.
 
 const DEFAULT_MAX_ENTRIES_VISITED = 5_000;
 const DEFAULT_MAX_MATCHES = 200;
@@ -716,6 +746,18 @@ async function* walkFiles(
     if (entry.isSymlink) continue; // never follow: escape and cycle defense
     if (entry.isDirectory) {
       if (SKIP_DIRS.has(entry.name)) continue;
+      // DirEntry is a snapshot taken by readDir; re-check with a no-follow
+      // stat, because the name may already point somewhere else by now. This
+      // narrows the window before descending — it does not close it, which is
+      // why emitted results are checked again at the point of use.
+      let current: Deno.FileInfo;
+      try {
+        current = await Deno.lstat(abs);
+      } catch {
+        budget.unreadableDirs++;
+        continue;
+      }
+      if (current.isSymlink || !current.isDirectory) continue;
       yield* walkFiles(rootReal, abs, budget, depth + 1);
       continue;
     }
@@ -735,6 +777,12 @@ async function* walkFiles(
  * the canonicalized start, so an in-root symlink pointing at `.git` is caught
  * with it.
  */
+function excludedSegment(rootReal: string, canonical: string): string | null {
+  return relative(rootReal, canonical)
+    .split("/")
+    .find((segment) => SKIP_DIRS.has(segment)) ?? null;
+}
+
 async function searchRoot(
   root: string,
   sub: string,
@@ -746,10 +794,8 @@ async function searchRoot(
     if (contained === null) {
       return `error: path escapes the workspace root: ${sub}`;
     }
-    const excluded = relative(rootReal, contained)
-      .split("/")
-      .find((segment) => SKIP_DIRS.has(segment));
-    if (excluded !== undefined) {
+    const excluded = excludedSegment(rootReal, contained);
+    if (excluded !== null) {
       return `error: ${excluded} is excluded from search`;
     }
     return { rootReal, startReal: contained };
@@ -832,6 +878,8 @@ export async function executeGrepFiles(
   let budgetExhausted = false;
   let skippedLarge = 0;
   let skippedUnreadable = 0;
+  let skippedBinary = 0;
+  let excludedRaced = 0;
   let skippedLongLines = 0;
 
   try {
@@ -846,18 +894,20 @@ export async function executeGrepFiles(
       const abs = resolve(rootReal, rel);
       // Identity-verified read: the size is checked before any content is
       // loaded, and a pathname repointed since the walk saw it is refused.
-      const read = await readContainedFile(
-        abs,
-        maxBytes,
-        rootReal,
-        options.realPath,
-      );
+      const read = await readContainedFile(abs, maxBytes, rootReal, {
+        realPath: options.realPath,
+        enforceExclusions: true,
+      });
       if (!read.ok) {
         if (read.oversized === true) skippedLarge++;
+        else if (read.excluded === true) excludedRaced++;
         else skippedUnreadable++;
         continue;
       }
-      if (looksBinary(read.bytes)) continue;
+      if (looksBinary(read.bytes)) {
+        skippedBinary++;
+        continue;
+      }
       const lines = new TextDecoder("utf-8", { fatal: false })
         .decode(read.bytes)
         .split("\n");
@@ -924,6 +974,10 @@ export async function executeGrepFiles(
   if (skippedUnreadable > 0) {
     notes.push(`${skippedUnreadable} file(s) unreadable or changed mid-search`);
   }
+  if (skippedBinary > 0) notes.push(`${skippedBinary} binary file(s) skipped`);
+  if (excludedRaced > 0) {
+    notes.push(`${excludedRaced} path(s) resolved into an excluded directory`);
+  }
   if (skippedLongLines > 0) {
     notes.push(`${skippedLongLines} line(s) over ${MAX_LINE_LENGTH} chars`);
   }
@@ -967,6 +1021,7 @@ export async function executeGlobFiles(
   let truncated = false;
   let byteCapped = false;
   let escaped = 0;
+  let excludedRaced = 0;
   const realPath = options.realPath ?? Deno.realPath;
   for await (const rel of walkFiles(rootReal, startReal, budget)) {
     if (!matchesGlobPath(rel, pattern)) continue;
@@ -974,8 +1029,13 @@ export async function executeGlobFiles(
     // ancestor-replacement check by canonicalizing before it emits: a path
     // that resolves outside the root is a name the model should never see.
     try {
-      if (!isWithinRoot(rootReal, await realPath(resolve(rootReal, rel)))) {
+      const canonical = await realPath(resolve(rootReal, rel));
+      if (!isWithinRoot(rootReal, canonical)) {
         escaped++;
+        continue;
+      }
+      if (excludedSegment(rootReal, canonical) !== null) {
+        excludedRaced++;
         continue;
       }
     } catch {
@@ -1000,6 +1060,9 @@ export async function executeGlobFiles(
   notes.push(...walkNotes(budget));
   if (escaped > 0) {
     notes.push(`${escaped} path(s) resolved outside the workspace root`);
+  }
+  if (excludedRaced > 0) {
+    notes.push(`${excludedRaced} path(s) resolved into an excluded directory`);
   }
   const body = hits.length === 0 ? "(no matches)" : hits.join("\n");
   return notes.length === 0 ? body : `${body}\n[${notes.join("; ")}]`;

@@ -270,7 +270,9 @@ describe("executeGrepFiles", () => {
     expect(out).not.toContain("beta.md");
   });
   test("reports no matches distinctly from an error", async () => {
-    expect(await executeGrepFiles(sroot, "zzz-absent")).toBe("(no matches)");
+    const out = await executeGrepFiles(sroot, "zzz-absent");
+    expect(out.startsWith("(no matches)")).toBe(true);
+    expect(out.startsWith("error:")).toBe(false);
   });
   test("rejects an invalid regex without throwing", async () => {
     const out = await executeGrepFiles(sroot, "(unclosed");
@@ -642,5 +644,44 @@ describe("an incomplete walk is never reported as a complete one", () => {
     const out = await executeGlobFiles(droot, "**/*.txt");
     expect(out).toContain("(no matches)");
     expect(out).toContain("directory depth limit");
+  });
+});
+
+describe("omissions are disclosed, not dropped", () => {
+  let oroot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    oroot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    await Deno.writeTextFile(`${oroot}/only.bin`, "abc\u0000needle\n");
+  });
+
+  afterAll(async () => {
+    if (oroot) await Deno.remove(oroot, { recursive: true });
+  });
+
+  test("a binary-only tree cannot return a bare (no matches)", async () => {
+    const out = await executeGrepFiles(oroot, "needle");
+    expect(out).not.toBe("(no matches)");
+    expect(out).toContain("binary file(s) skipped");
+  }, 20_000);
+});
+
+describe("a raced alias into an excluded directory returns nothing", () => {
+  // A replaced ancestor can land a path inside .git while staying in-root, so
+  // containment alone would accept it. The canonical path is checked against
+  // the exclusions too; the seam stands in for the swap the sandbox cannot make.
+  test("grep_files drops content canonically inside .git", async () => {
+    const intoGit = (_p: string) => Deno.realPath(`${sroot}/.git/config`);
+    const out = await executeGrepFiles(sroot, "needle", { realPath: intoGit });
+    expect(out).not.toContain("alpha.ts:");
+    expect(out).toContain("resolved into an excluded directory");
+  }, 20_000);
+
+  test("glob_files drops names canonically inside .git", async () => {
+    const intoGit = (_p: string) => Deno.realPath(`${sroot}/.git/config`);
+    const out = await executeGlobFiles(sroot, "**/*.ts", { realPath: intoGit });
+    expect(out).not.toContain("alpha.ts");
+    expect(out).toContain("resolved into an excluded directory");
   });
 });
