@@ -218,3 +218,82 @@ describe("autostart classification is position-aware and socket-coherent", () =>
     expect(autostart).toBe("yes");
   });
 });
+
+describe("prompt values cannot become launcher control input", () => {
+  // The reviewer's exploit shapes: an argument in a value slot that LOOKS like
+  // a launcher flag must be data, never control.
+  test("a -p prompt of --socket does not capture the next arg as a socket", async () => {
+    const { sock, autostart } = await dryRun({ HOME: "/home/c" }, [
+      "-p",
+      "--socket",
+      "--model",
+      "foo",
+    ]);
+    expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
+    expect(autostart).toBe("yes");
+  });
+  test("a -p prompt of --no-autostart does not opt out", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "-p",
+      "--no-autostart",
+      "--model",
+      "foo",
+    ]);
+    expect(autostart).toBe("yes");
+  });
+  test("a -p prompt of --server does not switch transport", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "-p",
+      "--server",
+      "--model",
+      "foo",
+    ]);
+    expect(autostart).toBe("yes");
+  });
+});
+
+describe("autostart requires an absolute private log home", () => {
+  async function runReal(
+    env: Record<string, string>,
+    cwd: string,
+  ): Promise<{ code: number; err: string }> {
+    const proc = new Deno.Command("bash", {
+      args: [LAUNCHER, "sessions"],
+      cwd,
+      env: { ...Deno.env.toObject(), ...env, DYFJ_LAUNCHER_DRY_RUN: "" },
+      stdout: "null",
+      stderr: "piped",
+    });
+    const { code, stderr } = await proc.output();
+    return { code, err: new TextDecoder().decode(stderr) };
+  }
+
+  test("empty HOME declines instead of logging into the cwd", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const cwd = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // A socket that certainly is not answering, so the ensure path runs.
+    const { code, err } = await runReal(
+      { HOME: "", DYFJ_SOCKET: `${cwd}/x.sock` },
+      cwd,
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("absolute HOME");
+    // Nothing durable appears in the invoking directory.
+    const entries: string[] = [];
+    for await (const e of Deno.readDir(cwd)) entries.push(e.name);
+    expect(entries).not.toContain(".dyfj");
+    await Deno.remove(cwd, { recursive: true });
+  }, 30_000);
+
+  test("relative HOME declines the same way", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const cwd = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    const { code, err } = await runReal(
+      { HOME: "relative/home", DYFJ_SOCKET: `${cwd}/x.sock` },
+      cwd,
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("absolute HOME");
+    await Deno.remove(cwd, { recursive: true });
+  }, 30_000);
+});

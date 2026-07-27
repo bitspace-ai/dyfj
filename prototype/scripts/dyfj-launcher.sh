@@ -32,26 +32,18 @@ default_socket_path() {
 }
 
 # Mirror resolveConfig: --unix / DYFJ_UNIX=1 win over an explicit HTTP server.
+# Reads the state parse_launcher_args recorded — never raw argv, where a
+# prompt value spelled --server would masquerade as a transport switch.
 uses_unix_transport() {
   if [[ "${DYFJ_UNIX:-}" == "1" ]]; then
     return 0
   fi
-  local arg
-  local saw_server=0
-  for arg in "$@"; do
-    case "$arg" in
-      --unix)
-        return 0
-        ;;
-      --server|--server=*)
-        saw_server=1
-        ;;
-    esac
-  done
+  [[ "$LAUNCHER_SAW_UNIX" == "1" ]] && return 0
+  [[ "$LAUNCHER_SAW_SERVER" == "1" ]] && return 1
   if [[ -n "${DYFJ_SERVER_URL:-}" ]]; then
     return 1
   fi
-  [[ "$saw_server" -eq 0 ]]
+  return 0
 }
 
 launcher_dir() {
@@ -75,22 +67,12 @@ launcher_dir() {
 # DYFJ_AUTOSTART=0.
 
 AUTOSTART_OPTOUT=0
-
-# Populate CLIENT_ARGS with "$@" minus --no-autostart.
-strip_autostart_flag() {
-  CLIENT_ARGS=()
-  local arg
-  for arg in "$@"; do
-    if [[ "$arg" == "--no-autostart" ]]; then
-      AUTOSTART_OPTOUT=1
-    else
-      CLIENT_ARGS+=("$arg")
-    fi
-  done
-}
+LAUNCHER_SUBCOMMAND=""
+LAUNCHER_SAW_SERVER=0
+LAUNCHER_SAW_UNIX=0
 
 # Flags that consume the next argument — mirrors cli.ts's VALUE_FLAGS so the
-# classification below never reads a flag VALUE as a subcommand.
+# parse below never reads a flag VALUE as launcher control input.
 is_value_flag() {
   case "$1" in
     --server|--socket|--key|--mode|--model|--tier|--hint|--session|--workspace|-p|--print)
@@ -98,6 +80,54 @@ is_value_flag() {
       ;;
   esac
   return 1
+}
+
+# One positional pass over the invocation, shared by every launcher decision.
+# A flag is a flag only in a CONTROL position: an argument sitting in the value
+# slot of -p/--socket/--model/… is data and is preserved verbatim — so a prompt
+# that happens to be the string --socket cannot re-route the probe, start a
+# runtime on an unintended path, or toggle autostart. Populates CLIENT_ARGS
+# (minus --no-autostart, which the client does not know), SOCKET_FLAG_VALUE,
+# AUTOSTART_OPTOUT, and LAUNCHER_SUBCOMMAND (first bare positional).
+parse_launcher_args() {
+  CLIENT_ARGS=()
+  local i=0
+  local args=("$@")
+  while [[ $i -lt ${#args[@]} ]]; do
+    local arg="${args[$i]}"
+    if [[ "$arg" == "--no-autostart" ]]; then
+      AUTOSTART_OPTOUT=1
+      i=$((i + 1))
+      continue
+    fi
+    if is_value_flag "$arg"; then
+      CLIENT_ARGS+=("$arg")
+      if [[ "$arg" == "--server" ]]; then
+        LAUNCHER_SAW_SERVER=1
+      fi
+      if [[ $((i + 1)) -lt ${#args[@]} ]]; then
+        if [[ "$arg" == "--socket" ]]; then
+          SOCKET_FLAG_VALUE="${args[$((i + 1))]}"
+        fi
+        CLIENT_ARGS+=("${args[$((i + 1))]}")
+      fi
+      i=$((i + 2))
+      continue
+    fi
+    case "$arg" in
+      --unix)
+        LAUNCHER_SAW_UNIX=1
+        ;;
+      -*) ;;
+      *)
+        if [[ -z "$LAUNCHER_SUBCOMMAND" ]]; then
+          LAUNCHER_SUBCOMMAND="$arg"
+        fi
+        ;;
+    esac
+    CLIENT_ARGS+=("$arg")
+    i=$((i + 1))
+  done
 }
 
 # True when this invocation should ensure a runtime first. Position-aware:
@@ -108,52 +138,50 @@ is_value_flag() {
 autostart_applies() {
   [[ "${DYFJ_AUTOSTART:-1}" == "0" ]] && return 1
   [[ "$AUTOSTART_OPTOUT" == "1" ]] && return 1
-  uses_unix_transport "$@" || return 1
-  local i=0
-  local args=("$@")
-  while [[ $i -lt ${#args[@]} ]]; do
-    local arg="${args[$i]}"
-    if is_value_flag "$arg"; then
-      i=$((i + 2))
-      continue
-    fi
+  uses_unix_transport || return 1
+  local arg
+  for arg in "$@"; do
     case "$arg" in
-      start|status|help|-h|--help)
+      -h|--help)
         return 1
         ;;
     esac
-    i=$((i + 1))
   done
+  case "$LAUNCHER_SUBCOMMAND" in
+    start|status|help)
+      return 1
+      ;;
+  esac
   return 0
 }
 
-# An explicit --socket must reach the probe and the spawned start the same way
-# it reaches the client; environment resolution already flows on its own.
-socket_override_args() {
+# The probe and the spawned start receive the captured --socket the same way
+# the client does; parse_launcher_args owns the capture.
+socket_forward_args() {
   SOCKET_ARGS=()
-  local i=0
-  local args=("$@")
-  while [[ $i -lt ${#args[@]} ]]; do
-    if [[ "${args[$i]}" == "--socket" && $((i + 1)) -lt ${#args[@]} ]]; then
-      SOCKET_FLAG_VALUE="${args[$((i + 1))]}"
-      SOCKET_ARGS=(--socket "$SOCKET_FLAG_VALUE")
-      return 0
-    fi
-    i=$((i + 1))
-  done
-  return 0
+  if [[ -n "$SOCKET_FLAG_VALUE" ]]; then
+    SOCKET_ARGS=(--socket "$SOCKET_FLAG_VALUE")
+  fi
 }
 
 # Log name = basename + short hash of the FULL socket path: two different
 # sockets sharing a basename (every per-worktree workbench.sock) must not
 # interleave into one file. No rotation here — the log grows until the
 # operator clears it, stated rather than silently assumed away.
+# Fails (returns 1) when HOME is unset, empty, or relative: a durable log
+# carrying runtime output must never land under whatever repository the
+# operator happens to be standing in, so there is no fallback directory —
+# autostart declines instead.
 runtime_log_path() {
+  case "${HOME:-}" in
+    /*) ;;
+    *) return 1 ;;
+  esac
   local sock base hash
   sock="$(resolve_socket_path)"
   base="$(basename "${sock%.sock}")"
   hash="$(printf '%s' "$sock" | cksum | cut -d' ' -f1)"
-  printf '%s/.dyfj/log/runtime-%s-%s.log' "${HOME:-.}" "$base" "$hash"
+  printf '%s/.dyfj/log/runtime-%s-%s.log' "$HOME" "$base" "$hash"
 }
 
 # Run the client without exec, on the same route main would use.
@@ -176,9 +204,13 @@ ensure_runtime() {
   fi
   local sock log
   sock="$(resolve_socket_path)"
-  log="$(runtime_log_path)"
-  # Owner-only: the runtime writes session/model/cost metadata and secret
-  # POINTER names (never values) to its stderr, and all of it lands here.
+  if ! log="$(runtime_log_path)"; then
+    echo "dyfj: autostart needs an absolute HOME for its log directory; set HOME or run 'dyfj start' yourself" >&2
+    return 1
+  fi
+  # Owner-only, and treated as sensitive wholesale: the spawned runtime's
+  # entire stdout/stderr lands here, and the launcher can vouch for none of
+  # it — the permission bits are the floor, not a claim about the contents.
   (
     umask 077
     mkdir -p "$(dirname "$log")"
@@ -247,7 +279,7 @@ route_cli() {
   resolved="$(resolve_socket_path)"
   default="$(default_socket_path)"
 
-  if uses_unix_transport "$@" && [[ "$resolved" != "$default" ]]; then
+  if uses_unix_transport && [[ "$resolved" != "$default" ]]; then
     printf 'deno'
     return
   fi
@@ -274,8 +306,8 @@ run_deno_cli() {
 }
 
 main() {
-  strip_autostart_flag "$@"
-  socket_override_args "${CLIENT_ARGS[@]}"
+  parse_launcher_args "$@"
+  socket_forward_args
   local route autostart
   route="$(route_cli "${CLIENT_ARGS[@]}")"
   if autostart_applies "${CLIENT_ARGS[@]}"; then
