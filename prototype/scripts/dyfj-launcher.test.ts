@@ -29,7 +29,7 @@ async function hasFreshCompiledBin(): Promise<boolean> {
 async function dryRun(
   env: Record<string, string>,
   args: string[] = [],
-): Promise<{ route: string; sock: string }> {
+): Promise<{ route: string; sock: string; autostart: string }> {
   const proc = new Deno.Command("bash", {
     args: [LAUNCHER, ...args],
     env: { ...Deno.env.toObject(), DYFJ_LAUNCHER_DRY_RUN: "1", ...env },
@@ -44,10 +44,11 @@ async function dryRun(
   }
   const route = text.match(/^route=(\w+)/)?.[1];
   const sock = text.match(/sock=(.+)$/)?.[1];
-  if (!route || !sock) {
+  const autostart = text.match(/autostart=(\w+)/)?.[1];
+  if (!route || !sock || !autostart) {
     throw new Error(`unexpected dry-run output: ${text}`);
   }
-  return { route, sock };
+  return { route, sock, autostart };
 }
 
 describe("dyfj launcher routing", () => {
@@ -127,5 +128,63 @@ describe("dyfj launcher routing", () => {
     const text = await Deno.readTextFile(LAUNCHER);
     expect(text).not.toMatch(/\/Users\//);
     expect(text).not.toMatch(/\/home\/[a-z]/);
+  });
+});
+
+describe("dyfj launcher autostart classification", () => {
+  // The classification is what the dry-run seam can pin: WHEN the launcher
+  // would ensure a runtime. The ensure path itself (probe, detached start,
+  // readiness wait) exercises real process lifecycle and is validated in UAT.
+  test("a bare invocation (REPL) autostarts", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" });
+    expect(autostart).toBe("yes");
+  });
+  test("an exec prompt autostarts", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["hello there"]);
+    expect(autostart).toBe("yes");
+  });
+  test("a prompt merely containing the word start still autostarts", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "how do I start the runtime",
+    ]);
+    expect(autostart).toBe("yes");
+  });
+  test("`start` never autostarts (it IS the start)", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["start"]);
+    expect(autostart).toBe("no");
+  });
+  test("`status` stays an honest reporter", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["status"]);
+    expect(autostart).toBe("no");
+  });
+  test("help never needs a runtime", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--help"]);
+    expect(autostart).toBe("no");
+  });
+  test("an HTTP session is out of scope", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "--server",
+      "http://127.0.0.1:18080",
+    ]);
+    expect(autostart).toBe("no");
+  });
+  test("--no-autostart opts out per call", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--no-autostart"]);
+    expect(autostart).toBe("no");
+  });
+  test("DYFJ_AUTOSTART=0 opts out standing", async () => {
+    const { autostart } = await dryRun({
+      HOME: "/home/c",
+      DYFJ_AUTOSTART: "0",
+    });
+    expect(autostart).toBe("no");
+  });
+  test("a custom socket still autostarts (on that socket)", async () => {
+    const { autostart, route } = await dryRun({
+      HOME: "/home/c",
+      DYFJ_SOCKET: "/run/custom.sock",
+    });
+    expect(autostart).toBe("yes");
+    expect(route).toBe("deno");
   });
 });

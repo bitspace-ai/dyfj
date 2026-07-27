@@ -47,6 +47,122 @@ launcher_dir() {
   cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 }
 
+# ── Autostart ────────────────────────────────────────────────────────────────
+#
+# A bare `dyfj` (and any other invocation that needs a live runtime over the
+# UDS seam) probes the socket first and, when nothing answers, starts the
+# runtime detached — logs to ~/.dyfj/log/ — then waits for the socket before
+# handing over to the client. One command, one terminal. `dyfj start` remains
+# the explicit foreground supervisor and is never auto-invoked FOR a `start`.
+#
+# The probe is the client's own `status` (exit 0 iff the runtime answered), so
+# a stale socket file left by a crash routes into the start path, where the
+# server's bind safety clears it. Two launchers racing both spawn a start; the
+# server refuses the second bind while the first answers, the loser exits into
+# the log, and both clients converge on the winner. Opt out per-call with
+# --no-autostart (consumed here, never passed to the client) or standing with
+# DYFJ_AUTOSTART=0.
+
+AUTOSTART_OPTOUT=0
+
+# Populate CLIENT_ARGS with "$@" minus --no-autostart.
+strip_autostart_flag() {
+  CLIENT_ARGS=()
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--no-autostart" ]]; then
+      AUTOSTART_OPTOUT=1
+    else
+      CLIENT_ARGS+=("$arg")
+    fi
+  done
+}
+
+# True when this invocation should ensure a runtime first. Exact-match scan:
+# `start` runs the runtime itself, `status` is an honest reporter and must not
+# change what it reports, help never needs a runtime. A quoted prompt that
+# merely CONTAINS one of these words is a single argv entry and never matches.
+autostart_applies() {
+  [[ "${DYFJ_AUTOSTART:-1}" == "0" ]] && return 1
+  [[ "$AUTOSTART_OPTOUT" == "1" ]] && return 1
+  uses_unix_transport "$@" || return 1
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      start|status|help|-h|--help)
+        return 1
+        ;;
+    esac
+  done
+  return 0
+}
+
+# An explicit --socket must reach the probe and the spawned start the same way
+# it reaches the client; environment resolution already flows on its own.
+socket_override_args() {
+  SOCKET_ARGS=()
+  local i=0
+  local args=("$@")
+  while [[ $i -lt ${#args[@]} ]]; do
+    if [[ "${args[$i]}" == "--socket" && $((i + 1)) -lt ${#args[@]} ]]; then
+      SOCKET_ARGS=(--socket "${args[$((i + 1))]}")
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+runtime_log_path() {
+  local sock base
+  sock="$(resolve_socket_path)"
+  base="$(basename "${sock%.sock}")"
+  printf '%s/.dyfj/log/runtime-%s.log' "${HOME:-.}" "$base"
+}
+
+# Run the client without exec, on the same route main would use.
+probe_runtime() {
+  local route
+  route="$(route_cli "$@")"
+  if [[ "$route" == "compiled" ]]; then
+    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)"       "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
+  else
+    local sock proto
+    sock="$(resolve_socket_path)"
+    proto="$(prototype_root)"
+    DYFJ_PROTOTYPE_ROOT="$proto" deno run       --allow-env="$(cli_env_allowlist)"       --allow-read       --allow-write       --allow-run=deno       --allow-net="127.0.0.1,localhost,unix:${sock}"       --sloppy-imports       "${proto}/src/cli.ts"       "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
+  fi
+}
+
+ensure_runtime() {
+  if probe_runtime "$@"; then
+    return 0
+  fi
+  local sock log
+  sock="$(resolve_socket_path)"
+  log="$(runtime_log_path)"
+  mkdir -p "$(dirname "$log")"
+  {
+    printf -- '── dyfj autostart · %s · socket %s ──
+'       "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$sock"
+  } >>"$log"
+  echo "dyfj: runtime not running at ${sock}; starting it (log: ${log})" >&2
+  nohup bash "$(launcher_dir)/$(basename "${BASH_SOURCE[0]}")"     "${SOCKET_ARGS[@]}" start >>"$log" 2>&1 &
+  disown
+  local i
+  for i in $(seq 1 50); do
+    if probe_runtime "$@"; then
+      echo "dyfj: runtime ready" >&2
+      return 0
+    fi
+    sleep 0.3
+  done
+  # No seconds figure in the message: the loop is 50 probes with 0.3s gaps,
+  # but each probe has its own startup cost, so wall time is not a constant.
+  echo "dyfj: runtime is not answering — check ${log} or run 'dyfj start' in the foreground" >&2
+  return 1
+}
+
 prototype_root() {
   printf '%s' "$(cd "$(launcher_dir)/.." && pwd)"
 }
@@ -117,20 +233,31 @@ run_deno_cli() {
 }
 
 main() {
-  local route
-  route="$(route_cli "$@")"
+  strip_autostart_flag "$@"
+  socket_override_args "${CLIENT_ARGS[@]}"
+  local route autostart
+  route="$(route_cli "${CLIENT_ARGS[@]}")"
+  if autostart_applies "${CLIENT_ARGS[@]}"; then
+    autostart="yes"
+  else
+    autostart="no"
+  fi
 
   if [[ "${DYFJ_LAUNCHER_DRY_RUN:-}" == "1" ]]; then
-    printf 'route=%s sock=%s\n' "$route" "$(resolve_socket_path)"
+    printf 'route=%s autostart=%s sock=%s\n'       "$route" "$autostart" "$(resolve_socket_path)"
     exit 0
+  fi
+
+  if [[ "$autostart" == "yes" ]]; then
+    ensure_runtime "${CLIENT_ARGS[@]}" || exit 1
   fi
 
   case "$route" in
     compiled)
-      DYFJ_PROTOTYPE_ROOT="$(prototype_root)" exec "$(compiled_bin)" "$@"
+      DYFJ_PROTOTYPE_ROOT="$(prototype_root)" exec "$(compiled_bin)" "${CLIENT_ARGS[@]}"
       ;;
     deno)
-      run_deno_cli "$@"
+      run_deno_cli "${CLIENT_ARGS[@]}"
       ;;
     *)
       echo "dyfj launcher: unknown route '$route'" >&2
