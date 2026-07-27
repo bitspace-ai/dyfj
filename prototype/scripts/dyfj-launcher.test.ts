@@ -188,3 +188,33 @@ describe("dyfj launcher autostart classification", () => {
     expect(route).toBe("deno");
   });
 });
+
+describe("autostart classification is position-aware and socket-coherent", () => {
+  test("an explicit --socket drives the launcher's own resolution", async () => {
+    const { sock, route, autostart } = await dryRun({ HOME: "/home/c" }, [
+      "--socket",
+      "/run/explicit.sock",
+    ]);
+    expect(sock).toBe("/run/explicit.sock");
+    expect(route).toBe("deno");
+    expect(autostart).toBe("yes");
+  });
+  test("--socket beats DYFJ_SOCKET", async () => {
+    const { sock } = await dryRun(
+      { HOME: "/home/c", DYFJ_SOCKET: "/run/env.sock" },
+      ["--socket", "/run/flag.sock"],
+    );
+    expect(sock).toBe("/run/flag.sock");
+  });
+  test("a -p prompt that is literally the word start still autostarts", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p", "start"]);
+    expect(autostart).toBe("yes");
+  });
+  test("a --session value named status is a value, not a subcommand", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "--session",
+      "status",
+    ]);
+    expect(autostart).toBe("yes");
+  });
+});

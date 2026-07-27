@@ -1700,6 +1700,12 @@ Usage:
   dyfj -p "<prompt>"        one-shot turn (alias)
   dyfj status               check the local runtime and socket
   dyfj start                foreground the local runtime (Ctrl-C to stop)
+
+Launcher lifecycle (the dyfj wrapper script, local UDS seam only):
+  a REPL or one-shot turn probes the socket first and, when no runtime
+  answers, starts one detached (output to ~/.dyfj/log/) and waits for it;
+  'start', 'status', and help are never auto-started for. Opt out per call
+  with --no-autostart, or standing with DYFJ_AUTOSTART=0.
   dyfj models               list available model slugs
   dyfj sessions             list sessions
 
@@ -1720,6 +1726,7 @@ Options:
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
+  --no-autostart   launcher only: do not auto-start a runtime for this call (env DYFJ_AUTOSTART=0)
   --json           one-shot only: print the full result as JSON
   -h, --help       show this help`;
 

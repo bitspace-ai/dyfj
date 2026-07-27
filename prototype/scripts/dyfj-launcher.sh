@@ -4,7 +4,18 @@
 # the socket away from ~/.dyfj/run/workbench.sock (Deno 2.9 exact-match grants).
 set -euo pipefail
 
+# Highest precedence: an explicit --socket argument, captured once by
+# socket_override_args. Routing, Deno net grants, log naming, the probe, the
+# spawned start, and the final client must all see the SAME socket — a flag
+# that reached the client but not the probe's net grant would leave the
+# launcher starting a runtime it can never see answer.
+SOCKET_FLAG_VALUE=""
+
 resolve_socket_path() {
+  if [[ -n "$SOCKET_FLAG_VALUE" ]]; then
+    printf '%s' "$SOCKET_FLAG_VALUE"
+    return
+  fi
   if [[ -n "${DYFJ_SOCKET:-}" ]]; then
     printf '%s' "$DYFJ_SOCKET"
     return
@@ -78,21 +89,40 @@ strip_autostart_flag() {
   done
 }
 
-# True when this invocation should ensure a runtime first. Exact-match scan:
-# `start` runs the runtime itself, `status` is an honest reporter and must not
-# change what it reports, help never needs a runtime. A quoted prompt that
-# merely CONTAINS one of these words is a single argv entry and never matches.
+# Flags that consume the next argument — mirrors cli.ts's VALUE_FLAGS so the
+# classification below never reads a flag VALUE as a subcommand.
+is_value_flag() {
+  case "$1" in
+    --server|--socket|--key|--mode|--model|--tier|--hint|--session|--workspace|-p|--print)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# True when this invocation should ensure a runtime first. Position-aware:
+# value-flag arguments are skipped with their values, so `dyfj -p start` (a
+# PROMPT that happens to be the word start) still autostarts, while the
+# subcommands do not — `start` runs the runtime itself, `status` is an honest
+# reporter and must not change what it reports, help never needs a runtime.
 autostart_applies() {
   [[ "${DYFJ_AUTOSTART:-1}" == "0" ]] && return 1
   [[ "$AUTOSTART_OPTOUT" == "1" ]] && return 1
   uses_unix_transport "$@" || return 1
-  local arg
-  for arg in "$@"; do
+  local i=0
+  local args=("$@")
+  while [[ $i -lt ${#args[@]} ]]; do
+    local arg="${args[$i]}"
+    if is_value_flag "$arg"; then
+      i=$((i + 2))
+      continue
+    fi
     case "$arg" in
       start|status|help|-h|--help)
         return 1
         ;;
     esac
+    i=$((i + 1))
   done
   return 0
 }
@@ -105,7 +135,8 @@ socket_override_args() {
   local args=("$@")
   while [[ $i -lt ${#args[@]} ]]; do
     if [[ "${args[$i]}" == "--socket" && $((i + 1)) -lt ${#args[@]} ]]; then
-      SOCKET_ARGS=(--socket "${args[$((i + 1))]}")
+      SOCKET_FLAG_VALUE="${args[$((i + 1))]}"
+      SOCKET_ARGS=(--socket "$SOCKET_FLAG_VALUE")
       return 0
     fi
     i=$((i + 1))
@@ -113,11 +144,16 @@ socket_override_args() {
   return 0
 }
 
+# Log name = basename + short hash of the FULL socket path: two different
+# sockets sharing a basename (every per-worktree workbench.sock) must not
+# interleave into one file. No rotation here — the log grows until the
+# operator clears it, stated rather than silently assumed away.
 runtime_log_path() {
-  local sock base
+  local sock base hash
   sock="$(resolve_socket_path)"
   base="$(basename "${sock%.sock}")"
-  printf '%s/.dyfj/log/runtime-%s.log' "${HOME:-.}" "$base"
+  hash="$(printf '%s' "$sock" | cksum | cut -d' ' -f1)"
+  printf '%s/.dyfj/log/runtime-%s-%s.log' "${HOME:-.}" "$base" "$hash"
 }
 
 # Run the client without exec, on the same route main would use.
@@ -141,11 +177,16 @@ ensure_runtime() {
   local sock log
   sock="$(resolve_socket_path)"
   log="$(runtime_log_path)"
-  mkdir -p "$(dirname "$log")"
-  {
-    printf -- '── dyfj autostart · %s · socket %s ──
-'       "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$sock"
-  } >>"$log"
+  # Owner-only: the runtime writes session/model/cost metadata and secret
+  # POINTER names (never values) to its stderr, and all of it lands here.
+  (
+    umask 077
+    mkdir -p "$(dirname "$log")"
+    printf -- '── dyfj autostart at %s, socket %s ──\n' \
+      "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$sock" >>"$log"
+  )
+  chmod 700 "$(dirname "$log")" 2>/dev/null || true
+  chmod 600 "$log" 2>/dev/null || true
   echo "dyfj: runtime not running at ${sock}; starting it (log: ${log})" >&2
   nohup bash "$(launcher_dir)/$(basename "${BASH_SOURCE[0]}")"     "${SOCKET_ARGS[@]}" start >>"$log" 2>&1 &
   disown
