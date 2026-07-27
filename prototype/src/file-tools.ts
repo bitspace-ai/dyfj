@@ -1,12 +1,18 @@
 /**
  * Workspace file tools for the agent loop, scoped to a workspace root.
  *
- * `read_file` and `list_files` are read-only and side-effect-free (the policy
- * auto-allows them). `write_file` is mutating — the command policy routes it
- * through operator approval, so its executor never runs unapproved.
- * Every path is resolved within the root and traversal/symlink escape is
- * rejected, so the model can only touch the project it's working in. `edit_file`
- * applies a single exact-string replacement (also mutating); `bash` is a later slice.
+ * `read_file`, `list_files`, `grep_files` and `glob_files` are read-only and
+ * side-effect-free (the policy auto-allows them). `write_file` is mutating —
+ * the command policy routes it through operator approval, so its executor never
+ * runs unapproved. Every path is resolved within the root and traversal/symlink
+ * escape is rejected, so the model can only touch the project it's working in.
+ * `edit_file` applies a single exact-string replacement (also mutating); `bash`
+ * is a later slice.
+ *
+ * Auto-approval means no operator sits between the model and these executors,
+ * so their resource ceilings are a security boundary rather than a courtesy.
+ * The search tools carry the heaviest ones; see the section comment below for
+ * what is enforced and what is deliberately left open.
  *
  * Executors never throw on operator/model error (bad path, missing file,
  * traversal attempt): they return an `error: …` string so the model sees the
@@ -14,9 +20,22 @@
  */
 
 import { dirname, relative, resolve } from "node:path";
+import {
+  BoundedMatcher,
+  RegexBudgetExceeded,
+  RegexUnavailable,
+} from "./bounded-regex.ts";
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
 const DEFAULT_MAX_ENTRIES = 500;
+
+/**
+ * Largest file any read tool will pull into memory. Read tools are
+ * auto-approved, so this ceiling is checked with `stat` BEFORE the read — a
+ * post-read length check is not a memory bound, it is a report on memory
+ * already spent.
+ */
+const HARD_MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 /**
  * Resolve `p` within `root` and return the absolute path, or throw if it
@@ -38,6 +57,11 @@ export function resolveWorkspacePath(root: string, p: string): string {
  * `range` selects a 1-based inclusive line window, so a large file can be read
  * in pieces without shelling out to sed/head/tail — each of which would route
  * through operator approval. The byte cap still applies to the selected window.
+ *
+ * `maxBytes` caps the text handed back to the model. It does NOT cap the read
+ * itself: the whole file is decoded before a window is sliced out of it. The
+ * memory bound is the separate `stat` check against HARD_MAX_FILE_BYTES below,
+ * which the model cannot raise.
  */
 export async function executeReadFile(
   root: string,
@@ -70,6 +94,9 @@ export async function executeReadFile(
     const info = await Deno.stat(target);
     if (info.isDirectory) {
       return `error: ${p} is a directory; use list_files`;
+    }
+    if (info.size > HARD_MAX_FILE_BYTES) {
+      return `error: ${p} is ${info.size} bytes, over the ${HARD_MAX_FILE_BYTES}-byte read limit`;
     }
     const full = await Deno.readTextFile(target);
     let text = full;
@@ -280,71 +307,197 @@ export async function executeEditFile(
 // approval fatigue rather than as a missing feature: read-heavy turns were
 // running ~8 approvals, overwhelmingly read-only sed/grep/cat.
 //
-// Safety properties, all deliberate:
-//   - The walk NEVER follows symlinked directories, so it cannot leave the root
-//     and cannot cycle. Regular files are still containment-checked.
-//   - Dot-directories (.git, .jj) and node_modules are skipped by default: they
-//     are large, uninteresting, and .git holds packed objects that look binary.
-//   - Every traversal is bounded — files visited, matches returned, bytes read
-//     per file — so a broad pattern degrades to a truncated answer, not a hang.
-//   - grep matches LINE BY LINE. Besides being the useful output shape, it
-//     bounds regex backtracking to line length: a model-supplied pattern cannot
-//     turn a large file into a catastrophic-backtracking hang.
+// Both tools are AUTO-APPROVED, so every limit here has to hold against
+// arguments the model chose — including a model steered by workspace file
+// content it just read. What is actually enforced, and what is not:
+//
+//   - The walk never follows symlinks, so it cannot leave the root and cannot
+//     cycle. .git/.jj/node_modules are skipped by name: large, uninteresting,
+//     and .git holds packed objects that read as binary.
+//   - The traversal budget counts EVERY directory entry visited, not only the
+//     files that survive filtering, and recursion stops at HARD_MAX_DEPTH. A
+//     directory-only or deeply nested tree therefore exhausts the budget the
+//     same way a wide one does. (It did not, before: counting files alone let
+//     an all-directories tree walk for free.)
+//   - Every model-supplied limit goes through `clampLimit` against a ceiling
+//     this module owns. `maxMatches: 1e9` yields HARD_MAX_MATCHES.
+//   - Files are `stat`ed before they are read, so an oversized file is skipped
+//     without being loaded. Checking length after `readFile` — the previous
+//     shape — reports the memory it already spent.
+//   - Rows stop accumulating at HARD_MAX_RESULT_BYTES independently of the row
+//     count, so one file of very long matching lines cannot produce an
+//     unbounded tool result.
+//   - Regex matching runs in a terminateable worker under a wall-clock budget
+//     (bounded-regex.ts). Matching line by line does NOT bound backtracking —
+//     one long line is enough for a catastrophic pattern — so lines over
+//     MAX_LINE_LENGTH are skipped outright and the budget, not the pattern,
+//     is what bounds the cost. If the worker cannot start, the search fails
+//     closed rather than matching on the main thread.
+//   - Glob matching does not go through RegExp at all: `matchesGlobPath` is a
+//     segment-wise wildcard matcher using the standard star-backtrack trick,
+//     worst-case quadratic over inputs that are themselves length-capped.
+//
+// Not defended here: a regular file swapped for a symlink between enumeration
+// and read. The walk rejects symlinks as it sees them, but the later read
+// reopens by pathname, so a concurrent replacement wins the race. Single
+// operator, single trust domain — recorded rather than fixed.
 
+const DEFAULT_MAX_ENTRIES_VISITED = 5_000;
+const DEFAULT_MAX_MATCHES = 200;
+
+// Ceilings this module owns. No argument, model- or caller-supplied, raises
+// them; `clampLimit` is the only way in.
+const HARD_MAX_ENTRIES_VISITED = 50_000;
+const HARD_MAX_MATCHES = 1_000;
+const HARD_MAX_GLOB_RESULTS = 2_000;
+const HARD_MAX_DEPTH = 32;
+const HARD_MAX_RESULT_BYTES = 128 * 1024;
+/** Lines longer than this are never handed to the matcher. */
+const MAX_LINE_LENGTH = 4_096;
+/** Glob patterns longer than this are refused rather than matched. */
+const MAX_GLOB_LENGTH = 512;
+
+const SKIP_DIRS = new Set(["node_modules", ".git", ".jj", ".hg", ".svn"]);
 
 /**
- * Convert a glob to an anchored RegExp. Supports `**` (crosses `/`), `*` and
- * `?` (do not cross `/`), and `[...]` classes.
- *
- * Hand-rolled on purpose: `node:path`'s `matchesGlob` pulls in minimatch, which
- * reads `process.env.__MINIMATCH_TESTING_PLATFORM__` and therefore needs
- * `--allow-env`. The runtime profiles (`serve-unix`, `workbench`) grant env by
- * explicit allowlist, so that dependency would throw NotCapable on first real
- * use — while passing tests, because the `test` profile grants `env=true`.
- * Exported so the matching itself is directly testable without any permission.
+ * Fold a caller-supplied limit into `[1, hardMax]`, falling back to `fallback`
+ * for anything that is not a usable number. Exported because "the model cannot
+ * inflate a limit" is a claim worth testing directly.
  */
-export function globToRegExp(glob: string): RegExp {
-  let out = "";
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === "*") {
-      if (glob[i + 1] === "*") {
-        // `**/` should also match zero directories, so `**/*.ts` finds root files.
-        if (glob[i + 2] === "/") {
-          out += "(?:.*/)?";
-          i += 2;
-        } else {
-          out += ".*";
-          i += 1;
-        }
-      } else {
-        out += "[^/]*";
-      }
+export function clampLimit(
+  value: number | undefined,
+  fallback: number,
+  hardMax: number,
+): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return Math.min(fallback, hardMax);
+  }
+  const n = Math.floor(value);
+  if (n < 1) return 1;
+  return Math.min(n, hardMax);
+}
+
+// ── Glob matching (no RegExp) ────────────────────────────────────────────────
+
+/** Does `ch` fall in a `[...]` class body (leading `!` or `^` negates)? */
+function matchClass(body: string, ch: string): boolean {
+  let negate = false;
+  let i = 0;
+  if (body[0] === "!" || body[0] === "^") {
+    negate = true;
+    i = 1;
+  }
+  let hit = false;
+  for (; i < body.length; i++) {
+    if (body[i + 1] === "-" && i + 2 < body.length) {
+      if (ch >= body[i] && ch <= body[i + 2]) hit = true;
+      i += 2;
+    } else if (body[i] === ch) {
+      hit = true;
+    }
+  }
+  return negate ? !hit : hit;
+}
+
+/** The pattern token starting at `p`: how many chars it spans, and its test. */
+function tokenAt(
+  pat: string,
+  p: number,
+): { len: number; test: (ch: string) => boolean } {
+  const c = pat[p];
+  if (c === "?") return { len: 1, test: () => true };
+  if (c === "[") {
+    const end = pat.indexOf("]", p + 1);
+    if (end !== -1) {
+      const body = pat.slice(p + 1, end);
+      return { len: end - p + 1, test: (ch) => matchClass(body, ch) };
+    }
+    return { len: 1, test: (ch) => ch === "[" }; // unterminated: literal
+  }
+  return { len: 1, test: (ch) => ch === c };
+}
+
+/**
+ * Match one path segment against one glob segment (`*`, `?`, `[...]`).
+ *
+ * The classic wildcard algorithm: advance greedily, and on a mismatch rewind to
+ * one character past the last `*`. Worst case is O(name × pattern) with no
+ * recursion and no backtracking blowup — which is the whole reason globs are
+ * not translated into a RegExp and run against model-supplied input.
+ */
+function matchSegment(name: string, pat: string): boolean {
+  let n = 0;
+  let p = 0;
+  let starN = -1;
+  let starP = -1;
+  while (n < name.length) {
+    if (p < pat.length && pat[p] === "*") {
+      starP = p;
+      starN = n;
+      p++;
       continue;
     }
-    if (c === "?") { out += "[^/]"; continue; }
-    if (c === "[") {
-      const end = glob.indexOf("]", i + 1);
-      if (end !== -1) { out += glob.slice(i, end + 1); i = end; continue; }
-      out += "\\["; continue;
+    if (p < pat.length) {
+      const tok = tokenAt(pat, p);
+      if (tok.test(name[n])) {
+        n++;
+        p += tok.len;
+        continue;
+      }
     }
-    out += c.replace(/[\\^$.+()|{}]/g, "\\$&");
-  }
-  return new RegExp(`^${out}$`);
-}
-
-/** True when a workspace-relative path matches the glob. */
-export function matchesGlobPath(path: string, glob: string): boolean {
-  try {
-    return globToRegExp(glob).test(path);
-  } catch {
+    if (starP !== -1) {
+      starN++;
+      n = starN;
+      p = starP + 1;
+      continue;
+    }
     return false;
   }
+  while (p < pat.length && pat[p] === "*") p++;
+  return p === pat.length;
 }
 
-const DEFAULT_MAX_FILES_SCANNED = 2000;
-const DEFAULT_MAX_MATCHES = 200;
-const SKIP_DIRS = new Set(["node_modules", ".git", ".jj", ".hg", ".svn"]);
+/** Same algorithm one level up, with `**` standing for zero or more segments. */
+function matchSegments(path: string[], glob: string[]): boolean {
+  let n = 0;
+  let g = 0;
+  let starN = -1;
+  let starG = -1;
+  while (n < path.length) {
+    if (g < glob.length && glob[g] === "**") {
+      starG = g;
+      starN = n;
+      g++;
+      continue;
+    }
+    if (g < glob.length && glob[g] !== "**" && matchSegment(path[n], glob[g])) {
+      n++;
+      g++;
+      continue;
+    }
+    if (starG !== -1) {
+      starN++;
+      n = starN;
+      g = starG + 1;
+      continue;
+    }
+    return false;
+  }
+  while (g < glob.length && glob[g] === "**") g++;
+  return g === glob.length;
+}
+
+/**
+ * True when a workspace-relative path matches the glob. `**` crosses `/`; `*`,
+ * `?` and `[...]` do not. Over-long patterns match nothing rather than being
+ * matched — the length cap is what keeps the quadratic worst case small.
+ */
+export function matchesGlobPath(path: string, glob: string): boolean {
+  if (glob.length === 0 || glob.length > MAX_GLOB_LENGTH) return false;
+  return matchSegments(path.split("/"), glob.split("/"));
+}
+
+// ── Traversal ────────────────────────────────────────────────────────────────
 
 /** True when the buffer looks binary (NUL byte in the first 8KB). */
 function looksBinary(bytes: Uint8Array): boolean {
@@ -355,14 +508,17 @@ function looksBinary(bytes: Uint8Array): boolean {
 
 /**
  * Yield workspace-relative file paths under `start`, depth-first and sorted for
- * deterministic output. Symlinked directories are not traversed; symlinked
- * files are yielded only when their real target stays inside the root.
+ * deterministic output. Symlinks are never followed. `budget.visited` counts
+ * every entry seen — directories included — so the cap bounds the walk itself
+ * and not merely the files it yields.
  */
 async function* walkFiles(
   rootReal: string,
   start: string,
   budget: { visited: number; cap: number },
+  depth = 0,
 ): AsyncGenerator<string> {
+  if (depth > HARD_MAX_DEPTH) return;
   let entries: Deno.DirEntry[];
   try {
     entries = [];
@@ -373,19 +529,41 @@ async function* walkFiles(
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     if (budget.visited >= budget.cap) return;
+    budget.visited++;
     const abs = resolve(start, entry.name);
     if (entry.isSymlink) continue; // never follow: escape and cycle defense
     if (entry.isDirectory) {
       if (SKIP_DIRS.has(entry.name)) continue;
-      yield* walkFiles(rootReal, abs, budget);
+      yield* walkFiles(rootReal, abs, budget, depth + 1);
       continue;
     }
     if (!entry.isFile) continue;
     if (!isWithinRoot(rootReal, abs)) continue;
-    budget.visited++;
     yield relative(rootReal, abs);
   }
 }
+
+/** Resolve the search start, or return an `error: …` string. */
+async function searchRoot(
+  root: string,
+  sub: string,
+): Promise<{ rootReal: string; startReal: string } | string> {
+  try {
+    const abs = resolveWorkspacePath(root, sub);
+    const rootReal = await Deno.realPath(resolve(root));
+    const contained = await containedRealPath(root, abs);
+    if (contained === null) {
+      return `error: path escapes the workspace root: ${sub}`;
+    }
+    return { rootReal, startReal: contained };
+  } catch (err) {
+    return `error: cannot search ${sub}: ${(err as Error).message}`;
+  }
+}
+
+// ── Executors ────────────────────────────────────────────────────────────────
+
+const encoder = new TextEncoder();
 
 /**
  * Search file contents for `pattern` (a JavaScript regular expression), scoped
@@ -400,67 +578,153 @@ export async function executeGrepFiles(
     maxMatches?: number;
     maxFiles?: number;
     maxBytes?: number;
+    budgetMs?: number;
+    workerSpecifier?: string;
   } = {},
 ): Promise<string> {
   if (pattern === "") return "error: pattern must be non-empty";
-  let re: RegExp;
+
+  let matcher: BoundedMatcher;
   try {
-    re = new RegExp(pattern);
+    matcher = new BoundedMatcher(pattern, {
+      budgetMs: options.budgetMs,
+      specifier: options.workerSpecifier,
+    });
   } catch (err) {
     return `error: invalid pattern: ${(err as Error).message}`;
   }
 
-  const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
-  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES_SCANNED;
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxMatches = clampLimit(
+    options.maxMatches,
+    DEFAULT_MAX_MATCHES,
+    HARD_MAX_MATCHES,
+  );
+  const maxEntries = clampLimit(
+    options.maxFiles,
+    DEFAULT_MAX_ENTRIES_VISITED,
+    HARD_MAX_ENTRIES_VISITED,
+  );
+  const maxBytes = clampLimit(
+    options.maxBytes,
+    DEFAULT_MAX_BYTES,
+    HARD_MAX_FILE_BYTES,
+  );
   const sub = options.path === undefined ? "." : options.path;
 
-  let rootReal: string;
-  let startReal: string;
-  try {
-    const abs = resolveWorkspacePath(root, sub);
-    rootReal = await Deno.realPath(resolve(root));
-    const contained = await containedRealPath(root, abs);
-    if (contained === null) {
-      return `error: path escapes the workspace root: ${sub}`;
-    }
-    startReal = contained;
-  } catch (err) {
-    return `error: cannot search ${sub}: ${(err as Error).message}`;
+  const start = await searchRoot(root, sub);
+  if (typeof start === "string") {
+    matcher.close();
+    return start;
   }
+  const { rootReal, startReal } = start;
 
   const rows: string[] = [];
-  const budget = { visited: 0, cap: maxFiles };
+  const budget = { visited: 0, cap: maxEntries };
+  let resultBytes = 0;
   let truncated = false;
-  for await (const rel of walkFiles(rootReal, startReal, budget)) {
-    if (options.include !== undefined && !matchesGlobPath(rel, options.include)) {
-      continue;
-    }
-    let bytes: Uint8Array;
-    try {
-      bytes = await Deno.readFile(resolve(rootReal, rel));
-    } catch {
-      continue;
-    }
-    if (bytes.length > maxBytes || looksBinary(bytes)) continue;
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      // Per-line match: bounds regex backtracking to one line's length.
-      if (!re.test(lines[i])) continue;
-      if (rows.length >= maxMatches) {
-        truncated = true;
-        break;
+  let byteCapped = false;
+  let budgetExhausted = false;
+  let skippedLarge = 0;
+  let skippedLongLines = 0;
+
+  try {
+    walk:
+    for await (const rel of walkFiles(rootReal, startReal, budget)) {
+      if (
+        options.include !== undefined &&
+        !matchesGlobPath(rel, options.include)
+      ) {
+        continue;
       }
-      rows.push(`${rel}:${i + 1}:${lines[i].trimEnd()}`);
+      const abs = resolve(rootReal, rel);
+      // stat before read: this is the memory bound, not the length check that
+      // used to sit after readFile.
+      let info: Deno.FileInfo;
+      try {
+        info = await Deno.stat(abs);
+      } catch {
+        continue;
+      }
+      if (!info.isFile) continue;
+      if (info.size > maxBytes) {
+        skippedLarge++;
+        continue;
+      }
+      let bytes: Uint8Array;
+      try {
+        bytes = await Deno.readFile(abs);
+      } catch {
+        continue;
+      }
+      if (looksBinary(bytes)) continue;
+      const lines = new TextDecoder("utf-8", { fatal: false })
+        .decode(bytes)
+        .split("\n");
+
+      // Over-long lines never reach the matcher: line-by-line matching narrows
+      // the input but does not bound backtracking on any one line.
+      const candidates: string[] = [];
+      const sourceIndex: number[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].length > MAX_LINE_LENGTH) {
+          skippedLongLines++;
+          continue;
+        }
+        candidates.push(lines[i]);
+        sourceIndex.push(i);
+      }
+
+      let hits: number[];
+      try {
+        hits = await matcher.matchLines(candidates);
+      } catch (err) {
+        if (err instanceof RegexBudgetExceeded) {
+          budgetExhausted = true;
+          break;
+        }
+        if (err instanceof RegexUnavailable) {
+          return `error: ${(err as Error).message}`;
+        }
+        return `error: cannot match pattern: ${(err as Error).message}`;
+      }
+
+      for (const hit of hits) {
+        if (rows.length >= maxMatches) {
+          truncated = true;
+          break walk;
+        }
+        const i = sourceIndex[hit];
+        const row = `${rel}:${i + 1}:${lines[i].trimEnd()}`;
+        const rowBytes = encoder.encode(row).byteLength + 1;
+        if (resultBytes + rowBytes > HARD_MAX_RESULT_BYTES) {
+          byteCapped = true;
+          break walk;
+        }
+        resultBytes += rowBytes;
+        rows.push(row);
+      }
     }
-    if (truncated) break;
+  } finally {
+    matcher.close();
   }
 
-  if (rows.length === 0) return "(no matches)";
+  if (rows.length === 0) {
+    if (budgetExhausted) {
+      return `error: pattern is too expensive to run (matching budget exhausted); simplify it`;
+    }
+    return "(no matches)";
+  }
   const notes: string[] = [];
   if (truncated) notes.push(`match limit ${maxMatches} reached`);
-  if (budget.visited >= budget.cap) notes.push(`file limit ${budget.cap} reached`);
+  if (byteCapped) notes.push(`result size limit reached`);
+  if (budgetExhausted) notes.push(`pattern matching budget exhausted`);
+  if (budget.visited >= budget.cap) {
+    notes.push(`entry limit ${budget.cap} reached`);
+  }
+  if (skippedLarge > 0) notes.push(`${skippedLarge} file(s) over the size cap`);
+  if (skippedLongLines > 0) {
+    notes.push(`${skippedLongLines} line(s) over ${MAX_LINE_LENGTH} chars`);
+  }
   return notes.length === 0
     ? rows.join("\n")
     : `${rows.join("\n")}\n[${notes.join("; ")}]`;
@@ -473,35 +737,52 @@ export async function executeGlobFiles(
   options: { path?: string; maxResults?: number; maxFiles?: number } = {},
 ): Promise<string> {
   if (pattern === "") return "error: pattern must be non-empty";
-  const maxResults = options.maxResults ?? DEFAULT_MAX_ENTRIES;
-  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES_SCANNED;
+  if (pattern.length > MAX_GLOB_LENGTH) {
+    return `error: pattern is longer than ${MAX_GLOB_LENGTH} characters`;
+  }
+  const maxResults = clampLimit(
+    options.maxResults,
+    DEFAULT_MAX_ENTRIES,
+    HARD_MAX_GLOB_RESULTS,
+  );
+  const maxEntries = clampLimit(
+    options.maxFiles,
+    DEFAULT_MAX_ENTRIES_VISITED,
+    HARD_MAX_ENTRIES_VISITED,
+  );
   const sub = options.path === undefined ? "." : options.path;
 
-  let rootReal: string;
-  let startReal: string;
-  try {
-    const abs = resolveWorkspacePath(root, sub);
-    rootReal = await Deno.realPath(resolve(root));
-    const contained = await containedRealPath(root, abs);
-    if (contained === null) {
-      return `error: path escapes the workspace root: ${sub}`;
-    }
-    startReal = contained;
-  } catch (err) {
-    return `error: cannot search ${sub}: ${(err as Error).message}`;
-  }
+  const start = await searchRoot(root, sub);
+  if (typeof start === "string") return start;
+  const { rootReal, startReal } = start;
 
   const hits: string[] = [];
-  const budget = { visited: 0, cap: maxFiles };
+  const budget = { visited: 0, cap: maxEntries };
+  let resultBytes = 0;
   let truncated = false;
+  let byteCapped = false;
   for await (const rel of walkFiles(rootReal, startReal, budget)) {
     if (!matchesGlobPath(rel, pattern)) continue;
     if (hits.length >= maxResults) {
       truncated = true;
       break;
     }
+    const relBytes = encoder.encode(rel).byteLength + 1;
+    if (resultBytes + relBytes > HARD_MAX_RESULT_BYTES) {
+      byteCapped = true;
+      break;
+    }
+    resultBytes += relBytes;
     hits.push(rel);
   }
   if (hits.length === 0) return "(no matches)";
-  return truncated ? `${hits.join("\n")}\n[result limit ${maxResults} reached]` : hits.join("\n");
+  const notes: string[] = [];
+  if (truncated) notes.push(`result limit ${maxResults} reached`);
+  if (byteCapped) notes.push(`result size limit reached`);
+  if (budget.visited >= budget.cap) {
+    notes.push(`entry limit ${budget.cap} reached`);
+  }
+  return notes.length === 0
+    ? hits.join("\n")
+    : `${hits.join("\n")}\n[${notes.join("; ")}]`;
 }

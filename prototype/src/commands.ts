@@ -562,7 +562,10 @@ export function buildGrepFilesCommand(root: string): CommandDefinition<string> {
       properties: {
         pattern: {
           type: "string",
-          description: "JavaScript regular expression, matched line by line.",
+          description:
+            "JavaScript regular expression, matched line by line. Matching runs " +
+            "under a wall-clock budget; an expensive pattern is cut off rather " +
+            "than allowed to run long.",
         },
         path: {
           type: "string",
@@ -574,9 +577,12 @@ export function buildGrepFilesCommand(root: string): CommandDefinition<string> {
           description:
             "Optional glob limiting which files are searched, e.g. `**/*.ts`.",
         },
+        // The stated cap is advisory: file-tools.ts clamps this against a
+        // ceiling it owns, so asking for more buys nothing.
         maxMatches: {
           type: "number",
-          description: "Maximum rows to return (default 200).",
+          description:
+            "Maximum rows to return (default 200, clamped to at most 1000).",
         },
       },
       additionalProperties: false,

@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   executeEditFile,
+  clampLimit,
   executeGlobFiles,
-  globToRegExp,
   matchesGlobPath,
   executeGrepFiles,
   executeListFiles,
@@ -345,15 +345,28 @@ describe("executeReadFile ranged reads", () => {
     const out = await executeReadFile(sroot, "alpha.ts");
     expect(out).toBe("const a = 1;\nneedle here\nconst b = 2;\n");
   });
+  test("refuses a file over the hard read ceiling before reading it", async () => {
+    // Sparse: stat reports 5MB without writing 5MB, which is exactly the case
+    // the pre-read stat is there to catch.
+    const huge = `${sroot}/huge.bin`;
+    const f = await Deno.create(huge);
+    await f.truncate(5 * 1024 * 1024);
+    f.close();
+    const out = await executeReadFile(sroot, "huge.bin");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("read limit");
+    await Deno.remove(huge);
+  });
 });
 
 
-// ── globToRegExp / matchesGlobPath (pure) ────────────────────────────────────
+// ── matchesGlobPath (pure) ───────────────────────────────────────────────────
 //
 // Pure and dependency-free by design: node:path's matchesGlob needs --allow-env
 // (minimatch reads process.env), and the runtime profiles grant env by explicit
 // allowlist — so that dependency would have thrown NotCapable in production
-// while passing tests, because the test profile grants env=true.
+// while passing tests, because the test profile grants env=true. It also does
+// not build a RegExp, so a model-supplied glob has no backtracking surface.
 
 describe("matchesGlobPath", () => {
   test("* does not cross a path separator", () => {
@@ -381,8 +394,117 @@ describe("matchesGlobPath", () => {
   test("an unparsable class degrades to no match rather than throwing", () => {
     expect(() => matchesGlobPath("a.ts", "a[.ts")).not.toThrow();
   });
-  test("globToRegExp is anchored", () => {
-    expect(globToRegExp("*.ts").source.startsWith("^")).toBe(true);
-    expect(globToRegExp("*.ts").source.endsWith("$")).toBe(true);
+  test("refuses an over-long pattern rather than matching it", () => {
+    expect(matchesGlobPath("a.ts", "*".repeat(600) + ".ts")).toBe(false);
   });
+  test("many ** segments stay fast (no regex backtracking surface)", () => {
+    const started = performance.now();
+    expect(
+      matchesGlobPath("a/b/c/d/e/f/g/h/i/j/k.txt", "**/".repeat(40) + "*.ts"),
+    ).toBe(false);
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+});
+
+// ── Enforced bounds on the auto-approved search tools ────────────────────────
+//
+// These are the regression tests for the two blocking findings in the
+// 2026-07-27 publish gate: an arbitrary regex could wedge the event loop, and
+// the "every traversal is bounded" comment was not backed by the code. Both
+// tools auto-approve, so each bound is exercised against arguments a model
+// could actually send.
+
+describe("clampLimit", () => {
+  test("falls back when the value is absent or unusable", () => {
+    expect(clampLimit(undefined, 200, 1000)).toBe(200);
+    expect(clampLimit(Number.NaN, 200, 1000)).toBe(200);
+    expect(clampLimit(Number.POSITIVE_INFINITY, 200, 1000)).toBe(200);
+  });
+  test("ignores an inflated limit", () => {
+    expect(clampLimit(1e9, 200, 1000)).toBe(1000);
+  });
+  test("floors to at least 1", () => {
+    expect(clampLimit(0, 200, 1000)).toBe(1);
+    expect(clampLimit(-5, 200, 1000)).toBe(1);
+  });
+  test("passes through a reasonable request", () => {
+    expect(clampLimit(50, 200, 1000)).toBe(50);
+  });
+});
+
+describe("grep_files resource bounds", () => {
+  let broot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    broot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // A line long enough that a catastrophic pattern cannot finish on it.
+    await Deno.writeTextFile(`${broot}/longline.txt`, "a".repeat(6000) + "!\n");
+    // Directory-only tree: nothing to yield, so a file-counting budget would
+    // have walked it for free.
+    let dir = broot;
+    for (let i = 0; i < 40; i++) {
+      dir = `${dir}/d${i}`;
+      await Deno.mkdir(dir);
+    }
+    await Deno.writeTextFile(`${dir}/buried.txt`, "needle\n");
+    await Deno.writeTextFile(`${broot}/plain.txt`, "needle\n");
+  });
+
+  afterAll(async () => {
+    if (broot) await Deno.remove(broot, { recursive: true });
+  });
+
+  test("a catastrophic pattern is cut off instead of hanging", async () => {
+    const started = performance.now();
+    const out = await executeGrepFiles(broot, "(a+)+$", { budgetMs: 300 });
+    const elapsed = performance.now() - started;
+    // The budget is what bounds this, so allow generous slack for worker
+    // startup — the assertion that matters is that it returns at all.
+    expect(elapsed).toBeLessThan(8000);
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("too expensive");
+  }, 20_000);
+
+  test("lines over the length cap are never matched", async () => {
+    // `a+!` matches the long line trivially; it is skipped for its length, so
+    // the only evidence it existed is the note.
+    const out = await executeGrepFiles(broot, "a+!");
+    expect(out).not.toContain("longline.txt");
+    expect(out === "(no matches)" || out.includes("over 4096 chars")).toBe(true);
+  }, 20_000);
+
+  test("directories consume the traversal budget", async () => {
+    // 5 entries is fewer than the directory chain is deep, so a budget that
+    // counted only files would have descended all the way to buried.txt.
+    const out = await executeGrepFiles(broot, "needle", { maxFiles: 5 });
+    expect(out).not.toContain("buried.txt");
+  }, 20_000);
+
+  test("the walk stops at the depth cap", async () => {
+    // buried.txt sits 40 directories down, past HARD_MAX_DEPTH (32), so it is
+    // unreachable no matter how large the entry budget is.
+    const out = await executeGrepFiles(broot, "needle", { maxFiles: 1e9 });
+    expect(out).toContain("plain.txt");
+    expect(out).not.toContain("buried.txt");
+  }, 20_000);
+
+  test("an oversized file is skipped without being read", async () => {
+    const out = await executeGrepFiles(broot, "a+", { maxBytes: 10 });
+    expect(out).not.toContain("longline.txt");
+  }, 20_000);
+
+  test("an inflated maxMatches does not raise the ceiling", async () => {
+    // Not observable in the row count on this small tree; what is observable is
+    // that the note reports the clamped value, not the requested one.
+    const out = await executeGrepFiles(broot, "needle", { maxMatches: 1e9 });
+    expect(out).not.toContain("1000000000");
+  }, 20_000);
+
+  test("fails closed when the matcher cannot start", async () => {
+    const out = await executeGrepFiles(broot, "needle", {
+      workerSpecifier: "file:///nonexistent/regex-worker.ts",
+    });
+    expect(out.startsWith("error:")).toBe(true);
+  }, 20_000);
 });
