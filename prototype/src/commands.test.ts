@@ -246,7 +246,13 @@ describe("invalid-arguments feedback", () => {
       "invalid arguments for read_file: missing required argument: path",
     );
     // …states the expected shape, with the schema's own description…
-    expect(result.reason).toContain('expected: {"path": string (required)}');
+    // read_file gained optional offset/limit (ranged reads). The corrective
+    // feedback advertises them, which is the point: the model learns the
+    // affordance exists from the error it just caused.
+    expect(result.reason).toContain(
+      'expected: {"path": string (required), "offset": number (optional), ' +
+        '"limit": number (optional)}',
+    );
     expect(result.reason).toContain(
       "path — File path relative to the workspace root.",
     );
@@ -366,6 +372,8 @@ describe("registerCoreCommands", () => {
     expect(registry.list().map((c) => c.id).sort()).toEqual([
       "bash",
       "edit_file",
+      "glob_files",
+      "grep_files",
       "list_files",
       "memory.read",
       "read_file",
@@ -1229,11 +1237,11 @@ describe("truncateForEventColumn", () => {
 
 describe("buildCommandToolCallEventPayload — event copy size cap", () => {
   test("caps a maximally-truncated read_file-sized result below the TEXT column limit", () => {
-    // Mirrors file-tools.ts's DEFAULT_MAX_BYTES (64 * 1024 characters) plus its
+    // Mirrors file-tools.ts's DEFAULT_MAX_BYTES (64 * 1024 encoded bytes) plus its
     // own truncation suffix — the exact shape that overflowed the column in
     // the original tool-result overflow defect.
     const modelFacingResult = "a".repeat(64 * 1024) +
-      "\n\n[truncated at 65536 characters]";
+      "\n\n[truncated at 65536 bytes]";
     const payload = buildCommandToolCallEventPayload(
       call({ path: "workbench.ts" }, { commandId: "read_file" }),
       {
@@ -1325,11 +1333,11 @@ describe("read_file → tool_call event containment", () => {
       },
     );
 
-    // The model-facing result keeps file-tools.ts's own 64KB-character cap —
+    // The model-facing result keeps file-tools.ts's own 64KB byte cap —
     // unchanged by this fix (non-goal).
     expect(result.isError).toBe(false);
     expect(result.result as string).toContain(
-      "[truncated at 65536 characters]",
+      "[truncated at 65536 bytes]",
     );
     const modelFacingBytes = new TextEncoder().encode(result.result as string)
       .byteLength;
@@ -1342,5 +1350,45 @@ describe("read_file → tool_call event containment", () => {
     expect(new TextEncoder().encode(toolResult).byteLength)
       .toBeLessThanOrEqual(EVENT_RESULT_MAX_BYTES);
     expect(toolResult).toContain("event-truncated");
+  });
+});
+
+describe("registerCoreCommands wiring", () => {
+  // A command can be fully built, unit-tested, and policy-probed and still be
+  // absent from the model's toolset, because unit tests and direct policy
+  // probes both bypass registerCoreCommands — registration is a separate step
+  // with nothing else asserting it. These two cover what the executor and
+  // policy tests cannot: that the tools reach the MODEL, and that they
+  // auto-approve once registered.
+  test("the search tools reach the model as projected tools", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+
+    const names = registry.projectTools().map((t) => t.name);
+    expect(names).toContain("grep_files");
+    expect(names).toContain("glob_files");
+  });
+
+  test("registered search tools auto-approve; bash still asks", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+
+    for (const id of ["grep_files", "glob_files"]) {
+      const cmd = registry.lookup(id)!;
+      const result = evaluateCommandPolicy(
+        cmd,
+        call({ pattern: "x" }, { commandId: id }),
+      );
+      expect(result.decision).toBe("allow");
+      expect(result.authzBasis).toBe("policy:allow:read-only-local");
+    }
+
+    const bash = registry.lookup("bash")!;
+    expect(
+      evaluateCommandPolicy(
+        bash,
+        call({ command: "ls" }, { commandId: "bash" }),
+      ).decision,
+    ).toBe("ask");
   });
 });
