@@ -241,6 +241,18 @@ describe("prompt values cannot become launcher control input", () => {
     ]);
     expect(autostart).toBe("yes");
   });
+  test("a -p prompt of --help does not suppress autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p", "--help"]);
+    expect(autostart).toBe("yes");
+  });
+  test("a -p prompt of -h does not suppress autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p", "-h"]);
+    expect(autostart).toBe("yes");
+  });
+  test("a control-position --help still opts out", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--help"]);
+    expect(autostart).toBe("no");
+  });
   test("a -p prompt of --server does not switch transport", async () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, [
       "-p",

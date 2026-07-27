@@ -70,6 +70,7 @@ AUTOSTART_OPTOUT=0
 LAUNCHER_SUBCOMMAND=""
 LAUNCHER_SAW_SERVER=0
 LAUNCHER_SAW_UNIX=0
+LAUNCHER_SAW_HELP=0
 
 # Flags that consume the next argument — mirrors cli.ts's VALUE_FLAGS so the
 # parse below never reads a flag VALUE as launcher control input.
@@ -118,6 +119,9 @@ parse_launcher_args() {
       --unix)
         LAUNCHER_SAW_UNIX=1
         ;;
+      -h|--help)
+        LAUNCHER_SAW_HELP=1
+        ;;
       -*) ;;
       *)
         if [[ -z "$LAUNCHER_SUBCOMMAND" ]]; then
@@ -139,14 +143,7 @@ autostart_applies() {
   [[ "${DYFJ_AUTOSTART:-1}" == "0" ]] && return 1
   [[ "$AUTOSTART_OPTOUT" == "1" ]] && return 1
   uses_unix_transport || return 1
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      -h|--help)
-        return 1
-        ;;
-    esac
-  done
+  [[ "$LAUNCHER_SAW_HELP" == "1" ]] && return 1
   case "$LAUNCHER_SUBCOMMAND" in
     start|status|help)
       return 1
