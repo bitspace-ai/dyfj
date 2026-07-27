@@ -218,6 +218,14 @@ export async function executeReadFile(
     if (!read.ok) {
       return `error: cannot read ${sanitizeOutputText(p)}: ${read.reason}`;
     }
+    // Exit verification sits HERE — after the filesystem work, before anything
+    // content-derived can be returned. The past-end error below embeds a line
+    // count; placing the check any later would let an unverified root leak
+    // that much.
+    {
+      const rootLost = await rootStillAnchored(root);
+      if (rootLost !== null) return rootLost;
+    }
     const full = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes);
     let text = full;
     if (hasRange) {
@@ -234,14 +242,14 @@ export async function executeReadFile(
           `${text}\n\n[lines ${offset}-${window.endLine} of ${window.totalLines}; ${more} more]`;
       }
     }
-    const rootLost = await rootStillAnchored(root);
-    if (rootLost !== null) return rootLost;
     const clipped = clipToUtf8Bytes(text, maxBytes);
     if (clipped !== null) {
       return `${clipped}\n\n[truncated at ${maxBytes} bytes]`;
     }
     return text;
   } catch (err) {
+    const rootLost = await rootStillAnchored(root);
+    if (rootLost !== null) return rootLost;
     return `error: cannot read ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
   }
 }
@@ -523,6 +531,8 @@ export async function executeListFiles(
     }
     return entries.join("\n");
   } catch (err) {
+    const rootLost = await rootStillAnchored(root);
+    if (rootLost !== null) return rootLost;
     return `error: cannot list ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
   }
 }
@@ -1298,7 +1308,7 @@ function escapeChar(c: string): string {
  */
 export function sanitizeOutputPathField(p: string): string {
   // deno-lint-ignore no-control-regex
-  return p.replace(
+  const out = p.replace(
     /[\\:\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
     (c) => {
       if (c === "\\") return "\\\\";
@@ -1306,6 +1316,14 @@ export function sanitizeOutputPathField(p: string): string {
       return escapeChar(c);
     },
   );
+  // Two whole-line forms are reserved for the tool itself: "(no matches)" and
+  // "[<notes>]". A file literally named either would impersonate a control
+  // record, so a path's LEADING "(" or "[" is escaped — position 0 only, which
+  // leaves file(1).txt untouched. Injective as before: a literal backslash was
+  // already escaped above, so an escape at the front can only mean this.
+  if (out.startsWith("(")) return `\\x28${out.slice(1)}`;
+  if (out.startsWith("[")) return `\\x5b${out.slice(1)}`;
+  return out;
 }
 
 /**
@@ -1399,6 +1417,7 @@ export async function executeGrepFiles(
   let changedDuringRead = 0;
   let totalReadBytes = 0;
   let readBudgetExhausted = false;
+  let matcherError: string | null = null;
 
   try {
     walk:
@@ -1458,10 +1477,12 @@ export async function executeGrepFiles(
             budgetExhausted = true;
             break walk;
           }
-          if (err instanceof RegexUnavailable) {
-            return `error: ${(err as Error).message}`;
-          }
-          return `error: cannot match pattern: ${safeErrorReason(err)}`;
+          // Break to the single exit funnel rather than returning here, so
+          // the root re-verification governs this path like every other one.
+          matcherError = err instanceof RegexUnavailable
+            ? `error: ${(err as Error).message}`
+            : `error: cannot match pattern: ${safeErrorReason(err)}`;
+          break walk;
         }
         for (const hit of hits) {
           if (rows.length >= maxMatches) {
@@ -1493,6 +1514,7 @@ export async function executeGrepFiles(
 
   const rootLost = await rootStillAnchored(root);
   if (rootLost !== null) return rootLost;
+  if (matcherError !== null) return matcherError;
   if (rows.length === 0 && budgetExhausted) {
     return `error: pattern is too expensive to run (matching budget exhausted); simplify it`;
   }

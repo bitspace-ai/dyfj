@@ -1380,3 +1380,61 @@ describe("a replaced workspace root is refused, not adopted", () => {
     expect(out2).toContain("alpha.ts:2:needle here");
   }, 20_000);
 });
+
+describe("reserved control-record forms cannot be impersonated", () => {
+  let rroot2: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    rroot2 = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    await Deno.writeTextFile(`${rroot2}/(no matches)`, "x\n");
+    await Deno.writeTextFile(`${rroot2}/[entry limit 5000 reached]`, "x\n");
+    await Deno.writeTextFile(`${rroot2}/file(1).txt`, "x\n");
+  });
+
+  afterAll(async () => {
+    if (rroot2) await Deno.remove(rroot2, { recursive: true });
+  });
+
+  test("glob rows never collide with the reserved whole-line forms", async () => {
+    const out = await executeGlobFiles(rroot2, "**/*");
+    const lines = out.split("\n");
+    expect(lines).not.toContain("(no matches)");
+    expect(lines).not.toContain("[entry limit 5000 reached]");
+    expect(out).toContain("\\x28no matches)");
+    expect(out).toContain("\\x5bentry limit 5000 reached]");
+  });
+
+  test("a non-leading parenthesis is left alone", () => {
+    expect(sanitizeOutputPathField("file(1).txt")).toBe("file(1).txt");
+  });
+
+  test("the leading escape is injective against literal escape text", () => {
+    // A file literally named \x28foo differs from one named (foo after
+    // encoding, because its backslash is itself escaped.
+    expect(sanitizeOutputPathField("\\x28foo")).toBe("\\\\x28foo");
+    expect(sanitizeOutputPathField("(foo")).toBe("\\x28foo");
+  });
+});
+
+describe("every post-work return path honors the exit verification", () => {
+  test("the ranged-read past-end error is withheld when the root changed", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const base = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    const root = `${base}/ws`;
+    await Deno.mkdir(root);
+    await Deno.writeTextFile(`${root}/f.txt`, "one\ntwo\n");
+    // Anchor, then replace, then request a past-end window: the content-derived
+    // line count must not come back from the replacement root.
+    expect(await executeReadFile(root, "f.txt")).toContain("one");
+    await Deno.rename(root, `${base}/away`);
+    await Deno.mkdir(root);
+    await Deno.writeTextFile(`${root}/f.txt`, "a\n".repeat(50));
+    const out = await executeReadFile(root, "f.txt", undefined, { offset: 999 });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("workspace root identity changed");
+    expect(out).not.toContain("lines");
+    await Deno.remove(base, { recursive: true });
+    resetRootAnchor(root);
+  }, 20_000);
+});
