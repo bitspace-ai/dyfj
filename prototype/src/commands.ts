@@ -554,8 +554,11 @@ export function buildGrepFilesCommand(root: string): CommandDefinition<string> {
     description:
       "Search workspace file contents with a regular expression. Returns " +
       "`path:line:text` rows. Prefer this over running grep/rg through bash: " +
-      "it is read-only, needs no approval, and stays inside the workspace. " +
-      "Symlinked directories, .git and node_modules are skipped.",
+      "it is read-only and needs no approval. Every path it returns is " +
+      "verified to resolve inside the workspace; symlinks, .git and " +
+      "node_modules are skipped. A result that hit a limit or skipped a file " +
+      "says so in a trailing note — treat a search without one as complete " +
+      "and any other as partial.",
     inputSchema: {
       type: "object",
       required: ["pattern"],
@@ -616,7 +619,9 @@ export function buildGlobFilesCommand(root: string): CommandDefinition<string> {
     title: "Find Files By Pattern",
     description:
       "Find workspace files whose relative path matches a glob, e.g. " +
-      "`**/*.test.ts`. Read-only; prefer this over running find/ls through bash.",
+      "`**/*.test.ts`. Read-only; prefer this over running find/ls through " +
+      "bash. Returns only paths verified to resolve inside the workspace, and " +
+      "notes any limit it hit rather than reporting a partial result as empty.",
     inputSchema: {
       type: "object",
       required: ["pattern"],

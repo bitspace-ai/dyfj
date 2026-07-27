@@ -3,6 +3,7 @@ import {
   executeEditFile,
   clampLimit,
   clipToUtf8Bytes,
+  newGlobBudget,
   executeGlobFiles,
   matchesGlobPath,
   executeGrepFiles,
@@ -683,5 +684,72 @@ describe("a raced alias into an excluded directory returns nothing", () => {
     const out = await executeGlobFiles(sroot, "**/*.ts", { realPath: intoGit });
     expect(out).not.toContain("alpha.ts");
     expect(out).toContain("resolved into an excluded directory");
+  });
+});
+
+describe("glob matching is bounded across the whole call", () => {
+  let groot: string;
+
+  // Worst case for a star-rewind matcher: a segment of one repeated character
+  // with a single mismatching character in the middle, so every star position
+  // is retried against nearly the whole segment. Names run near the 255-byte
+  // component limit; nesting stays inside PATH_MAX.
+  const poison = (n: number) =>
+    "s".repeat(Math.floor(n / 2)) + "x" + "s".repeat(n - Math.floor(n / 2) - 1);
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    groot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    let dir = groot;
+    for (let d = 0; d < 3; d++) {
+      dir = `${dir}/${poison(110)}${d}`;
+      await Deno.mkdir(dir);
+    }
+    for (let f = 0; f < 1200; f++) {
+      await Deno.writeTextFile(
+        `${dir}/${poison(240)}${String(f).padStart(4, "0")}`,
+        "x\n",
+      );
+    }
+  });
+
+  afterAll(async () => {
+    if (groot) await Deno.remove(groot, { recursive: true });
+  });
+
+  test("a near-worst-case pattern returns promptly and reports the cutoff", async () => {
+    const adversarial = "**/*" + "s".repeat(500) + "t";
+    expect(adversarial.length).toBeLessThanOrEqual(512);
+    const started = performance.now();
+    const out = await executeGlobFiles(groot, adversarial);
+    const elapsed = performance.now() - started;
+    // Without the aggregate budget this workload runs for minutes.
+    expect(elapsed).toBeLessThan(10_000);
+    expect(out).toContain("glob matching budget exhausted");
+  }, 60_000);
+
+  test("grep_files bounds its include glob the same way", async () => {
+    const out = await executeGrepFiles(groot, "zzz-absent", {
+      include: "**/*" + "s".repeat(500) + "t",
+    });
+    expect(out).toContain("include-glob matching budget exhausted");
+  }, 60_000);
+
+  test("an ordinary search stays far under the budget", () => {
+    const budget = newGlobBudget();
+    for (let i = 0; i < 500; i++) {
+      matchesGlobPath(
+        `src/pkg/deep/module${i}/index.test.ts`,
+        "**/*.test.ts",
+        budget,
+      );
+    }
+    // Realistic paths cost a tiny fraction of the ceiling, so the bound never
+    // fires on real work.
+    expect(budget.steps).toBeLessThan(budget.cap / 100);
+  });
+
+  test("an exhausted budget stops matching rather than matching everything", () => {
+    expect(matchesGlobPath("a.ts", "*.ts", { steps: 0, cap: 1 })).toBe(false);
   });
 });

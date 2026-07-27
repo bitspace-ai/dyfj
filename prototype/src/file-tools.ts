@@ -480,8 +480,11 @@ export async function executeEditFile(
 //     main thread ahead of the worker and is bounded by a pattern-length cap
 //     instead of by the clock.
 //   - Glob matching does not go through RegExp at all: `matchesGlobPath` is a
-//     segment-wise wildcard matcher using the standard star-backtrack trick,
-//     worst-case quadratic over inputs that are themselves length-capped.
+//     segment-wise wildcard matcher using the standard star-backtrack trick.
+//     It is worst-case quadratic, and length caps bound each match but not the
+//     product of a bad pattern and a large tree — so every comparison is
+//     counted against one budget shared by the whole call, and the call stops
+//     and says so when that budget runs out.
 //   - Content is read through `readContainedFile`, which verifies the opened
 //     descriptor's identity, so a file swapped for a symlink between the walk
 //     and the read is refused rather than followed.
@@ -507,6 +510,17 @@ const HARD_MAX_RESULT_BYTES = 128 * 1024;
 const MAX_LINE_LENGTH = 4_096;
 /** Glob patterns longer than this are refused rather than matched. */
 const MAX_GLOB_LENGTH = 512;
+/**
+ * Aggregate comparison budget for glob matching across one whole call.
+ *
+ * Length and entry ceilings bound the inputs but not their product: a
+ * near-worst-case 512-char pattern against a long path is ~2e6 comparisons, and
+ * 50,000 entries of that would occupy the event loop for minutes — on a tool
+ * nothing prompts for. Unlike the regex path there is no worker to terminate,
+ * because the matcher is ours and can simply count. Ordinary searches land
+ * three orders of magnitude below this.
+ */
+const HARD_MAX_GLOB_STEPS = 20_000_000;
 
 const SKIP_DIRS = new Set(["node_modules", ".git", ".jj", ".hg", ".svn"]);
 
@@ -576,12 +590,13 @@ function tokenAt(
  * recursion and no backtracking blowup — which is the whole reason globs are
  * not translated into a RegExp and run against model-supplied input.
  */
-function matchSegment(name: string, pat: string): boolean {
+function matchSegment(name: string, pat: string, budget: GlobBudget): boolean {
   let n = 0;
   let p = 0;
   let starN = -1;
   let starP = -1;
   while (n < name.length) {
+    if (++budget.steps > budget.cap) return false;
     if (p < pat.length && pat[p] === "*") {
       starP = p;
       starN = n;
@@ -609,19 +624,27 @@ function matchSegment(name: string, pat: string): boolean {
 }
 
 /** Same algorithm one level up, with `**` standing for zero or more segments. */
-function matchSegments(path: string[], glob: string[]): boolean {
+function matchSegments(
+  path: string[],
+  glob: string[],
+  budget: GlobBudget,
+): boolean {
   let n = 0;
   let g = 0;
   let starN = -1;
   let starG = -1;
   while (n < path.length) {
+    if (++budget.steps > budget.cap) return false;
     if (g < glob.length && glob[g] === "**") {
       starG = g;
       starN = n;
       g++;
       continue;
     }
-    if (g < glob.length && glob[g] !== "**" && matchSegment(path[n], glob[g])) {
+    if (
+      g < glob.length && glob[g] !== "**" &&
+      matchSegment(path[n], glob[g], budget)
+    ) {
       n++;
       g++;
       continue;
@@ -643,9 +666,31 @@ function matchSegments(path: string[], glob: string[]): boolean {
  * `?` and `[...]` do not. Over-long patterns match nothing rather than being
  * matched — the length cap is what keeps the quadratic worst case small.
  */
-export function matchesGlobPath(path: string, glob: string): boolean {
+export function matchesGlobPath(
+  path: string,
+  glob: string,
+  budget: GlobBudget = newGlobBudget(),
+): boolean {
   if (globPatternError(glob) !== null) return false;
-  return matchSegments(path.split("/"), glob.split("/"));
+  return matchSegments(path.split("/"), glob.split("/"), budget);
+}
+
+/**
+ * Comparison budget shared by every glob match in one call. `exhausted` is what
+ * the executors report: once the budget runs out every further match returns
+ * false, which without a note would look exactly like "no more matches".
+ */
+export interface GlobBudget {
+  steps: number;
+  cap: number;
+}
+
+export function newGlobBudget(cap = HARD_MAX_GLOB_STEPS): GlobBudget {
+  return { steps: 0, cap };
+}
+
+export function globBudgetExhausted(budget: GlobBudget): boolean {
+  return budget.steps > budget.cap;
 }
 
 /**
@@ -872,6 +917,7 @@ export async function executeGrepFiles(
 
   const rows: string[] = [];
   const budget = newWalkBudget(maxEntries);
+  const globBudget = newGlobBudget();
   let resultBytes = 0;
   let truncated = false;
   let byteCapped = false;
@@ -885,9 +931,10 @@ export async function executeGrepFiles(
   try {
     walk:
     for await (const rel of walkFiles(rootReal, startReal, budget)) {
+      if (globBudgetExhausted(globBudget)) break;
       if (
         options.include !== undefined &&
-        !matchesGlobPath(rel, options.include)
+        !matchesGlobPath(rel, options.include, globBudget)
       ) {
         continue;
       }
@@ -975,6 +1022,9 @@ export async function executeGrepFiles(
     notes.push(`${skippedUnreadable} file(s) unreadable or changed mid-search`);
   }
   if (skippedBinary > 0) notes.push(`${skippedBinary} binary file(s) skipped`);
+  if (globBudgetExhausted(globBudget)) {
+    notes.push(`include-glob matching budget exhausted`);
+  }
   if (excludedRaced > 0) {
     notes.push(`${excludedRaced} path(s) resolved into an excluded directory`);
   }
@@ -1017,6 +1067,7 @@ export async function executeGlobFiles(
 
   const hits: string[] = [];
   const budget = newWalkBudget(maxEntries);
+  const globBudget = newGlobBudget();
   let resultBytes = 0;
   let truncated = false;
   let byteCapped = false;
@@ -1024,7 +1075,8 @@ export async function executeGlobFiles(
   let excludedRaced = 0;
   const realPath = options.realPath ?? Deno.realPath;
   for await (const rel of walkFiles(rootReal, startReal, budget)) {
-    if (!matchesGlobPath(rel, pattern)) continue;
+    if (globBudgetExhausted(globBudget)) break;
+    if (!matchesGlobPath(rel, pattern, globBudget)) continue;
     // glob_files returns names without opening anything, so it gets the same
     // ancestor-replacement check by canonicalizing before it emits: a path
     // that resolves outside the root is a name the model should never see.
@@ -1063,6 +1115,9 @@ export async function executeGlobFiles(
   }
   if (excludedRaced > 0) {
     notes.push(`${excludedRaced} path(s) resolved into an excluded directory`);
+  }
+  if (globBudgetExhausted(globBudget)) {
+    notes.push(`glob matching budget exhausted`);
   }
   const body = hits.length === 0 ? "(no matches)" : hits.join("\n");
   return notes.length === 0 ? body : `${body}\n[${notes.join("; ")}]`;
