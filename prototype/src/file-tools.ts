@@ -68,7 +68,7 @@ export function resolveWorkspacePath(root: string, p: string): string {
   const abs = resolve(rootAbs, p);
   const rel = relative(rootAbs, abs);
   if (rel.startsWith("..") || rel.startsWith("/")) {
-    throw new Error(`path escapes the workspace root: ${p}`);
+    throw new Error(`path escapes the workspace root: ${sanitizeOutputText(p)}`);
   }
   return abs;
 }
@@ -114,23 +114,23 @@ export async function executeReadFile(
   try {
     const target = await containedRealPath(root, abs);
     if (target === null) {
-      return `error: path escapes the workspace root: ${p}`;
+      return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
     const info = await Deno.stat(target);
     if (info.isDirectory) {
-      return `error: ${p} is a directory; use list_files`;
+      return `error: ${sanitizeOutputText(p)} is a directory; use list_files`;
     }
     const rootReal = await Deno.realPath(resolve(root));
     const read = await readContainedFile(target, HARD_MAX_FILE_BYTES, rootReal);
     if (!read.ok) {
-      return `error: cannot read ${p}: ${read.reason}`;
+      return `error: cannot read ${sanitizeOutputText(p)}: ${read.reason}`;
     }
     const full = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes);
     let text = full;
     if (hasRange) {
       const window = lineWindow(full, offset, range.limit);
       if (window === null) {
-        return `error: offset ${offset} is past end of ${p} (${
+        return `error: offset ${offset} is past end of ${sanitizeOutputText(p)} (${
           countLines(full)
         } lines)`;
       }
@@ -147,7 +147,7 @@ export async function executeReadFile(
     }
     return text;
   } catch (err) {
-    return `error: cannot read ${p}: ${safeErrorReason(err)}`;
+    return `error: cannot read ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -407,7 +407,7 @@ export async function executeListFiles(
   try {
     const target = await containedRealPath(root, abs);
     if (target === null) {
-      return `error: path escapes the workspace root: ${p}`;
+      return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
     const entries: string[] = [];
     for await (const entry of Deno.readDir(target)) {
@@ -423,7 +423,7 @@ export async function executeListFiles(
     }
     return entries.join("\n");
   } catch (err) {
-    return `error: cannot list ${p}: ${safeErrorReason(err)}`;
+    return `error: cannot list ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -456,7 +456,7 @@ export async function executeWriteFile(
     const rootReal = await Deno.realPath(resolve(root));
     const parentReal = await Deno.realPath(dirname(abs));
     if (!isWithinRoot(rootReal, parentReal)) {
-      return `error: path escapes the workspace root: ${p}`;
+      return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
     // Refuse to write through a symlink at the target path: write_file never
     // follows symlinks. lstat (no-follow) detects a symlink even when it dangles
@@ -465,20 +465,20 @@ export async function executeWriteFile(
     try {
       const targetInfo = await lstat(abs);
       if (targetInfo.isSymlink) {
-        return `error: refusing to write through a symlink: ${p}`;
+        return `error: refusing to write through a symlink: ${sanitizeOutputText(p)}`;
       }
     } catch (err) {
       if (!(err instanceof Deno.errors.NotFound)) {
-        return `error: cannot write ${p}: ${safeErrorReason(err)}`;
+        return `error: cannot write ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
       }
       // NotFound — the target does not exist yet; the parent containment governs.
     }
     await Deno.writeTextFile(abs, content);
     // Non-content-derived result: no exact length, which would otherwise persist
     // a payload-size signal into the event log + session replay (CWE-532).
-    return `wrote ${p}`;
+    return `wrote ${sanitizeOutputText(p)}`;
   } catch (err) {
-    return `error: cannot write ${p}: ${safeErrorReason(err)}`;
+    return `error: cannot write ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -515,31 +515,31 @@ export async function executeEditFile(
   try {
     const target = await containedRealPath(root, abs);
     if (target === null) {
-      return `error: path escapes the workspace root: ${p}`;
+      return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
     const info = await Deno.stat(target);
     if (info.isDirectory) {
-      return `error: ${p} is a directory`;
+      return `error: ${sanitizeOutputText(p)} is a directory`;
     }
     text = await Deno.readTextFile(target);
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) {
-      return `error: cannot edit ${p}: file not found`;
+      return `error: cannot edit ${sanitizeOutputText(p)}: file not found`;
     }
-    return `error: cannot read ${p}: ${safeErrorReason(err)}`;
+    return `error: cannot read ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
   }
   const first = text.indexOf(oldString);
   if (first === -1) {
-    return `error: oldString not found in ${p}`;
+    return `error: oldString not found in ${sanitizeOutputText(p)}`;
   }
   if (text.indexOf(oldString, first + oldString.length) !== -1) {
-    return `error: oldString is not unique in ${p}; add more surrounding context`;
+    return `error: oldString is not unique in ${sanitizeOutputText(p)}; add more surrounding context`;
   }
   const updated = text.slice(0, first) + newString +
     text.slice(first + oldString.length);
   const writeResult = await executeWriteFile(root, p, updated, lstat);
   // executeWriteFile returns "wrote <p>" on success or "error: …" on failure.
-  return writeResult.startsWith("error:") ? writeResult : `edited ${p}`;
+  return writeResult.startsWith("error:") ? writeResult : `edited ${sanitizeOutputText(p)}`;
 }
 
 // ── Search affordances ───────────────────────────────────────────────────────
@@ -575,7 +575,9 @@ export async function executeEditFile(
 //     this module owns. `maxMatches: 1e9` yields HARD_MAX_MATCHES.
 //   - Files are `stat`ed before they are read, so an oversized file is skipped
 //     without being loaded. Checking length after `readFile` — the previous
-//     shape — reports the memory it already spent.
+//     shape — reports the memory it already spent. Reads also draw on one
+//     total-byte budget for the whole call: the per-file and entry caps each
+//     held while their product did not.
 //   - Rows stop accumulating at HARD_MAX_RESULT_BYTES independently of the row
 //     count, so one file of very long matching lines cannot produce an
 //     unbounded tool result.
@@ -630,6 +632,15 @@ const HARD_MAX_RESULT_BYTES = 128 * 1024;
 const MAX_LINE_LENGTH = 4_096;
 /** Lines one file may spend, however small each of them is. */
 const HARD_MAX_LINES_PER_FILE = 200_000;
+/**
+ * Total bytes one grep call may read across every file. The per-file cap and
+ * the entry cap each held individually while their PRODUCT did not: 5,000
+ * entries at 64 KiB apiece is ~312 MiB of auto-approved reads in one call, and
+ * binary or long-line-only files spend none of the regex budget on the way.
+ * One shared ceiling bounds the product directly. Enforced before each read,
+ * so a call can overshoot by at most one file's own size cap.
+ */
+const HARD_MAX_TOTAL_READ_BYTES = 64 * 1024 * 1024;
 /** Lines per worker round trip: bounds the structured clone and the accumulator. */
 const MATCH_CHUNK_LINES = 2_000;
 /** Glob patterns longer than this are refused rather than matched. */
@@ -1085,7 +1096,7 @@ async function searchRoot(
     const rootReal = await Deno.realPath(resolve(root));
     const contained = await containedRealPath(root, abs);
     if (contained === null) {
-      return `error: path escapes the workspace root: ${sub}`;
+      return `error: path escapes the workspace root: ${sanitizeOutputText(sub)}`;
     }
     const excluded = excludedSegment(rootReal, contained);
     if (excluded !== null) {
@@ -1093,7 +1104,7 @@ async function searchRoot(
     }
     return { rootReal, startReal: contained };
   } catch (err) {
-    return `error: cannot search ${sub}: ${safeErrorReason(err)}`;
+    return `error: cannot search ${sanitizeOutputText(sub)}: ${safeErrorReason(err)}`;
   }
 }
 
@@ -1144,8 +1155,9 @@ export async function executeGrepFiles(
     maxFiles?: number;
     maxBytes?: number;
     budgetMs?: number;
-    // Test-only seams. `buildGrepFilesCommand` sets neither, so nothing the
-    // model sends can reach them — and that must stay true: an overridden
+    maxTotalReadBytes?: number;
+    // Test-only seams. `buildGrepFilesCommand` sets none of these, so nothing
+    // the model sends can reach them — and that must stay true: an overridden
     // worker runs with the host's inherited permissions, and an overridden
     // canonicalizer is what decides containment.
     workerSpecifier?: string;
@@ -1165,7 +1177,11 @@ export async function executeGrepFiles(
       specifier: options.workerSpecifier,
     });
   } catch (err) {
-    return `error: invalid pattern: ${(err as Error).message}`;
+    // The engine's message embeds the pattern itself, which is model-supplied
+    // text like any other and gets the same structural escaping.
+    return `error: invalid pattern: ${
+      sanitizeOutputText((err as Error).message)
+    }`;
   }
 
   const maxMatches = clampLimit(
@@ -1182,6 +1198,14 @@ export async function executeGrepFiles(
     options.maxBytes,
     DEFAULT_MAX_BYTES,
     HARD_MAX_FILE_BYTES,
+  );
+  // The total-read ceiling is not model-reachable: buildGrepFilesCommand never
+  // maps it, so the option exists only so tests can exercise the cutoff
+  // without writing 64 MiB of fixtures.
+  const maxTotalReadBytes = clampLimit(
+    options.maxTotalReadBytes,
+    HARD_MAX_TOTAL_READ_BYTES,
+    HARD_MAX_TOTAL_READ_BYTES,
   );
   const sub = options.path === undefined ? "." : options.path;
 
@@ -1206,11 +1230,17 @@ export async function executeGrepFiles(
   let skippedLongLines = 0;
   let lineCappedFiles = 0;
   let changedDuringRead = 0;
+  let totalReadBytes = 0;
+  let readBudgetExhausted = false;
 
   try {
     walk:
     for await (const rel of walkFiles(rootReal, startReal, budget)) {
       if (globBudgetExhausted(globBudget)) break;
+      if (totalReadBytes >= maxTotalReadBytes) {
+        readBudgetExhausted = true;
+        break;
+      }
       if (
         options.include !== undefined &&
         !matchesGlobPath(rel, options.include, globBudget)
@@ -1231,6 +1261,7 @@ export async function executeGrepFiles(
         else skippedUnreadable++;
         continue;
       }
+      totalReadBytes += read.bytes.byteLength;
       if (looksBinary(read.bytes)) {
         skippedBinary++;
         continue;
@@ -1307,6 +1338,9 @@ export async function executeGrepFiles(
   if (skippedBinary > 0) notes.push(`${skippedBinary} binary file(s) skipped`);
   if (changedDuringRead > 0) {
     notes.push(`${changedDuringRead} file(s) changed while being read`);
+  }
+  if (readBudgetExhausted) {
+    notes.push(`total read budget ${maxTotalReadBytes} bytes reached`);
   }
   if (globBudgetExhausted(globBudget)) {
     notes.push(`include-glob matching budget exhausted`);

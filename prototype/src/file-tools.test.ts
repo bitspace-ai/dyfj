@@ -1145,3 +1145,59 @@ describe("display-control characters cannot restructure a row", () => {
     expect(sanitizeOutputText("a\tb")).toBe("a\\x09b");
   });
 });
+
+describe("one call cannot read without limit by staying under per-file caps", () => {
+  let troot: string;
+
+  beforeAll(async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    troot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    // Five 10 KiB files: each under any per-file cap, 50 KiB in aggregate.
+    for (let i = 0; i < 5; i++) {
+      await Deno.writeTextFile(
+        `${troot}/f${i}.txt`,
+        ("x".repeat(99) + "\n").repeat(100),
+      );
+    }
+  });
+
+  afterAll(async () => {
+    if (troot) await Deno.remove(troot, { recursive: true });
+  });
+
+  test("the shared read budget stops the call and says so", async () => {
+    // The ceiling is not model-reachable; the option exists for this test.
+    const out = await executeGrepFiles(troot, "zzz-absent", {
+      maxTotalReadBytes: 15_000,
+    });
+    expect(out).toContain("(no matches)");
+    expect(out).toContain("total read budget 15000 bytes reached");
+  }, 20_000);
+
+  test("under the budget there is no such note", async () => {
+    const out = await executeGrepFiles(troot, "zzz-absent");
+    expect(out).not.toContain("total read budget");
+  }, 20_000);
+});
+
+describe("error results get the same structural escaping as rows", () => {
+  test("a control character in a requested path is escaped in the error", async () => {
+    const out = await executeReadFile(sroot, "no\nsuch.txt");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out.split("\n").length).toBe(1);
+    expect(out).toContain("\\x0a");
+  });
+  test("a control character in a search path is escaped in the error", async () => {
+    const out = await executeGrepFiles(sroot, "needle", { path: "no\rdir" });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).not.toContain("\r");
+    expect(out).toContain("\\x0d");
+  }, 20_000);
+  test("an invalid pattern's engine message is escaped too", async () => {
+    // The engine echoes the pattern back inside its message.
+    const out = await executeGrepFiles(sroot, "(\u001b");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("invalid pattern");
+    expect(out).not.toContain("\u001b");
+  }, 20_000);
+});
