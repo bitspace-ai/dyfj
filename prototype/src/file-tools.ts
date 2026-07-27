@@ -60,17 +60,30 @@ export function safeErrorReason(err: unknown): string {
 }
 
 /**
- * Resolve `p` within `root` and return the absolute path, or throw if it
- * escapes the root. Pure (no I/O) so it's directly testable.
+ * Resolve `p` within `root` and return the absolute path, or throw if `p` is
+ * not a workspace-relative path that stays inside the root. Pure (no I/O) so
+ * it's directly testable.
+ *
+ * Absolute inputs are rejected outright — even ones that resolve inside the
+ * workspace. The schemas document paths as workspace-relative, and every
+ * executor echoes the caller's path into its result and the durable event
+ * transcript; accepting an in-root absolute path would put the operator's
+ * username and workspace layout into both. The rejection message deliberately
+ * does not echo the value, for the same reason.
  */
 export function resolveWorkspacePath(root: string, p: string): string {
+  if (isAbsolute(p)) {
+    throw new Error("path must be relative to the workspace root");
+  }
   const rootAbs = resolve(root);
   const abs = resolve(rootAbs, p);
   const rel = relative(rootAbs, abs);
   // isAbsolute, not startsWith("/"): on Windows, `relative` between different
   // drives (or a UNC share) returns the ABSOLUTE target — `C:\evil` — which
   // starts with neither ".." nor "/", so a prefix check reads an out-of-root
-  // path as contained. On POSIX the two checks are equivalent.
+  // path as contained. On POSIX the two checks are equivalent. Reachable even
+  // with absolute inputs rejected above: `..` traversal resolves wherever it
+  // resolves.
   if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`path escapes the workspace root: ${sanitizeOutputText(p)}`);
   }
@@ -1125,6 +1138,12 @@ async function searchRoot(
 ): Promise<
   { rootReal: string; startReal: string; startSegments: string[] } | string
 > {
+  // Checked before resolveWorkspacePath so the catch below — which echoes
+  // `sub` for ordinary failures — never gets the chance to echo an absolute
+  // path into the result and transcript.
+  if (isAbsolute(sub)) {
+    return "error: path must be relative to the workspace root";
+  }
   try {
     const abs = resolveWorkspacePath(root, sub);
     const rootReal = await Deno.realPath(resolve(root));

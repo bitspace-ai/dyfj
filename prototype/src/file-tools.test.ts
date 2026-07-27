@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { resolve as resolvePath } from "node:path";
 import {
   executeEditFile,
   clampLimit,
@@ -34,10 +35,23 @@ describe("resolveWorkspacePath", () => {
   test("rejects parent traversal", () => {
     expect(() => resolveWorkspacePath("/work", "../secret")).toThrow("escapes");
   });
-  test("rejects an absolute path outside the root", () => {
-    expect(() => resolveWorkspacePath("/work", "/etc/hosts")).toThrow(
-      "escapes",
-    );
+  test("rejects any absolute path, without echoing it", () => {
+    // Absolute inputs are refused even when they would resolve in-root: the
+    // executors echo the caller's path into results and the durable
+    // transcript, so an accepted in-root absolute path would publish the
+    // operator's username and workspace layout. The message must not echo
+    // the value for the same reason.
+    for (const abs of ["/etc/hosts", "/work/inside.txt"]) {
+      try {
+        resolveWorkspacePath("/work", abs);
+        throw new Error("expected a throw");
+      } catch (err) {
+        const msg = (err as Error).message;
+        expect(msg).toContain("must be relative");
+        expect(msg).not.toContain("/etc");
+        expect(msg).not.toContain("/work");
+      }
+    }
   });
   // The Windows cross-drive case — relative("D:\\ws", "C:\\evil") returning
   // an absolute path with no ".." prefix — cannot be reproduced from POSIX,
@@ -46,7 +60,7 @@ describe("resolveWorkspacePath", () => {
   // equivalence so the swap cannot regress what is testable here.
   test("isAbsolute-based rejection matches the POSIX prefix check", () => {
     expect(() => resolveWorkspacePath("/work", "/other/root")).toThrow(
-      "escapes",
+      "must be relative",
     );
     expect(isWithinRoot("/work", "/other/root")).toBe(false);
   });
@@ -1273,5 +1287,32 @@ describe("the path field encoding is injective", () => {
   });
   test("ordinary paths pass through untouched", () => {
     expect(sanitizeOutputPathField("src/pkg/a.ts")).toBe("src/pkg/a.ts");
+  });
+});
+
+describe("an in-root absolute path never reaches a tool result", () => {
+  // sroot itself is relative (a temp dir under the test cwd); the adversarial
+  // shape is its ABSOLUTE form, which resolves in-root but must be refused.
+  const absRoot = () => resolvePath(sroot);
+  test("read_file refuses it without echoing the workspace root", async () => {
+    const out = await executeReadFile(sroot, `${absRoot()}/alpha.ts`);
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).toContain("must be relative");
+    expect(out).not.toContain(absRoot());
+  });
+  test("grep_files refuses an absolute search path the same way", async () => {
+    const out = await executeGrepFiles(sroot, "needle", { path: absRoot() });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).not.toContain(absRoot());
+  }, 20_000);
+  test("glob_files refuses an absolute search path the same way", async () => {
+    const out = await executeGlobFiles(sroot, "**/*", { path: absRoot() });
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).not.toContain(absRoot());
+  });
+  test("write_file refuses it without echoing", async () => {
+    const out = await executeWriteFile(sroot, `${absRoot()}/x.txt`, "content");
+    expect(out.startsWith("error:")).toBe(true);
+    expect(out).not.toContain(absRoot());
   });
 });
