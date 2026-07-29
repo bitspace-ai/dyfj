@@ -395,8 +395,11 @@ describe("a -p prompt makes the invocation a turn the runtime is needed for", ()
 describe("the probe invokes the client on the UDS seam explicitly", () => {
   test("both client routes pass --unix before status", async () => {
     const lines = (await Deno.readTextFile(LAUNCHER)).split("\n");
-    const open = lines.findIndex((l) => l.startsWith("probe_runtime() {"));
-    const body = lines.slice(open, open + lines.slice(open).indexOf("}"));
+    const open = lines.findIndex((l) => l.trim() === "probe_runtime() {");
+    expect(open).toBeGreaterThanOrEqual(0);
+    const close = lines.findIndex((l, i) => i > open && l === "}");
+    expect(close).toBeGreaterThan(open);
+    const body = lines.slice(open, close);
     const invocations = body.filter((l) =>
       l.trimEnd().endsWith("status >/dev/null 2>&1")
     );
