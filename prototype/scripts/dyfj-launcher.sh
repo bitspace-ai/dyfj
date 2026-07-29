@@ -46,8 +46,47 @@ uses_unix_transport() {
   return 0
 }
 
+resolve_launcher_source() {
+  local source="${BASH_SOURCE[0]}"
+  local depth=0
+  while [[ -L "$source" ]]; do
+    local dir target
+    depth=$((depth + 1))
+    if [[ "$depth" -gt 40 ]]; then
+      echo "dyfj launcher: launcher symlink chain exceeds 40 links" >&2
+      return 1
+    fi
+    if ! dir="$(cd "$(dirname "$source")" && pwd -P)"; then
+      echo "dyfj launcher: cannot resolve launcher symlink directory" >&2
+      return 1
+    fi
+    if ! target="$(readlink "$source")" || [[ -z "$target" ]]; then
+      echo "dyfj launcher: cannot read launcher symlink" >&2
+      return 1
+    fi
+    case "$target" in
+      /*) source="$target" ;;
+      *) source="$dir/$target" ;;
+    esac
+  done
+  if [[ ! -f "$source" ]]; then
+    echo "dyfj launcher: resolved launcher source is not a file" >&2
+    return 1
+  fi
+  printf '%s' "$source"
+}
+
+# BASH_SOURCE preserves the invoked symlink instead of the opened script path.
+if ! LAUNCHER_SOURCE="$(resolve_launcher_source)"; then
+  exit 1
+fi
+if ! LAUNCHER_DIR="$(cd "$(dirname "$LAUNCHER_SOURCE")" && pwd -P)"; then
+  echo "dyfj launcher: cannot resolve launcher directory" >&2
+  exit 1
+fi
+
 launcher_dir() {
-  cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+  printf '%s' "$LAUNCHER_DIR"
 }
 
 # ── Autostart ────────────────────────────────────────────────────────────────
@@ -267,7 +306,7 @@ ensure_runtime() {
   chmod 700 "$(dirname "$log")" 2>/dev/null || true
   chmod 600 "$log" 2>/dev/null || true
   echo "dyfj: runtime not running at ${sock}; starting it (log: ${log})" >&2
-  nohup bash "$(launcher_dir)/$(basename "${BASH_SOURCE[0]}")"     "${SOCKET_ARGS[@]}" start >>"$log" 2>&1 &
+  nohup bash "$LAUNCHER_SOURCE" "${SOCKET_ARGS[@]}" start >>"$log" 2>&1 &
   disown
   local i
   for i in $(seq 1 50); do

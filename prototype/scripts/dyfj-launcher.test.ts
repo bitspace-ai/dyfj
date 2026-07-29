@@ -63,6 +63,71 @@ async function dryRun(
 }
 
 describe("dyfj launcher routing", () => {
+  test("resolves its prototype root through a symlink chain", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+
+    try {
+      const bin = `${root}/bin`;
+      const target = `${root}/launcher`;
+      const link = `${bin}/dyfj`;
+      await Deno.mkdir(bin);
+      // Use the existing bash grant so fixture setup does not broaden the
+      // test profile's filesystem permissions.
+      const setup = new Deno.Command("bash", {
+        args: [
+          "-c",
+          'set -e\nln -s "$1" "$2"\nln -s "$3" "$4"',
+          "dyfj-test",
+          LAUNCHER,
+          target,
+          "../launcher",
+          link,
+        ],
+        stdout: "null",
+        stderr: "piped",
+      });
+      const setupResult = await setup.output();
+      if (setupResult.code !== 0) {
+        const err = new TextDecoder().decode(setupResult.stderr).trim();
+        throw new Error(`symlink setup failed (${setupResult.code}): ${err}`);
+      }
+
+      const proc = new Deno.Command("bash", {
+        args: [
+          link,
+          "--parse-check",
+          "--socket",
+          `${root}/workbench.sock`,
+          "models",
+        ],
+        env: { ...Deno.env.toObject(), DYFJ_AUTOSTART: "0" },
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const { code, stderr } = await proc.output();
+      const err = new TextDecoder().decode(stderr).trim();
+      if (code !== 0) {
+        throw new Error(`symlinked launcher failed (${code}): ${err}`);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("autostart respawns the resolved launcher source", async () => {
+    const lines = (await Deno.readTextFile(LAUNCHER)).split("\n");
+    const spawns = lines.filter((line) =>
+      line.trimStart().startsWith("nohup bash ")
+    );
+    expect(spawns).toHaveLength(1);
+    const [spawn] = spawns;
+    expect(spawn).toContain('"$LAUNCHER_SOURCE"');
+    expect(spawn).not.toContain("BASH_SOURCE");
+  });
+
   test("default path prefers compiled when the binary exists", async () => {
     const { route, sock } = await dryRun({ HOME: "/home/c" });
     expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
