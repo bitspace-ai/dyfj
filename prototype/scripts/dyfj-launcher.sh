@@ -71,6 +71,7 @@ LAUNCHER_SUBCOMMAND=""
 LAUNCHER_SAW_SERVER=0
 LAUNCHER_SAW_UNIX=0
 LAUNCHER_SAW_HELP=0
+LAUNCHER_SAW_PROMPT=0
 LAUNCHER_ARGS_INVALID=0
 SOCKET_FLAG_SET=0
 
@@ -107,6 +108,9 @@ parse_launcher_args() {
       CLIENT_ARGS+=("$arg")
       if [[ "$arg" == "--server" ]]; then
         LAUNCHER_SAW_SERVER=1
+      fi
+      if [[ "$arg" == "-p" || "$arg" == "--print" ]]; then
+        LAUNCHER_SAW_PROMPT=1
       fi
       if [[ $((i + 1)) -lt ${#args[@]} ]]; then
         if [[ "$arg" == "--socket" ]]; then
@@ -161,6 +165,10 @@ autostart_applies() {
   [[ "$LAUNCHER_ARGS_INVALID" == "1" ]] && return 1
   uses_unix_transport || return 1
   [[ "$LAUNCHER_SAW_HELP" == "1" ]] && return 1
+  # A -p/--print prompt is a turn, so it needs a runtime even alongside a bare
+  # `start`/`status` positional. Checked after help flags, which keep
+  # precedence.
+  [[ "$LAUNCHER_SAW_PROMPT" == "1" ]] && return 0
   case "$LAUNCHER_SUBCOMMAND" in
     start|status|help)
       return 1
@@ -221,17 +229,19 @@ runtime_log_path() {
   printf '%s/.dyfj/log/runtime-%s-%s.log' "$HOME" "$base" "$hash"
 }
 
-# Run the client without exec, on the same route main would use.
+# Run the client without exec, on the same route main would use. --unix is
+# explicit: autostart applies only on the UDS seam, and without it an ambient
+# DYFJ_SERVER_URL would let the probe answer over HTTP for a dead socket.
 probe_runtime() {
   local route
   route="$(route_cli "$@")"
   if [[ "$route" == "compiled" ]]; then
-    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)"       "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
+    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)"       --unix "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
   else
     local sock proto
     sock="$(resolve_socket_path)"
     proto="$(prototype_root)"
-    DYFJ_PROTOTYPE_ROOT="$proto" deno run       --allow-env="$(cli_env_allowlist)"       --allow-read       --allow-write       --allow-run=deno       --allow-net="127.0.0.1,localhost,unix:${sock}"       --sloppy-imports       "${proto}/src/cli.ts"       "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
+    DYFJ_PROTOTYPE_ROOT="$proto" deno run       --allow-env="$(cli_env_allowlist)"       --allow-read       --allow-write       --allow-run=deno       --allow-net="127.0.0.1,localhost,unix:${sock}"       --sloppy-imports       "${proto}/src/cli.ts"       --unix "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
   fi
 }
 
