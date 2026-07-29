@@ -356,3 +356,58 @@ describe("an invocation the client's parser rejects never triggers autostart", (
     expect(autostart).toBe("no");
   });
 });
+
+describe("a -p prompt makes the invocation a turn the runtime is needed for", () => {
+  test("status alongside -p does not suppress the runtime the turn needs", async () => {
+    // The client resolves a prompt before subcommands, so this is a turn, not
+    // the `status` report — suppressing autostart leaves it failing against
+    // nothing.
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "-p",
+      "status of the build",
+      "status",
+    ]);
+    expect(autostart).toBe("yes");
+  });
+
+  test("a help FLAG wins over a prompt", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "--help",
+      "-p",
+      "hello",
+    ]);
+    expect(autostart).toBe("no");
+  });
+
+  test("a positional help alongside a prompt is a turn, matching the client", async () => {
+    // parseArgs gives help precedence to the -h/--help FLAG state only: a
+    // populated -p returns an exec command before positional-command
+    // validation, so this invocation is a print turn and needs a runtime.
+    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+      "help",
+      "-p",
+      "hello",
+    ]);
+    expect(autostart).toBe("yes");
+  });
+});
+
+describe("the probe invokes the client on the UDS seam explicitly", () => {
+  test("both client routes pass --unix before status", async () => {
+    const lines = (await Deno.readTextFile(LAUNCHER)).split("\n");
+    const open = lines.findIndex((l) => l.trim() === "probe_runtime() {");
+    expect(open).toBeGreaterThanOrEqual(0);
+    const close = lines.findIndex((l, i) => i > open && l === "}");
+    expect(close).toBeGreaterThan(open);
+    const body = lines.slice(open, close);
+    const invocations = body.filter((l) =>
+      l.trimEnd().endsWith("status >/dev/null 2>&1")
+    );
+    // One per route — compiled and deno. A third would be an unreviewed call.
+    expect(invocations).toHaveLength(2);
+    for (const line of invocations) {
+      expect(line).toContain("--unix");
+      expect(line.indexOf("--unix")).toBeLessThan(line.indexOf(" status "));
+    }
+  });
+});
