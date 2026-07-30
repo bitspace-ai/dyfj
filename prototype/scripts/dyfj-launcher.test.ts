@@ -119,11 +119,11 @@ describe("dyfj launcher routing", () => {
 
   test("autostart respawns the resolved launcher source", async () => {
     const lines = (await Deno.readTextFile(LAUNCHER)).split("\n");
-    const spawns = lines.filter((line) =>
-      line.trimStart().startsWith("nohup bash ")
-    );
+    const spawns = lines.filter((line) => line.includes("nohup bash "));
     expect(spawns).toHaveLength(1);
     const [spawn] = spawns;
+    expect(spawn.trimStart().startsWith("nohup bash ")).toBe(true);
+    expect(spawn).toContain("start --launcher-autostarted");
     expect(spawn).toContain('"$LAUNCHER_SOURCE"');
     expect(spawn).not.toContain("BASH_SOURCE");
   });

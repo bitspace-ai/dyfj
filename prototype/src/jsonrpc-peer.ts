@@ -51,6 +51,7 @@ export class JsonRpcPeer {
   #nextId = 0;
   #closed = false;
   #writeChain: Promise<void> = Promise.resolve();
+  #rpcContext?: RpcContext;
 
   constructor(conn: Deno.Conn, options: JsonRpcPeerOptions = {}) {
     this.#conn = conn;
@@ -88,16 +89,43 @@ export class JsonRpcPeer {
 
   // Initiate a request to the peer; resolves with its result, or rejects with an
   // RpcError if the peer returns an error response.
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(
+    method: string,
+    params?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const id = `p${++this.#nextId}`;
     const message: JsonRpcRequest = params === undefined
       ? { jsonrpc: "2.0", id, method }
       : { jsonrpc: "2.0", id, method, params };
     return new Promise<unknown>((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      let onAbort: (() => void) | undefined;
+      const cleanup = () => {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+      };
+      const pending: Pending = {
+        resolve: (value) => {
+          cleanup();
+          resolve(value);
+        },
+        reject: (error) => {
+          cleanup();
+          reject(error);
+        },
+      };
+      if (signal?.aborted) {
+        pending.reject(signal.reason);
+        return;
+      }
+      this.#pending.set(id, pending);
+      onAbort = () => {
+        if (!this.#pending.delete(id)) return;
+        pending.reject(signal?.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
       this.#write(message).catch((err) => {
-        this.#pending.delete(id);
-        reject(err);
+        if (!this.#pending.delete(id)) return;
+        pending.reject(err);
       });
     });
   }
@@ -152,9 +180,10 @@ export class JsonRpcPeer {
   // A context bound to this connection, so a handler can stream notifications and
   // issue server-initiated requests (e.g. the mid-turn approval) while it runs.
   #context(): RpcContext {
-    return {
+    return this.#rpcContext ??= {
       notify: (method, params) => this.notify(method, params),
-      request: (method, params) => this.request(method, params),
+      request: (method, params, signal) =>
+        this.request(method, params, signal),
     };
   }
 

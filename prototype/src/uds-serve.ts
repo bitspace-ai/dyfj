@@ -7,8 +7,10 @@ import { serveWorkbenchUnix } from "./uds-server";
 import { ensureSocketDir, resolveSocketPath } from "./uds-path";
 import { loadConfig, loadSecretsConfig } from "./config";
 import { resolveSecretsIntoEnv } from "./secrets";
+import { installRuntimeSigintHandler } from "./runtime-sigint";
 
 const socketPath = resolveSocketPath();
+const autostarted = Deno.args.includes("--autostarted");
 ensureSocketDir(socketPath);
 
 // Engine config (defaults → ~/.dyfj/config.toml → env), resolved once at the
@@ -22,15 +24,29 @@ const config = await loadConfig();
 // a plain local-only boot is unchanged.
 await resolveSecretsIntoEnv(await loadSecretsConfig());
 
-const server = await serveWorkbenchUnix(socketPath, {
-  onParseError: (detail) => console.error(`[uds] ${detail}`),
-  engineConfig: config,
+let resolveCloseServer!: (close: () => Promise<void>) => void;
+const closeServerReady = new Promise<() => Promise<void>>((resolve) => {
+  resolveCloseServer = resolve;
 });
-console.error(
-  `dyfj runtime: JSON-RPC over UDS at ${socketPath}  (ctrl-c to stop)`,
+installRuntimeSigintHandler(
+  autostarted,
+  async () => await (await closeServerReady)(),
+  { add: (handler) => Deno.addSignalListener("SIGINT", handler) },
+  Deno.exit,
 );
 
-Deno.addSignalListener("SIGINT", async () => {
-  await server.close();
-  Deno.exit(0);
-});
+try {
+  const server = await serveWorkbenchUnix(socketPath, {
+    onParseError: (detail) => console.error(`[uds] ${detail}`),
+    engineConfig: config,
+  });
+  resolveCloseServer(() => server.close());
+  console.error(
+    `dyfj runtime: JSON-RPC over UDS at ${socketPath}  ${
+      autostarted ? "(autostarted)" : "(ctrl-c to stop)"
+    }`,
+  );
+} catch (error) {
+  resolveCloseServer(() => Promise.reject(error));
+  throw error;
+}

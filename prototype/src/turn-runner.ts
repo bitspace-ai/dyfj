@@ -33,6 +33,7 @@ export type FetchSessionEvents = (
 
 export interface TurnRequestBody {
   prompt?: unknown;
+  turnId?: unknown;
   mode?: unknown;
   routingOptions?: unknown;
   sessionId?: unknown;
@@ -45,6 +46,12 @@ export interface TurnRequestBody {
 }
 
 const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+const TURN_ID_SHAPE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isValidTurnId(value: unknown): value is string {
+  return typeof value === "string" && TURN_ID_SHAPE.test(value);
+}
 
 // paid inference requires BOTH a loopback transport AND that the
 // operator explicitly opts in per turn. Remote callers are denied outright; a
@@ -144,10 +151,17 @@ function buildRuntimeInputFromJson(
   if (body.workspace !== undefined && typeof body.workspace !== "string") {
     return { error: "workspace must be a string" };
   }
+  if (
+    body.turnId !== undefined &&
+    !isValidTurnId(body.turnId)
+  ) {
+    return { error: "turnId must be a UUID" };
+  }
   return {
     mode,
     prompt: body.prompt,
     routingOptions,
+    ...(typeof body.turnId === "string" ? { turnId: body.turnId } : {}),
     // Honored only for a loopback operator; the runtime applies that gate.
     ...(typeof body.workspace === "string"
       ? { workspaceRoot: body.workspace }

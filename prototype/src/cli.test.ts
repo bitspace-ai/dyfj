@@ -1,6 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
-  main,
   bufferedTurn,
   buildServeUnixArgs,
   buildTurnBody,
@@ -27,6 +26,8 @@ import {
   promptToolApproval,
   readLauncherSecretsConfig,
   readLineOrNull,
+  readlineTurnInterruptSource,
+  selectTurnInterruptSource,
   readMemoryMcpNetGrant,
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
@@ -45,12 +46,16 @@ import {
   spinnerGuardedTurnHandlers,
   type StartRuntimeFn,
   streamTurn,
+  type TurnInterruptSource,
   type TurnResult,
 } from "./cli";
 import { serveWorkbenchUnix } from "./uds-server";
 import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client";
 import { DomainError } from "./turn-contract";
-import type { SupersedingRetryStartedEvent } from "./turn-contract";
+import type {
+  SupersedingRetryStartedEvent,
+  TurnStreamFrame,
+} from "./turn-contract";
 
 describe("readLineOrNull", () => {
   test("resolves the answered line", async () => {
@@ -78,12 +83,87 @@ describe("readLineOrNull", () => {
   });
 
   test("resolves null when the question rejects", async () => {
+    let removed = 0;
     const rl = {
       question: () => Promise.reject(new Error("boom")),
       once: () => {},
-      off: () => {},
+      off: () => {
+        removed++;
+      },
     };
     expect(await readLineOrNull(rl, "> ")).toBeNull();
+    expect(removed).toBe(1);
+  });
+
+  test("passes an abort signal to the pending question", async () => {
+    const abortController = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const rl = {
+      question: (
+        _prompt: string,
+        options?: { signal?: AbortSignal },
+      ) => {
+        receivedSignal = options?.signal;
+        return new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+      once: () => {},
+      off: () => {},
+    };
+    const pending = readLineOrNull(rl, "> ", abortController.signal);
+
+    abortController.abort();
+
+    expect(await pending).toBeNull();
+    expect(receivedSignal).toBe(abortController.signal);
+  });
+});
+
+describe("readlineTurnInterruptSource", () => {
+  test("routes readline SIGINT through the active turn handler", () => {
+    let registered: (() => void) | undefined;
+    const rl = {
+      on: (_event: "SIGINT", handler: () => void) => {
+        registered = handler;
+      },
+      off: (_event: "SIGINT", handler: () => void) => {
+        if (registered === handler) registered = undefined;
+      },
+    };
+    const source = readlineTurnInterruptSource(rl);
+    const handler = vi.fn();
+
+    source.add(handler);
+    registered?.();
+    expect(handler).toHaveBeenCalledOnce();
+    source.remove(handler);
+    expect(registered).toBeUndefined();
+  });
+
+  test("uses process SIGINT when terminal stdin has redirected stdout", () => {
+    const readlineSource: TurnInterruptSource = {
+      add: () => {},
+      remove: () => {},
+    };
+    const signalSource: TurnInterruptSource = {
+      add: () => {},
+      remove: () => {},
+    };
+
+    expect(
+      selectTurnInterruptSource(true, true, readlineSource, signalSource),
+    ).toBe(readlineSource);
+    expect(
+      selectTurnInterruptSource(true, false, readlineSource, signalSource),
+    ).toBe(signalSource);
+    expect(
+      selectTurnInterruptSource(false, true, readlineSource, signalSource),
+    ).toBeUndefined();
   });
 });
 
@@ -103,6 +183,7 @@ function result(overrides: Partial<TurnResult> = {}): TurnResult {
   return {
     sessionId: "01CLISESSION0000000000000000",
     traceId: "0123456789abcdef0123456789abcdef",
+    stopReason: "stop",
     text: "Workbench says hello.",
     receipt: "Workbench receipt",
     model: {
@@ -303,6 +384,463 @@ describe("socketTurn", () => {
     expect(events).toHaveLength(1);
     expect(r.sessionId).toBe(result().sessionId);
   });
+
+  test("an abort signal sends turn/cancel for the generated turn id", async () => {
+    const abortController = new AbortController();
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const events: Record<string, unknown>[] = [];
+    let finishTurn!: (value: unknown) => void;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method, params) => {
+          calls.push({ method, params });
+          if (method === "turn") {
+            return new Promise((resolve) => {
+              finishTurn = resolve;
+            });
+          }
+          if (method === "turn/cancel") {
+            finishTurn(result({ stopReason: "aborted", text: "partial" }));
+            return Promise.resolve({ cancelled: true });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      {
+        abortSignal: abortController.signal,
+        onEvent: (event) => events.push(event),
+      },
+      connect,
+    );
+
+    await Promise.resolve();
+    abortController.abort();
+    const receipt = await pending;
+
+    expect(receipt.stopReason).toBe("aborted");
+    const turnId = (calls[0].params as { turnId: string }).turnId;
+    expect(turnId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(calls).toEqual([
+      { method: "turn", params: { prompt: "hi", turnId } },
+      { method: "turn/cancel", params: { turnId } },
+    ]);
+    expect(events).toEqual([{
+      type: "turnAborted",
+      sessionId: receipt.sessionId,
+      traceId: receipt.traceId,
+      turnId,
+    }]);
+  });
+
+  test("an abort while connecting prevents turn dispatch", async () => {
+    const abortController = new AbortController();
+    const calls: string[] = [];
+    let closed = false;
+    let finishConnect!: (client: Awaited<ReturnType<ConnectFn>>) => void;
+    const connect: ConnectFn = () =>
+      new Promise((resolve) => {
+        finishConnect = resolve;
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      { abortSignal: abortController.signal },
+      connect,
+    );
+
+    abortController.abort();
+    finishConnect({
+      request: (method) => {
+        calls.push(method);
+        return Promise.resolve(undefined);
+      },
+      close: () => {
+        closed = true;
+      },
+    });
+
+    await expect(pending).rejects.toThrow("turn interrupted before dispatch");
+    expect(calls).toEqual([]);
+    expect(closed).toBe(true);
+  });
+
+  test("does not surface an abort event for a normally completed turn", async () => {
+    const events: Record<string, unknown>[] = [];
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method, params) => {
+          if (method === "turn") {
+            const turnId = (params as { turnId: string }).turnId;
+            options?.onStream?.({
+              t: "event",
+              event: {
+                type: "turnAborted",
+                sessionId: result().sessionId,
+                traceId: result().traceId,
+                turnId,
+              },
+            });
+            return Promise.resolve(result());
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+
+    const receipt = await socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      { onEvent: (event) => events.push(event) },
+      connect,
+    );
+
+    expect(receipt.stopReason).toBe("stop");
+    expect(events).toEqual([]);
+  });
+
+  test("replaces stale abort-event attribution with terminal receipt identity", async () => {
+    const events: Record<string, unknown>[] = [];
+    const aborted = result({ stopReason: "aborted" });
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method, params) => {
+          if (method === "turn") {
+            const turnId = (params as { turnId: string }).turnId;
+            options?.onStream?.({
+              t: "event",
+              event: {
+                type: "turnAborted",
+                sessionId: "01STALESESSION00000000000000",
+                traceId: "stale-trace",
+                turnId,
+              },
+            });
+            return Promise.resolve(aborted);
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+
+    await socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi", turnId: "00000000-0000-4000-8000-000000000001" },
+      { onEvent: (event) => events.push(event) },
+      connect,
+    );
+
+    expect(events).toEqual([{
+      type: "turnAborted",
+      sessionId: aborted.sessionId,
+      traceId: aborted.traceId,
+      turnId: "00000000-0000-4000-8000-000000000001",
+    }]);
+  });
+
+  test("drops an opaque malformed event payload before reading its type", async () => {
+    const events: Record<string, unknown>[] = [];
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method) => {
+          if (method === "turn") {
+            options?.onStream?.({
+              t: "event",
+              event: null,
+            } as unknown as TurnStreamFrame);
+            return Promise.resolve(result());
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+
+    await socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      { onEvent: (event) => events.push(event) },
+      connect,
+    );
+
+    expect(events).toEqual([]);
+  });
+
+  test("a rejected cancellation request returns a bounded error instead of hanging", async () => {
+    const abortController = new AbortController();
+    let closed = false;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) =>
+          method === "turn"
+            ? new Promise(() => {})
+            : Promise.reject(new Error("untrusted peer detail")),
+        close: () => {
+          closed = true;
+        },
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      { abortSignal: abortController.signal },
+      connect,
+    );
+
+    await Promise.resolve();
+    abortController.abort();
+
+    await expect(pending).rejects.toThrow(
+      "turn cancellation was not acknowledged; restart the runtime before retrying",
+    );
+    expect(closed).toBe(true);
+  });
+
+  test("a synchronous turn request failure still closes the client", async () => {
+    let closed = false;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: () => {
+          throw new Error("peer closed");
+        },
+        close: () => {
+          closed = true;
+        },
+      });
+
+    await expect(socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      {},
+      connect,
+    )).rejects.toThrow("peer closed");
+    expect(closed).toBe(true);
+  });
+
+  test("an onConnected failure still closes the client", async () => {
+    let closed = false;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: () => Promise.resolve(result()),
+        close: () => {
+          closed = true;
+        },
+      });
+
+    await expect(socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      {
+        onConnected: () => {
+          throw new Error("listener registration failed");
+        },
+      },
+      connect,
+    )).rejects.toThrow("listener registration failed");
+    expect(closed).toBe(true);
+  });
+
+  test("a synchronous cancellation request failure uses the bounded client error", async () => {
+    const abortController = new AbortController();
+    let closed = false;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) => {
+          if (method === "turn") return new Promise(() => {});
+          throw new Error("untrusted peer detail");
+        },
+        close: () => {
+          closed = true;
+        },
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      { abortSignal: abortController.signal },
+      connect,
+    );
+
+    await Promise.resolve();
+    abortController.abort();
+
+    await expect(pending).rejects.toThrow(
+      "turn cancellation was not acknowledged; restart the runtime before retrying",
+    );
+    expect(closed).toBe(true);
+  });
+
+  test("an unresponsive cancellation request reaches its acknowledgement deadline", async () => {
+    const abortController = new AbortController();
+    let closed = false;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: () => new Promise(() => {}),
+        close: () => {
+          closed = true;
+        },
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      {
+        abortSignal: abortController.signal,
+        cancellationTimeoutMs: 10,
+      },
+      connect,
+    );
+
+    await Promise.resolve();
+    abortController.abort();
+
+    await expect(pending).rejects.toThrow(
+      "turn cancellation was not acknowledged; restart the runtime before retrying",
+    );
+    expect(closed).toBe(true);
+  });
+
+  test("a negative cancellation acknowledgement leaves the turn authoritative but bounded", async () => {
+    const abortController = new AbortController();
+    let closed = false;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) =>
+          method === "turn" ? new Promise(() => {}) : Promise.resolve({
+            cancelled: false,
+            reason: "no_active_turn",
+          }),
+        close: () => {
+          closed = true;
+        },
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      {
+        abortSignal: abortController.signal,
+        cancellationSettleTimeoutMs: 10,
+      },
+      connect,
+    );
+
+    await Promise.resolve();
+    abortController.abort();
+
+    await expect(pending).rejects.toThrow(
+      "turn did not finish after cancellation was declined; remote work may still be running",
+    );
+    expect(closed).toBe(true);
+  });
+
+  test("a negative cancellation acknowledgement does not mask the original turn error", async () => {
+    const abortController = new AbortController();
+    let rejectTurn!: (error: Error) => void;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) =>
+          method === "turn"
+            ? new Promise((_resolve, reject) => {
+              rejectTurn = reject;
+            })
+            : Promise.resolve({
+              cancelled: false,
+              reason: "no_active_turn",
+            }),
+        close: () => {},
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      { abortSignal: abortController.signal },
+      connect,
+    );
+
+    await Promise.resolve();
+    abortController.abort();
+    await Promise.resolve();
+    rejectTurn(new Error("provider failed"));
+
+    await expect(pending).rejects.toThrow("provider failed");
+  });
+
+  test("a positive cancellation acknowledgement cannot leave the client waiting forever", async () => {
+    const abortController = new AbortController();
+    let closed = false;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) =>
+          method === "turn"
+            ? new Promise(() => {})
+            : Promise.resolve({ cancelled: true }),
+        close: () => {
+          closed = true;
+        },
+      });
+    const pending = socketTurn(
+      cfg({ unix: true }),
+      { prompt: "hi" },
+      {
+        abortSignal: abortController.signal,
+        cancellationSettleTimeoutMs: 10,
+      },
+      connect,
+    );
+
+    await Promise.resolve();
+    abortController.abort();
+
+    await expect(pending).rejects.toThrow(
+      "turn did not finish after cancellation was acknowledged; remote work may still be running",
+    );
+    expect(closed).toBe(true);
+  });
+
+  test("a late positive acknowledgement cannot install a timer after turn cleanup", async () => {
+    vi.useFakeTimers();
+    try {
+      const abortController = new AbortController();
+      let finishTurn!: (value: unknown) => void;
+      let finishCancel!: (value: unknown) => void;
+      let markCancelRequested!: () => void;
+      const cancelRequested = new Promise<void>((resolve) => {
+        markCancelRequested = resolve;
+      });
+      const connect: ConnectFn = () =>
+        Promise.resolve({
+          request: (method) => {
+            if (method === "turn") {
+              return new Promise((resolve) => {
+                finishTurn = resolve;
+              });
+            }
+            markCancelRequested();
+            return new Promise((resolve) => {
+              finishCancel = resolve;
+            });
+          },
+          close: () => {},
+        });
+      const pending = socketTurn(
+        cfg({ unix: true }),
+        { prompt: "hi" },
+        { abortSignal: abortController.signal },
+        connect,
+      );
+
+      await Promise.resolve();
+      abortController.abort();
+      await cancelRequested;
+      finishTurn(result());
+      await pending;
+      finishCancel({ cancelled: true });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("socketTurn over a real Unix socket (integration)", () => {
@@ -371,6 +909,27 @@ describe("promptToolApproval", () => {
   test("denies on anything else", async () => {
     const { io } = fakeIo(["n"]);
     expect((await promptToolApproval(io, {}, true)).decision).toBe("deny");
+  });
+  test("reports an interrupted approval separately from a denial", async () => {
+    const abortController = new AbortController();
+    const io: Io = {
+      out: () => {},
+      err: () => {},
+      readLine: (_prompt, signal) => {
+        abortController.abort();
+        expect(signal?.aborted).toBe(true);
+        return Promise.resolve(null);
+      },
+      close: () => {},
+    };
+    expect(
+      await promptToolApproval(
+        io,
+        {},
+        true,
+        abortController.signal,
+      ),
+    ).toEqual({ decision: "abort" });
   });
   test("denies without prompting when non-interactive", async () => {
     let asked = false;
@@ -603,6 +1162,10 @@ describe("formatRuntimeEvent", () => {
   test("ignores routine non-tool lifecycle events", () => {
     expect(formatRuntimeEvent({ type: "modelSelected" })).toBeNull();
   });
+
+  test("marks an aborted turn", () => {
+    expect(formatRuntimeEvent({ type: "turnAborted" })).toBe("[interrupted]");
+  });
 });
 
 describe("handleTurnRuntimeEvent", () => {
@@ -624,6 +1187,23 @@ describe("handleTurnRuntimeEvent", () => {
     );
     expect(stderr).toContain("tool: bash started");
     expect(stdout).toHaveLength(0);
+  });
+
+  test("flushes preserved partial text before the interrupted marker", () => {
+    const writes: string[] = [];
+    const io: Io = {
+      out: (text) => writes.push(`out:${text}`),
+      err: (line) => writes.push(`err:${line}`),
+      readLine: () => Promise.resolve(null),
+      close: () => {},
+    };
+    const output = createTurnOutputHandlers(cfg(), io);
+    output.onDelta("unfinished partial line");
+
+    handleTurnRuntimeEvent({ type: "turnAborted" }, output, io);
+
+    expect(writes.some((write) => write.startsWith("out:"))).toBe(true);
+    expect(writes.at(-1)).toBe("err:[interrupted]");
   });
 
   test("renders a context-compression status line to stderr", () => {
@@ -703,6 +1283,35 @@ describe("runExec over the socket (--unix)", () => {
     expect(code).toBe(0);
     expect(stdout.join("")).toBe("Hi\n");
     expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
+  });
+
+  test("prints buffered aborted text before the interrupted marker", async () => {
+    const writes: string[] = [];
+    const io: Io = {
+      out: (text) => writes.push(`out:${text}`),
+      err: (line) => writes.push(`err:${line}`),
+      readLine: () => Promise.resolve(null),
+      close: () => {},
+    };
+    const code = await runExec(
+      "hi",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      fakeTurnConnect(
+        [],
+        result({ stopReason: "aborted", text: "buffered partial text" }),
+      ),
+    );
+
+    expect(code).toBe(0);
+    const textIndex = writes.findIndex((write) =>
+      write.includes("buffered partial text")
+    );
+    const markerIndex = writes.indexOf("err:[interrupted]");
+    expect(textIndex).toBeGreaterThanOrEqual(0);
+    expect(markerIndex).toBeGreaterThan(textIndex);
   });
 
   test("honors the superseding-retry signal over the UDS seam too", async () => {
@@ -791,6 +1400,46 @@ describe("runRepl", () => {
     expect(stderr.join("\n")).toContain("transient");
   });
 
+  test("exits the REPL after cancellation leaves remote work uncertain", async () => {
+    let turnCalls = 0;
+    const interrupts: TurnInterruptSource = {
+      add: (handler) => queueMicrotask(handler),
+      remove: () => {
+        throw new Error("interrupt cleanup failed");
+      },
+    };
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) => {
+          if (method === "turn") {
+            turnCalls++;
+            return new Promise(() => {});
+          }
+          return Promise.reject(new Error("cancel transport failed"));
+        },
+        close: () => {},
+      });
+    const { io, stderr, prompts } = fakeIo(["first", "second"]);
+
+    const code = await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      connect,
+      false,
+      interrupts,
+    );
+
+    expect(turnCalls).toBe(1);
+    expect(code).toBe(1);
+    expect(prompts).toHaveLength(1);
+    const renderedError = stderr.join("\n");
+    expect(renderedError).toContain(
+      "turn cancellation was not acknowledged; restart the runtime before retrying",
+    );
+    expect(renderedError).not.toContain("interrupt cleanup failed");
+  });
+
   test("receipts carry the running session total across turns", async () => {
     const paid = (totalUsd: number) =>
       result({ cost: { estimatedUsd: 0, totalUsd, paidInferenceUsed: true } });
@@ -804,6 +1453,401 @@ describe("runRepl", () => {
     // Each receipt shows the sum of every per-turn cost so far.
     expect(text).toContain("session $0.0100");
     expect(text).toContain("session $0.0300");
+  });
+
+  test("Ctrl-C cancels one UDS turn and carries its session into the next request", async () => {
+    const bodies: Array<{ sessionId?: string }> = [];
+    let finishFirst!: (value: unknown) => void;
+    let activeInterrupt: (() => void) | undefined;
+    let interruptCount = 0;
+    const interrupts: TurnInterruptSource = {
+      add: (handler) => {
+        interruptCount++;
+        activeInterrupt = handler;
+      },
+      remove: () => {
+        activeInterrupt = undefined;
+      },
+    };
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method, params) => {
+          if (method === "turn") {
+            bodies.push(params as { sessionId?: string });
+            if (bodies.length === 1) {
+              options?.onStream?.({ t: "delta", text: "partial" });
+              queueMicrotask(() => {
+                activeInterrupt?.();
+                activeInterrupt?.();
+              });
+              return new Promise((resolve) => {
+                finishFirst = resolve;
+              });
+            }
+            options?.onStream?.({ t: "delta", text: "next" });
+            return Promise.resolve(result({ text: "next" }));
+          }
+          if (method === "turn/cancel") {
+            options?.onStream?.({
+              t: "event",
+              event: { type: "turnAborted" },
+            });
+            finishFirst(result({ stopReason: "aborted", text: "partial" }));
+            return Promise.resolve({ cancelled: true });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const { io, stdout, stderr, raw } = fakeIo(
+      ["first", "second"],
+      { errIsTerminal: true },
+    );
+    io.turnInterrupts = interrupts;
+
+    await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      connect,
+      false,
+    );
+
+    expect(stdout.join("")).toContain("partial");
+    expect(stdout.join("")).toContain("next");
+    expect(stderr).toContain("[interrupted]");
+    expect(stderr.filter((line) => line === "[interrupt requested]")).toEqual([
+      "[interrupt requested]",
+    ]);
+    expect(bodies[0].sessionId).toBeUndefined();
+    expect(bodies[1].sessionId).toBe(result().sessionId);
+    expect(raw[raw.length - 1]).toBe(ERASE_LINE);
+  });
+
+  test("an aborted receipt commits its session before fallible rendering", async () => {
+    const bodies: Array<{ sessionId?: string }> = [];
+    const firstSessionId = "01ABORTEDSESSION000000000000";
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method, params) => {
+          if (method !== "turn") return Promise.resolve(undefined);
+          bodies.push(params as { sessionId?: string });
+          if (bodies.length === 1) {
+            options?.onStream?.({ t: "delta", text: "partial" });
+            return Promise.resolve(result({
+              sessionId: firstSessionId,
+              stopReason: "aborted",
+              text: "partial",
+            }));
+          }
+          return Promise.resolve(result({ sessionId: firstSessionId }));
+        },
+        close: () => {},
+      });
+    const { io } = fakeIo(["first", "second"]);
+    const write = io.out;
+    let failNextWrite = true;
+    io.out = (text) => {
+      if (failNextWrite) {
+        failNextWrite = false;
+        throw new Error("stdout failed");
+      }
+      write(text);
+    };
+
+    await runRepl(cfg({ unix: true }), io, fetch, connect);
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].sessionId).toBeUndefined();
+    expect(bodies[1].sessionId).toBe(firstSessionId);
+  });
+
+  test("an aborted receipt commits its session before fallible spinner cleanup", async () => {
+    const bodies: Array<{ sessionId?: string }> = [];
+    const firstSessionId = "01ABORTEDSESSION000000000000";
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method, params) => {
+          if (method !== "turn") return Promise.resolve(undefined);
+          bodies.push(params as { sessionId?: string });
+          return Promise.resolve(result({
+            sessionId: firstSessionId,
+            stopReason: bodies.length === 1 ? "aborted" : "stop",
+          }));
+        },
+        close: () => {},
+      });
+    const { io } = fakeIo(["first", "second"], { errIsTerminal: true });
+    let rawWrites = 0;
+    io.errRaw = () => {
+      rawWrites++;
+      if (rawWrites === 2) throw new Error("terminal erase failed");
+    };
+
+    await runRepl(cfg({ unix: true }), io, fetch, connect);
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].sessionId).toBeUndefined();
+    expect(bodies[1].sessionId).toBe(firstSessionId);
+  });
+
+  test("prints buffered aborted text before the interrupted marker", async () => {
+    let activeInterrupt: (() => void) | undefined;
+    const interrupts: TurnInterruptSource = {
+      add: (handler) => {
+        activeInterrupt = handler;
+      },
+      remove: () => {
+        activeInterrupt = undefined;
+      },
+    };
+    let finishTurn!: (value: unknown) => void;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) => {
+          if (method === "turn") {
+            queueMicrotask(() => activeInterrupt?.());
+            return new Promise((resolve) => {
+              finishTurn = resolve;
+            });
+          }
+          if (method === "turn/cancel") {
+            finishTurn(result({
+              stopReason: "aborted",
+              text: "buffered partial text",
+            }));
+            return Promise.resolve({ cancelled: true });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const writes: string[] = [];
+    let readCount = 0;
+    const io: Io = {
+      out: (text) => writes.push(`out:${text}`),
+      err: (line) => writes.push(`err:${line}`),
+      readLine: () => Promise.resolve(readCount++ === 0 ? "first" : null),
+      close: () => {},
+    };
+
+    await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      connect,
+      false,
+      interrupts,
+    );
+
+    const textIndex = writes.findIndex((write) =>
+      write.includes("buffered partial text")
+    );
+    const markerIndex = writes.indexOf("err:[interrupted]");
+    expect(textIndex).toBeGreaterThanOrEqual(0);
+    expect(markerIndex).toBeGreaterThan(textIndex);
+  });
+
+  test("Ctrl-C cancels a pending approval read before the next REPL prompt", async () => {
+    let interrupt: (() => void) | undefined;
+    const interrupts: TurnInterruptSource = {
+      add: (handler) => {
+        interrupt = handler;
+      },
+      remove: () => {
+        interrupt = undefined;
+      },
+    };
+    let readCount = 0;
+    let approvalReadSettled = false;
+    let approvalSignal: AbortSignal | undefined;
+    const io: Io = {
+      out: () => {},
+      err: () => {},
+      readLine: (_prompt, signal) => {
+        readCount++;
+        if (readCount === 1) return Promise.resolve("first");
+        if (readCount === 2) {
+          approvalSignal = signal;
+          return new Promise((resolve) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                approvalReadSettled = true;
+                resolve(null);
+              },
+              { once: true },
+            );
+          });
+        }
+        expect(approvalReadSettled).toBe(true);
+        return Promise.resolve("/exit");
+      },
+      close: () => {},
+    };
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method) => {
+          if (method === "runtime/status") {
+            return Promise.resolve({ runtime: {} });
+          }
+          if (method === "turn") {
+            const approval = options?.onApproval?.({
+              kind: "tool",
+              commandId: "write_file",
+            });
+            queueMicrotask(() => interrupt?.());
+            return Promise.resolve(approval).then(() =>
+              result({ stopReason: "aborted" })
+            );
+          }
+          if (method === "turn/cancel") {
+            return Promise.resolve({ cancelled: true });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+
+    await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      connect,
+      true,
+      interrupts,
+    );
+
+    expect(approvalSignal?.aborted).toBe(true);
+    expect(approvalReadSettled).toBe(true);
+    expect(readCount).toBe(3);
+  });
+
+  test("a spinner startup failure never installs the in-flight interrupt handler", async () => {
+    let added = 0;
+    let removed = 0;
+    let connectCalls = 0;
+    const interrupts: TurnInterruptSource = {
+      add: () => {
+        added++;
+      },
+      remove: () => {
+        removed++;
+      },
+    };
+    const connect: ConnectFn = () => {
+      connectCalls++;
+      return Promise.reject(new Error("should not connect"));
+    };
+    const { io } = fakeIo(["first", "/exit"], { errIsTerminal: true });
+    io.errRaw = () => {
+      throw new Error("spinner write failed");
+    };
+
+    await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      connect,
+      false,
+      interrupts,
+    );
+
+    expect(added).toBe(0);
+    expect(removed).toBe(0);
+    expect(connectCalls).toBe(0);
+  });
+
+  test("does not intercept SIGINT until the UDS connection is established", async () => {
+    let added = 0;
+    let removed = 0;
+    const interrupts: TurnInterruptSource = {
+      add: () => {
+        added++;
+      },
+      remove: () => {
+        removed++;
+      },
+    };
+    let finishConnect!: (client: Awaited<ReturnType<ConnectFn>>) => void;
+    let markConnectStarted!: () => void;
+    const connectStarted = new Promise<void>((resolve) => {
+      markConnectStarted = resolve;
+    });
+    const connect: ConnectFn = () => {
+      markConnectStarted();
+      return new Promise((resolve) => {
+        finishConnect = resolve;
+      });
+    };
+    const { io } = fakeIo(["first", "/exit"]);
+    const pending = runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      connect,
+      false,
+      interrupts,
+    );
+
+    await connectStarted;
+    expect(added).toBe(0);
+    finishConnect({
+      request: (method) =>
+        method === "turn"
+          ? Promise.resolve(result())
+          : Promise.resolve(undefined),
+      close: () => {},
+    });
+    await pending;
+
+    expect(added).toBe(1);
+    expect(removed).toBe(1);
+  });
+
+  test("a spinner erase failure cannot prevent an installed turn cancellation", async () => {
+    const interrupts: TurnInterruptSource = {
+      add: (handler) => {
+        queueMicrotask(handler);
+      },
+      remove: () => {},
+    };
+    let finishTurn!: (value: unknown) => void;
+    let cancellationCalls = 0;
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method) => {
+          if (method === "turn") {
+            return new Promise((resolve) => {
+              finishTurn = resolve;
+            });
+          }
+          if (method === "turn/cancel") {
+            cancellationCalls++;
+            finishTurn(result({ stopReason: "aborted" }));
+            return Promise.resolve({ cancelled: true });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const { io } = fakeIo(["first", "/exit"], { errIsTerminal: true });
+    let rawWrites = 0;
+    io.errRaw = () => {
+      rawWrites++;
+      if (rawWrites > 1) throw new Error("stderr failed");
+    };
+
+    await runRepl(
+      cfg({ unix: true }),
+      io,
+      fetch,
+      connect,
+      false,
+      interrupts,
+    );
+
+    expect(cancellationCalls).toBe(1);
   });
 });
 
@@ -874,6 +1918,31 @@ describe("parseArgs", () => {
   test("'status' and 'start' are their own commands", () => {
     expect(parseArgs(["status"]).command).toBe("status");
     expect(parseArgs(["start"]).command).toBe("start");
+  });
+  test("accepts the internal launcher marker only on start", () => {
+    expect(parseArgs(["start", "--launcher-autostarted"])).toMatchObject({
+      command: "start",
+      launcherAutostarted: true,
+    });
+    expect(parseArgs(["-p", "--launcher-autostarted"])).toMatchObject({
+      command: "exec",
+      prompt: "--launcher-autostarted",
+    });
+  });
+  test("rejects the internal launcher marker outside start", () => {
+    for (
+      const argv of [
+        ["--launcher-autostarted"],
+        ["status", "--launcher-autostarted"],
+        ["start", "extra", "--launcher-autostarted"],
+        ["-p", "hello", "start", "--launcher-autostarted"],
+        ["start", "--launcher-autostarted", "--help"],
+      ]
+    ) {
+      expect(parseArgs(argv).error).toContain(
+        "--launcher-autostarted is valid only with start",
+      );
+    }
   });
   test("--socket overrides the socket path", () => {
     expect(parseArgs(["--socket", "/run/x.sock", "models"]).overrides.socket)
@@ -1306,6 +2375,26 @@ describe("runtime lifecycle commands", () => {
     expect(stderr.join("\n")).toContain("foreground process");
   });
 
+  test("runStart describes the autostarted signal posture accurately", async () => {
+    const { io, stderr } = fakeIo();
+    let receivedAutostarted: boolean | undefined;
+    const code = await runStart(
+      cfg(),
+      io,
+      (_config, options) => {
+        receivedAutostarted = options?.autostarted;
+        return Promise.resolve(0);
+      },
+      true,
+    );
+
+    expect(code).toBe(0);
+    expect(receivedAutostarted).toBe(true);
+    expect(stderr.join("\n")).toContain("autostarted process");
+    expect(stderr.join("\n")).toContain("leaves the runtime running");
+    expect(stderr.join("\n")).not.toContain("foreground process");
+  });
+
   test("runStart fails with a precise fallback command", async () => {
     const { io, stderr } = fakeIo();
     const code = await runStart(cfg(), io, () => {
@@ -1355,6 +2444,24 @@ describe("runtime lifecycle commands", () => {
       "/run/wb.sock",
     );
     expect(args[3]).toBe("--allow-net=unix:/run/wb.sock");
+  });
+
+  test("buildServeUnixArgs marks only an autostarted runtime", () => {
+    const foreground = buildServeUnixArgs(
+      ["127.0.0.1:3306"],
+      "/run/wb.sock",
+    );
+    const autostarted = buildServeUnixArgs(
+      ["127.0.0.1:3306"],
+      "/run/wb.sock",
+      null,
+      null,
+      null,
+      true,
+    );
+
+    expect(foreground).not.toContain("--autostarted");
+    expect(autostarted.at(-1)).toBe("--autostarted");
   });
 
   test("buildServeUnixArgs appends the launch-resolved memory endpoint grant", () => {
@@ -1521,6 +2628,21 @@ describe("runtime lifecycle commands", () => {
     const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
     expect(launcherEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
+  });
+
+  test("the internal autostart marker is not ambient process state", async () => {
+    const raw = await Deno.readTextFile("deno.json");
+    const parsed = JSON.parse(raw) as {
+      tasks: Record<string, string>;
+      permissions: Record<string, { env?: string[] | boolean }>;
+    };
+    expect(parsed.permissions["cli"].env).not.toContain("DYFJ_AUTOSTARTED");
+    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
+      ?.[1];
+    expect(compileEnv?.split(",")).not.toContain("DYFJ_AUTOSTARTED");
+    const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
+    const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
+    expect(launcherEnv?.split(",")).not.toContain("DYFJ_AUTOSTARTED");
   });
 
   test("readServeUnixNetGrants reads the real profile", async () => {
@@ -2558,7 +3680,9 @@ describe("main --parse-check", () => {
   test("a parser THROW also exits 2 — the contract is 0/2, not 0/2/crash", async () => {
     // normalizeSessionRef throws on an invalid ref rather than returning a
     // parse error; parse-check absorbs either rejection shape.
-    expect(await main(["--parse-check", "--session", "garbage-value"], silentIo))
+    expect(
+      await main(["--parse-check", "--session", "garbage-value"], silentIo),
+    )
       .toBe(2);
   });
 });

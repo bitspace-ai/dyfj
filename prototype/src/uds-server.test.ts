@@ -7,7 +7,7 @@ import {
   type WorkbenchUnixServerOptions,
 } from "./uds-server";
 import { JsonRpcPeer } from "./jsonrpc-peer";
-import { RpcErrorCode, type RpcContext, type RpcHandlers } from "./jsonrpc";
+import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
 import type { WorkbenchHttpRuntime } from "./turn-runner";
 import type { TurnStreamFrame } from "./turn-contract";
 
@@ -64,7 +64,8 @@ const anyVal = (v: unknown): any => v;
 
 describe("serveWorkbenchUnix read methods", () => {
   test("models/list returns the loaded models with a server-computed routable flag", async () => {
-    const client = await connectClient(await startServer({
+    const client = await connectClient(
+      await startServer({
       ...fakes,
       loadModels: async () =>
         anyVal([
@@ -72,7 +73,8 @@ describe("serveWorkbenchUnix read methods", () => {
           { slug: "hosted-priced", tier: 2, costInput: 15, costOutput: 75 },
           { slug: "hosted-unpriced", tier: 2, costInput: 0, costOutput: 0 },
         ]),
-    }));
+      }),
+    );
     const { models } = anyVal(await client.request("models/list"));
     expect(models.map((m: { slug: string; routable: boolean }) => [
       m.slug,
@@ -85,7 +87,8 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("models/list marks locality server-side", async () => {
-    const client = await connectClient(await startServer({
+    const client = await connectClient(
+      await startServer({
       ...fakes,
       loadModels: async () =>
         anyVal([
@@ -106,7 +109,8 @@ describe("serveWorkbenchUnix read methods", () => {
             costOutput: 75,
           },
         ]),
-    }));
+      }),
+    );
     const { models } = anyVal(await client.request("models/list"));
     expect(models.map((m: { slug: string; local: boolean }) => [
       m.slug,
@@ -118,7 +122,8 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("runtime/status resolves the bare-turn route past a hosted configured default", async () => {
-    const client = await connectClient(await startServer({
+    const client = await connectClient(
+      await startServer({
       ...fakes,
       loadModels: async () =>
         anyVal([
@@ -146,7 +151,8 @@ describe("serveWorkbenchUnix read methods", () => {
         permissionLevel: "operator",
         approvePaidDefault: false,
       }),
-    }));
+      }),
+    );
     const { runtime } = anyVal(await client.request("runtime/status"));
     // The configured default stays visible, but the resolved bare-turn route
     // shows what a turn actually gets: the local default (hosted is an
@@ -221,6 +227,7 @@ describe("serveWorkbenchUnix read methods", () => {
           "tools/list",
           "tools/inspect",
           "turn",
+          "turn/cancel",
         ],
         methodCatalog: [
           { id: "runtime/status", namespace: "runtime", kind: "read" },
@@ -231,6 +238,11 @@ describe("serveWorkbenchUnix read methods", () => {
           { id: "tools/list", namespace: "tools", kind: "read" },
           { id: "tools/inspect", namespace: "tools", kind: "read" },
           { id: "turn", namespace: "turn", kind: "interactive" },
+          {
+            id: "turn/cancel",
+            namespace: "turn",
+            kind: "interactive",
+          },
         ],
       },
     });
@@ -340,6 +352,222 @@ describe("serveWorkbenchUnix turn method", () => {
       { t: "delta", text: "world" },
       { t: "event", event: { kind: "tool-call", name: "noop" } },
     ]);
+  });
+
+  test("turn/cancel aborts the matching active turn and is otherwise a no-op", async () => {
+    const turnId = "123e4567-e89b-42d3-a456-426614174000";
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const runRuntime: WorkbenchHttpRuntime = (input) =>
+      new Promise((resolve) => {
+        markStarted();
+        input.abortSignal?.addEventListener("abort", () => {
+          resolve(anyVal({ stopReason: "aborted", text: "partial" }));
+        }, { once: true });
+      });
+    const ctx: RpcContext = {
+      notify: () => Promise.resolve(),
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    const turn = handlers.turn({ prompt: "hi", turnId }, ctx);
+
+    await started;
+    const otherContext: RpcContext = {
+      notify: () => Promise.resolve(),
+      request: () => Promise.reject(new Error("different peer")),
+    };
+    expect(
+      await handlers["turn/cancel"]({ turnId }, otherContext),
+    ).toEqual({
+      cancelled: false,
+      reason: "no_active_turn",
+    });
+    expect(await handlers["turn/cancel"]({ turnId }, ctx)).toEqual({
+      cancelled: true,
+    });
+    await expect(turn).resolves.toMatchObject({
+      stopReason: "aborted",
+      text: "partial",
+    });
+    expect(await handlers["turn/cancel"]({ turnId }, ctx)).toEqual({
+      cancelled: false,
+      reason: "no_active_turn",
+    });
+  });
+
+  test("an approval arriving after acknowledged cancellation cannot start work", async () => {
+    const turnId = "123e4567-e89b-42d3-a456-426614174000";
+    let markApprovalRequested!: () => void;
+    const approvalRequested = new Promise<void>((resolve) => {
+      markApprovalRequested = resolve;
+    });
+    let resolveApproval!: (value: unknown) => void;
+    const approvalResponse = new Promise<unknown>((resolve) => {
+      resolveApproval = resolve;
+    });
+    let executorStarted = false;
+    let runtimeCalls = 0;
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      runtimeCalls++;
+      if (runtimeCalls > 1) return anyVal({ text: "next turn" });
+      let matchedSignalReason = false;
+      try {
+        const verdict = await input.confirmToolApproval?.({
+          commandId: "write_file",
+          callId: "c1",
+          title: "Write File",
+          arguments: { path: "notes.md" },
+        });
+        executorStarted = verdict?.decision === "approve";
+      } catch (error) {
+        matchedSignalReason = error === input.abortSignal?.reason;
+      }
+      return anyVal({
+        aborted: input.abortSignal?.aborted,
+        matchedSignalReason,
+      });
+    };
+    const ctx: RpcContext = {
+      notify: () => Promise.resolve(),
+      request: (_method, _params, signal) => {
+        markApprovalRequested();
+        return new Promise((resolve, reject) => {
+          const onAbort = () => reject(signal?.reason);
+          signal?.addEventListener("abort", onAbort, { once: true });
+          approvalResponse.then(resolve, reject).finally(() => {
+            signal?.removeEventListener("abort", onAbort);
+          });
+        });
+      },
+    };
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    const turn = handlers.turn({ prompt: "edit notes", turnId }, ctx);
+
+    await approvalRequested;
+    expect(await handlers["turn/cancel"]({ turnId }, ctx)).toEqual({
+      cancelled: true,
+    });
+    await expect(turn).resolves.toMatchObject({
+      aborted: true,
+      matchedSignalReason: true,
+    });
+    expect(executorStarted).toBe(false);
+    await expect(handlers.turn({ prompt: "next" }, ctx)).resolves.toMatchObject({
+      text: "next turn",
+    });
+    resolveApproval({ decision: "approve" });
+  });
+
+  test("turn/cancel declines after the runtime closes its cancellation window", async () => {
+    const turnId = "123e4567-e89b-42d3-a456-426614174000";
+    let markFinalizing!: () => void;
+    const finalizing = new Promise<void>((resolve) => {
+      markFinalizing = resolve;
+    });
+    let finish!: () => void;
+    const finalized = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      input.onCancellationClosed?.();
+      markFinalizing();
+      await finalized;
+      return anyVal({ stopReason: "stop", text: "done" });
+    };
+    const ctx: RpcContext = {
+      notify: () => Promise.resolve(),
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    const turn = handlers.turn({ prompt: "hi", turnId }, ctx);
+
+    await finalizing;
+    expect(await handlers["turn/cancel"]({ turnId }, ctx)).toEqual({
+      cancelled: false,
+      reason: "no_active_turn",
+    });
+    finish();
+    await expect(turn).resolves.toMatchObject({
+      stopReason: "stop",
+      text: "done",
+    });
+  });
+
+  test("different connections may use the same active turn id", async () => {
+    const turnId = "123e4567-e89b-42d3-a456-426614174000";
+    let startedCount = 0;
+    let markBothStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => {
+      markBothStarted = resolve;
+    });
+    const runRuntime: WorkbenchHttpRuntime = (input) =>
+      new Promise((resolve) => {
+        startedCount++;
+        if (startedCount === 2) markBothStarted();
+        input.abortSignal?.addEventListener("abort", () => {
+          resolve(anyVal({ stopReason: "aborted", text: "" }));
+        }, { once: true });
+      });
+    const context = (): RpcContext => ({
+      notify: () => Promise.resolve(),
+      request: () => Promise.reject(new Error("no peer approver")),
+    });
+    const firstContext = context();
+    const secondContext = context();
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    const first = handlers.turn({ prompt: "first", turnId }, firstContext);
+    const second = handlers.turn({ prompt: "second", turnId }, secondContext);
+
+    await bothStarted;
+    expect(
+      await handlers["turn/cancel"]({ turnId }, firstContext),
+    ).toEqual({ cancelled: true });
+    expect(
+      await handlers["turn/cancel"]({ turnId }, secondContext),
+    ).toEqual({ cancelled: true });
+    await expect(first).resolves.toMatchObject({ stopReason: "aborted" });
+    await expect(second).resolves.toMatchObject({ stopReason: "aborted" });
+  });
+
+  test("one connection cannot accumulate concurrent active turns", async () => {
+    const firstTurnId = "123e4567-e89b-42d3-a456-426614174000";
+    const secondTurnId = "123e4567-e89b-42d3-a456-426614174001";
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const runRuntime: WorkbenchHttpRuntime = (input) =>
+      new Promise((resolve) => {
+        markStarted();
+        input.abortSignal?.addEventListener("abort", () => {
+          resolve(anyVal({ stopReason: "aborted", text: "" }));
+        }, { once: true });
+      });
+    const ctx: RpcContext = {
+      notify: () => Promise.resolve(),
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    const first = handlers.turn({
+      prompt: "first",
+      turnId: firstTurnId,
+    }, ctx);
+
+    await started;
+    await expect(handlers.turn({
+      prompt: "second",
+      turnId: secondTurnId,
+    }, ctx)).rejects.toMatchObject({
+      code: RpcErrorCode.invalidParams,
+      message: "connection already has an active turn",
+    });
+    expect(
+      await handlers["turn/cancel"]({ turnId: firstTurnId }, ctx),
+    ).toEqual({ cancelled: true });
+    await expect(first).resolves.toMatchObject({ stopReason: "aborted" });
   });
 
   test("keeps the superseding-retry signal ordered between stale and replacement deltas", async () => {
@@ -576,6 +804,37 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
     expect(result.verdict).toMatchObject({
       decision: "deny",
       reason: "not now",
+    });
+  });
+
+  test("an interrupted approval aborts the server-side turn signal", async () => {
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      let matchedSignalReason = false;
+      try {
+        await input.confirmToolApproval?.({
+          commandId: "write_file",
+          callId: "c1",
+          title: "Write File",
+          arguments: { path: "notes.md" },
+        });
+      } catch (error) {
+        matchedSignalReason = error === input.abortSignal?.reason;
+      }
+      return anyVal({
+        aborted: input.abortSignal?.aborted,
+        matchedSignalReason,
+      });
+    };
+    const server = await startServer({ ...fakes, runRuntime });
+    const client = await connectClient(server, {
+      approval: () => ({ decision: "abort" }),
+    });
+
+    await expect(
+      client.request("turn", { prompt: "edit notes" }),
+    ).resolves.toMatchObject({
+      aborted: true,
+      matchedSignalReason: true,
     });
   });
 

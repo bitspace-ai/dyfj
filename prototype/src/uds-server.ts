@@ -21,7 +21,12 @@ import {
   type WorkbenchProjectSessions,
   type WorkbenchSessionEvent,
 } from "./sessions";
-import { RpcError, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
+import {
+  type RpcContext,
+  RpcError,
+  RpcErrorCode,
+  type RpcHandlers,
+} from "./jsonrpc";
 import { JsonRpcPeer } from "./jsonrpc-peer";
 import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench";
 import type { PermissionLevel, WorkbenchConfig } from "./config";
@@ -35,6 +40,7 @@ import { isSupersedingRetryStarted } from "./turn-contract";
 import {
   engineConfigToTurnDeps,
   executeTurn,
+  isValidTurnId,
   resolveTurnFromBody,
   type TurnRequestBody,
   type WorkbenchHttpRuntime,
@@ -155,6 +161,7 @@ const METHOD_CATALOG = [
   { id: "tools/list", namespace: "tools", kind: "read" },
   { id: "tools/inspect", namespace: "tools", kind: "read" },
   { id: "turn", namespace: "turn", kind: "interactive" },
+  { id: "turn/cancel", namespace: "turn", kind: "interactive" },
 ] as const satisfies readonly WorkbenchMethodSummary[];
 
 const METHOD_IDS = METHOD_CATALOG.map((method) => method.id);
@@ -390,6 +397,12 @@ function toBudgetCeilingVerdict(
   };
 }
 
+function approvalWasAborted(response: unknown): boolean {
+  return typeof response === "object" &&
+    response !== null &&
+    (response as Record<string, unknown>).decision === "abort";
+}
+
 function resolveEngineTurnDeps(
   options: WorkbenchUnixServerOptions,
 ): ReturnType<typeof engineConfigToTurnDeps> {
@@ -413,6 +426,16 @@ export function buildTurnHandlers(
   const fetchSessionEvents = options.fetchSessionEvents ??
     fetchWorkbenchSessionEvents;
   const engineDeps = resolveEngineTurnDeps(options);
+  const activeTurns = new Map<
+    RpcContext,
+    Map<
+      string,
+      {
+        abortController: AbortController;
+        acceptingCancellation: boolean;
+      }
+    >
+  >();
 
   return {
     turn: async (params, ctx) => {
@@ -424,6 +447,43 @@ export function buildTurnHandlers(
       if ("error" in resolved) {
         throw new RpcError(RpcErrorCode.invalidParams, resolved.error);
       }
+      const turnId = resolved.runtimeInput.turnId;
+      const activeKey = turnId ?? crypto.randomUUID();
+      const abortController = new AbortController();
+      const activeTurn = {
+        abortController,
+        acceptingCancellation: true,
+      };
+      const abortIfApprovalWasInterrupted = (response: unknown): void => {
+        if (!approvalWasAborted(response)) return;
+        abortController.abort();
+        throw abortController.signal.reason;
+      };
+      const rejectStaleApprovalAfterCancellation = (): void => {
+        if (abortController.signal.aborted) {
+          throw abortController.signal.reason;
+        }
+      };
+      const requestApproval = (request: unknown): Promise<unknown> =>
+        ctx.request("approval", request, abortController.signal);
+      let contextTurns = activeTurns.get(ctx);
+      if (contextTurns?.size) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "connection already has an active turn",
+        );
+      }
+      if (contextTurns === undefined) {
+        contextTurns = new Map();
+        activeTurns.set(ctx, contextTurns);
+      }
+      contextTurns.set(activeKey, activeTurn);
+      if (turnId !== undefined) {
+        resolved.runtimeInput.onCancellationClosed = () => {
+          activeTurn.acceptingCancellation = false;
+        };
+      }
+      resolved.runtimeInput.abortSignal = abortController.signal;
       // A client that drops mid-turn makes every subsequent notify reject.
       // Deltas and status events are best-effort, so their send failures are
       // swallowed and logged once per turn rather than once per frame (a
@@ -443,6 +503,7 @@ export function buildTurnHandlers(
             `further failures this turn will not be logged`,
         );
       };
+      try {
       return await executeTurn(resolved, {
         authContext: UDS_LOOPBACK_AUTH,
         loopback: true,
@@ -454,32 +515,53 @@ export function buildTurnHandlers(
         // the client's response is the verdict. A failed request (no client
         // approver, dropped connection) denies, fail-closed.
         confirmToolApproval: (request) =>
-          ctx.request("approval", request).then(
-            toApprovalVerdict,
-            (): ToolApprovalVerdict => ({
-              decision: "deny",
-              reason: "approval request failed (no client approver?)",
-            }),
+          requestApproval(request).then(
+            (response) => {
+              abortIfApprovalWasInterrupted(response);
+              rejectStaleApprovalAfterCancellation();
+              return toApprovalVerdict(response);
+            },
+            (): ToolApprovalVerdict => {
+              rejectStaleApprovalAfterCancellation();
+              return {
+                decision: "deny",
+                reason: "approval request failed (no client approver?)",
+              };
+            },
           ),
         confirmBudgetCeiling: (warning) =>
-          ctx.request("approval", budgetCeilingApprovalRequest(warning)).then(
-            toBudgetCeilingVerdict,
-            (): BudgetCeilingVerdict => ({
-              decision: "deny",
-              reason: "budget ceiling approval failed (no client approver?)",
-            }),
+          requestApproval(budgetCeilingApprovalRequest(warning)).then(
+            (response) => {
+              abortIfApprovalWasInterrupted(response);
+              rejectStaleApprovalAfterCancellation();
+              return toBudgetCeilingVerdict(response);
+            },
+            (): BudgetCeilingVerdict => {
+              rejectStaleApprovalAfterCancellation();
+              return {
+                decision: "deny",
+                reason: "budget ceiling approval failed (no client approver?)",
+              };
+            },
           ),
         confirmRunawayAnomaly: (warning) =>
-          ctx.request("approval", runawayAnomalyApprovalRequest(warning)).then(
-            (response) =>
-              toBudgetCeilingVerdict(
+            requestApproval(runawayAnomalyApprovalRequest(warning))
+              .then(
+            (response) => {
+              abortIfApprovalWasInterrupted(response);
+              rejectStaleApprovalAfterCancellation();
+              return toBudgetCeilingVerdict(
                 response,
                 "operator declined the anomaly halt",
-              ),
-            (): BudgetCeilingVerdict => ({
-              decision: "deny",
-              reason: "anomaly halt approval failed (no client approver?)",
-            }),
+              );
+            },
+            (): BudgetCeilingVerdict => {
+              rejectStaleApprovalAfterCancellation();
+              return {
+                decision: "deny",
+                reason: "anomaly halt approval failed (no client approver?)",
+              };
+            },
           ),
         // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame) so a
         // client can reuse one frame handler across both transports. Deltas are
@@ -508,6 +590,31 @@ export function buildTurnHandlers(
           return sent.catch(noteStreamNotifyFailure);
         },
       });
+      } finally {
+        const contextTurns = activeTurns.get(ctx);
+        if (contextTurns?.get(activeKey) === activeTurn) {
+          contextTurns.delete(activeKey);
+          if (contextTurns.size === 0) activeTurns.delete(ctx);
+        }
+      }
+    },
+    "turn/cancel": (params, ctx) => {
+      const turnId = asRecord(params).turnId;
+      if (!isValidTurnId(turnId)) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "turnId must be a UUID",
+        );
+      }
+      const activeTurn = activeTurns.get(ctx)?.get(turnId);
+      if (
+        activeTurn === undefined || !activeTurn.acceptingCancellation
+      ) {
+        return { cancelled: false, reason: "no_active_turn" };
+      }
+      activeTurn.acceptingCancellation = false;
+      activeTurn.abortController.abort();
+      return { cancelled: true };
     },
   };
 }

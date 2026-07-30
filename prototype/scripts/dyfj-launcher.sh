@@ -306,7 +306,8 @@ ensure_runtime() {
   chmod 700 "$(dirname "$log")" 2>/dev/null || true
   chmod 600 "$log" 2>/dev/null || true
   echo "dyfj: runtime not running at ${sock}; starting it (log: ${log})" >&2
-  nohup bash "$LAUNCHER_SOURCE" "${SOCKET_ARGS[@]}" start >>"$log" 2>&1 &
+  # Mark the background runtime to ignore a terminal SIGINT if it reaches it.
+  nohup bash "$LAUNCHER_SOURCE" "${SOCKET_ARGS[@]}" start --launcher-autostarted >>"$log" 2>&1 &
   disown
   local i
   for i in $(seq 1 50); do

@@ -45,17 +45,20 @@ export interface WorkbenchTurnResult {
     cacheRead: number;
     cacheWrite: number;
     /**
-     * Provider-reported reasoning/thinking tokens, when the provider exposes
-     * them separately from visible output (e.g. Gemini's thoughtsTokenCount).
-     * These are drawn from the model's output budget but are not part of
-     * `output` (the visible answer). Used by length-stop classification to see
-     * the model's true output-budget and context-window consumption; recorded
-     * usage and cost intentionally ignore it. Absent/other providers => 0.
+     * Provider-reported reasoning/thinking tokens, or a character estimate
+     * when an interrupted streaming adapter received plaintext reasoning
+     * without a covering usage total. These are drawn from the model's output
+     * budget but are not part of `output`, which can include generated text
+     * withheld from display. Used by length-stop classification and receipts;
+     * each adapter computes its own cost without callers adding this field
+     * again. Unobserved reasoning => 0.
      */
     reasoning?: number;
   };
   stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
   timings: WorkbenchCallTimings;
+  /** Present only when cancellation won before any provider request began. */
+  requestDispatched?: false;
 }
 
 export interface WorkbenchToolDefinition {
@@ -173,7 +176,9 @@ export class WorkbenchHostedProviderBaseUrlError extends DomainError {
 
 export class WorkbenchLocalProviderBaseUrlError extends DomainError {
   constructor(public readonly slug: string, public readonly baseUrl: string) {
-    super(`Local provider baseUrl is not loopback-only for ${errorField(slug)}`);
+    super(
+      `Local provider baseUrl is not loopback-only for ${errorField(slug)}`,
+    );
     this.name = "WorkbenchLocalProviderBaseUrlError";
   }
 }
@@ -187,8 +192,8 @@ const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
  * connection (VPN/mesh route flaps, IPv6 with no route) hung the whole turn
  * silently and indefinitely — the operator sees nothing after tool approval.
  * Bound the time to response HEADERS only: once headers arrive the abort timer
- * is cleared, so long streaming bodies are unaffected. Aborts surface as a
- * named error carrying the provider label instead of an infinite hang.
+ * is cleared, so long streaming bodies are unaffected. Header-timeout failures
+ * carry the provider label instead of becoming an infinite hang.
  */
 export const PROVIDER_HEADER_TIMEOUT_MS = 30_000;
 
@@ -199,12 +204,26 @@ export async function fetchWithHeaderTimeout(
   label: string,
   timeoutMs: number = PROVIDER_HEADER_TIMEOUT_MS,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutController = new AbortController();
+  const externalSignal = init.signal;
+  let timedOut = false;
+  const signal = externalSignal === undefined || externalSignal === null
+    ? timeoutController.signal
+    : AbortSignal.any([externalSignal, timeoutController.signal]);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    timeoutController.abort();
+  }, timeoutMs);
   try {
-    return await fetchFn(url, { ...init, signal: controller.signal });
+    return await fetchFn(url, { ...init, signal });
   } catch (err) {
-    if (controller.signal.aborted) {
+    if (
+      externalSignal?.aborted === true &&
+      signal.reason === externalSignal.reason
+    ) {
+      throw err;
+    }
+    if (timedOut) {
       throw new Error(
         `${label}: no response headers within ${timeoutMs}ms (network unreachable or provider stalled)`,
       );
@@ -213,6 +232,55 @@ export async function fetchWithHeaderTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+function isAbortFromSignal(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  return signal?.aborted === true && error === signal.reason;
+}
+
+class ProviderRequestAbortedError extends Error {
+  constructor(
+    public readonly elapsedMs: number,
+    options: { cause: unknown },
+  ) {
+    super("provider request aborted", options);
+    this.name = "ProviderRequestAbortedError";
+  }
+}
+
+function annotateProviderAbort(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  now: () => number,
+  requestStarted: number,
+): never {
+  if (isAbortFromSignal(error, signal)) {
+    throw new ProviderRequestAbortedError(
+      Math.max(0, Math.round(now() - requestStarted)),
+      { cause: error },
+    );
+  }
+  throw error;
+}
+
+function isIncompleteSseDataLine(line: string, error: unknown): boolean {
+  if (!(error instanceof SyntaxError)) return false;
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return false;
+  const data = trimmed.slice("data:".length).trim();
+  if (data.length === 0) return true;
+  if (data === "[DONE]") return false;
+  if (
+    error.message.includes("Unexpected end of JSON input") ||
+    error.message.includes("Unterminated string in JSON")
+  ) {
+    return true;
+  }
+  const position = /at position (\d+)/.exec(error.message)?.[1];
+  return position !== undefined && Number(position) >= data.length;
 }
 /**
  * Hosted OpenAI-compatible providers: the env var each reads its bearer key
@@ -237,6 +305,7 @@ const anthropicProviders = new Set(["anthropic"]);
 const googleProviders = new Set(["google"]);
 const GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY";
 const GEMINI_DEFAULT_MAX_TOKENS = 8192;
+const HOSTED_OPENAI_DEFAULT_MAX_TOKENS = 8192;
 // Gemini 3.x are thinking models and draw thinking tokens from maxOutputTokens
 //. Bound thinking so it doesn't starve the answer; "low" keeps the
 // reasoning trail cheap while leaving the 8192 budget mostly for output. (2.5
@@ -267,12 +336,16 @@ export interface OpenAIToolCallDelta {
 export interface OpenAIChatStreamEvent {
   done: boolean;
   textDelta?: string;
+  reasoningDelta?: string;
   toolCallDeltas?: OpenAIToolCallDelta[];
   finishReason?: string;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-  };
+  usage?: OpenAIChatUsage;
+}
+
+interface OpenAIChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  completion_tokens_details?: { reasoning_tokens?: number };
 }
 
 export function parseModelRegistryRows(
@@ -539,6 +612,12 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+function finiteNonnegativeTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
 /**
  * Text used for the fallback input-token estimate when the provider does not
  * report prompt_tokens. Covers the full conversation (system + history, or the
@@ -634,6 +713,7 @@ export function buildOpenAIChatRequest(
     jsonObject?: boolean;
     tools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
+    maxCompletionTokens?: number;
   } = {},
 ) {
   const body: {
@@ -641,6 +721,7 @@ export function buildOpenAIChatRequest(
     stream: boolean;
     messages: OpenAIWireMessage[];
     response_format?: { type: "json_object" };
+    max_completion_tokens?: number;
     tools?: Array<{
       type: "function";
       function: WorkbenchToolDefinition;
@@ -658,6 +739,9 @@ export function buildOpenAIChatRequest(
   };
   if (options.jsonObject) {
     body.response_format = { type: "json_object" };
+  }
+  if (options.maxCompletionTokens !== undefined) {
+    body.max_completion_tokens = options.maxCompletionTokens;
   }
   if (options.tools && options.tools.length > 0) {
     // Sanitize names to ^[a-zA-Z0-9_-]+$ — OpenAI rejects dotted command ids
@@ -694,6 +778,7 @@ export interface WorkbenchTurnParams {
   onTextDelta?: (delta: string) => void;
   jsonObject?: boolean;
   tools?: WorkbenchToolDefinition[];
+  abortSignal?: AbortSignal;
   now?: () => number;
   fetchFn?: FetchLike;
   getEnv?: (name: string) => string | undefined;
@@ -726,12 +811,11 @@ export function modelSupportsTranscriptRetry(model: WorkbenchModel): boolean {
 }
 
 /**
- * The output-token cap the request for this model actually carries — what a
- * stopReason "length" is measured against. The Anthropic and Google adapters
- * send fixed caps regardless of what the catalog row advertises the model can
- * do, so classification must compare against the requested cap, not the
- * catalog capability. The OpenAI-compatible path sends no explicit cap; the
- * catalog limit is the best knowledge of the server-side default.
+ * The output-token limit used to classify stopReason "length". Hosted
+ * OpenAI-compatible adapters return the cap their request carries. Anthropic
+ * and Google use the smaller of their transmitted fixed ceiling and the catalog
+ * limit as a classification proxy. Local OpenAI-compatible requests omit a cap,
+ * so their catalog value is the available proxy for the server's default.
  */
 export function modelRequestedOutputCap(
   model: WorkbenchModel,
@@ -742,6 +826,9 @@ export function modelRequestedOutputCap(
   }
   if (googleProviders.has(model.provider)) {
     return Math.min(catalog ?? Infinity, GEMINI_DEFAULT_MAX_TOKENS);
+  }
+  if (openAIHostedProviders.has(model.provider)) {
+    return Math.min(catalog ?? Infinity, HOSTED_OPENAI_DEFAULT_MAX_TOKENS);
   }
   return catalog;
 }
@@ -756,13 +843,20 @@ export async function runWorkbenchTurn(
     params.defaultModelId,
   );
   const model = selection.selected;
+  if (params.abortSignal?.aborted) {
+    return abortedWorkbenchTurnResult(params, model, selection, 0, false);
+  }
 
   if (anthropicProviders.has(model.provider)) {
-    return await runAnthropicMessagesTurn(params, model, selection);
+    return await runAnthropicMessagesTurn(params, model, selection).catch(
+      (error) => recoverWorkbenchAbort(error, params, model, selection),
+    );
   }
 
   if (googleProviders.has(model.provider)) {
-    return await runGoogleGenerativeAITurn(params, model, selection);
+    return await runGoogleGenerativeAITurn(params, model, selection).catch(
+      (error) => recoverWorkbenchAbort(error, params, model, selection),
+    );
   }
 
   const hostedContract = openAIHostedProviderContracts.get(model.provider);
@@ -782,7 +876,14 @@ export async function runWorkbenchTurn(
     }
     return await executeOpenAICompatibleTurn(params, model, selection, {
       authHeader: `Bearer ${apiKey}`,
-    });
+    }).catch((error) =>
+      recoverWorkbenchAbort(
+        error,
+        params,
+        model,
+        selection,
+      )
+    );
   }
 
   if (!openAICompatibleLocalProviders.has(model.provider)) {
@@ -791,7 +892,59 @@ export async function runWorkbenchTurn(
   if (!isAllowedLocalProviderBaseUrl(model.baseUrl)) {
     throw new WorkbenchLocalProviderBaseUrlError(model.slug, model.baseUrl);
   }
-  return await executeOpenAICompatibleTurn(params, model, selection, {});
+  return await executeOpenAICompatibleTurn(params, model, selection, {}).catch(
+    (error) => recoverWorkbenchAbort(error, params, model, selection),
+  );
+}
+
+function recoverWorkbenchAbort(
+  error: unknown,
+  params: WorkbenchTurnParams,
+  model: WorkbenchModel,
+  selection: WorkbenchSelection,
+): WorkbenchTurnResult {
+  if (error instanceof ProviderRequestAbortedError) {
+    return abortedWorkbenchTurnResult(
+      params,
+      model,
+      selection,
+      error.elapsedMs,
+    );
+  }
+  if (isAbortFromSignal(error, params.abortSignal)) {
+    return abortedWorkbenchTurnResult(params, model, selection);
+  }
+  throw error;
+}
+
+function abortedWorkbenchTurnResult(
+  params: WorkbenchTurnParams,
+  model: WorkbenchModel,
+  selection: WorkbenchSelection,
+  elapsedMs = 0,
+  requestDispatched = true,
+): WorkbenchTurnResult {
+  const input = requestDispatched
+    ? estimateTextTokens(estimateParamsInputText(params))
+    : 0;
+  return {
+    text: "",
+    model,
+    selection,
+    usage: {
+      input,
+      output: 0,
+      cost: { total: (input / 1_000_000) * model.costInput },
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
+    stopReason: "aborted",
+    timings: {
+      responseHeadersMs: 0,
+      totalMs: elapsedMs,
+    },
+    ...(requestDispatched ? {} : { requestDispatched: false as const }),
+  };
 }
 
 /**
@@ -805,6 +958,9 @@ async function executeOpenAICompatibleTurn(
   selection: WorkbenchSelection,
   opts: { authHeader?: string },
 ): Promise<WorkbenchTurnResult> {
+  if (params.abortSignal?.aborted) {
+    return abortedWorkbenchTurnResult(params, model, selection, 0, false);
+  }
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? performance.now.bind(performance);
   const stream = params.onTextDelta !== undefined;
@@ -814,6 +970,7 @@ async function executeOpenAICompatibleTurn(
     `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,
     {
       method: "POST",
+      signal: params.abortSignal,
       // Refuse redirects: only the initial base URL is validated as loopback for
       // local providers, so following a 307/308 could re-POST the (private)
       // transcript body to an off-box target. A redirect on a completions POST
@@ -834,16 +991,31 @@ async function executeOpenAICompatibleTurn(
             jsonObject: params.jsonObject,
             tools: params.tools,
             messages: params.messages,
+            maxCompletionTokens: openAIHostedProviders.has(model.provider)
+              ? modelRequestedOutputCap(model)
+              : undefined,
           },
         ),
       ),
     },
     `${model.provider}/${model.slug}`,
+  ).catch((error) =>
+    annotateProviderAbort(
+      error,
+      params.abortSignal,
+      now,
+      requestStarted,
+    )
   );
   const headersReceived = now();
 
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
+    const detail = response.body === null
+      ? ""
+      : await readBoundedOpenAIText(response).catch((error) => {
+        if (error instanceof DomainError) throw error;
+        return "";
+      });
     throw new Error(
       `Model request failed for ${model.slug}: HTTP ${response.status}` +
         (detail ? ` ${detail.slice(0, 300)}` : ""),
@@ -857,23 +1029,80 @@ async function executeOpenAICompatibleTurn(
       now,
       requestStarted,
       headersReceived,
+      params.abortSignal,
+      params.tools,
     )
     : await readOpenAIChatJson(response, now, requestStarted, headersReceived);
+  const generatedText = result.text;
   let text = result.text;
   let toolCalls = result.toolCalls;
   let finishReason = result.finishReason;
-  // Some servers (mlx_lm + Qwen3-Coder) leak tool calls as text instead of
-  // parsing them; recover them so the agent loop still fires.
-  if (!toolCalls || toolCalls.length === 0) {
-    const recovered = extractTextToolCalls(text);
+  // Some servers (mlx_lm + Qwen3-Coder) leak offered tool calls as text instead
+  // of parsing them. Recover only those calls and leave unrelated function-like
+  // prose untouched.
+  if (result.aborted) {
+    text = stripIncompleteTextToolCallSuffix(text, params.tools);
+  } else if (finishReason === "error") {
+    if (result.visibleText !== undefined) text = result.visibleText;
+  } else if (
+    params.tools && params.tools.length > 0
+  ) {
+    const offered = new Set(
+      toolWireNames(params.tools).map(({ wire }) => wire),
+    );
+    const recovered = extractTextToolCallsInternal(text, offered, true);
     if (recovered.toolCalls.length > 0) {
-      toolCalls = recovered.toolCalls;
-      text = recovered.cleaned;
-      finishReason = "tool_calls";
+      text = result.visibleText ?? recovered.cleaned;
+      if (!toolCalls || toolCalls.length === 0) {
+        toolCalls = recovered.toolCalls;
+        finishReason = "tool_calls";
+      } else {
+        const existingToolCalls = toolCalls;
+        const signatures = new Set<string>();
+        const uncanonicalizedNames = new Set<string>();
+        const seenNames = new Set<string>();
+        for (const call of existingToolCalls) {
+          seenNames.add(call.name);
+          const signature = canonicalToolCallSignature(call);
+          if (signature === undefined) uncanonicalizedNames.add(call.name);
+          else signatures.add(signature);
+        }
+        const ids = new Set(existingToolCalls.map((call) => call.id));
+        const distinct = recovered.toolCalls.flatMap((call) => {
+          const signature = canonicalToolCallSignature(call);
+          if (signature === undefined) {
+            if (seenNames.has(call.name)) {
+              throw new DomainError(
+                "Provider returned ambiguous mixed tool calls",
+              );
+            }
+            uncanonicalizedNames.add(call.name);
+          } else {
+            if (signatures.has(signature)) return [];
+            if (uncanonicalizedNames.has(call.name)) {
+              throw new DomainError(
+                "Provider returned ambiguous mixed tool calls",
+              );
+            }
+            signatures.add(signature);
+          }
+          seenNames.add(call.name);
+          let id = call.id;
+          let suffix = existingToolCalls.length + 1;
+          while (ids.has(id)) id = `text-tool-${suffix++}`;
+          ids.add(id);
+          return [{ ...call, id }];
+        });
+        toolCalls = [...existingToolCalls, ...distinct];
+      }
+    } else if (result.visibleText !== undefined) {
+      text = result.visibleText;
     }
   }
   // Map wire tool names back to the registry names the runtime dispatches on.
-  if (toolCalls && params.tools) {
+  if (
+    !result.aborted && finishReason !== "error" && toolCalls && params.tools
+  ) {
     const originalByWire = new Map(
       toolWireNames(params.tools).map(({ wire, tool }) => [wire, tool.name]),
     );
@@ -882,12 +1111,100 @@ async function executeOpenAICompatibleTurn(
       name: originalByWire.get(call.name) ?? call.name,
     }));
   }
-  const input = result.usage?.prompt_tokens ??
+  const input = finiteNonnegativeTokenCount(result.usage?.prompt_tokens) ??
     estimateTextTokens(estimateParamsInputText(params));
-  const output = result.usage?.completion_tokens ?? estimateTextTokens(text);
+  const reportedCompletion = finiteNonnegativeTokenCount(
+    result.usage?.completion_tokens,
+  );
+  const reportedReasoning = finiteNonnegativeTokenCount(
+    result.usage?.completion_tokens_details?.reasoning_tokens,
+  );
+  const reasoningCharacters = "reasoningCharacters" in result
+    ? result.reasoningCharacters
+    : 0;
+  const estimatedReasoning = Math.ceil(reasoningCharacters / 4);
+  const usageCoversReasoning = !result.aborted &&
+    (!("usageReasoningCharacters" in result) ||
+      result.usageReasoningCharacters === result.reasoningCharacters);
+  const toolCallCharacters = "toolCallCharacters" in result
+    ? result.toolCallCharacters
+    : 0;
+  const estimatedGeneratedOutput = Math.ceil(
+    (generatedText.length + toolCallCharacters) / 4,
+  );
+  const usageCoversGeneratedOutput = !result.aborted &&
+    (!("usageGeneratedCharacters" in result) ||
+      result.usageGeneratedCharacters ===
+        generatedText.length + toolCallCharacters);
+  const usageCoversCompletionReasoning = !result.aborted &&
+    (!("usageCompletionReasoningCharacters" in result) ||
+      result.usageCompletionReasoningCharacters ===
+        result.reasoningCharacters);
+  const usageCoversCompletionTotal = usageCoversGeneratedOutput &&
+    usageCoversCompletionReasoning;
+  let reasoning: number;
+  let output: number;
+  let billableOutput: number;
+  if (reportedCompletion === undefined) {
+    reasoning = reportedReasoning === undefined
+      ? estimatedReasoning
+      : usageCoversReasoning
+      ? reportedReasoning
+      : reportedReasoning + Math.ceil(
+        Math.max(
+          0,
+          reasoningCharacters - (result.usageReasoningCharacters ?? 0),
+        ) / 4,
+      );
+    output = estimatedGeneratedOutput;
+    billableOutput = output + reasoning;
+  } else if (usageCoversCompletionTotal) {
+    const split = reportedReasoning === undefined
+      ? estimatedReasoning
+      : usageCoversReasoning
+      ? reportedReasoning
+      : reportedReasoning + Math.ceil(
+        Math.max(
+          0,
+          reasoningCharacters - (result.usageReasoningCharacters ?? 0),
+        ) / 4,
+      );
+    reasoning = Math.min(split, reportedCompletion);
+    output = reportedCompletion - reasoning;
+    billableOutput = reportedCompletion;
+  } else {
+    const generatedAfterUsage = Math.ceil(
+      Math.max(
+        0,
+        generatedText.length + toolCallCharacters -
+          (result.usageGeneratedCharacters ?? 0),
+      ) / 4,
+    );
+    const reasoningAfterCompletionUsage = Math.ceil(
+      Math.max(
+        0,
+        reasoningCharacters -
+          (result.usageCompletionReasoningCharacters ?? 0),
+      ) / 4,
+    );
+    reasoning = reportedReasoning === undefined
+      ? estimatedReasoning
+      : reportedReasoning + Math.ceil(
+        Math.max(
+          0,
+          reasoningCharacters - (result.usageReasoningCharacters ?? 0),
+        ) / 4,
+      );
+    billableOutput = Math.max(
+      reportedCompletion + generatedAfterUsage +
+        reasoningAfterCompletionUsage,
+      reasoning + estimatedGeneratedOutput,
+    );
+    output = billableOutput - reasoning;
+  }
   const timings = withTimePerOutputToken(result.timings, output);
   const costTotal = (input / 1_000_000) * model.costInput +
-    (output / 1_000_000) * model.costOutput;
+    (billableOutput / 1_000_000) * model.costOutput;
 
   return {
     text,
@@ -899,9 +1216,15 @@ async function executeOpenAICompatibleTurn(
       cost: { total: costTotal },
       cacheRead: 0,
       cacheWrite: 0,
+      reasoning,
     },
-    stopReason: normaliseFinishReason(finishReason),
-    toolCalls,
+    stopReason: stopReasonWithAbort(
+      result.aborted,
+      normaliseFinishReason(finishReason),
+    ),
+    toolCalls: result.aborted || finishReason === "error"
+      ? undefined
+      : toolCalls,
     timings,
   };
 }
@@ -1137,6 +1460,7 @@ export function parseAnthropicStreamLine(
 
   const json = JSON.parse(trimmed.slice("data:".length).trim()) as {
     type?: string;
+    error?: unknown;
     message?: {
       usage?: {
         input_tokens?: number;
@@ -1147,6 +1471,9 @@ export function parseAnthropicStreamLine(
     delta?: { type?: string; text?: string; stop_reason?: string };
     usage?: { output_tokens?: number };
   };
+  if (json.type === "error") {
+    throw new DomainError("Anthropic stream returned an error envelope");
+  }
 
   switch (json.type) {
     case "message_start":
@@ -1198,6 +1525,9 @@ async function runAnthropicMessagesTurn(
       ANTHROPIC_API_KEY_ENV_VAR,
     );
   }
+  if (params.abortSignal?.aborted) {
+    return abortedWorkbenchTurnResult(params, model, selection, 0, false);
+  }
 
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? performance.now.bind(performance);
@@ -1208,6 +1538,7 @@ async function runAnthropicMessagesTurn(
     `${model.baseUrl.replace(/\/$/, "")}/v1/messages`,
     {
       method: "POST",
+      signal: params.abortSignal,
       headers: {
         "content-type": "application/json",
         "x-api-key": apiKey,
@@ -1228,6 +1559,13 @@ async function runAnthropicMessagesTurn(
       ),
     },
     `anthropic/${model.slug}`,
+  ).catch((error) =>
+    annotateProviderAbort(
+      error,
+      params.abortSignal,
+      now,
+      requestStarted,
+    )
   );
   const headersReceived = now();
 
@@ -1246,6 +1584,7 @@ async function runAnthropicMessagesTurn(
       now,
       requestStarted,
       headersReceived,
+      params.abortSignal,
     )
     : await readAnthropicMessagesJson(
       response,
@@ -1256,7 +1595,7 @@ async function runAnthropicMessagesTurn(
 
   // Map wire tool names back to the registry names the runtime dispatches on.
   let toolCalls = result.toolCalls;
-  if (toolCalls && params.tools) {
+  if (!result.aborted && toolCalls && params.tools) {
     const originalByWire = new Map(
       toolWireNames(params.tools).map((
         { wire, tool },
@@ -1293,8 +1632,11 @@ async function runAnthropicMessagesTurn(
       cacheRead,
       cacheWrite,
     },
-    stopReason: normaliseAnthropicStopReason(result.stopReason),
-    toolCalls,
+    stopReason: stopReasonWithAbort(
+      result.aborted,
+      normaliseAnthropicStopReason(result.stopReason),
+    ),
+    toolCalls: result.aborted ? undefined : toolCalls,
     timings,
   };
 }
@@ -1306,6 +1648,7 @@ async function readAnthropicMessagesJson(
   headersReceived: number,
 ): Promise<{
   text: string;
+  aborted?: false;
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -1366,8 +1709,10 @@ async function readAnthropicMessagesStream(
   now: () => number,
   requestStarted: number,
   headersReceived: number,
+  abortSignal?: AbortSignal,
 ): Promise<{
   text: string;
+  aborted: boolean;
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -1390,6 +1735,7 @@ async function readAnthropicMessagesStream(
   let cacheReadTokens: number | undefined;
   let cacheWriteTokens: number | undefined;
   let firstTokenAt: number | undefined;
+  let aborted = false;
 
   const applyEvent = (event: AnthropicStreamEvent) => {
     if (event.textDelta) {
@@ -1398,37 +1744,70 @@ async function readAnthropicMessagesStream(
       onTextDelta(event.textDelta);
     }
     if (event.stopReason) stopReason = event.stopReason;
-    if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
-    if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
+    if (event.inputTokens !== undefined) {
+      inputTokens = Math.max(inputTokens ?? 0, event.inputTokens);
+    }
+    if (event.outputTokens !== undefined) {
+      outputTokens = Math.max(outputTokens ?? 0, event.outputTokens);
+    }
     if (event.cacheReadTokens !== undefined) {
-      cacheReadTokens = event.cacheReadTokens;
+      cacheReadTokens = Math.max(
+        cacheReadTokens ?? 0,
+        event.cacheReadTokens,
+      );
     }
     if (event.cacheWriteTokens !== undefined) {
-      cacheWriteTokens = event.cacheWriteTokens;
+      cacheWriteTokens = Math.max(
+        cacheWriteTokens ?? 0,
+        event.cacheWriteTokens,
+      );
+    }
+  };
+
+  const parseAndApplyStreamLine = (line: string) => {
+    try {
+      const event = parseAnthropicStreamLine(line);
+      if (event && !event.done) applyEvent(event);
+    } catch (error) {
+      void reader.cancel().catch(() => {});
+      throw error;
     }
   };
 
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (!isAbortFromSignal(error, abortSignal)) throw error;
+      aborted = true;
+      break;
+    }
+    const { value, done } = chunk;
+    if (done) {
+      break;
+    }
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      const event = parseAnthropicStreamLine(line);
-      if (event && !event.done) applyEvent(event);
+      parseAndApplyStreamLine(line);
     }
   }
-
-  buffer += decoder.decode();
+  if (!aborted) buffer += decoder.decode();
   if (buffer.trim().length > 0) {
-    const event = parseAnthropicStreamLine(buffer);
-    if (event && !event.done) applyEvent(event);
+    try {
+      parseAndApplyStreamLine(buffer);
+    } catch (error) {
+      if (!aborted || !isIncompleteSseDataLine(buffer, error)) throw error;
+    }
   }
+  aborted ||= abortSignal?.aborted === true;
 
   const completed = now();
   return {
     text,
+    aborted,
     stopReason,
     inputTokens,
     outputTokens,
@@ -1456,6 +1835,7 @@ async function readAnthropicMessagesStream(
 export interface GeminiStreamEvent {
   done: boolean;
   textDelta?: string;
+  reasoningCharacters?: number;
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -1494,6 +1874,7 @@ export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
   if (trimmed.length === 0 || !trimmed.startsWith("data:")) return null;
 
   const json = JSON.parse(trimmed.slice("data:".length).trim()) as {
+    error?: unknown;
     candidates?: Array<{
       content?: { parts?: Array<{ text?: string; thought?: boolean }> };
       finishReason?: string;
@@ -1504,15 +1885,23 @@ export function parseGeminiStreamLine(line: string): GeminiStreamEvent | null {
       thoughtsTokenCount?: number;
     };
   };
+  if (Object.hasOwn(json, "error")) {
+    throw new DomainError("Gemini stream returned an error envelope");
+  }
   const candidate = json.candidates?.[0];
+  const parts = candidate?.content?.parts ?? [];
   // Exclude thinking parts: reasoning content is not answer text.
-  const textDelta = (candidate?.content?.parts ?? [])
+  const textDelta = parts
     .filter((part) => !part.thought)
     .map((part) => part.text ?? "")
     .join("") || undefined;
+  const reasoningCharacters = parts
+    .filter((part) => part.thought)
+    .reduce((total, part) => total + (part.text?.length ?? 0), 0);
   return {
     done: false,
     textDelta,
+    ...(reasoningCharacters > 0 ? { reasoningCharacters } : {}),
     stopReason: candidate?.finishReason,
     inputTokens: json.usageMetadata?.promptTokenCount,
     outputTokens: json.usageMetadata?.candidatesTokenCount,
@@ -1547,6 +1936,9 @@ async function runGoogleGenerativeAITurn(
       GEMINI_API_KEY_ENV_VAR,
     );
   }
+  if (params.abortSignal?.aborted) {
+    return abortedWorkbenchTurnResult(params, model, selection, 0, false);
+  }
 
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? performance.now.bind(performance);
@@ -1558,6 +1950,7 @@ async function runGoogleGenerativeAITurn(
   const requestStarted = now();
   const response = await fetchWithHeaderTimeout(fetchFn, endpoint, {
     method: "POST",
+    signal: params.abortSignal,
     headers: {
       "content-type": "application/json",
       "x-goog-api-key": apiKey,
@@ -1567,7 +1960,14 @@ async function runGoogleGenerativeAITurn(
         jsonObject: params.jsonObject,
       }),
     ),
-  }, `gemini/${model.slug}`);
+  }, `gemini/${model.slug}`).catch((error) =>
+    annotateProviderAbort(
+      error,
+      params.abortSignal,
+      now,
+      requestStarted,
+    )
+  );
   const headersReceived = now();
 
   if (!response.ok) {
@@ -1585,15 +1985,50 @@ async function runGoogleGenerativeAITurn(
       now,
       requestStarted,
       headersReceived,
+      params.abortSignal,
     )
     : await readGeminiJson(response, now, requestStarted, headersReceived);
 
-  const input = result.inputTokens ??
+  const input = finiteNonnegativeTokenCount(result.inputTokens) ??
     estimateTextTokens(estimateParamsInputText(params));
-  const output = result.outputTokens ?? estimateTextTokens(result.text);
+  const estimatedOutput = estimateTextTokens(result.text);
+  const reportedOutput = finiteNonnegativeTokenCount(result.outputTokens);
+  const usageCoversOutput = !result.aborted &&
+    (!("usageTextCharacters" in result) ||
+      result.usageTextCharacters === result.text.length);
+  const output = reportedOutput === undefined
+    ? estimatedOutput
+    : usageCoversOutput
+    ? reportedOutput
+    : reportedOutput + Math.ceil(
+      Math.max(0, result.text.length - (result.usageTextCharacters ?? 0)) / 4,
+    );
+  const reportedReasoning = finiteNonnegativeTokenCount(
+    result.reasoningTokens,
+  );
+  const reasoningCharacters = "reasoningCharacters" in result
+    ? result.reasoningCharacters
+    : 0;
+  const usageReasoningCharacters = "usageReasoningCharacters" in result
+    ? result.usageReasoningCharacters
+    : undefined;
+  const usageCoversReasoning = !result.aborted &&
+    (usageReasoningCharacters === undefined ||
+      usageReasoningCharacters === reasoningCharacters);
+  const reasoning = reportedReasoning === undefined
+    ? Math.ceil(reasoningCharacters / 4)
+    : usageCoversReasoning
+    ? reportedReasoning
+    : reportedReasoning + Math.ceil(
+      Math.max(
+        0,
+        reasoningCharacters - (usageReasoningCharacters ?? 0),
+      ) / 4,
+    );
+  const billableOutput = output + reasoning;
   const timings = withTimePerOutputToken(result.timings, output);
   const costTotal = (input / 1_000_000) * model.costInput +
-    (output / 1_000_000) * model.costOutput;
+    (billableOutput / 1_000_000) * model.costOutput;
 
   return {
     text: result.text,
@@ -1605,11 +2040,12 @@ async function runGoogleGenerativeAITurn(
       cost: { total: costTotal },
       cacheRead: 0,
       cacheWrite: 0,
-      // Thinking tokens are reported separately and drawn from the output
-      // budget; carried for length-stop classification, not for cost.
-      reasoning: result.reasoningTokens ?? 0,
+      reasoning,
     },
-    stopReason: normaliseGeminiStopReason(result.stopReason),
+    stopReason: stopReasonWithAbort(
+      result.aborted,
+      normaliseGeminiStopReason(result.stopReason),
+    ),
     toolCalls: undefined,
     timings,
   };
@@ -1622,10 +2058,12 @@ async function readGeminiJson(
   headersReceived: number,
 ): Promise<{
   text: string;
+  aborted?: false;
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
   reasoningTokens?: number;
+  usageTextCharacters?: number;
   timings: WorkbenchCallTimings;
 }> {
   const json = await response.json() as {
@@ -1666,12 +2104,17 @@ async function readGeminiStream(
   now: () => number,
   requestStarted: number,
   headersReceived: number,
+  abortSignal?: AbortSignal,
 ): Promise<{
   text: string;
+  aborted: boolean;
   stopReason?: string;
   inputTokens?: number;
   outputTokens?: number;
   reasoningTokens?: number;
+  reasoningCharacters: number;
+  usageReasoningCharacters?: number;
+  usageTextCharacters?: number;
   timings: WorkbenchCallTimings;
 }> {
   if (!response.body) {
@@ -1686,7 +2129,11 @@ async function readGeminiStream(
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
   let reasoningTokens: number | undefined;
+  let reasoningCharacters = 0;
+  let usageReasoningCharacters: number | undefined;
+  let usageTextCharacters: number | undefined;
   let firstTokenAt: number | undefined;
+  let aborted = false;
 
   const applyEvent = (event: GeminiStreamEvent) => {
     if (event.textDelta) {
@@ -1694,39 +2141,92 @@ async function readGeminiStream(
       text += event.textDelta;
       onTextDelta(event.textDelta);
     }
+    reasoningCharacters += event.reasoningCharacters ?? 0;
     if (event.stopReason) stopReason = event.stopReason;
-    if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
-    if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
-    if (event.reasoningTokens !== undefined) {
-      reasoningTokens = event.reasoningTokens;
+    const previousOutput = finiteNonnegativeTokenCount(outputTokens);
+    const incomingOutput = finiteNonnegativeTokenCount(event.outputTokens);
+    const previousReasoning = finiteNonnegativeTokenCount(reasoningTokens);
+    const incomingReasoning = finiteNonnegativeTokenCount(
+      event.reasoningTokens,
+    );
+    if (event.inputTokens !== undefined) {
+      inputTokens = Math.max(inputTokens ?? 0, event.inputTokens);
+    }
+    if (incomingOutput !== undefined) {
+      outputTokens = Math.max(previousOutput ?? 0, incomingOutput);
+    }
+    if (incomingReasoning !== undefined) {
+      reasoningTokens = Math.max(previousReasoning ?? 0, incomingReasoning);
+    }
+    if (
+      incomingReasoning !== undefined &&
+      (previousReasoning === undefined ||
+        incomingReasoning > previousReasoning ||
+        (incomingReasoning === previousReasoning &&
+          event.stopReason !== undefined))
+    ) {
+      usageReasoningCharacters = reasoningCharacters;
+    }
+    if (
+      incomingOutput !== undefined &&
+      (previousOutput === undefined || incomingOutput > previousOutput ||
+        (incomingOutput === previousOutput && event.stopReason !== undefined))
+    ) {
+      usageTextCharacters = text.length;
+    }
+  };
+
+  const parseAndApplyStreamLine = (line: string) => {
+    try {
+      const event = parseGeminiStreamLine(line);
+      if (event && !event.done) applyEvent(event);
+    } catch (error) {
+      void reader.cancel().catch(() => {});
+      throw error;
     }
   };
 
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (!isAbortFromSignal(error, abortSignal)) throw error;
+      aborted = true;
+      break;
+    }
+    const { value, done } = chunk;
+    if (done) {
+      break;
+    }
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      const event = parseGeminiStreamLine(line);
-      if (event && !event.done) applyEvent(event);
+      parseAndApplyStreamLine(line);
     }
   }
-
-  buffer += decoder.decode();
+  if (!aborted) buffer += decoder.decode();
   if (buffer.trim().length > 0) {
-    const event = parseGeminiStreamLine(buffer);
-    if (event && !event.done) applyEvent(event);
+    try {
+      parseAndApplyStreamLine(buffer);
+    } catch (error) {
+      if (!aborted || !isIncompleteSseDataLine(buffer, error)) throw error;
+    }
   }
+  aborted ||= abortSignal?.aborted === true;
 
   const completed = now();
   return {
     text,
+    aborted,
     stopReason,
     inputTokens,
     outputTokens,
     reasoningTokens,
+    reasoningCharacters,
+    usageReasoningCharacters,
+    usageTextCharacters,
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       timeToFirstTokenMs: firstTokenAt === undefined
@@ -1769,9 +2269,17 @@ export function parseOpenAIChatStreamLine(
   if (data === "[DONE]") return { done: true };
 
   const json = JSON.parse(data) as {
+    error?: unknown;
     choices?: Array<{
       delta?: {
         content?: string;
+        reasoning?: string;
+        reasoning_content?: string;
+        reasoning_details?: Array<{
+          type?: string;
+          text?: string;
+          summary?: string;
+        }>;
         tool_calls?: Array<{
           index?: number;
           id?: string;
@@ -1779,16 +2287,42 @@ export function parseOpenAIChatStreamLine(
           function?: { name?: string; arguments?: string };
         }>;
       };
-      message?: { content?: string };
+      message?: {
+        content?: string;
+        reasoning?: string;
+        reasoning_content?: string;
+        reasoning_details?: Array<{
+          type?: string;
+          text?: string;
+          summary?: string;
+        }>;
+      };
       finish_reason?: string;
     }>;
-    usage?: {
-      prompt_tokens?: number;
-      completion_tokens?: number;
-    };
+    usage?: OpenAIChatUsage;
   };
+  if (Object.hasOwn(json, "error")) {
+    throw new DomainError("Provider stream returned an error envelope");
+  }
   const choice = json.choices?.[0];
+  const reasoningDetails = choice?.delta?.reasoning_details ??
+    choice?.message?.reasoning_details;
+  const structuredReasoning = reasoningDetails
+    ?.map((detail) =>
+      detail.type === "reasoning.text"
+        ? detail.text ?? ""
+        : detail.type === "reasoning.summary"
+        ? detail.summary ?? ""
+        : ""
+    )
+    .join("");
+  const legacyReasoning = choice?.delta?.reasoning ??
+    choice?.delta?.reasoning_content ?? choice?.message?.reasoning ??
+    choice?.message?.reasoning_content;
   const rawToolCalls = choice?.delta?.tool_calls;
+  if (rawToolCalls && rawToolCalls.length > MAX_STRUCTURED_TOOL_CALLS) {
+    throw new DomainError("Provider returned too many structured tool calls");
+  }
   const toolCallDeltas = rawToolCalls && rawToolCalls.length > 0
     ? rawToolCalls.map((tc, i) => ({
       index: tc.index ?? i,
@@ -1800,10 +2334,51 @@ export function parseOpenAIChatStreamLine(
   return {
     done: false,
     textDelta: choice?.delta?.content ?? choice?.message?.content ?? undefined,
+    reasoningDelta: structuredReasoning || legacyReasoning || undefined,
     toolCallDeltas,
     finishReason: choice?.finish_reason ?? undefined,
     usage: json.usage,
   };
+}
+
+const MAX_OPENAI_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_OPENAI_RESPONSE_CHUNKS = 8_192;
+const MAX_OPENAI_RESPONSE_READS = 16_384;
+const MAX_STRUCTURED_TOOL_CALLS = 128;
+const MAX_STRUCTURED_TOOL_NAME_CHARACTERS = 64 * 1024;
+
+async function readBoundedOpenAIText(response: Response): Promise<string> {
+  if (!response.body) {
+    throw new DomainError("Provider response did not include a body");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let receivedBytes = 0;
+  let receivedChunks = 0;
+  let receivedReads = 0;
+  const text: string[] = [];
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    receivedReads += 1;
+    receivedBytes += value.byteLength;
+    if (value.byteLength > 0) receivedChunks += 1;
+    if (
+      receivedBytes > MAX_OPENAI_RESPONSE_BYTES ||
+      receivedChunks > MAX_OPENAI_RESPONSE_CHUNKS ||
+      receivedReads > MAX_OPENAI_RESPONSE_READS
+    ) {
+      void reader.cancel().catch(() => {});
+      throw new DomainError("Provider response exceeded the adapter limit");
+    }
+    text.push(decoder.decode(value, { stream: true }));
+  }
+  text.push(decoder.decode());
+  return text.join("");
+}
+
+async function readBoundedOpenAIJson<T>(response: Response): Promise<T> {
+  return JSON.parse(await readBoundedOpenAIText(response)) as T;
 }
 
 async function readOpenAIChatJson(
@@ -1813,12 +2388,16 @@ async function readOpenAIChatJson(
   headersReceived: number,
 ): Promise<{
   text: string;
+  visibleText?: string;
+  aborted?: false;
   finishReason?: string;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: OpenAIChatUsage;
   toolCalls?: WorkbenchToolCall[];
+  toolCallCharacters: number;
   timings: WorkbenchCallTimings;
 }> {
-  const json = await response.json() as {
+  const json = await readBoundedOpenAIJson<{
+    error?: unknown;
     choices?: Array<{
       message?: {
         content?: string;
@@ -1833,15 +2412,26 @@ async function readOpenAIChatJson(
       };
       finish_reason?: string;
     }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-  };
+    usage?: OpenAIChatUsage;
+  }>(response);
+  if (Object.hasOwn(json, "error")) {
+    throw new DomainError("Provider response returned an error envelope");
+  }
   const completed = now();
   const choice = json.choices?.[0];
+  const rawToolCalls = choice?.message?.tool_calls;
+  const toolCallCharacters = (rawToolCalls ?? []).reduce(
+    (total, call) =>
+      total + (call.function?.name?.length ?? 0) +
+      (call.function?.arguments?.length ?? 0),
+    0,
+  );
   return {
     text: choice?.message?.content ?? "",
     finishReason: choice?.finish_reason,
     usage: json.usage,
-    toolCalls: parseOpenAIToolCalls(choice?.message?.tool_calls),
+    toolCalls: parseOpenAIToolCalls(rawToolCalls),
+    toolCallCharacters,
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       totalMs: Math.round(completed - requestStarted),
@@ -1859,6 +2449,15 @@ function parseOpenAIToolCalls(
     | undefined,
 ): WorkbenchToolCall[] | undefined {
   if (!toolCalls || toolCalls.length === 0) return undefined;
+  if (
+    toolCalls.length > MAX_STRUCTURED_TOOL_CALLS ||
+    toolCalls.reduce(
+        (total, toolCall) => total + (toolCall.function?.name?.length ?? 0),
+        0,
+      ) > MAX_STRUCTURED_TOOL_NAME_CHARACTERS
+  ) {
+    throw new DomainError("Provider returned too many structured tool calls");
+  }
   return toolCalls.map((toolCall, idx) => ({
     id: toolCall.id ?? `tool-call-${idx + 1}`,
     name: toolCall.function?.name ?? "",
@@ -1870,6 +2469,9 @@ function parseToolArguments(
   value: string | undefined,
 ): Record<string, unknown> {
   if (!value) return {};
+  if (!toolArgumentWithinBudget(value)) {
+    throw new DomainError("Provider returned oversized tool arguments");
+  }
   try {
     const parsed = JSON.parse(value);
     if (
@@ -1883,53 +2485,525 @@ function parseToolArguments(
   return {};
 }
 
-const TEXT_FUNCTION_RE = /<function=([^>\s]+)\s*>([\s\S]*?)<\/function>/g;
-const TEXT_PARAM_RE = /<parameter=([^>\s]+)\s*>([\s\S]*?)<\/parameter>/g;
-const TEXT_TOOLCALL_TAG_RE = /<\/?tool_call>/g;
+const MAX_CANONICAL_JSON_DEPTH = 64;
+const MAX_CANONICAL_JSON_ENTRIES = 1_024;
+const MAX_CANONICAL_JSON_CHARACTERS = 64 * 1_024;
 
-function coerceParamValue(raw: string): unknown {
-  if (raw === "") return "";
+interface CanonicalJsonBudget {
+  remainingEntries: number;
+  remainingCharacters: number;
+}
+
+function canonicalToolCallSignature(
+  call: WorkbenchToolCall,
+): string | undefined {
+  const argumentsJson = canonicalJson(call.arguments);
+  return argumentsJson === undefined
+    ? undefined
+    : `${call.name}\0${argumentsJson}`;
+}
+
+function canonicalJson(
+  value: unknown,
+  depth = 0,
+  budget: CanonicalJsonBudget = {
+    remainingEntries: MAX_CANONICAL_JSON_ENTRIES,
+    remainingCharacters: MAX_CANONICAL_JSON_CHARACTERS,
+  },
+): string | undefined {
+  if (
+    depth > MAX_CANONICAL_JSON_DEPTH || budget.remainingEntries-- <= 0
+  ) return undefined;
+  if (Array.isArray(value)) {
+    if (value.length > budget.remainingEntries) return undefined;
+    const punctuation = 2 + Math.max(0, value.length - 1);
+    if (punctuation > budget.remainingCharacters) return undefined;
+    budget.remainingCharacters -= punctuation;
+    const items: string[] = [];
+    for (const item of value) {
+      const canonical = canonicalJson(item, depth + 1, budget);
+      if (canonical === undefined) return undefined;
+      items.push(canonical);
+    }
+    return `[${items.join(",")}]`;
+  }
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    const keys: string[] = [];
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue;
+      if (keys.length >= budget.remainingEntries) return undefined;
+      keys.push(key);
+    }
+    keys.sort();
+    const punctuation = 2 + Math.max(0, keys.length - 1);
+    if (punctuation > budget.remainingCharacters) return undefined;
+    budget.remainingCharacters -= punctuation;
+    const entries: string[] = [];
+    for (const key of keys) {
+      if (key.length > budget.remainingCharacters) return undefined;
+      const encodedKey = JSON.stringify(key);
+      if (encodedKey.length + 1 > budget.remainingCharacters) return undefined;
+      budget.remainingCharacters -= encodedKey.length + 1;
+      const canonical = canonicalJson(record[key], depth + 1, budget);
+      if (canonical === undefined) return undefined;
+      entries.push(`${encodedKey}:${canonical}`);
+    }
+    return `{${entries.join(",")}}`;
+  }
+  if (typeof value === "string" && value.length > budget.remainingCharacters) {
+    return undefined;
+  }
+  const serialized = JSON.stringify(value) ?? "undefined";
+  if (serialized.length > budget.remainingCharacters) return undefined;
+  budget.remainingCharacters -= serialized.length;
+  return serialized;
+}
+
+const TEXT_FUNCTION_RE = /<function=([^>\s]+)\s{0,32}>([\s\S]*?)<\/function>/g;
+const TEXT_PARAM_RE = /<parameter=([^>\s]+)\s*>([\s\S]*?)<\/parameter>/g;
+const MAX_TEXT_TOOL_WRAPPER_WHITESPACE = 32;
+const MAX_TEXT_TOOL_MARKUP_CANDIDATES = 64;
+const TEXT_FUNCTION_MARKER = "<function=";
+const TEXT_PARAMETER_MARKER = "<parameter=";
+
+function exceedsTextToolMarkupCandidateLimit(
+  text: string,
+  marker: string,
+): boolean {
+  let count = 0;
+  let searchFrom = 0;
+  for (;;) {
+    const found = text.indexOf(marker, searchFrom);
+    if (found < 0) return false;
+    count++;
+    if (count > MAX_TEXT_TOOL_MARKUP_CANDIDATES) return true;
+    searchFrom = found + marker.length;
+  }
+}
+
+function exceedsTextToolMarkupCandidateLimits(text: string): boolean {
+  return exceedsTextToolMarkupCandidateLimit(text, TEXT_FUNCTION_MARKER) ||
+    exceedsTextToolMarkupCandidateLimit(text, TEXT_PARAMETER_MARKER);
+}
+
+function countNewTextToolMarkupCandidates(
+  tail: string,
+  delta: string,
+  marker: string,
+  remaining: number,
+): { count: number; tail: string } {
+  const combined = tail + delta;
+  let count = 0;
+  let searchFrom = 0;
+  for (;;) {
+    const found = combined.indexOf(marker, searchFrom);
+    if (found < 0) break;
+    count++;
+    if (count > remaining) break;
+    searchFrom = found + marker.length;
+  }
+  return {
+    count,
+    tail: combined.slice(-(marker.length - 1)),
+  };
+}
+
+type CoercedParamValue =
+  | { ok: true; value: unknown }
+  | { ok: false };
+
+function toolArgumentWithinBudget(raw: string): boolean {
+  if (raw.length > MAX_CANONICAL_JSON_CHARACTERS) return false;
+  let depth = 0;
+  let entries = 1;
+  let inString = false;
+  let escaped = false;
+  for (const character of raw) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+    } else if (character === "{" || character === "[") {
+      depth += 1;
+      entries += 1;
+      if (
+        depth > MAX_CANONICAL_JSON_DEPTH ||
+        entries > MAX_CANONICAL_JSON_ENTRIES
+      ) return false;
+    } else if (character === "}" || character === "]") {
+      depth -= 1;
+    } else if (character === ",") {
+      entries += 1;
+      if (entries > MAX_CANONICAL_JSON_ENTRIES) return false;
+    }
+  }
+  return true;
+}
+
+function coerceParamValue(raw: string): CoercedParamValue {
+  if (!toolArgumentWithinBudget(raw)) return { ok: false };
+  if (raw === "") return { ok: true, value: "" };
   try {
-    return JSON.parse(raw);
+    return { ok: true, value: JSON.parse(raw) };
   } catch {
-    return raw;
+    return { ok: true, value: raw };
   }
 }
 
 /**
  * Recover tool calls that a model emitted as text instead of structured
  * tool_calls. Qwen3-Coder (via mlx_lm) frequently leaks its native XML dialect
- * into the content — `<function=NAME><parameter=KEY>VALUE</parameter>…</function>`,
- * optionally wrapped in `<tool_call>` — which the inference server does not
- * parse. This extracts those calls so the agent loop still fires, and returns
- * the text with the markup stripped. Server-agnostic: only triggers when the
- * structured tool_calls are absent and the markup is present.
+ * into the content — `<tool_call><function=NAME>…</function></tool_call>` —
+ * which the inference server does not parse. Runtime recovery requires the
+ * complete explicit wrapper, so unwrapped, incomplete, and unoffered
+ * function-like prose is not executable.
  */
-export function extractTextToolCalls(
+function extractTextToolCallsInternal(
   text: string,
-): { toolCalls: WorkbenchToolCall[]; cleaned: string } {
+  offeredNames?: ReadonlySet<string>,
+  preserveWhitespace = false,
+): {
+  toolCalls: WorkbenchToolCall[];
+  cleaned: string;
+  unrecoverable: boolean;
+} {
+  if (exceedsTextToolMarkupCandidateLimits(text)) {
+    return { toolCalls: [], cleaned: text, unrecoverable: false };
+  }
   const toolCalls: WorkbenchToolCall[] = [];
+  let unrecoverable = false;
+  const retained: string[] = [];
+  let retainedThrough = 0;
   const fn = new RegExp(TEXT_FUNCTION_RE);
+  const wrapperTag = "<tool_call>";
+  let wrapper = -1;
+  let nextWrapper = text.indexOf(wrapperTag);
   let match: RegExpExecArray | null;
   while ((match = fn.exec(text)) !== null) {
+    while (nextWrapper >= 0 && nextWrapper < match.index) {
+      wrapper = nextWrapper;
+      nextWrapper = text.indexOf(wrapperTag, nextWrapper + wrapperTag.length);
+    }
+    let hasAssociatedWrapper = false;
+    if (wrapper >= retainedThrough) {
+      let contentStart = wrapper + wrapperTag.length;
+      while (
+        contentStart < match.index &&
+        contentStart - (wrapper + wrapperTag.length) <
+          MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+        text[contentStart].trim().length === 0
+      ) {
+        contentStart++;
+      }
+      hasAssociatedWrapper = contentStart === match.index;
+    }
+    let markupEnd = match.index + match[0].length;
+    let closingStart = markupEnd;
+    while (
+      closingStart < text.length &&
+      text[closingStart].trim().length === 0
+    ) {
+      closingStart++;
+    }
+    const hasClosingWrapper = text.startsWith("</tool_call>", closingStart);
+    if (
+      offeredNames !== undefined &&
+      (
+        !offeredNames.has(match[1]) ||
+        !hasAssociatedWrapper ||
+        !hasClosingWrapper
+      )
+    ) {
+      wrapper = -1;
+      continue;
+    }
     const args: Record<string, unknown> = {};
     const params = new RegExp(TEXT_PARAM_RE);
     let p: RegExpExecArray | null;
+    let recoverable = true;
     while ((p = params.exec(match[2])) !== null) {
-      args[p[1]] = coerceParamValue(p[2].trim());
+      const value = coerceParamValue(p[2].trim());
+      if (!value.ok) {
+        recoverable = false;
+        break;
+      }
+      args[p[1]] = value.value;
+    }
+    if (!recoverable) {
+      unrecoverable = true;
+      wrapper = -1;
+      continue;
     }
     toolCalls.push({
       id: `text-tool-${toolCalls.length + 1}`,
       name: match[1],
       arguments: args,
     });
+    const markupStart = hasAssociatedWrapper ? wrapper : match.index;
+    if (hasClosingWrapper) {
+      markupEnd = closingStart + "</tool_call>".length;
+    }
+    retained.push(text.slice(retainedThrough, markupStart));
+    retainedThrough = markupEnd;
+    wrapper = -1;
   }
-  if (toolCalls.length === 0) return { toolCalls, cleaned: text };
-  const cleaned = text
-    .replace(new RegExp(TEXT_FUNCTION_RE), "")
-    .replace(TEXT_TOOLCALL_TAG_RE, "")
-    .trim();
+  if (unrecoverable || toolCalls.length === 0) {
+    return { toolCalls: [], cleaned: text, unrecoverable };
+  }
+  retained.push(text.slice(retainedThrough));
+  const retainedText = retained.join("");
+  const cleaned = preserveWhitespace ? retainedText : retainedText.trim();
+  return { toolCalls, cleaned, unrecoverable: false };
+}
+
+export function extractTextToolCalls(
+  text: string,
+  offeredNames?: ReadonlySet<string>,
+): { toolCalls: WorkbenchToolCall[]; cleaned: string } {
+  const { toolCalls, cleaned } = extractTextToolCallsInternal(
+    text,
+    offeredNames,
+  );
   return { toolCalls, cleaned };
+}
+
+function textToolMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  if (!tools || tools.length === 0) return -1;
+  const offered = toolWireNames(tools).map(({ wire }) => wire);
+  const maxUndecidedPrefix = "<function=".length +
+    Math.max(...offered.map((name) => name.length)) +
+    (2 * MAX_TEXT_TOOL_WRAPPER_WHITESPACE);
+  let wrapper = text.indexOf("<tool_call>");
+  while (wrapper >= 0) {
+    const rawAfterWrapper = wrapper + "<tool_call>".length;
+    let afterWrapper = rawAfterWrapper;
+    while (
+      afterWrapper < text.length &&
+      afterWrapper - rawAfterWrapper < MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+      text[afterWrapper].trim().length === 0
+    ) {
+      afterWrapper++;
+    }
+    const wrapperGapIsBounded = afterWrapper - rawAfterWrapper <=
+        MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+      (
+        afterWrapper === text.length ||
+        text[afterWrapper].trim().length > 0
+      );
+    if (
+      wrapperGapIsBounded &&
+      text.length - rawAfterWrapper <= maxUndecidedPrefix
+    ) {
+      if (afterWrapper === text.length) return wrapper;
+      const undecided = text.slice(afterWrapper);
+      if ("<function=".startsWith(undecided)) return wrapper;
+      if (text.startsWith("<function=", afterWrapper)) {
+        const functionStart = afterWrapper + "<function=".length;
+        let functionEnd = functionStart;
+        while (
+          functionEnd < text.length &&
+          text[functionEnd] !== ">" &&
+          text[functionEnd].trim().length > 0
+        ) {
+          functionEnd++;
+        }
+        const fragment = text.slice(functionStart, functionEnd);
+        if (fragment.length === 0) return wrapper;
+        if (
+          functionEnd === text.length &&
+          offered.some((name) => name.startsWith(fragment))
+        ) {
+          return wrapper;
+        }
+        if (
+          text[functionEnd] === ">" &&
+          offered.includes(fragment)
+        ) {
+          return wrapper;
+        }
+        let openingEnd = functionEnd;
+        while (
+          openingEnd < text.length &&
+          openingEnd - functionEnd < MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+          text[openingEnd].trim().length === 0
+        ) {
+          openingEnd++;
+        }
+        if (
+          offered.includes(fragment) &&
+          openingEnd - functionEnd <= MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+          (
+            openingEnd === text.length ||
+            text[openingEnd] === ">"
+          )
+        ) {
+          return wrapper;
+        }
+      }
+    }
+    wrapper = text.indexOf("<tool_call>", wrapper + 1);
+  }
+  const partial = text.lastIndexOf("<tool_call");
+  return partial >= 0 &&
+      "<tool_call>".startsWith(text.slice(partial))
+    ? partial
+    : -1;
+}
+
+function possibleTextToolMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  return textToolMarkupStart(text, tools);
+}
+
+function confirmedTextToolMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  if (!tools || tools.length === 0) return -1;
+  const offered = new Set(toolWireNames(tools).map(({ wire }) => wire));
+  const maxOfferedNameLength = Math.max(
+    ...[...offered].map((name) => name.length),
+  );
+  let wrapper = text.indexOf("<tool_call>");
+  while (wrapper >= 0) {
+    const rawOpeningStart = wrapper + "<tool_call>".length;
+    let openingStart = rawOpeningStart;
+    while (
+      openingStart < text.length &&
+      openingStart - rawOpeningStart < MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+      text[openingStart].trim().length === 0
+    ) {
+      openingStart++;
+    }
+    if (
+      openingStart - rawOpeningStart <= MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+      text.startsWith("<function=", openingStart)
+    ) {
+      const nameStart = openingStart + "<function=".length;
+      let nameEnd = nameStart;
+      while (
+        nameEnd < text.length &&
+        nameEnd - nameStart <= maxOfferedNameLength &&
+        text[nameEnd] !== ">" &&
+        text[nameEnd].trim().length > 0
+      ) {
+        nameEnd++;
+      }
+      let openingEnd = nameEnd;
+      while (
+        openingEnd < text.length &&
+        openingEnd - nameEnd < MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+        text[openingEnd].trim().length === 0
+      ) {
+        openingEnd++;
+      }
+      if (
+        nameEnd - nameStart <= maxOfferedNameLength &&
+        text[openingEnd] === ">" &&
+        offered.has(text.slice(nameStart, nameEnd))
+      ) {
+        return wrapper;
+      }
+    }
+    wrapper = text.indexOf("<tool_call>", wrapper + 1);
+  }
+  return -1;
+}
+
+function recognizedIncompleteTextToolMarkupStart(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): number {
+  if (!tools || tools.length === 0) return -1;
+  const offered = toolWireNames(tools).map(({ wire }) => wire);
+  const maxOfferedNameLength = Math.max(...offered.map((name) => name.length));
+  let wrapper = text.indexOf("<tool_call>");
+  while (wrapper >= 0) {
+    const rawOpeningStart = wrapper + "<tool_call>".length;
+    let openingStart = rawOpeningStart;
+    while (
+      openingStart < text.length &&
+      openingStart - rawOpeningStart < MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+      text[openingStart].trim().length === 0
+    ) {
+      openingStart++;
+    }
+    if (
+      openingStart - rawOpeningStart <= MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+      text.startsWith("<function=", openingStart)
+    ) {
+      const nameStart = openingStart + "<function=".length;
+      let nameEnd = nameStart;
+      while (
+        nameEnd < text.length &&
+        nameEnd - nameStart <= maxOfferedNameLength &&
+        text[nameEnd] !== ">" &&
+        text[nameEnd].trim().length > 0
+      ) {
+        nameEnd++;
+      }
+      const fragment = text.slice(nameStart, nameEnd);
+      let openingEnd = nameEnd;
+      while (
+        openingEnd < text.length &&
+        openingEnd - nameEnd < MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+        text[openingEnd].trim().length === 0
+      ) {
+        openingEnd++;
+      }
+      const openingCanStillFinish = nameEnd === text.length ||
+        text[nameEnd] === ">" ||
+        (
+          text[nameEnd]?.trim().length === 0 &&
+          (openingEnd === text.length || text[openingEnd] === ">")
+        );
+      const offeredNameMatches = nameEnd === text.length
+        ? offered.some((name) => name.startsWith(fragment))
+        : offered.includes(fragment);
+      if (
+        fragment.length > 0 &&
+        openingCanStillFinish &&
+        offeredNameMatches
+      ) {
+        return wrapper;
+      }
+    }
+    wrapper = text.indexOf("<tool_call>", wrapper + 1);
+  }
+  return -1;
+}
+
+function stripIncompleteTextToolCallSuffix(
+  text: string,
+  tools: WorkbenchToolDefinition[] | undefined,
+): string {
+  if (!tools || tools.length === 0) return text;
+  if (exceedsTextToolMarkupCandidateLimits(text)) return text;
+  const offered = new Set(toolWireNames(tools).map(({ wire }) => wire));
+  const extraction = extractTextToolCallsInternal(
+    text,
+    offered,
+    true,
+  );
+  if (extraction.unrecoverable) return text;
+  const withoutCompleteCalls = extraction.cleaned;
+  const confirmed = confirmedTextToolMarkupStart(withoutCompleteCalls, tools);
+  const incomplete = confirmed >= 0
+    ? confirmed
+    : recognizedIncompleteTextToolMarkupStart(withoutCompleteCalls, tools);
+  return incomplete < 0
+    ? withoutCompleteCalls
+    : withoutCompleteCalls.slice(0, incomplete);
 }
 
 async function readOpenAIChatStream(
@@ -1938,10 +3012,19 @@ async function readOpenAIChatStream(
   now: () => number,
   requestStarted: number,
   headersReceived: number,
+  abortSignal?: AbortSignal,
+  tools?: WorkbenchToolDefinition[],
 ): Promise<{
   text: string;
+  visibleText: string;
+  reasoningCharacters: number;
+  toolCallCharacters: number;
+  usageGeneratedCharacters?: number;
+  usageReasoningCharacters?: number;
+  usageCompletionReasoningCharacters?: number;
+  aborted: boolean;
   finishReason?: string;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: OpenAIChatUsage;
   // The OpenAI-compatible stream carries tool calls as indexed deltas, which
   // this reader accumulates — so a streamed turn can both stream text and
   // request tools (unlike the Anthropic/Google streaming readers).
@@ -1954,15 +3037,95 @@ async function readOpenAIChatStream(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  let lineFragments: string[] = [];
   let text = "";
+  let reasoningCharacters = 0;
+  let toolCallCharacters = 0;
   let finishReason: string | undefined;
-  let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  let usage: OpenAIChatUsage | undefined;
+  let usageGeneratedCharacters: number | undefined;
+  let usageReasoningCharacters: number | undefined;
+  let usageCompletionReasoningCharacters: number | undefined;
   let firstTokenAt: number | undefined;
-  // Once a model leaks tool-call markup into the text (Qwen3-Coder via mlx_lm),
-  // stop forwarding deltas to the user — the markup is recovered into structured
-  // tool calls by extractTextToolCalls, so showing the raw XML would be noise.
+  // Withhold a recognized offered-tool wrapper until it closes. Recoverable
+  // markup stays hidden; trailing prose resumes immediately after the close.
   let suppressing = false;
+  let sawTextToolMarkup = false;
+  let textToolRecoveryDisabled = !tools || tools.length === 0;
+  let functionCandidates = 0;
+  let parameterCandidates = 0;
+  let functionCandidateTail = "";
+  let parameterCandidateTail = "";
+  let forwardedLength = 0;
+  let forwardedText = "";
+  let closingSearchFrom = 0;
+  let receivedBytes = 0;
+  let receivedChunks = 0;
+  let receivedReads = 0;
+  let structuredToolNameCharacters = 0;
+  let aborted = false;
+
+  const offeredNames = tools
+    ? new Set(toolWireNames(tools).map(({ wire }) => wire))
+    : undefined;
+  const emitTextDelta = (delta: string) => {
+    if (delta.length === 0) return;
+    forwardedText += delta;
+    onTextDelta(delta);
+  };
+  const forwardAvailableText = () => {
+    while (forwardedLength < text.length) {
+      if (textToolRecoveryDisabled) {
+        emitTextDelta(text.slice(forwardedLength));
+        forwardedLength = text.length;
+        return;
+      }
+      if (suppressing) {
+        const closing = text.indexOf("</tool_call>", closingSearchFrom);
+        if (closing < 0) {
+          closingSearchFrom = Math.max(
+            forwardedLength,
+            text.length - "</tool_call>".length + 1,
+          );
+          return;
+        }
+        const end = closing + "</tool_call>".length;
+        const candidate = text.slice(forwardedLength, end);
+        const extraction = extractTextToolCallsInternal(
+          candidate,
+          offeredNames,
+          true,
+        );
+        if (extraction.unrecoverable || extraction.toolCalls.length === 0) {
+          emitTextDelta(candidate);
+        } else {
+          sawTextToolMarkup = true;
+        }
+        forwardedLength = end;
+        suppressing = false;
+        closingSearchFrom = end;
+        continue;
+      }
+      const pending = text.slice(forwardedLength);
+      const confirmed = confirmedTextToolMarkupStart(pending, tools);
+      if (confirmed >= 0) {
+        if (confirmed > 0) {
+          emitTextDelta(pending.slice(0, confirmed));
+          forwardedLength += confirmed;
+        }
+        suppressing = true;
+        closingSearchFrom = forwardedLength;
+        continue;
+      }
+      const possible = possibleTextToolMarkupStart(pending, tools);
+      const safeEnd = possible >= 0 ? forwardedLength + possible : text.length;
+      if (safeEnd > forwardedLength) {
+        emitTextDelta(text.slice(forwardedLength, safeEnd));
+        forwardedLength = safeEnd;
+      }
+      return;
+    }
+  };
 
   // Tool calls arrive as deltas keyed by index; id/name land in the first
   // fragment for that index and arguments stream as string fragments (MLX sends
@@ -1973,62 +3136,228 @@ async function readOpenAIChatStream(
   >();
 
   const applyEvent = (event: OpenAIChatStreamEvent) => {
+    if (event.reasoningDelta) {
+      reasoningCharacters += event.reasoningDelta.length;
+    }
     if (event.textDelta) {
       firstTokenAt ??= now();
-      const prevLen = text.length;
-      text += event.textDelta;
-      if (!suppressing) {
-        const markup = text.search(/<tool_call>|<function=/);
-        if (markup === -1) {
-          onTextDelta(event.textDelta);
-        } else {
-          // Forward only the part of this delta before the markup begins.
-          const forwardLen = markup - prevLen;
-          if (forwardLen > 0) onTextDelta(event.textDelta.slice(0, forwardLen));
-          suppressing = true;
-        }
+      if (!textToolRecoveryDisabled) {
+        const functionUpdate = countNewTextToolMarkupCandidates(
+          functionCandidateTail,
+          event.textDelta,
+          TEXT_FUNCTION_MARKER,
+          MAX_TEXT_TOOL_MARKUP_CANDIDATES - functionCandidates,
+        );
+        functionCandidateTail = functionUpdate.tail;
+        functionCandidates += functionUpdate.count;
+        const parameterUpdate = countNewTextToolMarkupCandidates(
+          parameterCandidateTail,
+          event.textDelta,
+          TEXT_PARAMETER_MARKER,
+          MAX_TEXT_TOOL_MARKUP_CANDIDATES - parameterCandidates,
+        );
+        parameterCandidateTail = parameterUpdate.tail;
+        parameterCandidates += parameterUpdate.count;
       }
+      text += event.textDelta;
+      if (
+        !textToolRecoveryDisabled &&
+        (
+          functionCandidates > MAX_TEXT_TOOL_MARKUP_CANDIDATES ||
+          parameterCandidates > MAX_TEXT_TOOL_MARKUP_CANDIDATES
+        )
+      ) {
+        if (sawTextToolMarkup) {
+          throw new DomainError(
+            "Provider returned too many textual tool-call markers",
+          );
+        }
+        textToolRecoveryDisabled = true;
+        suppressing = false;
+      }
+      forwardAvailableText();
     }
     for (const delta of event.toolCallDeltas ?? []) {
+      if (
+        !toolAcc.has(delta.index) &&
+        toolAcc.size >= MAX_STRUCTURED_TOOL_CALLS
+      ) {
+        throw new DomainError(
+          "Provider returned too many structured tool calls",
+        );
+      }
       const acc = toolAcc.get(delta.index) ?? { args: "" };
       if (delta.id) acc.id = delta.id;
-      if (delta.name) acc.name = delta.name;
-      if (delta.argumentsFragment) acc.args += delta.argumentsFragment;
+      if (delta.name) {
+        structuredToolNameCharacters += delta.name.length;
+        if (
+          structuredToolNameCharacters >
+            MAX_STRUCTURED_TOOL_NAME_CHARACTERS
+        ) {
+          throw new DomainError(
+            "Provider returned too many structured tool calls",
+          );
+        }
+        acc.name = (acc.name ?? "") + delta.name;
+        toolCallCharacters += delta.name.length;
+      }
+      if (delta.argumentsFragment) {
+        toolCallCharacters += delta.argumentsFragment.length;
+        if (
+          acc.args.length + delta.argumentsFragment.length >
+            MAX_CANONICAL_JSON_CHARACTERS
+        ) {
+          throw new DomainError("Provider returned oversized tool arguments");
+        }
+        acc.args += delta.argumentsFragment;
+      }
       toolAcc.set(delta.index, acc);
     }
     if (event.finishReason) finishReason = event.finishReason;
-    if (event.usage) usage = event.usage;
+    if (event.usage) {
+      const previousPrompt = finiteNonnegativeTokenCount(usage?.prompt_tokens);
+      const incomingPrompt = finiteNonnegativeTokenCount(
+        event.usage.prompt_tokens,
+      );
+      const previousCompletion = finiteNonnegativeTokenCount(
+        usage?.completion_tokens,
+      );
+      const incomingCompletion = finiteNonnegativeTokenCount(
+        event.usage.completion_tokens,
+      );
+      const previousReasoning = finiteNonnegativeTokenCount(
+        usage?.completion_tokens_details?.reasoning_tokens,
+      );
+      const incomingReasoning = finiteNonnegativeTokenCount(
+        event.usage.completion_tokens_details?.reasoning_tokens,
+      );
+      usage = {
+        ...(previousPrompt !== undefined || incomingPrompt !== undefined
+          ? {
+            prompt_tokens: Math.max(previousPrompt ?? 0, incomingPrompt ?? 0),
+          }
+          : {}),
+        ...(previousCompletion !== undefined || incomingCompletion !== undefined
+          ? {
+            completion_tokens: Math.max(
+              previousCompletion ?? 0,
+              incomingCompletion ?? 0,
+            ),
+          }
+          : {}),
+        ...(previousReasoning !== undefined || incomingReasoning !== undefined
+          ? {
+            completion_tokens_details: {
+              reasoning_tokens: Math.max(
+                previousReasoning ?? 0,
+                incomingReasoning ?? 0,
+              ),
+            },
+          }
+          : {}),
+      };
+      if (
+        incomingCompletion !== undefined &&
+        (previousCompletion === undefined ||
+          incomingCompletion > previousCompletion ||
+          (incomingCompletion === previousCompletion &&
+            event.finishReason !== undefined))
+      ) {
+        usageGeneratedCharacters = text.length + toolCallCharacters;
+        usageCompletionReasoningCharacters = reasoningCharacters;
+      }
+      if (
+        incomingReasoning !== undefined &&
+        (previousReasoning === undefined ||
+          incomingReasoning > previousReasoning ||
+          (incomingReasoning === previousReasoning &&
+            event.finishReason !== undefined))
+      ) {
+        usageReasoningCharacters = reasoningCharacters;
+      }
+    }
+  };
+
+  const parseAndApplyStreamLine = async (line: string) => {
+    try {
+      const event = parseOpenAIChatStreamLine(line);
+      if (event && !event.done) applyEvent(event);
+    } catch (error) {
+      void reader.cancel().catch(() => {});
+      throw error;
+    }
   };
 
   while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const event = parseOpenAIChatStreamLine(line);
-      if (event && !event.done) applyEvent(event);
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (!isAbortFromSignal(error, abortSignal)) throw error;
+      aborted = true;
+      break;
+    }
+    const { value, done } = chunk;
+    if (done) {
+      break;
+    }
+    receivedReads += 1;
+    receivedBytes += value.byteLength;
+    if (value.byteLength > 0) receivedChunks += 1;
+    if (
+      receivedBytes > MAX_OPENAI_RESPONSE_BYTES ||
+      receivedChunks > MAX_OPENAI_RESPONSE_CHUNKS ||
+      receivedReads > MAX_OPENAI_RESPONSE_READS
+    ) {
+      void reader.cancel().catch(() => {});
+      throw new DomainError("Provider response exceeded the adapter limit");
+    }
+    const parts = decoder.decode(value, { stream: true }).split("\n");
+    lineFragments.push(parts.shift() ?? "");
+    for (const part of parts) {
+      const line = lineFragments.join("");
+      lineFragments = [part];
+      await parseAndApplyStreamLine(line);
     }
   }
-
-  buffer += decoder.decode();
+  if (!aborted) lineFragments.push(decoder.decode());
+  const buffer = lineFragments.join("");
   if (buffer.trim().length > 0) {
-    const event = parseOpenAIChatStreamLine(buffer);
-    if (event && !event.done) applyEvent(event);
+    try {
+      await parseAndApplyStreamLine(buffer);
+    } catch (error) {
+      if (!aborted || !isIncompleteSseDataLine(buffer, error)) throw error;
+    }
   }
+  aborted ||= abortSignal?.aborted === true;
+  const deliverable = aborted || suppressing || sawTextToolMarkup
+    ? stripIncompleteTextToolCallSuffix(text, tools)
+    : text;
+  if (!deliverable.startsWith(forwardedText)) {
+    throw new DomainError("Provider stream presentation diverged");
+  }
+  emitTextDelta(deliverable.slice(forwardedText.length));
 
   const toolCalls: WorkbenchToolCall[] = [...toolAcc.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([index, acc]) => ({
-      id: acc.id ?? `tool-call-${index + 1}`,
-      name: acc.name ?? "",
-      arguments: parseToolArguments(acc.args),
-    }));
+    .map(([index, acc]) => {
+      return {
+        id: acc.id ?? `tool-call-${index + 1}`,
+        name: acc.name ?? "",
+        arguments: parseToolArguments(acc.args),
+      };
+    });
 
   const completed = now();
   return {
     text,
+    visibleText: deliverable,
+    reasoningCharacters,
+    toolCallCharacters,
+    usageGeneratedCharacters,
+    usageReasoningCharacters,
+    usageCompletionReasoningCharacters,
+    aborted,
     finishReason,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     usage,
@@ -2052,4 +3381,12 @@ function normaliseFinishReason(
   if (reason === "tool_calls") return "tool_use";
   if (reason === "error") return "error";
   return "stop";
+}
+
+function stopReasonWithAbort(
+  aborted: boolean | undefined,
+  providerStopReason: WorkbenchTurnResult["stopReason"],
+): WorkbenchTurnResult["stopReason"] {
+  if (providerStopReason === "error") return "error";
+  return aborted === true ? "aborted" : providerStopReason;
 }
