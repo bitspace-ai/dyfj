@@ -188,7 +188,10 @@ export function validateCompressionSummary(
   // a preamble — so a model cannot embed a second (spoofed) marker inside a
   // section body and have it ride into the re-injected message.
   if (trimmed.includes(CONVERSATION_SUMMARY_MARKER)) {
-    return { ok: false, reason: "summary contains the untrusted-summary marker" };
+    return {
+      ok: false,
+      reason: "summary contains the untrusted-summary marker",
+    };
   }
   // Reject any preamble before the first heading: the output must BE the
   // sections, not prose that happens to contain them.
@@ -293,9 +296,13 @@ export async function compressElderTranscript(
   elder: WorkbenchMessage[],
   runCompletion: CompressionCompletion,
   estimateTokens: (messages: WorkbenchMessage[]) => number,
+  abortSignal?: AbortSignal,
 ): Promise<CompressionOutcome> {
   if (elder.length === 0) {
     return { status: "declined", reason: "nothing to compress" };
+  }
+  if (abortSignal?.aborted) {
+    return { status: "declined", reason: "compression was interrupted" };
   }
   const tokensBeforeEstimate = estimateTokens(elder);
   let result: { text: string; modelSlug: string; stopReason: string };
@@ -308,11 +315,17 @@ export async function compressElderTranscript(
       reason: `compression call failed: ${message}`,
     };
   }
+  if (abortSignal?.aborted) {
+    return { status: "declined", reason: "compression was interrupted" };
+  }
   // A length-stopped compression turn is itself truncated: it may carry all six
   // headings but a cut-off summary. Accepting it would replace elder turns with
   // incomplete content — decline instead.
   if (result.stopReason === "length") {
     return { status: "declined", reason: "compression output was truncated" };
+  }
+  if (result.stopReason !== "stop") {
+    return { status: "declined", reason: "compression did not complete" };
   }
   const validated = validateCompressionSummary(result.text);
   if (!validated.ok) return { status: "declined", reason: validated.reason };

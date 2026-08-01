@@ -59,6 +59,21 @@ const models: WorkbenchModel[] = [
   },
 ];
 
+function interruptibleSse(body: string): typeof fetch {
+  return (async (_input, init) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(body));
+          init?.signal?.addEventListener("abort", () => {
+            controller.error(init.signal?.reason);
+          }, { once: true });
+        },
+      }),
+      { status: 200 },
+    )) as typeof fetch;
+}
+
 describe("parseModelRegistryRows", () => {
   test("parses active model rows from Dolt-shaped strings", () => {
     const parsed = parseModelRegistryRows([
@@ -415,6 +430,14 @@ describe("buildOpenAIChatRequest", () => {
     expect(body.stream).toBe(true);
   });
 
+  test("can carry an explicit completion ceiling", () => {
+    const body = buildOpenAIChatRequest("hosted", "system", "hello", true, {
+      maxCompletionTokens: 8192,
+    });
+
+    expect(body.max_completion_tokens).toBe(8192);
+  });
+
   test("can require strict JSON object output", () => {
     const body = buildOpenAIChatRequest("gemma4", "system", "hello", false, {
       jsonObject: true,
@@ -559,6 +582,18 @@ describe("parseOpenAIChatStreamLine", () => {
     ]);
   });
 
+  test("extracts plaintext reasoning without duplicating legacy aliases", () => {
+    const event = parseOpenAIChatStreamLine(
+      'data: {"choices":[{"delta":{"reasoning":"duplicate","reasoning_details":[{"type":"reasoning.text","text":"private thought"},{"type":"reasoning.encrypted","data":"opaque"}]}}],"usage":{"completion_tokens":9,"completion_tokens_details":{"reasoning_tokens":7}}}',
+    );
+
+    expect(event?.reasoningDelta).toBe("private thought");
+    expect(event?.usage).toEqual({
+      completion_tokens: 9,
+      completion_tokens_details: { reasoning_tokens: 7 },
+    });
+  });
+
   test("ignores blank and non-data lines", () => {
     expect(parseOpenAIChatStreamLine("")).toBeNull();
     expect(parseOpenAIChatStreamLine("event: message")).toBeNull();
@@ -595,6 +630,47 @@ describe("extractTextToolCalls", () => {
     const { toolCalls, cleaned } = extractTextToolCalls("just a normal answer");
     expect(toolCalls).toEqual([]);
     expect(cleaned).toBe("just a normal answer");
+  });
+
+  test("recovers tool markup at the candidate limit", () => {
+    const text = Array.from(
+      { length: 64 },
+      (_, index) =>
+        `<function=list_files><parameter=path>${index}</parameter></function>`,
+    ).join("");
+    const { toolCalls, cleaned } = extractTextToolCalls(text);
+    expect(toolCalls).toHaveLength(64);
+    expect(cleaned).toBe("");
+  });
+
+  test("leaves a large batch of unwrapped offered-function examples as prose", () => {
+    const text = Array.from(
+      { length: 10_000 },
+      (_, index) =>
+        `<function=list_files><parameter=path>${index}</parameter></function>`,
+    ).join("\n");
+    const { toolCalls, cleaned } = extractTextToolCalls(
+      text,
+      new Set(["list_files"]),
+    );
+    expect(toolCalls).toEqual([]);
+    expect(cleaned).toBe(text);
+  });
+
+  test("leaves excessive incomplete function candidates as prose", () => {
+    const text = "<function=list_files".repeat(10_000);
+    const { toolCalls, cleaned } = extractTextToolCalls(text);
+    expect(toolCalls).toEqual([]);
+    expect(cleaned).toBe(text);
+  });
+
+  test("leaves excessive incomplete parameter candidates as prose", () => {
+    const text = `<function=list_files>${
+      "<parameter=path".repeat(10_000)
+    }</function>`;
+    const { toolCalls, cleaned } = extractTextToolCalls(text);
+    expect(toolCalls).toEqual([]);
+    expect(cleaned).toBe(text);
   });
 });
 
@@ -656,6 +732,17 @@ describe("runWorkbenchTurn streaming", () => {
     // the platform fetch throws on a 307/308 instead of re-POSTing the (private)
     // transcript body to the redirect target off loopback.
     expect(capturedRedirect).toBe("error");
+  });
+
+  test("bounds an OpenAI-compatible error response body", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      fetchFn: async () =>
+        new Response("x".repeat(4 * 1024 * 1024 + 1), { status: 500 }),
+    })).rejects.toThrow("Provider response exceeded the adapter limit");
   });
 
   test("rejects local providers with non-loopback base URLs", async () => {
@@ -722,6 +809,970 @@ describe("runWorkbenchTurn streaming", () => {
     });
   });
 
+  test("lower-bounds a completed stream's early usage with later text", async () => {
+    const laterText = "x".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: { prompt_tokens: 7, completion_tokens: 1 },
+            })
+          }\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{
+                  delta: { content: laterText },
+                  finish_reason: "stop",
+                }],
+              })
+            }\n` +
+            "data: [DONE]\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result).toMatchObject({
+      text: laterText,
+      stopReason: "stop",
+      usage: { input: 7, output: 101 },
+    });
+  });
+
+  test("does not let an equal usage-only total erase intervening text", async () => {
+    const laterText = "x".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: { prompt_tokens: 7, completion_tokens: 100 },
+            })
+          }\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{ delta: { content: laterText } }],
+              })
+            }\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [],
+                usage: { prompt_tokens: 7, completion_tokens: 100 },
+              })
+            }\n` +
+            "data: [DONE]\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ input: 7, output: 200 });
+  });
+
+  test("does not let an earlier finish enable a stale equal usage frame", async () => {
+    const laterText = "x".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: { prompt_tokens: 7, completion_tokens: 100 },
+            })
+          }\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{ delta: { content: laterText } }],
+              })
+            }\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{ delta: {}, finish_reason: "stop" }],
+              })
+            }\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [],
+                usage: { prompt_tokens: 7, completion_tokens: 100 },
+              })
+            }\n` +
+            "data: [DONE]\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ input: 7, output: 200 });
+  });
+
+  test("preserves HTTP status diagnostics for a bodyless error response", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      fetchFn: async () => new Response(null, { status: 500 }),
+    })).rejects.toThrow("Model request failed for gemma4:e2b: HTTP 500");
+  });
+
+  test("trusts final provider usage over the character estimate", async () => {
+    const text = "x".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [{
+                delta: { content: text },
+                finish_reason: "stop",
+              }],
+              usage: { prompt_tokens: 7, completion_tokens: 1 },
+            })
+          }\n` +
+            "data: [DONE]\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ input: 7, output: 1 });
+  });
+
+  test("an aborted stream returns partial text and observed usage without tool calls", async () => {
+    const abortController = new AbortController();
+    const generated = "partial<tool_call><function=list_files>" +
+      "<parameter=path>.</parameter></function></tool_call>";
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => sawDelta(),
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{
+              delta: {
+                content: generated,
+              },
+            }],
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: { prompt_tokens: 7, completion_tokens: 2 },
+            })
+          }`,
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      text: "partial",
+      stopReason: "aborted",
+      usage: { input: 7, output: estimateTextTokens(generated) },
+    });
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("abort fallback meters structured tool-call fragments", async () => {
+    const abortController = new AbortController();
+    const name = "write_file";
+    const argumentsFragment = `{"content":"${"x".repeat(8_192)}"}`;
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name,
+        description: "Write a file.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => {},
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "tc-1",
+                  type: "function",
+                  function: { name, arguments: argumentsFragment },
+                }],
+              },
+            }],
+          })
+        }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+      usage: {
+        output: Math.ceil((name.length + argumentsFragment.length) / 4),
+      },
+    });
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("an aborted stream preserves excessive complete tool markup as prose", async () => {
+    const abortController = new AbortController();
+    const markup = Array.from(
+      { length: 65 },
+      (_, index) =>
+        `<tool_call><function=list_files><parameter=path>${index}</parameter></function></tool_call>`,
+    ).join("");
+    const deltas: string[] = [];
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({ choices: [{ delta: { content: markup } }] })
+        }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas).toEqual([markup]);
+    expect(result).toMatchObject({ text: markup, stopReason: "aborted" });
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("an aborted stream retains usage fields split across frames", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => sawDelta(),
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: "partial" } }],
+            usage: { prompt_tokens: 100 },
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: { completion_tokens: 20 },
+            })
+          }\n`,
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result.usage).toMatchObject({ input: 100, output: 20 });
+  });
+
+  test("an abort observed before dispatch records no provider call usage", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    let fetchCalled = false;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      fetchFn: async () => {
+        fetchCalled = true;
+        return new Response();
+      },
+    });
+
+    expect(fetchCalled).toBe(false);
+    expect(result.stopReason).toBe("aborted");
+    expect(result.requestDispatched).toBe(false);
+    expect(result.usage).toMatchObject({
+      input: 0,
+      output: 0,
+      cost: { total: 0 },
+    });
+  });
+
+  test("a concurrent abort does not mask a malformed provider frame", async () => {
+    const abortController = new AbortController();
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: async () => {
+        abortController.abort();
+        return new Response("data: {malformed}\n\n", { status: 200 });
+      },
+    })).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  test("a concurrent abort does not mask a truncated frame at clean EOF", async () => {
+    const abortController = new AbortController();
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: async () => {
+        abortController.abort();
+        return new Response('data: {"choices":[');
+      },
+    })).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  test("an abort does not suppress a complete malformed buffered frame", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: interruptibleSse("data: {malformed}"),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await expect(pending).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  test("an abort does not suppress a buffered frame with mismatched delimiters", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: interruptibleSse('data: {"choices":[}'),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await expect(pending).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  test("an abort does not suppress an invalid token inside an unfinished object", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: interruptibleSse('data: {"choices": @'),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await expect(pending).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  test("a concurrent independent AbortError is not attributed to the caller", async () => {
+    const abortController = new AbortController();
+    const independent = new DOMException("independent", "AbortError");
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: async () => {
+        abortController.abort();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(independent);
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    })).rejects.toBe(independent);
+  });
+
+  test("a provider terminal error outranks a concurrent cancellation", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: interruptibleSse(
+        'data: {"choices":[{"delta":{},"finish_reason":"error"}]}\n',
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      stopReason: "error",
+    });
+  });
+
+  test("a top-level provider error envelope fails the stream", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () =>
+        new Response(
+          'data: {"choices":[{"delta":{"content":"partial"}}]}\n' +
+            'data: {"error":{"message":"upstream failed"}}\n',
+          { status: 200 },
+        ),
+    })).rejects.toThrow("Provider stream returned an error envelope");
+  });
+
+  test("a top-level provider error envelope fails a buffered response", async () => {
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      fetchFn: async () =>
+        Response.json({ error: { message: "quota exceeded" } }),
+    })).rejects.toThrow("Provider response returned an error envelope");
+  });
+
+  test("a provider terminal error outranks recoverable textual tool markup", async () => {
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "write_file",
+        description: "Write a file.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [{
+                delta: {
+                  content:
+                    "<tool_call><function=write_file><parameter=path>notes.md</parameter></function></tool_call>",
+                },
+                finish_reason: "error",
+              }],
+            })
+          }\n`,
+          { status: 200 },
+        ),
+    });
+
+    expect(result.stopReason).toBe("error");
+    expect(result.text).toBe("");
+    expect(deltas).toEqual([]);
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("a buffered provider error cannot be reclassified as textual tool use", async () => {
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "write_file",
+        description: "Write a file.",
+        parameters: { type: "object" },
+      }],
+      fetchFn: async () =>
+        Response.json({
+          choices: [{
+            message: {
+              content:
+                "<tool_call><function=write_file><parameter=path>notes.md</parameter></function></tool_call>",
+            },
+            finish_reason: "error",
+          }],
+        }),
+    });
+
+    expect(result.stopReason).toBe("error");
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("an abort ignores only an incomplete buffered frame", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => sawDelta(),
+      fetchFn: interruptibleSse(
+        'data: {"choices":[{"delta":{"content":"partial"}}]}\n' +
+          'data: {"choices":[',
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      text: "partial",
+      stopReason: "aborted",
+    });
+  });
+
+  test("an aborted stream strips a long incomplete leaked tool-call suffix", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const generated =
+      "partial<tool_call><function=list_files><parameter=path>" +
+      "x".repeat(1024);
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => sawDelta(),
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{
+              delta: {
+                content: generated,
+              },
+            }],
+          })
+        }\n`,
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result.text).toBe("partial");
+    expect(result.stopReason).toBe("aborted");
+    expect(result.toolCalls).toBeUndefined();
+    expect(result.usage.output).toBe(estimateTextTokens(generated));
+  });
+
+  test("an aborted stream preserves an ambiguous literal wrapper suffix", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const text = "explain <tool_call>";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain syntax",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => sawDelta(),
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result.text).toBe(text);
+    expect(result.stopReason).toBe("aborted");
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("an abort ignores a truncated buffered JSON array at the input boundary", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      fetchFn: interruptibleSse('data: {"choices":[1,2'),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      stopReason: "aborted",
+    });
+  });
+
+  test("an aborted stream preserves whitespace before stripped tool markup", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const prefix = "partial  \n";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => sawDelta(),
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{
+              delta: {
+                content:
+                  `${prefix}<tool_call><function=list_files><parameter=path>`,
+              },
+            }],
+          })
+        }\n`,
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result.text).toBe(prefix);
+    expect(result.stopReason).toBe("aborted");
+  });
+
+  test("an aborted stream preserves tool-like prose when no matching tool was offered", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const text =
+      "The syntax is <tool_call><function=foo></function></tool_call>.";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => sawDelta(),
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result.text).toBe(text);
+    expect(result.stopReason).toBe("aborted");
+  });
+
+  test("an aborted no-tools stream preserves complete function-like prose", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const received = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const text = "Use <function=foo> literally";
+    const deltas: string[] = [];
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        sawDelta();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await received;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+    expect(result.stopReason).toBe("aborted");
+  });
+
+  test("an aborted stream releases an ambiguous tool prefix once later text disproves it", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const received = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const deltas: string[] = [];
+    const text = "Use <function=list_users> literally";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        if (deltas.join("") === text) sawDelta();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: "Use <function=list_" } }],
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              choices: [{ delta: { content: "users> literally" } }],
+            })
+          }\n`,
+      ),
+    });
+
+    await received;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+    expect(result.stopReason).toBe("aborted");
+  });
+
+  test("releases a malformed wrapped opening after a bounded prefix", async () => {
+    const abortController = new AbortController();
+    let received!: () => void;
+    const sawText = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const text = "<tool_call><function=list_files " + "x".repeat(128);
+    const deltas: string[] = [];
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        if (deltas.join("") === text) received();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await sawText;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+  });
+
+  test("an aborted stream preserves an empty function-name prefix", async () => {
+    const abortController = new AbortController();
+    let received!: () => void;
+    const sawText = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const text = "Explain <function=";
+    const deltas: string[] = [];
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        if (deltas.join("") === text) received();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await sawText;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+  });
+
+  test("a pre-header abort records elapsed time without claiming headers arrived", async () => {
+    const abortController = new AbortController();
+    const nowValues = [105, 130];
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      now: () => nowValues.shift() ?? 130,
+      fetchFn: ((_input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(init.signal?.reason);
+          }, { once: true });
+        })) as typeof fetch,
+    });
+
+    abortController.abort();
+    const result = await pending;
+
+    expect(result.stopReason).toBe("aborted");
+    expect(result.timings).toEqual({
+      responseHeadersMs: 0,
+      totalMs: 25,
+    });
+  });
+
   const sseStream = (chunks: unknown[]) => {
     const body = chunks
       .map((c) => `data: ${JSON.stringify(c)}\n\n`)
@@ -772,6 +1823,234 @@ describe("runWorkbenchTurn streaming", () => {
     expect(deltas).toEqual([]); // a tool-call turn streamed no text
   });
 
+  test("removes textual tool markup when a structured call is also present", async () => {
+    const deltas: string[] = [];
+    const text =
+      "before <tool_call><function=list_files><parameter=depth>1</parameter><parameter=path>.</parameter></function></tool_call> after";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list the files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: text,
+              tool_calls: [{
+                index: 0,
+                id: "tc-1",
+                type: "function",
+                function: {
+                  name: "list_files",
+                  arguments: '{"path":".","depth":1}',
+                },
+              }],
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe("before  after");
+    expect(result.text).toBe("before  after");
+    expect(result.toolCalls).toEqual([
+      {
+        id: "tc-1",
+        name: "list_files",
+        arguments: { path: ".", depth: 1 },
+      },
+    ]);
+  });
+
+  test("retains a distinct textual call alongside a structured call", async () => {
+    const text =
+      "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read and list",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [
+        {
+          name: "read_file",
+          description: "Read a file.",
+          parameters: { type: "object" },
+        },
+        {
+          name: "list_files",
+          description: "List files.",
+          parameters: { type: "object" },
+        },
+      ],
+      onTextDelta: () => {},
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: text,
+              tool_calls: [{
+                index: 0,
+                id: "tc-1",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: '{"path":"README.md"}',
+                },
+              }],
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ]),
+    });
+
+    expect(result.text).toBe("");
+    expect(result.toolCalls).toEqual([
+      { id: "tc-1", name: "read_file", arguments: { path: "README.md" } },
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("rejects deeply nested structured arguments before mixed-call recovery", async () => {
+    let deepArguments = '{"leaf":true}';
+    for (let depth = 0; depth < 10_000; depth += 1) {
+      deepArguments = `{"nested":${deepArguments}}`;
+    }
+    const text =
+      "<tool_call><function=read_file><parameter=path>other.md</parameter></function></tool_call>";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read and list",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "read_file",
+        description: "Read a file.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => {},
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: text,
+              tool_calls: [{
+                index: 0,
+                id: "tc-1",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: `{"payload":${deepArguments}}`,
+                },
+              }],
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ]),
+    });
+
+    await expect(pending).rejects.toThrow(
+      "Provider returned oversized tool arguments",
+    );
+  });
+
+  test("rejects overly wide structured arguments before mixed-call recovery", async () => {
+    const wideArguments = `{
+      ${
+      Array.from({ length: 10_000 }, (_, index) => `"k${index}":${index}`).join(
+        ",",
+      )
+    }
+    }`;
+    const text =
+      "<tool_call><function=read_file><parameter=path>other.md</parameter></function></tool_call>";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "read_file",
+        description: "Read a file.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => {},
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: text,
+              tool_calls: [{
+                index: 0,
+                id: "tc-1",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: `{"payload":${wideArguments}}`,
+                },
+              }],
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ]),
+    });
+
+    await expect(pending).rejects.toThrow(
+      "Provider returned oversized tool arguments",
+    );
+  });
+
+  test("over-budget textual tool arguments remain prose", async () => {
+    let deep = "true";
+    for (let depth = 0; depth < 65; depth += 1) deep = `{"nested":${deep}}`;
+    const wide = `{
+      ${
+      Array.from({ length: 1_025 }, (_, index) => `"k${index}":${index}`).join(
+        ",",
+      )
+    }
+    }`;
+    const long = JSON.stringify("x".repeat(64 * 1_024));
+
+    for (const raw of [deep, wide, long]) {
+      const markup =
+        `<tool_call><function=read_file><parameter=payload>${raw}</parameter></function></tool_call>`;
+      const deltas: string[] = [];
+      const result = await runWorkbenchTurn({
+        systemPrompt: "system",
+        prompt: "read",
+        routing: { modelId: "gemma4:e2b" },
+        models,
+        tools: [{
+          name: "read_file",
+          description: "Read a file.",
+          parameters: { type: "object" },
+        }],
+        onTextDelta: (delta) => deltas.push(delta),
+        fetchFn: sseStream([{
+          choices: [{
+            delta: { content: markup },
+            finish_reason: "stop",
+          }],
+        }]),
+      });
+
+      expect(result.text).toBe(markup);
+      expect(result.toolCalls).toBeUndefined();
+      expect(deltas).toEqual([markup]);
+    }
+  });
+
   test("accumulates fragmented tool-call arguments by index (hosted OpenAI shape)", async () => {
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
@@ -813,6 +2092,390 @@ describe("runWorkbenchTurn streaming", () => {
     expect(result.toolCalls).toEqual([
       { id: "tc-2", name: "read_file", arguments: { path: "a.ts" } },
     ]);
+  });
+
+  test("rejects oversized structured tool arguments before parsing them", async () => {
+    const oversized = `{"payload":"${"x".repeat(64 * 1_024)}"}`;
+    const common = {
+      systemPrompt: "system",
+      prompt: "read a file",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+    };
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      fetchFn: async () =>
+        Response.json({
+          choices: [{
+            message: {
+              content: "",
+              tool_calls: [{
+                id: "tc-buffered",
+                type: "function",
+                function: { name: "read_file", arguments: oversized },
+              }],
+            },
+            finish_reason: "tool_calls",
+          }],
+        }),
+    })).rejects.toThrow("Provider returned oversized tool arguments");
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      onTextDelta: () => {},
+      fetchFn: sseStream([{
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: "tc-streamed",
+              type: "function",
+              function: { name: "read_file", arguments: oversized },
+            }],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+    })).rejects.toThrow("Provider returned oversized tool arguments");
+  });
+
+  test("bounds buffered and streamed OpenAI-compatible responses before JSON parsing", async () => {
+    const oversized = `{"payload":"${"x".repeat(4 * 1024 * 1024)}"}`;
+    const response = {
+      choices: [{
+        message: {
+          content: "",
+          tool_calls: [{
+            id: "tc-large",
+            type: "function",
+            function: { name: "read_file", arguments: oversized },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
+    };
+    const common = {
+      systemPrompt: "system",
+      prompt: "read a file",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+    };
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      fetchFn: async () => Response.json(response),
+    })).rejects.toThrow("Provider response exceeded the adapter limit");
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      onTextDelta: () => {},
+      fetchFn: sseStream([response]),
+    })).rejects.toThrow("Provider response exceeded the adapter limit");
+  });
+
+  test("bounds response fragmentation in buffered and streamed modes", async () => {
+    const fragmentedResponse = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 0; index < 8_193; index++) {
+              controller.enqueue(new Uint8Array([0x20]));
+            }
+          },
+        }),
+      );
+    const common = {
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+    };
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      fetchFn: async () => fragmentedResponse(),
+    })).rejects.toThrow("Provider response exceeded the adapter limit");
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      onTextDelta: () => {},
+      fetchFn: async () => fragmentedResponse(),
+    })).rejects.toThrow("Provider response exceeded the adapter limit");
+  });
+
+  test("does not count zero-byte reads toward the fragmentation limit", async () => {
+    const responseAfterEmptyReads = (body: string) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 0; index < 8_193; index++) {
+              controller.enqueue(new Uint8Array());
+            }
+            controller.enqueue(new TextEncoder().encode(body));
+            controller.close();
+          },
+        }),
+      );
+    const common = {
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+    };
+    const response = {
+      choices: [{
+        message: { content: "ok" },
+        finish_reason: "stop",
+      }],
+    };
+
+    const buffered = await runWorkbenchTurn({
+      ...common,
+      fetchFn: async () => responseAfterEmptyReads(JSON.stringify(response)),
+    });
+    const streamed = await runWorkbenchTurn({
+      ...common,
+      onTextDelta: () => {},
+      fetchFn: async () =>
+        responseAfterEmptyReads(`data: ${JSON.stringify(response)}\n\n`),
+    });
+
+    expect(buffered.text).toBe("ok");
+    expect(streamed.text).toBe("ok");
+  });
+
+  test("bounds total response reads even when every read is empty", async () => {
+    const emptyReads = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 0; index < 16_385; index++) {
+              controller.enqueue(new Uint8Array());
+            }
+          },
+        }),
+      );
+    const common = {
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+    };
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      fetchFn: async () => emptyReads(),
+    })).rejects.toThrow("Provider response exceeded the adapter limit");
+    await expect(runWorkbenchTurn({
+      ...common,
+      onTextDelta: () => {},
+      fetchFn: async () => emptyReads(),
+    })).rejects.toThrow("Provider response exceeded the adapter limit");
+  });
+
+  test("does not wait for reader cancellation before rejecting a response limit", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(4 * 1024 * 1024 + 1));
+      },
+      cancel() {
+        return new Promise<void>(() => {});
+      },
+    });
+    const rejection = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () => new Response(body),
+    });
+
+    await expect(Promise.race([
+      rejection,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("reader cancellation blocked")), 100)
+      ),
+    ])).rejects.toThrow("Provider response exceeded the adapter limit");
+  });
+
+  test("bounds streamed structured-call count and aggregate name fragments", async () => {
+    const calls = Array.from({ length: 129 }, (_, index) => ({
+      index,
+      id: `tc-${index}`,
+      type: "function",
+      function: { name: "read_file", arguments: "{}" },
+    }));
+    const common = {
+      systemPrompt: "system",
+      prompt: "read files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+    };
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      fetchFn: sseStream([{
+        choices: [{ delta: { tool_calls: calls } }],
+      }]),
+    })).rejects.toThrow("Provider returned too many structured tool calls");
+
+    await expect(runWorkbenchTurn({
+      ...common,
+      fetchFn: sseStream([{
+        choices: [{
+          delta: {
+            tool_calls: [{
+              index: 0,
+              function: { name: "x".repeat(64 * 1024 + 1) },
+            }],
+          },
+        }],
+      }]),
+    })).rejects.toThrow("Provider returned too many structured tool calls");
+  });
+
+  test("cancels the response reader when mid-stream validation fails", async () => {
+    let cancelled = false;
+    const calls = Array.from({ length: 129 }, (_, index) => ({
+      index,
+      function: { name: "read_file", arguments: "{}" },
+    }));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          `data: ${
+            JSON.stringify({
+              choices: [{ delta: { tool_calls: calls } }],
+            })
+          }\n\n`,
+        ));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () => new Response(body),
+    })).rejects.toThrow("Provider returned too many structured tool calls");
+    expect(cancelled).toBe(true);
+  });
+
+  test("cancels the response reader when a complete SSE line is malformed", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("data: {oops}\n\n"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: async () => new Response(body),
+    })).rejects.toBeInstanceOf(SyntaxError);
+    expect(cancelled).toBe(true);
+  });
+
+  test("cancels an open response as soon as tool arguments exceed the limit", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          `data: ${
+            JSON.stringify({
+              choices: [{
+                delta: {
+                  tool_calls: [{
+                    index: 0,
+                    function: {
+                      name: "read_file",
+                      arguments: "x".repeat(64 * 1024 + 1),
+                    },
+                  }],
+                },
+              }],
+            })
+          }\n\n`,
+        ));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read a file",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "read_file",
+        description: "Read a file.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => {},
+      fetchFn: async () => new Response(body),
+    })).rejects.toThrow("Provider returned oversized tool arguments");
+    expect(cancelled).toBe(true);
+  });
+
+  test("accumulates fragmented tool-call names by index", async () => {
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "write a file",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "tc-3",
+                type: "function",
+                function: { name: "write" },
+              }],
+            },
+          }],
+        },
+        {
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                function: {
+                  name: "_file",
+                  arguments: '{"path":"notes.md"}',
+                },
+              }],
+            },
+            finish_reason: "tool_calls",
+          }],
+        },
+      ]),
+    });
+
+    expect(result.toolCalls).toEqual([{
+      id: "tc-3",
+      name: "write_file",
+      arguments: { path: "notes.md" },
+    }]);
   });
 
   test("sanitizes dotted tool names on the wire and maps the response back", async () => {
@@ -867,6 +2530,11 @@ describe("runWorkbenchTurn streaming", () => {
       prompt: "list files",
       routing: { modelId: "gemma4:e2b" },
       models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
       onTextDelta: (delta) => deltas.push(delta),
       fetchFn: sseStream([
         { choices: [{ delta: { content: "I'll check. " } }] },
@@ -874,7 +2542,7 @@ describe("runWorkbenchTurn streaming", () => {
           choices: [{
             delta: {
               content:
-                "<function=list_files><parameter=path>.</parameter></function>",
+                "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>",
             },
           }],
         },
@@ -889,19 +2557,190 @@ describe("runWorkbenchTurn streaming", () => {
     expect(deltas.join("")).toBe("I'll check. ");
   });
 
+  test("withholds a standalone wrapper until the next delta confirms an offered tool", async () => {
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        { choices: [{ delta: { content: "I'll check. <tool_call>" } }] },
+        {
+          choices: [{
+            delta: {
+              content:
+                "<function=list_files><parameter=path>.</parameter></function></tool_call>",
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe("I'll check. ");
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("does not treat a tool_call-prefixed word as protocol markup", async () => {
+    const deltas: string[] = [];
+    const text = "Use <tool_calling> as the heading.";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain syntax",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        { choices: [{ delta: { content: text } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(result.text).toBe(text);
+    expect(deltas.join("")).toBe(text);
+  });
+
+  test("does not use tool_calling prose as the wrapper for a later tool call", async () => {
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain then list",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: "Use <tool_calling> as a heading; ",
+            },
+          }],
+        },
+        {
+          choices: [{
+            delta: {
+              content:
+                "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>",
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe("Use <tool_calling> as a heading; ");
+    expect(result.text).toBe("Use <tool_calling> as a heading; ");
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("preserves an unrelated literal tool_call wrapper before a later tool call", async () => {
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain then list",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: "The literal marker is <tool_call> in this sentence. ",
+            },
+          }],
+        },
+        {
+          choices: [{
+            delta: {
+              content:
+                "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>",
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    const narration = "The literal marker is <tool_call> in this sentence.";
+    expect(deltas.join("")).toBe(`${narration} `);
+    expect(result.text).toBe(`${narration} `);
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("streams a large batch of literal wrapper markers as prose", async () => {
+    const deltas: string[] = [];
+    const text = Array.from(
+      { length: 10_000 },
+      (_, index) => `literal <tool_call> marker ${index}\n`,
+    ).join("");
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "show markers",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        { choices: [{ delta: { content: text } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+    expect(result.toolCalls).toBeUndefined();
+  });
+
   test("recovers a leaked tool call from a buffered (non-streamed) turn", async () => {
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
       prompt: "list files",
       routing: { modelId: "gemma4:e2b" },
       models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
       fetchFn: async () =>
         new Response(
           JSON.stringify({
             choices: [{
               message: {
                 content:
-                  "<function=list_files><parameter=path>.</parameter></function></tool_call>",
+                  "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>",
               },
               finish_reason: "stop",
             }],
@@ -915,6 +2754,588 @@ describe("runWorkbenchTurn streaming", () => {
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
     expect(result.stopReason).toBe("tool_use");
+  });
+
+  test("does not recover a textual call to a tool that was not offered", async () => {
+    const text =
+      "<function=write_file><parameter=path>x</parameter></function>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: text },
+              finish_reason: "stop",
+            }],
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.text).toBe(text);
+    expect(result.toolCalls).toBeUndefined();
+    expect(result.stopReason).toBe("stop");
+  });
+
+  test("does not recover an unwrapped textual call to an offered tool", async () => {
+    const text =
+      "Example: <function=list_files><parameter=path>.</parameter></function>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain syntax",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: text },
+              finish_reason: "stop",
+            }],
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.text).toBe(text);
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("does not recover an offered call with an unclosed wrapper", async () => {
+    const text =
+      "<tool_call><function=list_files><parameter=path>.</parameter></function>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain syntax",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: text },
+              finish_reason: "stop",
+            }],
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.text).toBe(text);
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("preserves unoffered function prose while recovering a later offered call", async () => {
+    const deltas: string[] = [];
+    const text = "Example: <function=write_file>not available</function>. " +
+      "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain then list",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        { choices: [{ delta: { content: text } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    const prose = "Example: <function=write_file>not available</function>.";
+    expect(deltas.join("")).toBe(`${prose} `);
+    expect(result.text).toBe(`${prose} `);
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("preserves a closed function name that only prefixes an offered tool", async () => {
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    let received!: () => void;
+    const sawText = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const text = "Use <function=list> literally";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        received();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await sawText;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+  });
+
+  test("preserves a closed wrapped name that only prefixes an offered tool", async () => {
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    let received!: () => void;
+    const sawText = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const text =
+      "Use <tool_call><function=list></function></tool_call> literally";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "explain",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        received();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await sawText;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+  });
+
+  test("preserves ordinary text after a complete offered call when aborted", async () => {
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    let received!: () => void;
+    const sawPrefix = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const text =
+      "before <tool_call><function=list_files><parameter=path>.</parameter></function></tool_call> after";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        if (deltas.join("") === "before ") received();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await sawPrefix;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe("before  after");
+    expect(result.text).toBe("before  after");
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("streams ordinary text after a complete offered call", async () => {
+    const deltas: string[] = [];
+    const text =
+      "  before <tool_call><function=list_files><parameter=path>.</parameter></function></tool_call> after  ";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        { choices: [{ delta: { content: text } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas).toEqual(["  before ", " after  "]);
+    expect(result.text).toBe("  before  after  ");
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("fails boundedly when textual marker limits cross after hidden calls", async () => {
+    const call =
+      "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>";
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: () => {},
+      fetchFn: sseStream(Array.from(
+        { length: 65 },
+        () => ({ choices: [{ delta: { content: call } }] }),
+      )),
+    })).rejects.toThrow(
+      "Provider returned too many textual tool-call markers",
+    );
+  });
+
+  test("keeps live and durable text aligned after a complete call and incomplete suffix", async () => {
+    const deltas: string[] = [];
+    const complete =
+      "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>";
+    const incomplete =
+      "<tool_call><function=read_file><parameter=path>README.md";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "inspect files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }, {
+        name: "read_file",
+        description: "Read a file.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: `before ${complete} between ${incomplete}`,
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe("before  between ");
+    expect(result.text).toBe("before  between ");
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("does not retain an incomplete offered call hidden from live output", async () => {
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: "answer<tool_call><function=list_files>",
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe("answer");
+    expect(result.text).toBe("answer");
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("withholds both permitted tool-call whitespace gaps across deltas", async () => {
+    const deltas: string[] = [];
+    const wrapperGap = " ".repeat(32);
+    const functionGap = " ".repeat(32);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: `answer<tool_call>${wrapperGap}<function=list_files `,
+            },
+          }],
+        },
+        {
+          choices: [{
+            delta: {
+              content: `${
+                functionGap.slice(1)
+              }><parameter=path>.</parameter></function></tool_call>`,
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe("answer");
+    expect(result.text).toBe("answer");
+    expect(result.toolCalls).toEqual([
+      { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
+    ]);
+  });
+
+  test("treats an excessive wrapper gap as prose live and durably", async () => {
+    const deltas: string[] = [];
+    const text = "<tool_call>" + " ".repeat(33) +
+      "<function=list_files><parameter=path>.</parameter></function></tool_call>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "show syntax",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: { content: "<tool_call>" + " ".repeat(33) },
+          }],
+        },
+        {
+          choices: [{
+            delta: {
+              content:
+                "<function=list_files><parameter=path>.</parameter></function></tool_call>",
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("treats excessive whitespace after a function name as prose", async () => {
+    const deltas: string[] = [];
+    const prefix = "<tool_call><function=list_files" + " ".repeat(33);
+    const suffix = "><parameter=path>.</parameter></function></tool_call>";
+    const text = prefix + suffix;
+    let streamController:
+      | ReadableStreamDefaultController<Uint8Array>
+      | undefined;
+    const encoder = new TextEncoder();
+    const resultPromise = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "show syntax",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        if (deltas.join("") !== prefix) return;
+        streamController?.enqueue(encoder.encode(
+          `data: ${
+            JSON.stringify({
+              choices: [{ delta: { content: suffix } }],
+            })
+          }\n\ndata: ${
+            JSON.stringify({
+              choices: [{ delta: {}, finish_reason: "stop" }],
+            })
+          }\n\n`,
+        ));
+        streamController?.close();
+      },
+      fetchFn: (async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              streamController = controller;
+              controller.enqueue(encoder.encode(
+                `data: ${
+                  JSON.stringify({
+                    choices: [{ delta: { content: prefix } }],
+                  })
+                }\n\n`,
+              ));
+            },
+          }),
+          { status: 200 },
+        )) as typeof fetch,
+    });
+    const result = await resultPromise;
+
+    expect(deltas[0]).toBe(prefix);
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("treats an excessive post-name gap in one delta as prose", async () => {
+    const deltas: string[] = [];
+    const text = "<tool_call><function=list_files" + " ".repeat(33) +
+      "><parameter=path>.</parameter></function></tool_call>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "show syntax",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([
+        {
+          choices: [{
+            delta: {
+              content: "<tool_call><function=list_files" + " ".repeat(33),
+            },
+          }],
+        },
+        {
+          choices: [{
+            delta: {
+              content: "><parameter=path>.</parameter></function></tool_call>",
+            },
+          }],
+        },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(deltas.join("")).toBe(text);
+    expect(result.text).toBe(text);
+    expect(result.toolCalls).toBeUndefined();
+  });
+
+  test("a literal wrapper cannot hide a later incomplete offered call on abort", async () => {
+    const abortController = new AbortController();
+    let received!: () => void;
+    const sawPrefix = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    const prefix = "Literal <tool_call> prose. ";
+    const text = `${prefix}<tool_call><function=list_`;
+    const deltas: string[] = [];
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "list files",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      abortSignal: abortController.signal,
+      tools: [{
+        name: "list_files",
+        description: "List files.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => {
+        deltas.push(delta);
+        if (deltas.join("") === prefix) received();
+      },
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: text } }],
+          })
+        }\n`,
+      ),
+    });
+
+    await sawPrefix;
+    abortController.abort();
+    const result = await pending;
+
+    expect(deltas.join("")).toBe(prefix);
+    expect(result.text).toBe(prefix);
   });
 });
 
@@ -934,6 +3355,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
   test("calls the OpenAI platform with a bearer key and meters cost", async () => {
     let requestUrl = "";
     let authHeader: string | null = null;
+    let requestBody: Record<string, unknown> = {};
 
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
@@ -944,6 +3366,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
       fetchFn: async (input, init) => {
         requestUrl = String(input);
         authHeader = new Headers(init?.headers).get("authorization");
+        requestBody = JSON.parse(String(init?.body));
         return new Response(
           JSON.stringify({
             choices: [{
@@ -959,6 +3382,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
 
     expect(requestUrl).toBe("https://api.openai.com/v1/chat/completions");
     expect(authHeader).toBe("Bearer sk-test-key");
+    expect(requestBody.max_completion_tokens).toBe(8192);
     expect(result.model.provider).toBe("openai");
     expect(result.text).toBe("hello from gpt");
     // 1M input * $5 + 1M output * $30, per-MTok rates.
@@ -976,6 +3400,37 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
         throw new Error("fetch should not be called without a key");
       },
     })).rejects.toBeInstanceOf(HostedProviderCredentialMissingError);
+  });
+
+  test("an abort during credential lookup records zero pre-dispatch usage", async () => {
+    const abortController = new AbortController();
+    let fetchCalled = false;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gpt-test" },
+      models: [gptModel],
+      abortSignal: abortController.signal,
+      getEnv: () => {
+        abortController.abort();
+        return "present";
+      },
+      fetchFn: async () => {
+        fetchCalled = true;
+        return new Response();
+      },
+    });
+
+    expect(fetchCalled).toBe(false);
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+      usage: {
+        input: 0,
+        output: 0,
+        cost: { total: 0 },
+      },
+    });
   });
 
   test("rejects a non-https hosted base URL before inference", async () => {
@@ -1047,6 +3502,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
   test("calls OpenRouter with its own bearer key and meters cost from the row", async () => {
     let requestUrl = "";
     let authHeader: string | null = null;
+    let requestBody: Record<string, unknown> = {};
 
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
@@ -1057,6 +3513,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       fetchFn: async (input, init) => {
         requestUrl = String(input);
         authHeader = new Headers(init?.headers).get("authorization");
+        requestBody = JSON.parse(String(init?.body));
         return new Response(
           JSON.stringify({
             choices: [{
@@ -1072,10 +3529,560 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
 
     expect(requestUrl).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(authHeader).toBe("Bearer sk-or-key");
+    expect(requestBody.max_completion_tokens).toBe(8192);
     expect(result.model.provider).toBe("openrouter");
     expect(result.text).toBe("hello from openrouter");
     // 1M input * $0.2688 + 1M output * $0.8448, per-MTok rates.
     expect(result.usage.cost.total).toBeCloseTo(1.1136, 5);
+  });
+
+  test("meters buffered structured tool calls when usage is absent", async () => {
+    const name = "write_file";
+    const argumentsJson = `{"content":"${"x".repeat(8_192)}"}`;
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      tools: [{
+        name,
+        description: "Write a file.",
+        parameters: { type: "object" },
+      }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        Response.json({
+          choices: [{
+            message: {
+              content: "",
+              tool_calls: [{
+                id: "tc-1",
+                type: "function",
+                function: { name, arguments: argumentsJson },
+              }],
+            },
+            finish_reason: "tool_calls",
+          }],
+        }),
+    });
+
+    expect(result.usage.output).toBe(
+      Math.ceil((name.length + argumentsJson.length) / 4),
+    );
+    expect(result.usage.cost.total).toBeGreaterThan(0);
+  });
+
+  test("splits provider-reported reasoning from visible output without double charging", async () => {
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 10,
+              completion_tokens: 9,
+              completion_tokens_details: { reasoning_tokens: 7 },
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ input: 10, output: 2, reasoning: 7 });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (10 * 0.2688 + 9 * 0.8448) / 1_000_000,
+      12,
+    );
+  });
+
+  test("OpenAI-compatible TPOT excludes earlier reasoning tokens", async () => {
+    const nowValues = [0, 10, 20, 120];
+    const visible = "x".repeat(40);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      onTextDelta: () => {},
+      now: () => nowValues.shift() ?? 120,
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [{
+                delta: { content: visible },
+                finish_reason: "stop",
+              }],
+              usage: {
+                prompt_tokens: 9,
+                completion_tokens: 510,
+                completion_tokens_details: { reasoning_tokens: 500 },
+              },
+            })
+          }\n`,
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ output: 10, reasoning: 500 });
+    expect(result.timings).toMatchObject({
+      generationMs: 100,
+      timePerOutputTokenMs: 11,
+    });
+  });
+
+  test("ignores a nonnumeric provider reasoning-token value", async () => {
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 10,
+              completion_tokens: 9,
+              completion_tokens_details: { reasoning_tokens: "7" },
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ input: 10, output: 9, reasoning: 0 });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (10 * 0.2688 + 9 * 0.8448) / 1_000_000,
+      12,
+    );
+  });
+
+  test("uses a smaller catalog completion ceiling when one is declared", async () => {
+    let requestBody: Record<string, unknown> = {};
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [{ ...openRouterModel, maxOutputTokens: 1024 }],
+      getEnv: () => "sk-or-key",
+      fetchFn: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestBody.max_completion_tokens).toBe(1024);
+  });
+
+  test("estimates streamed plaintext reasoning when cancellation precedes usage", async () => {
+    const abortController = new AbortController();
+    const reasoning = "1234567890123456789012345678901234567890";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{
+              delta: {
+                reasoning_details: [{
+                  type: "reasoning.text",
+                  text: reasoning,
+                }],
+              },
+            }],
+          })
+        }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+    const input = estimateTextTokens("system\nhello");
+    const reasoningTokens = estimateTextTokens(reasoning);
+
+    expect(result).toMatchObject({
+      text: "",
+      stopReason: "aborted",
+      usage: { input, output: 0, reasoning: reasoningTokens },
+    });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (input * 0.2688 + reasoningTokens * 0.8448) / 1_000_000,
+      12,
+    );
+  });
+
+  test("estimates abort-time reasoning when only interim completion usage arrived", async () => {
+    const abortController = new AbortController();
+    const reasoning = "1234567890123456789012345678901234567890";
+    const visible = "12345678901234567890123456789012";
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [{
+              delta: {
+                reasoning_details: [{
+                  type: "reasoning.text",
+                  text: reasoning,
+                }],
+              },
+            }],
+            usage: { prompt_tokens: 7, completion_tokens: 2 },
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({ choices: [{ delta: { content: visible } }] })
+          }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+    const reasoningTokens = estimateTextTokens(reasoning);
+
+    expect(result).toMatchObject({
+      text: visible,
+      stopReason: "aborted",
+      usage: { input: 7, output: 8, reasoning: reasoningTokens },
+    });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (7 * 0.2688 + (8 + reasoningTokens) * 0.8448) / 1_000_000,
+      12,
+    );
+  });
+
+  test("merges reasoning-token detail across streamed usage frames", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [],
+            usage: {
+              prompt_tokens: 7,
+              completion_tokens: 9,
+              completion_tokens_details: { reasoning_tokens: 7 },
+            },
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: {
+                completion_tokens_details: {
+                  accepted_prediction_tokens: 1,
+                },
+              },
+            })
+          }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+      usage: { input: 7, output: 2, reasoning: 7 },
+    });
+  });
+
+  test("lower-bounds interim reasoning usage with later plaintext reasoning", async () => {
+    const abortController = new AbortController();
+    const laterReasoning = "r".repeat(400);
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [],
+            usage: {
+              prompt_tokens: 7,
+              completion_tokens: 1,
+              completion_tokens_details: { reasoning_tokens: 1 },
+            },
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              choices: [{
+                delta: {
+                  reasoning_details: [{
+                    type: "reasoning.text",
+                    text: laterReasoning,
+                  }],
+                },
+              }],
+            })
+          }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+      usage: { input: 7, output: 0, reasoning: 101 },
+    });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (7 * 0.2688 + 101 * 0.8448) / 1_000_000,
+      12,
+    );
+  });
+
+  test("retains reasoning usage reported without a completion total", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            choices: [],
+            usage: {
+              prompt_tokens: 7,
+              completion_tokens_details: { reasoning_tokens: 7 },
+            },
+          })
+        }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+      usage: { input: 7, output: 0, reasoning: 7 },
+    });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (7 * 0.2688 + 7 * 0.8448) / 1_000_000,
+      12,
+    );
+  });
+
+  test("lower-bounds completed usage when plaintext reasoning follows its frame", async () => {
+    const laterReasoning = "r".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: {
+                prompt_tokens: 7,
+                completion_tokens: 1,
+                completion_tokens_details: { reasoning_tokens: 1 },
+              },
+            })
+          }\n\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{
+                  delta: {
+                    reasoning_details: [{
+                      type: "reasoning.text",
+                      text: laterReasoning,
+                    }],
+                  },
+                  finish_reason: "stop",
+                }],
+              })
+            }\n\n` +
+            "data: [DONE]\n\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({
+      input: 7,
+      output: 0,
+      reasoning: 101,
+    });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (7 * 0.2688 + 101 * 0.8448) / 1_000_000,
+      12,
+    );
+  });
+
+  test("does not refresh completion coverage from a prompt-only usage frame", async () => {
+    const laterText = "x".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: { prompt_tokens: 7, completion_tokens: 1 },
+            })
+          }\n\n` +
+            `data: ${
+              JSON.stringify({ choices: [{ delta: { content: laterText } }] })
+            }\n\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{ delta: {}, finish_reason: "stop" }],
+                usage: { prompt_tokens: 7 },
+              })
+            }\n\n` +
+            "data: [DONE]\n\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ input: 7, output: 101 });
+  });
+
+  test("adds post-snapshot text to the highest cumulative usage total", async () => {
+    const laterText = "x".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: { prompt_tokens: 7, completion_tokens: 100 },
+            })
+          }\n\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{
+                  delta: { content: laterText },
+                  finish_reason: "stop",
+                }],
+                usage: { prompt_tokens: 1, completion_tokens: 1 },
+              })
+            }\n\n` +
+            "data: [DONE]\n\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ input: 7, output: 200 });
+  });
+
+  test("trusts a final completion total without a repeated reasoning split", async () => {
+    const laterReasoning = "r".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "z-ai/glm-5.2" },
+      models: [openRouterModel],
+      onTextDelta: () => {},
+      getEnv: () => "sk-or-key",
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              choices: [],
+              usage: {
+                prompt_tokens: 7,
+                completion_tokens: 10,
+                completion_tokens_details: { reasoning_tokens: 1 },
+              },
+            })
+          }\n\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{
+                  delta: {
+                    reasoning_details: [{
+                      type: "reasoning.text",
+                      text: laterReasoning,
+                    }],
+                  },
+                }],
+              })
+            }\n\n` +
+            `data: ${
+              JSON.stringify({
+                choices: [{ delta: {}, finish_reason: "stop" }],
+                usage: { completion_tokens: 10 },
+              })
+            }\n\n` +
+            "data: [DONE]\n\n",
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({
+      input: 7,
+      output: 0,
+      reasoning: 10,
+    });
+    expect(result.usage.cost.total).toBeCloseTo(
+      (7 * 0.2688 + 10 * 0.8448) / 1_000_000,
+      12,
+    );
   });
 
   test("fails closed naming OPENROUTER_API_KEY — an OpenAI key does not satisfy it", async () => {
@@ -1182,7 +4189,9 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       },
     });
 
-    expect(requestUrl).toBe("https://openrouter.ai:443/api/v1/chat/completions");
+    expect(requestUrl).toBe(
+      "https://openrouter.ai:443/api/v1/chat/completions",
+    );
     expect(result.model.provider).toBe("openrouter");
   });
 });
@@ -1235,6 +4244,7 @@ describe("parseGeminiStreamLine", () => {
       'data: {"candidates":[{"content":{"parts":[{"text":"secret reasoning","thought":true},{"text":"the answer"}]}}]}',
     );
     expect(event?.textDelta).toBe("the answer");
+    expect(event?.reasoningCharacters).toBe("secret reasoning".length);
   });
 
   test("surfaces thinking-token usage separately from visible output", () => {
@@ -1283,6 +4293,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
             usageMetadata: {
               promptTokenCount: 1_000_000,
               candidatesTokenCount: 1_000_000,
+              thoughtsTokenCount: 500_000,
             },
           }),
           { status: 200 },
@@ -1296,8 +4307,280 @@ describe("runWorkbenchTurn Google Gemini", () => {
     expect(keyHeader).toBe("gem-test-key");
     expect(result.model.provider).toBe("google");
     expect(result.text).toBe("hello from gemini");
-    // 1M input * $2 + 1M output * $12, per-MTok rates.
-    expect(result.usage.cost.total).toBeCloseTo(14, 5);
+    expect(result.usage.reasoning).toBe(500_000);
+    // 1M input * $2 + 1.5M billable output * $12, per-MTok rates.
+    expect(result.usage.cost.total).toBeCloseTo(20, 5);
+  });
+
+  test("an aborted stream keeps Gemini partial text and reported usage", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => sawDelta(),
+      getEnv: () => "gem-test-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "partial" }] } }],
+            usageMetadata: {
+              promptTokenCount: 9,
+              candidatesTokenCount: 2,
+            },
+          })
+        }\n\n`,
+      ),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      text: "partial",
+      stopReason: "aborted",
+      usage: { input: 9, output: 2 },
+    });
+  });
+
+  test("Gemini error envelopes outrank a concurrent cancellation", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "gem-test-key",
+      fetchFn: interruptibleSse(
+        'data: {"error":{"code":429,"message":"quota"}}\n',
+      ),
+    });
+    const rejection = expect(pending).rejects.toThrow(
+      "Gemini stream returned an error envelope",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await rejection;
+  });
+
+  test("estimates streamed Gemini reasoning received before cancellation", async () => {
+    const abortController = new AbortController();
+    const reasoning = "r".repeat(400);
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "gem-test-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            candidates: [{
+              content: { parts: [{ text: reasoning, thought: true }] },
+            }],
+          })
+        }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+      usage: { reasoning: 100 },
+    });
+  });
+
+  test("lower-bounds aborted Gemini usage with later preserved text", async () => {
+    const abortController = new AbortController();
+    const laterText = "x".repeat(400);
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "gem-test-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            candidates: [],
+            usageMetadata: {
+              promptTokenCount: 9,
+              candidatesTokenCount: 1,
+            },
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              candidates: [{ content: { parts: [{ text: laterText }] } }],
+            })
+          }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      text: laterText,
+      stopReason: "aborted",
+      usage: { input: 9, output: 101 },
+    });
+  });
+
+  test("retains the highest Gemini usage total before cancellation", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "gem-test-key",
+      fetchFn: interruptibleSse(
+        `data: ${
+          JSON.stringify({
+            candidates: [],
+            usageMetadata: {
+              promptTokenCount: 9,
+              candidatesTokenCount: 100,
+            },
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              candidates: [],
+              usageMetadata: {
+                promptTokenCount: 1,
+                candidatesTokenCount: 1,
+              },
+            })
+          }\n`,
+      ),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+      usage: { input: 9, output: 100 },
+    });
+  });
+
+  test("does not refresh Gemini output coverage from prompt-only usage", async () => {
+    const laterText = "x".repeat(400);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      onTextDelta: () => {},
+      getEnv: () => "gem-test-key",
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              candidates: [],
+              usageMetadata: {
+                promptTokenCount: 9,
+                candidatesTokenCount: 1,
+              },
+            })
+          }\n\n` +
+            `data: ${
+              JSON.stringify({
+                candidates: [{ content: { parts: [{ text: laterText }] } }],
+              })
+            }\n\n` +
+            `data: ${
+              JSON.stringify({
+                candidates: [{ finishReason: "STOP" }],
+                usageMetadata: { promptTokenCount: 9 },
+              })
+            }\n\n`,
+          { status: 200 },
+        ),
+    });
+
+    expect(result).toMatchObject({
+      text: laterText,
+      usage: { input: 9, output: 101 },
+    });
+  });
+
+  test("Gemini TPOT uses visible generation tokens, not earlier reasoning", async () => {
+    const nowValues = [0, 10, 20, 120];
+    const visible = "x".repeat(40);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      onTextDelta: () => {},
+      now: () => nowValues.shift() ?? 120,
+      getEnv: () => "gem-test-key",
+      fetchFn: async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              candidates: [{
+                content: { parts: [{ text: visible }] },
+                finishReason: "STOP",
+              }],
+              usageMetadata: {
+                promptTokenCount: 9,
+                candidatesTokenCount: 10,
+                thoughtsTokenCount: 500,
+              },
+            })
+          }\n`,
+          { status: 200 },
+        ),
+    });
+
+    expect(result.usage).toMatchObject({ output: 10, reasoning: 500 });
+    expect(result.timings).toMatchObject({
+      generationMs: 100,
+      timePerOutputTokenMs: 11,
+    });
+  });
+
+  test("Gemini clean EOF preserves a concurrent trailing-frame error", async () => {
+    const abortController = new AbortController();
+    await expect(runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemini-test" },
+      models: [geminiModel],
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "gem-test-key",
+      fetchFn: async () => {
+        abortController.abort();
+        return new Response('data: {"candidates":[');
+      },
+    })).rejects.toBeInstanceOf(SyntaxError);
   });
 
   test("fails closed when GEMINI_API_KEY is absent", async () => {
@@ -1679,6 +4962,128 @@ describe("anthropic provider adapter", () => {
     expect(result.usage.output).toBe(2);
   });
 
+  test("an aborted stream keeps Anthropic partial text and received input usage", async () => {
+    const abortController = new AbortController();
+    let sawDelta!: () => void;
+    const firstDelta = new Promise<void>((resolve) => {
+      sawDelta = resolve;
+    });
+    const pending = runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => sawDelta(),
+      getEnv: () => "test-key-not-real",
+      fetchFn: interruptibleSse([
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}',
+        "",
+      ].join("\n")),
+    });
+
+    await firstDelta;
+    abortController.abort();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      text: "partial",
+      stopReason: "aborted",
+      usage: { input: 10, output: 2 },
+    });
+  });
+
+  test("Anthropic clean EOF honors a concurrent abort signal", async () => {
+    const abortController = new AbortController();
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "test-key-not-real",
+      fetchFn: async () => {
+        abortController.abort();
+        return new Response([
+          'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+          "",
+        ].join("\n"));
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "partial",
+      stopReason: "aborted",
+      usage: { input: 10, output: 2 },
+    });
+  });
+
+  test("Anthropic clean EOF preserves a concurrent trailing-frame error", async () => {
+    const abortController = new AbortController();
+    await expect(runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "test-key-not-real",
+      fetchFn: async () => {
+        abortController.abort();
+        return new Response('data: {"type":"content_block_delta"');
+      },
+    })).rejects.toBeInstanceOf(SyntaxError);
+  });
+
+  test("Anthropic error envelopes outrank a concurrent cancellation", async () => {
+    const abortController = new AbortController();
+    const pending = runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv: () => "test-key-not-real",
+      fetchFn: interruptibleSse(
+        'data: {"type":"error","error":{"type":"overloaded_error"}}\n',
+      ),
+    });
+    const rejection = expect(pending).rejects.toThrow(
+      "Anthropic stream returned an error envelope",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await rejection;
+  });
+
+  test("Anthropic keeps the highest streamed usage totals", async () => {
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      onTextDelta: () => {},
+      getEnv: () => "test-key-not-real",
+      fetchFn: async () =>
+        new Response([
+          'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+          'data: {"type":"message_delta","usage":{"output_tokens":100}}',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+          'data: {"type":"message_stop"}',
+          "",
+        ].join("\n")),
+    });
+
+    expect(result.usage).toMatchObject({ input: 10, output: 100 });
+  });
+
   test("fails closed when the credential is not projected", async () => {
     await expect(
       runWorkbenchTurn({
@@ -1848,6 +5253,29 @@ describe("fetchWithHeaderTimeout", () => {
       fetchWithHeaderTimeout(refused, "http://x/", {}, "l", 1000),
     ).rejects.toThrow("connection refused");
   });
+
+  test("an earlier external abort wins when the header timer later fires before fetch rejects", async () => {
+    const controller = new AbortController();
+    let rejectFetch!: (reason: unknown) => void;
+    const delayedAbort =
+      ((_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          rejectFetch = () => reject(init?.signal?.reason);
+        })) as typeof fetch;
+    const pending = fetchWithHeaderTimeout(
+      delayedAbort,
+      "http://x/",
+      { signal: controller.signal },
+      "l",
+      5,
+    );
+
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    rejectFetch(controller.signal.reason);
+
+    await expect(pending).rejects.toBe(controller.signal.reason);
+  });
 });
 
 // ── catalog-row routability ───────────────────────────────────────────────────
@@ -1891,7 +5319,11 @@ describe("unpriced models are unroutable", () => {
     // Hosted configured defaults never ride a bare turn (local-by-default), so
     // the pricing rule for this row binds only on explicit selection — which
     // still throws, per the explicit-modelId test above.
-    const selection = selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview");
+    const selection = selectWorkbenchModel(
+      [...models, unpriced],
+      {},
+      "gpt-6-preview",
+    );
     expect(selection.selected.tier).toBe(0);
     expect(selection.reason).toBe("default_local");
   });

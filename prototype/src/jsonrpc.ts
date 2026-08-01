@@ -179,7 +179,11 @@ export function notification(
 // pure core only declares the shape and a no-op default.
 export interface RpcContext {
   notify(method: string, params?: unknown): Promise<void>;
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(
+    method: string,
+    params?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
 }
 
 export type RpcHandler = (

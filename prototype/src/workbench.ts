@@ -14,6 +14,7 @@ import type {
   WorkbenchMessage,
   WorkbenchModel,
   WorkbenchToolCall,
+  WorkbenchTurnResult,
 } from "./provider";
 import {
   HostedInferenceRequiresProviderError,
@@ -30,7 +31,10 @@ import { loadAgentsInstructions } from "./repo-context";
 import type { WorkspaceRootIdentity } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
 import type { PermissionLevel } from "./config";
-import type { SupersedingRetryStartedEvent } from "./turn-contract";
+import type {
+  SupersedingRetryStartedEvent,
+  TurnAbortedEvent,
+} from "./turn-contract";
 import {
   DomainError,
   MAX_REASON_FIELD_BYTES,
@@ -89,7 +93,7 @@ export interface WorkbenchReceiptInput {
   totalTokensOutput: number;
   totalCacheReadTokens?: number;
   totalCacheWriteTokens?: number;
-  /** Provider-reported reasoning/thinking tokens, when reported (else 0). */
+  /** Reported or abort-estimated reasoning/thinking tokens (else 0). */
   totalReasoningTokens?: number;
   totalCalls: number;
   contextBudget?: PackedContextSummary;
@@ -146,6 +150,9 @@ export interface WorkbenchRuntimeInput {
   mode: Exclude<WorkbenchInvocation["mode"], "shell">;
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
+  turnId?: string;
+  abortSignal?: AbortSignal;
+  onCancellationClosed?: () => void;
   authContext?: WorkbenchAuthContext;
   /**
    * Client-requested workspace root for the read-only file tools (e.g. the
@@ -378,6 +385,7 @@ export type WorkbenchRuntimeEvent =
    * reset the rendered buffer — not merely display it.
    */
   | SupersedingRetryStartedEvent
+  | TurnAbortedEvent
   | {
     /** Terminal outcome of length recovery for one provider call. */
     type: "lengthRecoveryFinished";
@@ -412,6 +420,7 @@ export type WorkbenchRuntimeEvent =
 export interface WorkbenchRuntimeResult {
   sessionId: string;
   traceId: string;
+  stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
   text: string;
   receipt: string;
   model: {
@@ -434,7 +443,7 @@ export interface WorkbenchRuntimeResult {
     output: number;
     cacheRead: number;
     cacheWrite: number;
-    /** Provider-reported reasoning/thinking tokens across the turn (when reported). */
+    /** Reported or abort-estimated reasoning/thinking tokens across the turn. */
     reasoning?: number;
     totalCalls: number;
   };
@@ -1612,9 +1621,10 @@ export async function runWorkbenchRuntime(
   let estimatedCostUsd = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
-  // Reasoning/thinking tokens when the provider reports them separately from
-  // visible output (e.g. Gemini). Surfaced on the receipt so the operator sees
-  // the model's true output-side consumption; cost/recorded usage unchanged.
+  // Reasoning/thinking tokens are provider-reported when available. Streaming
+  // adapters that receive plaintext reasoning before an interrupt can estimate
+  // uncovered usage. The receipt surfaces them separately; the provider
+  // adapter includes them in billable cost.
   let reasoningTokens = 0;
   // Per-turn aggregates across every provider call the agent loop makes, so
   // receipts/events count the whole turn, not just the final call.
@@ -1627,6 +1637,12 @@ export async function runWorkbenchRuntime(
   let contextProfile: AskContextProfile | undefined;
   let validation: WorkbenchValidationSummary | undefined;
   let finalText = "";
+  let finalStopReason: WorkbenchTurnResult["stopReason"] = "error";
+  const captureTurnState = (turn: WorkbenchTurnResult): void => {
+    finalText = turn.text;
+    finalStopReason = turn.stopReason;
+    callTimings = turn.timings;
+  };
 
   try {
     let systemPrompt: string;
@@ -2032,8 +2048,12 @@ export async function runWorkbenchRuntime(
           messages: compressionInput,
           routing: { modelId: compressionModel.slug },
           models,
+          abortSignal: runtimeInput.abortSignal,
         });
-        budget.record(turn.usage, turn.model.tier);
+        if (turn.requestDispatched !== false) {
+          budget.record(turn.usage, turn.model.tier);
+          reasoningTokens += turn.usage.reasoning ?? 0;
+        }
         return {
           text: turn.text,
           modelSlug: turn.model.slug,
@@ -2044,6 +2064,7 @@ export async function runWorkbenchRuntime(
         elder,
         runCompletion,
         (msgs) => estimateRuntimeInputCount(transcriptEstimateText("", msgs)),
+        runtimeInput.abortSignal,
       );
       if (outcome.status !== "compressed") return outcome;
       // Persist FIRST and durably. The live turn only uses the compressed
@@ -2214,21 +2235,23 @@ export async function runWorkbenchRuntime(
         estimatedInputCount: request.estimatedInputCount,
       });
       const turn = await runWorkbenchTurn(params);
-      cacheReadTokens += turn.usage.cacheRead;
-      cacheWriteTokens += turn.usage.cacheWrite;
-      reasoningTokens += turn.usage.reasoning ?? 0;
-      turnInputTokens += turn.usage.input;
-      turnOutputTokens += turn.usage.output;
-      turnCostUsd += turn.usage.cost.total;
-      budget.record(turn.usage, turn.model.tier);
-      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-        type: "afterProviderResponse",
-        sessionId,
-        modelSlug: turn.model.slug,
-        inputCount: turn.usage.input,
-        outputCount: turn.usage.output,
-        totalMs: turn.timings.totalMs,
-      });
+      if (turn.requestDispatched !== false) {
+        cacheReadTokens += turn.usage.cacheRead;
+        cacheWriteTokens += turn.usage.cacheWrite;
+        reasoningTokens += turn.usage.reasoning ?? 0;
+        turnInputTokens += turn.usage.input;
+        turnOutputTokens += turn.usage.output;
+        turnCostUsd += turn.usage.cost.total;
+        budget.record(turn.usage, turn.model.tier);
+        await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+          type: "afterProviderResponse",
+          sessionId,
+          modelSlug: turn.model.slug,
+          inputCount: turn.usage.input,
+          outputCount: turn.usage.output,
+          totalMs: turn.timings.totalMs,
+        });
+      }
       return turn;
     };
     // Length-stop recovery around every provider call: classify a
@@ -2542,6 +2565,7 @@ export async function runWorkbenchRuntime(
       models,
       jsonObject: isNextWork,
       tools: commandTools,
+      abortSignal: runtimeInput.abortSignal,
       // Stream when not producing JSON and either no tools are offered or the
       // provider can stream tool calls — this also restores live token
       // streaming for ordinary companion replies (tools registered, none used).
@@ -2556,6 +2580,7 @@ export async function runWorkbenchRuntime(
         transcriptEstimateText(systemPrompt, messages),
       ),
     });
+    captureTurnState(turn);
     // Agent loop: iterate model<->tools until the model stops requesting tools,
     // repeats itself, or hits the step cap. On the OpenAI-compatible path each
     // gather step streams live (text deltas + captured tool calls); elsewhere
@@ -2568,10 +2593,18 @@ export async function runWorkbenchRuntime(
     // the model's own assistant turns (with tool-call intentions) and the
     // matching tool results are appended each step and replayed on the next
     // call, so multi-step turns stay coherent.
+    if (
+      runtimeInput.abortSignal?.aborted &&
+      turn.stopReason !== "error"
+    ) {
+      turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
+    }
     const seenToolCalls = new Set<string>();
     let toolSteps = 0;
+    toolLoop:
     while (
       !isNextWork &&
+      !runtimeInput.abortSignal?.aborted &&
       turn.toolCalls &&
       turn.toolCalls.length > 0 &&
       toolSteps < MAX_TOOL_STEPS
@@ -2594,8 +2627,15 @@ export async function runWorkbenchRuntime(
       const requestedToolCalls = turn.toolCalls;
       const stepResults: ToolResultSummary[] = [];
       for (const toolCall of requestedToolCalls) {
+        if (
+          runtimeInput.abortSignal?.aborted &&
+          turn.stopReason !== "error"
+        ) {
+          turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
+          break toolLoop;
+        }
         const toolStartedAt = Date.now();
-        await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        const startedEvent = emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
           type: "toolCallStarted",
           sessionId,
           commandId: toolCall.name,
@@ -2603,7 +2643,11 @@ export async function runWorkbenchRuntime(
         });
         let commandResult: Awaited<ReturnType<typeof invokeCommandWithEvent>>;
         try {
-          commandResult = await invokeCommandWithEvent(
+          // Starting event emission and invoking the command happen in the same
+          // event-loop turn, so an external signal delivered on a later turn
+          // cannot land between them. The emitter invocation itself is the
+          // boundary; a synchronously mutating observer does not undo it.
+          const commandOutcome = invokeCommandWithEvent(
             commandRegistry,
             {
               commandId: toolCall.name,
@@ -2641,7 +2685,16 @@ export async function runWorkbenchRuntime(
               permissionLevel: permissionLevel ?? "strict",
               loopback: authContext.transport === "loopback",
             },
+          ).then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error }),
           );
+          // emitRuntimeEvent contains observer rejection, so this await cannot
+          // bypass the already-started command's settlement.
+          await startedEvent;
+          const outcome = await commandOutcome;
+          if (!outcome.ok) throw outcome.error;
+          commandResult = outcome.value;
           await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
             type: "toolCallCompleted",
             sessionId,
@@ -2651,6 +2704,13 @@ export async function runWorkbenchRuntime(
             durationMs: Date.now() - toolStartedAt,
           });
         } catch (err) {
+          if (
+            runtimeInput.abortSignal?.aborted &&
+            err === runtimeInput.abortSignal.reason
+          ) {
+            turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
+            break toolLoop;
+          }
           // errorMessage crosses the wire like turnFailed does — sanitized
           // the same way. Tool RESULTS (the model-facing text on a completed
           // call) are a separate, untouched product surface; this is only
@@ -2677,6 +2737,13 @@ export async function runWorkbenchRuntime(
           isError: commandResult.isError,
           result: commandResultText(commandResult),
         });
+        if (
+          runtimeInput.abortSignal?.aborted &&
+          turn.stopReason !== "error"
+        ) {
+          turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
+          break toolLoop;
+        }
       }
 
       const atCap = toolSteps >= MAX_TOOL_STEPS;
@@ -2714,6 +2781,7 @@ export async function runWorkbenchRuntime(
         defaultModelId: defaultCompanionModel,
         models,
         tools: forceConclude ? undefined : commandTools,
+        abortSignal: runtimeInput.abortSignal,
         // Stream the gather step when the provider streams tool calls, and
         // always stream the forced no-tools conclusion.
         onTextDelta: streamsToolCalls || forceConclude ? liveDelta : undefined,
@@ -2721,8 +2789,28 @@ export async function runWorkbenchRuntime(
         modelSlug: selected.slug,
         estimatedInputCount: followUpInputCount,
       });
+      captureTurnState(turn);
+      if (
+        runtimeInput.abortSignal?.aborted &&
+        turn.stopReason !== "error"
+      ) {
+        turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
+      }
     }
-    if (isNextWork) {
+    if (
+      runtimeInput.abortSignal?.aborted &&
+      turn.stopReason !== "error"
+    ) {
+      turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
+    }
+    runtimeInput.onCancellationClosed?.();
+    if (turn.stopReason === "aborted") {
+      if (streamedText) {
+        log("");
+      } else {
+        log(turn.text);
+      }
+    } else if (isNextWork) {
       const result = validateNextWorkJson(turn.text);
       validation = { ok: result.ok, errors: result.errors };
       printNextWorkResult(result, turn.text, log);
@@ -2732,6 +2820,7 @@ export async function runWorkbenchRuntime(
       log(turn.text);
     }
     finalText = turn.text;
+    finalStopReason = turn.stopReason;
 
     selectedForReceipt = {
       displayName: turn.model.displayName,
@@ -2816,12 +2905,25 @@ export async function runWorkbenchRuntime(
         duration_ms: turn.timings.totalMs,
       })
     );
-    await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-      type: "turnCompleted",
-      sessionId,
-      traceId,
-    });
+    await emitRuntimeEvent(
+      runtimeInput.onRuntimeEvent,
+      turn.stopReason === "aborted"
+        ? {
+          type: "turnAborted",
+          sessionId,
+          traceId,
+          turnId: runtimeInput.turnId,
+        }
+        : {
+          type: "turnCompleted",
+          sessionId,
+          traceId,
+        },
+    );
   } catch (err: unknown) {
+    runtimeInput.onCancellationClosed?.();
+    const cancelledAtApproval = runtimeInput.abortSignal?.aborted === true &&
+      err === runtimeInput.abortSignal.reason;
     // errorName crosses the wire too, so it gets the same discipline as
     // errorMessage: a fixed literal from the class table, never `.name` —
     // that is a plain writable string property, so a foreign error could
@@ -2833,19 +2935,56 @@ export async function runWorkbenchRuntime(
     // whole offending value (e.g. a huge turn.text), so this must never carry
     // the raw message — summarizeError applies the same cap the client side
     // enforces defensively, at the point of origin instead.
-    await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-      type: "turnFailed",
-      sessionId,
-      traceId,
-      errorName: name,
-      errorMessage: summarizeError(err),
-    });
+    if (!cancelledAtApproval) {
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "turnFailed",
+        sessionId,
+        traceId,
+        errorName: name,
+        errorMessage: summarizeError(err),
+      });
+    }
     // instanceof, never `name` — name is a plain mutable string property any
     // Error can be given, so branching on it would let a foreign error simply
     // claim one of these class names and ride its raw-.message treatment
     // straight past the whole policy. instanceof checks the real prototype
     // chain instead.
-    if (err instanceof PaidEscalationDeclinedError) {
+    if (cancelledAtApproval) {
+      finalStopReason = "aborted";
+      spanId = generateSpanId();
+      await writeIntegrity(() =>
+        writeEvent({
+          event_id: generateULID(),
+          session_id: sessionId,
+          event_type: "model_response",
+          trace_id: traceId,
+          span_id: spanId,
+          principal_id: principalId,
+          principal_type: "agent",
+          action: "invoke",
+          resource: selectedForEvents?.slug ?? "workbench_model",
+          authz_basis: "policy:local-default",
+          model_id: selectedForEvents?.slug ?? null,
+          provider: selectedForEvents?.provider ?? null,
+          api: selectedForEvents?.api ?? null,
+          tokens_input: turnInputTokens,
+          tokens_output: turnOutputTokens,
+          tokens_cache_read: cacheReadTokens,
+          tokens_cache_write: cacheWriteTokens,
+          cost_total: turnCostUsd,
+          ...authnEventFields,
+          content: finalText,
+          stop_reason: "aborted",
+          duration_ms: Date.now() - sessionStart,
+        })
+      );
+      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+        type: "turnAborted",
+        sessionId,
+        traceId,
+        turnId: runtimeInput.turnId,
+      });
+    } else if (err instanceof PaidEscalationDeclinedError) {
       // verdict.reason is already sanitized at construction (see the class),
       // so it's safe to read directly here.
       const verdict = err.verdict;
@@ -3056,6 +3195,7 @@ export async function runWorkbenchRuntime(
     return {
       sessionId,
       traceId,
+      stopReason: finalStopReason,
       text: finalText,
       receipt,
       model: {

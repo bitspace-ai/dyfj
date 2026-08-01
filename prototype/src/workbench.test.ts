@@ -104,6 +104,8 @@ const runtimeMocks = vi.hoisted(() => {
     // returning — exercises the agent loop's toolCallCompleted error path
     // (a call that fails outright, not merely a denied/errored result).
     commandThrows: null as Error | null,
+    commandCalls: [] as string[],
+    commandHook: null as (() => void | Promise<void>) | null,
     agentsInstructions: null as
       | null
       | {
@@ -250,7 +252,16 @@ vi.mock("./repo-context", () => ({
       path: "README.md#section-1",
     }],
     sections: [],
-    budget: {},
+    budget: {
+      totalTokens: 100,
+      usedTokens: 30,
+      headroomTokens: 70,
+      byBucket: {
+        system: { limitTokens: 30, usedTokens: 10 },
+        active_repo: { limitTokens: 50, usedTokens: 20 },
+        derived_memory: { limitTokens: 20, usedTokens: 0 },
+      },
+    },
     profile: "compact",
   }),
 }));
@@ -290,6 +301,8 @@ vi.mock("./commands", () => ({
     toolCall: { commandId: string; callId: string },
     context: { writeEvent?: (event: Record<string, unknown>) => Promise<void> },
   ) => {
+    runtimeMocks.commandCalls.push(toolCall.commandId);
+    await runtimeMocks.commandHook?.();
     if (runtimeMocks.commandThrows) throw runtimeMocks.commandThrows;
     const result = runtimeMocks.commandResult ?? {
       decision: "allow",
@@ -336,6 +349,8 @@ beforeEach(() => {
   runtimeMocks.supportsTranscriptRetry = true;
   runtimeMocks.commandResult = null;
   runtimeMocks.commandThrows = null;
+  runtimeMocks.commandCalls.length = 0;
+  runtimeMocks.commandHook = null;
   runtimeMocks.agentsInstructions = null;
   runtimeMocks.sessionWorkspace = null;
   runtimeMocks.sessionWorkspaceThrows = false;
@@ -992,6 +1007,403 @@ describe("runWorkbenchRuntime observer events", () => {
     expect(JSON.stringify(events)).not.toContain("runtime response");
   });
 
+  test("an aborted turn finalizes partial text and usage without dispatching tools", async () => {
+    const abortController = new AbortController();
+    const events: Record<string, unknown>[] = [];
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 17,
+        output: 3,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      timings: { responseHeadersMs: 1, totalMs: 4 },
+    };
+    runtimeMocks.runWorkbenchTurn
+      .mockImplementationOnce(async (params) => {
+        expect(params.abortSignal).toBe(abortController.signal);
+        abortController.abort();
+        return {
+          ...base,
+          text: "partial answer",
+          stopReason: "aborted",
+          toolCalls: [{
+            id: "c1",
+            name: "list_files",
+            arguments: { path: "." },
+          }],
+        };
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        text: "next answer",
+        stopReason: "stop",
+      });
+
+    const first = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "start",
+      routingOptions: {},
+      turnId: "123e4567-e89b-42d3-a456-426614174000",
+      abortSignal: abortController.signal,
+      onRuntimeEvent: (event) => events.push(event),
+    });
+
+    expect(first).toMatchObject({
+      text: "partial answer",
+      stopReason: "aborted",
+      tokens: { input: 17, output: 3, totalCalls: 1 },
+    });
+    expect(runtimeMocks.writtenEvents).toContainEqual(
+      expect.objectContaining({
+        event_type: "model_response",
+        content: "partial answer",
+        stop_reason: "aborted",
+        tokens_input: 17,
+        tokens_output: 3,
+      }),
+    );
+    expect(
+      runtimeMocks.writtenEvents.some((event) =>
+        event.event_type === "tool_call"
+      ),
+    ).toBe(false);
+    expect(events).toContainEqual({
+      type: "turnAborted",
+      sessionId: first.sessionId,
+      traceId: first.traceId,
+      turnId: "123e4567-e89b-42d3-a456-426614174000",
+    });
+    expect(events.some((event) => event.type === "turnCompleted")).toBe(false);
+
+    const next = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "continue",
+      routingOptions: {},
+      sessionId: first.sessionId,
+    });
+    expect(next).toMatchObject({
+      text: "next answer",
+      stopReason: "stop",
+    });
+  });
+
+  test("an aborted next-work turn preserves partial text without validating it", async () => {
+    const abortController = new AbortController();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    runtimeMocks.runWorkbenchTurn.mockImplementationOnce(async () => {
+      abortController.abort();
+      return {
+        text: '{"worklet_id":"next-work.v0"',
+        model: runtimeMocks.model,
+        selection: {
+          selected: runtimeMocks.model,
+          considered: [runtimeMocks.model.slug],
+          reason: "default",
+        },
+        usage: {
+          input: 17,
+          output: 3,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        stopReason: "aborted",
+        timings: { responseHeadersMs: 1, totalMs: 4 },
+      };
+    });
+
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "next-work",
+        prompt: "what should I do next?",
+        routingOptions: {},
+        turnId: "123e4567-e89b-42d3-a456-426614174000",
+        abortSignal: abortController.signal,
+      });
+
+      expect(result).toMatchObject({
+        text: '{"worklet_id":"next-work.v0"',
+        stopReason: "aborted",
+      });
+      expect(result.context).not.toHaveProperty("validation");
+      expect(
+        log.mock.calls.flat().some((part) =>
+          String(part).includes("Next-work validation failed")
+        ),
+      ).toBe(false);
+      const response = runtimeMocks.writtenEvents.find((event) =>
+        event.event_type === "model_response"
+      );
+      expect(JSON.parse(String(response?.content))).toEqual({
+        worklet_id: "next-work.v0",
+        raw: '{"worklet_id":"next-work.v0"',
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("a provider terminal error outranks a concurrent cancellation", async () => {
+    const abortController = new AbortController();
+    const events: Record<string, unknown>[] = [];
+    runtimeMocks.runWorkbenchTurn.mockImplementationOnce(async () => {
+      abortController.abort();
+      return {
+        model: runtimeMocks.model,
+        selection: {
+          selected: runtimeMocks.model,
+          considered: [runtimeMocks.model.slug],
+          reason: "default",
+        },
+        usage: {
+          input: 10,
+          output: 2,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        timings: { responseHeadersMs: 1, totalMs: 2 },
+        text: "provider refusal",
+        stopReason: "error",
+      };
+    });
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "start",
+      routingOptions: {},
+      abortSignal: abortController.signal,
+      onRuntimeEvent: (event) => events.push(event),
+    });
+
+    expect(result.stopReason).toBe("error");
+    expect(runtimeMocks.writtenEvents).toContainEqual(
+      expect.objectContaining({
+        event_type: "model_response",
+        stop_reason: "error",
+      }),
+    );
+    expect(events.some((event) => event.type === "turnAborted")).toBe(false);
+  });
+
+  test("an abort during a running tool lets it settle and starts no queued tool", async () => {
+    const abortController = new AbortController();
+    let markToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      markToolStarted = resolve;
+    });
+    let releaseTool!: () => void;
+    const toolSettled = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    runtimeMocks.commandHook = () => {
+      abortController.abort();
+      markToolStarted();
+      return toolSettled;
+    };
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+      text: "",
+      stopReason: "tool_use",
+      toolCalls: [
+        { id: "c1", name: "list_files", arguments: { path: "." } },
+        { id: "c2", name: "read_file", arguments: { path: "README.md" } },
+      ],
+    });
+
+    let turnSettled = false;
+    const pending = runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      abortSignal: abortController.signal,
+      onRuntimeEvent: (event) => {
+        if (event.type === "toolCallStarted") {
+          throw new Error("observer failed");
+        }
+      },
+    });
+    pending.finally(() => {
+      turnSettled = true;
+    });
+
+    await toolStarted;
+    await Promise.resolve();
+    expect(turnSettled).toBe(false);
+    releaseTool();
+    const result = await pending;
+    expect(result.stopReason).toBe("aborted");
+    expect(runtimeMocks.commandCalls).toEqual(["list_files"]);
+    expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
+  });
+
+  test("an approval cancellation does not report a tool failure", async () => {
+    const abortController = new AbortController();
+    const events: Record<string, unknown>[] = [];
+    runtimeMocks.commandHook = () => {
+      abortController.abort();
+      throw abortController.signal.reason;
+    };
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+      text: "",
+      stopReason: "tool_use",
+      toolCalls: [{
+        id: "c1",
+        name: "write_file",
+        arguments: { path: "note.txt", content: "text" },
+      }],
+    });
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "write a note",
+      routingOptions: {},
+      turnId: "123e4567-e89b-42d3-a456-426614174000",
+      abortSignal: abortController.signal,
+      onRuntimeEvent: (event) => events.push(event),
+    });
+
+    expect(result.stopReason).toBe("aborted");
+    expect(
+      events.some((event) => event.type === "toolCallCompleted"),
+    ).toBe(false);
+    expect(events).toContainEqual({
+      type: "turnAborted",
+      sessionId: result.sessionId,
+      traceId: result.traceId,
+      turnId: "123e4567-e89b-42d3-a456-426614174000",
+    });
+  });
+
+  test("tool invocation crosses the boundary in the same turn that start-event emission begins", async () => {
+    const abortController = new AbortController();
+    let markStartEmission!: () => void;
+    const startEmission = new Promise<void>((resolve) => {
+      markStartEmission = resolve;
+    });
+    let releaseStartEvent!: () => void;
+    const startEventReleased = new Promise<void>((resolve) => {
+      releaseStartEvent = resolve;
+    });
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+      text: "",
+      stopReason: "tool_use",
+      toolCalls: [
+        { id: "c1", name: "list_files", arguments: { path: "." } },
+        { id: "c2", name: "read_file", arguments: { path: "README.md" } },
+      ],
+    });
+
+    const pending = runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      abortSignal: abortController.signal,
+      onRuntimeEvent: (event) => {
+        if (event.type !== "toolCallStarted") return;
+        markStartEmission();
+        return startEventReleased;
+      },
+    });
+
+    await startEmission;
+    expect(runtimeMocks.commandCalls).toEqual(["list_files"]);
+    abortController.abort();
+    releaseStartEvent();
+    const result = await pending;
+
+    expect(result.stopReason).toBe("aborted");
+    expect(runtimeMocks.commandCalls).toEqual(["list_files"]);
+  });
+
+  test("closes cancellation acceptance before terminal finalization", async () => {
+    let cancellationClosed = false;
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+      text: "done",
+      stopReason: "stop",
+    });
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "finish",
+      routingOptions: {},
+      onCancellationClosed: () => {
+        cancellationClosed = true;
+      },
+      onRuntimeEvent: (event) => {
+        if (event.type === "turnCompleted") {
+          expect(cancellationClosed).toBe(true);
+        }
+      },
+    });
+
+    expect(result.stopReason).toBe("stop");
+    expect(cancellationClosed).toBe(true);
+  });
+
   test("agent loop iterates model<->tools until the model stops requesting tools", async () => {
     const base = {
       model: runtimeMocks.model,
@@ -1370,6 +1782,61 @@ describe("runWorkbenchRuntime observer events", () => {
         }),
       })).rejects.toThrow("Budget ceiling confirmation declined");
       expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+    } finally {
+      (runtimeMocks.model as { tier: number }).tier = prevTier;
+      runtimeMocks.model.costInput = prevCost;
+      log.mockRestore();
+    }
+  });
+
+  test("cancelling a budget approval finalizes an aborted turn", async () => {
+    const prevTier = runtimeMocks.model.tier;
+    const prevCost = runtimeMocks.model.costInput;
+    (runtimeMocks.model as { tier: number }).tier = 1;
+    runtimeMocks.model.costInput = 15;
+    const abortController = new AbortController();
+    const events: Record<string, unknown>[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "explore",
+        routingOptions: {},
+        turnId: "123e4567-e89b-42d3-a456-426614174000",
+        abortSignal: abortController.signal,
+        defaultPerCallBudgetUsd: 0.00001,
+        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
+        confirmBudgetCeiling: async () => {
+          abortController.abort();
+          throw abortController.signal.reason;
+        },
+        onRuntimeEvent: (event) => events.push(event),
+      });
+
+      expect(result).toMatchObject({
+        text: "",
+        stopReason: "aborted",
+        tokens: { input: 0, output: 0, totalCalls: 0 },
+      });
+      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+      expect(runtimeMocks.writtenEvents).toContainEqual(
+        expect.objectContaining({
+          event_type: "model_response",
+          content: "",
+          stop_reason: "aborted",
+          tokens_input: 0,
+          tokens_output: 0,
+        }),
+      );
+      expect(events).toContainEqual({
+        type: "turnAborted",
+        sessionId: result.sessionId,
+        traceId: result.traceId,
+        turnId: "123e4567-e89b-42d3-a456-426614174000",
+      });
+      expect(events.some((event) => event.type === "afterProviderResponse"))
+        .toBe(false);
+      expect(events.some((event) => event.type === "turnFailed")).toBe(false);
     } finally {
       (runtimeMocks.model as { tier: number }).tier = prevTier;
       runtimeMocks.model.costInput = prevCost;
@@ -3195,6 +3662,80 @@ describe("runWorkbenchRuntime proactive context compression", () => {
           e.event_type === "context_compressed"
         ),
       ).toBe(true);
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  test("includes compression reasoning in the turn receipt", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      const compression = params.systemPrompt === COMPRESSION_SYSTEM_PROMPT;
+      return Promise.resolve({
+        ...turnResult(compression ? validSummary : "runtime response"),
+        usage: {
+          ...turnResult("").usage,
+          reasoning: compression ? 7 : 3,
+        },
+      });
+    });
+
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+      });
+
+      expect(result.tokens.reasoning).toBe(10);
+      expect(result.tokens.totalCalls).toBe(2);
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  test("an abort during compression cannot replace elder context", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    const abortController = new AbortController();
+    const captured: { value?: WorkbenchMessage[] } = {};
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        abortController.abort();
+        return Promise.resolve({
+          ...turnResult(""),
+          stopReason: "aborted",
+          requestDispatched: false,
+        });
+      }
+      captured.value = params.messages;
+      return Promise.resolve({
+        ...turnResult(""),
+        stopReason: "aborted",
+        requestDispatched: false,
+      });
+    });
+
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        turnId: "123e4567-e89b-42d3-a456-426614174000",
+        abortSignal: abortController.signal,
+      });
+
+      expect(result.stopReason).toBe("aborted");
+      expect(result.tokens.totalCalls).toBe(0);
+      expect(JSON.stringify(captured.value ?? [])).toContain("old question");
+      expect(
+        runtimeMocks.writtenEvents.some((event) =>
+          event.event_type === "context_compressed"
+        ),
+      ).toBe(false);
     } finally {
       runtimeMocks.model.contextWindow = prevWindow;
     }

@@ -8,6 +8,17 @@ import {
 } from "./turn-runner";
 
 describe("resolveTurnFromBody paid posture", () => {
+  test("carries a valid client turn id into the runtime input", () => {
+    const turnId = "123e4567-e89b-42d3-a456-426614174000";
+    const resolved = resolveTurnFromBody({ prompt: "hi", turnId }, true);
+    expect(resolved).toMatchObject({ runtimeInput: { turnId } });
+  });
+
+  test("rejects a malformed turn id", () => {
+    expect(resolveTurnFromBody({ prompt: "hi", turnId: "turn-1" }, true))
+      .toMatchObject({ status: 400, error: "turnId must be a UUID" });
+  });
+
   test("explicit approvePaidInference true opts in", () => {
     const resolved = resolveTurnFromBody(
       { prompt: "hi", approvePaidInference: true },
@@ -84,6 +95,8 @@ describe("formatTurnSummaryLine", () => {
   test("degrades gracefully on partial results", () => {
     // deno-lint-ignore no-explicit-any
     const line = formatTurnSummaryLine({ sessionId: "01X" } as any);
-    expect(line).toBe("[turn] session=01X model=unknown tokens=? cost=$? local");
+    expect(line).toBe(
+      "[turn] session=01X model=unknown tokens=? cost=$? local",
+    );
   });
 });

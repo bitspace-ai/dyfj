@@ -24,6 +24,7 @@
 export interface TurnReceipt {
   sessionId: string;
   traceId: string;
+  stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
   text: string;
   receipt: string;
   model: {
@@ -45,11 +46,12 @@ export interface TurnReceipt {
     cacheRead: number;
     cacheWrite: number;
     /**
-     * Provider-reported reasoning/thinking tokens across the turn, when the
-     * provider reports them separately from visible output (e.g. Gemini's
-     * thoughtsTokenCount). Optional and additive: older servers omit it, and
-     * clients must render it only when present and non-zero. Display-only —
-     * recorded usage and cost intentionally exclude these tokens.
+     * Reasoning/thinking tokens separated from non-reasoning generated tokens:
+     * provider-reported when available, or estimated by streaming adapters
+     * that received plaintext reasoning before an interrupted call ended.
+     * Optional and additive; clients render it only when present and non-zero.
+     * The cost field already accounts for any billable reasoning the adapter
+     * observed.
      */
     reasoning?: number;
     totalCalls: number;
@@ -108,6 +110,13 @@ export type SupersedingRetryStartedEvent = {
   sessionId: string;
   modelSlug: string;
   reason: SupersedingRetryReason;
+};
+
+export type TurnAbortedEvent = {
+  type: "turnAborted";
+  sessionId: string;
+  traceId: string;
+  turnId?: string;
 };
 
 /**

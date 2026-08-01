@@ -11,7 +11,7 @@ export interface UnixClient {
 }
 
 export interface ToolApprovalVerdict {
-  decision: "approve" | "deny";
+  decision: "approve" | "deny" | "abort";
   reason?: string;
 }
 

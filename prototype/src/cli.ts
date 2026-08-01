@@ -48,6 +48,7 @@ export type TurnResult = TurnReceipt;
 
 export interface TurnRequest {
   prompt: string;
+  turnId?: string;
   mode?: "turn" | "ask" | "next-work";
   routingOptions?: {
     modelId?: string;
@@ -99,7 +100,9 @@ export interface Io {
   /** True when stderr is an interactive terminal (spinner may animate). */
   errIsTerminal?: boolean;
   /** Prompt and read one line; null on EOF. */
-  readLine(prompt: string): Promise<string | null>;
+  readLine(prompt: string, signal?: AbortSignal): Promise<string | null>;
+  /** Interactive readline owns terminal Ctrl-C while its interface is open. */
+  turnInterrupts?: TurnInterruptSource;
   close(): void;
 }
 
@@ -402,7 +405,11 @@ export function handleTurnRuntimeEvent(
   // Both clients decode the transport JSON but never schema-validate the frame,
   // so a malformed `event: null` or primitive must be dropped, not dereferenced.
   if (typeof event !== "object" || event === null) return;
-  const line = formatRuntimeEvent(event as Record<string, unknown>);
+  const runtimeEvent = event as Record<string, unknown>;
+  // The renderer may still hold an incomplete final line. Make the terminal
+  // marker follow all preserved partial text, rather than bisecting it.
+  if (runtimeEvent.type === "turnAborted") output.finish();
+  const line = formatRuntimeEvent(runtimeEvent);
   if (line !== null) io.err(line);
 }
 
@@ -550,12 +557,19 @@ export async function runExec(
         io,
         onApproval,
       );
+      const terminalHandlers = {
+        ...handlers,
+        onEvent: (event: Record<string, unknown>) => {
+          if (event.type === "turnAborted") return;
+          handlers.onEvent(event);
+        },
+      };
       spinner.start();
       let result: TurnResult;
       try {
         result = config.unix
-          ? await socketTurn(config, body, handlers, connect)
-          : await streamTurn(config, body, handlers, fetchFn);
+          ? await socketTurn(config, body, terminalHandlers, connect)
+          : await streamTurn(config, body, terminalHandlers, fetchFn);
       } finally {
         // Covers every non-streaming exit — turn failure, declined approval,
         // buffered-only turns — so no orphaned spinner line survives the turn.
@@ -567,6 +581,9 @@ export async function runExec(
         output.emitBufferedText(result.text);
       } else {
         output.finish();
+      }
+      if (result.stopReason === "aborted") {
+        handlers.onEvent({ type: "turnAborted" });
       }
       io.err(formatReceipt(result, config.color));
     }
@@ -585,7 +602,8 @@ export async function runRepl(
   fetchFn: typeof fetch = fetch,
   connect: ConnectFn = connectUnixClient,
   interactive = true,
-): Promise<void> {
+  interrupts: TurnInterruptSource | undefined = io.turnInterrupts,
+): Promise<number> {
   io.err(
     `dyfj — ${
       config.unix ? config.socket : config.serverUrl
@@ -606,8 +624,7 @@ export async function runRepl(
   // accumulated client-side so the displayed total always matches the receipts
   // the operator has seen.
   let sessionSpendUsd = 0;
-  const onApproval = (request: unknown) =>
-    promptMidTurnApproval(io, request, interactive);
+  let exitCode = 0;
   try {
     for (;;) {
       const line = await io.readLine(replPrompt(config.color));
@@ -628,41 +645,113 @@ export async function runRepl(
       try {
         const output = createTurnOutputHandlers(config, io);
         const spinner = createTurnSpinner(config, io);
+        const abortController = config.unix ? new AbortController() : undefined;
+        const onApproval = (request: unknown) =>
+          promptMidTurnApproval(
+            io,
+            request,
+            interactive,
+            abortController?.signal,
+          );
         const handlers = spinnerGuardedTurnHandlers(
           spinner,
           output,
           io,
           onApproval,
         );
+        const terminalHandlers = {
+          ...handlers,
+          onEvent: (event: Record<string, unknown>) => {
+            if (event.type === "turnAborted") return;
+            handlers.onEvent(event);
+          },
+        };
         const body = buildTurnBody(prompt, config, sessionId);
-        spinner.start();
+        let interruptRequested = false;
+        const interrupt = () => {
+          if (interruptRequested) return;
+          interruptRequested = true;
+          abortController?.abort();
+          try {
+            spinner.stop();
+          } catch {
+            // A failed terminal erase must not escape before cancellation runs.
+          }
+          try {
+            io.err("[interrupt requested]");
+          } catch {
+            // A terminal write failure must not prevent the cancellation.
+          }
+        };
+        let interruptInstalled = false;
+        let turnFailed = false;
         let result: TurnResult;
         try {
+          spinner.start();
           result = config.unix
-            ? await socketTurn(config, body, handlers, connect)
-            : await streamTurn(config, body, handlers, fetchFn);
+            ? await socketTurn(
+              config,
+              body,
+              {
+                ...terminalHandlers,
+                abortSignal: abortController?.signal,
+                onConnected: () => {
+                  if (interrupts !== undefined) {
+                    interrupts.add(interrupt);
+                    interruptInstalled = true;
+                  }
+                },
+              },
+              connect,
+            )
+            : await streamTurn(config, body, terminalHandlers, fetchFn);
+          sessionId = result.sessionId;
+        } catch (error) {
+          turnFailed = true;
+          throw error;
         } finally {
-          spinner.stop();
+          let cleanupFailed = false;
+          let cleanupError: unknown;
+          try {
+            if (interruptInstalled) interrupts?.remove(interrupt);
+          } catch (error) {
+            cleanupFailed = true;
+            cleanupError = error;
+          }
+          try {
+            spinner.stop();
+          } catch (error) {
+            if (!cleanupFailed) cleanupError = error;
+            cleanupFailed = true;
+          }
+          if (!turnFailed && cleanupFailed) throw cleanupError;
         }
         if (!output.streamed() && result.text.length > 0) {
           output.emitBufferedText(result.text);
         } else {
           output.finish();
         }
+        if (result.stopReason === "aborted") {
+          handlers.onEvent({ type: "turnAborted" });
+        }
         sessionSpendUsd += result.cost.totalUsd;
         io.err(formatReceipt(result, config.color, sessionSpendUsd));
-        sessionId = result.sessionId;
       } catch (error) {
         io.err(
           config.unix
             ? socketError(error, config)
             : friendlyError(error, config),
         );
+        if (error instanceof TurnCancellationUncertainError) {
+          exitCode = 1;
+          break;
+        }
       }
     }
   } finally {
     io.close();
   }
+  return exitCode;
 }
 
 // ── UDS read commands (models/sessions over the JSON-RPC seam) ───────────────
@@ -711,9 +800,25 @@ interface RuntimeStatusPayload {
 export interface StartRuntimeOptions {
   command?: string;
   cwd?: string;
+  autostarted?: boolean;
 }
 
 export type ConnectFn = typeof connectUnixClient;
+export const TURN_CANCELLATION_TIMEOUT_MS = 5_000;
+export const TURN_CANCELLATION_SETTLE_TIMEOUT_MS = 30_000;
+
+class TurnCancellationUncertainError extends DomainError {}
+
+export interface TurnInterruptSource {
+  add(handler: () => void): void;
+  remove(handler: () => void): void;
+}
+
+const denoTurnInterruptSource: TurnInterruptSource = {
+  add: (handler) => Deno.addSignalListener("SIGINT", handler),
+  remove: (handler) => Deno.removeSignalListener("SIGINT", handler),
+};
+
 export type StartRuntimeFn = (
   config: CliConfig,
   options?: StartRuntimeOptions,
@@ -734,22 +839,144 @@ export async function socketTurn(
     onApproval?: (
       request: unknown,
     ) => Promise<ToolApprovalVerdict> | ToolApprovalVerdict;
+    abortSignal?: AbortSignal;
+    onConnected?: () => void;
+    cancellationTimeoutMs?: number;
+    cancellationSettleTimeoutMs?: number;
   } = {},
   connect: ConnectFn = connectUnixClient,
 ): Promise<TurnResult> {
+  const turnId = body.turnId ?? crypto.randomUUID();
   const clientOptions: UnixClientOptions = {};
+  let turnAbortedEvent: Record<string, unknown> | undefined;
   if (handlers.onDelta !== undefined || handlers.onEvent !== undefined) {
     clientOptions.onStream = (params) => {
-      const frame = params as TurnStreamFrame;
-      if (frame.t === "delta") handlers.onDelta?.(frame.text);
-      else if (frame.t === "event") handlers.onEvent?.(frame.event);
+      if (typeof params !== "object" || params === null) return;
+      const frame = params as {
+        t?: unknown;
+        text?: unknown;
+        event?: unknown;
+      };
+      if (frame.t === "delta" && typeof frame.text === "string") {
+        handlers.onDelta?.(frame.text);
+      } else if (
+        frame.t === "event" &&
+        typeof frame.event === "object" &&
+        frame.event !== null &&
+        !Array.isArray(frame.event)
+      ) {
+        const event = frame.event as Record<string, unknown>;
+        if (
+          event.type === "turnAborted" &&
+          (
+            typeof event.sessionId !== "string" ||
+            typeof event.traceId !== "string" ||
+            event.turnId !== turnId
+          )
+        ) {
+          return;
+        }
+        if (event.type === "turnAborted") {
+          turnAbortedEvent = event;
+          return;
+        }
+        handlers.onEvent?.(event);
+      }
     };
   }
   if (handlers.onApproval) clientOptions.onApproval = handlers.onApproval;
   const client = await connect(config.socket, clientOptions);
+  let rejectCancellation!: (error: DomainError) => void;
+  const cancellationFailure = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  let cancel: Promise<unknown> | undefined;
+  let cancellationTimer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  const cancellationError = () =>
+    new TurnCancellationUncertainError(
+      "turn cancellation was not acknowledged; restart the runtime before retrying",
+    );
+  const cancellationSettleError = () =>
+    new TurnCancellationUncertainError(
+      "turn did not finish after cancellation was acknowledged; remote work may still be running, so restart the runtime before retrying",
+    );
+  const cancellationDeclinedSettleError = () =>
+    new TurnCancellationUncertainError(
+      "turn did not finish after cancellation was declined; remote work may still be running, so restart the runtime before retrying",
+    );
+  const requestCancel = () => {
+    if (cancel !== undefined) return;
+    cancellationTimer = setTimeout(() => {
+      rejectCancellation(cancellationError());
+    }, handlers.cancellationTimeoutMs ?? TURN_CANCELLATION_TIMEOUT_MS);
+    cancel = Promise.resolve()
+      .then(() => client.request("turn/cancel", { turnId }))
+      .then(
+        (result) => {
+          clearTimeout(cancellationTimer);
+          if (typeof result !== "object" || result === null) {
+            rejectCancellation(cancellationError());
+          } else if (!settled) {
+            const cancelled = (result as Record<string, unknown>).cancelled;
+            if (cancelled !== true && cancelled !== false) {
+              rejectCancellation(cancellationError());
+              return result;
+            }
+            cancellationTimer = setTimeout(
+              () => {
+                rejectCancellation(
+                  cancelled
+                    ? cancellationSettleError()
+                    : cancellationDeclinedSettleError(),
+                );
+              },
+              handlers.cancellationSettleTimeoutMs ??
+                TURN_CANCELLATION_SETTLE_TIMEOUT_MS,
+            );
+          }
+          return result;
+        },
+        () => {
+          clearTimeout(cancellationTimer);
+          rejectCancellation(cancellationError());
+        },
+      );
+  };
   try {
-    return await client.request("turn", body) as TurnResult;
+    if (handlers.abortSignal?.aborted) {
+      throw new DomainError("turn interrupted before dispatch");
+    }
+    handlers.onConnected?.();
+    const turn = client.request("turn", { ...body, turnId });
+    handlers.abortSignal?.addEventListener("abort", requestCancel, {
+      once: true,
+    });
+    if (handlers.abortSignal?.aborted) requestCancel();
+    const result = await Promise.race([
+      turn as Promise<TurnResult>,
+      cancellationFailure,
+    ]);
+    if (result.stopReason === "aborted") {
+      const matchingAbortEvent = turnAbortedEvent?.sessionId ===
+            result.sessionId &&
+          turnAbortedEvent.traceId === result.traceId
+        ? turnAbortedEvent
+        : undefined;
+      handlers.onEvent?.(
+        matchingAbortEvent ?? {
+          type: "turnAborted",
+          sessionId: result.sessionId,
+          traceId: result.traceId,
+          turnId,
+        },
+      );
+    }
+    return result;
   } finally {
+    settled = true;
+    clearTimeout(cancellationTimer);
+    handlers.abortSignal?.removeEventListener("abort", requestCancel);
     client.close();
   }
 }
@@ -764,6 +991,7 @@ export async function promptMidTurnApproval(
   io: Io,
   request: unknown,
   interactive: boolean,
+  abortSignal?: AbortSignal,
 ): Promise<ToolApprovalVerdict> {
   if (!interactive) {
     return {
@@ -779,7 +1007,11 @@ export async function promptMidTurnApproval(
       ? r.message
       : "Projected spend crosses the configured budget ceiling.";
     io.err(`\n⚠  ${message}`);
-    const answer = await io.readLine("   exceed budget ceiling? [y/N] ");
+    const answer = await io.readLine(
+      "   exceed budget ceiling? [y/N] ",
+      abortSignal,
+    );
+    if (abortSignal?.aborted) return { decision: "abort" };
     if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
       return { decision: "approve" };
     }
@@ -792,7 +1024,9 @@ export async function promptMidTurnApproval(
     io.err(`\n🛑 ${message}`);
     const answer = await io.readLine(
       "   allow the next call anyway? [y/N] ",
+      abortSignal,
     );
+    if (abortSignal?.aborted) return { decision: "abort" };
     if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
       return { decision: "approve" };
     }
@@ -803,7 +1037,8 @@ export async function promptMidTurnApproval(
     : String(r.commandId ?? "tool");
   io.err(`\n⚠  approve ${title}?`);
   io.err(formatApprovalArgs(r.arguments));
-  const answer = await io.readLine("   approve? [y/N] ");
+  const answer = await io.readLine("   approve? [y/N] ", abortSignal);
+  if (abortSignal?.aborted) return { decision: "abort" };
   if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
     return { decision: "approve" };
   }
@@ -816,6 +1051,7 @@ export const promptToolApproval = promptMidTurnApproval;
 export function formatRuntimeEvent(
   event: Record<string, unknown>,
 ): string | null {
+  if (event.type === "turnAborted") return "[interrupted]";
   if (event.type === "toolStepStarted") {
     const step = typeof event.step === "number" ? event.step : "?";
     const count = typeof event.toolCallCount === "number"
@@ -1242,6 +1478,7 @@ export function buildServeUnixArgs(
   memoryMcpGrant?: string | null,
   runGrants?: string[] | null,
   envGrants?: string[] | null,
+  autostarted = false,
 ): string[] {
   const socketGrant = `unix:${socketPath}`;
   let net = netGrants.includes(socketGrant)
@@ -1272,6 +1509,7 @@ export function buildServeUnixArgs(
     "--env-file=.env",
     "--sloppy-imports",
     "src/uds-serve.ts",
+    ...(autostarted ? ["--autostarted"] : []),
   ];
 }
 
@@ -1443,6 +1681,7 @@ export async function startLocalRuntime(
 ): Promise<number> {
   const command = options.command ?? "deno";
   const cwd = options.cwd ?? defaultPrototypeRoot();
+  const autostarted = options.autostarted === true;
   const netGrants = await readServeUnixNetGrants(cwd);
   const memoryMcpGrant = await readMemoryMcpNetGrant(cwd);
   // When a [secrets] resolver is configured, the child runtime must be granted
@@ -1470,32 +1709,46 @@ export async function startLocalRuntime(
     const extra = inheritEnv.filter((name) => !profileEnv.includes(name));
     envGrants = extra.length > 0 ? [...profileEnv, ...extra] : null;
   }
-  const child = new Deno.Command(command, {
-    args: buildServeUnixArgs(
-      netGrants,
-      config.socket,
-      memoryMcpGrant,
-      runGrants,
-      envGrants,
-    ),
-    cwd,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  const status = await child.status;
-  return status.code;
+  // Autostarted supervisor and server share the client's terminal process
+  // group. Both must survive the SIGINT that the client converts into cancel.
+  const ignoreSigint = () => {};
+  if (autostarted) denoTurnInterruptSource.add(ignoreSigint);
+  try {
+    const child = new Deno.Command(command, {
+      args: buildServeUnixArgs(
+        netGrants,
+        config.socket,
+        memoryMcpGrant,
+        runGrants,
+        envGrants,
+        autostarted,
+      ),
+      cwd,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn();
+    const status = await child.status;
+    return status.code;
+  } finally {
+    if (autostarted) denoTurnInterruptSource.remove(ignoreSigint);
+  }
 }
 
 export async function runStart(
   config: CliConfig,
   io: Io,
   startRuntime: StartRuntimeFn = startLocalRuntime,
+  autostarted = false,
 ): Promise<number> {
   io.err(`dyfj: starting local runtime at ${config.socket}`);
-  io.err(`dyfj: foreground process; Ctrl-C stops the runtime`);
+  io.err(
+    autostarted
+      ? `dyfj: autostarted process; after its signal handler is ready, client Ctrl-C leaves the runtime running`
+      : `dyfj: foreground process; Ctrl-C signals runtime shutdown; the shell may return before cleanup settles`,
+  );
   try {
-    return await startRuntime(config);
+    return await startRuntime(config, { autostarted });
   } catch (error) {
     io.err(`dyfj: could not start local runtime: ${summarizeError(error)}`);
     io.err(`dyfj: fallback command: cd prototype && deno task serve-unix`);
@@ -1517,6 +1770,7 @@ interface ParsedArgs {
   prompt?: string;
   json: boolean;
   overrides: Partial<CliConfig>;
+  launcherAutostarted?: true;
   error?: string;
 }
 
@@ -1540,11 +1794,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let json = false;
   let printPrompt: string | undefined;
   let help = false;
+  let launcherAutostarted = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--json") {
       json = true;
+    } else if (arg === "--launcher-autostarted") {
+      launcherAutostarted = true;
     } else if (arg === "--unix") {
       overrides.unix = true;
     } else if (arg === "--approve-paid") {
@@ -1594,6 +1851,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
+  if (
+    launcherAutostarted &&
+    !(
+      !help && printPrompt === undefined && positional[0] === "start" &&
+      positional.length === 1
+    )
+  ) {
+    return error("--launcher-autostarted is valid only with start");
+  }
+
   if (help) return { command: "help", json, overrides };
 
   if (printPrompt !== undefined) {
@@ -1609,7 +1876,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return { command: "status", json, overrides };
   }
   if (positional[0] === "start" && positional.length === 1) {
-    return { command: "start", json, overrides };
+    return {
+      command: "start",
+      json,
+      overrides,
+      ...(launcherAutostarted ? { launcherAutostarted: true as const } : {}),
+    };
   }
   if (positional[0] === "exec") {
     const prompt = positional.slice(1).join(" ").trim();
@@ -1743,9 +2015,37 @@ Options:
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 interface QuestionReadline {
-  question(prompt: string): Promise<string>;
+  question(prompt: string, options?: { signal?: AbortSignal }): Promise<string>;
   once(event: "close", listener: () => void): unknown;
   off(event: "close", listener: () => void): unknown;
+}
+
+interface SigintReadline {
+  on(event: "SIGINT", listener: () => void): unknown;
+  off(event: "SIGINT", listener: () => void): unknown;
+}
+
+export function readlineTurnInterruptSource(
+  rl: SigintReadline,
+): TurnInterruptSource {
+  return {
+    add: (handler) => {
+      rl.on("SIGINT", handler);
+    },
+    remove: (handler) => {
+      rl.off("SIGINT", handler);
+    },
+  };
+}
+
+export function selectTurnInterruptSource(
+  inputIsTerminal: boolean,
+  outputIsTerminal: boolean,
+  readlineSource: TurnInterruptSource,
+  signalSource: TurnInterruptSource,
+): TurnInterruptSource | undefined {
+  if (!inputIsTerminal) return undefined;
+  return outputIsTerminal ? readlineSource : signalSource;
 }
 
 /**
@@ -1757,11 +2057,12 @@ interface QuestionReadline {
 export function readLineOrNull(
   rl: QuestionReadline,
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     const onClose = () => resolve(null);
     rl.once("close", onClose);
-    rl.question(prompt).then(
+    rl.question(prompt, signal === undefined ? undefined : { signal }).then(
       (answer) => {
         rl.off("close", onClose);
         resolve(answer);
@@ -1777,6 +2078,8 @@ export function readLineOrNull(
 function realIo(): Io {
   const encoder = new TextEncoder();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const inputIsTerminal = Deno.stdin.isTerminal();
+  const outputIsTerminal = Deno.stdout.isTerminal();
   return {
     out: (text) => {
       Deno.stdout.writeSync(encoder.encode(text));
@@ -1786,7 +2089,13 @@ function realIo(): Io {
       Deno.stderr.writeSync(encoder.encode(text));
     },
     errIsTerminal: Deno.stderr.isTerminal(),
-    readLine: (prompt) => readLineOrNull(rl, prompt),
+    readLine: (prompt, signal) => readLineOrNull(rl, prompt, signal),
+    turnInterrupts: selectTurnInterruptSource(
+      inputIsTerminal,
+      outputIsTerminal,
+      readlineTurnInterruptSource(rl),
+      denoTurnInterruptSource,
+    ),
     close: () => rl.close(),
   };
 }
@@ -1842,10 +2151,14 @@ export async function main(argv: string[], io: Io): Promise<number> {
     return await runStatus(config, io);
   }
   if (parsed.command === "start") {
-    return await runStart(config, io);
+    return await runStart(
+      config,
+      io,
+      startLocalRuntime,
+      parsed.launcherAutostarted === true,
+    );
   }
-  await runRepl(config, io, fetch, connectUnixClient, interactive);
-  return 0;
+  return await runRepl(config, io, fetch, connectUnixClient, interactive);
 }
 
 if (import.meta.main) {

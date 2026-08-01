@@ -635,6 +635,32 @@ describe("invokeCommand approval (ask) flow", () => {
     });
   });
 
+  test("does not start the executor while approval is pending", async () => {
+    let approve!: (verdict: { decision: "approve" }) => void;
+    const approval = new Promise<{ decision: "approve" }>((resolve) => {
+      approve = resolve;
+    });
+    let ran = false;
+    const registry = createCommandRegistry([
+      writeFileCommand(() => {
+        ran = true;
+        return "ran";
+      }),
+    ]);
+    const pending = invokeCommand(
+      registry,
+      call({ path: "x" }, { commandId: "write_file" }),
+      () => approval,
+    );
+
+    await Promise.resolve();
+    expect(ran).toBe(false);
+
+    approve({ decision: "approve" });
+    await expect(pending).resolves.toMatchObject({ decision: "allow" });
+    expect(ran).toBe(true);
+  });
+
   test("a deny verdict does not run the tool and carries the reason", async () => {
     let ran = false;
     const registry = createCommandRegistry([

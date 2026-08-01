@@ -73,6 +73,22 @@ describe("JsonRpcPeer", () => {
     expect(await client.request("models/list")).toEqual({ models: [] });
   });
 
+  test("all requests on one connection share one handler context", async () => {
+    const contexts: unknown[] = [];
+    const { client } = await connectPair({
+      inspect: (_params, ctx) => {
+        contexts.push(ctx);
+        return {};
+      },
+    });
+
+    await client.request("inspect");
+    await client.request("inspect");
+
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]).toBe(contexts[1]);
+  });
+
   test("server-initiated request -> client handler (the approval round-trip)", async () => {
     const { server } = await connectPair({}, {
       approval: (params) => {
@@ -86,6 +102,39 @@ describe("JsonRpcPeer", () => {
         command: "rm -rf build/",
       }),
     ).toEqual({ decision: "approve-once" });
+  });
+
+  test("an aborted request removes its pending correlation and ignores a late response", async () => {
+    let markApprovalStarted!: () => void;
+    const approvalStarted = new Promise<void>((resolve) => {
+      markApprovalStarted = resolve;
+    });
+    let releaseApproval!: () => void;
+    const approvalGate = new Promise<void>((resolve) => {
+      releaseApproval = resolve;
+    });
+    const { server } = await connectPair({}, {
+      approval: async () => {
+        markApprovalStarted();
+        await approvalGate;
+        return { decision: "approve" };
+      },
+    });
+    const abortController = new AbortController();
+    const pending = server.request(
+      "approval",
+      { tool: "write_file" },
+      abortController.signal,
+    );
+
+    await approvalStarted;
+    abortController.abort();
+    await expect(pending).rejects.toBe(abortController.signal.reason);
+    releaseApproval();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await expect(server.request("approval", { tool: "next" })).resolves
+      .toEqual({ decision: "approve" });
   });
 
   test("unknown method rejects with methodNotFound", async () => {
