@@ -254,6 +254,111 @@ describe("fetchWorkbenchSessionEvents", () => {
     expect(calls[0].sql).toContain("AS OF TIMESTAMP('2026-06-12 10:00:00')");
   });
 
+  test("projects provider-call nulls for an AS OF schema before migration 003", async () => {
+    const calls: string[] = [];
+    const historicalRow = {
+      event_id: "01HISTORICAL",
+      event_type: "model_response",
+      trace_id: "0123",
+      span_id: "historical-span",
+      parent_span_id: "",
+      principal_id: "workbench",
+      model_id: "gemma4",
+      provider: "ollama",
+      api: "openai-completions",
+      content: "historical response",
+      stop_reason: "stop",
+      tokens_input: "",
+      tokens_output: "",
+      tokens_cache_read: "",
+      tokens_cache_write: "",
+      cost_total: "",
+      duration_ms: "",
+      tool_name: "",
+      tool_call_id: "",
+      tool_arguments: "",
+      tool_result: "",
+      tool_is_error: "",
+      created_at: "2026-06-12 10:00:00",
+    };
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      asOf: "2026-06-12 10:00:00",
+      query: (sql) => {
+        calls.push(sql);
+        if (!sql.includes("NULL AS provider_call_order")) {
+          return Promise.reject(
+            new Error(
+              'column "provider_call_order" could not be found in any table in scope',
+            ),
+          );
+        }
+        return Promise.resolve([historicalRow]);
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain(
+      "provider_call_order, provider_call_purpose, provider_error_class",
+    );
+    expect(calls[1]).toContain("NULL AS provider_call_order");
+    expect(event).toMatchObject({
+      eventId: "01HISTORICAL",
+      providerCallOrder: null,
+      providerCallPurpose: null,
+      providerErrorClass: null,
+      tokensInput: null,
+      tokensOutput: null,
+    });
+  });
+
+  test("does not retry an AS OF query for an unrelated missing column", async () => {
+    const calls: string[] = [];
+    const error = new Error(
+      'column "tool_name" could not be found in any table in scope',
+    );
+    await expect(fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      asOf: "2026-06-12 10:00:00",
+      query: (sql) => {
+        calls.push(sql);
+        return Promise.reject(error);
+      },
+    })).rejects.toThrow(error);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("retains provider-call fields for a post-migration AS OF query", async () => {
+    const calls: string[] = [];
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      asOf: "2026-06-12 10:00:00",
+      query: (sql) => {
+        calls.push(sql);
+        return Promise.resolve([{
+          event_id: "01POSTMIGRATION",
+          event_type: "provider_call",
+          trace_id: "0123",
+          span_id: "provider-span",
+          parent_span_id: "root-span",
+          principal_id: "workbench",
+          provider_call_order: "2",
+          provider_call_purpose: "tool_followup",
+          provider_error_class: "",
+          created_at: "2026-06-12 10:00:00",
+        }]);
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain(
+      "provider_call_order, provider_call_purpose, provider_error_class",
+    );
+    expect(event).toMatchObject({
+      providerCallOrder: 2,
+      providerCallPurpose: "tool_followup",
+      providerErrorClass: null,
+    });
+  });
+
   test("rejects a malformed AS OF value before touching SQL", async () => {
     await expect(fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
@@ -288,6 +393,58 @@ describe("fetchWorkbenchSessionEvents", () => {
       tokensInput: 10,
       tokensOutput: 4,
     });
+  });
+
+  test("returns trace parentage and tool arguments as structured JSON", async () => {
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      query: () =>
+        Promise.resolve([{
+          event_id: "01EVENT",
+          event_type: "tool_call",
+          trace_id: "0123",
+          span_id: "tool-span",
+          parent_span_id: "provider-span",
+          principal_id: "workbench",
+          api: "responses",
+          tokens_cache_read: "3",
+          tokens_cache_write: "1",
+          duration_ms: "25",
+          provider_call_order: "2",
+          provider_call_purpose: "tool_followup",
+          provider_error_class: "",
+          tool_arguments: '{"path":"README.md","max":20}',
+          created_at: "2026-06-12 10:00:00",
+        }]),
+    });
+    expect(event).toMatchObject({
+      spanId: "tool-span",
+      parentSpanId: "provider-span",
+      api: "responses",
+      tokensCacheRead: 3,
+      tokensCacheWrite: 1,
+      durationMs: 25,
+      providerCallOrder: 2,
+      providerCallPurpose: "tool_followup",
+      providerErrorClass: null,
+      toolArguments: { path: "README.md", max: 20 },
+    });
+  });
+
+  test("leaves array-valued tool arguments absent", async () => {
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      query: () =>
+        Promise.resolve([{
+          event_id: "01EVENT",
+          event_type: "tool_call",
+          trace_id: "0123",
+          principal_id: "workbench",
+          tool_arguments: "[]",
+          created_at: "2026-06-12 10:00:00",
+        }]),
+    });
+    expect(event.toolArguments).toBeNull();
   });
 
   test("maps tool_is_error to a boolean across driver round-trips", async () => {
@@ -327,7 +484,7 @@ describe("buildConversationMessages", () => {
     tool: {
       name?: string;
       callId?: string;
-      arguments?: string;
+      arguments?: Record<string, unknown>;
       result?: string;
       isError?: boolean;
     } = {},
@@ -335,14 +492,23 @@ describe("buildConversationMessages", () => {
     eventId: "01E",
     eventType,
     traceId: "t",
+    spanId: "s",
+    parentSpanId: null,
     principalId: "chris",
     modelId: null,
     provider: null,
+    api: null,
     content,
     stopReason: null,
     tokensInput: null,
     tokensOutput: null,
+    tokensCacheRead: null,
+    tokensCacheWrite: null,
     costTotal: null,
+    durationMs: null,
+    providerCallOrder: null,
+    providerCallPurpose: null,
+    providerErrorClass: null,
     toolName: tool.name ?? null,
     toolCallId: tool.callId ?? null,
     toolArguments: tool.arguments ?? null,
@@ -476,7 +642,10 @@ describe("buildConversationMessages", () => {
       event("session_start", "recent q"),
       event(
         "context_compressed",
-        JSON.stringify({ summary: "## Session intent\nold shape", turnsCompressed: 1 }),
+        JSON.stringify({
+          summary: "## Session intent\nold shape",
+          turnsCompressed: 1,
+        }),
       ),
       event("model_response", "recent a"),
     ]);
@@ -579,7 +748,7 @@ describe("buildConversationMessages", () => {
       event("tool_call", "list_files allowed", {
         name: "list_files",
         callId: "call_1",
-        arguments: '{"path":"."}',
+        arguments: { path: "." },
         result: "README.md\nsrc/",
       }),
       event("model_response", "There are two entries."),
@@ -620,8 +789,9 @@ describe("buildConversationMessages", () => {
       event("tool_call", "read_file denied: invalid arguments", {
         name: "read_file",
         callId: "call_bad",
-        arguments: "{}",
-        result: "invalid arguments for read_file: missing required argument: path",
+        arguments: {},
+        result:
+          "invalid arguments for read_file: missing required argument: path",
         isError: true,
       }),
       event("model_response", "Retrying with a path."),
@@ -640,7 +810,7 @@ describe("buildConversationMessages", () => {
       event("tool_call", "list_files allowed", {
         name: "list_files",
         callId: "call_ok",
-        arguments: "{}",
+        arguments: {},
         result: "README.md",
       }),
     ]);
@@ -657,7 +827,7 @@ describe("buildConversationMessages", () => {
       event("tool_call", "list_files allowed", {
         name: "list_files",
         callId: `call_${i}`,
-        arguments: "{}",
+        arguments: {},
         result: `result ${i}`,
       }),
       event("model_response", `response ${i}`),

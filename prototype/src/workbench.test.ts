@@ -54,6 +54,7 @@ const runtimeMocks = vi.hoisted(() => {
   };
   return {
     ulid: 0,
+    span: 0,
     writtenEvents: [] as Record<string, unknown>[],
     sessions: [] as Record<string, unknown>[],
     sessionUpdates: [] as Record<string, unknown>[],
@@ -121,7 +122,7 @@ vi.mock("./utils", () => ({
     async () => [{ session_spent: "0", session_today: "0", daily_others: "0" }],
   generateULID: () => `01TEST${String(++runtimeMocks.ulid).padStart(20, "0")}`,
   generateTraceId: () => "0123456789abcdef0123456789abcdef",
-  generateSpanId: () => "0123456789abcdef",
+  generateSpanId: () => String(++runtimeMocks.span).padStart(16, "0"),
   writeEvent: async (event: Record<string, unknown>) => {
     if (event.event_type === runtimeMocks.failEventType) {
       // Record what a rejected-but-committed write leaves behind, so the
@@ -155,6 +156,7 @@ vi.mock("./utils", () => ({
       model_id: params.selected,
       provider: params.provider,
       api: params.api,
+      parent_span_id: params.parentSpanId,
     });
   },
   closeDoltPool: async () => {},
@@ -299,7 +301,10 @@ vi.mock("./commands", () => ({
   invokeCommandWithEvent: async (
     _registry: unknown,
     toolCall: { commandId: string; callId: string },
-    context: { writeEvent?: (event: Record<string, unknown>) => Promise<void> },
+    context: {
+      parentSpanId?: string;
+      writeEvent?: (event: Record<string, unknown>) => Promise<void>;
+    },
   ) => {
     runtimeMocks.commandCalls.push(toolCall.commandId);
     await runtimeMocks.commandHook?.();
@@ -318,6 +323,7 @@ vi.mock("./commands", () => ({
       tool_call_id: toolCall.callId,
       tool_is_error: result.isError,
       tool_result: result.isError ? result.reason : result.result,
+      parent_span_id: context.parentSpanId,
     });
     return result;
   },
@@ -357,6 +363,7 @@ beforeEach(() => {
   runtimeMocks.failEventMessage = null;
   runtimeMocks.failEventErrorName = null;
   runtimeMocks.ulid = 0;
+  runtimeMocks.span = 0;
   runtimeMocks.writtenEvents.length = 0;
   runtimeMocks.sessions.length = 0;
   runtimeMocks.sessionUpdates.length = 0;
@@ -1540,6 +1547,131 @@ describe("runWorkbenchRuntime observer events", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  test("persists an ordered provider-call trace with requested tools beneath their provider span", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce({
+        ...base,
+        text: "",
+        usage: {
+          input: 10,
+          output: 2,
+          cost: { total: 0 },
+          cacheRead: 1,
+          cacheWrite: 0,
+        },
+        stopReason: "tool_use",
+        toolCalls: [{
+          id: "read-1",
+          name: "read_file",
+          arguments: { path: "README.md" },
+        }],
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        text: "complete",
+        usage: {
+          input: 14,
+          output: 3,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        stopReason: "stop",
+      });
+
+    await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "read the README",
+      routingOptions: {},
+    });
+
+    const root = runtimeMocks.writtenEvents.find((event) =>
+      event.event_type === "session_start"
+    )!;
+    const providerCalls = runtimeMocks.writtenEvents.filter((event) =>
+      event.event_type === "provider_call"
+    );
+    expect(providerCalls).toHaveLength(2);
+    expect(providerCalls).toMatchObject([
+      {
+        parent_span_id: root.span_id,
+        provider_call_order: 1,
+        provider_call_purpose: "initial",
+        tokens_input: 10,
+        tokens_output: 2,
+        tokens_cache_read: 1,
+        cost_total: 0,
+        content: null,
+      },
+      {
+        parent_span_id: root.span_id,
+        provider_call_order: 2,
+        provider_call_purpose: "tool_followup",
+        tokens_input: 14,
+        tokens_output: 3,
+        content: null,
+      },
+    ]);
+    const toolCall = runtimeMocks.writtenEvents.find((event) =>
+      event.event_type === "tool_call" && event.tool_call_id === "read-1"
+    );
+    expect(toolCall?.parent_span_id).toBe(providerCalls[0].span_id);
+    expect(providerCalls[0].span_id).not.toBe(root.span_id);
+    const modelSelected = runtimeMocks.writtenEvents.find((event) =>
+      event.event_type === "model_selected"
+    );
+    expect(modelSelected?.parent_span_id).toBe(root.span_id);
+    const response = runtimeMocks.writtenEvents.find((event) =>
+      event.event_type === "model_response"
+    );
+    expect(response).toMatchObject({
+      parent_span_id: root.span_id,
+      tokens_input: 24,
+      tokens_output: 5,
+      tokens_cache_read: 1,
+      cost_total: 0,
+    });
+    const budgetSummary = runtimeMocks.writtenEvents.find((event) =>
+      event.event_type === "budget_summary"
+    );
+    expect(budgetSummary?.parent_span_id).toBe(root.span_id);
+  });
+
+  test("records a content-free provider-call failure with a safe classification", async () => {
+    runtimeMocks.runWorkbenchTurn.mockRejectedValueOnce(
+      new Error("provider-controlled response body must not persist"),
+    );
+
+    await expect(runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "fail safely",
+      routingOptions: {},
+    })).rejects.toThrow("provider-controlled response body must not persist");
+
+    const providerCall = runtimeMocks.writtenEvents.find((event) =>
+      event.event_type === "provider_call"
+    );
+    expect(providerCall).toMatchObject({
+      provider_call_order: 1,
+      provider_call_purpose: "initial",
+      provider_error_class: "Error",
+      content: null,
+      stop_reason: "error",
+    });
+    expect(JSON.stringify(providerCall)).not.toContain(
+      "provider-controlled response body",
+    );
   });
 
   test("a denied tool call's reason reaches the model verbatim on the next step, marked as an error", async () => {
@@ -3162,6 +3294,36 @@ describe("runWorkbenchRuntime event-write integrity policy", () => {
     }
   });
 
+  test("provider_call write failure preserves aggregate accounting and the replay response", async () => {
+    runtimeMocks.failEventType = "provider_call";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await run("turn");
+      expect(result.tokens).toMatchObject({
+        input: 42,
+        output: 7,
+        totalCalls: 1,
+      });
+      expect(runtimeMocks.writtenEvents).toContainEqual(
+        expect.objectContaining({
+          event_type: "model_response",
+          content: "runtime response",
+          tokens_input: 42,
+          tokens_output: 7,
+        }),
+      );
+      expect(
+        runtimeMocks.writtenEvents.some((event) =>
+          event.event_type === "provider_call"
+        ),
+      ).toBe(false);
+      expect(result.receipt).toContain("audit log has gaps");
+    } finally {
+      runtimeMocks.failEventType = null;
+      warn.mockRestore();
+    }
+  });
+
   // The agent-loop tool_call event write used to be integrity-required
   // (writeIntegrity), so any INSERT failure — including the receipted "value
   // too large for column" rejection on an oversized tool result — failed the
@@ -3662,6 +3824,36 @@ describe("runWorkbenchRuntime proactive context compression", () => {
           e.event_type === "context_compressed"
         ),
       ).toBe(true);
+      const root = runtimeMocks.writtenEvents.find((event) =>
+        event.event_type === "session_start"
+      )!;
+      const compressionCall = runtimeMocks.writtenEvents.find((event) =>
+        event.event_type === "provider_call" &&
+        event.provider_call_purpose === "context_compression"
+      );
+      expect(compressionCall).toMatchObject({
+        parent_span_id: root.span_id,
+        provider_call_order: 1,
+        tokens_input: 10,
+        tokens_output: 5,
+        tokens_cache_read: 0,
+        tokens_cache_write: 0,
+        cost_total: 0,
+        stop_reason: "stop",
+        content: null,
+        thinking: null,
+      });
+      const providerCalls = runtimeMocks.writtenEvents.filter((event) =>
+        event.event_type === "provider_call"
+      );
+      expect(providerCalls.map((event) => event.provider_call_order)).toEqual([
+        1,
+        2,
+      ]);
+      const compressionEvent = runtimeMocks.writtenEvents.find((event) =>
+        event.event_type === "context_compressed"
+      );
+      expect(compressionEvent?.parent_span_id).toBe(root.span_id);
     } finally {
       runtimeMocks.model.contextWindow = prevWindow;
     }
@@ -3691,6 +3883,50 @@ describe("runWorkbenchRuntime proactive context compression", () => {
 
       expect(result.tokens.reasoning).toBe(10);
       expect(result.tokens.totalCalls).toBe(2);
+    } finally {
+      runtimeMocks.model.contextWindow = prevWindow;
+    }
+  });
+
+  test("records a safe failed compression attempt and continues uncompressed", async () => {
+    const prevWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    const captured: { value?: WorkbenchMessage[] } = {};
+    const providerMessage = "provider-controlled compression body";
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        return Promise.reject(new Error(providerMessage));
+      }
+      captured.value = params.messages;
+      return Promise.resolve(turnResult("runtime response"));
+    });
+
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+      });
+      expect(result.text).toBe("runtime response");
+      expect(JSON.stringify(captured.value ?? [])).toContain("old question");
+      expect(
+        runtimeMocks.writtenEvents.some((event) =>
+          event.event_type === "context_compressed"
+        ),
+      ).toBe(false);
+      const compressionAttempt = runtimeMocks.writtenEvents.find((event) =>
+        event.event_type === "provider_call" &&
+        event.provider_call_purpose === "context_compression"
+      );
+      expect(compressionAttempt).toMatchObject({
+        provider_call_purpose: "context_compression",
+        provider_error_class: "Error",
+        stop_reason: "error",
+        content: null,
+        thinking: null,
+      });
+      expect(JSON.stringify(compressionAttempt)).not.toContain(providerMessage);
     } finally {
       runtimeMocks.model.contextWindow = prevWindow;
     }

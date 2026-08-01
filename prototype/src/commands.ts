@@ -183,6 +183,7 @@ export interface CommandEventContext {
   traceId: string;
   eventId?: string;
   spanId?: string;
+  parentSpanId?: string;
   durationMs?: number;
   writeEvent?: (event: Record<string, unknown>) => Promise<void> | void;
 }
@@ -930,6 +931,7 @@ export function buildCommandToolCallEventPayload(
     event_type: "tool_call",
     trace_id: context.traceId,
     span_id: context.spanId ?? generateSpanId(),
+    parent_span_id: context.parentSpanId ?? null,
     principal_id: call.caller.principalId,
     principal_type: call.caller.principalType,
     action: isError ? "deny" : "invoke",

@@ -247,6 +247,7 @@ export async function writeModelSelectedEvent(params: {
   provider?: string;
   api?: string;
   durationMs?: number;
+  parentSpanId?: string;
   authnFields?: Record<string, unknown>;
 }): Promise<void> {
   await writeEvent(buildModelSelectedEventPayload(params));
@@ -263,6 +264,7 @@ export function buildModelSelectedEventPayload(params: {
   durationMs?: number;
   eventId?: string;
   spanId?: string;
+  parentSpanId?: string;
   principalId?: string;
   authnFields?: Record<string, unknown>;
 }): Record<string, unknown> {
@@ -272,6 +274,7 @@ export function buildModelSelectedEventPayload(params: {
     event_type: "model_selected",
     trace_id: params.traceId,
     span_id: params.spanId ?? generateSpanId(),
+    parent_span_id: params.parentSpanId ?? null,
     principal_id: params.principalId ??
       resolvePrincipalId({ get: (key) => process.env[key] }),
     principal_type: "human",

@@ -225,20 +225,27 @@ export interface WorkbenchSessionEvent {
   eventId: string;
   eventType: string;
   traceId: string;
+  spanId: string;
+  parentSpanId: string | null;
   principalId: string;
   modelId: string | null;
   provider: string | null;
+  api: string | null;
   content: string | null;
   stopReason: string | null;
   tokensInput: number | null;
   tokensOutput: number | null;
+  tokensCacheRead: number | null;
+  tokensCacheWrite: number | null;
   costTotal: string | null;
+  durationMs: number | null;
+  providerCallOrder: number | null;
+  providerCallPurpose: string | null;
+  providerErrorClass: string | null;
   // tool-call audit fields, so resume can replay tool turns.
-  // toolArguments is normalized to a JSON string regardless of how the JSON
-  // column round-trips.
   toolName: string | null;
   toolCallId: string | null;
-  toolArguments: string | null;
+  toolArguments: Record<string, unknown> | null;
   toolResult: string | null;
   toolIsError: boolean | null;
   createdAt: string;
@@ -248,6 +255,43 @@ const AS_OF_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$/;
 
 export function isValidAsOfTimestamp(value: string): boolean {
   return AS_OF_TIMESTAMP.test(value);
+}
+
+function eventQuery(
+  asOfClause: string,
+  historicalProviderCallSchema = false,
+): string {
+  const providerCallFields = historicalProviderCallSchema
+    ? "NULL AS provider_call_order, NULL AS provider_call_purpose, " +
+      "NULL AS provider_error_class"
+    : "provider_call_order, provider_call_purpose, provider_error_class";
+  return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
+    `principal_id, model_id, provider, api, content, stop_reason, ` +
+    `tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, ` +
+    `cost_total, duration_ms, ${providerCallFields}, tool_name, tool_call_id, ` +
+    `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
+    `WHERE session_id = ? ORDER BY created_at ASC;`;
+}
+
+function isMissingProviderCallColumn(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+    message?: unknown;
+    sqlMessage?: unknown;
+  };
+  const message = [candidate.message, candidate.sqlMessage]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  const knownProviderCallColumn =
+    /provider_call_(order|purpose)|provider_error_class/.test(message);
+  if (!knownProviderCallColumn) return false;
+  const driverReportsMissingField = candidate.code === "ER_BAD_FIELD_ERROR" ||
+    candidate.errno === 1054;
+  return driverReportsMissingField ||
+    /unknown column|column\s+["'](?:provider_call_(?:order|purpose)|provider_error_class)["']\s+could not be found/i
+      .test(message);
 }
 
 export async function fetchWorkbenchSessionEvents(input: {
@@ -267,36 +311,51 @@ export async function fetchWorkbenchSessionEvents(input: {
     }
     asOfClause = ` AS OF TIMESTAMP('${input.asOf.replace("T", " ")}')`;
   }
-  const rows = await query(
-    `SELECT event_id, event_type, trace_id, principal_id, model_id, ` +
-      `provider, content, stop_reason, tokens_input, tokens_output, ` +
-      `cost_total, tool_name, tool_call_id, tool_arguments, tool_result, ` +
-      `tool_is_error, created_at FROM events${asOfClause} ` +
-      `WHERE session_id = ? ORDER BY created_at ASC;`,
-    [input.sessionId],
-  );
+  let rows: Record<string, string>[];
+  try {
+    rows = await query(eventQuery(asOfClause), [input.sessionId]);
+  } catch (error) {
+    // An AS OF snapshot predating migration 003 has no provider_call columns.
+    // Preserve the event surface by projecting NULL literals under the expected
+    // aliases only for that known historical shape; current and post-migration
+    // AS OF queries retain their durable provider-call values.
+    if (input.asOf === undefined || !isMissingProviderCallColumn(error)) {
+      throw error;
+    }
+    rows = await query(eventQuery(asOfClause, true), [input.sessionId]);
+  }
   return rows.map((row) => ({
     eventId: row.event_id,
     eventType: row.event_type,
     traceId: row.trace_id,
+    spanId: row.span_id,
+    parentSpanId: nullableString(row.parent_span_id),
     principalId: row.principal_id,
-    modelId: row.model_id === "" ? null : row.model_id,
-    provider: row.provider === "" ? null : row.provider,
-    content: row.content === "" ? null : row.content,
-    stopReason: row.stop_reason === "" ? null : row.stop_reason,
-    tokensInput: row.tokens_input === "" ? null : Number(row.tokens_input),
-    tokensOutput: row.tokens_output === "" ? null : Number(row.tokens_output),
-    costTotal: row.cost_total === "" ? null : row.cost_total,
+    modelId: nullableString(row.model_id),
+    provider: nullableString(row.provider),
+    api: nullableString(row.api),
+    content: nullableString(row.content),
+    stopReason: nullableString(row.stop_reason),
+    tokensInput: nullableNumber(row.tokens_input),
+    tokensOutput: nullableNumber(row.tokens_output),
+    tokensCacheRead: nullableNumber(row.tokens_cache_read),
+    tokensCacheWrite: nullableNumber(row.tokens_cache_write),
+    costTotal: nullableString(row.cost_total),
+    durationMs: nullableNumber(row.duration_ms),
+    providerCallOrder: nullableNumber(row.provider_call_order),
+    providerCallPurpose: nullableString(row.provider_call_purpose),
+    providerErrorClass: nullableString(row.provider_error_class),
     toolName: row.tool_name ? String(row.tool_name) : null,
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolArguments: normalizeToolArguments(row.tool_arguments),
     toolResult: row.tool_result ? String(row.tool_result) : null,
     // tinyint(1) round-trips as a number or numeric string depending on the
     // driver path; normalize either to a boolean, absent to null.
-    toolIsError: row.tool_is_error === null || row.tool_is_error === undefined ||
+    toolIsError:
+      row.tool_is_error === null || row.tool_is_error === undefined ||
         row.tool_is_error === ""
-      ? null
-      : Number(row.tool_is_error) === 1,
+        ? null
+        : Number(row.tool_is_error) === 1,
     createdAt: row.created_at,
   }));
 }
@@ -400,26 +459,40 @@ export function buildConversationMessages(
   return sliceToRecentTurns(messages, maxTurns);
 }
 
-/**
- * Normalize a tool_arguments JSON column to a string, regardless of whether the
- * driver returns JSON as text or an already-parsed object.
- */
-function normalizeToolArguments(raw: unknown): string | null {
-  if (raw === null || raw === undefined || raw === "") return null;
-  return typeof raw === "string" ? raw : JSON.stringify(raw);
+function nullableString(raw: unknown): string | null {
+  return raw === null || raw === undefined || raw === "" ? null : String(raw);
 }
 
-/** Parse a persisted tool_arguments JSON string back to a structured object. */
-function parseToolArguments(raw: string | null): Record<string, unknown> {
-  if (raw === null || raw.trim() === "") return {};
+function nullableNumber(raw: unknown): number | null {
+  return raw === null || raw === undefined || raw === "" ? null : Number(raw);
+}
+
+/**
+ * Decode textual or already-parsed JSON objects/records from tool_arguments.
+ * Invalid, empty, array, and other non-object values stay absent.
+ */
+function normalizeToolArguments(raw: unknown): Record<string, unknown> | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw !== "string") return null;
   try {
     const parsed = JSON.parse(raw);
-    return parsed !== null && typeof parsed === "object"
+    return parsed !== null && typeof parsed === "object" &&
+        !Array.isArray(parsed)
       ? parsed as Record<string, unknown>
-      : {};
+      : null;
   } catch {
-    return {};
+    return null;
   }
+}
+
+/** Default absent tool arguments to the empty object needed for replay. */
+function parseToolArguments(
+  raw: Record<string, unknown> | null,
+): Record<string, unknown> {
+  return raw ?? {};
 }
 
 /**

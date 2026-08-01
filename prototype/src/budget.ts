@@ -1001,10 +1001,12 @@ export class BudgetTracker {
 
   /**
    * Build the Dolt event payload for the budget_summary event.
-   * Pure function — accepts an optional id/spanId override for testing.
+   * Pure function — accepts optional span identifiers for testing and trace
+   * parentage.
    */
   buildSummaryEventPayload(
-    overrides: { eventId?: string; spanId?: string } = {},
+    overrides: { eventId?: string; spanId?: string; parentSpanId?: string } =
+      {},
     extra: Record<string, unknown> = {},
   ): Record<string, unknown> {
     const summary = this.getSummary();
@@ -1014,6 +1016,7 @@ export class BudgetTracker {
       event_type: "budget_summary",
       trace_id: this.traceId,
       span_id: overrides.spanId ?? generateSpanId(),
+      parent_span_id: overrides.parentSpanId ?? null,
       principal_id: this.principalId,
       principal_type: "human",
       action: "summarise",
@@ -1035,7 +1038,11 @@ export class BudgetTracker {
    * Write the budget_summary event to Dolt.
    * Call once at session end, after the session_end lifecycle event.
    */
-  async writeSummaryEvent(extra: Record<string, unknown> = {}): Promise<void> {
-    await writeEvent(this.buildSummaryEventPayload({}, extra));
+  async writeSummaryEvent(
+    extra: Record<string, unknown> = {},
+    overrides: { eventId?: string; spanId?: string; parentSpanId?: string } =
+      {},
+  ): Promise<void> {
+    await writeEvent(this.buildSummaryEventPayload(overrides, extra));
   }
 }

@@ -1567,6 +1567,10 @@ export async function runWorkbenchRuntime(
     }
   };
   const workletId = isNextWork ? "next-work.v0" : undefined;
+  // The session-start span is the stable root of this user turn. Durable
+  // provider calls, their requested tools, and terminal outcomes hang below it.
+  const turnRootSpanId = generateSpanId();
+  let providerCallOrder = 0;
   // Prior conversation now rides in the transcript as real messages (see the
   // seed below), so the prompt is just the current message — no flattened
   // "Conversation so far:" prepend.
@@ -1592,7 +1596,7 @@ export async function runWorkbenchRuntime(
       session_id: sessionId,
       event_type: "session_start",
       trace_id: traceId,
-      span_id: generateSpanId(),
+      span_id: turnRootSpanId,
       principal_id: principalId,
       principal_type: "human",
       action: "start",
@@ -1662,6 +1666,7 @@ export async function runWorkbenchRuntime(
             event_type: "tool_call",
             trace_id: traceId,
             span_id: generateSpanId(),
+            parent_span_id: turnRootSpanId,
             principal_id: principalId,
             principal_type: "agent",
             action: "read",
@@ -1952,6 +1957,7 @@ export async function runWorkbenchRuntime(
           provider: selected.provider,
           api: selected.api,
           durationMs: Date.now() - sessionStart,
+          parentSpanId: turnRootSpanId,
           authnFields: authnEventFields,
         }),
       BEST_EFFORT,
@@ -2042,14 +2048,84 @@ export async function runWorkbenchRuntime(
         );
         // No tools, no streaming to the operator: the compression turn produces
         // a structured summary out of band, never rendered as reply text.
-        const turn = await runWorkbenchTurn({
-          systemPrompt: COMPRESSION_SYSTEM_PROMPT,
-          prompt: "",
-          messages: compressionInput,
-          routing: { modelId: compressionModel.slug },
-          models,
-          abortSignal: runtimeInput.abortSignal,
-        });
+        const providerSpanId = generateSpanId();
+        const order = ++providerCallOrder;
+        const startedAt = Date.now();
+        let turn: Awaited<ReturnType<typeof runWorkbenchTurn>>;
+        try {
+          turn = await runWorkbenchTurn({
+            systemPrompt: COMPRESSION_SYSTEM_PROMPT,
+            prompt: "",
+            messages: compressionInput,
+            routing: { modelId: compressionModel.slug },
+            models,
+            abortSignal: runtimeInput.abortSignal,
+          });
+        } catch (err) {
+          await writeMaybe(
+            () =>
+              writeEvent({
+                event_id: generateULID(),
+                session_id: sessionId,
+                event_type: "provider_call",
+                trace_id: traceId,
+                span_id: providerSpanId,
+                parent_span_id: turnRootSpanId,
+                principal_id: principalId,
+                principal_type: "agent",
+                action: "invoke",
+                resource: compressionModel.slug,
+                authz_basis: "policy:local-compression",
+                model_id: compressionModel.slug,
+                provider: compressionModel.provider,
+                api: compressionModel.api,
+                provider_call_order: order,
+                provider_call_purpose: "context_compression",
+                provider_error_class: classifyErrorKind(err),
+                content: null,
+                thinking: null,
+                stop_reason: "error",
+                duration_ms: Date.now() - startedAt,
+                ...authnEventFields,
+              }),
+            BEST_EFFORT,
+            noteSkippedEventWrite,
+          );
+          throw err;
+        }
+        await writeMaybe(
+          () =>
+            writeEvent({
+              event_id: generateULID(),
+              session_id: sessionId,
+              event_type: "provider_call",
+              trace_id: traceId,
+              span_id: providerSpanId,
+              parent_span_id: turnRootSpanId,
+              principal_id: principalId,
+              principal_type: "agent",
+              action: "invoke",
+              resource: turn.model.slug,
+              authz_basis: "policy:local-compression",
+              model_id: turn.model.slug,
+              provider: turn.model.provider,
+              api: turn.model.api,
+              tokens_input: turn.usage.input,
+              tokens_output: turn.usage.output,
+              tokens_cache_read: turn.usage.cacheRead,
+              tokens_cache_write: turn.usage.cacheWrite,
+              cost_total: turn.usage.cost.total,
+              stop_reason: turn.stopReason,
+              provider_call_order: order,
+              provider_call_purpose: "context_compression",
+              content: null,
+              thinking: null,
+              duration_ms: Date.now() - startedAt,
+              ...authnEventFields,
+            }),
+          BEST_EFFORT,
+          noteSkippedEventWrite,
+        );
         if (turn.requestDispatched !== false) {
           budget.record(turn.usage, turn.model.tier);
           reasoningTokens += turn.usage.reasoning ?? 0;
@@ -2083,6 +2159,7 @@ export async function runWorkbenchRuntime(
           event_type: "context_compressed",
           trace_id: traceId,
           span_id: generateSpanId(),
+          parent_span_id: turnRootSpanId,
           principal_id: principalId,
           principal_type: "agent",
           action: "compress",
@@ -2202,6 +2279,7 @@ export async function runWorkbenchRuntime(
     const runObservedTurn = async (
       params: Parameters<typeof runWorkbenchTurn>[0],
       request: { modelSlug: string; estimatedInputCount: number },
+      purpose: "initial" | "tool_followup" | "forced_conclusion" | "recovery",
     ) => {
       // Budget-gate and record EVERY provider call: the agent loop can make
       // several calls in one turn, so per-call and session limits must be
@@ -2234,7 +2312,77 @@ export async function runWorkbenchRuntime(
         modelSlug: request.modelSlug,
         estimatedInputCount: request.estimatedInputCount,
       });
-      const turn = await runWorkbenchTurn(params);
+      const providerSpanId = generateSpanId();
+      const order = ++providerCallOrder;
+      const startedAt = Date.now();
+      let turn: Awaited<ReturnType<typeof runWorkbenchTurn>>;
+      try {
+        turn = await runWorkbenchTurn(params);
+      } catch (err) {
+        await writeMaybe(
+          () =>
+            writeEvent({
+              event_id: generateULID(),
+              session_id: sessionId,
+              event_type: "provider_call",
+              trace_id: traceId,
+              span_id: providerSpanId,
+              parent_span_id: turnRootSpanId,
+              principal_id: principalId,
+              principal_type: "agent",
+              action: "invoke",
+              resource: selected.slug,
+              authz_basis: "policy:local-default",
+              model_id: selected.slug,
+              provider: selected.provider,
+              api: selected.api,
+              provider_call_order: order,
+              provider_call_purpose: purpose,
+              provider_error_class: classifyErrorKind(err),
+              content: null,
+              thinking: null,
+              stop_reason: "error",
+              duration_ms: Date.now() - startedAt,
+              ...authnEventFields,
+            }),
+          BEST_EFFORT,
+          noteSkippedEventWrite,
+        );
+        throw err;
+      }
+      await writeMaybe(
+        () =>
+          writeEvent({
+            event_id: generateULID(),
+            session_id: sessionId,
+            event_type: "provider_call",
+            trace_id: traceId,
+            span_id: providerSpanId,
+            parent_span_id: turnRootSpanId,
+            principal_id: principalId,
+            principal_type: "agent",
+            action: "invoke",
+            resource: turn.model.slug,
+            authz_basis: "policy:local-default",
+            model_id: turn.model.slug,
+            provider: turn.model.provider,
+            api: turn.model.api,
+            tokens_input: turn.usage.input,
+            tokens_output: turn.usage.output,
+            tokens_cache_read: turn.usage.cacheRead,
+            tokens_cache_write: turn.usage.cacheWrite,
+            cost_total: turn.usage.cost.total,
+            stop_reason: turn.stopReason,
+            provider_call_order: order,
+            provider_call_purpose: purpose,
+            content: null,
+            thinking: null,
+            duration_ms: Date.now() - startedAt,
+            ...authnEventFields,
+          }),
+        BEST_EFFORT,
+        noteSkippedEventWrite,
+      );
       if (turn.requestDispatched !== false) {
         cacheReadTokens += turn.usage.cacheRead;
         cacheWriteTokens += turn.usage.cacheWrite;
@@ -2252,7 +2400,10 @@ export async function runWorkbenchRuntime(
           totalMs: turn.timings.totalMs,
         });
       }
-      return turn;
+      return {
+        ...turn,
+        providerSpanId,
+      };
     };
     // Length-stop recovery around every provider call: classify a
     // stopReason "length" result (catalog limits + reported usage), then
@@ -2263,8 +2414,11 @@ export async function runWorkbenchRuntime(
     const runRecoveredTurn = async (
       params: Parameters<typeof runWorkbenchTurn>[0],
       request: { modelSlug: string; estimatedInputCount: number },
-    ): Promise<Awaited<ReturnType<typeof runWorkbenchTurn>>> => {
-      const turn = await runObservedTurn(params, request);
+      purpose: "initial" | "tool_followup" | "forced_conclusion" | "recovery",
+    ): Promise<
+      Awaited<ReturnType<typeof runWorkbenchTurn>> & { providerSpanId?: string }
+    > => {
+      const turn = await runObservedTurn(params, request, purpose);
       if (turn.stopReason !== "length") return turn;
       // Prompt-side total for window arithmetic: Anthropic's input_tokens
       // excludes cache traffic, so the cached prompt must be added back.
@@ -2374,6 +2528,7 @@ export async function runWorkbenchRuntime(
                     transcriptEstimateText(params.systemPrompt, plan.messages),
                   ),
                 },
+                "recovery",
               );
             }
           } catch (err) {
@@ -2467,6 +2622,7 @@ export async function runWorkbenchRuntime(
             modelSlug: request.modelSlug,
             estimatedInputCount: continuationInput,
           },
+          "recovery",
         );
       } catch (err) {
         if (isBudgetRefusal(err)) {
@@ -2579,7 +2735,7 @@ export async function runWorkbenchRuntime(
       estimatedInputCount: estimateRuntimeInputCount(
         transcriptEstimateText(systemPrompt, messages),
       ),
-    });
+    }, "initial");
     captureTurnState(turn);
     // Agent loop: iterate model<->tools until the model stops requesting tools,
     // repeats itself, or hits the step cap. On the OpenAI-compatible path each
@@ -2661,6 +2817,7 @@ export async function runWorkbenchRuntime(
             {
               sessionId,
               traceId,
+              parentSpanId: turn.providerSpanId ?? turnRootSpanId,
               // Agent-loop tool calls (call + result) are audit-relevant, but
               // BEST_EFFORT rather than integrity-required, unlike session_start
               // and model_response: a tool result's size is bounded only by the
@@ -2788,7 +2945,7 @@ export async function runWorkbenchRuntime(
       }, {
         modelSlug: selected.slug,
         estimatedInputCount: followUpInputCount,
-      });
+      }, forceConclude ? "forced_conclusion" : "tool_followup");
       captureTurnState(turn);
       if (
         runtimeInput.abortSignal?.aborted &&
@@ -2877,6 +3034,7 @@ export async function runWorkbenchRuntime(
         event_type: "model_response",
         trace_id: traceId,
         span_id: spanId,
+        parent_span_id: turnRootSpanId,
         principal_id: principalId,
         principal_type: "agent",
         action: "invoke",
@@ -2959,6 +3117,7 @@ export async function runWorkbenchRuntime(
           event_type: "model_response",
           trace_id: traceId,
           span_id: spanId,
+          parent_span_id: turnRootSpanId,
           principal_id: principalId,
           principal_type: "agent",
           action: "invoke",
@@ -3004,6 +3163,7 @@ export async function runWorkbenchRuntime(
             event_type: "error",
             trace_id: traceId,
             span_id: generateSpanId(),
+            parent_span_id: turnRootSpanId,
             principal_id: principalId,
             principal_type: "agent",
             action: "invoke",
@@ -3037,6 +3197,7 @@ export async function runWorkbenchRuntime(
             event_type: "error",
             trace_id: traceId,
             span_id: generateSpanId(),
+            parent_span_id: turnRootSpanId,
             principal_id: principalId,
             principal_type: "agent",
             action: "invoke",
@@ -3073,6 +3234,7 @@ export async function runWorkbenchRuntime(
             event_type: "error",
             trace_id: traceId,
             span_id: generateSpanId(),
+            parent_span_id: turnRootSpanId,
             principal_id: principalId,
             principal_type: "agent",
             action: "invoke",
@@ -3113,6 +3275,7 @@ export async function runWorkbenchRuntime(
         event_type: "session_end",
         trace_id: traceId,
         span_id: generateSpanId(),
+        parent_span_id: turnRootSpanId,
         principal_id: principalId,
         principal_type: "human",
         action: "end",
@@ -3128,7 +3291,11 @@ export async function runWorkbenchRuntime(
     // event's own content. The later session-content write is the only skip
     // that lands after every persisted surface: console line only.
     await writeMaybe(
-      () => budget.writeSummaryEvent({ skippedEventWrites }),
+      () =>
+        budget.writeSummaryEvent(
+          { skippedEventWrites },
+          { parentSpanId: turnRootSpanId },
+        ),
       BEST_EFFORT,
       noteSkippedEventWrite,
     );
