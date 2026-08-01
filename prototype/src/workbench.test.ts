@@ -3324,6 +3324,69 @@ describe("runWorkbenchRuntime event-write integrity policy", () => {
     }
   });
 
+  test("a skipped provider_call span leaves its requested tool attached to the turn root", async () => {
+    const base = {
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "tool_use" as const,
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    };
+    runtimeMocks.runWorkbenchTurn
+      .mockResolvedValueOnce({
+        ...base,
+        text: "",
+        toolCalls: [{ id: "c1", name: "list_files", arguments: { path: "." } }],
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        text: "complete despite skipped provider spans",
+        stopReason: "stop",
+        toolCalls: [],
+      });
+    runtimeMocks.failEventType = "provider_call";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "list the repository",
+        routingOptions: {},
+      });
+
+      const root = runtimeMocks.writtenEvents.find((event) =>
+        event.event_type === "session_start"
+      )!;
+      const toolCall = runtimeMocks.writtenEvents.find((event) =>
+        event.event_type === "tool_call" && event.tool_call_id === "c1"
+      );
+      expect(
+        runtimeMocks.writtenEvents.some((event) =>
+          event.event_type === "provider_call"
+        ),
+      ).toBe(false);
+      expect(toolCall?.parent_span_id).toBe(root.span_id);
+      expect(runtimeMocks.commandCalls).toEqual(["list_files"]);
+      expect(result).toMatchObject({
+        text: "complete despite skipped provider spans",
+        tokens: { input: 20, output: 4, totalCalls: 2 },
+      });
+      expect(result.receipt).toContain("audit log has gaps");
+    } finally {
+      runtimeMocks.failEventType = null;
+      warn.mockRestore();
+    }
+  });
+
   // The agent-loop tool_call event write used to be integrity-required
   // (writeIntegrity), so any INSERT failure — including the receipted "value
   // too large for column" rejection on an oversized tool result — failed the

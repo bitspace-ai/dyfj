@@ -2350,6 +2350,7 @@ export async function runWorkbenchRuntime(
         );
         throw err;
       }
+      let providerCallPersisted = true;
       await writeMaybe(
         () =>
           writeEvent({
@@ -2381,7 +2382,10 @@ export async function runWorkbenchRuntime(
             ...authnEventFields,
           }),
         BEST_EFFORT,
-        noteSkippedEventWrite,
+        () => {
+          providerCallPersisted = false;
+          noteSkippedEventWrite();
+        },
       );
       if (turn.requestDispatched !== false) {
         cacheReadTokens += turn.usage.cacheRead;
@@ -2402,7 +2406,7 @@ export async function runWorkbenchRuntime(
       }
       return {
         ...turn,
-        providerSpanId,
+        ...(providerCallPersisted ? { providerSpanId } : {}),
       };
     };
     // Length-stop recovery around every provider call: classify a
