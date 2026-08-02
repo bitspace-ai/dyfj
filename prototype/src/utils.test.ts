@@ -191,6 +191,7 @@ describe("buildModelSelectedEventPayload", () => {
       api: "openai-completions",
       eventId: "01TESTEVENT0000000000000000",
       spanId: "0123456789abcdef",
+      parentSpanId: "fedcba9876543210",
       principalId: "test-principal",
       durationMs: 12,
     });
@@ -201,6 +202,7 @@ describe("buildModelSelectedEventPayload", () => {
       event_type: "model_selected",
       trace_id: "0123456789abcdef0123456789abcdef",
       span_id: "0123456789abcdef",
+      parent_span_id: "fedcba9876543210",
       principal_id: "test-principal",
       principal_type: "human",
       action: "select",

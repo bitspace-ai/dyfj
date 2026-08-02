@@ -353,13 +353,15 @@ describe("BudgetTracker.buildSummaryEventPayload()", () => {
     expect(content.config.perCallLimitUsd).toBe(0.20);
   });
 
-  test("accepts overrides for eventId and spanId (deterministic testing)", () => {
+  test("accepts overrides for event and trace span identifiers", () => {
     const payload = makeTracker().buildSummaryEventPayload({
       eventId: "FIXED_EVENT_ID",
       spanId: "FIXED_SPAN_ID",
+      parentSpanId: "TURN_ROOT_SPAN_ID",
     });
     expect(payload.event_id).toBe("FIXED_EVENT_ID");
     expect(payload.span_id).toBe("FIXED_SPAN_ID");
+    expect(payload.parent_span_id).toBe("TURN_ROOT_SPAN_ID");
   });
 
   test("action is 'summarise' and resource is 'session_budget'", () => {

@@ -986,6 +986,7 @@ describe("buildCommandToolCallEventPayload", () => {
         sessionId: "01TESTSESSION00000000000000",
         traceId: "0123456789abcdef0123456789abcdef",
         spanId: "0123456789abcdef",
+        parentSpanId: "fedcba9876543210",
         durationMs: 12,
       },
     );
@@ -996,6 +997,7 @@ describe("buildCommandToolCallEventPayload", () => {
       event_type: "tool_call",
       trace_id: "0123456789abcdef0123456789abcdef",
       span_id: "0123456789abcdef",
+      parent_span_id: "fedcba9876543210",
       principal_id: "operator",
       principal_type: "human",
       action: "invoke",

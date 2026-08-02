@@ -15,7 +15,8 @@ CREATE TABLE events (
         'session_end',
         'model_selected',
         'budget_summary',
-        'context_compressed'
+        'context_compressed',
+        'provider_call'
     ) NOT NULL,
     created_at                TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 
@@ -55,6 +56,13 @@ CREATE TABLE events (
     content                   TEXT,
     stop_reason               ENUM('stop', 'length', 'tool_use', 'error', 'aborted'),
 
+    -- provider_call events are content-free trace spans. Their typed fields
+    -- reconstruct the provider-call attempts recorded for a Workbench turn
+    -- without duplicating replay text.
+    provider_call_order       INT UNSIGNED,
+    provider_call_purpose     ENUM('initial', 'tool_followup', 'forced_conclusion', 'recovery', 'context_compression'),
+    provider_error_class      VARCHAR(64),
+
     tool_name                 VARCHAR(128),
     tool_call_id              VARCHAR(128),
     tool_arguments            JSON,
@@ -67,6 +75,7 @@ CREATE TABLE events (
     INDEX idx_session (session_id, created_at),
     INDEX idx_event_type (event_type, created_at),
     INDEX idx_model (model_id, created_at),
+    INDEX idx_provider_call (trace_id, provider_call_order),
     INDEX idx_principal (principal_id, principal_type, created_at),
     INDEX idx_trace (trace_id, span_id)
 );
