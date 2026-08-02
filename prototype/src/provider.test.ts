@@ -548,6 +548,58 @@ describe("buildOpenAIChatRequest", () => {
       content: "# DYFJ",
     });
   });
+
+  test("keeps historical tool calls wire-safe for a no-tools conclusion", () => {
+    const tools = [
+      { name: "memory.read", description: "a", parameters: {} },
+      { name: "memory_read", description: "b", parameters: {} },
+      {
+        name: "x".repeat(64) + ".second",
+        description: "c",
+        parameters: {},
+      },
+      {
+        name: "x".repeat(64) + ".third",
+        description: "d",
+        parameters: {},
+      },
+    ];
+    const messages = [{
+      role: "assistant" as const,
+      content: "Gathering context.",
+      toolCalls: tools.map((tool, index) => ({
+        id: `call-${index}`,
+        name: tool.name,
+        arguments: {},
+      })),
+    }];
+    const gather = buildOpenAIChatRequest("model", "system", "seed", false, {
+      tools,
+      messages,
+    });
+    const forced = buildOpenAIChatRequest("model", "system", "seed", false, {
+      historyTools: tools,
+      messages,
+    });
+
+    expect(forced).not.toHaveProperty("tools");
+    expect(forced).not.toHaveProperty("tool_choice");
+    const expectedWireNames = [
+      "memory_read",
+      "memory_read_1",
+      "x".repeat(64),
+      `${"x".repeat(60)}_3`,
+    ];
+    expect(gather.tools?.map((tool) => tool.function.name)).toEqual(
+      expectedWireNames,
+    );
+    expect(forced.messages[1]?.tool_calls?.map((call) => call.function.name))
+      .toEqual(expectedWireNames);
+    expect(expectedWireNames.every((name) => name.length <= 64)).toBe(true);
+    expect(messages[0].toolCalls.map((call) => call.name)).toEqual(
+      tools.map((tool) => tool.name),
+    );
+  });
 });
 
 describe("parseOpenAIChatStreamLine", () => {

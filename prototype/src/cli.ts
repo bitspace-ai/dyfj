@@ -1059,6 +1059,10 @@ export function formatRuntimeEvent(
       : "?";
     return `tool: step ${step} running ${count} call(s)`;
   }
+  if (event.type === "toolStepLimitReached") {
+    const maxSteps = typeof event.maxSteps === "number" ? event.maxSteps : "?";
+    return `tool: reached ${maxSteps}-step limit; concluding now`;
+  }
   if (event.type === "toolCallStarted") {
     const commandId = typeof event.commandId === "string"
       ? event.commandId

@@ -27,7 +27,6 @@ import {
   readLauncherSecretsConfig,
   readLineOrNull,
   readlineTurnInterruptSource,
-  selectTurnInterruptSource,
   readMemoryMcpNetGrant,
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
@@ -41,6 +40,7 @@ import {
   runStart,
   runStatus,
   runtimeEventIsVisible,
+  selectTurnInterruptSource,
   socketError,
   socketTurn,
   spinnerGuardedTurnHandlers,
@@ -1165,6 +1165,13 @@ describe("formatRuntimeEvent", () => {
 
   test("marks an aborted turn", () => {
     expect(formatRuntimeEvent({ type: "turnAborted" })).toBe("[interrupted]");
+  });
+
+  test("marks the forced conclusion after the tool-step limit", () => {
+    expect(formatRuntimeEvent({
+      type: "toolStepLimitReached",
+      maxSteps: 8,
+    })).toBe("tool: reached 8-step limit; concluding now");
   });
 });
 
