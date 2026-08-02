@@ -199,6 +199,7 @@ describe("serveWorkbenchUnix read methods", () => {
           approvePaidDefault: false,
           defaultSessionBudgetUsd: 2,
           defaultPerCallBudgetUsd: 0.2,
+          maxToolSteps: 7,
         },
       }),
     );
@@ -209,6 +210,7 @@ describe("serveWorkbenchUnix read methods", () => {
         defaultCompanionModel: "local-x",
         permissionLevel: "operator",
         approvePaidDefault: false,
+        maxToolSteps: 7,
         models: { total: 1 },
       },
     });
@@ -352,6 +354,36 @@ describe("serveWorkbenchUnix turn method", () => {
       { t: "delta", text: "world" },
       { t: "event", event: { kind: "tool-call", name: "noop" } },
     ]);
+  });
+
+  test("threads the configured agent-step limit and returns the receipt field", async () => {
+    let seenMaxToolSteps: number | undefined;
+    const server = await startServer({
+      ...fakes,
+      engineConfig: anyVal({
+        defaultCompanionModel: null,
+        permissionLevel: "strict",
+        approvePaidDefault: false,
+        trustWorkspaceInstructions: false,
+        defaultSessionBudgetUsd: 1,
+        defaultPerCallBudgetUsd: 0.1,
+        defaultDailyBudgetUsd: 25,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        maxToolSteps: 7,
+      }),
+      runRuntime: async (input) => {
+        seenMaxToolSteps = input.maxToolSteps;
+        return anyVal({
+          agent: { toolStepsUsed: 3, maxToolSteps: 7, limitReached: false },
+        });
+      },
+    });
+    const client = await connectClient(server);
+    await expect(client.request("turn", { prompt: "hi" })).resolves.toEqual({
+      agent: { toolStepsUsed: 3, maxToolSteps: 7, limitReached: false },
+    });
+    expect(seenMaxToolSteps).toBe(7);
   });
 
   test("turn/cancel aborts the matching active turn and is otherwise a no-op", async () => {

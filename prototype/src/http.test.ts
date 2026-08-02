@@ -34,6 +34,11 @@ function runtimeResult(overrides: Partial<WorkbenchRuntimeResult> = {}) {
       cacheWrite: 0,
       totalCalls: 1,
     },
+    agent: {
+      toolStepsUsed: 0,
+      maxToolSteps: 32,
+      limitReached: false,
+    },
     context: {
       sources: ["README.md Section 1 <README.md#section-1>"],
     },
@@ -422,6 +427,47 @@ describe("createWorkbenchHttpHandler", () => {
     expect((sseReceipt as typeof inProcess).context.sources).toEqual(
       inProcess.context.sources,
     );
+    expect((sseReceipt as typeof inProcess).agent).toEqual(inProcess.agent);
+  });
+
+  test("threads the configured agent-step limit into buffered and SSE turns", async () => {
+    const calls: WorkbenchRuntimeInput[] = [];
+    const handler = createWorkbenchHttpHandler({
+      engineConfig: {
+        defaultCompanionModel: null,
+        permissionLevel: "strict",
+        approvePaidDefault: false,
+        trustWorkspaceInstructions: false,
+        defaultSessionBudgetUsd: 1,
+        defaultPerCallBudgetUsd: 0.1,
+        defaultDailyBudgetUsd: 25,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        maxToolSteps: 7,
+      },
+      runRuntime: async (input) => {
+        calls.push(input);
+        return runtimeResult();
+      },
+    });
+    await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: "hello" }),
+      }),
+    );
+    await handler(
+      new Request("http://localhost/api/turn", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
+        },
+        body: JSON.stringify({ prompt: "hello" }),
+      }),
+    );
+    expect(calls.map((input) => input.maxToolSteps)).toEqual([7, 7]);
   });
 
   test("serializes concurrent same-session turns; never runs them in parallel", async () => {

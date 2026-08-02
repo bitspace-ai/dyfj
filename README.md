@@ -134,6 +134,8 @@ mlx_lm.server \
 
 Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the Ollama fallback explicitly.
 
+Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; served HTTP and UDS engines also load `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence for served engines. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use.
+
 ### Hosted inference (explicit escalation)
 
 Hosted models are never the default path. Selecting one (for example `--model claude-haiku-4-5`) goes through the budget preflight and an interactive consent prompt before any tokens are spent, and the call is receipted with cost and prompt-cache telemetry.
@@ -460,3 +462,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-06-21 - Transport seam documented: a duplex JSON-RPC 2.0 protocol over a Unix domain socket as the canonical loopback transport, the shared `turn-runner` core both transports run, and the `serve-unix` launcher + engine-free CLI-over-socket; Status, Repo layout, the Layer 1 runtime boundary, and Run-it updated to match (per the transport-seam decision, 2026-06-21).
 - 2026-06-30 - Schema refactored into a readable current baseline (`schema/current/`), mutable catalog seeds (`schema/catalog/`), forward migrations (`schema/migrations/`), and preserved replay history (`schema/history/`).
 - 2026-07-03 - Cost posture revised: Layer 0 stance #2 rewritten from local-first-by-default with per-call paid escalation to operator-routed inference inside budget envelopes (per-session and per-day) with a runaway-anomaly hard stop; stance #1, Boundaries, the tagline, and the Layer 2 cost/budget entry aligned. Local inference remains first-class and fail-closed; non-loopback transports remain fail-closed; unpriced models are not routable. Cost visibility is unchanged as a Layer 0 stance — the consent ceremony is demoted, not the accounting. Envelope enforcement is marked as in-progress runtime work.
+- 2026-08-02 - Run-it configuration now documents the bounded Workbench tool-step limit and receipt visibility.

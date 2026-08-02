@@ -344,6 +344,8 @@ export interface ExecuteTurnDeps {
   /** Runaway-anomaly hard-stop multiples (config), resolved once at the boundary. */
   anomalyTurnMultiple?: number;
   anomalyScopeMultiple?: number;
+  /** Maximum model↔tool loop steps in one turn (config), resolved once at the boundary. */
+  maxToolSteps?: number;
   /**
    * Warn-then-confirm handler when projected spend crosses a budget ceiling.
    * The UDS transport supplies a duplex round-trip; HTTP omits it, so the
@@ -370,6 +372,7 @@ export function engineConfigToTurnDeps(
     | "defaultDailyBudgetUsd"
     | "anomalyTurnMultiple"
     | "anomalyScopeMultiple"
+    | "maxToolSteps"
   >,
 ): Pick<
   ExecuteTurnDeps,
@@ -382,6 +385,7 @@ export function engineConfigToTurnDeps(
   | "defaultDailyBudgetUsd"
   | "anomalyTurnMultiple"
   | "anomalyScopeMultiple"
+  | "maxToolSteps"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -393,6 +397,7 @@ export function engineConfigToTurnDeps(
     defaultDailyBudgetUsd: config.defaultDailyBudgetUsd,
     anomalyTurnMultiple: config.anomalyTurnMultiple,
     anomalyScopeMultiple: config.anomalyScopeMultiple,
+    maxToolSteps: config.maxToolSteps,
   };
 }
 
@@ -468,6 +473,9 @@ function runExecuteTurn(
       : {}),
     ...(deps.anomalyScopeMultiple !== undefined
       ? { anomalyScopeMultiple: deps.anomalyScopeMultiple }
+      : {}),
+    ...(deps.maxToolSteps !== undefined
+      ? { maxToolSteps: deps.maxToolSteps }
       : {}),
     authContext: deps.authContext,
     onTextDelta: deps.onTextDelta,

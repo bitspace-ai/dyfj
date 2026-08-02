@@ -31,6 +31,14 @@ level = "strict"
 # mind. Env override: DYFJ_TRUST_WORKSPACE_INSTRUCTIONS.
 # trust_instructions = true
 
+[agent]
+# Served HTTP and UDS engines load this file setting; every entrypoint accepts
+# the DYFJ_MAX_TOOL_STEPS environment override.
+# Maximum model-to-tool steps in one turn. Default 32; valid range 1 through 64.
+# Reaching the limit asks the model for a final no-tools answer from the transcript.
+# Env override: DYFJ_MAX_TOOL_STEPS.
+# max_tool_steps = 32
+
 [paid]
 # Standing paid-inference posture on loopback turns. When a request omits the
 # per-turn approvePaidInference flag, the engine falls back to this default.

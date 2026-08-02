@@ -29,7 +29,11 @@ import {
 } from "./jsonrpc";
 import { JsonRpcPeer } from "./jsonrpc-peer";
 import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench";
-import type { PermissionLevel, WorkbenchConfig } from "./config";
+import {
+  AGENT_DEFAULTS,
+  type PermissionLevel,
+  type WorkbenchConfig,
+} from "./config";
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
@@ -96,6 +100,7 @@ export interface WorkbenchRuntimeStatus {
   defaultSessionBudgetUsd: number;
   defaultPerCallBudgetUsd: number;
   defaultDailyBudgetUsd: number;
+  maxToolSteps: number;
   models: { total: number; local: number; hosted: number };
 }
 
@@ -133,6 +138,7 @@ export interface WorkbenchUnixServerOptions {
     | "defaultDailyBudgetUsd"
     | "anomalyTurnMultiple"
     | "anomalyScopeMultiple"
+    | "maxToolSteps"
   >;
 }
 
@@ -214,6 +220,8 @@ function runtimeStatus(
     defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
       0.1,
     defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ?? 25,
+    maxToolSteps: options.engineConfig?.maxToolSteps ??
+      AGENT_DEFAULTS.maxToolSteps,
     // Locality counts use the same provider+loopback classification as
     // `models/list[].local` and the bare-turn route — never the tier label,
     // which is catalog metadata a mis-tiered row can get wrong.

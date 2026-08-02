@@ -306,6 +306,11 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
     });
   }
 
+  test("verify-workbench-events grants the agent step-limit env var", () => {
+    expect(profileEnv("verify-workbench-events").has("DYFJ_MAX_TOOL_STEPS"))
+      .toBe(true);
+  });
+
   // Reverse: a new runtime env var can't be added to the allowlist without
   // joining the declared surface (only system env is exempt).
   for (const profile of ENGINE_PROFILES) {
@@ -747,4 +752,57 @@ describe("parseSecretsConfig — strict [secrets] keys", () => {
       )
     ).toThrow(/not a recognized key/);
   });
+});
+
+describe("loadConfig agent tool-step limit", () => {
+  test("defaults maxToolSteps to 32", async () => {
+    const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
+    expect(cfg.maxToolSteps).toBe(32);
+  });
+
+  test("TOML and environment layers override maxToolSteps with env precedence", async () => {
+    const fileCfg = await loadConfig({
+      env: env(HOME),
+      readTextFile: present,
+      parseToml: table({ agent: { max_tool_steps: 12 } }),
+    });
+    expect(fileCfg.maxToolSteps).toBe(12);
+
+    const envCfg = await loadConfig({
+      env: env({ ...HOME, DYFJ_MAX_TOOL_STEPS: "48" }),
+      readTextFile: present,
+      parseToml: table({ agent: { max_tool_steps: 12 } }),
+    });
+    expect(envCfg.maxToolSteps).toBe(48);
+  });
+
+  test("treats whitespace-only env max tool steps as absent", async () => {
+    const cfg = await loadConfig({
+      env: env({ ...HOME, DYFJ_MAX_TOOL_STEPS: " \t\n " }),
+      readTextFile: present,
+      parseToml: table({ agent: { max_tool_steps: 12 } }),
+    });
+    expect(cfg.maxToolSteps).toBe(12);
+  });
+
+  test.each([0, -1, 1.5, 65])(
+    "rejects invalid TOML max_tool_steps %s",
+    async (value) => {
+      await expect(loadConfig({
+        env: env(HOME),
+        readTextFile: present,
+        parseToml: table({ agent: { max_tool_steps: value } }),
+      })).rejects.toThrow(/max tool steps|integer from 1 through 64/);
+    },
+  );
+
+  test.each(["0", "-1", "1.5", "many", "65"])(
+    "rejects invalid env max tool steps %s",
+    async (value) => {
+      await expect(loadConfig({
+        env: env({ ...HOME, DYFJ_MAX_TOOL_STEPS: value }),
+        readTextFile: notFound,
+      })).rejects.toThrow(/max tool steps|integer from 1 through 64/);
+    },
+  );
 });

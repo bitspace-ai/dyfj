@@ -449,8 +449,11 @@ export function formatReceipt(
     : "";
   const tokens =
     `${result.tokens.input}→${result.tokens.output} tok${reasoning}`;
+  const toolSteps =
+    `tools ${result.agent.toolStepsUsed}/${result.agent.maxToolSteps}` +
+    (result.agent.limitReached ? " (limit reached)" : "");
   return dim(
-    `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${result.route.reason}`,
+    `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${toolSteps} · ${result.route.reason}`,
   );
 }
 
@@ -792,6 +795,7 @@ interface RuntimeStatusPayload {
     defaultSessionBudgetUsd?: number;
     defaultPerCallBudgetUsd?: number;
     defaultDailyBudgetUsd?: number;
+    maxToolSteps?: number;
     models?: { total?: number; local?: number; hosted?: number };
     methods?: string[];
   };
@@ -1394,6 +1398,7 @@ export function formatRuntimeStatus(
     `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
       (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
     } day · $${(runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)} per call`,
+    `tool-step limit: ${runtime.maxToolSteps ?? "unknown"}`,
     `methods: ${methods.length}`,
   ].join("\n");
 }
