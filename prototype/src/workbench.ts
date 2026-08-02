@@ -346,6 +346,12 @@ export type WorkbenchRuntimeEvent =
     toolCallCount: number;
   }
   | {
+    /** The fixed tool-step limit was reached; a no-tools conclusion is attempted next. */
+    type: "toolStepLimitReached";
+    sessionId: string;
+    maxSteps: number;
+  }
+  | {
     type: "toolCallStarted";
     sessionId: string;
     commandId: string;
@@ -569,6 +575,16 @@ export class ContextCompressionPersistenceUncertainError extends DomainError {
   }
 }
 
+/** A capped tool loop's no-tools conclusion failed before completion. */
+export class ToolStepLimitConclusionError extends DomainError {
+  constructor() {
+    super(
+      "The no-tools conclusion after the tool-step limit could not be completed.",
+    );
+    this.name = "ToolStepLimitConclusionError";
+  }
+}
+
 // Every DomainError subclass this codebase defines, paired with a fixed
 // string literal — one WE wrote, never one read off an instance — that
 // classifyErrorKind returns for it. `instanceof DomainError` alone is not
@@ -595,6 +611,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
     ContextCompressionPersistenceUncertainError,
     "ContextCompressionPersistenceUncertainError",
   ],
+  [ToolStepLimitConclusionError, "ToolStepLimitConclusionError"],
   [RpcError, "RpcError"],
   [WorkbenchModelNotFoundError, "WorkbenchModelNotFoundError"],
   [
@@ -2280,6 +2297,7 @@ export async function runWorkbenchRuntime(
       params: Parameters<typeof runWorkbenchTurn>[0],
       request: { modelSlug: string; estimatedInputCount: number },
       purpose: "initial" | "tool_followup" | "forced_conclusion" | "recovery",
+      onProviderError?: (error: unknown) => unknown,
     ) => {
       // Budget-gate and record EVERY provider call: the agent loop can make
       // several calls in one turn, so per-call and session limits must be
@@ -2319,6 +2337,7 @@ export async function runWorkbenchRuntime(
       try {
         turn = await runWorkbenchTurn(params);
       } catch (err) {
+        const safeError = onProviderError?.(err) ?? err;
         await writeMaybe(
           () =>
             writeEvent({
@@ -2338,7 +2357,7 @@ export async function runWorkbenchRuntime(
               api: selected.api,
               provider_call_order: order,
               provider_call_purpose: purpose,
-              provider_error_class: classifyErrorKind(err),
+              provider_error_class: classifyErrorKind(safeError),
               content: null,
               thinking: null,
               stop_reason: "error",
@@ -2348,7 +2367,7 @@ export async function runWorkbenchRuntime(
           BEST_EFFORT,
           noteSkippedEventWrite,
         );
-        throw err;
+        throw safeError;
       }
       let providerCallPersisted = true;
       await writeMaybe(
@@ -2419,10 +2438,16 @@ export async function runWorkbenchRuntime(
       params: Parameters<typeof runWorkbenchTurn>[0],
       request: { modelSlug: string; estimatedInputCount: number },
       purpose: "initial" | "tool_followup" | "forced_conclusion" | "recovery",
+      onProviderError?: (error: unknown) => unknown,
     ): Promise<
       Awaited<ReturnType<typeof runWorkbenchTurn>> & { providerSpanId?: string }
     > => {
-      const turn = await runObservedTurn(params, request, purpose);
+      const turn = await runObservedTurn(
+        params,
+        request,
+        purpose,
+        onProviderError,
+      );
       if (turn.stopReason !== "length") return turn;
       // Prompt-side total for window arithmetic: Anthropic's input_tokens
       // excludes cache traffic, so the cached prompt must be added back.
@@ -2533,6 +2558,7 @@ export async function runWorkbenchRuntime(
                   ),
                 },
                 "recovery",
+                onProviderError,
               );
             }
           } catch (err) {
@@ -2915,6 +2941,13 @@ export async function runWorkbenchRuntime(
             ? `Reached the ${MAX_TOOL_STEPS}-step tool limit; forcing a concluding answer.`
             : "Model repeated prior tool calls; forcing a concluding answer.",
         );
+        if (atCap) {
+          await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+            type: "toolStepLimitReached",
+            sessionId,
+            maxSteps: MAX_TOOL_STEPS,
+          });
+        }
       }
       // Append this step to the transcript: the assistant turn that requested
       // the tools (text + tool-call intentions) and one tool message per result.
@@ -2934,22 +2967,30 @@ export async function runWorkbenchRuntime(
         transcriptEstimateText(systemPrompt, messages),
       );
       streamedText = false;
-      turn = await runRecoveredTurn({
-        systemPrompt,
-        prompt: modelPrompt,
-        messages,
-        routing: routingOptions,
-        defaultModelId: defaultCompanionModel,
-        models,
-        tools: forceConclude ? undefined : commandTools,
-        abortSignal: runtimeInput.abortSignal,
-        // Stream the gather step when the provider streams tool calls, and
-        // always stream the forced no-tools conclusion.
-        onTextDelta: streamsToolCalls || forceConclude ? liveDelta : undefined,
-      }, {
-        modelSlug: selected.slug,
-        estimatedInputCount: followUpInputCount,
-      }, forceConclude ? "forced_conclusion" : "tool_followup");
+      turn = await runRecoveredTurn(
+        {
+          systemPrompt,
+          prompt: modelPrompt,
+          messages,
+          routing: routingOptions,
+          defaultModelId: defaultCompanionModel,
+          models,
+          tools: forceConclude ? undefined : commandTools,
+          historyTools: forceConclude ? commandTools : undefined,
+          abortSignal: runtimeInput.abortSignal,
+          // Stream the gather step when the provider streams tool calls, and
+          // always stream the forced no-tools conclusion.
+          onTextDelta: streamsToolCalls || forceConclude
+            ? liveDelta
+            : undefined,
+        },
+        {
+          modelSlug: selected.slug,
+          estimatedInputCount: followUpInputCount,
+        },
+        forceConclude ? "forced_conclusion" : "tool_followup",
+        atCap ? () => new ToolStepLimitConclusionError() : undefined,
+      );
       captureTurnState(turn);
       if (
         runtimeInput.abortSignal?.aborted &&

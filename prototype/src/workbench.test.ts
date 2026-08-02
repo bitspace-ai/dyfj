@@ -1482,11 +1482,13 @@ describe("runWorkbenchRuntime observer events", () => {
       toolCalls: [{ id: "c", name: "list_files", arguments: {} }],
     });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const events: Array<{ type: string }> = [];
     try {
       const result = await runWorkbenchRuntime({
         mode: "turn",
         prompt: "loop without stopping",
         routingOptions: {},
+        onRuntimeEvent: (event) => events.push(event),
       });
       expect(result.text).toBe("forced conclusion");
       // step 0 + MAX_TOOL_STEPS gather calls, then the loop exits
@@ -1499,6 +1501,16 @@ describe("runWorkbenchRuntime observer events", () => {
       // an earlier gather call still offered tools (so the model could continue)
       const firstFollowUp = runtimeMocks.runWorkbenchTurn.mock.calls[1][0];
       expect(Array.isArray(firstFollowUp.tools)).toBe(true);
+      const limitEventIndex = events.findIndex((event) =>
+        event.type === "toolStepLimitReached"
+      );
+      expect(events[limitEventIndex]).toMatchObject({
+        type: "toolStepLimitReached",
+        maxSteps: MAX_TOOL_STEPS,
+      });
+      expect(events[limitEventIndex + 1]).toMatchObject({
+        type: "beforeProviderRequest",
+      });
     } finally {
       log.mockRestore();
     }
@@ -1532,11 +1544,13 @@ describe("runWorkbenchRuntime observer events", () => {
       .mockResolvedValueOnce(repeat) // step 1 gather — identical call
       .mockResolvedValueOnce({ ...base, text: "done", stopReason: "stop" });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const events: Array<{ type: string }> = [];
     try {
       const result = await runWorkbenchRuntime({
         mode: "turn",
         prompt: "explore",
         routingOptions: {},
+        onRuntimeEvent: (event) => events.push(event),
       });
       expect(result.text).toBe("done");
       // step 0 + one gather + the forced conclusion — not the full step cap
@@ -1544,8 +1558,175 @@ describe("runWorkbenchRuntime observer events", () => {
       // the repeat was detected (step 2) and tools dropped to force a conclusion
       const forcedCall = runtimeMocks.runWorkbenchTurn.mock.calls[2][0];
       expect(forcedCall.tools).toBeUndefined();
+      expect(events.some((event) => event.type === "toolStepLimitReached"))
+        .toBe(false);
     } finally {
       log.mockRestore();
+    }
+  });
+
+  test("contains a failed capped conclusion without losing prior-call accounting", async () => {
+    const sentinel = "PROVIDER_RESPONSE_BODY_MUST_NOT_SURFACE";
+    let toolCallIndex = 0;
+    const toolTurn = () => ({
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      text: "",
+      toolCalls: [{
+        id: `c-${toolCallIndex}`,
+        name: "list_files",
+        arguments: { path: `${toolCallIndex++}` },
+      }],
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0.01 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "tool_use" as const,
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+    });
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params) => {
+      if (params.tools === undefined) {
+        return Promise.reject(new Error(sentinel));
+      }
+      return Promise.resolve(toolTurn());
+    });
+    const events: Array<{ type: string; [key: string]: unknown }> = [];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "loop until the limit",
+        routingOptions: {},
+        onRuntimeEvent: (event) => events.push(event),
+      })).rejects.toThrow(
+        "The no-tools conclusion after the tool-step limit could not be completed.",
+      );
+
+      const providerCalls = runtimeMocks.writtenEvents.filter((event) =>
+        event.event_type === "provider_call"
+      );
+      expect(providerCalls).toHaveLength(MAX_TOOL_STEPS + 1);
+      expect(providerCalls.slice(0, MAX_TOOL_STEPS)).toEqual(
+        Array.from({ length: MAX_TOOL_STEPS }, () =>
+          expect.objectContaining({
+            cost_total: 0.01,
+            stop_reason: "tool_use",
+          })),
+      );
+      expect(providerCalls.at(-1)).toMatchObject({
+        provider_call_purpose: "forced_conclusion",
+        provider_error_class: "ToolStepLimitConclusionError",
+        stop_reason: "error",
+      });
+      const failed = events.find((event) => event.type === "turnFailed");
+      expect(failed).toMatchObject({
+        errorName: "ToolStepLimitConclusionError",
+        errorMessage:
+          "The no-tools conclusion after the tool-step limit could not be completed.",
+      });
+      expect(JSON.stringify({ providerCalls, events })).not.toContain(sentinel);
+    } finally {
+      error.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  test("contains a failed overflow-recovery call after the tool-step limit", async () => {
+    const sentinel = "RECOVERY_PROVIDER_BODY_MUST_NOT_SURFACE";
+    const previousWindow = runtimeMocks.model.contextWindow;
+    let toolCallIndex = 0;
+    let noToolsCalls = 0;
+    runtimeMocks.model.contextWindow = 100;
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params) => {
+      if (params.tools === undefined) {
+        if (noToolsCalls++ === 0) {
+          return Promise.resolve({
+            model: runtimeMocks.model,
+            selection: {
+              selected: runtimeMocks.model,
+              considered: [runtimeMocks.model.slug],
+              reason: "default",
+            },
+            text: "partial conclusion",
+            usage: {
+              input: 99,
+              output: 0,
+              cost: { total: 0.01 },
+              cacheRead: 0,
+              cacheWrite: 0,
+            },
+            stopReason: "length" as const,
+            timings: { responseHeadersMs: 1, totalMs: 2 },
+          });
+        }
+        return Promise.reject(new Error(sentinel));
+      }
+      return Promise.resolve({
+        model: runtimeMocks.model,
+        selection: {
+          selected: runtimeMocks.model,
+          considered: [runtimeMocks.model.slug],
+          reason: "default",
+        },
+        text: "",
+        toolCalls: [{
+          id: `c-${toolCallIndex}`,
+          name: "list_files",
+          arguments: { path: `${toolCallIndex++}` },
+        }],
+        usage: {
+          input: 10,
+          output: 2,
+          cost: { total: 0.01 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        stopReason: "tool_use" as const,
+        timings: { responseHeadersMs: 1, totalMs: 2 },
+      });
+    });
+    const events: Array<{ type: string; [key: string]: unknown }> = [];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "loop until the limit",
+        routingOptions: {},
+        recoverContextOverflow: async () => ({
+          messages: [{ role: "user", content: "compressed history" }],
+        }),
+        onRuntimeEvent: (event) => events.push(event),
+      })).rejects.toThrow(
+        "The no-tools conclusion after the tool-step limit could not be completed.",
+      );
+
+      const providerCalls = runtimeMocks.writtenEvents.filter((event) =>
+        event.event_type === "provider_call"
+      );
+      expect(providerCalls).toHaveLength(MAX_TOOL_STEPS + 2);
+      expect(providerCalls.at(-1)).toMatchObject({
+        provider_call_purpose: "recovery",
+        provider_error_class: "ToolStepLimitConclusionError",
+        stop_reason: "error",
+      });
+      expect(events.find((event) => event.type === "turnFailed"))
+        .toMatchObject({
+          errorName: "ToolStepLimitConclusionError",
+          errorMessage:
+            "The no-tools conclusion after the tool-step limit could not be completed.",
+        });
+      expect(JSON.stringify({ providerCalls, events })).not.toContain(sentinel);
+    } finally {
+      runtimeMocks.model.contextWindow = previousWindow;
+      error.mockRestore();
     }
   });
 

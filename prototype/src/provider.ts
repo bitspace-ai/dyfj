@@ -667,7 +667,7 @@ function toOpenAIWireMessages(
   systemPrompt: string,
   prompt: string,
   messages: WorkbenchMessage[] | undefined,
-  tools: WorkbenchToolDefinition[] | undefined,
+  historyTools: WorkbenchToolDefinition[] | undefined,
 ): OpenAIWireMessage[] {
   const wire: OpenAIWireMessage[] = [
     { role: "system", content: systemPrompt },
@@ -676,7 +676,7 @@ function toOpenAIWireMessages(
     wire.push({ role: "user", content: prompt });
     return wire;
   }
-  const wireName = wireNameLookup(tools);
+  const wireName = wireNameLookup(historyTools);
   for (const m of messages) {
     if (m.role === "user") {
       wire.push({ role: "user", content: m.content });
@@ -712,6 +712,8 @@ export function buildOpenAIChatRequest(
   options: {
     jsonObject?: boolean;
     tools?: WorkbenchToolDefinition[];
+    /** Definitions used only to serialize historical tool-call names. */
+    historyTools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
     maxCompletionTokens?: number;
   } = {},
@@ -734,7 +736,7 @@ export function buildOpenAIChatRequest(
       systemPrompt,
       prompt,
       options.messages,
-      options.tools,
+      options.historyTools ?? options.tools,
     ),
   };
   if (options.jsonObject) {
@@ -778,6 +780,8 @@ export interface WorkbenchTurnParams {
   onTextDelta?: (delta: string) => void;
   jsonObject?: boolean;
   tools?: WorkbenchToolDefinition[];
+  /** Definitions used only to serialize historical tool-call names. */
+  historyTools?: WorkbenchToolDefinition[];
   abortSignal?: AbortSignal;
   now?: () => number;
   fetchFn?: FetchLike;
@@ -990,6 +994,7 @@ async function executeOpenAICompatibleTurn(
           {
             jsonObject: params.jsonObject,
             tools: params.tools,
+            historyTools: params.historyTools,
             messages: params.messages,
             maxCompletionTokens: openAIHostedProviders.has(model.provider)
               ? modelRequestedOutputCap(model)
