@@ -8,9 +8,11 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- Agent-tool turns now use a configurable tool-step limit rather than a fixed eight-step ceiling. The default is 32 steps; served HTTP and UDS engines load `[agent].max_tool_steps`, and every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`, bounded to integers from 1 through 64. Forced conclusions are marked as Workbench instructions instead of synthetic user messages, and runtime status plus turn receipts report the effective limit and tool-step usage.
+
 - Ask and next-work context now uses the transport-authorized selected workspace instead of the long-running runtime's own checkout. Generic repositories load bounded root-level `AGENTS.md`, README, and the first recognized project manifest when present; workspace-derived content is framed as untrusted context, and optional Workbench notes remain available only when they resolve to regular files under that same root. An unavailable selected workspace fails with a fixed diagnostic rather than silently substituting server-repository context.
 
-- OpenAI-compatible forced no-tools conclusions now preserve the wire-safe names of historical tool calls and visibly announce when the fixed tool-step limit begins the conclusion.
+- OpenAI-compatible forced no-tools conclusions now preserve the wire-safe names of historical tool calls and visibly announce when the configured tool-step limit begins the conclusion.
 
 - Gemini usage that reports reasoning tokens separately now includes them in billable output and receipt cost while keeping non-reasoning output tokens separate; time per output token remains based on the visible-generation interval and its non-reasoning output count.
 - The supported `~/.local/bin/dyfj` symlink install now resolves the repository launcher before deriving the prototype root, so the CLI source and autostart respawn are found in the repository rather than beneath `~/.local`. The launcher rejects a 41st file-link hop; newline-bearing path components and targets are outside this install contract.

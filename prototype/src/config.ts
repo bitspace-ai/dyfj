@@ -117,6 +117,14 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     enumValues: PERMISSION_LEVELS,
     default: "strict",
   },
+  {
+    key: "maxToolSteps",
+    envVar: "DYFJ_MAX_TOOL_STEPS",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 32,
+  },
   // ── engine: budget defaults (env layer today; file layer is the next slice) ──
   {
     key: "defaultSessionBudgetUsd",
@@ -316,6 +324,8 @@ export interface WorkbenchConfig {
    */
   anomalyTurnMultiple: number;
   anomalyScopeMultiple: number;
+  /** Maximum model↔tool loop steps in one turn (startup posture). */
+  maxToolSteps: number;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
@@ -330,6 +340,7 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultDailyBudgetUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
   anomalyTurnMultiple: schemaNumberDefault("anomalyTurnMultiple"),
   anomalyScopeMultiple: schemaNumberDefault("anomalyScopeMultiple"),
+  maxToolSteps: schemaNumberDefault("maxToolSteps"),
 };
 
 /** Minimal env surface, so callers can inject a fake in tests. */
@@ -457,6 +468,13 @@ export async function loadConfig(
         `${configLabel(path)} [anomaly].scope_multiple`,
       );
     }
+    const fileMaxToolSteps = readNumber(table, "agent", "max_tool_steps");
+    if (fileMaxToolSteps !== undefined) {
+      config.maxToolSteps = validateMaxToolSteps(
+        fileMaxToolSteps,
+        `${configLabel(path)} [agent].max_tool_steps`,
+      );
+    }
   }
 
   // ── env layer (overrides the file) ──
@@ -508,6 +526,11 @@ export async function loadConfig(
     env,
     schemaEnvVar("anomalyScopeMultiple"),
     config.anomalyScopeMultiple,
+  );
+  config.maxToolSteps = readMaxToolSteps(
+    env,
+    schemaEnvVar("maxToolSteps"),
+    config.maxToolSteps,
   );
 
   return config;
@@ -894,6 +917,16 @@ function validatePositiveMultiple(value: number, source: string): number {
   return value;
 }
 
+function validateMaxToolSteps(value: number, source: string): number {
+  if (!Number.isInteger(value) || value < 1 || value > 64) {
+    throw new Error(
+      `config: invalid max tool steps from ${source} ` +
+        `(expected an integer from 1 through 64)`,
+    );
+  }
+  return value;
+}
+
 function parseBooleanEnv(raw: string, source: string): boolean {
   const normalized = raw.trim().toLowerCase();
   if (normalized === "1" || normalized === "true" || normalized === "yes") {
@@ -935,6 +968,44 @@ export const BUDGET_DEFAULTS: BudgetDefaults = {
   perCallLimitUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
   dailyLimitUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
 };
+
+function readMaxToolSteps(
+  env: ConfigEnv,
+  envVar: string,
+  fallback: number,
+): number {
+  const raw = env.get(envVar);
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed === "") return fallback;
+  if (!/^[0-9]+$/.test(trimmed)) {
+    throw new Error(
+      `config: invalid max tool steps from ${envVar} ` +
+        `(expected an integer from 1 through 64)`,
+    );
+  }
+  return validateMaxToolSteps(Number(trimmed), envVar);
+}
+
+export interface AgentDefaults {
+  /** Maximum model↔tool loop steps in one turn. */
+  maxToolSteps: number;
+}
+
+export const AGENT_DEFAULTS: AgentDefaults = {
+  maxToolSteps: schemaNumberDefault("maxToolSteps"),
+};
+
+export function resolveAgentDefaultsFromEnv(
+  env: ConfigEnv = Deno.env,
+): AgentDefaults {
+  return {
+    maxToolSteps: readMaxToolSteps(
+      env,
+      schemaEnvVar("maxToolSteps"),
+      AGENT_DEFAULTS.maxToolSteps,
+    ),
+  };
+}
 
 function readPositiveUsd(
   env: ConfigEnv,

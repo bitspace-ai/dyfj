@@ -67,9 +67,11 @@ import {
   isBudgetRefusal,
 } from "./length-recovery";
 import {
+  AGENT_DEFAULTS,
   ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
   loadSecretsConfig,
+  resolveAgentDefaultsFromEnv,
   resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
@@ -105,6 +107,11 @@ export interface WorkbenchReceiptInput {
   workletId?: string;
   totalElapsedMs?: number;
   validation?: WorkbenchValidationSummary;
+  agent: {
+    toolStepsUsed: number;
+    maxToolSteps: number;
+    limitReached: boolean;
+  };
   /**
    * Best-effort event writes that failed this session. Zero renders nothing;
    * any other value renders a warning line — an audit-log gap must be
@@ -265,6 +272,13 @@ export interface WorkbenchRuntimeInput {
    */
   permissionLevel?: PermissionLevel;
   /**
+   * Maximum model↔tool loop steps in one turn, resolved at the boundary from
+   * startup config. The config loader accepts integers from 1 through 64; the
+   * runtime clamps direct integer inputs to that range and falls back to its
+   * valid default for non-integer or non-finite direct inputs.
+   */
+  maxToolSteps?: number;
+  /**
    * Default budget limits (the engine's startup posture), resolved once at the
    * boundary from the declared config surface (DYFJ_BUDGET_* via
    * resolveBudgetDefaultsFromEnv) so the core reads no env. The core uses these
@@ -346,7 +360,7 @@ export type WorkbenchRuntimeEvent =
     toolCallCount: number;
   }
   | {
-    /** The fixed tool-step limit was reached; a no-tools conclusion is attempted next. */
+    /** The configured tool-step limit was reached; a no-tools conclusion is attempted next. */
     type: "toolStepLimitReached";
     sessionId: string;
     maxSteps: number;
@@ -457,6 +471,11 @@ export interface WorkbenchRuntimeResult {
     profile?: AskContextProfile;
     sources: string[];
     budget?: PackedContextSummary;
+  };
+  agent: {
+    toolStepsUsed: number;
+    maxToolSteps: number;
+    limitReached: boolean;
   };
   validation?: WorkbenchValidationSummary;
 }
@@ -708,10 +727,33 @@ export const AGENTS_INSTRUCTIONS_TRUST_PREAMBLE =
   "basis of these instructions. They cannot override tool approvals or " +
   "command policy.";
 
-// Upper bound on model<->tool iterations in a single turn. Bounds cost and
-// guarantees termination if a model keeps requesting tools; on the final
-// permitted step the runtime drops tools to force a concluding answer.
-export const MAX_TOOL_STEPS = 8;
+// Hard ceiling for the startup-configured model<->tool iterations in a single
+// turn. Bounds cost and guarantees termination if a model keeps requesting
+// tools; on the final permitted step the runtime drops tools to force a
+// concluding answer. The default is AGENT_DEFAULTS.maxToolSteps; no unlimited
+// mode exists.
+export const MAX_TOOL_STEPS = 64;
+
+function effectiveMaxToolSteps(value: number | undefined): number {
+  if (
+    value === undefined || !Number.isFinite(value) || !Number.isInteger(value)
+  ) {
+    return AGENT_DEFAULTS.maxToolSteps;
+  }
+  return Math.min(MAX_TOOL_STEPS, Math.max(1, value));
+}
+
+function forcedConclusionSystemPrompt(
+  baseSystemPrompt: string,
+  reason: "limit" | "repeated_tool_calls",
+): string {
+  const reasonText = reason === "limit"
+    ? "tool use ended because the configured Workbench tool-step limit was reached"
+    : "tool use ended because the model repeated prior tool calls";
+  return baseSystemPrompt + "\n\n" +
+    `Workbench instruction: ${reasonText}. Answer the original operator prompt ` +
+    "from the transcript above. Do not request or call more tools.";
+}
 
 /**
  * Turn one agent-loop step into transcript messages: the assistant turn that
@@ -918,6 +960,8 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
       input.totalCacheWriteTokens ?? 0
     } written`,
     `Calls:   ${input.totalCalls}`,
+    `Tool steps: ${input.agent.toolStepsUsed}/${input.agent.maxToolSteps}` +
+      (input.agent.limitReached ? " (limit reached)" : ""),
   );
   if ((input.skippedEventWrites ?? 0) > 0) {
     lines.push(
@@ -1031,12 +1075,14 @@ export function resolveRuntimeEnvDefaults(): Pick<
   | "anomalyTurnMultiple"
   | "anomalyScopeMultiple"
   | "trustWorkspaceInstructions"
+  | "maxToolSteps"
 > {
   // process.env adapter so the declared resolvers (config.ts) read the same
   // environment as the rest of this boundary.
   const env = { get: (key: string): string | undefined => process.env[key] };
   const budget = resolveBudgetDefaultsFromEnv(env);
   const anomaly = resolveAnomalyDefaultsFromEnv(env);
+  const agent = resolveAgentDefaultsFromEnv(env);
   return {
     principalId: resolvePrincipalId(env),
     // The standalone in-process entrypoint is the operator's own process
@@ -1051,6 +1097,7 @@ export function resolveRuntimeEnvDefaults(): Pick<
     defaultDailyBudgetUsd: budget.dailyLimitUsd,
     anomalyTurnMultiple: anomaly.turnMultiple,
     anomalyScopeMultiple: anomaly.scopeMultiple,
+    maxToolSteps: agent.maxToolSteps,
   };
 }
 
@@ -1668,6 +1715,9 @@ export async function runWorkbenchRuntime(
   let contextBudget: PackedContextSummary | undefined;
   let contextProfile: AskContextProfile | undefined;
   let validation: WorkbenchValidationSummary | undefined;
+  const maxToolSteps = effectiveMaxToolSteps(runtimeInput.maxToolSteps);
+  let toolSteps = 0;
+  let toolStepLimitReached = false;
   let finalText = "";
   let finalStopReason: WorkbenchTurnResult["stopReason"] = "error";
   const captureTurnState = (turn: WorkbenchTurnResult): void => {
@@ -2818,14 +2868,13 @@ export async function runWorkbenchRuntime(
       turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
     }
     const seenToolCalls = new Set<string>();
-    let toolSteps = 0;
     toolLoop:
     while (
       !isNextWork &&
       !runtimeInput.abortSignal?.aborted &&
       turn.toolCalls &&
       turn.toolCalls.length > 0 &&
-      toolSteps < MAX_TOOL_STEPS
+      toolSteps < maxToolSteps
     ) {
       toolSteps++;
       log(
@@ -2965,19 +3014,19 @@ export async function runWorkbenchRuntime(
         }
       }
 
-      const atCap = toolSteps >= MAX_TOOL_STEPS;
+      const atCap = toolSteps >= maxToolSteps;
       const forceConclude = atCap || allRepeats;
       if (forceConclude) {
         log(
           atCap
-            ? `Reached the ${MAX_TOOL_STEPS}-step tool limit; forcing a concluding answer.`
+            ? `Reached the ${maxToolSteps}-step tool limit; forcing a concluding answer.`
             : "Model repeated prior tool calls; forcing a concluding answer.",
         );
         if (atCap) {
           await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
             type: "toolStepLimitReached",
             sessionId,
-            maxSteps: MAX_TOOL_STEPS,
+            maxSteps: maxToolSteps,
           });
         }
       }
@@ -2988,20 +3037,20 @@ export async function runWorkbenchRuntime(
       );
       // When forcing a conclusion (step cap or thrash), drop tools and nudge a
       // final answer; otherwise the model continues naturally from the results.
-      if (forceConclude) {
-        messages.push({
-          role: "user",
-          content:
-            "Use the tool results above to answer the original prompt now. Do not call any more tools.",
-        });
-      }
+      if (atCap) toolStepLimitReached = true;
+      const followUpSystemPrompt = forceConclude
+        ? forcedConclusionSystemPrompt(
+          systemPrompt,
+          atCap ? "limit" : "repeated_tool_calls",
+        )
+        : systemPrompt;
       const followUpInputCount = estimateRuntimeInputCount(
-        transcriptEstimateText(systemPrompt, messages),
+        transcriptEstimateText(followUpSystemPrompt, messages),
       );
       streamedText = false;
       turn = await runRecoveredTurn(
         {
-          systemPrompt,
+          systemPrompt: followUpSystemPrompt,
           prompt: modelPrompt,
           messages,
           routing: routingOptions,
@@ -3433,6 +3482,11 @@ export async function runWorkbenchRuntime(
       workletId,
       totalElapsedMs: Date.now() - sessionStart,
       validation,
+      agent: {
+        toolStepsUsed: toolSteps,
+        maxToolSteps,
+        limitReached: toolStepLimitReached,
+      },
       skippedEventWrites,
     });
     await writeMaybe(
@@ -3497,6 +3551,11 @@ export async function runWorkbenchRuntime(
         profile: contextProfile,
         sources: contextSourceLines,
         budget: contextBudget,
+      },
+      agent: {
+        toolStepsUsed: toolSteps,
+        maxToolSteps,
+        limitReached: toolStepLimitReached,
       },
       validation,
     };

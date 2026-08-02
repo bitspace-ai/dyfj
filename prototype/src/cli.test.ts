@@ -202,6 +202,7 @@ function result(overrides: Partial<TurnResult> = {}): TurnResult {
       cacheWrite: 0,
       totalCalls: 1,
     },
+    agent: { toolStepsUsed: 0, maxToolSteps: 32, limitReached: false },
     ...overrides,
   };
 }
@@ -2252,6 +2253,7 @@ describe("runtime lifecycle commands", () => {
         approvePaidDefault: false,
         defaultSessionBudgetUsd: 2,
         defaultPerCallBudgetUsd: 0.25,
+        maxToolSteps: 7,
         models: { total: 3, local: 1, hosted: 2 },
         methods: ["runtime/status", "models/list"],
       },
@@ -2260,6 +2262,7 @@ describe("runtime lifecycle commands", () => {
     expect(text).toContain("socket: /run/wb.sock");
     expect(text).toContain("qwen-local");
     expect(text).toContain("3 total");
+    expect(text).toContain("tool-step limit: 7");
     expect(text).toContain("methods: 2");
     // The runtime omits the trust field here (older/incomplete response), so the
     // stance is unknown — never asserted "off" without evidence.
@@ -3023,6 +3026,17 @@ describe("presentation", () => {
     const s = formatReceipt(result(), false);
     expect(s).toContain("Qwen3 Coder 30B");
     expect(s).toContain("12→5 tok");
+    expect(s).toContain("tools 0/32");
+  });
+  test("formatReceipt names a reached tool-step limit", () => {
+    expect(
+      formatReceipt(
+        result({
+          agent: { toolStepsUsed: 2, maxToolSteps: 2, limitReached: true },
+        }),
+        false,
+      ),
+    ).toContain("tools 2/2 (limit reached)");
   });
   test("formatReceipt appends the running session total when given", () => {
     const paid = result({

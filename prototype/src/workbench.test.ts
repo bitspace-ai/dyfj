@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { BudgetExceededError, resetCeilingConfirmations } from "./budget";
+import { AGENT_DEFAULTS } from "./config";
 import { LENGTH_CONTINUATION_NUDGE } from "./length-recovery";
 import {
   COMPRESSION_SECTIONS,
@@ -23,7 +24,6 @@ import {
   isNextWorkMode,
   isWorkbenchShellExitCommand,
   isWorkbenchShellSessionCommand,
-  MAX_TOOL_STEPS,
   maybeBuildPaidEscalationPreflightBanner,
   PaidEscalationDeclinedError,
   type PaidEscalationPreflightInput,
@@ -445,6 +445,7 @@ const BASE_RECEIPT: WorkbenchReceiptInput = {
   estimatedCostUsd: 0,
   workletId: "next-work.v0",
   validation: { ok: true, errors: [] },
+  agent: { toolStepsUsed: 12, maxToolSteps: 32, limitReached: false },
 };
 
 const BASE_PREFLIGHT: PaidEscalationPreflightInput = {
@@ -511,6 +512,14 @@ describe("buildWorkbenchReceipt", () => {
     expect(receipt).toContain("Actual cost:    $0.012346");
     expect(receipt).toContain("Tokens:  3000 in, 1200 out");
     expect(receipt).toContain("Calls:   2");
+  });
+
+  test("includes configured agent-step usage and limit status", () => {
+    expect(buildWorkbenchReceipt(BASE_RECEIPT)).toContain("Tool steps: 12/32");
+    expect(buildWorkbenchReceipt({
+      ...BASE_RECEIPT,
+      agent: { toolStepsUsed: 2, maxToolSteps: 2, limitReached: true },
+    })).toContain("Tool steps: 2/2 (limit reached)");
   });
 
   test("reports reasoning tokens only when the provider reported some", () => {
@@ -1647,7 +1656,7 @@ describe("runWorkbenchRuntime observer events", () => {
     }
   });
 
-  test("agent loop stops at MAX_TOOL_STEPS and forces a no-tools concluding answer", async () => {
+  test("agent loop honors a configured small step limit and forces a no-tools conclusion", async () => {
     const base = {
       model: runtimeMocks.model,
       selection: {
@@ -1678,16 +1687,28 @@ describe("runWorkbenchRuntime observer events", () => {
         mode: "turn",
         prompt: "loop without stopping",
         routingOptions: {},
+        maxToolSteps: 2,
         onRuntimeEvent: (event) => events.push(event),
       });
       expect(result.text).toBe("forced conclusion");
-      // step 0 + MAX_TOOL_STEPS gather calls, then the loop exits
-      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(
-        1 + MAX_TOOL_STEPS,
-      );
+      // Step 0 plus two tool-gathering calls, then one forced no-tools call.
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(3);
+      expect(result.agent).toEqual({
+        toolStepsUsed: 2,
+        maxToolSteps: 2,
+        limitReached: true,
+      });
       // the final forced call dropped tools to make the model conclude
       const lastCall = runtimeMocks.runWorkbenchTurn.mock.calls.at(-1)![0];
       expect(lastCall.tools).toBeUndefined();
+      expect(lastCall.systemPrompt).toContain(
+        "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached.",
+      );
+      expect(
+        lastCall.messages.filter((message: WorkbenchMessage) =>
+          message.role === "user"
+        ),
+      ).toEqual([{ role: "user", content: "loop without stopping" }]);
       // an earlier gather call still offered tools (so the model could continue)
       const firstFollowUp = runtimeMocks.runWorkbenchTurn.mock.calls[1][0];
       expect(Array.isArray(firstFollowUp.tools)).toBe(true);
@@ -1696,7 +1717,7 @@ describe("runWorkbenchRuntime observer events", () => {
       );
       expect(events[limitEventIndex]).toMatchObject({
         type: "toolStepLimitReached",
-        maxSteps: MAX_TOOL_STEPS,
+        maxSteps: 2,
       });
       expect(events[limitEventIndex + 1]).toMatchObject({
         type: "beforeProviderRequest",
@@ -1705,6 +1726,47 @@ describe("runWorkbenchRuntime observer events", () => {
       log.mockRestore();
     }
   });
+
+  test.each([
+    [-2, 1],
+    [65, 64],
+    [1.5, AGENT_DEFAULTS.maxToolSteps],
+  ])(
+    "direct maxToolSteps %s resolves to %s",
+    async (provided, expected) => {
+      runtimeMocks.runWorkbenchTurn.mockResolvedValue({
+        model: runtimeMocks.model,
+        selection: {
+          selected: runtimeMocks.model,
+          considered: [runtimeMocks.model.slug],
+          reason: "default",
+        },
+        text: "done",
+        usage: {
+          input: 10,
+          output: 2,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        stopReason: "stop",
+        timings: { responseHeadersMs: 1, totalMs: 2 },
+      });
+
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "answer without tools",
+        routingOptions: {},
+        maxToolSteps: provided,
+      });
+
+      expect(result.agent).toEqual({
+        toolStepsUsed: 0,
+        maxToolSteps: expected,
+        limitReached: false,
+      });
+    },
+  );
 
   test("agent loop forces a conclusion when the model repeats prior tool calls", async () => {
     const base = {
@@ -1743,11 +1805,19 @@ describe("runWorkbenchRuntime observer events", () => {
         onRuntimeEvent: (event) => events.push(event),
       });
       expect(result.text).toBe("done");
+      expect(result.agent).toEqual({
+        toolStepsUsed: 2,
+        maxToolSteps: 32,
+        limitReached: false,
+      });
       // step 0 + one gather + the forced conclusion — not the full step cap
       expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(3);
       // the repeat was detected (step 2) and tools dropped to force a conclusion
       const forcedCall = runtimeMocks.runWorkbenchTurn.mock.calls[2][0];
       expect(forcedCall.tools).toBeUndefined();
+      expect(forcedCall.systemPrompt).toContain(
+        "Workbench instruction: tool use ended because the model repeated prior tool calls.",
+      );
       expect(events.some((event) => event.type === "toolStepLimitReached"))
         .toBe(false);
     } finally {
@@ -1803,13 +1873,16 @@ describe("runWorkbenchRuntime observer events", () => {
       const providerCalls = runtimeMocks.writtenEvents.filter((event) =>
         event.event_type === "provider_call"
       );
-      expect(providerCalls).toHaveLength(MAX_TOOL_STEPS + 1);
-      expect(providerCalls.slice(0, MAX_TOOL_STEPS)).toEqual(
-        Array.from({ length: MAX_TOOL_STEPS }, () =>
-          expect.objectContaining({
-            cost_total: 0.01,
-            stop_reason: "tool_use",
-          })),
+      expect(providerCalls).toHaveLength(AGENT_DEFAULTS.maxToolSteps + 1);
+      expect(providerCalls.slice(0, AGENT_DEFAULTS.maxToolSteps)).toEqual(
+        Array.from(
+          { length: AGENT_DEFAULTS.maxToolSteps },
+          () =>
+            expect.objectContaining({
+              cost_total: 0.01,
+              stop_reason: "tool_use",
+            }),
+        ),
       );
       expect(providerCalls.at(-1)).toMatchObject({
         provider_call_purpose: "forced_conclusion",
@@ -1901,7 +1974,7 @@ describe("runWorkbenchRuntime observer events", () => {
       const providerCalls = runtimeMocks.writtenEvents.filter((event) =>
         event.event_type === "provider_call"
       );
-      expect(providerCalls).toHaveLength(MAX_TOOL_STEPS + 2);
+      expect(providerCalls).toHaveLength(AGENT_DEFAULTS.maxToolSteps + 2);
       expect(providerCalls.at(-1)).toMatchObject({
         provider_call_purpose: "recovery",
         provider_error_class: "ToolStepLimitConclusionError",
@@ -2395,7 +2468,7 @@ describe("runWorkbenchRuntime observer events", () => {
         "BudgetExceededError",
       );
       // Step 0 spent $0.03 (over the $0.02 session limit); the first follow-up
-      // is rejected before a second provider call — well short of MAX_TOOL_STEPS.
+      // is rejected before a second provider call — well short of the step limit.
       expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
     } finally {
       (runtimeMocks.model as { tier: number }).tier = prevTier;

@@ -56,6 +56,12 @@ export interface TurnReceipt {
     reasoning?: number;
     totalCalls: number;
   };
+  /** Agent-loop usage for this turn; provider calls and parallel tool calls are distinct. */
+  agent: {
+    toolStepsUsed: number;
+    maxToolSteps: number;
+    limitReached: boolean;
+  };
   /** Context provenance — what fed the turn (memory + repo sources). */
   context: { sources: string[] };
 }

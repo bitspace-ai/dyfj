@@ -79,6 +79,7 @@ export interface WorkbenchHttpHandlerOptions {
     | "defaultDailyBudgetUsd"
     | "anomalyTurnMultiple"
     | "anomalyScopeMultiple"
+    | "maxToolSteps"
   >;
 }
 
