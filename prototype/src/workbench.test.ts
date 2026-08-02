@@ -34,6 +34,7 @@ import {
   toolStepToMessages,
   validateNextWorkJson,
   type WorkbenchReceiptInput,
+  WorkspaceContextUnavailableError,
   workspaceRootForTransport,
 } from "./workbench";
 import { DomainError, MAX_REASON_FIELD_BYTES } from "./turn-contract";
@@ -113,6 +114,11 @@ const runtimeMocks = vi.hoisted(() => {
         body: string;
         source: { kind: "file"; label: string; path: string };
       },
+    askContextOptions: [] as Array<{
+      repoRoot?: string;
+      workspaceRootIdentity?: { dev: number | null; ino: number | null };
+    }>,
+    askContextError: null as Error | null,
   };
 });
 
@@ -247,25 +253,32 @@ vi.mock("./repo-context", () => ({
   buildContextSourceLines: (sources: Array<{ label: string; path: string }>) =>
     sources.map((source) => `${source.label} <${source.path}>`),
   loadAgentsInstructions: async () => runtimeMocks.agentsInstructions,
-  loadAskRepoContext: async () => ({
-    sources: [{
-      kind: "file",
-      label: "README.md Section 1",
-      path: "README.md#section-1",
-    }],
-    sections: [],
-    budget: {
-      totalTokens: 100,
-      usedTokens: 30,
-      headroomTokens: 70,
-      byBucket: {
-        system: { limitTokens: 30, usedTokens: 10 },
-        active_repo: { limitTokens: 50, usedTokens: 20 },
-        derived_memory: { limitTokens: 20, usedTokens: 0 },
+  loadAskRepoContext: async (options: {
+    repoRoot?: string;
+    workspaceRootIdentity?: { dev: number | null; ino: number | null };
+  } = {}) => {
+    runtimeMocks.askContextOptions.push(options);
+    if (runtimeMocks.askContextError) throw runtimeMocks.askContextError;
+    return {
+      sources: [{
+        kind: "file",
+        label: "README.md Section 1",
+        path: "README.md#section-1",
+      }],
+      sections: [],
+      budget: {
+        totalTokens: 100,
+        usedTokens: 30,
+        headroomTokens: 70,
+        byBucket: {
+          system: { limitTokens: 30, usedTokens: 10 },
+          active_repo: { limitTokens: 50, usedTokens: 20 },
+          derived_memory: { limitTokens: 20, usedTokens: 0 },
+        },
       },
-    },
-    profile: "compact",
-  }),
+      profile: "compact",
+    };
+  },
 }));
 
 vi.mock("./memory", () => ({
@@ -358,6 +371,8 @@ beforeEach(() => {
   runtimeMocks.commandCalls.length = 0;
   runtimeMocks.commandHook = null;
   runtimeMocks.agentsInstructions = null;
+  runtimeMocks.askContextOptions.length = 0;
+  runtimeMocks.askContextError = null;
   runtimeMocks.sessionWorkspace = null;
   runtimeMocks.sessionWorkspaceThrows = false;
   runtimeMocks.failEventMessage = null;
@@ -693,6 +708,181 @@ describe("workspaceRootForTransport", () => {
     // A crafted cwd from a remote/shared consumer must not steer the file tools.
     expect(workspaceRootForTransport("/etc", "remote")).toBeUndefined();
     expect(workspaceRootForTransport("/", "remote")).toBeUndefined();
+  });
+});
+
+describe("ask-mode workspace context binding", () => {
+  test("loads context from the selected loopback workspace, not the runtime root", async () => {
+    const runtimeRoot = await Deno.makeTempDir({ prefix: "ask-runtime-root-" });
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-selected-root-",
+    });
+    try {
+      await runWorkbenchRuntime({
+        mode: "ask",
+        prompt: "describe this project",
+        routingOptions: {},
+        rootOverride: runtimeRoot,
+        workspaceRoot: selectedRoot,
+      });
+
+      expect(runtimeMocks.askContextOptions).toHaveLength(1);
+      expect(runtimeMocks.askContextOptions[0].repoRoot).toBe(
+        await Deno.realPath(selectedRoot),
+      );
+      expect(runtimeMocks.askContextOptions[0].repoRoot).not.toBe(
+        await Deno.realPath(runtimeRoot),
+      );
+      expect(runtimeMocks.askContextOptions[0].workspaceRootIdentity).toEqual({
+        dev: expect.any(Number),
+        ino: expect.any(Number),
+      });
+    } finally {
+      await Deno.remove(runtimeRoot, { recursive: true });
+      await Deno.remove(selectedRoot, { recursive: true });
+    }
+  });
+
+  test("an unavailable selected workspace fails instead of loading context from the runtime root", async () => {
+    const runtimeRoot = await Deno.makeTempDir({
+      prefix: "ask-runtime-fallback-",
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const failure = runWorkbenchRuntime({
+        mode: "ask",
+        prompt: "describe this project",
+        routingOptions: {},
+        rootOverride: runtimeRoot,
+        workspaceRoot: `${runtimeRoot}/missing-workspace`,
+      });
+
+      await expect(failure).rejects.toBeInstanceOf(
+        WorkspaceContextUnavailableError,
+      );
+      expect(runtimeMocks.askContextOptions).toHaveLength(0);
+      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalledWith(
+        "Requested workspace not accessible; using default.",
+      );
+    } finally {
+      log.mockRestore();
+      await Deno.remove(runtimeRoot, { recursive: true });
+    }
+  });
+
+  test("a failed resumed-workspace lookup cannot rebind ask context to the runtime root", async () => {
+    const runtimeRoot = await Deno.makeTempDir({
+      prefix: "ask-resume-fallback-",
+    });
+    runtimeMocks.sessionWorkspaceThrows = true;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const failure = runWorkbenchRuntime({
+        mode: "ask",
+        prompt: "describe this project",
+        routingOptions: {},
+        rootOverride: runtimeRoot,
+        sessionId: "01TEST00000000000000000001",
+      });
+
+      await expect(failure).rejects.toBeInstanceOf(
+        WorkspaceContextUnavailableError,
+      );
+      expect(runtimeMocks.askContextOptions).toHaveLength(0);
+      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      await Deno.remove(runtimeRoot, { recursive: true });
+    }
+  });
+
+  test("logs a bounded cause when selected-workspace context loading fails", async () => {
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-context-failure-",
+    });
+    runtimeMocks.askContextError = new Error("private loader detail");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "ask",
+        prompt: "describe this project",
+        routingOptions: {},
+        workspaceRoot: selectedRoot,
+      })).rejects.toBeInstanceOf(WorkspaceContextUnavailableError);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^Repo context unavailable: \[Error, \d+ bytes\]$/,
+        ),
+      );
+      expect(warn).not.toHaveBeenCalledWith(
+        expect.stringContaining("private loader detail"),
+      );
+    } finally {
+      warn.mockRestore();
+      await Deno.remove(selectedRoot, { recursive: true });
+    }
+  });
+
+  test("a remote caller remains pinned to the trusted runtime root", async () => {
+    const runtimeRoot = await Deno.makeTempDir({ prefix: "ask-remote-root-" });
+    const requestedRoot = await Deno.makeTempDir({
+      prefix: "ask-remote-request-",
+    });
+    try {
+      await runWorkbenchRuntime({
+        mode: "ask",
+        prompt: "describe this project",
+        routingOptions: {},
+        rootOverride: runtimeRoot,
+        workspaceRoot: requestedRoot,
+        authContext: {
+          transport: "remote",
+          authnStatus: "authenticated",
+          authnMechanism: "api_key",
+          authnIssuerRef: "test_issuer",
+          authzBasis: "bearer_token",
+        },
+      });
+
+      expect(runtimeMocks.askContextOptions[0].repoRoot).toBe(runtimeRoot);
+      expect(runtimeMocks.askContextOptions[0].repoRoot).not.toBe(
+        requestedRoot,
+      );
+    } finally {
+      await Deno.remove(runtimeRoot, { recursive: true });
+      await Deno.remove(requestedRoot, { recursive: true });
+    }
+  });
+
+  test("a remote resumed ask remains pinned when its stored-workspace lookup fails", async () => {
+    const runtimeRoot = await Deno.makeTempDir({
+      prefix: "ask-remote-resume-root-",
+    });
+    runtimeMocks.sessionWorkspaceThrows = true;
+    try {
+      await runWorkbenchRuntime({
+        mode: "ask",
+        prompt: "describe this project",
+        routingOptions: {},
+        rootOverride: runtimeRoot,
+        sessionId: "01TEST00000000000000000001",
+        authContext: {
+          transport: "remote",
+          authnStatus: "authenticated",
+          authnMechanism: "api_key",
+          authnIssuerRef: "test_issuer",
+          authzBasis: "bearer_token",
+        },
+      });
+
+      expect(runtimeMocks.askContextOptions).toHaveLength(1);
+      expect(runtimeMocks.askContextOptions[0].repoRoot).toBe(runtimeRoot);
+      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledOnce();
+    } finally {
+      await Deno.remove(runtimeRoot, { recursive: true });
+    }
   });
 });
 

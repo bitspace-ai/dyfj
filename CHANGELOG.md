@@ -8,6 +8,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- Ask and next-work context now uses the transport-authorized selected workspace instead of the long-running runtime's own checkout. Generic repositories load bounded root-level `AGENTS.md`, README, and the first recognized project manifest when present; workspace-derived content is framed as untrusted context, and optional Workbench notes remain available only when they resolve to regular files under that same root. An unavailable selected workspace fails with a fixed diagnostic rather than silently substituting server-repository context.
+
 - OpenAI-compatible forced no-tools conclusions now preserve the wire-safe names of historical tool calls and visibly announce when the fixed tool-step limit begins the conclusion.
 
 - Gemini usage that reports reasoning tokens separately now includes them in billable output and receipt cost while keeping non-reasoning output tokens separate; time per output token remains based on the visible-generation interval and its non-reasoning output count.

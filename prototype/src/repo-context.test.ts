@@ -11,6 +11,7 @@ import {
   estimateContextTokens,
   extractReadmeSection1,
   loadAgentsInstructions,
+  loadAskRepoContext,
   type LoadedRepoContext,
   packContextSections,
 } from "./repo-context";
@@ -103,6 +104,204 @@ describe("buildAskSystemPrompt", () => {
       "Workbench MVP loop: ship the smallest useful slice.",
     );
     expect(prompt).toContain("Context sources used");
+  });
+});
+
+describe("loadAskRepoContext", () => {
+  test("loads generic README and manifest context from the selected workspace", async () => {
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-context-selected-",
+    });
+    try {
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "README.md"),
+        "# Music Rotater\n\nRotates a personal music library.\n",
+      );
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "package.json"),
+        JSON.stringify({ name: "music-rotater", version: "1.0.0" }),
+      );
+
+      const context = await loadAskRepoContext({
+        repoRoot: selectedRoot,
+        profile: "full",
+      });
+      const rendered = buildAskSystemPrompt("test companion", context);
+
+      expect(context.sources).toEqual([
+        { kind: "file", label: "README.md", path: "README.md" },
+        { kind: "file", label: "package.json", path: "package.json" },
+      ]);
+      expect(rendered.indexOf("untrusted workspace context")).toBeLessThan(
+        rendered.indexOf("Music Rotater"),
+      );
+      expect(rendered).toContain("Music Rotater");
+      expect(rendered).toContain('"name":"music-rotater"');
+    } finally {
+      await Deno.remove(selectedRoot, { recursive: true });
+    }
+  });
+
+  test("a repository without DYFJ-shaped files degrades to empty bounded context", async () => {
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-context-empty-",
+    });
+    try {
+      const context = await loadAskRepoContext({
+        repoRoot: selectedRoot,
+        profile: "compact",
+      });
+
+      expect(context.sources).toEqual([]);
+      expect(context.sections).toEqual([]);
+      expect(context.budget.usedTokens).toBe(0);
+    } finally {
+      await Deno.remove(selectedRoot, { recursive: true });
+    }
+  });
+
+  test("compact generic AGENTS context leaves room for the README section", async () => {
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-context-system-budget-",
+    });
+    try {
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "AGENTS.md"),
+        "Generic project instructions. ".repeat(80),
+      );
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "README.md"),
+        "# Project\n\n## 1. Decisions\n\nThe README decision context must remain visible.\n",
+      );
+
+      const context = await loadAskRepoContext({
+        repoRoot: selectedRoot,
+        profile: "compact",
+      });
+
+      expect(context.sources.map((source) => source.path)).toEqual([
+        "AGENTS.md",
+        "README.md#section-1",
+      ]);
+    } finally {
+      await Deno.remove(selectedRoot, { recursive: true });
+    }
+  });
+
+  test("loads the richer Workbench context when those files exist in the selected workspace", async () => {
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-context-dyfj-",
+    });
+    try {
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "AGENTS.md"),
+        "Read README Section 1; it is authoritative.\n",
+      );
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "README.md"),
+        "# Project\n\n## 1. Decisions\n\nLayer 0 rules.\n\n## 2. Goal\n\nShip.\n",
+      );
+      await Deno.mkdir(path.join(selectedRoot, "notes"));
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "notes", "workbench-mvp-loop.md"),
+        "Workbench loop: ship the smallest useful slice.\n",
+      );
+
+      const context = await loadAskRepoContext({
+        repoRoot: selectedRoot,
+        profile: "full",
+      });
+
+      expect(context.sources.map((source) => source.path)).toEqual([
+        "AGENTS.md",
+        "README.md#section-1",
+        "notes/workbench-mvp-loop.md",
+      ]);
+      const bodies = context.sections.map((section) => section.body).join(
+        "\n",
+      );
+      expect(buildAskSystemPrompt("test companion", context)).toContain(
+        "untrusted workspace context",
+      );
+      expect(bodies).not.toContain("## 2. Goal");
+    } finally {
+      await Deno.remove(selectedRoot, { recursive: true });
+    }
+  });
+
+  test("compact Workbench context prioritizes notes ahead of a manifest", async () => {
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-context-priority-",
+    });
+    try {
+      await Deno.mkdir(path.join(selectedRoot, "notes"));
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "notes", "workbench-mvp-loop.md"),
+        "Workbench loop: ship the smallest useful slice. ".repeat(4),
+      );
+      await Deno.writeTextFile(
+        path.join(selectedRoot, "deno.json"),
+        JSON.stringify({ description: "manifest context ".repeat(100) }),
+      );
+
+      const context = await loadAskRepoContext({
+        repoRoot: selectedRoot,
+        profile: "compact",
+      });
+      const paths = context.sources.map((source) => source.path);
+
+      expect(paths).toContain("notes/workbench-mvp-loop.md");
+      if (paths.includes("deno.json")) {
+        expect(paths.indexOf("notes/workbench-mvp-loop.md")).toBeLessThan(
+          paths.indexOf("deno.json"),
+        );
+      }
+    } finally {
+      await Deno.remove(selectedRoot, { recursive: true });
+    }
+  });
+
+  test("does not follow a symlinked notes directory outside the selected workspace", async () => {
+    const selectedRoot = await Deno.makeTempDir({
+      prefix: "ask-context-notes-root-",
+    });
+    const outsideRoot = await Deno.makeTempDir({
+      prefix: "ask-context-notes-outside-",
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await Deno.writeTextFile(
+        path.join(outsideRoot, "workbench-mvp-loop.md"),
+        "outside instructions must not load\n",
+      );
+      // The path-scoped Deno test profile cannot call Deno.symlink directly;
+      // the existing test profile permits bash for POSIX fixture setup.
+      const linked = await new Deno.Command("bash", {
+        args: [
+          "-c",
+          'ln -s -- "$1" "$2"',
+          "bash",
+          outsideRoot,
+          path.join(selectedRoot, "notes"),
+        ],
+      }).output();
+      expect(linked.success).toBe(true);
+
+      const context = await loadAskRepoContext({
+        repoRoot: selectedRoot,
+        profile: "full",
+      });
+
+      expect(context.sources).toEqual([]);
+      expect(context.sections).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        "notes/workbench-mvp-loop.md context skipped: path escapes the workspace root",
+      );
+    } finally {
+      warn.mockRestore();
+      await Deno.remove(selectedRoot, { recursive: true });
+      await Deno.remove(outsideRoot, { recursive: true });
+    }
   });
 });
 

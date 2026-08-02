@@ -585,6 +585,16 @@ export class ToolStepLimitConclusionError extends DomainError {
   }
 }
 
+/** The selected workspace could not safely supply request-time repo context. */
+export class WorkspaceContextUnavailableError extends DomainError {
+  constructor() {
+    super(
+      "The selected workspace is unavailable; repository context was not loaded.",
+    );
+    this.name = "WorkspaceContextUnavailableError";
+  }
+}
+
 // Every DomainError subclass this codebase defines, paired with a fixed
 // string literal — one WE wrote, never one read off an instance — that
 // classifyErrorKind returns for it. `instanceof DomainError` alone is not
@@ -612,6 +622,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
     "ContextCompressionPersistenceUncertainError",
   ],
   [ToolStepLimitConclusionError, "ToolStepLimitConclusionError"],
+  [WorkspaceContextUnavailableError, "WorkspaceContextUnavailableError"],
   [RpcError, "RpcError"],
   [WorkbenchModelNotFoundError, "WorkbenchModelNotFoundError"],
   [
@@ -1666,10 +1677,70 @@ export async function runWorkbenchRuntime(
   };
 
   try {
+    // Resolve the selected workspace once before context mode branches. Ask
+    // context and companion tools must share this exact, transport-gated root:
+    // otherwise a long-running runtime can answer about its own checkout while
+    // the client is operating in a different project.
+    let workspaceRoot = fallbackRoot;
+    // A failed explicit workspace request poisons instruction elevation. The
+    // companion's file tools may use the default root, but ask context must
+    // fail instead of silently rebinding to a root the operator did not select.
+    let workspaceResolutionFailed = workspaceLookupFailed &&
+      authContext.transport === "loopback";
+    if (workspaceLookupFailed) {
+      log(
+        authContext.transport !== "loopback"
+          ? "Session workspace lookup failed; remote caller remains pinned to the default root."
+          : usesRepoAskContext
+          ? "Session workspace lookup failed; repo context will not use the default root."
+          : "Session workspace lookup failed; file tools will use the default root.",
+      );
+    }
+    let workspaceRootIdentity: WorkspaceRootIdentity | undefined;
+    if (honoredWorkspace) {
+      try {
+        const real = await Deno.realPath(honoredWorkspace);
+        const rootInfo = await Deno.stat(real);
+        if (rootInfo.isDirectory) {
+          workspaceRoot = real;
+          workspaceRootIdentity = { dev: rootInfo.dev, ino: rootInfo.ino };
+        } else {
+          workspaceResolutionFailed = true;
+          log(
+            usesRepoAskContext
+              ? "Requested workspace is not a directory; repo context will not use the default root."
+              : "Requested workspace is not a directory; file tools will use the default root.",
+          );
+        }
+      } catch {
+        workspaceResolutionFailed = true;
+        log(
+          usesRepoAskContext
+            ? "Requested workspace not accessible; repo context will not use the default root."
+            : "Requested workspace not accessible; file tools will use the default root.",
+        );
+      }
+    }
+    if (!usesRepoAskContext || !workspaceResolutionFailed) {
+      log(`Workspace: ${workspaceRoot}\n`);
+    }
+
     let systemPrompt: string;
     if (usesRepoAskContext) {
       log("Loading repo-local context...");
-      const repoContext = await loadAskRepoContext();
+      if (workspaceResolutionFailed) {
+        throw new WorkspaceContextUnavailableError();
+      }
+      let repoContext;
+      try {
+        repoContext = await loadAskRepoContext({
+          repoRoot: workspaceRoot,
+          workspaceRootIdentity,
+        });
+      } catch (err) {
+        console.warn(`Repo context unavailable: ${summarizeError(err)}`);
+        throw new WorkspaceContextUnavailableError();
+      }
       contextSourceLines = buildContextSourceLines(repoContext.sources);
       contextBudget = repoContext.budget;
       contextProfile = repoContext.profile;
@@ -1743,45 +1814,6 @@ export async function runWorkbenchRuntime(
         `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
           `(${authContext.transport} clearance)\n`,
       );
-      // Mount the file tools at the resolved workspace (see honoredWorkspace
-      // above): canonicalize the honored root and verify it is a real directory,
-      // else fall back to the server default. Containment within the root is
-      // enforced per call by the file tools regardless of which root wins here.
-      let workspaceRoot = fallbackRoot;
-      // A failed EXPLICIT workspace request poisons instruction elevation:
-      // the file tools may fall back to the default root (containment is
-      // per-call), but the operator's trust named a workspace that did not
-      // resolve, and elevating the fallback root's AGENTS.md in its place
-      // would grant system-prompt authority — and possible hosted egress —
-      // to instructions from a root the operator never selected.
-      let workspaceResolutionFailed = workspaceLookupFailed;
-      if (workspaceLookupFailed) {
-        log("Session workspace lookup failed; using default root.");
-      }
-      // Selection-time identity anchor for instruction elevation: the loader
-      // re-verifies that the root it reads is the directory verified HERE,
-      // so a root swapped between selection and read is refused rather than
-      // silently elevated.
-      let workspaceRootIdentity: WorkspaceRootIdentity | undefined;
-      if (honoredWorkspace) {
-        try {
-          const real = await Deno.realPath(honoredWorkspace);
-          const rootInfo = await Deno.stat(real);
-          if (rootInfo.isDirectory) {
-            workspaceRoot = real;
-            workspaceRootIdentity = { dev: rootInfo.dev, ino: rootInfo.ino };
-          } else {
-            workspaceResolutionFailed = true;
-            log(
-              "Requested workspace is not a directory; using default.",
-            );
-          }
-        } catch {
-          workspaceResolutionFailed = true;
-          log("Requested workspace not accessible; using default.");
-        }
-      }
-      log(`Workspace: ${workspaceRoot}\n`);
       // External-memory recall: offered only on a loopback/operator turn with an
       // endpoint configured (DYFJ_MEMORY_MCP_URL). A non-loopback consumer never
       // receives the tool, so the private external memory is unreachable off-box.
@@ -3228,6 +3260,34 @@ export async function runWorkbenchRuntime(
         noteSkippedEventWrite,
       );
       log(`\nBudget exceeded: ${summarizeError(err)}`);
+    } else if (err instanceof WorkspaceContextUnavailableError) {
+      await writeMaybe(
+        () =>
+          writeEvent({
+            event_id: generateULID(),
+            session_id: sessionId,
+            event_type: "error",
+            trace_id: traceId,
+            span_id: generateSpanId(),
+            parent_span_id: turnRootSpanId,
+            principal_id: principalId,
+            principal_type: "agent",
+            action: "invoke",
+            resource: selectedForEvents?.slug ?? "workbench_context",
+            authz_basis: "policy:local-default",
+            model_id: selectedForEvents?.slug ?? null,
+            provider: selectedForEvents?.provider ?? null,
+            api: selectedForEvents?.api ?? null,
+            ...authnEventFields,
+            content: summarizeError(err),
+            stop_reason: "error",
+            duration_ms: Date.now() - sessionStart,
+          }),
+        BEST_EFFORT,
+        noteSkippedEventWrite,
+      );
+      log(`\n${summarizeError(err)}`);
+      turnError = err;
     } else if (err instanceof ContextWindowOverflowError) {
       // Expected operational condition, not an "Unexpected error": record it
       // on the audit log with the length stop it came from, show the operator
