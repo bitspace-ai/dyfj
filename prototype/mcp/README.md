@@ -1,13 +1,15 @@
 # DYFJ Memory MCP Server
 
-Exposes DYFJ's Dolt-backed memory substrate to any agent that speaks MCP.
+Exposes a conservative Dolt-backed memory projection to any agent that speaks
+MCP. The standalone stdio server returns only memories classified `client_safe`
+or `public`; it does not expose private or shareable memory rows.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `read_memory(slug)` | Fetch full content of a memory by slug |
-| `list_memories(type?)` | Index of all memories, optionally filtered by type |
+| `read_memory(slug)` | Fetch full content of a client-safe or public memory by slug |
+| `list_memories(type?)` | Index of client-safe and public memories, optionally filtered by type |
 | `write_memory(slug, name, type, description, content)` | Upsert a memory |
 | `start_session(task_description, slug?, session_name?)` | Create a session record, returns session_id |
 | `update_session(session_id, status, progress_done, progress_total, content?)` | Update session state |

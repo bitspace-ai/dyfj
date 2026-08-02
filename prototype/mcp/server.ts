@@ -4,14 +4,15 @@
  *
  * Exposes Dolt-backed memory and session tracking as MCP tools.
  * Any agent that speaks MCP (Claude Code, Codex CLI, Gemini CLI, Cursor, etc.)
- * can attach to this server and get the full DYFJ memory substrate for free.
+ * can attach to this server and get a conservative client-safe and public
+ * memory projection.
  *
  * Transport: stdio (standard for CLI coding agents)
  *
  * Tools exposed:
  *   read_memory(slug)                         — fetch full memory content
  *   write_memory(slug, name, type, desc, content) — upsert a memory
- *   list_memories(type?)                      — index of all memories
+ *   list_memories(type?)                      — client-safe and public memory index
  *   start_session(task_description, slug?)    — create a session row, return session_id
  *   update_session(session_id, status, progress_done, progress_total, content?) — update session state
  *   list_sessions(limit?, status?)            — recent sessions
@@ -30,6 +31,7 @@ import { z } from "npm:zod@4.4.3";
 import { ulid } from "npm:ulid@2.4.0";
 import mysql from "npm:mysql2@3.22.3/promise";
 import { buildDoltPoolOptions, type SqlParam } from "./dolt-config";
+import { listMcpMemories, readMcpMemory } from "./memory-tools";
 
 // ── Dolt connection (TCP → sql-server) ────────────────────────────────────────
 // Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.
@@ -70,44 +72,18 @@ const server = new McpServer({
 
 server.tool(
   "read_memory",
-  "Load the full content of a project or reference memory from the DYFJ knowledge base. " +
+  "Load the full content of a client-safe or public project or reference memory. " +
     "Call this before starting work to pull relevant context. " +
     "Available slugs are listed by calling list_memories().",
   { slug: z.string().describe("Memory slug, e.g. 'project_dyfj' or 'reference_1password_cli'") },
-  async ({ slug }) => {
-    const rows = await doltQuery(
-      `SELECT memory_id, slug, type, name, description, content ` +
-        `FROM memories WHERE slug = ? LIMIT 1;`,
-      [slug],
-    );
-    if (rows.length === 0) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Memory not found: '${slug}'. Use list_memories() to see valid slugs.`,
-          },
-        ],
-        isError: true,
-      };
-    }
-    const m = rows[0]!;
-    return {
-      content: [
-        {
-          type: "text",
-          text: `# ${m.name}\n\n${(m.content ?? "").trim()}`,
-        },
-      ],
-    };
-  }
+  ({ slug }) => readMcpMemory(doltQuery, slug),
 );
 
 // ── Tool: list_memories ───────────────────────────────────────────────────────
 
 server.tool(
   "list_memories",
-  "List all memories in the DYFJ knowledge base. Returns slug, type, name, and description. " +
+  "List the client-safe and public memory projection. Returns slug, type, name, and description. " +
     "Optionally filter by type: user | feedback | project | reference.",
   {
     type: z
@@ -115,31 +91,7 @@ server.tool(
       .optional()
       .describe("Filter by memory type (omit for all)"),
   },
-  async ({ type }) => {
-    const where = type ? "WHERE type = ?" : "";
-    const params = type ? [type] : [];
-    const rows = await doltQuery(
-      `SELECT slug, type, name, description FROM memories ${where} ORDER BY type, slug;`,
-      params,
-    );
-    if (rows.length === 0) {
-      return {
-        content: [{ type: "text", text: "No memories found." }],
-      };
-    }
-
-    const lines = [
-      "| slug | type | name | description |",
-      "|------|------|------|-------------|",
-      ...rows.map((r) => {
-        const desc = r.description?.replace(/\n/g, " ").replace(/\|/g, "\\|").slice(0, 100) ?? "";
-        return `| ${r.slug} | ${r.type} | ${r.name} | ${desc} |`;
-      }),
-    ];
-    return {
-      content: [{ type: "text", text: lines.join("\n") }],
-    };
-  }
+  ({ type }) => listMcpMemories(doltQuery, type),
 );
 
 // ── Tool: write_memory ────────────────────────────────────────────────────────
