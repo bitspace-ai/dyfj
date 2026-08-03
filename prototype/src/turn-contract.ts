@@ -70,9 +70,9 @@ export interface TurnReceipt {
  * SSE frame protocol, negotiated via `Accept: text/event-stream`. Each wire
  * frame is `data: <json>\n\n` carrying one of these, discriminated by `t`:
  *   delta  — incremental model text
- *   event  — a lifecycle record (opaque JSON; the typed record is the receipt —
- *            except the superseding-retry signal below, which is pinned here
- *            because clients must ACT on it, not merely display it)
+ *   event  — a lifecycle record (opaque JSON; the typed record is the receipt,
+ *            with the superseding-retry and unparsed-markup signals pinned
+ *            below because clients must act on or display them)
  *   done   — terminal success, carrying the full TurnReceipt
  *   error  — terminal failure
  */
@@ -91,7 +91,7 @@ export type TurnStreamFrame =
  * must reset its rendered buffer for the turn; the authoritative text is
  * whatever streams after, or the receipt's `text`.
  *
- * This is the one lifecycle event whose shape is part of the wire contract:
+ * The superseding-retry shape is part of the wire contract:
  * deltas and events share one ordered channel on both transports (SSE frames,
  * UDS `stream` notifications), so in-order delivery of the signal relative to
  * the deltas around it is guaranteed. Continuation retries (output-cap
@@ -123,6 +123,15 @@ export type TurnAbortedEvent = {
   sessionId: string;
   traceId: string;
   turnId?: string;
+};
+
+/** Content-free unmatched-opening warning emitted before terminal success. */
+export type UnparsedToolCallMarkupDetectedEvent = {
+  type: "unparsedToolCallMarkupDetected";
+  sessionId: string;
+  /** Bounded count of unmatched exact `<tool_call>` openings. */
+  count: number;
+  countIsLowerBound: boolean;
 };
 
 /**

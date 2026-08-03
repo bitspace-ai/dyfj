@@ -677,14 +677,42 @@ describe("serveWorkbenchUnix turn method", () => {
     expect(sent).toEqual([{ t: "delta", text: "stale partial" }]);
   });
 
-  test("a rejected non-supersede event notification does not abort the turn", async () => {
-    // The asymmetry: only the supersede signal is fail-closed. A status event
-    // whose send fails (client gone) must stay best-effort — swallowed, not
+  test("a rejected unparsed-markup notification fails the turn", async () => {
+    const warning = {
+      type: "unparsedToolCallMarkupDetected",
+      sessionId: "01UDSSESSION0000000000000000",
+      count: 2,
+      countIsLowerBound: false,
+    };
+    let completed = false;
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      await input.onRuntimeEvent?.(anyVal(warning));
+      completed = true;
+      return anyVal({ receiptId: "r1" });
+    };
+    const ctx: RpcContext = {
+      notify: (_method, params) =>
+        (params as TurnStreamFrame).t === "event"
+          ? Promise.reject(new Error("stream channel lost"))
+          : Promise.resolve(),
+      request: () => Promise.reject(new Error("no peer approver")),
+    };
+
+    const handlers = buildTurnHandlers({ ...fakes, runRuntime });
+    await expect(handlers.turn({ prompt: "hi" }, ctx)).rejects.toThrow(
+      "stream channel lost",
+    );
+    expect(completed).toBe(false);
+  });
+
+  test("a rejected plain status notification does not abort the turn", async () => {
+    // The asymmetry: safety signals are fail-closed. This plain status event's
+    // failed send (client gone) must stay best-effort — swallowed, not
     // surfaced — so the turn runs to completion instead of failing on a dropped
     // notification, and no per-event rejection floods back to the runtime.
     let afterEventReached = false;
     const runRuntime: WorkbenchHttpRuntime = async (input) => {
-      // A plain status event, not the superseding-retry signal.
+      // A plain status event, not either fail-closed safety signal.
       await input.onRuntimeEvent?.(anyVal({ type: "toolCallStarted" }));
       afterEventReached = true;
       return anyVal({ receiptId: "r1" });

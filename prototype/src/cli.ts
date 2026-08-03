@@ -408,7 +408,10 @@ export function handleTurnRuntimeEvent(
   const runtimeEvent = event as Record<string, unknown>;
   // The renderer may still hold an incomplete final line. Make the terminal
   // marker follow all preserved partial text, rather than bisecting it.
-  if (runtimeEvent.type === "turnAborted") output.finish();
+  if (
+    runtimeEvent.type === "turnAborted" ||
+    runtimeEvent.type === "unparsedToolCallMarkupDetected"
+  ) output.finish();
   const line = formatRuntimeEvent(runtimeEvent);
   if (line !== null) io.err(line);
 }
@@ -1066,6 +1069,19 @@ export function formatRuntimeEvent(
   if (event.type === "toolStepLimitReached") {
     const maxSteps = typeof event.maxSteps === "number" ? event.maxSteps : "?";
     return `tool: reached ${maxSteps}-step limit; concluding now`;
+  }
+  if (event.type === "unparsedToolCallMarkupDetected") {
+    const count = typeof event.count === "number" &&
+        Number.isSafeInteger(event.count) && event.count > 0
+      ? event.count
+      : null;
+    const amount = count === null
+      ? "an unknown number of unmatched openings"
+      : `${
+        event.countIsLowerBound === true ? "at least " : ""
+      }${count} unmatched opening(s)`;
+    return `WARNING: unparsed tool-call markup was present (${amount}); ` +
+      "no tools were executed from it";
   }
   if (event.type === "toolCallStarted") {
     const commandId = typeof event.commandId === "string"

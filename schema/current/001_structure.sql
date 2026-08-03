@@ -62,6 +62,8 @@ CREATE TABLE events (
     provider_call_order       INT UNSIGNED,
     provider_call_purpose     ENUM('initial', 'tool_followup', 'forced_conclusion', 'recovery', 'context_compression'),
     provider_error_class      VARCHAR(64),
+    unparsed_tool_call_count  INT UNSIGNED,
+    unparsed_tool_call_count_is_lower_bound BOOLEAN,
 
     tool_name                 VARCHAR(128),
     tool_call_id              VARCHAR(128),

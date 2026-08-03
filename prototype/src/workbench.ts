@@ -34,6 +34,7 @@ import type { PermissionLevel } from "./config";
 import type {
   SupersedingRetryStartedEvent,
   TurnAbortedEvent,
+  UnparsedToolCallMarkupDetectedEvent,
 } from "./turn-contract";
 import {
   DomainError,
@@ -197,8 +198,9 @@ export interface WorkbenchRuntimeInput {
    * shown before a superseding retry replaces them. A caller that streams deltas
    * with overflow recovery enabled but supplies no event channel here (and does
    * not surface the recovery `log` note) cannot be signaled, and would render the
-   * stale and replacement deltas concatenated. Delivery of that one event is
-   * fail-closed only when this handler is present.
+   * stale and replacement deltas concatenated. The same channel carries the
+   * required unparsed-markup disclosure. Delivery of either safety signal is
+   * fail-closed when this handler is present.
    */
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   /**
@@ -406,6 +408,7 @@ export type WorkbenchRuntimeEvent =
    */
   | SupersedingRetryStartedEvent
   | TurnAbortedEvent
+  | UnparsedToolCallMarkupDetectedEvent
   | {
     /** Terminal outcome of length recovery for one provider call. */
     type: "lengthRecoveryFinished";
@@ -1350,11 +1353,11 @@ async function emitRuntimeEvent(
 }
 
 /**
- * Deliver the superseding-retry signal WITHOUT the best-effort swallow the
- * other runtime events get.
+ * Deliver the superseding-retry signal without the best-effort swallow used for
+ * non-safety runtime events.
  *
- * Every other runtime event is a status line: losing one costs the consumer
- * some progress detail. This one is the single event a consumer must *act* on —
+ * Non-safety runtime events are status lines: losing one costs the consumer
+ * some progress detail. This signal requires a consumer to *act* —
  * it is what tells a streaming client to discard the text it has already
  * rendered. If it is dropped, the replacement deltas concatenate onto the stale
  * ones and are presented as one answer, which is exactly the corruption this
@@ -1368,6 +1371,18 @@ async function emitRuntimeEvent(
 async function deliverSupersedingRetrySignal(
   handler: WorkbenchRuntimeInput["onRuntimeEvent"],
   event: SupersedingRetryStartedEvent,
+): Promise<void> {
+  if (!handler) return;
+  await handler(event);
+}
+
+/**
+ * Deliver the unparsed-markup warning as a required safety signal. A turn must
+ * not complete successfully when its client could not receive the disclosure.
+ */
+async function deliverUnparsedToolCallMarkupSignal(
+  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  event: UnparsedToolCallMarkupDetectedEvent,
 ): Promise<void> {
   if (!handler) return;
   await handler(event);
@@ -2477,6 +2492,13 @@ export async function runWorkbenchRuntime(
             stop_reason: turn.stopReason,
             provider_call_order: order,
             provider_call_purpose: purpose,
+            ...(turn.unparsedToolCallMarkup
+              ? {
+                unparsed_tool_call_count: turn.unparsedToolCallMarkup.count,
+                unparsed_tool_call_count_is_lower_bound:
+                  turn.unparsedToolCallMarkup.countIsLowerBound,
+              }
+              : {}),
             content: null,
             thinking: null,
             duration_ms: Date.now() - startedAt,
@@ -2504,6 +2526,27 @@ export async function runWorkbenchRuntime(
           outputCount: turn.usage.output,
           totalMs: turn.timings.totalMs,
         });
+        if (turn.unparsedToolCallMarkup) {
+          const warningEvent: UnparsedToolCallMarkupDetectedEvent = {
+            type: "unparsedToolCallMarkupDetected",
+            sessionId,
+            count: turn.unparsedToolCallMarkup.count,
+            countIsLowerBound: turn.unparsedToolCallMarkup.countIsLowerBound,
+          };
+          if (!runtimeInput.onRuntimeEvent) {
+            const amount = warningEvent.countIsLowerBound
+              ? `at least ${warningEvent.count}`
+              : String(warningEvent.count);
+            log(
+              `WARNING: unparsed tool-call markup was present (${amount} unmatched opening(s)); ` +
+                "no tools were executed from it",
+            );
+          }
+          await deliverUnparsedToolCallMarkupSignal(
+            runtimeInput.onRuntimeEvent,
+            warningEvent,
+          );
+        }
       }
       return {
         ...turn,

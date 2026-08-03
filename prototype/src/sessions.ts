@@ -242,6 +242,8 @@ export interface WorkbenchSessionEvent {
   providerCallOrder: number | null;
   providerCallPurpose: string | null;
   providerErrorClass: string | null;
+  unparsedToolCallCount: number | null;
+  unparsedToolCallCountIsLowerBound: boolean | null;
   // tool-call audit fields, so resume can replay tool turns.
   toolName: string | null;
   toolCallId: string | null;
@@ -260,15 +262,22 @@ export function isValidAsOfTimestamp(value: string): boolean {
 function eventQuery(
   asOfClause: string,
   historicalProviderCallSchema = false,
+  historicalUnparsedToolCallSchema = false,
 ): string {
   const providerCallFields = historicalProviderCallSchema
     ? "NULL AS provider_call_order, NULL AS provider_call_purpose, " +
       "NULL AS provider_error_class"
     : "provider_call_order, provider_call_purpose, provider_error_class";
+  const unparsedToolCallFields = historicalUnparsedToolCallSchema
+    ? "NULL AS unparsed_tool_call_count, " +
+      "NULL AS unparsed_tool_call_count_is_lower_bound"
+    : "unparsed_tool_call_count, " +
+      "unparsed_tool_call_count_is_lower_bound";
   return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
     `principal_id, model_id, provider, api, content, stop_reason, ` +
     `tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, ` +
-    `cost_total, duration_ms, ${providerCallFields}, tool_name, tool_call_id, ` +
+    `cost_total, duration_ms, ${providerCallFields}, ${unparsedToolCallFields}, ` +
+    `tool_name, tool_call_id, ` +
     `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
     `WHERE session_id = ? ORDER BY created_at ASC;`;
 }
@@ -291,6 +300,23 @@ function isMissingProviderCallColumn(error: unknown): boolean {
     candidate.errno === 1054;
   return driverReportsMissingField ||
     /unknown column|column\s+["'](?:provider_call_(?:order|purpose)|provider_error_class)["']\s+could not be found/i
+      .test(message);
+}
+
+function isMissingUnparsedToolCallColumn(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+    message?: unknown;
+    sqlMessage?: unknown;
+  };
+  const message = [candidate.message, candidate.sqlMessage]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  if (!/unparsed_tool_call_count/.test(message)) return false;
+  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
+    /unknown column|column\s+["']unparsed_tool_call_count(?:_is_lower_bound)?["']\s+could not be found/i
       .test(message);
 }
 
@@ -319,10 +345,22 @@ export async function fetchWorkbenchSessionEvents(input: {
     // Preserve the event surface by projecting NULL literals under the expected
     // aliases only for that known historical shape; current and post-migration
     // AS OF queries retain their durable provider-call values.
-    if (input.asOf === undefined || !isMissingProviderCallColumn(error)) {
+    const missingProviderCall = isMissingProviderCallColumn(error);
+    const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
+    if (
+      input.asOf === undefined ||
+      (!missingProviderCall && !missingUnparsedToolCall)
+    ) {
       throw error;
     }
-    rows = await query(eventQuery(asOfClause, true), [input.sessionId]);
+    rows = await query(
+      eventQuery(
+        asOfClause,
+        missingProviderCall,
+        missingProviderCall || missingUnparsedToolCall,
+      ),
+      [input.sessionId],
+    );
   }
   return rows.map((row) => ({
     eventId: row.event_id,
@@ -345,6 +383,13 @@ export async function fetchWorkbenchSessionEvents(input: {
     providerCallOrder: nullableNumber(row.provider_call_order),
     providerCallPurpose: nullableString(row.provider_call_purpose),
     providerErrorClass: nullableString(row.provider_error_class),
+    unparsedToolCallCount: nullableNumber(row.unparsed_tool_call_count),
+    unparsedToolCallCountIsLowerBound:
+      row.unparsed_tool_call_count_is_lower_bound === null ||
+        row.unparsed_tool_call_count_is_lower_bound === undefined ||
+        row.unparsed_tool_call_count_is_lower_bound === ""
+        ? null
+        : Number(row.unparsed_tool_call_count_is_lower_bound) === 1,
     toolName: row.tool_name ? String(row.tool_name) : null,
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolArguments: normalizeToolArguments(row.tool_arguments),
