@@ -62,6 +62,23 @@ const fakes: WorkbenchUnixServerOptions = {
 // deno-lint-ignore no-explicit-any
 const anyVal = (v: unknown): any => v;
 
+type EngineConfig = NonNullable<WorkbenchUnixServerOptions["engineConfig"]>;
+function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
+  return {
+    defaultCompanionModel: null,
+    permissionLevel: "strict",
+    approvePaidDefault: false,
+    trustWorkspaceInstructions: false,
+    defaultSessionBudgetUsd: 1,
+    defaultPerCallBudgetUsd: 0.1,
+    defaultDailyBudgetUsd: 25,
+    anomalyTurnMultiple: 3,
+    anomalyScopeMultiple: 2,
+    maxToolSteps: 32,
+    ...overrides,
+  };
+}
+
 describe("serveWorkbenchUnix read methods", () => {
   test("models/list returns the loaded models with a server-computed routable flag", async () => {
     const client = await connectClient(
@@ -193,14 +210,14 @@ describe("serveWorkbenchUnix read methods", () => {
     const client = await connectClient(
       await startServer({
         ...fakes,
-        engineConfig: {
+        engineConfig: engineConfig({
           defaultCompanionModel: "local-x",
           permissionLevel: "operator",
           approvePaidDefault: false,
           defaultSessionBudgetUsd: 2,
           defaultPerCallBudgetUsd: 0.2,
           maxToolSteps: 7,
-        },
+        }),
       }),
     );
     expect(await client.request("runtime/status")).toMatchObject({
@@ -745,7 +762,7 @@ describe("serveWorkbenchUnix turn method", () => {
   // decided by the shared turn core. Same gate as the HTTP loopback path.
   test("loopback clearance: paid approved with the per-turn opt-in", async () => {
     const runRuntime: WorkbenchHttpRuntime = async (input) => {
-      const verdict = await input.confirmPaidEscalation?.();
+      const verdict = await input.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
     const client = await connectClient(
@@ -761,7 +778,7 @@ describe("serveWorkbenchUnix turn method", () => {
 
   test("paid denied without the per-turn opt-in", async () => {
     const runRuntime: WorkbenchHttpRuntime = async (input) => {
-      const verdict = await input.confirmPaidEscalation?.();
+      const verdict = await input.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
     const client = await connectClient(
@@ -773,20 +790,20 @@ describe("serveWorkbenchUnix turn method", () => {
 
   test("loopback inherits approvePaidDefault when the request omits opt-in", async () => {
     const runRuntime: WorkbenchHttpRuntime = async (input) => {
-      const verdict = await input.confirmPaidEscalation?.();
+      const verdict = await input.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
     const client = await connectClient(
       await startServer({
         ...fakes,
         runRuntime,
-        engineConfig: {
+        engineConfig: engineConfig({
           defaultCompanionModel: null,
           permissionLevel: "strict",
           approvePaidDefault: true,
           defaultSessionBudgetUsd: 1,
           defaultPerCallBudgetUsd: 0.1,
-        },
+        }),
       }),
     );
     expect(await client.request("turn", { prompt: "hi" })).toEqual({

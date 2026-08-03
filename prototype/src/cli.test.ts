@@ -204,6 +204,7 @@ function result(overrides: Partial<TurnResult> = {}): TurnResult {
       totalCalls: 1,
     },
     agent: { toolStepsUsed: 0, maxToolSteps: 32, limitReached: false },
+    context: { sources: [] },
     ...overrides,
   };
 }

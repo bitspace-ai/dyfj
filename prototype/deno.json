@@ -1,6 +1,7 @@
 {
   "tasks": {
-    "check": "deno check --sloppy-imports src/http.ts src/workbench.ts src/jsonrpc.ts src/jsonrpc-peer.ts src/uds-server.ts src/uds-path.ts src/uds-client.ts src/uds-serve.ts mcp/server.ts src/cli.ts",
+    "check": "deno check --sloppy-imports src/http.ts src/workbench.ts src/jsonrpc.ts src/jsonrpc-peer.ts src/uds-server.ts src/uds-path.ts src/uds-client.ts src/uds-serve.ts mcp/server.ts src/cli.ts && deno task check:tests",
+    "check:tests": "deno check --sloppy-imports src/*.test.ts mcp/*.test.ts scripts/*.test.ts",
     "test": "deno task check && TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.6 run --root . --pool=threads",
     "start": "deno run --no-prompt -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench": "deno run --no-prompt -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
@@ -299,7 +300,8 @@
     "$dax": "jsr:@david/dax@0.42.0",
     "@std/toml": "jsr:@std/toml@1.0.8",
     "mysql2/promise": "npm:mysql2@3.22.3/promise",
-    "ulid": "npm:ulid@2.4.0"
+    "ulid": "npm:ulid@2.4.0",
+    "vitest": "npm:vitest@3.2.6"
   },
   "nodeModulesDir": "auto",
   "compilerOptions": {

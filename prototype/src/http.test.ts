@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createWorkbenchHttpHandler } from "./http";
+import type { WorkbenchSessionEvent } from "./sessions";
 import { PAID_ESCALATION_REMOTE_DENIED } from "./turn-runner";
 import type {
   WorkbenchRuntimeInput,
@@ -10,6 +11,7 @@ function runtimeResult(overrides: Partial<WorkbenchRuntimeResult> = {}) {
   return {
     sessionId: "01HTTPSESSION00000000000000",
     traceId: "0123456789abcdef0123456789abcdef",
+    stopReason: "stop",
     text: "Workbench says hello.",
     receipt: "Workbench receipt\nSession: 01HTTPSESSION00000000000000",
     model: {
@@ -749,8 +751,13 @@ describe("createWorkbenchHttpHandler", () => {
         defaultCompanionModel: null,
         permissionLevel: "strict",
         approvePaidDefault: true,
+        trustWorkspaceInstructions: false,
         defaultSessionBudgetUsd: 1,
         defaultPerCallBudgetUsd: 0.1,
+        defaultDailyBudgetUsd: 25,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        maxToolSteps: 32,
       },
       runRuntime: async (input) => {
         sink.verdict = await input.confirmPaidEscalation?.(
@@ -776,8 +783,13 @@ describe("createWorkbenchHttpHandler", () => {
         defaultCompanionModel: null,
         permissionLevel: "strict",
         approvePaidDefault: true,
+        trustWorkspaceInstructions: false,
         defaultSessionBudgetUsd: 1,
         defaultPerCallBudgetUsd: 0.1,
+        defaultDailyBudgetUsd: 25,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        maxToolSteps: 32,
       },
       runRuntime: async (input) => {
         verdict = await input.confirmPaidEscalation?.("paid model selected");
@@ -1091,7 +1103,8 @@ describe("remote bearer auth", () => {
       serveInfo(remoteHost),
     );
     expect(response.status).toBe(200);
-    expect(calls[0]?.authContext.transport).toBe("remote");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.authContext!.transport).toBe("remote");
   });
 
   test("rejects unknown non-loopback hosts even with the bearer", async () => {
@@ -1192,18 +1205,34 @@ describe("remote bearer auth", () => {
 
 describe("session REST surface", () => {
   const sessionId = "01ABCDEF0123456789ABCDEF01";
-  const sampleEvent = {
+  const sampleEvent: WorkbenchSessionEvent = {
     eventId: "01EVENT",
     eventType: "session_start",
     traceId: "trace",
+    spanId: "span",
+    parentSpanId: null,
     principalId: "chris",
     modelId: null,
     provider: null,
+    api: null,
     content: "earlier prompt",
     stopReason: null,
     tokensInput: null,
     tokensOutput: null,
+    tokensCacheRead: null,
+    tokensCacheWrite: null,
     costTotal: null,
+    durationMs: null,
+    providerCallOrder: null,
+    providerCallPurpose: null,
+    providerErrorClass: null,
+    unparsedToolCallCount: null,
+    unparsedToolCallCountIsLowerBound: null,
+    toolName: null,
+    toolCallId: null,
+    toolArguments: null,
+    toolResult: null,
+    toolIsError: null,
     createdAt: "2026-06-12 10:00:00",
   };
 

@@ -54,7 +54,7 @@ describe("tier inference from provider", () => {
 // ── Tool result content extraction (mirrors tool_result handler) ──────────────
 
 function extractToolResultText(
-  content: { type: string; text?: string }[],
+  content: Array<{ type: string; text?: string; [key: string]: unknown }>,
   limit = 500,
 ): string | null {
   const text = content
