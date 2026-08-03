@@ -16,7 +16,7 @@ The split between `core/` and `prototype/` is a permanent two-tier structure whe
 
 ## Status
 
-Early and active. The prototype is functional - Workbench CLI/shell plus a thin engine-free `dyfj` CLI client over the REST and Unix-socket seams, HTTP veneer (loopback by default, with optional authenticated remote interfaces), SSE streaming on the turn path, a duplex JSON-RPC 2.0 seam over a Unix domain socket (the canonical loopback transport, sharing one turn core with the HTTP/SSE path), shared single-turn runtime boundary, a multi-step agent loop (iterating model↔tools with read-only workspace file tools), local-first provider path with hosted providers (Anthropic, OpenAI, and Google Gemini) behind the paid-escalation path, a Dolt-backed model registry, Dolt-backed memory with privacy-class scoping, system prompts persisted in a Dolt prompts table, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+Early and active. The prototype is functional - Workbench CLI/shell plus a thin engine-free `dyfj` CLI client over the REST and Unix-socket seams, HTTP veneer (loopback by default, with optional authenticated remote interfaces), SSE streaming on the turn path, a duplex JSON-RPC 2.0 seam over a Unix domain socket (the canonical loopback transport, sharing one turn core with the HTTP/SSE path), shared single-turn runtime boundary, a multi-step agent loop (iterating model↔tools with read-only workspace file tools), an operator-routed provider path with local models plus hosted providers (Anthropic, OpenAI, OpenRouter, and Google Gemini) behind paid-approval and budget controls, a Dolt-backed model registry, Dolt-backed memory with privacy-class scoping, system prompts persisted in a Dolt prompts table, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
 
 Dated change tracking lives in [CHANGELOG.md](CHANGELOG.md).
 
@@ -97,7 +97,7 @@ How the work actually happens, separate from what gets built.
 
 ### Prerequisites
 
-- [Deno](https://deno.com) 2.7+
+- [Deno](https://deno.com) 2.9+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [MLX-LM](https://github.com/ml-explore/mlx-lm) for the Apple silicon local default, or [Ollama](https://ollama.com) as a supported local fallback
 - _(Optional, for `core/`)_ [`rustup`](https://rustup.rs/) - the toolchain pin in `core/rust-toolchain.toml` will install the right Rust automatically when you `cargo build` there.
@@ -136,9 +136,17 @@ Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama r
 
 Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; served HTTP and UDS engines also load `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence for served engines. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use.
 
-### Hosted inference (explicit escalation)
+### Hosted inference (paid approval)
 
-Hosted models are never the default path. Selecting one (for example `--model claude-haiku-4-5`) goes through the budget preflight and an interactive consent prompt before any tokens are spent, and the call is receipted with cost and prompt-cache telemetry.
+With no configured companion default, a bare turn uses the registry's local
+default. The operator can instead configure a hosted companion default or
+select a hosted model from `dyfj models`. Paid inference requires approval on a
+loopback session: use `--approve-paid`, `/model <slug> --approve-paid`, or the
+standing `[paid].approve_paid_default` posture. Once approved, ordinary calls
+inside the configured budget envelopes run without another budget prompt and
+are receipted with cost and prompt-cache telemetry; crossing a ceiling requires
+explicit confirmation, and the runaway-anomaly hard stops remain separate.
+Non-loopback callers cannot inherit or assert paid approval and fail closed.
 
 Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), OpenRouter (`OPENROUTER_API_KEY`), and Google Gemini (`GEMINI_API_KEY`). The **pointer** mechanism keeps secret values off the config file: for a declared secret env var you write a `[secrets.pointers]` *pointer* (an `op://` ref, etc.), never the value, and it is resolved at process start. (The separate `[secrets.env]` map, below, is a plaintext surface for *non-secret* resolver env — do not put a credential there.)
 
@@ -184,7 +192,7 @@ The resolver is **session-first**: the first declared pointer is resolved alone 
 
 ```sh
 ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
-  op run -- deno task workbench --model claude-haiku-4-5 --prompt "..."
+  op run -- dyfj start
 ```
 
 Which models exist, what they cost, and which tier they sit in is registry data, not code - see the current catalog in `schema/catalog/001_models.sql`. Catalog pricing and availability rows are operator-curated seed values, not authoritative provider price sheets. Historical catalog changes are preserved under `schema/history/`. Repricing or adding a model is a Dolt commit.
@@ -208,19 +216,28 @@ cd ../..
 
 The `data/` directory is gitignored.
 
-### Run the prototype
+### Run Workbench
 
 ```sh
-deno task workbench
+deno task --cwd prototype compile-cli
+./prototype/dist/dyfj
 ```
 
-For the interactive shell:
+The bare launcher is the daily-driver path: it connects to the local UDS runtime
+and opens the streaming REPL, starting a background runtime first when none
+answers. Put `prototype/dist/` on your `PATH` to use `dyfj` without the
+path prefix. Common commands are:
 
 ```sh
-deno task workbench shell
+./prototype/dist/dyfj exec "Summarize this repository"
+./prototype/dist/dyfj status
+./prototype/dist/dyfj models
+./prototype/dist/dyfj sessions
+./prototype/dist/dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
 ```
 
-For the local HTTP veneer:
+The HTTP implementation remains available as an explicit standalone server; it
+is not the default terminal-client path:
 
 ```sh
 deno task workbench-http
@@ -244,28 +261,23 @@ DYFJ_WORKBENCH_API_KEY="op://<vault>/<item>/credential" \
 - Requests arriving with a valid bearer are recorded on the event log with `authn_mechanism = api_key`; keyless loopback requests record the local-policy basis. Identity is audit data, not an afterthought - see `schema/current/001_structure.sql` and the historical authn migration in `schema/history/011_events_authn.sql`.
 - The HTML surface prompts for the key on first remote use and keeps it in browser `localStorage`.
 
-Project the key from your secret manager at process start, as with provider keys. Do not put it in `.env`, and do not expose these ports publicly - this is an authenticated private-network posture, not an internet-facing one.
+Project the bearer key from your secret manager into the standalone HTTP process
+at launch. Do not put it in `.env`, and do not expose these ports publicly -
+this is an authenticated private-network posture, not an internet-facing one.
 
 #### JSON-RPC seam over a Unix domain socket
 
-Alongside the HTTP veneer, the workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket — the canonical `loopback` transport (no TCP port; gated by filesystem permissions; full local clearance). It is the seam the terminal clients use instead of HTTP, and both transports run the same shared turn core, so a turn behaves identically over HTTP/SSE and the socket.
+Alongside the HTTP veneer, the workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket — the canonical `loopback` transport (no TCP port; gated by filesystem permissions; full local clearance). It is the seam the terminal clients use instead of HTTP, and both transports run the same shared turn core, so a turn behaves identically over HTTP/SSE and the socket. The bare `dyfj` launcher starts this runtime automatically when needed; the direct engine task remains available for development:
 
 ```sh
 deno task serve-unix      # serve the JSON-RPC seam on the Unix socket
 ```
 
-For daily use, prefer the `dyfj` CLI lifecycle commands:
-
-```sh
-dyfj status               # check local runtime reachability and model posture
-dyfj start                # foreground the local UDS runtime
-```
-
 The socket path resolves from `DYFJ_SOCKET`, else `$XDG_RUNTIME_DIR/dyfj/workbench.sock`, else `~/.dyfj/run/workbench.sock` (the parent directory is created mode 0700). The engine-free `dyfj` CLI reaches the read methods over the socket:
 
 ```sh
-dyfj models
-dyfj sessions
+./prototype/dist/dyfj models
+./prototype/dist/dyfj sessions
 ```
 
 For a compiled daily-driver binary under Deno 2.9+, run `deno task compile-cli` in `prototype/` and put `dist/` on your `PATH`. The shipped `dist/dyfj` launcher execs the compiled binary on the default socket path and falls back to `deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path.
@@ -463,3 +475,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-06-30 - Schema refactored into a readable current baseline (`schema/current/`), mutable catalog seeds (`schema/catalog/`), forward migrations (`schema/migrations/`), and preserved replay history (`schema/history/`).
 - 2026-07-03 - Cost posture revised: Layer 0 stance #2 rewritten from local-first-by-default with per-call paid escalation to operator-routed inference inside budget envelopes (per-session and per-day) with a runaway-anomaly hard stop; stance #1, Boundaries, the tagline, and the Layer 2 cost/budget entry aligned. Local inference remains first-class and fail-closed; non-loopback transports remain fail-closed; unpriced models are not routable. Cost visibility is unchanged as a Layer 0 stance — the consent ceremony is demoted, not the accounting. Envelope enforcement is marked as in-progress runtime work.
 - 2026-08-02 - Run-it configuration now documents the bounded Workbench tool-step limit and receipt visibility.
+- 2026-08-02 - Operator guidance now leads with the autostarting `dyfj`/UDS path, retains HTTP as an explicit supported server, and distinguishes boot-time secret pointers from standalone-process key projection.

@@ -1,8 +1,8 @@
 # Workbench Model Routing MVP
 
-Status: design note, partially implemented in `prototype/src/workbench.ts`.
-
-Tracks: `dyfj-2fl.8` - Design worklet-based model routing MVP.
+Status: historical design note for the first worklet-routing experiment
+(2026-05-28). It records the experiment, not the current operator entrypoint or
+the current model catalog.
 
 ## Frame
 
@@ -132,7 +132,7 @@ This keeps routing observable without requiring a separate dashboard.
 
 ## First Experiment
 
-`dyfj-2fl.8.2` implemented the first experiment:
+The first experiment implemented:
 
 - `deno task workbench next-work`
 - local Tier 0 default route

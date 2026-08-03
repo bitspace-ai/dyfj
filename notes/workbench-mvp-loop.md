@@ -1,8 +1,9 @@
 # Workbench MVP Loop
 
-Status: design note, partially implemented in `prototype/src/workbench.ts`.
-
-Tracks: `dyfj-2fl` - Design Workbench MVP.
+Status: historical design note for the first Workbench CLI tracer bullet
+(2026-05-25). It records that slice's acceptance criteria, not the current
+operator workflow. The current entrypoint is `dyfj` over UDS, and the runtime now
+supports multi-step tool use.
 
 ## Frame
 

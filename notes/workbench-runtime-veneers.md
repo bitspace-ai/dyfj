@@ -1,8 +1,11 @@
 # Workbench Runtime Veneers
 
-Status: implemented runtime/veneer inventory for `dyfj-f30`.
+Status: historical implementation inventory for the original CLI/HTTP split
+(2026-06-04). The direct tasks below still exist for development, but the
+current operator entrypoint is `dyfj` over the Unix-socket seam; a bare
+invocation autostarts that runtime. HTTP remains a supported explicit server.
 
-## Current Entry Points
+## Original Direct Entry Points
 
 - `prototype/deno.json` exposes `deno task workbench`, which runs
   `src/workbench.ts`.
@@ -11,7 +14,7 @@ Status: implemented runtime/veneer inventory for `dyfj-f30`.
 - `runWorkbench()` resolves the invocation, dispatches `shell` mode to
   `runWorkbenchShell()`, and sends single-turn modes through
   `runWorkbenchRuntime()`.
-- `runWorkbenchShell()` is the current interactive shell loop. It reads prompts,
+- `runWorkbenchShell()` is the direct task's interactive shell loop. It reads prompts,
   handles `:session` and `:quit`, and then calls
   `runWorkbench(["--prompt", prompt])`.
 - `prototype/examples/verify-workbench-events.ts` calls `runWorkbench()`
@@ -162,8 +165,8 @@ runtime logs the observer failure and preserves the turn result.
 - `runWorkbenchRuntime()` still prints some progress/receipt output while it
   runs. The HTTP response does not parse console output, but future cleanup can
   move all rendering fully into veneers.
-- Paid inference consent is injected. The HTTP veneer currently fails closed for
-  paid inference instead of inheriting the TTY prompt path.
+- Paid inference consent is injected. HTTP accepts an explicit per-turn approval
+  from its API/HTML surface instead of inheriting the TTY prompt path.
 - `bestEffortEvents` currently differs for repo ask context. The runtime should
   preserve that behavior until there is a clearer policy.
 - `turn` mode exposes command tools; `ask` and `next-work` do not. That
