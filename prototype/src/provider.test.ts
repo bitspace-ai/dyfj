@@ -4,10 +4,12 @@ import {
   buildGeminiRequest,
   buildOpenAIChatRequest,
   defaultLocalWorkbenchModels,
+  detectUnparsedToolCallMarkup,
   estimateTextTokens,
   extractTextToolCalls,
   fetchWithHeaderTimeout,
   HostedProviderCredentialMissingError,
+  MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
   parseAnthropicStreamLine,
   parseGeminiStreamLine,
   parseModelRegistryRows,
@@ -723,6 +725,75 @@ describe("extractTextToolCalls", () => {
     const { toolCalls, cleaned } = extractTextToolCalls(text);
     expect(toolCalls).toEqual([]);
     expect(cleaned).toBe(text);
+  });
+});
+
+describe("detectUnparsedToolCallMarkup", () => {
+  test("requires at least two unmatched openings", () => {
+    expect(
+      detectUnparsedToolCallMarkup(
+        "The literal marker is <tool_call> in this sentence.",
+      ),
+    ).toBeUndefined();
+    expect(
+      detectUnparsedToolCallMarkup(
+        "Examples: <tool_call></tool_call> and <tool_call></tool_call>.",
+      ),
+    ).toBeUndefined();
+    expect(
+      detectUnparsedToolCallMarkup(
+        "One stray <tool_call> plus <tool_call></tool_call>.",
+      ),
+    ).toBeUndefined();
+  });
+
+  test("does not classify a direct input beyond the accepted-response bound", () => {
+    const opening = "<tool_call>";
+    const closing = "</tool_call>";
+    expect(MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS).toBe(4 * 1_024 * 1_024);
+    const atBound = opening.repeat(2) + "x".repeat(
+      MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS - (2 * opening.length),
+    );
+    const beyondBound = `${atBound}x`;
+    const wrapperStraddlingBound = opening + "x".repeat(
+      MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS - (2 * opening.length),
+    ) + opening + closing;
+
+    expect(detectUnparsedToolCallMarkup(atBound)).toEqual({
+      count: 2,
+      countIsLowerBound: false,
+    });
+    expect(detectUnparsedToolCallMarkup(beyondBound)).toBeUndefined();
+    expect(detectUnparsedToolCallMarkup(wrapperStraddlingBound))
+      .toBeUndefined();
+  });
+
+  test("counts unmatched openings before capping the reported count", () => {
+    expect(
+      detectUnparsedToolCallMarkup(
+        "</tool_call></tool_call><tool_call><tool_call>",
+      ),
+    ).toEqual({ count: 2, countIsLowerBound: false });
+    expect(
+      detectUnparsedToolCallMarkup(
+        "<tool_call>".repeat(71) + "</tool_call>".repeat(70),
+      ),
+    ).toBeUndefined();
+    expect(
+      detectUnparsedToolCallMarkup(
+        "<tool_call>".repeat(71) + "</tool_call>".repeat(1),
+      ),
+    ).toEqual({ count: 64, countIsLowerBound: true });
+    expect(
+      detectUnparsedToolCallMarkup(
+        "<tool_call>".repeat(72) + "</tool_call>".repeat(70),
+      ),
+    ).toEqual({ count: 2, countIsLowerBound: false });
+    expect(
+      detectUnparsedToolCallMarkup(
+        "<tool_call>".repeat(71) + "</tool_call>".repeat(71),
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -2103,6 +2174,78 @@ describe("runWorkbenchTurn streaming", () => {
     }
   });
 
+  test("flags repeated unmatched tool-call openings without creating calls", async () => {
+    const malformed = Array.from(
+      { length: 71 },
+      (_, index) =>
+        `<tool_call>\n${index % 2 === 0 ? "edit_file" : "read_file"}\n`,
+    ).join("") + "</tool_call>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "make the change",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [
+        {
+          name: "edit_file",
+          description: "Edit a file.",
+          parameters: { type: "object" },
+        },
+        {
+          name: "read_file",
+          description: "Read a file.",
+          parameters: { type: "object" },
+        },
+      ],
+      fetchFn: async () =>
+        Response.json({
+          choices: [{
+            message: { content: malformed },
+            finish_reason: "stop",
+          }],
+        }),
+    });
+
+    expect(result.text).toBe(malformed);
+    expect(result.toolCalls).toBeUndefined();
+    expect(result.unparsedToolCallMarkup).toEqual({
+      count: 64,
+      countIsLowerBound: true,
+    });
+  });
+
+  test("flags streamed unparsed openings while preserving visible text", async () => {
+    const malformed =
+      "before <tool_call>\nedit_file\n<tool_call>\nread_file\n after";
+    const deltas: string[] = [];
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "make the change",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [{
+        name: "edit_file",
+        description: "Edit a file.",
+        parameters: { type: "object" },
+      }],
+      onTextDelta: (delta) => deltas.push(delta),
+      fetchFn: sseStream([{
+        choices: [{
+          delta: { content: malformed },
+          finish_reason: "stop",
+        }],
+      }]),
+    });
+
+    expect(deltas.join("")).toBe(malformed);
+    expect(result.text).toBe(malformed);
+    expect(result.toolCalls).toBeUndefined();
+    expect(result.unparsedToolCallMarkup).toEqual({
+      count: 2,
+      countIsLowerBound: false,
+    });
+  });
+
   test("accumulates fragmented tool-call arguments by index (hosted OpenAI shape)", async () => {
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
@@ -2609,6 +2752,45 @@ describe("runWorkbenchTurn streaming", () => {
     expect(deltas.join("")).toBe("I'll check. ");
   });
 
+  test("recovers multiple textual calls from SSE without warning metadata", async () => {
+    const markup =
+      "<tool_call><function=read_file><parameter=path>README.md</parameter></function></tool_call>" +
+      "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read and list",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [
+        {
+          name: "read_file",
+          description: "Read a file.",
+          parameters: { type: "object" },
+        },
+        {
+          name: "list_files",
+          description: "List files.",
+          parameters: { type: "object" },
+        },
+      ],
+      onTextDelta: () => {},
+      fetchFn: sseStream([
+        { choices: [{ delta: { content: markup } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] },
+      ]),
+    });
+
+    expect(result.toolCalls).toEqual([
+      {
+        id: "text-tool-1",
+        name: "read_file",
+        arguments: { path: "README.md" },
+      },
+      { id: "text-tool-2", name: "list_files", arguments: { path: "." } },
+    ]);
+    expect(result.unparsedToolCallMarkup).toBeUndefined();
+  });
+
   test("withholds a standalone wrapper until the next delta confirms an offered tool", async () => {
     const deltas: string[] = [];
     const result = await runWorkbenchTurn({
@@ -2806,6 +2988,47 @@ describe("runWorkbenchTurn streaming", () => {
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
     expect(result.stopReason).toBe("tool_use");
+  });
+
+  test("recovers multiple textual calls from JSON without warning metadata", async () => {
+    const markup =
+      "<tool_call><function=read_file><parameter=path>README.md</parameter></function></tool_call>" +
+      "<tool_call><function=list_files><parameter=path>.</parameter></function></tool_call>";
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "read and list",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      tools: [
+        {
+          name: "read_file",
+          description: "Read a file.",
+          parameters: { type: "object" },
+        },
+        {
+          name: "list_files",
+          description: "List files.",
+          parameters: { type: "object" },
+        },
+      ],
+      fetchFn: async () =>
+        Response.json({
+          choices: [{
+            message: { content: markup },
+            finish_reason: "stop",
+          }],
+        }),
+    });
+
+    expect(result.toolCalls).toEqual([
+      {
+        id: "text-tool-1",
+        name: "read_file",
+        arguments: { path: "README.md" },
+      },
+      { id: "text-tool-2", name: "list_files", arguments: { path: "." } },
+    ]);
+    expect(result.unparsedToolCallMarkup).toBeUndefined();
   });
 
   test("does not recover a textual call to a tool that was not offered", async () => {

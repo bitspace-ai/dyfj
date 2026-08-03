@@ -55,6 +55,7 @@ import { DomainError } from "./turn-contract";
 import type {
   SupersedingRetryStartedEvent,
   TurnStreamFrame,
+  UnparsedToolCallMarkupDetectedEvent,
 } from "./turn-contract";
 
 describe("readLineOrNull", () => {
@@ -224,6 +225,15 @@ function supersedeEvent(): Record<string, unknown> {
     modelSlug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
     reason: "context_overflow_recovery",
   } satisfies SupersedingRetryStartedEvent;
+}
+
+function unparsedMarkupEvent(): Record<string, unknown> {
+  return {
+    type: "unparsedToolCallMarkupDetected",
+    sessionId: "01CLISESSION0000000000000000",
+    count: 64,
+    countIsLowerBound: true,
+  } satisfies UnparsedToolCallMarkupDetectedEvent;
 }
 
 function sseResponse(frames: Frame[]): Response {
@@ -1071,6 +1081,30 @@ describe("runExec", () => {
     expect(stderr).toContain("tool: bash finished (85ms)");
   });
 
+  test("renders the shared unparsed-markup warning before the SSE receipt", async () => {
+    const { fn } = recordingFetch([
+      sseResponse([
+        { t: "delta", text: "provider text" },
+        { t: "event", event: unparsedMarkupEvent() },
+        { t: "done", result: result({ text: "provider text" }) },
+      ]),
+    ]);
+    const { io, stderr } = fakeIo();
+    const code = await runExec("make the change", cfg(), io, false, fn);
+    expect(code).toBe(0);
+    const warningIndex = stderr.findIndex((line) =>
+      line.startsWith("WARNING:")
+    );
+    const receiptIndex = stderr.findIndex((line) =>
+      line.startsWith("— Qwen3 Coder 30B")
+    );
+    const warning = stderr[warningIndex];
+    expect(warning).toContain("no tools were executed from it");
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(receiptIndex).toBeGreaterThanOrEqual(0);
+    expect(warningIndex).toBeLessThan(receiptIndex);
+  });
+
   test("renders streamed markdown without raw markers", async () => {
     const { fn } = recordingFetch([
       sseResponse([
@@ -1173,6 +1207,15 @@ describe("formatRuntimeEvent", () => {
       type: "toolStepLimitReached",
       maxSteps: 8,
     })).toBe("tool: reached 8-step limit; concluding now");
+  });
+
+  test("warns about unparsed markup without model-supplied text", () => {
+    const warning = formatRuntimeEvent(unparsedMarkupEvent());
+    expect(warning).toBe(
+      "WARNING: unparsed tool-call markup was present (at least 64 unmatched opening(s)); " +
+        "no tools were executed from it",
+    );
+    expect(warning).not.toMatch(/edit_file|read_file|<tool_call>/);
   });
 });
 
@@ -1345,6 +1388,33 @@ describe("runExec over the socket (--unix)", () => {
     const markerAt = out.indexOf("retrying with recovered context");
     expect(markerAt).toBeGreaterThan(out.indexOf("stale partial"));
     expect(out.indexOf("fresh answer")).toBeGreaterThan(markerAt);
+  });
+
+  test("renders the shared unparsed-markup warning over the UDS seam", async () => {
+    const { io, stderr } = fakeIo();
+    const code = await runExec(
+      "make the change",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      fakeTurnConnect(
+        [{ t: "event", event: unparsedMarkupEvent() }],
+        result({ text: "provider text" }),
+      ),
+    );
+    expect(code).toBe(0);
+    const warningIndex = stderr.findIndex((line) =>
+      line.startsWith("WARNING:")
+    );
+    const receiptIndex = stderr.findIndex((line) =>
+      line.startsWith("— Qwen3 Coder 30B")
+    );
+    const warning = stderr[warningIndex];
+    expect(warning).toContain("no tools were executed from it");
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(receiptIndex).toBeGreaterThanOrEqual(0);
+    expect(warningIndex).toBeLessThan(receiptIndex);
   });
 
   test("an unreachable socket points the operator at dyfj start", async () => {

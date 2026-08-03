@@ -301,13 +301,53 @@ describe("fetchWorkbenchSessionEvents", () => {
       "provider_call_order, provider_call_purpose, provider_error_class",
     );
     expect(calls[1]).toContain("NULL AS provider_call_order");
+    expect(calls[1]).toContain("NULL AS unparsed_tool_call_count");
     expect(event).toMatchObject({
       eventId: "01HISTORICAL",
       providerCallOrder: null,
       providerCallPurpose: null,
       providerErrorClass: null,
+      unparsedToolCallCount: null,
+      unparsedToolCallCountIsLowerBound: null,
       tokensInput: null,
       tokensOutput: null,
+    });
+  });
+
+  test("projects unparsed-markup nulls for an AS OF schema before migration 004", async () => {
+    const calls: string[] = [];
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      asOf: "2026-08-01 10:00:00",
+      query: (sql) => {
+        calls.push(sql);
+        if (!sql.includes("NULL AS unparsed_tool_call_count")) {
+          return Promise.reject(
+            new Error(
+              'column "unparsed_tool_call_count" could not be found in any table in scope',
+            ),
+          );
+        }
+        return Promise.resolve([{
+          event_id: "01PRE004",
+          event_type: "provider_call",
+          trace_id: "0123",
+          span_id: "provider-span",
+          principal_id: "workbench",
+          provider_call_order: "1",
+          provider_call_purpose: "initial",
+          created_at: "2026-08-01 10:00:00",
+        }]);
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain("provider_call_order, provider_call_purpose");
+    expect(calls[1]).toContain("NULL AS unparsed_tool_call_count");
+    expect(event).toMatchObject({
+      providerCallOrder: 1,
+      providerCallPurpose: "initial",
+      unparsedToolCallCount: null,
+      unparsedToolCallCountIsLowerBound: null,
     });
   });
 
@@ -344,6 +384,8 @@ describe("fetchWorkbenchSessionEvents", () => {
           provider_call_order: "2",
           provider_call_purpose: "tool_followup",
           provider_error_class: "",
+          unparsed_tool_call_count: "64",
+          unparsed_tool_call_count_is_lower_bound: "1",
           created_at: "2026-06-12 10:00:00",
         }]);
       },
@@ -356,6 +398,8 @@ describe("fetchWorkbenchSessionEvents", () => {
       providerCallOrder: 2,
       providerCallPurpose: "tool_followup",
       providerErrorClass: null,
+      unparsedToolCallCount: 64,
+      unparsedToolCallCountIsLowerBound: true,
     });
   });
 

@@ -2092,6 +2092,124 @@ describe("runWorkbenchRuntime observer events", () => {
     expect(budgetSummary?.parent_span_id).toBe(root.span_id);
   });
 
+  test("emits and persists content-free unparsed-markup metadata before completion", async () => {
+    const modelText = "<tool_call>\nedit_file\n<tool_call>\nread_file\n";
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      text: modelText,
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 8,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "stop",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+      unparsedToolCallMarkup: {
+        count: 2,
+        countIsLowerBound: false,
+      },
+    });
+    const events: Array<{ type: string; [key: string]: unknown }> = [];
+
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "make the change",
+      routingOptions: {},
+      onRuntimeEvent: (event) => {
+        events.push(event as { type: string; [key: string]: unknown });
+      },
+    });
+
+    const warning = events.find((event) =>
+      event.type === "unparsedToolCallMarkupDetected"
+    );
+    expect(warning).toEqual({
+      type: "unparsedToolCallMarkupDetected",
+      sessionId: result.sessionId,
+      count: 2,
+      countIsLowerBound: false,
+    });
+    expect(JSON.stringify(warning)).not.toMatch(
+      /edit_file|read_file|<tool_call>/,
+    );
+    expect(events.indexOf(warning!)).toBeLessThan(
+      events.findIndex((event) => event.type === "turnCompleted"),
+    );
+    expect(runtimeMocks.commandCalls).toEqual([]);
+
+    const providerCall = runtimeMocks.writtenEvents.find((event) =>
+      event.event_type === "provider_call"
+    );
+    expect(providerCall).toMatchObject({
+      unparsed_tool_call_count: 2,
+      unparsed_tool_call_count_is_lower_bound: false,
+      content: null,
+      thinking: null,
+    });
+    expect(JSON.stringify(providerCall)).not.toMatch(
+      /edit_file|read_file|<tool_call>/,
+    );
+    expect(runtimeMocks.writtenEvents).toContainEqual(
+      expect.objectContaining({
+        event_type: "model_response",
+        content: modelText,
+      }),
+    );
+  });
+
+  test("fails instead of completing when the unparsed-markup warning cannot be delivered", async () => {
+    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
+      text: "<tool_call><tool_call>",
+      model: runtimeMocks.model,
+      selection: {
+        selected: runtimeMocks.model,
+        considered: [runtimeMocks.model.slug],
+        reason: "default",
+      },
+      usage: {
+        input: 10,
+        output: 2,
+        cost: { total: 0 },
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      stopReason: "stop",
+      timings: { responseHeadersMs: 1, totalMs: 2 },
+      unparsedToolCallMarkup: {
+        count: 2,
+        countIsLowerBound: false,
+      },
+    });
+    const events: string[] = [];
+
+    await expect(runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "make the change",
+      routingOptions: {},
+      onRuntimeEvent: (event) => {
+        events.push(event.type);
+        if (event.type === "unparsedToolCallMarkupDetected") {
+          throw new Error("client disconnected");
+        }
+      },
+    })).rejects.toThrow("client disconnected");
+
+    expect(events).toContain("turnFailed");
+    expect(events).not.toContain("turnCompleted");
+    expect(
+      runtimeMocks.writtenEvents.some((event) =>
+        event.event_type === "model_response"
+      ),
+    ).toBe(false);
+  });
+
   test("records a content-free provider-call failure with a safe classification", async () => {
     runtimeMocks.runWorkbenchTurn.mockRejectedValueOnce(
       new Error("provider-controlled response body must not persist"),

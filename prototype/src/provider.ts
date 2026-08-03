@@ -59,6 +59,12 @@ export interface WorkbenchTurnResult {
   timings: WorkbenchCallTimings;
   /** Present only when cancellation won before any provider request began. */
   requestDispatched?: false;
+  /** Safe metadata for repeated unmatched textual tool-call wrapper openings. */
+  unparsedToolCallMarkup?: {
+    /** Bounded count of unmatched exact `<tool_call>` openings. */
+    count: number;
+    countIsLowerBound: boolean;
+  };
 }
 
 export interface WorkbenchToolDefinition {
@@ -1210,6 +1216,9 @@ async function executeOpenAICompatibleTurn(
   const timings = withTimePerOutputToken(result.timings, output);
   const costTotal = (input / 1_000_000) * model.costInput +
     (billableOutput / 1_000_000) * model.costOutput;
+  const unparsedToolCallMarkup = !result.aborted && finishReason !== "error"
+    ? detectUnparsedToolCallMarkup(text)
+    : undefined;
 
   return {
     text,
@@ -1230,6 +1239,7 @@ async function executeOpenAICompatibleTurn(
     toolCalls: result.aborted || finishReason === "error"
       ? undefined
       : toolCalls,
+    ...(unparsedToolCallMarkup ? { unparsedToolCallMarkup } : {}),
     timings,
   };
 }
@@ -2571,6 +2581,54 @@ const MAX_TEXT_TOOL_WRAPPER_WHITESPACE = 32;
 const MAX_TEXT_TOOL_MARKUP_CANDIDATES = 64;
 const TEXT_FUNCTION_MARKER = "<function=";
 const TEXT_PARAMETER_MARKER = "<parameter=";
+const UNPARSED_TOOL_CALL_OPENING = "<tool_call>";
+const UNPARSED_TOOL_CALL_CLOSING = "</tool_call>";
+export const MAX_UNPARSED_TOOL_CALL_MARKERS = 64;
+/**
+ * Equal-valued character bound for the OpenAI adapter's 4 MiB response-byte
+ * ceiling. UTF-8 decoding cannot produce more UTF-16 code units than input
+ * bytes, and JSON unescaping only contracts the representation, so model text
+ * from an accepted response fits this whole-text bound.
+ */
+export const MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS = MAX_OPENAI_RESPONSE_BYTES;
+
+/**
+ * Detect the degraded Qwen-compatible shape that remains after textual-call
+ * recovery: at least two exact wrapper openings left unmatched by closings.
+ * One stray opening is not structural evidence, and balanced examples remain
+ * prose. Markers are processed in order, so a closing matches only a preceding
+ * opening; leading closings cannot cancel later openings. Inputs beyond the
+ * accepted-response bound are not prefix-classified; the whole-text scan and
+ * reported unmatched-opening count remain bounded.
+ */
+export function detectUnparsedToolCallMarkup(
+  text: string,
+): WorkbenchTurnResult["unparsedToolCallMarkup"] {
+  if (text.length > MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS) return undefined;
+  let unmatchedOpeningCount = 0;
+  let openingAt = text.indexOf(UNPARSED_TOOL_CALL_OPENING);
+  let closingAt = text.indexOf(UNPARSED_TOOL_CALL_CLOSING);
+  while (openingAt >= 0 || closingAt >= 0) {
+    if (openingAt >= 0 && (closingAt < 0 || openingAt < closingAt)) {
+      unmatchedOpeningCount += 1;
+      openingAt = text.indexOf(
+        UNPARSED_TOOL_CALL_OPENING,
+        openingAt + UNPARSED_TOOL_CALL_OPENING.length,
+      );
+    } else {
+      if (unmatchedOpeningCount > 0) unmatchedOpeningCount -= 1;
+      closingAt = text.indexOf(
+        UNPARSED_TOOL_CALL_CLOSING,
+        closingAt + UNPARSED_TOOL_CALL_CLOSING.length,
+      );
+    }
+  }
+  if (unmatchedOpeningCount < 2) return undefined;
+  return {
+    count: Math.min(unmatchedOpeningCount, MAX_UNPARSED_TOOL_CALL_MARKERS),
+    countIsLowerBound: unmatchedOpeningCount > MAX_UNPARSED_TOOL_CALL_MARKERS,
+  };
+}
 
 function exceedsTextToolMarkupCandidateLimit(
   text: string,

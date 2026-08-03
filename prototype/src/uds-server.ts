@@ -582,19 +582,23 @@ export function buildTurnHandlers(
             { t: "delta", text } satisfies TurnStreamFrame,
           ).catch(noteStreamNotifyFailure);
         },
-        // The superseding-retry signal is the ONE event whose delivery the
-        // runtime must observe: its send failure is returned so the fail-closed
-        // path can abort the retry rather than stream an unmarked replacement.
-        // Every other runtime event is a fire-and-forget notification — a failed
-        // send is nothing to report, and returning its rejection would only make
-        // the runtime's best-effort emitter warn once per event (a flood on a
+        // Safety-critical signals are the events whose delivery the runtime
+        // must observe: a superseding retry resets rendered text, while an
+        // unparsed-markup warning prevents an unqualified success. Their send
+        // failures are returned so the runtime can fail closed. Every other
+        // runtime event is a fire-and-forget notification — a failed send is
+        // nothing to report, and returning its rejection would only make the
+        // runtime's best-effort emitter warn once per event (a flood on a
         // tool-heavy turn after the client drops). So swallow those, logging once.
         onRuntimeEvent: (event) => {
           const sent = ctx.notify(
             "stream",
             { t: "event", event } satisfies TurnStreamFrame,
           );
-          if (isSupersedingRetryStarted(event)) return sent;
+          if (
+            isSupersedingRetryStarted(event) ||
+            event.type === "unparsedToolCallMarkupDetected"
+          ) return sent;
           return sent.catch(noteStreamNotifyFailure);
         },
       });

@@ -316,7 +316,7 @@ export interface ExecuteTurnDeps {
   onTextDelta?: (delta: string) => void;
   // Matches WorkbenchRuntimeInput.onRuntimeEvent: a transport handler may return
   // a promise (the UDS seam returns its notify), so the runtime can await
-  // delivery where that matters (the fail-closed superseding-retry signal).
+  // delivery where that matters (the fail-closed safety signals).
   onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   /**
    * Mutating-tool approval handler. The UDS transport supplies a
