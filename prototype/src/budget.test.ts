@@ -394,6 +394,8 @@ describe("BudgetExceededError", () => {
 // ── ensureBudgetAllowed (warn-then-confirm) ───────────────────────────────────
 
 describe("ensureBudgetAllowed", () => {
+  const dailyBudget = { dailyCostSoFar: 0, dailyLimitUsd: 25 };
+
   test("under ceiling proceeds without prompting", async () => {
     const { ensureBudgetAllowed } = await import("./budget");
     const confirm = vi.fn();
@@ -404,6 +406,7 @@ describe("ensureBudgetAllowed", () => {
         sessionCostSoFar: 0,
         sessionLimitUsd: 1,
         perCallLimitUsd: 0.1,
+        ...dailyBudget,
       },
       confirm,
     );
@@ -419,6 +422,7 @@ describe("ensureBudgetAllowed", () => {
         sessionCostSoFar: 0.95,
         sessionLimitUsd: 1,
         perCallLimitUsd: 0.1,
+        ...dailyBudget,
         reason: "session_limit",
       },
       async () => ({ decision: "approve" }),
@@ -437,6 +441,7 @@ describe("ensureBudgetAllowed", () => {
           sessionCostSoFar: 0.95,
           sessionLimitUsd: 1,
           perCallLimitUsd: 0.1,
+          ...dailyBudget,
           reason: "session_limit",
         },
       ),
@@ -455,6 +460,7 @@ describe("ensureBudgetAllowed", () => {
           sessionCostSoFar: 0,
           sessionLimitUsd: 1,
           perCallLimitUsd: 0.1,
+          ...dailyBudget,
           reason: "per_call_limit",
         },
         async () => ({ decision: "deny", reason: "too much" }),
@@ -466,12 +472,14 @@ describe("ensureBudgetAllowed", () => {
 // ── createTurnBudgetCeilingGate (once-per-turn dedupe) ────────────────────────
 
 describe("createTurnBudgetCeilingGate", () => {
+  const dailyBudget = { dailyCostSoFar: 0, dailyLimitUsd: 25 };
   const overPerCall: PreCallCheck = {
     allowed: false,
     estimatedCost: 0.12,
     sessionCostSoFar: 0,
     sessionLimitUsd: 1,
     perCallLimitUsd: 0.1,
+    ...dailyBudget,
     reason: "per_call_limit",
   };
 
@@ -495,6 +503,7 @@ describe("createTurnBudgetCeilingGate", () => {
       sessionCostSoFar: 0.95,
       sessionLimitUsd: 1,
       perCallLimitUsd: 0.1,
+      ...dailyBudget,
       reason: "per_call_limit",
     });
     expect(confirm).toHaveBeenCalledTimes(2);
@@ -517,6 +526,7 @@ describe("createTurnBudgetCeilingGate", () => {
       sessionCostSoFar: 0.95,
       sessionLimitUsd: 1,
       perCallLimitUsd: 0.1,
+      ...dailyBudget,
       reason: "per_call_limit",
     });
     expect(confirm).toHaveBeenCalledTimes(2);
@@ -536,6 +546,7 @@ describe("createTurnBudgetCeilingGate", () => {
       sessionCostSoFar: 0.96,
       sessionLimitUsd: 1,
       perCallLimitUsd: 0.5,
+      ...dailyBudget,
       reason: "session_limit",
     });
     // Larger projection, same scope: the session confirmation holds — an
@@ -546,6 +557,7 @@ describe("createTurnBudgetCeilingGate", () => {
       sessionCostSoFar: 0.95,
       sessionLimitUsd: 1,
       perCallLimitUsd: 0.5,
+      ...dailyBudget,
       reason: "session_limit",
     });
     expect(confirm).toHaveBeenCalledTimes(1);

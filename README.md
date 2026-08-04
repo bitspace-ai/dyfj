@@ -294,7 +294,7 @@ Useful validation tasks:
 
 ```sh
 deno task test            # runs deno task check first
-deno task check           # strict typecheck of the non-test import graph
+deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events
@@ -475,4 +475,5 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-06-30 - Schema refactored into a readable current baseline (`schema/current/`), mutable catalog seeds (`schema/catalog/`), forward migrations (`schema/migrations/`), and preserved replay history (`schema/history/`).
 - 2026-07-03 - Cost posture revised: Layer 0 stance #2 rewritten from local-first-by-default with per-call paid escalation to operator-routed inference inside budget envelopes (per-session and per-day) with a runaway-anomaly hard stop; stance #1, Boundaries, the tagline, and the Layer 2 cost/budget entry aligned. Local inference remains first-class and fail-closed; non-loopback transports remain fail-closed; unpriced models are not routable. Cost visibility is unchanged as a Layer 0 stance — the consent ceremony is demoted, not the accounting. Envelope enforcement is marked as in-progress runtime work.
 - 2026-08-02 - Run-it configuration now documents the bounded Workbench tool-step limit and receipt visibility.
+- 2026-08-03 - Validation commands now state that the default check covers both production and test import graphs.
 - 2026-08-02 - Operator guidance now leads with the autostarting `dyfj`/UDS path, retains HTTP as an explicit supported server, and distinguishes boot-time secret pointers from standalone-process key projection.

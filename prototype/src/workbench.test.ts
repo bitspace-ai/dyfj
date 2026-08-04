@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { BudgetExceededError, resetCeilingConfirmations } from "./budget";
+import {
+  BudgetExceededError,
+  resetCeilingConfirmations,
+  type RunawayAnomalyWarning,
+} from "./budget";
 import { AGENT_DEFAULTS } from "./config";
 import { LENGTH_CONTINUATION_NUDGE } from "./length-recovery";
 import {
@@ -1148,9 +1152,7 @@ describe("runWorkbenchRuntime observer events", () => {
       mode: "turn",
       prompt: "summarize this sensitive prompt body",
       routingOptions: {},
-      onRuntimeEvent: (event) => {
-        events.push(event);
-      },
+      onRuntimeEvent: (event) => void events.push(event),
     });
 
     expect(result.text).toBe("runtime response");
@@ -1259,7 +1261,7 @@ describe("runWorkbenchRuntime observer events", () => {
       routingOptions: {},
       turnId: "123e4567-e89b-42d3-a456-426614174000",
       abortSignal: abortController.signal,
-      onRuntimeEvent: (event) => events.push(event),
+      onRuntimeEvent: (event) => void events.push(event),
     });
 
     expect(first).toMatchObject({
@@ -1387,7 +1389,7 @@ describe("runWorkbenchRuntime observer events", () => {
       prompt: "start",
       routingOptions: {},
       abortSignal: abortController.signal,
-      onRuntimeEvent: (event) => events.push(event),
+      onRuntimeEvent: (event) => void events.push(event),
     });
 
     expect(result.stopReason).toBe("error");
@@ -1501,7 +1503,7 @@ describe("runWorkbenchRuntime observer events", () => {
       routingOptions: {},
       turnId: "123e4567-e89b-42d3-a456-426614174000",
       abortSignal: abortController.signal,
-      onRuntimeEvent: (event) => events.push(event),
+      onRuntimeEvent: (event) => void events.push(event),
     });
 
     expect(result.stopReason).toBe("aborted");
@@ -1688,7 +1690,7 @@ describe("runWorkbenchRuntime observer events", () => {
         prompt: "loop without stopping",
         routingOptions: {},
         maxToolSteps: 2,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(result.text).toBe("forced conclusion");
       // Step 0 plus two tool-gathering calls, then one forced no-tools call.
@@ -1802,7 +1804,7 @@ describe("runWorkbenchRuntime observer events", () => {
         mode: "turn",
         prompt: "explore",
         routingOptions: {},
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(result.text).toBe("done");
       expect(result.agent).toEqual({
@@ -1865,7 +1867,7 @@ describe("runWorkbenchRuntime observer events", () => {
         mode: "turn",
         prompt: "loop until the limit",
         routingOptions: {},
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       })).rejects.toThrow(
         "The no-tools conclusion after the tool-step limit could not be completed.",
       );
@@ -1966,7 +1968,7 @@ describe("runWorkbenchRuntime observer events", () => {
         recoverContextOverflow: async () => ({
           messages: [{ role: "user", content: "compressed history" }],
         }),
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       })).rejects.toThrow(
         "The no-tools conclusion after the tool-step limit could not be completed.",
       );
@@ -2504,7 +2506,7 @@ describe("runWorkbenchRuntime observer events", () => {
           abortController.abort();
           throw abortController.signal.reason;
         },
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
 
       expect(result).toMatchObject({
@@ -2578,7 +2580,7 @@ describe("runWorkbenchRuntime observer events", () => {
         routingOptions: {},
         defaultSessionBudgetUsd: 0.02,
         confirmPaidEscalation: async () => ({ decision: "approve" as const }),
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(result.text).toBe("");
       expect((events.at(-1) as { type: string }).type).toBe("turnFailed");
@@ -2614,9 +2616,7 @@ describe("runWorkbenchRuntime observer events", () => {
         mode: "turn",
         prompt: "summarize",
         routingOptions: {},
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
+        onRuntimeEvent: (event) => void events.push(event),
       })).rejects.toThrow("local model unavailable");
 
       expect(events.at(-1)).toEqual({
@@ -2672,9 +2672,7 @@ describe("runWorkbenchRuntime observer events", () => {
         prompt: "hello",
         routingOptions: {},
         trustWorkspaceInstructions: true,
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
+        onRuntimeEvent: (event) => void events.push(event),
       });
 
       expect(result.text).toBe("runtime response");
@@ -2768,9 +2766,7 @@ describe("runWorkbenchRuntime observer events", () => {
         mode: "turn",
         prompt: "hello",
         routingOptions: {},
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
+        onRuntimeEvent: (event) => void events.push(event),
       });
 
       expect(result.text).toBe("runtime response");
@@ -2814,9 +2810,7 @@ describe("runWorkbenchRuntime observer events", () => {
           authnIssuerRef: "test_issuer",
           authzBasis: "bearer_token",
         },
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
+        onRuntimeEvent: (event) => void events.push(event),
       });
 
       expect(result.text).toBe("runtime response");
@@ -2855,9 +2849,7 @@ describe("runWorkbenchRuntime observer events", () => {
         routingOptions: {},
         trustWorkspaceInstructions: true,
         workspaceRoot: "/nonexistent-workspace-for-elevation-test",
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
+        onRuntimeEvent: (event) => void events.push(event),
       });
 
       expect(result.text).toBe("runtime response");
@@ -2923,9 +2915,7 @@ describe("runWorkbenchRuntime observer events", () => {
         routingOptions: {},
         trustWorkspaceInstructions: true,
         sessionId: "01TEST00000000000000000001",
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
+        onRuntimeEvent: (event) => void events.push(event),
       });
 
       expect(result.text).toBe("runtime response");
@@ -2949,9 +2939,7 @@ describe("runWorkbenchRuntime observer events", () => {
         prompt: "hello",
         routingOptions: {},
         trustWorkspaceInstructions: true,
-        onRuntimeEvent: (event) => {
-          events.push(event);
-        },
+        onRuntimeEvent: (event) => void events.push(event),
       });
 
       expect(result.text).toBe("runtime response");
@@ -4246,7 +4234,7 @@ describe("runWorkbenchRuntime runaway anomaly gate", () => {
     const prevCost = runtimeMocks.model.costInput;
     (runtimeMocks.model as { tier: number }).tier = 1;
     runtimeMocks.model.costInput = 0;
-    const confirmRunawayAnomaly = vi.fn(async () => ({
+    const confirmRunawayAnomaly = vi.fn(async (_: RunawayAnomalyWarning) => ({
       decision: "approve" as const,
     }));
     runtimeMocks.runWorkbenchTurn
@@ -4435,7 +4423,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       const compressed = events.find((e) => e.type === "contextCompressed");
       expect(compressed).toBeDefined();
@@ -4614,7 +4602,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(events.some((e) => e.type === "contextCompressed")).toBe(false);
       expect(JSON.stringify(captured.value ?? [])).toContain("old question");
@@ -4639,7 +4627,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       // No compression surfaced, and the actual turn saw the uncompressed history.
       expect(events.some((e) => e.type === "contextCompressed")).toBe(false);
@@ -4699,7 +4687,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "one more",
         routingOptions: {},
         conversationMessages: moderateHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(result.text).toBe("recovered answer");
       const compressed = events.find((e) => e.type === "contextCompressed");
@@ -4756,7 +4744,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       // No compression request left the machine, and none was surfaced.
       expect(compressionCallMade).toBe(false);
@@ -4803,14 +4791,25 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         eventId: "01E",
         eventType,
         traceId: "t",
+        spanId: "s",
+        parentSpanId: null,
         principalId: "operator",
         modelId: null,
         provider: null,
+        api: null,
         content,
         stopReason: null,
         tokensInput: null,
         tokensOutput: null,
+        tokensCacheRead: null,
+        tokensCacheWrite: null,
         costTotal: null,
+        durationMs: null,
+        providerCallOrder: null,
+        providerCallPurpose: null,
+        providerErrorClass: null,
+        unparsedToolCallCount: null,
+        unparsedToolCallCountIsLowerBound: null,
         toolName: null,
         toolCallId: null,
         toolArguments: null,
@@ -4861,7 +4860,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(events.some((e) => e.type === "contextCompressed")).toBe(true);
       // The live turn saw the summary, not the elder turns it replaced.
@@ -4896,7 +4895,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(events.some((e) => e.type === "contextCompressed")).toBe(false);
       expect(JSON.stringify(captured.value ?? [])).toContain("old question");
@@ -5031,7 +5030,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       // Compressed, and the request went to the LOCAL row — never the hosted
       // session model.
@@ -5071,7 +5070,7 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         prompt: "new question",
         routingOptions: {},
         conversationMessages: bigHistory,
-        onRuntimeEvent: (event) => events.push(event),
+        onRuntimeEvent: (event) => void events.push(event),
       });
       expect(routed.slug).toBe("qwen3-local");
       expect(events.some((e) => e.type === "contextCompressed")).toBe(true);

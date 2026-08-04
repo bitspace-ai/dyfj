@@ -841,6 +841,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
     const writeCmd: CommandDefinition<string> = {
       id: "write_file",
       title: "Write File",
+      description: "Write a file",
       inputSchema: {
         type: "object",
         required: ["path", "content"],
@@ -888,6 +889,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
     const writeCmd: CommandDefinition<string> = {
       id: "write_file",
       title: "Write File",
+      description: "Write a file",
       inputSchema: {
         type: "object",
         required: ["path", "content"],
@@ -1056,6 +1058,7 @@ describe("buildCommandToolCallEventPayload", () => {
     const sensitiveCmd: CommandDefinition<string> = {
       id: "bash",
       title: "Run Bash Command",
+      description: "Run a shell command",
       inputSchema: {
         type: "object",
         required: ["command"],
@@ -1364,6 +1367,7 @@ describe("read_file → tool_call event containment", () => {
     // The model-facing result keeps file-tools.ts's own 64KB byte cap —
     // unchanged by this fix (non-goal).
     expect(result.isError).toBe(false);
+    if (!("result" in result)) throw new Error("expected an allowed result");
     expect(result.result as string).toContain(
       "[truncated at 65536 bytes]",
     );
