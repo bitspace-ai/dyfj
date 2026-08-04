@@ -1104,7 +1104,7 @@ describe("remote bearer auth", () => {
     );
     expect(response.status).toBe(200);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.authContext!.transport).toBe("remote");
+    expect(calls[0]?.authContext?.transport).toBe("remote");
   });
 
   test("rejects unknown non-loopback hosts even with the bearer", async () => {
