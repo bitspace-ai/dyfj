@@ -14,8 +14,9 @@ fn make_session_start_event() -> Event {
     let session_id = ulid::Ulid::new().to_string();
     let trace_id = format!("{:032x}", rand::random::<u128>());
     let span_id = format!("{:016x}", rand::random::<u64>());
-    let created_at = DateTime::<Utc>::from_timestamp_micros(Utc::now().timestamp_micros())
-        .expect("current time must be representable as microseconds since epoch");
+    let created_at = DateTime::parse_from_rfc3339("2026-08-04T11:24:56.012452Z")
+        .expect("fixture timestamp must be valid")
+        .with_timezone(&Utc);
 
     Event {
         event_id,

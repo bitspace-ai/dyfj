@@ -8,6 +8,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- Rust event writes now bind `TIMESTAMP(6)` values as fixed-width UTC text, avoiding Dolt's prepared temporal-value decoding error for leading-zero fractional seconds; the live schema round trip pins the affected case.
+
 - The default prototype test gate now typechecks its Vitest sources under `src/`, `mcp/`, and `scripts/` before running them, so stale test fixtures and callbacks cannot bypass the repository's strict TypeScript check.
 
 - OpenAI-compatible turns now detect at least two unmatched `<tool_call>` openings left after structured and textual tool-call recovery. The detector matches markers in order, counts the whole accepted model text, declines to classify oversized direct inputs rather than inspecting a truncated prefix, and reports only a bounded unmatched-opening count. The runtime preserves the provider text but emits a conspicuous content-free warning before the terminal receipt, records that bounded count on the provider-call span, and never executes the malformed markup.
