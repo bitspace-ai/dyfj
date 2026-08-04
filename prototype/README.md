@@ -88,7 +88,9 @@ export DOLT_DATABASE=dolt
 Useful checks:
 
 ```sh
-deno task test
+deno task check          # production and Vitest source typechecking
+deno task check:tests    # Vitest sources only
+deno task test           # checks first, then runs Vitest
 deno task verify-workbench-events
 (cd .. && deno task test:schema)
 (cd .. && deno task validate-schema)

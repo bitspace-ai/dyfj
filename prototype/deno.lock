@@ -1182,7 +1182,8 @@
       "jsr:@david/dax@0.42.0",
       "jsr:@std/toml@1.0.8",
       "npm:mysql2@3.22.3",
-      "npm:ulid@2.4.0"
+      "npm:ulid@2.4.0",
+      "npm:vitest@3.2.6"
     ]
   }
 }

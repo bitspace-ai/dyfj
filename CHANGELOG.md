@@ -8,6 +8,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- The default prototype test gate now typechecks its Vitest sources under `src/`, `mcp/`, and `scripts/` before running them, so stale test fixtures and callbacks cannot bypass the repository's strict TypeScript check.
+
 - OpenAI-compatible turns now detect at least two unmatched `<tool_call>` openings left after structured and textual tool-call recovery. The detector matches markers in order, counts the whole accepted model text, declines to classify oversized direct inputs rather than inspecting a truncated prefix, and reports only a bounded unmatched-opening count. The runtime preserves the provider text but emits a conspicuous content-free warning before the terminal receipt, records that bounded count on the provider-call span, and never executes the malformed markup.
 
 - Agent-tool turns now use a configurable tool-step limit rather than a fixed eight-step ceiling. The default is 32 steps; served HTTP and UDS engines load `[agent].max_tool_steps`, and every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`, bounded to integers from 1 through 64. Forced conclusions are marked as Workbench instructions instead of synthetic user messages, and runtime status plus turn receipts report the effective limit and tool-step usage.

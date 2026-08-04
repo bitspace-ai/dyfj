@@ -509,7 +509,7 @@ describe("fetchWorkbenchSessionEvents", () => {
     }));
     const events = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () => Promise.resolve(rows),
+      query: () => Promise.resolve(rows as unknown as Record<string, string>[]),
     });
     expect(events.map((e) => e.toolIsError)).toEqual([
       true,
@@ -553,6 +553,8 @@ describe("buildConversationMessages", () => {
     providerCallOrder: null,
     providerCallPurpose: null,
     providerErrorClass: null,
+    unparsedToolCallCount: null,
+    unparsedToolCallCountIsLowerBound: null,
     toolName: tool.name ?? null,
     toolCallId: tool.callId ?? null,
     toolArguments: tool.arguments ?? null,
