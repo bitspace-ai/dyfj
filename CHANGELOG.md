@@ -8,7 +8,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
-- Rust event writes now bind `TIMESTAMP(6)` values as fixed-width UTC text, avoiding Dolt's prepared temporal-value decoding error for leading-zero fractional seconds; the live schema round trip pins the affected case.
+- Rust event writes now bind `TIMESTAMP(6)` values as fixed-width text containing UTC clock fields, avoiding Dolt's prepared temporal-value decoding error for leading-zero fractional seconds; the live schema round trip pins the affected case after switching the connection from a non-UTC write timezone to UTC before reading.
 
 - The default prototype test gate now typechecks its Vitest sources under `src/`, `mcp/`, and `scripts/` before running them, so stale test fixtures and callbacks cannot bypass the repository's strict TypeScript check.
 
@@ -39,12 +39,18 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
-- `deno task test` is now an honest whole-repository aggregate gate: it runs
+- `deno task test` is now a repository aggregate gate for the enumerated
+  source, test, schema, Rust, and integration lanes. It runs
   source and recursive test-file typechecks, prototype unit tests, current and
-  historical schema checks, database-free Rust tests, and an isolated-Dolt
-  integration lane with UDS and MCP round trips. The integration lane creates
-  and removes its own temporary repository and SQL server; it neither reads
-  `.env` nor uses the operator database.
+  historical schema checks, non-ignored Rust tests using offline SQLx metadata
+  and no inherited `DATABASE_URL`, and an isolated-Dolt integration lane with
+  UDS and MCP round trips. The integration lane owns a temporary repository and
+  SQL server, with cleanup on normal completion and handled failure. SIGINT and
+  SIGTERM request cooperative cancellation; the direct lane process receives
+  SIGTERM followed by a bounded wait and possible SIGKILL. The Rust tracer
+  retains its manual-run `.env` loader, but the fixture's explicit
+  `DATABASE_URL` takes precedence, so the lane does not use the operator
+  database.
 
 - The Workbench turn runtime now records a content-free `provider_call` span for each provider-call attempt it makes within a user turn, with its ordered purpose, model/provider/API, stop reason, and duration. Successfully returned calls also carry per-call token/cache/cost totals; failures omit usage/cost and carry a fixed safe classification, stop reason, and duration. Each user turn has a stable root span; provider-requested tools attach to their requesting provider span, while terminal turn/error events attach to the root. The existing aggregate `model_response` remains the replay record.
 

@@ -50,7 +50,7 @@ pub async fn write(pool: &MySqlPool, event: &Event) -> Result<()> {
         event.event_id,
         event.session_id,
         event.event_type,
-        // Dolt's binary temporal parameter path drops leading fractional zeroes.
+        // Dolt's binary temporal parameter path rejects the observed leading-zero fraction.
         event.created_at.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
         event.trace_id,
         event.span_id,

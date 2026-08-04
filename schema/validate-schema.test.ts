@@ -3,6 +3,7 @@ import {
   assertSchemaApplyPlan,
   buildSchemaApplyPlan,
   migrationFileNames,
+  parseSchemaValidationScope,
 } from "./validate-schema.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
@@ -103,5 +104,19 @@ Deno.test("assertEventsTablePresent rejects missing events table output", () => 
 Deno.test("assertEventsTablePresent accepts events table output", () => {
   assertEventsTablePresent(
     "+--------+\n| Tables |\n+--------+\n| events |\n+--------+\n",
+  );
+});
+
+Deno.test("parseSchemaValidationScope accepts only one known selector", () => {
+  assertEquals(parseSchemaValidationScope([]), "all");
+  assertEquals(parseSchemaValidationScope(["--current-only"]), "current");
+  assertEquals(parseSchemaValidationScope(["--history-only"]), "history");
+  assertThrows(
+    () => parseSchemaValidationScope(["--current-only", "--history-only"]),
+    "usage: validate-schema.ts",
+  );
+  assertThrows(
+    () => parseSchemaValidationScope(["--unknown"]),
+    "usage: validate-schema.ts",
   );
 });

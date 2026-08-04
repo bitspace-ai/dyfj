@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dyfj_core::events::{self, Event};
-use sqlx::MySqlPool;
+use sqlx::mysql::MySqlPoolOptions;
 
 fn make_session_start_event() -> Event {
     let event_id = ulid::Ulid::new().to_string();
@@ -40,15 +40,25 @@ async fn round_trip_session_start_event() -> Result<()> {
     let _ = dotenvy::dotenv();
     let database_url =
         std::env::var("DATABASE_URL").context("DATABASE_URL must be set for integration tests")?;
-    let pool = MySqlPool::connect(&database_url)
+    let pool = MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect(&database_url)
         .await
         .with_context(|| format!("connect to {database_url}"))?;
+    sqlx::query("SET time_zone = '+02:00'")
+        .execute(&pool)
+        .await
+        .context("set a non-UTC session timezone")?;
 
     let event = make_session_start_event();
 
     events::write(&pool, &event)
         .await
         .context("events::write should accept a well-formed session_start event")?;
+    sqlx::query("SET time_zone = '+00:00'")
+        .execute(&pool)
+        .await
+        .context("switch to UTC before reading the stored instant")?;
 
     let read_back = events::read_by_id(&pool, &event.event_id)
         .await

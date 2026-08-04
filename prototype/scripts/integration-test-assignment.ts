@@ -19,7 +19,7 @@ export function assertIntegrationTestAssignments(
   assigned = assignedIntegrationTests(),
 ): void {
   const integrationTests = discovered.filter((path) =>
-    path.endsWith(".integration.test.ts")
+    /\.integration\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)
   ).sort();
   const missing = integrationTests.filter((path) => !assigned.includes(path));
   const stale = assigned.filter((path) => !integrationTests.includes(path));

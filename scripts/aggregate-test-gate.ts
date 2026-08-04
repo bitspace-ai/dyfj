@@ -14,16 +14,13 @@ export interface RunGateOptions {
   signal?: AbortSignal;
 }
 
-const decoder = new TextDecoder();
 const inheritedEnvironmentNames = [
   "PATH",
   "HOME",
-  "TMPDIR",
-  "TEMP",
-  "TMP",
   "CARGO_HOME",
   "RUSTUP_HOME",
 ];
+const laneShutdownTimeoutMs = 10_000;
 
 function formatCommand(lane: GateLane): string {
   return [lane.command, ...lane.args].join(" ");
@@ -54,7 +51,10 @@ async function stopChild(
     await Promise.race([
       child.status,
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("shutdown timeout")), 2_000)
+        setTimeout(
+          () => reject(new Error("shutdown timeout")),
+          laneShutdownTimeoutMs,
+        )
       ),
     ]);
   } catch {
@@ -67,12 +67,12 @@ async function stopChild(
   }
 }
 
-async function outputOrAbort(
+async function statusOrAbort(
   child: ReturnType<Deno.Command["spawn"]>,
   signal: AbortSignal | undefined,
-): Promise<{ output?: Deno.CommandOutput; aborted: boolean }> {
-  const output = child.output();
-  if (!signal) return { output: await output, aborted: false };
+): Promise<{ status?: Deno.CommandStatus; aborted: boolean }> {
+  const status = child.status;
+  if (!signal) return { status: await status, aborted: false };
   if (signal.aborted) {
     await stopChild(child);
     return { aborted: true };
@@ -80,7 +80,7 @@ async function outputOrAbort(
 
   let onAbort: (() => void) | undefined;
   const result = await Promise.race([
-    output.then((value) => ({ type: "output" as const, value })),
+    status.then((value) => ({ type: "status" as const, value })),
     new Promise<{ type: "aborted" }>((resolve) => {
       onAbort = () => resolve({ type: "aborted" });
       signal.addEventListener("abort", onAbort, { once: true });
@@ -88,7 +88,7 @@ async function outputOrAbort(
     }),
   ]);
   if (onAbort) signal.removeEventListener("abort", onAbort);
-  if (result.type === "output") return { output: result.value, aborted: false };
+  if (result.type === "status") return { status: result.value, aborted: false };
 
   await stopChild(child);
   return { aborted: true };
@@ -127,6 +127,9 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
         "src/mcp-client.ts",
         "mcp/server.ts",
         "src/cli.ts",
+        "scripts/esbuild-binary.ts",
+        "scripts/integration-child-environment.ts",
+        "scripts/run-vitest.ts",
         "scripts/isolated-dolt-fixture.ts",
         "scripts/isolated-dolt-integration.ts",
       ],
@@ -143,16 +146,16 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
       command: "deno",
       args: [
         "run",
-        "-P=test",
+        "--allow-env",
         "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "npm:vitest@3.2.6",
+        "--allow-run=deno",
+        "scripts/run-vitest.ts",
         "run",
         "--root",
         ".",
         "--pool=threads",
         "--exclude",
-        "**/*.integration.test.ts",
+        "**/*.integration.{test,spec}.?(c|m)[jt]s?(x)",
       ],
       cwd: prototype,
       env: { TMPDIR: "/tmp" },
@@ -190,7 +193,7 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
       cwd: root,
     },
     {
-      label: "Database-free Rust tests",
+      label: "Offline-metadata Rust tests",
       command: "cargo",
       args: ["test"],
       cwd: core,
@@ -201,7 +204,7 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
       command: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,DYFJ_ROOT",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DYFJ_ROOT",
         "--allow-read=.,..",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
         "--allow-run=deno,dolt,cargo",
@@ -209,6 +212,7 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
         "scripts/isolated-dolt-integration.ts",
       ],
       cwd: prototype,
+      env: { TMPDIR: "/tmp" },
     },
   ];
 }
@@ -227,25 +231,21 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
         cwd: lane.cwd,
         env: { ...safeEnvironment(), ...(lane.env ?? {}) },
         clearEnv: true,
-        stdout: "piped",
-        stderr: "piped",
+        stdout: "inherit",
+        stderr: "inherit",
       }).spawn();
-      const result = await outputOrAbort(child, options.signal);
+      const result = await statusOrAbort(child, options.signal);
       const elapsedMs = Math.round(performance.now() - start);
       if (result.aborted) {
         out.error(`✗ ${lane.label}: interrupted (${elapsedMs}ms)`);
         return interruptedExitCode(options.signal!);
       }
-      const output = result.output!;
-      const stdout = decoder.decode(output.stdout);
-      const stderr = decoder.decode(output.stderr);
-      if (stdout) out.log(stdout.trimEnd());
-      if (stderr) out.error(stderr.trimEnd());
-      if (output.code !== 0) {
+      const status = result.status!;
+      if (status.code !== 0) {
         out.error(
-          `✗ ${lane.label}: failure (${elapsedMs}ms, exit ${output.code})`,
+          `✗ ${lane.label}: failure (${elapsedMs}ms, exit ${status.code})`,
         );
-        return output.code || 1;
+        return status.code || 1;
       }
       out.log(`✓ ${lane.label}: success (${elapsedMs}ms)`);
     } catch (error) {
@@ -258,6 +258,7 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
       return 127;
     }
   }
+  if (options.signal?.aborted) return interruptedExitCode(options.signal);
   out.log("✓ aggregate test gate passed");
   return 0;
 }

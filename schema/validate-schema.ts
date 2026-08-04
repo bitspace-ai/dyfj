@@ -20,6 +20,70 @@ const schemaDirectories: SchemaDirectory[] = [
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
+class SchemaValidationInterruptedError extends Error {
+  constructor() {
+    super("schema validation interrupted");
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new SchemaValidationInterruptedError();
+}
+
+async function stopChild(
+  child: ReturnType<Deno.Command["spawn"]>,
+): Promise<void> {
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    return;
+  }
+  try {
+    await Promise.race([
+      child.status,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("shutdown timeout")), 2_000)
+      ),
+    ]);
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The process exited while the timeout elapsed.
+    }
+    await child.status.catch(() => undefined);
+  }
+}
+
+async function outputOrAbort(
+  child: ReturnType<Deno.Command["spawn"]>,
+  signal: AbortSignal | undefined,
+): Promise<Deno.CommandOutput> {
+  const output = child.output();
+  if (!signal) return await output;
+  if (signal.aborted) {
+    await stopChild(child);
+    await output.catch(() => undefined);
+    throw new SchemaValidationInterruptedError();
+  }
+
+  let onAbort: (() => void) | undefined;
+  const result = await Promise.race([
+    output.then((value) => ({ type: "output" as const, value })),
+    new Promise<{ type: "aborted" }>((resolve) => {
+      onAbort = () => resolve({ type: "aborted" });
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }),
+  ]);
+  if (onAbort) signal.removeEventListener("abort", onAbort);
+  if (result.type === "output") return result.value;
+
+  await stopChild(child);
+  await output.catch(() => undefined);
+  throw new SchemaValidationInterruptedError();
+}
+
 export function migrationFileNames(entries: Iterable<DirEntryLike>): string[] {
   return Array.from(entries)
     .filter((entry) => entry.isFile && entry.name.endsWith(".sql"))
@@ -64,8 +128,9 @@ export function assertEventsTablePresent(output: string): void {
 async function runCommand(
   command: string,
   args: string[],
-  options: { cwd: string; input?: string },
+  options: { cwd: string; input?: string; signal?: AbortSignal },
 ): Promise<CommandResult> {
+  throwIfAborted(options.signal);
   const child = new Deno.Command(command, {
     args,
     cwd: options.cwd,
@@ -74,13 +139,23 @@ async function runCommand(
     stderr: "piped",
   }).spawn();
 
+  const outputPromise = outputOrAbort(child, options.signal);
+  let inputError: unknown;
   if (options.input !== undefined) {
     const writer = child.stdin.getWriter();
-    await writer.write(encoder.encode(options.input));
-    await writer.close();
+    try {
+      await writer.write(encoder.encode(options.input));
+      await writer.close();
+    } catch (error) {
+      inputError = error;
+      await stopChild(child);
+    } finally {
+      writer.releaseLock();
+    }
   }
 
-  const output = await child.output();
+  const output = await outputPromise;
+  if (inputError !== undefined && output.code === 0) throw inputError;
 
   return {
     code: output.code,
@@ -92,7 +167,12 @@ async function runCommand(
 async function runChecked(
   command: string,
   args: string[],
-  options: { cwd: string; input?: string; label: string },
+  options: {
+    cwd: string;
+    input?: string;
+    label: string;
+    signal?: AbortSignal;
+  },
 ): Promise<CommandResult> {
   const result = await runCommand(command, args, options);
   if (result.code !== 0) {
@@ -139,7 +219,10 @@ async function readSchemaApplyPlan(schemaDir: URL): Promise<SchemaApplyPlan> {
   return buildSchemaApplyPlan(entriesByDirectory);
 }
 
-async function initDoltRepository(tempDir: string): Promise<void> {
+async function initDoltRepository(
+  tempDir: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   await runChecked("dolt", [
     "init",
     "--name",
@@ -149,6 +232,7 @@ async function initDoltRepository(tempDir: string): Promise<void> {
   ], {
     cwd: tempDir,
     label: "dolt init",
+    signal,
   });
 }
 
@@ -156,21 +240,25 @@ async function validateFileSequence(
   schemaDir: URL,
   files: string[],
   label: string,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
+  throwIfAborted(signal);
   const tempDir = await Deno.makeTempDir({
     prefix: "dyfj-schema-validate-",
   });
   console.log(`Validating ${label}: ${files.length} files in ${tempDir}`);
 
   try {
-    await initDoltRepository(tempDir);
+    await initDoltRepository(tempDir, signal);
 
     for (const file of files) {
+      throwIfAborted(signal);
       console.log(`Applying schema/${file}`);
       await runChecked("dolt", ["sql"], {
         cwd: tempDir,
         input: await Deno.readTextFile(new URL(file, schemaDir)),
         label: `schema/${file}`,
+        signal,
       });
     }
 
@@ -181,6 +269,7 @@ async function validateFileSequence(
     ], {
       cwd: tempDir,
       label: "SHOW TABLES LIKE 'events'",
+      signal,
     });
     assertEventsTablePresent(tables.stdout);
   } finally {
@@ -190,9 +279,28 @@ async function validateFileSequence(
 
 export type SchemaValidationScope = "all" | "current" | "history";
 
+export function parseSchemaValidationScope(
+  args: string[],
+): SchemaValidationScope {
+  if (args.length > 1) {
+    throw new Error(
+      "usage: validate-schema.ts [--current-only|--history-only]",
+    );
+  }
+  const argument = args[0];
+  if (argument === undefined) return "all";
+  if (argument === "--current-only") return "current";
+  if (argument === "--history-only") return "history";
+  throw new Error(
+    "usage: validate-schema.ts [--current-only|--history-only]",
+  );
+}
+
 export async function validateSchema(
   scope: SchemaValidationScope = "all",
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfAborted(signal);
   const schemaDir = new URL("./", import.meta.url);
   const plan = await readSchemaApplyPlan(schemaDir);
   assertSchemaApplyPlan(plan);
@@ -202,7 +310,12 @@ export async function validateSchema(
     ...plan.catalog,
   ];
   if (scope === "all" || scope === "current") {
-    await validateFileSequence(schemaDir, currentFiles, "current schema");
+    await validateFileSequence(
+      schemaDir,
+      currentFiles,
+      "current schema",
+      signal,
+    );
   }
   // Forward migrations are an upgrade path for pre-baseline databases, so they
   // are validated on top of the historical replay end-state (the old-world
@@ -212,30 +325,43 @@ export async function validateSchema(
       schemaDir,
       [...plan.history, ...plan.migrations],
       "historical replay + forward migrations",
+      signal,
     );
   }
 
+  throwIfAborted(signal);
   console.log("Schema validation passed.");
 }
 
 if (import.meta.main) {
+  const abortController = new AbortController();
+  let interruptedExitCode: number | undefined;
+  const interrupt = (exitCode: number) => {
+    if (abortController.signal.aborted) return;
+    interruptedExitCode = exitCode;
+    abortController.abort();
+  };
+  const onSigint = () => interrupt(130);
+  const onSigterm = () => interrupt(143);
+  Deno.addSignalListener("SIGINT", onSigint);
+  Deno.addSignalListener("SIGTERM", onSigterm);
+  let exitCode = 0;
   try {
-    const argument = Deno.args[0];
-    const scope = argument === "--current-only"
-      ? "current"
-      : argument === "--history-only"
-      ? "history"
-      : argument === undefined
-      ? "all"
-      : undefined;
-    if (!scope) {
-      throw new Error(
-        "usage: validate-schema.ts [--current-only|--history-only]",
-      );
-    }
-    await validateSchema(scope);
+    await validateSchema(
+      parseSchemaValidationScope(Deno.args),
+      abortController.signal,
+    );
+    if (interruptedExitCode !== undefined) exitCode = interruptedExitCode;
   } catch (error) {
-    console.error(error instanceof Error ? error.message : error);
-    Deno.exit(1);
+    if (interruptedExitCode !== undefined) {
+      exitCode = interruptedExitCode;
+    } else {
+      console.error(error instanceof Error ? error.message : error);
+      exitCode = 1;
+    }
+  } finally {
+    Deno.removeSignalListener("SIGINT", onSigint);
+    Deno.removeSignalListener("SIGTERM", onSigterm);
   }
+  if (exitCode !== 0) Deno.exit(exitCode);
 }

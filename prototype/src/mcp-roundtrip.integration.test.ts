@@ -78,8 +78,17 @@ Deno.test(
 );
 
 Deno.test("MCP round trip fails closed without fixture connection settings", () => {
+  const fixtureEnvironment: Record<string, string> = {
+    DENO_BIN: "/fixture/deno",
+    DYFJ_ROOT: "/fixture/prototype",
+    HOME: "/fixture/home",
+    DOLT_PORT: "3306",
+    DOLT_USER: "root",
+    DOLT_PASSWORD: "",
+    DOLT_DATABASE: "fixture",
+  };
   assertThrows(
-    () => fixtureClientOptions(() => undefined),
-    "missing required fixture environment variable: DENO_BIN",
+    () => fixtureClientOptions((name) => fixtureEnvironment[name]),
+    "missing required fixture environment variable: DOLT_HOST",
   );
 });

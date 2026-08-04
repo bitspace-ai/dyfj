@@ -1,6 +1,11 @@
 import { testSourcesFromPaths } from "../prototype/scripts/check-test-files.ts";
 import { assertIntegrationTestAssignments } from "../prototype/scripts/integration-test-assignment.ts";
-import { type GateLane, runGate } from "./aggregate-test-gate.ts";
+import { integrationChildEnvironment } from "../prototype/scripts/integration-child-environment.ts";
+import {
+  type GateLane,
+  productionLanes,
+  runGate,
+} from "./aggregate-test-gate.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -33,12 +38,16 @@ Deno.test("recursive test discovery includes nested test files", () => {
     testSourcesFromPaths([
       "prototype/src/root.test.ts",
       "prototype/src/nested/deep.test.ts",
+      "prototype/src/nested/component.spec.tsx",
+      "prototype/src/nested/worker.test.mts",
       "prototype/src/nested/not-test.ts",
       "prototype/mcp/tool.test.ts",
     ]),
     [
       "prototype/mcp/tool.test.ts",
+      "prototype/src/nested/component.spec.tsx",
       "prototype/src/nested/deep.test.ts",
+      "prototype/src/nested/worker.test.mts",
       "prototype/src/root.test.ts",
     ],
   );
@@ -50,18 +59,49 @@ Deno.test("integration tests must have an explicit lane assignment", () => {
       assertIntegrationTestAssignments(
         [
           "src/assigned.integration.test.ts",
+          "src/assigned.integration.spec.tsx",
           "src/unassigned.integration.test.ts",
         ],
-        ["src/assigned.integration.test.ts"],
+        [
+          "src/assigned.integration.spec.tsx",
+          "src/assigned.integration.test.ts",
+        ],
       ),
     "missing=src/unassigned.integration.test.ts",
+  );
+});
+
+Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", () => {
+  const lane = productionLanes("/repo").find((candidate) =>
+    candidate.label === "Isolated Dolt integration lane"
+  );
+  if (!lane) throw new Error("isolated Dolt integration lane is missing");
+  assertStringIncludes(lane.args.join(" "), "CARGO_HOME");
+  assertStringIncludes(lane.args.join(" "), "RUSTUP_HOME");
+  assertEquals(lane.env?.TMPDIR, "/tmp");
+  assertEquals(
+    integrationChildEnvironment(
+      { SQLX_OFFLINE: "true" },
+      (name) =>
+        ({
+          CARGO_HOME: "/custom/cargo",
+          RUSTUP_HOME: "/custom/rustup",
+        })[name],
+    ),
+    {
+      CARGO_HOME: "/custom/cargo",
+      RUSTUP_HOME: "/custom/rustup",
+      SQLX_OFFLINE: "true",
+    },
   );
 });
 
 Deno.test("aggregate lane children do not inherit unrelated environment", async () => {
   const sentinel = "DYFJ_AGGREGATE_SENTINEL";
   const prior = Deno.env.get(sentinel);
+  const priorTmpdir = Deno.env.get("TMPDIR");
   Deno.env.set(sentinel, "must-not-reach-child");
+  Deno.env.set("TMPDIR", "/not-a-granted-temp-root");
   try {
     const code = await runGate({
       lanes: [{
@@ -71,7 +111,7 @@ Deno.test("aggregate lane children do not inherit unrelated environment", async 
           "eval",
           `if (Deno.env.get(${
             JSON.stringify(sentinel)
-          }) !== undefined) Deno.exit(1);`,
+          }) !== undefined || Deno.env.get("TMPDIR") !== undefined) Deno.exit(1);`,
         ],
       }],
       out: { log: () => {}, error: () => {} },
@@ -80,6 +120,8 @@ Deno.test("aggregate lane children do not inherit unrelated environment", async 
   } finally {
     if (prior === undefined) Deno.env.delete(sentinel);
     else Deno.env.set(sentinel, prior);
+    if (priorTmpdir === undefined) Deno.env.delete("TMPDIR");
+    else Deno.env.set("TMPDIR", priorTmpdir);
   }
 });
 
@@ -155,4 +197,33 @@ Deno.test("aggregate gate stops its active lane on interruption", async () => {
     clearTimeout(abortTimer);
     if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
+});
+
+Deno.test("aggregate gate reports an interrupt after its final lane", async () => {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const abortController = new AbortController();
+  const code = await runGate({
+    signal: abortController.signal,
+    lanes: [{
+      label: "final lane",
+      command: "deno",
+      args: ["eval", "Deno.exit(0)"],
+    }],
+    out: {
+      log: (message) => {
+        logs.push(message);
+        if (message.startsWith("✓ final lane:")) {
+          abortController.abort("SIGTERM");
+        }
+      },
+      error: (message) => errors.push(message),
+    },
+  });
+
+  assertEquals(code, 143);
+  if (logs.includes("✓ aggregate test gate passed")) {
+    throw new Error("aggregate reported success after interruption");
+  }
+  assertEquals(errors, []);
 });

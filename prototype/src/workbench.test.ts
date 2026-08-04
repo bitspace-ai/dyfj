@@ -1037,13 +1037,25 @@ describe("paid escalation preflight", () => {
 
 describe("promptPaidEscalationTty (consent verdict)", () => {
   test("escalates instead of prompting in a non-interactive session", async () => {
-    // The test process has no TTY: the CLI driver must escalate (defer to an
-    // out-of-band operator), not throw or block.
-    const verdict = await promptPaidEscalationTty("paid model selected");
-    expect(verdict).toEqual({
-      decision: "escalate",
-      reason: expect.any(String),
+    const stdin = process.stdin as typeof process.stdin & { isTTY?: boolean };
+    const originalIsTTY = Object.getOwnPropertyDescriptor(stdin, "isTTY");
+    Object.defineProperty(stdin, "isTTY", {
+      configurable: true,
+      value: false,
     });
+    try {
+      const verdict = await promptPaidEscalationTty("paid model selected");
+      expect(verdict).toEqual({
+        decision: "escalate",
+        reason: expect.any(String),
+      });
+    } finally {
+      if (originalIsTTY) {
+        Object.defineProperty(stdin, "isTTY", originalIsTTY);
+      } else {
+        Reflect.deleteProperty(stdin, "isTTY");
+      }
+    }
   });
 });
 

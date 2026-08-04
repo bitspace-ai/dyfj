@@ -116,13 +116,17 @@ deno task check          # production and Vitest source typechecking
 deno task check:tests    # Vitest sources only
 deno task test           # checks first, then runs the prototype unit suite
 deno task verify-workbench-events
-(cd .. && deno task test) # whole-repository aggregate gate
+(cd .. && deno task test) # repository aggregate gate
 ```
 
 The root aggregate gate runs the schema, Rust, and isolated-Dolt integration
-lanes in addition to this prototype unit suite. Its temporary Dolt repository
-and SQL server are created and removed for the run, so it neither reads `.env`
-nor uses an operator database.
+lanes in addition to this prototype unit suite. It owns a temporary Dolt
+repository and SQL server, with cleanup on normal completion and handled
+failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane
+process receives SIGTERM followed by a bounded wait and possible SIGKILL. The
+Rust tracer test retains
+its manual-run `.env` loader, but the fixture's explicit `DATABASE_URL` takes
+precedence, so the lane does not use an operator database.
 
 For Workbench failures that look like "the model never responds", check the selected local provider directly before debugging DYFJ. For MLX-LM Server:
 

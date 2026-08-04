@@ -3,8 +3,9 @@ import {
   startIsolatedDoltFixture,
 } from "./isolated-dolt-fixture.ts";
 import { integrationTestAssignments } from "./integration-test-assignment.ts";
-
-const inheritedEnvironmentNames = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP"];
+import { resolveEsbuildBinary } from "./esbuild-binary.ts";
+import { integrationChildEnvironment } from "./integration-child-environment.ts";
+import { fileURLToPath } from "node:url";
 
 class IntegrationInterruptedError extends Error {
   constructor() {
@@ -67,15 +68,6 @@ async function statusOrAbort(
   throw new IntegrationInterruptedError();
 }
 
-function safeEnvironment(): Record<string, string> {
-  return Object.fromEntries(
-    inheritedEnvironmentNames.flatMap((name) => {
-      const value = Deno.env.get(name);
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
-}
-
 async function runChecked(
   command: string,
   args: string[],
@@ -85,7 +77,7 @@ async function runChecked(
   const child = new Deno.Command(command, {
     args,
     cwd: options.cwd,
-    env: { ...safeEnvironment(), ...options.env },
+    env: integrationChildEnvironment(options.env),
     clearEnv: true,
     stdout: "inherit",
     stderr: "inherit",
@@ -96,9 +88,12 @@ async function runChecked(
   }
 }
 
-const repoRoot = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
-const prototypeRoot = new URL("..", import.meta.url).pathname.replace(
-  /\/$/,
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url)).replace(
+  /[\\\/]$/,
+  "",
+);
+const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
+  /[\\\/]$/,
   "",
 );
 const abortController = new AbortController();
@@ -121,16 +116,18 @@ try {
   });
   throwIfAborted(abortController.signal);
   await seedFixtureMemories(fixture.env);
+  const esbuildBinary = await resolveEsbuildBinary(prototypeRoot);
   const env = {
     ...fixture.env,
     DYFJ_ROOT: prototypeRoot,
     DENO_BIN: Deno.execPath(),
+    ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}`,
   };
   await runChecked("deno", [
     "run",
     "-P=test",
     "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
-    "--allow-run=bash,deno,dolt,node_modules/.deno/esbuild@0.27.7/node_modules/esbuild/bin/esbuild,node_modules/.deno/@esbuild+darwin-arm64@0.27.7/node_modules/@esbuild/darwin-arm64/bin/esbuild",
+    `--allow-run=bash,deno,dolt,${esbuildBinary}`,
     "npm:vitest@3.2.6",
     "run",
     "--root",

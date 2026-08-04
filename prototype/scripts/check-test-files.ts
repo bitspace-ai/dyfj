@@ -1,9 +1,10 @@
 import { assertIntegrationTestAssignments } from "./integration-test-assignment.ts";
 
 const ignoredDirectories = new Set([".git", ".vitest-tmp", "node_modules"]);
+const vitestTestSourcePattern = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 export function isTestSource(path: string): boolean {
-  return path.endsWith(".test.ts");
+  return vitestTestSourcePattern.test(path);
 }
 
 export function testSourcesFromPaths(paths: string[]): string[] {

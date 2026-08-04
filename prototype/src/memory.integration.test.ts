@@ -1,9 +1,6 @@
 /**
- * Hermetic SQL integration coverage for memory retrieval.
- *
- * The aggregate fixture supplies the rows used here. This file deliberately
- * names only fixture data so it never reads or asserts against an operator
- * corpus.
+ * SQL integration coverage for memory retrieval in the isolated aggregate
+ * lane. The fixture supplies the connection and every row asserted here.
  */
 
 import { describe, expect, test } from "vitest";
@@ -31,6 +28,7 @@ describe("loadMemoriesByType (integration)", () => {
     expect(feedback.map((memory) => memory.slug)).toEqual([
       "fixture_feedback_shareable",
     ]);
+    expect(feedback[0]?.content).toContain("shareable content");
   });
 
   test("does not cross-contaminate requested types or an empty request", async () => {

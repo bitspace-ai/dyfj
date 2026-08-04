@@ -21,6 +21,7 @@ const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const shutdownTimeoutMs = 2_000;
 const readinessTimeoutMs = 10_000;
+const readinessProbeTimeoutMs = 1_000;
 const bindAttempts = 3;
 const fixtureEnvironmentNames = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP"];
 
@@ -38,6 +39,12 @@ interface FixturePool {
   end(): Promise<void>;
 }
 
+interface FixtureConnection {
+  execute(sql: string | { sql: string; timeout: number }): Promise<unknown>;
+  end(): Promise<void>;
+  destroy(): void;
+}
+
 function createFixturePool(env: Record<string, string>): FixturePool {
   // Deno's npm declaration bridge drops mysql2's mixed-in promise methods.
   return mysql.createPool({
@@ -47,7 +54,21 @@ function createFixturePool(env: Record<string, string>): FixturePool {
     password: env.DOLT_PASSWORD,
     database: env.DOLT_DATABASE,
     connectionLimit: 1,
+    connectTimeout: readinessProbeTimeoutMs,
   }) as unknown as FixturePool;
+}
+
+function createFixtureConnection(
+  env: Record<string, string>,
+): Promise<FixtureConnection> {
+  return mysql.createConnection({
+    host: env.DOLT_HOST,
+    port: Number(env.DOLT_PORT),
+    user: env.DOLT_USER,
+    password: env.DOLT_PASSWORD,
+    database: env.DOLT_DATABASE,
+    connectTimeout: readinessProbeTimeoutMs,
+  }) as unknown as Promise<FixtureConnection>;
 }
 
 class FixtureSetupAbortedError extends Error {
@@ -103,12 +124,22 @@ async function runChecked(
     stdout: "piped",
     stderr: "piped",
   }).spawn();
+  const outputPromise = outputOrAbort(child, options.signal);
+  let inputError: unknown;
   if (options.input !== undefined) {
     const writer = child.stdin.getWriter();
-    await writer.write(encoder.encode(options.input));
-    await writer.close();
+    try {
+      await writer.write(encoder.encode(options.input));
+      await writer.close();
+    } catch (error) {
+      inputError = error;
+      await stopChild(child);
+    } finally {
+      writer.releaseLock();
+    }
   }
-  const output = await outputOrAbort(child, options.signal);
+  const output = await outputPromise;
+  if (inputError !== undefined && output.code === 0) throw inputError;
   const stdout = decoder.decode(output.stdout);
   const stderr = decoder.decode(output.stderr);
   if (output.code !== 0) {
@@ -128,7 +159,66 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-async function waitForSql(
+async function executeReadinessProbe(
+  connection: FixtureConnection,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  throwIfAborted(signal);
+  const execution = connection.execute({ sql: "SELECT 1", timeout: timeoutMs });
+  if (!signal) {
+    await execution;
+    return;
+  }
+
+  let onAbort: (() => void) | undefined;
+  const result = await Promise.race([
+    execution.then(
+      () => ({ type: "complete" as const }),
+      (error) => ({ type: "error" as const, error }),
+    ),
+    new Promise<{ type: "aborted" }>((resolve) => {
+      onAbort = () => resolve({ type: "aborted" });
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }),
+  ]);
+  if (onAbort) signal.removeEventListener("abort", onAbort);
+  if (result.type === "complete") return;
+  if (result.type === "error") throw result.error;
+
+  connection.destroy();
+  throw new FixtureSetupAbortedError();
+}
+
+async function connectOrAbort(
+  env: Record<string, string>,
+  signal: AbortSignal | undefined,
+): Promise<FixtureConnection> {
+  const connection = createFixtureConnection(env);
+  if (!signal) return await connection;
+
+  let onAbort: (() => void) | undefined;
+  const result = await Promise.race([
+    connection.then(
+      (value) => ({ type: "connected" as const, value }),
+      (error) => ({ type: "error" as const, error }),
+    ),
+    new Promise<{ type: "aborted" }>((resolve) => {
+      onAbort = () => resolve({ type: "aborted" });
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }),
+  ]);
+  if (onAbort) signal.removeEventListener("abort", onAbort);
+  if (result.type === "connected") return result.value;
+  if (result.type === "error") throw result.error;
+
+  void connection.then((value) => value.destroy(), () => undefined);
+  throw new FixtureSetupAbortedError();
+}
+
+export async function waitForSql(
   env: Record<string, string>,
   signal: AbortSignal | undefined,
   timeoutMs = readinessTimeoutMs,
@@ -137,15 +227,25 @@ async function waitForSql(
   let lastError: unknown;
   while (Date.now() - start < timeoutMs) {
     throwIfAborted(signal);
+    let connection: FixtureConnection | undefined;
     try {
-      const pool = createFixturePool(env);
-      await pool.execute("SELECT 1");
-      await pool.end();
+      connection = await connectOrAbort(env, signal);
+      const remainingMs = timeoutMs - (Date.now() - start);
+      await executeReadinessProbe(
+        connection,
+        signal,
+        Math.max(1, Math.min(readinessProbeTimeoutMs, remainingMs)),
+      );
       return;
     } catch (error) {
       lastError = error;
       throwIfAborted(signal);
       await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      if (connection) {
+        if (signal?.aborted) connection.destroy();
+        else await connection.end().catch(() => undefined);
+      }
     }
   }
   throw new Error(
@@ -205,7 +305,7 @@ async function applySqlFiles(
 }
 
 function databaseNameFor(root: string): string {
-  const name = root.split("/").at(-1);
+  const name = root.split(/[\\/]/).at(-1);
   if (!name || !/^[A-Za-z0-9_]+$/.test(name)) {
     throw new Error(
       `fixture directory does not form a safe database name: ${root}`,
@@ -234,8 +334,8 @@ async function startSqlServer(
       cwd: root,
       clearEnv: true,
       env: fixtureEnvironment(),
-      stdout: "piped",
-      stderr: "piped",
+      stdout: "null",
+      stderr: "null",
     }).spawn();
     const env = {
       DOLT_HOST: "127.0.0.1",
@@ -299,14 +399,21 @@ export async function startIsolatedDoltFixture(
       ...fixture,
       cleanup: async () => {
         if (cleaned) return;
-        cleaned = true;
         if (child) await stopChild(child);
         await Deno.remove(root, { recursive: true });
+        cleaned = true;
       },
     };
   } catch (error) {
     if (child) await stopChild(child);
-    await Deno.remove(root, { recursive: true }).catch(() => undefined);
+    try {
+      await Deno.remove(root, { recursive: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "isolated Dolt fixture setup and cleanup failed",
+      );
+    }
     throw error;
   }
 }
