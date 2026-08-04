@@ -20,7 +20,7 @@
  */
 
 import { Client } from "npm:@modelcontextprotocol/sdk@1.29.0/client";
-import { StdioClientTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/client/stdio";
+import { StdioClientTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/client/stdio.js";
 import process from "node:process";
 
 // ── Types (mirroring tool inputs/outputs) ─────────────────────────────────────
@@ -52,29 +52,40 @@ const SERVER_BIN = process.env.DENO_BIN ?? "deno";
 const DYFJ_ROOT = process.env.DYFJ_ROOT ?? `${process.env.HOME}/.dyfj`;
 const SERVER_SCRIPT = `${DYFJ_ROOT}/mcp/server.ts`;
 
+export interface DyfjMcpClientOptions {
+  serverExecutable?: string;
+  serverScript?: string;
+  childEnv?: Record<string, string>;
+}
+
 export class DyfjMcpClient {
   private client: Client;
   private transport: StdioClientTransport | null = null;
   private connected = false;
+  private readonly options: DyfjMcpClientOptions;
 
-  constructor() {
+  constructor(options: DyfjMcpClientOptions = {}) {
+    this.options = options;
     this.client = new Client({ name: "dyfj-extension", version: "1.0.0" });
   }
 
   async connect(): Promise<void> {
     if (this.connected) return;
+    const childEnv = this.options.childEnv === undefined
+      ? { ...process.env }
+      : { ...this.options.childEnv };
+    childEnv.HOME ??= process.env.HOME ?? "";
+    const port = childEnv.DOLT_PORT ?? "3306";
     this.transport = new StdioClientTransport({
-      command: SERVER_BIN,
+      command: this.options.serverExecutable ?? SERVER_BIN,
       args: [
         "run",
-        "--allow-net=127.0.0.1:3306",
+        "--sloppy-imports",
+        `--allow-net=127.0.0.1:${port}`,
         "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE",
-        SERVER_SCRIPT,
+        this.options.serverScript ?? SERVER_SCRIPT,
       ],
-      env: { ...process.env, HOME: process.env.HOME ?? "" } as Record<
-        string,
-        string
-      >,
+      env: childEnv,
     });
     await this.client.connect(this.transport);
     this.connected = true;

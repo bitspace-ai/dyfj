@@ -293,12 +293,19 @@ The coordination primitive is visibility-first and intended to make concurrent a
 Useful validation tasks:
 
 ```sh
-deno task test            # runs deno task check first
+deno task test            # whole-repository aggregate gate
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events
 ```
+
+`deno task test` runs the source and recursive test-file typechecks, the
+prototype unit suite, current and historical schema checks, database-free Rust
+tests, and an isolated-Dolt integration lane (including UDS and MCP round
+trips). The integration lane creates and removes its own temporary Dolt
+repository and SQL server; it does not read `.env` or use the operator's Dolt
+database. It requires Deno, Dolt, and the pinned Rust toolchain.
 
 Before treating a Workbench model failure as a DYFJ problem, validate that the selected local provider can actually generate, not just report health. For MLX-LM Server:
 

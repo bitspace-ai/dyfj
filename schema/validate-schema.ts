@@ -188,7 +188,11 @@ async function validateFileSequence(
   }
 }
 
-export async function validateSchema(): Promise<void> {
+export type SchemaValidationScope = "all" | "current" | "history";
+
+export async function validateSchema(
+  scope: SchemaValidationScope = "all",
+): Promise<void> {
   const schemaDir = new URL("./", import.meta.url);
   const plan = await readSchemaApplyPlan(schemaDir);
   assertSchemaApplyPlan(plan);
@@ -197,22 +201,39 @@ export async function validateSchema(): Promise<void> {
     ...plan.current,
     ...plan.catalog,
   ];
-  await validateFileSequence(schemaDir, currentFiles, "current schema");
+  if (scope === "all" || scope === "current") {
+    await validateFileSequence(schemaDir, currentFiles, "current schema");
+  }
   // Forward migrations are an upgrade path for pre-baseline databases, so they
   // are validated on top of the historical replay end-state (the old-world
   // shape), not on top of the baseline they are already folded into.
-  await validateFileSequence(
-    schemaDir,
-    [...plan.history, ...plan.migrations],
-    "historical replay + forward migrations",
-  );
+  if (scope === "all" || scope === "history") {
+    await validateFileSequence(
+      schemaDir,
+      [...plan.history, ...plan.migrations],
+      "historical replay + forward migrations",
+    );
+  }
 
   console.log("Schema validation passed.");
 }
 
 if (import.meta.main) {
   try {
-    await validateSchema();
+    const argument = Deno.args[0];
+    const scope = argument === "--current-only"
+      ? "current"
+      : argument === "--history-only"
+      ? "history"
+      : argument === undefined
+      ? "all"
+      : undefined;
+    if (!scope) {
+      throw new Error(
+        "usage: validate-schema.ts [--current-only|--history-only]",
+      );
+    }
+    await validateSchema(scope);
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     Deno.exit(1);

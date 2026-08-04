@@ -10,9 +10,9 @@
  * everything the server writes to the console, and asserts the canary (and
  * the turn text) never appears.
  *
- * Real dependencies, per the repo testing posture: hits the live Dolt
- * sql-server at 127.0.0.1:3306 (canary rows are inserted and removed around
- * the test) and stands up a loopback stub that speaks the OpenAI-compatible
+ * The aggregate integration fixture provides the isolated Dolt sql-server;
+ * this test adds and removes only its canary rows there, then stands up a
+ * loopback stub that speaks the OpenAI-compatible
  * chat/completions wire as the "model". Console capture hooks console.*,
  * the channel the narration path uses.
  */
@@ -102,55 +102,59 @@ describe("server console canary (integration)", () => {
     }
   });
 
-  test("a real turn writes no private context or content to the console", async () => {
-    const captured: string[] = [];
-    const original = {
-      log: console.log,
-      info: console.info,
-      warn: console.warn,
-      error: console.error,
-    };
-    const record =
-      (level: keyof typeof original) => (...parts: unknown[]) => {
-        captured.push(`${level}: ${parts.map(String).join(" ")}`);
+  test(
+    "a real turn writes no private context or content to the console",
+    async () => {
+      const captured: string[] = [];
+      const original = {
+        log: console.log,
+        info: console.info,
+        warn: console.warn,
+        error: console.error,
       };
-    console.log = record("log");
-    console.info = record("info");
-    console.warn = record("warn");
-    console.error = record("error");
+      const record =
+        (level: keyof typeof original) => (...parts: unknown[]) => {
+          captured.push(`${level}: ${parts.map(String).join(" ")}`);
+        };
+      console.log = record("log");
+      console.info = record("info");
+      console.warn = record("warn");
+      console.error = record("error");
 
-    let result: { text?: string };
-    try {
-      const client = await connectUnixClient(server.socketPath, {
-        onStream: () => {},
-      });
+      let result: { text?: string };
       try {
-        result = await client.request("turn", {
-          prompt: "canary leak integration test turn",
-          routingOptions: { modelId: MODEL_SLUG },
-        }) as { text?: string };
+        const client = await connectUnixClient(server.socketPath, {
+          onStream: () => {},
+        });
+        try {
+          result = await client.request("turn", {
+            prompt: "canary leak integration test turn",
+            routingOptions: { modelId: MODEL_SLUG },
+          }) as { text?: string };
+        } finally {
+          client.close();
+        }
       } finally {
-        client.close();
+        console.log = original.log;
+        console.info = original.info;
+        console.warn = original.warn;
+        console.error = original.error;
       }
-    } finally {
-      console.log = original.log;
-      console.info = original.info;
-      console.warn = original.warn;
-      console.error = original.error;
-    }
 
-    // The turn really ran end to end through the stub model.
-    expect(result.text).toContain(STUB_REPLY);
+      // The turn really ran end to end through the stub model.
+      expect(result.text).toContain(STUB_REPLY);
 
-    const consoleOutput = captured.join("\n");
-    // The operational summary line is the only expected turn output.
-    expect(consoleOutput).toMatch(/\[turn\] session=/);
-    // The canary must never reach the server console: not the private memory
-    // name, not its content, not the model's response text.
-    expect(consoleOutput).not.toContain(MEMORY_NAME);
-    expect(consoleOutput).not.toContain(MEMORY_CONTENT);
-    expect(consoleOutput).not.toContain(STUB_REPLY);
-    // Nor any memory-index narration of the receipt.
-    expect(consoleOutput).not.toContain("memory-index:");
-  }, 60_000);
+      const consoleOutput = captured.join("\n");
+      // The operational summary line is the only expected turn output.
+      expect(consoleOutput).toMatch(/\[turn\] session=/);
+      // The canary must never reach the server console: not the private memory
+      // name, not its content, not the model's response text.
+      expect(consoleOutput).not.toContain(MEMORY_NAME);
+      expect(consoleOutput).not.toContain(MEMORY_CONTENT);
+      expect(consoleOutput).not.toContain(STUB_REPLY);
+      // Nor any memory-index narration of the receipt.
+      expect(consoleOutput).not.toContain("memory-index:");
+    },
+    60_000,
+  );
 });
