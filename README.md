@@ -293,12 +293,25 @@ The coordination primitive is visibility-first and intended to make concurrent a
 Useful validation tasks:
 
 ```sh
-deno task test            # runs deno task check first
+deno task test            # repository aggregate gate
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events
 ```
+
+`deno task test` runs the source and recursive test-file typechecks, the
+prototype unit suite, current and historical schema checks, non-ignored Rust
+tests using offline SQLx metadata and no inherited `DATABASE_URL`, and an
+isolated-Dolt integration lane (including UDS and MCP round trips). The
+integration lane owns a temporary Dolt repository and SQL server, with cleanup
+on normal completion and handled failure. SIGINT and SIGTERM request
+cooperative cancellation; the direct lane process receives SIGTERM followed by
+a bounded wait and possible SIGKILL. The Rust tracer test retains its
+manual-run `.env`
+loader, but the fixture's explicit `DATABASE_URL` takes precedence, so the lane
+does not use the operator's Dolt database. It requires Deno, Dolt, and the
+pinned Rust toolchain.
 
 Before treating a Workbench model failure as a DYFJ problem, validate that the selected local provider can actually generate, not just report health. For MLX-LM Server:
 

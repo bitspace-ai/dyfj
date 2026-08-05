@@ -1,8 +1,8 @@
 {
   "tasks": {
-    "check": "deno check --sloppy-imports src/http.ts src/workbench.ts src/jsonrpc.ts src/jsonrpc-peer.ts src/uds-server.ts src/uds-path.ts src/uds-client.ts src/uds-serve.ts mcp/server.ts src/cli.ts && deno task check:tests",
-    "check:tests": "deno check --sloppy-imports src/*.test.ts mcp/*.test.ts scripts/*.test.ts",
-    "test": "deno task check && TMPDIR=.vitest-tmp deno run -P=test --env-file=.env npm:vitest@3.2.6 run --root . --pool=threads",
+    "check": "deno check --sloppy-imports src/http.ts src/workbench.ts src/jsonrpc.ts src/jsonrpc-peer.ts src/uds-server.ts src/uds-path.ts src/uds-client.ts src/uds-serve.ts mcp/server.ts src/cli.ts scripts/esbuild-binary.ts scripts/integration-child-environment.ts scripts/run-vitest.ts scripts/isolated-dolt-fixture.ts scripts/isolated-dolt-integration.ts scripts/integration-test-assignment.ts && deno task check:tests",
+    "check:tests": "deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP --allow-read=. --allow-run=deno scripts/check-test-files.ts",
+    "test": "deno task check && TMPDIR=.vitest-tmp deno run --allow-env --allow-read=. --allow-run=deno scripts/run-vitest.ts run --root . --pool=threads --exclude '**/*.integration.{test,spec}.?(c|m)[jt]s?(x)'",
     "start": "deno run --no-prompt -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench": "deno run --no-prompt -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench-http": "deno run --no-prompt -P=workbench-http --env-file=.env --sloppy-imports src/http.ts",
@@ -28,9 +28,7 @@
       ],
       "net": true,
       "run": [
-        "bash",
-        "node_modules/.deno/esbuild@0.27.7/node_modules/esbuild/bin/esbuild",
-        "node_modules/.deno/@esbuild+darwin-arm64@0.27.7/node_modules/@esbuild/darwin-arm64/bin/esbuild"
+        "bash"
       ],
       "ffi": [
         "node_modules"

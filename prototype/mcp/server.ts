@@ -25,13 +25,16 @@
  * SQL directly in each client.
  */
 
-import { McpServer } from "npm:@modelcontextprotocol/sdk@1.29.0/server/mcp";
-import { StdioServerTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/server/stdio";
+import { McpServer } from "npm:@modelcontextprotocol/sdk@1.29.0/server/mcp.js";
+import { StdioServerTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/server/stdio.js";
 import { z } from "npm:zod@4.4.3";
 import { ulid } from "npm:ulid@2.4.0";
 import mysql from "npm:mysql2@3.22.3/promise";
 import { buildDoltPoolOptions, type SqlParam } from "./dolt-config";
 import { listMcpMemories, readMcpMemory } from "./memory-tools";
+
+type McpMemoryType = "user" | "feedback" | "project" | "reference";
+type McpSessionStatus = "active" | "completed";
 
 // ── Dolt connection (TCP → sql-server) ────────────────────────────────────────
 // Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.
@@ -46,7 +49,10 @@ function getPool(): mysql.Pool {
 }
 
 /** Run a SELECT and return rows as plain objects */
-async function doltQuery(sql: string, params: SqlParam[] = []): Promise<Record<string, string>[]> {
+async function doltQuery(
+  sql: string,
+  params: SqlParam[] = [],
+): Promise<Record<string, string>[]> {
   const [rows] = await getPool().execute(sql, params);
   return (rows as mysql.RowDataPacket[]).map((r) => {
     const out: Record<string, string> = {};
@@ -59,7 +65,6 @@ async function doltQuery(sql: string, params: SqlParam[] = []): Promise<Record<s
 async function doltExec(sql: string, params: SqlParam[] = []): Promise<void> {
   await getPool().execute(sql, params);
 }
-
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
@@ -75,8 +80,10 @@ server.tool(
   "Load the full content of a client-safe or public project or reference memory. " +
     "Call this before starting work to pull relevant context. " +
     "Available slugs are listed by calling list_memories().",
-  { slug: z.string().describe("Memory slug, e.g. 'project_dyfj' or 'reference_1password_cli'") },
-  ({ slug }) => readMcpMemory(doltQuery, slug),
+  {
+    slug: z.string().describe("Memory slug from list_memories"),
+  },
+  ({ slug }: { slug: string }) => readMcpMemory(doltQuery, slug),
 );
 
 // ── Tool: list_memories ───────────────────────────────────────────────────────
@@ -91,7 +98,7 @@ server.tool(
       .optional()
       .describe("Filter by memory type (omit for all)"),
   },
-  ({ type }) => listMcpMemories(doltQuery, type),
+  ({ type }: { type?: McpMemoryType }) => listMcpMemories(doltQuery, type),
 );
 
 // ── Tool: write_memory ────────────────────────────────────────────────────────
@@ -109,7 +116,15 @@ server.tool(
     description: z.string().describe("One-line summary for the index"),
     content: z.string().describe("Full memory content (markdown)"),
   },
-  async ({ slug, name, type, description, content }) => {
+  async (
+    { slug, name, type, description, content }: {
+      slug: string;
+      name: string;
+      type: McpMemoryType;
+      description: string;
+      content: string;
+    },
+  ) => {
     const id = ulid();
     await doltExec(
       `INSERT INTO memories (memory_id, slug, type, name, description, content) ` +
@@ -125,7 +140,7 @@ server.tool(
         },
       ],
     };
-  }
+  },
 );
 
 // ── Tool: start_session ───────────────────────────────────────────────────────
@@ -144,25 +159,32 @@ server.tool(
       .optional()
       .describe(
         "Optional stable slug, e.g. '20260415-dyfj-mcp-server'. " +
-          "Auto-generated from timestamp + task if omitted."
+          "Auto-generated from timestamp + task if omitted.",
       ),
     session_name: z
       .string()
       .optional()
       .describe("Optional 4-word human-readable session name"),
   },
-  async ({ task_description, slug, session_name }) => {
+  async (
+    { task_description, slug, session_name }: {
+      task_description: string;
+      slug?: string;
+      session_name?: string;
+    },
+  ) => {
     const id = ulid();
     const now = new Date();
     const ts = now.toISOString().slice(0, 10).replace(/-/g, "");
     const hms = now.toISOString().slice(11, 23).replace(/[:.]/g, "");
-    const derivedSlug =
-      slug ??
-      `${ts}T${hms}-${task_description
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .slice(0, 40)
-        .replace(/-$/, "")}`;
+    const derivedSlug = slug ??
+      `${ts}T${hms}-${
+        task_description
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .slice(0, 40)
+          .replace(/-$/, "")
+      }`;
 
     await doltExec(
       `INSERT INTO sessions (session_id, slug, session_name, task_description, status, progress_done, progress_total) ` +
@@ -177,7 +199,7 @@ server.tool(
         },
       ],
     };
-  }
+  },
 );
 
 // ── Tool: update_session ──────────────────────────────────────────────────────
@@ -204,10 +226,18 @@ server.tool(
       .string()
       .optional()
       .describe(
-        "Freeform session content — context, decisions, verification notes (markdown)"
+        "Freeform session content — context, decisions, verification notes (markdown)",
       ),
   },
-  async ({ session_id, status, progress_done, progress_total, content }) => {
+  async (
+    { session_id, status, progress_done, progress_total, content }: {
+      session_id: string;
+      status: McpSessionStatus;
+      progress_done: number;
+      progress_total: number;
+      content?: string;
+    },
+  ) => {
     await doltExec(
       `UPDATE sessions SET status = ?, progress_done = ?, progress_total = ?, ` +
         `content = COALESCE(?, content) WHERE session_id = ?;`,
@@ -217,11 +247,12 @@ server.tool(
       content: [
         {
           type: "text",
-          text: `Session ${session_id} updated: status=${status} progress=${progress_done}/${progress_total}`,
+          text:
+            `Session ${session_id} updated: status=${status} progress=${progress_done}/${progress_total}`,
         },
       ],
     };
-  }
+  },
 );
 
 // ── Tool: list_sessions ──────────────────────────────────────────────────────────
@@ -243,7 +274,9 @@ server.tool(
       .optional()
       .describe("Filter by status (omit for all)"),
   },
-  async ({ limit = 10, status }) => {
+  async (
+    { limit = 10, status }: { limit?: number; status?: McpSessionStatus },
+  ) => {
     const where = status ? "WHERE status = ?" : "";
     const params: SqlParam[] = status ? [status, limit] : [limit];
     const rows = await doltQuery(
@@ -260,10 +293,12 @@ server.tool(
       const prog = r.progress_total !== "0"
         ? ` [${r.progress_done}/${r.progress_total}]`
         : "";
-      return `${(r.created_at ?? "").slice(0, 16)} | ${r.status}${prog} | ${r.task_description}${name}\n  id: ${r.session_id}\n  slug: ${r.slug}`;
+      return `${
+        (r.created_at ?? "").slice(0, 16)
+      } | ${r.status}${prog} | ${r.task_description}${name}\n  id: ${r.session_id}\n  slug: ${r.slug}`;
     });
     return { content: [{ type: "text", text: lines.join("\n\n") }] };
-  }
+  },
 );
 
 // ── Tool: get_session ────────────────────────────────────────────────────────────
@@ -275,9 +310,11 @@ server.tool(
     "then continue from where it left off using update_session().",
   {
     session_id: z.string().optional().describe("session_id from list_sessions"),
-    slug: z.string().optional().describe("session slug (alternative to session_id)"),
+    slug: z.string().optional().describe(
+      "session slug (alternative to session_id)",
+    ),
   },
-  async ({ session_id, slug }) => {
+  async ({ session_id, slug }: { session_id?: string; slug?: string }) => {
     if (!session_id && !slug) {
       return {
         content: [{ type: "text", text: "Provide either session_id or slug." }],
@@ -294,7 +331,10 @@ server.tool(
     );
     if (rows.length === 0) {
       return {
-        content: [{ type: "text", text: `Session not found. Use list_sessions() to find valid IDs.` }],
+        content: [{
+          type: "text",
+          text: `Session not found. Use list_sessions() to find valid IDs.`,
+        }],
         isError: true,
       };
     }
@@ -311,7 +351,7 @@ server.tool(
       s.content ? `## Session Content\n\n${s.content}` : "*(no content yet)*",
     ].filter(Boolean).join("\n");
     return { content: [{ type: "text", text: header }] };
-  }
+  },
 );
 
 // ── Start ─────────────────────────────────────────────────────────────────────

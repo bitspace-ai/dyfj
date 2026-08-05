@@ -8,6 +8,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- Rust event writes now bind `TIMESTAMP(6)` values as fixed-width text containing UTC clock fields, avoiding Dolt's prepared temporal-value decoding error for leading-zero fractional seconds; the live schema round trip pins the affected case after switching the connection from a non-UTC write timezone to UTC before reading.
+
 - The default prototype test gate now typechecks its Vitest sources under `src/`, `mcp/`, and `scripts/` before running them, so stale test fixtures and callbacks cannot bypass the repository's strict TypeScript check.
 
 - OpenAI-compatible turns now detect at least two unmatched `<tool_call>` openings left after structured and textual tool-call recovery. The detector matches markers in order, counts the whole accepted model text, declines to classify oversized direct inputs rather than inspecting a truncated prefix, and reports only a bounded unmatched-opening count. The runtime preserves the provider text but emits a conspicuous content-free warning before the terminal receipt, records that bounded count on the provider-call span, and never executes the malformed markup.
@@ -36,6 +38,19 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 - Local by default: a bare turn (no explicit model, tier, or hint) now routes to the registry's local tier-0 default whenever a genuinely local, routable row exists — even when the standing companion default names a hosted model — and with no such row it fails with a named error rather than falling back to a hosted model (`dyfj status` then shows `bare-turn route: unavailable`). Hosted inference is a deliberate per-task escalation — explicit `--model`/`/model` or a hosted `--tier`, plus the existing per-turn paid-consent gate — never an ambient default inherited from standing config. Locality is decided by provider + loopback endpoint, not the tier label alone: a mis-catalogued "tier 0" row naming a hosted provider is excluded from bare-default, hint, and explicit tier-0 routing alike, because tier-0 selection is exempt from the paid-consent preflight. A bare turn that bypassed a hosted configured default carries the distinct route reason `default_local` on its receipt, and a hosted turn without consent still fails closed exactly as before; a configured default that resolves to a local model is honored unchanged (`default_config`).
 
 ### Added
+
+- `deno task test` is now a repository aggregate gate for the enumerated
+  source, test, schema, Rust, and integration lanes. It runs
+  source and recursive test-file typechecks, prototype unit tests, current and
+  historical schema checks, non-ignored Rust tests using offline SQLx metadata
+  and no inherited `DATABASE_URL`, and an isolated-Dolt integration lane with
+  UDS and MCP round trips. The integration lane owns a temporary repository and
+  SQL server, with cleanup on normal completion and handled failure. SIGINT and
+  SIGTERM request cooperative cancellation; the direct lane process receives
+  SIGTERM followed by a bounded wait and possible SIGKILL. The Rust tracer
+  retains its manual-run `.env` loader, but the fixture's explicit
+  `DATABASE_URL` takes precedence, so the lane does not use the operator
+  database.
 
 - The Workbench turn runtime now records a content-free `provider_call` span for each provider-call attempt it makes within a user turn, with its ordered purpose, model/provider/API, stop reason, and duration. Successfully returned calls also carry per-call token/cache/cost totals; failures omit usage/cost and carry a fixed safe classification, stop reason, and duration. Each user turn has a stable root span; provider-requested tools attach to their requesting provider span, while terminal turn/error events attach to the root. The existing aggregate `model_response` remains the replay record.
 
