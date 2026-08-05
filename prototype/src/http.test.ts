@@ -963,7 +963,12 @@ describe("GET /api/models", () => {
       loadModels: () =>
         Promise.resolve([
           ...pickerModels,
-          { ...pickerModels[1], slug: "gpt-6-preview", costInput: 0, costOutput: 0 },
+          {
+            ...pickerModels[1],
+            slug: "gpt-6-preview",
+            costInput: 0,
+            costOutput: 0,
+          },
         ]),
     });
     const response = await handler(
@@ -1228,6 +1233,21 @@ describe("session REST surface", () => {
     providerErrorClass: null,
     unparsedToolCallCount: null,
     unparsedToolCallCountIsLowerBound: null,
+    runnerKind: null,
+    runnerProfile: null,
+    runnerProtocol: null,
+    runnerProtocolVersion: null,
+    runnerStopReason: null,
+    runnerExternalSessionId: null,
+    runnerAgentName: null,
+    runnerAgentVersion: null,
+    runnerTransport: null,
+    runnerAccessRoute: null,
+    runnerCostBasis: null,
+    runnerWorkspace: null,
+    runnerCapabilities: null,
+    runnerEvidenceScope: null,
+    permissionVerdict: null,
     toolName: null,
     toolCallId: null,
     toolArguments: null,

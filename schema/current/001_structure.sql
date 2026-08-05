@@ -16,7 +16,10 @@ CREATE TABLE events (
         'model_selected',
         'budget_summary',
         'context_compressed',
-        'provider_call'
+        'provider_call',
+        'runner_selected',
+        'agent_permission',
+        'agent_response'
     ) NOT NULL,
     created_at                TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 
@@ -46,6 +49,26 @@ CREATE TABLE events (
     model_id                  VARCHAR(128),
     provider                  VARCHAR(64),
     api                       VARCHAR(64),
+
+    -- External-agent turns have a runner identity instead of a native model
+    -- identity. These fields mix profile-declared routing metadata with
+    -- Workbench-observed ACP protocol/session/capability/stop evidence; the
+    -- agent-owned inner loop remains opaque.
+    runner_kind               ENUM('external_agent'),
+    runner_profile            VARCHAR(128),
+    runner_protocol           VARCHAR(32),
+    runner_protocol_version   VARCHAR(32),
+    runner_stop_reason        ENUM('end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled'),
+    runner_external_session_id VARCHAR(256),
+    runner_agent_name         VARCHAR(128),
+    runner_agent_version      VARCHAR(64),
+    runner_transport          ENUM('local_stdio'),
+    runner_access_route       ENUM('local_sidecar', 'subscription_oauth', 'metered_direct_api', 'aggregator', 'independent_host'),
+    runner_cost_basis         ENUM('local_free', 'subscription_quota', 'metered_usd', 'unknown'),
+    runner_workspace          VARCHAR(1024),
+    runner_capabilities       JSON,
+    runner_evidence_scope     ENUM('outer_only'),
+    permission_verdict        ENUM('approved', 'denied', 'cancelled'),
 
     tokens_input              INT UNSIGNED,
     tokens_output             INT UNSIGNED,
@@ -78,6 +101,7 @@ CREATE TABLE events (
     INDEX idx_event_type (event_type, created_at),
     INDEX idx_model (model_id, created_at),
     INDEX idx_provider_call (trace_id, provider_call_order),
+    INDEX idx_runner (runner_kind, runner_profile, created_at),
     INDEX idx_principal (principal_id, principal_type, created_at),
     INDEX idx_trace (trace_id, span_id)
 );

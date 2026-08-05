@@ -30,8 +30,11 @@ import type { AskContextProfile } from "./repo-context";
 import { loadAgentsInstructions } from "./repo-context";
 import type { WorkspaceRootIdentity } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
+import type { AcpPermissionDecision, AcpPermissionPrompt } from "./acp-client";
 import type { PermissionLevel } from "./config";
 import type {
+  ExternalAgentTurnReceipt,
+  NativeTurnReceipt,
   SupersedingRetryStartedEvent,
   TurnAbortedEvent,
   UnparsedToolCallMarkupDetectedEvent,
@@ -158,6 +161,13 @@ export interface WorkbenchRuntimeInput {
   mode: Exclude<WorkbenchInvocation["mode"], "shell">;
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
+  /** Explicit external-loop selection. Absent preserves the native model/tool loop. */
+  runner?: { kind: "acp"; profile: "fixture" };
+  /** External-agent permission requests fail closed when this is absent. */
+  confirmExternalAgentPermission?: (
+    prompt: AcpPermissionPrompt,
+    signal: AbortSignal,
+  ) => Promise<AcpPermissionDecision>;
   turnId?: string;
   abortSignal?: AbortSignal;
   onCancellationClosed?: () => void;
@@ -440,36 +450,7 @@ export type WorkbenchRuntimeEvent =
     errorMessage: string;
   };
 
-export interface WorkbenchRuntimeResult {
-  sessionId: string;
-  traceId: string;
-  stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
-  text: string;
-  receipt: string;
-  model: {
-    displayName: string;
-    slug: string;
-    provider?: string;
-    api?: string;
-    tier: 0 | 1 | 2;
-  };
-  route: {
-    reason: string;
-  };
-  cost: {
-    estimatedUsd: number;
-    totalUsd: number;
-    paidInferenceUsed: boolean;
-  };
-  tokens: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    /** Reported or abort-estimated reasoning/thinking tokens across the turn. */
-    reasoning?: number;
-    totalCalls: number;
-  };
+export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
   context: {
     profile?: AskContextProfile;
     sources: string[];
@@ -482,6 +463,12 @@ export interface WorkbenchRuntimeResult {
   };
   validation?: WorkbenchValidationSummary;
 }
+
+export type ExternalAgentWorkbenchRuntimeResult = ExternalAgentTurnReceipt;
+
+export type WorkbenchRuntimeResult =
+  | NativeWorkbenchRuntimeResult
+  | ExternalAgentWorkbenchRuntimeResult;
 
 export type WorkbenchRunResult = WorkbenchRuntimeResult;
 
@@ -1455,9 +1442,35 @@ export async function runWorkbench(
   }
 }
 
+export function runWorkbenchRuntime(
+  runtimeInput: WorkbenchRuntimeInput & {
+    runner: { kind: "acp"; profile: "fixture" };
+  },
+): Promise<ExternalAgentWorkbenchRuntimeResult>;
+export function runWorkbenchRuntime(
+  runtimeInput: WorkbenchRuntimeInput & { runner?: undefined },
+): Promise<NativeWorkbenchRuntimeResult>;
+export function runWorkbenchRuntime(
+  runtimeInput: WorkbenchRuntimeInput,
+): Promise<WorkbenchRuntimeResult>;
 export async function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
 ): Promise<WorkbenchRuntimeResult> {
+  if (runtimeInput.runner?.kind === "acp") {
+    const { runExternalAgentWorkbenchRuntime } = await import(
+      "./external-agent-runtime"
+    );
+    return await runExternalAgentWorkbenchRuntime({
+      ...runtimeInput,
+      runner: runtimeInput.runner,
+    });
+  }
+  return await runNativeWorkbenchRuntime(runtimeInput);
+}
+
+async function runNativeWorkbenchRuntime(
+  runtimeInput: WorkbenchRuntimeInput,
+): Promise<NativeWorkbenchRuntimeResult> {
   const {
     eventExists,
     generateULID,

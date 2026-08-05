@@ -14,6 +14,7 @@ import {
   createWorkbenchSession,
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionWorkspace,
+  fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
   updateWorkbenchSession,
 } from "./sessions";
@@ -113,6 +114,23 @@ describe("fetchWorkbenchSessionWorkspace", () => {
         query: async () => [],
       }),
     ).toBeNull();
+  });
+});
+
+describe("fetchWorkbenchSessionWorkspaceRecord", () => {
+  test("distinguishes an existing session without a workspace from a missing session", async () => {
+    expect(
+      await fetchWorkbenchSessionWorkspaceRecord({
+        sessionId: "existing",
+        query: async () => [{ workspace: "" }],
+      }),
+    ).toEqual({ exists: true, workspace: null });
+    expect(
+      await fetchWorkbenchSessionWorkspaceRecord({
+        sessionId: "missing",
+        query: async () => [],
+      }),
+    ).toEqual({ exists: false, workspace: null });
   });
 });
 
@@ -439,6 +457,59 @@ describe("fetchWorkbenchSessionEvents", () => {
     });
   });
 
+  test("round-trips typed external-runner metadata", async () => {
+    const queries: string[] = [];
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      query: (sql) => {
+        queries.push(sql);
+        return Promise.resolve([{
+          event_id: "01RUNNER",
+          event_type: "agent_response",
+          trace_id: "0123",
+          span_id: "runner-span",
+          principal_id: "workbench",
+          content: "external answer",
+          stop_reason: "stop",
+          runner_kind: "external_agent",
+          runner_profile: "fixture",
+          runner_protocol: "acp",
+          runner_protocol_version: "1",
+          runner_stop_reason: "end_turn",
+          runner_external_session_id: "fixture-1",
+          runner_agent_name: "dyfj-acp-fixture",
+          runner_agent_version: "1.0.0",
+          runner_transport: "local_stdio",
+          runner_access_route: "local_sidecar",
+          runner_cost_basis: "local_free",
+          runner_workspace: "/tmp/workspace",
+          runner_capabilities: '["sessionCapabilities.close"]',
+          runner_evidence_scope: "outer_only",
+          permission_verdict: "approved",
+          created_at: "2026-08-05 10:00:00",
+        }]);
+      },
+    });
+    expect(queries[0]).toContain(
+      "CAST(runner_capabilities AS CHAR) AS runner_capabilities",
+    );
+    expect(event).toMatchObject({
+      eventType: "agent_response",
+      runnerKind: "external_agent",
+      runnerProfile: "fixture",
+      runnerProtocol: "acp",
+      runnerProtocolVersion: "1",
+      runnerStopReason: "end_turn",
+      runnerExternalSessionId: "fixture-1",
+      runnerTransport: "local_stdio",
+      runnerAccessRoute: "local_sidecar",
+      runnerCostBasis: "local_free",
+      runnerCapabilities: ["sessionCapabilities.close"],
+      runnerEvidenceScope: "outer_only",
+      permissionVerdict: "approved",
+    });
+  });
+
   test("returns trace parentage and tool arguments as structured JSON", async () => {
     const [event] = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
@@ -555,6 +626,21 @@ describe("buildConversationMessages", () => {
     providerErrorClass: null,
     unparsedToolCallCount: null,
     unparsedToolCallCountIsLowerBound: null,
+    runnerKind: null,
+    runnerProfile: null,
+    runnerProtocol: null,
+    runnerProtocolVersion: null,
+    runnerStopReason: null,
+    runnerExternalSessionId: null,
+    runnerAgentName: null,
+    runnerAgentVersion: null,
+    runnerTransport: null,
+    runnerAccessRoute: null,
+    runnerCostBasis: null,
+    runnerWorkspace: null,
+    runnerCapabilities: null,
+    runnerEvidenceScope: null,
+    permissionVerdict: null,
     toolName: tool.name ?? null,
     toolCallId: tool.callId ?? null,
     toolArguments: tool.arguments ?? null,
@@ -572,6 +658,17 @@ describe("buildConversationMessages", () => {
     expect(messages).toEqual([
       { role: "user", content: "What is DYFJ?" },
       { role: "assistant", content: "A local-first workbench." },
+    ]);
+  });
+
+  test("replays an external-agent response as an assistant turn", () => {
+    const messages = buildConversationMessages([
+      event("session_start", "delegate this"),
+      event("agent_response", "external result"),
+    ]);
+    expect(messages).toEqual([
+      { role: "user", content: "delegate this" },
+      { role: "assistant", content: "external result" },
     ]);
   });
 

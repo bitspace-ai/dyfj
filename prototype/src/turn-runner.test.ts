@@ -8,6 +8,26 @@ import {
 } from "./turn-runner";
 
 describe("resolveTurnFromBody paid posture", () => {
+  test("selects the fixture runner only for a loopback turn", () => {
+    expect(resolveTurnFromBody({ prompt: "hi", runner: "fixture" }, true))
+      .toMatchObject({
+        runtimeInput: { runner: { kind: "acp", profile: "fixture" } },
+      });
+    expect(resolveTurnFromBody({ prompt: "hi", runner: "fixture" }, false))
+      .toMatchObject({ status: 403 });
+  });
+
+  test("keeps external runner selection distinct from model routing", () => {
+    expect(resolveTurnFromBody({
+      prompt: "hi",
+      runner: "fixture",
+      routingOptions: { modelId: "not-a-runner" },
+    }, true)).toMatchObject({
+      status: 400,
+      error: "runner cannot be combined with model routing options",
+    });
+  });
+
   test("carries a valid client turn id into the runtime input", () => {
     const turnId = "123e4567-e89b-42d3-a456-426614174000";
     const resolved = resolveTurnFromBody({ prompt: "hi", turnId }, true);
@@ -77,6 +97,18 @@ describe("paidEscalationVerdict", () => {
 });
 
 describe("formatTurnSummaryLine", () => {
+  test("reports external runner evidence without inventing model or USD facts", () => {
+    const line = formatTurnSummaryLine({
+      sessionId: "01ACP",
+      runner: { profile: "fixture", protocol: "acp", costBasis: "local_free" },
+    } as any);
+    expect(line).toBe(
+      "[turn] session=01ACP runner=fixture protocol=acp cost_basis=local_free",
+    );
+    expect(line).not.toContain("model=");
+    expect(line).not.toContain("cost=$");
+  });
+
   test("carries routing and cost facts, never content", () => {
     const line = formatTurnSummaryLine({
       sessionId: "01ABC",

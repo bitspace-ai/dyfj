@@ -28,7 +28,8 @@
       ],
       "net": true,
       "run": [
-        "bash"
+        "bash",
+        "deno"
       ],
       "ffi": [
         "node_modules"
@@ -96,7 +97,8 @@
         "generativelanguage.googleapis.com:443"
       ],
       "run": [
-        "bash"
+        "bash",
+        "deno"
       ]
     },
     "workbench-http": {
@@ -160,7 +162,8 @@
         "generativelanguage.googleapis.com:443"
       ],
       "run": [
-        "bash"
+        "bash",
+        "deno"
       ]
     },
     "cli": {
@@ -246,7 +249,8 @@
       "read": true,
       "write": true,
       "run": [
-        "bash"
+        "bash",
+        "deno"
       ]
     },
     "local-model-diagnostic": {
@@ -296,7 +300,9 @@
   },
   "imports": {
     "$dax": "jsr:@david/dax@0.42.0",
+    "@agentclientprotocol/sdk": "npm:@agentclientprotocol/sdk@1.3.0",
     "@std/toml": "jsr:@std/toml@1.0.8",
+    "mysql2": "npm:mysql2@3.22.3",
     "mysql2/promise": "npm:mysql2@3.22.3/promise",
     "ulid": "npm:ulid@2.4.0",
     "vitest": "npm:vitest@3.2.6"

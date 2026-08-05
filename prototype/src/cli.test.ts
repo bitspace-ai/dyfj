@@ -1023,6 +1023,53 @@ describe("runExec tool approval (--unix)", () => {
     );
     expect(captured.verdict?.decision).toBe("deny");
   });
+
+  test("aborts pending operator input when the turn ends first", async () => {
+    const approvalSettled = Promise.withResolvers<ToolApprovalVerdict>();
+    const io: Io = {
+      out: () => {},
+      err: () => {},
+      readLine: (_prompt, signal) =>
+        new Promise((resolve) => {
+          signal?.addEventListener("abort", () => resolve(null), {
+            once: true,
+          });
+        }),
+      close: () => {},
+    };
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: async (method: string) => {
+          if (method === "turn") {
+            void Promise.resolve(
+              options?.onApproval?.({
+                commandId: "external_agent",
+                title: "External agent action",
+                arguments: {},
+              }),
+            ).then((verdict) => {
+              if (verdict !== undefined) approvalSettled.resolve(verdict);
+            });
+            return result();
+          }
+          return undefined;
+        },
+        close: () => {},
+      });
+
+    await expect(runExec(
+      "finish before approval",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      connect,
+      true,
+    )).resolves.toBe(0);
+    await expect(approvalSettled.promise).resolves.toEqual({
+      decision: "abort",
+    });
+  });
 });
 
 // ── runExec ───────────────────────────────────────────────────────────────────
@@ -1364,6 +1411,134 @@ describe("runExec over the socket (--unix)", () => {
     const markerIndex = writes.indexOf("err:[interrupted]");
     expect(textIndex).toBeGreaterThanOrEqual(0);
     expect(markerIndex).toBeGreaterThan(textIndex);
+  });
+
+  test("Ctrl-C cancels a one-shot UDS turn exactly once", async () => {
+    let activeInterrupt: (() => void) | undefined;
+    let finishTurn!: (value: unknown) => void;
+    let cancelCalls = 0;
+    const interrupts: TurnInterruptSource = {
+      add: (handler) => {
+        activeInterrupt = handler;
+      },
+      remove: () => {
+        activeInterrupt = undefined;
+      },
+    };
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method) => {
+          if (method === "turn") {
+            options?.onStream?.({ t: "delta", text: "partial" });
+            queueMicrotask(() => {
+              activeInterrupt?.();
+              activeInterrupt?.();
+            });
+            return new Promise((resolve) => {
+              finishTurn = resolve;
+            });
+          }
+          if (method === "turn/cancel") {
+            cancelCalls++;
+            finishTurn(result({ stopReason: "aborted", text: "partial" }));
+            return Promise.resolve({ cancelled: true });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const { io, stdout, stderr } = fakeIo();
+    io.turnInterrupts = interrupts;
+
+    const code = await runExec(
+      "cancel me",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      connect,
+    );
+
+    expect(code).toBe(0);
+    expect(cancelCalls).toBe(1);
+    expect(stdout.join("")).toContain("partial");
+    expect(stderr.filter((line) => line === "[interrupt requested]")).toEqual([
+      "[interrupt requested]",
+    ]);
+    expect(stderr).toContain("[interrupted]");
+    expect(activeInterrupt).toBeUndefined();
+  });
+
+  test("one-shot cleanup preserves the turn failure and still aborts approval input", async () => {
+    const approvalSettled = Promise.withResolvers<ToolApprovalVerdict>();
+    const interrupts: TurnInterruptSource = {
+      add: () => {},
+      remove: () => {
+        throw new Error("interrupt cleanup failed");
+      },
+    };
+    const connect: ConnectFn = (_socketPath, options) =>
+      Promise.resolve({
+        request: (method) => {
+          if (method !== "turn") return Promise.resolve(undefined);
+          void Promise.resolve(
+            options?.onApproval?.({
+              commandId: "external_agent",
+              title: "External agent action",
+              arguments: {},
+            }),
+          ).then((verdict) => {
+            if (verdict !== undefined) approvalSettled.resolve(verdict);
+          });
+          return Promise.reject(new DomainError("turn failed"));
+        },
+        close: () => {},
+      });
+    const { io, stderr } = fakeIo();
+    io.readLine = (_prompt, signal) =>
+      new Promise((resolve) => {
+        signal?.addEventListener("abort", () => resolve(null), { once: true });
+      });
+    io.turnInterrupts = interrupts;
+
+    const code = await runExec(
+      "fail while approval is pending",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      connect,
+    );
+
+    expect(code).toBe(1);
+    await expect(approvalSettled.promise).resolves.toEqual({
+      decision: "abort",
+    });
+    expect(stderr.join("\n")).toContain("turn failed");
+    expect(stderr.join("\n")).not.toContain("interrupt cleanup failed");
+  });
+
+  test("one-shot cleanup failure changes an otherwise successful exit to failure", async () => {
+    const interrupts: TurnInterruptSource = {
+      add: () => {},
+      remove: () => {
+        throw new Error("interrupt cleanup failed");
+      },
+    };
+    const { io, stderr } = fakeIo();
+    io.turnInterrupts = interrupts;
+
+    const code = await runExec(
+      "successful turn",
+      cfg({ unix: true }),
+      io,
+      false,
+      fetch,
+      fakeTurnConnect([], result()),
+    );
+
+    expect(code).toBe(1);
+    expect(stderr.at(-1)).toBe("dyfj: [Error, 24 bytes]");
   });
 
   test("honors the superseding-retry signal over the UDS seam too", async () => {
@@ -1944,6 +2119,25 @@ describe("parseArgs", () => {
   test("-p is an exec alias", () => {
     const p = parseArgs(["-p", "hello"]);
     expect(p).toMatchObject({ command: "exec", prompt: "hello" });
+  });
+  test("parses only the declared fixture runner", () => {
+    expect(parseArgs(["--runner", "fixture", "exec", "hi"]).overrides.runner)
+      .toBe("fixture");
+    expect(parseArgs(["--runner", "vendor", "exec", "hi"]).error)
+      .toContain("runner must be fixture");
+  });
+
+  test("rejects explicit model routing alongside a runner", () => {
+    for (
+      const routing of [["--model", "model"], ["--tier", "1"], [
+        "--hint",
+        "code",
+      ]]
+    ) {
+      expect(
+        parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error,
+      ).toContain("runner cannot be combined");
+    }
   });
   test("collects routing + server flags", () => {
     const p = parseArgs([
@@ -2813,6 +3007,19 @@ describe("REPL /model", () => {
     );
   });
 
+  test("/model <slug> leaves an external runner for native model routing", async () => {
+    const { io } = fakeIo();
+    const config = cfg({ runner: "fixture" });
+    await handleReplModelCommand(
+      "/model gpt-5.5",
+      config,
+      io,
+      fakeConnect([{ slug: "gpt-5.5", tier: 2, local: false }]),
+    );
+    expect(config.model).toBe("gpt-5.5");
+    expect(config.runner).toBeUndefined();
+  });
+
   test("/model <slug> --approve-paid arms the session paid opt-in", async () => {
     const { io, stderr } = fakeIo();
     const config = cfg();
@@ -3041,6 +3248,13 @@ describe("session posture", () => {
 });
 
 describe("buildTurnBody", () => {
+  test("selects the fixture runner without sending model routing", () => {
+    expect(buildTurnBody(
+      "hi",
+      cfg({ runner: "fixture", model: "ignored-native-default", tier: 2 }),
+    )).toEqual({ prompt: "hi", mode: "turn", runner: "fixture" });
+  });
+
   test("omits routingOptions when no routing is set", () => {
     expect(buildTurnBody("hi", cfg())).toEqual({ prompt: "hi", mode: "turn" });
   });
@@ -3093,6 +3307,39 @@ describe("buildTurnBody", () => {
 });
 
 describe("presentation", () => {
+  test("formatReceipt reports ACP provenance without fake token or USD facts", () => {
+    const external: TurnResult = {
+      sessionId: "01CLISESSION0000000000000000",
+      traceId: "0123456789abcdef0123456789abcdef",
+      stopReason: "stop",
+      text: "fixture output",
+      receipt: "External-agent turn receipt",
+      runner: {
+        kind: "external_agent",
+        profile: "fixture",
+        protocol: "acp",
+        protocolVersion: 1,
+        externalStopReason: "end_turn",
+        externalSessionId: "fixture-1",
+        capabilities: [],
+        workspace: "/tmp/workspace",
+        transport: "local_stdio",
+        accessRoute: "local_sidecar",
+        costBasis: "local_free",
+        evidence: { source: "acp", innerState: "opaque" },
+        elapsedMs: 12,
+      },
+      route: { reason: "explicit_external_agent" },
+      context: { sources: [] },
+    };
+    const formatted = formatReceipt(external, false);
+    expect(formatted).toContain(
+      "fixture · acp v1 · local_stdio · local_sidecar · local_free · 12ms",
+    );
+    expect(formatted).not.toContain("tok");
+    expect(formatted).not.toContain("$0");
+  });
+
   test("formatReceipt names the model and token counts", () => {
     const s = formatReceipt(result(), false);
     expect(s).toContain("Qwen3 Coder 30B");

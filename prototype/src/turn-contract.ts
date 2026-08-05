@@ -17,11 +17,12 @@
  */
 
 /**
- * The receipt a single turn carries — identical on the buffered (JSON) and
- * streaming (SSE) paths. This is the operator-facing, recomputable record of
- * what a turn cost, which model ran, how it routed, and what fed its context.
+ * Native-loop receipt carried identically on buffered (JSON) and streaming
+ * (SSE) paths. External-agent turns use the separate receipt below because ACP
+ * usage signals are optional and this foundation does not ingest or map them
+ * into Workbench-native model, token, tool-step, or USD accounting.
  */
-export interface TurnReceipt {
+export interface NativeTurnReceipt {
   sessionId: string;
   traceId: string;
   stopReason: "stop" | "length" | "tool_use" | "error" | "aborted";
@@ -65,6 +66,64 @@ export interface TurnReceipt {
   /** Context provenance — what fed the turn (memory + repo sources). */
   context: { sources: string[] };
 }
+
+export type ExternalAgentCostBasis =
+  | "local_free"
+  | "subscription_quota"
+  | "metered_usd"
+  | "unknown";
+
+export type ExternalAgentAccessRoute =
+  | "local_sidecar"
+  | "subscription_oauth"
+  | "metered_direct_api"
+  | "aggregator"
+  | "independent_host";
+
+export type ExternalAgentStopReason =
+  | "end_turn"
+  | "max_tokens"
+  | "max_turn_requests"
+  | "refusal"
+  | "cancelled";
+
+/**
+ * Outer receipt for a turn whose inner loop is owned by an external agent.
+ * Native model, token, tool-step, and USD fields are intentionally absent:
+ * this foundation does not ingest ACP's optional usage signals or treat them as
+ * equivalent to Workbench-native accounting.
+ */
+export interface ExternalAgentTurnReceipt {
+  sessionId: string;
+  traceId: string;
+  stopReason: "stop" | "length" | "error" | "aborted";
+  text: string;
+  receipt: string;
+  runner: {
+    kind: "external_agent";
+    profile: string;
+    protocol: "acp";
+    protocolVersion?: number;
+    externalStopReason?: ExternalAgentStopReason;
+    externalSessionId?: string;
+    agentName?: string;
+    agentVersion?: string;
+    capabilities: string[];
+    workspace: string;
+    transport: "local_stdio";
+    accessRoute: ExternalAgentAccessRoute;
+    costBasis: ExternalAgentCostBasis;
+    evidence: {
+      source: "acp";
+      innerState: "opaque";
+    };
+    elapsedMs: number;
+  };
+  route: { reason: string };
+  context: { sources: string[] };
+}
+
+export type TurnReceipt = NativeTurnReceipt | ExternalAgentTurnReceipt;
 
 /**
  * SSE frame protocol, negotiated via `Accept: text/event-stream`. Each wire
@@ -165,9 +224,9 @@ export function isSupersedingRetryStarted(
  * frame and the same events as `event` frames — transports differ only in how
  * events arrive, never in the receipt.
  */
-export interface BufferedTurnResponse extends TurnReceipt {
+export type BufferedTurnResponse = TurnReceipt & {
   events: Array<Record<string, unknown>>;
-}
+};
 
 /**
  * Marker base class for errors this codebase constructs from app-controlled,

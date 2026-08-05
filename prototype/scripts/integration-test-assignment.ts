@@ -1,6 +1,7 @@
 export const integrationTestAssignments = {
   vitest: [
     "scripts/isolated-dolt-fixture.integration.test.ts",
+    "src/acp-runner.integration.test.ts",
     "src/memory.integration.test.ts",
     "src/uds-canary.integration.test.ts",
   ],

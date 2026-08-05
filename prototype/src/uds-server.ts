@@ -472,8 +472,17 @@ export function buildTurnHandlers(
           throw abortController.signal.reason;
         }
       };
-      const requestApproval = (request: unknown): Promise<unknown> =>
-        ctx.request("approval", request, abortController.signal);
+      const requestApproval = (
+        request: unknown,
+        signal?: AbortSignal,
+      ): Promise<unknown> =>
+        ctx.request(
+          "approval",
+          request,
+          signal === undefined
+            ? abortController.signal
+            : AbortSignal.any([abortController.signal, signal]),
+        );
       let contextTurns = activeTurns.get(ctx);
       if (contextTurns?.size) {
         throw new RpcError(
@@ -522,8 +531,8 @@ export function buildTurnHandlers(
         // the connected client to approve a mutating tool or budget ceiling;
         // the client's response is the verdict. A failed request (no client
         // approver, dropped connection) denies, fail-closed.
-        confirmToolApproval: (request) =>
-          requestApproval(request).then(
+        confirmToolApproval: (request, signal) =>
+          requestApproval(request, signal).then(
             (response) => {
               abortIfApprovalWasInterrupted(response);
               rejectStaleApprovalAfterCancellation();

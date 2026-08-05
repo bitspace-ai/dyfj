@@ -58,6 +58,8 @@ export interface TurnRequest {
   sessionId?: string;
   /** Working directory to scope the server's read-only file tools to. */
   workspace?: string;
+  /** Experimental external-agent profile selector. */
+  runner?: "fixture";
   /**
    * Per-turn opt-in to paid (hosted) inference. The engine honors it only on the
    * loopback transport AND only when set — a remote caller can never approve spend.
@@ -68,11 +70,16 @@ export interface TurnRequest {
 export interface CliConfig {
   serverUrl: string;
   key?: string;
-  /** Context mode: "turn" = companion + memory; "ask"/"next-work" = repo context. */
+  /**
+   * Context mode: native "turn" = companion + memory; native
+   * "ask"/"next-work" = repo context. External runners receive the literal
+   * prompt and selected workspace.
+   */
   mode: "turn" | "ask" | "next-work";
   model?: string;
   tier?: 0 | 1 | 2;
   hint?: "code" | "chat" | "reasoning";
+  runner?: "fixture";
   sessionId?: string;
   /** Working directory sent to the server to scope read-only file tools. */
   workspace?: string;
@@ -140,14 +147,17 @@ export function buildTurnBody(
   sessionId?: string,
 ): TurnRequest {
   const routingOptions: NonNullable<TurnRequest["routingOptions"]> = {};
-  if (config.model !== undefined) routingOptions.modelId = config.model;
-  if (config.tier !== undefined) routingOptions.tier = config.tier;
-  if (config.hint !== undefined) routingOptions.hint = config.hint;
+  if (config.runner === undefined) {
+    if (config.model !== undefined) routingOptions.modelId = config.model;
+    if (config.tier !== undefined) routingOptions.tier = config.tier;
+    if (config.hint !== undefined) routingOptions.hint = config.hint;
+  }
 
   const body: TurnRequest = { prompt, mode: config.mode };
   if (Object.keys(routingOptions).length > 0) {
     body.routingOptions = routingOptions;
   }
+  if (config.runner !== undefined) body.runner = config.runner;
   if (sessionId !== undefined) body.sessionId = sessionId;
   // Send the workspace only when establishing a NEW session (no sessionId): the
   // server persists it on the session row, and resumed turns read it back, so
@@ -443,6 +453,15 @@ export function formatReceipt(
   sessionTotalUsd?: number,
 ): string {
   const dim = (s: string) => (color ? `\x1b[2m${s}\x1b[0m` : s);
+  if ("runner" in result) {
+    return dim(
+      `— ${result.runner.profile} · ${result.runner.protocol}${
+        result.runner.protocolVersion === undefined
+          ? " (not negotiated)"
+          : ` v${result.runner.protocolVersion}`
+      } · ${result.runner.transport} · ${result.runner.accessRoute} · ${result.runner.costBasis} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
+    );
+  }
   const cost = formatUsdShort(result.cost.totalUsd);
   const session = sessionTotalUsd !== undefined
     ? ` · session ${formatUsdShort(sessionTotalUsd)}`
@@ -544,19 +563,61 @@ export async function runExec(
   fetchFn: typeof fetch = fetch,
   connect: ConnectFn = connectUnixClient,
   interactive = true,
+  interrupts: TurnInterruptSource | undefined = io.turnInterrupts,
 ): Promise<number> {
   const body = buildTurnBody(prompt, config, config.sessionId);
+  const approvalController = config.unix ? new AbortController() : undefined;
+  let interruptInstalled = false;
+  let interruptRequested = false;
+  let stopTurnIndicator = () => {};
+  const interrupt = () => {
+    if (interruptRequested) return;
+    interruptRequested = true;
+    approvalController?.abort();
+    try {
+      stopTurnIndicator();
+    } catch {
+      // A failed terminal erase must not escape before cancellation runs.
+    }
+    try {
+      io.err("[interrupt requested]");
+    } catch {
+      // A terminal write failure must not prevent the cancellation.
+    }
+  };
+  const installInterrupt = () => {
+    if (interrupts === undefined || interruptInstalled) return;
+    interrupts.add(interrupt);
+    interruptInstalled = true;
+  };
   const onApproval = (request: unknown) =>
-    promptMidTurnApproval(io, request, interactive);
+    promptMidTurnApproval(
+      io,
+      request,
+      interactive,
+      approvalController?.signal,
+    );
+  let turnFailed = false;
+  let exitCode = 0;
   try {
     if (json) {
       const result = config.unix
-        ? await socketTurn(config, body, { onApproval }, connect)
+        ? await socketTurn(
+          config,
+          body,
+          {
+            onApproval,
+            abortSignal: approvalController?.signal,
+            onConnected: installInterrupt,
+          },
+          connect,
+        )
         : await bufferedTurn(config, body, fetchFn);
       io.out(`${JSON.stringify(result, null, 2)}\n`);
     } else {
       const output = createTurnOutputHandlers(config, io);
       const spinner = createTurnSpinner(config, io);
+      stopTurnIndicator = () => spinner.stop();
       const handlers = spinnerGuardedTurnHandlers(
         spinner,
         output,
@@ -574,7 +635,16 @@ export async function runExec(
       let result: TurnResult;
       try {
         result = config.unix
-          ? await socketTurn(config, body, terminalHandlers, connect)
+          ? await socketTurn(
+            config,
+            body,
+            {
+              ...terminalHandlers,
+              abortSignal: approvalController?.signal,
+              onConnected: installInterrupt,
+            },
+            connect,
+          )
           : await streamTurn(config, body, terminalHandlers, fetchFn);
       } finally {
         // Covers every non-streaming exit — turn failure, declined approval,
@@ -593,13 +663,34 @@ export async function runExec(
       }
       io.err(formatReceipt(result, config.color));
     }
-    return 0;
   } catch (error) {
+    turnFailed = true;
     io.err(
       config.unix ? socketError(error, config) : friendlyError(error, config),
     );
-    return 1;
+    exitCode = 1;
+  } finally {
+    let cleanupError: unknown;
+    try {
+      approvalController?.abort();
+    } catch (error) {
+      cleanupError = error;
+    }
+    try {
+      if (interruptInstalled) interrupts?.remove(interrupt);
+    } catch (error) {
+      cleanupError ??= error;
+    }
+    if (!turnFailed && cleanupError !== undefined) {
+      io.err(
+        config.unix
+          ? socketError(cleanupError, config)
+          : friendlyError(cleanupError, config),
+      );
+      exitCode = 1;
+    }
   }
+  return exitCode;
 }
 
 export async function runRepl(
@@ -716,6 +807,7 @@ export async function runRepl(
           turnFailed = true;
           throw error;
         } finally {
+          abortController?.abort();
           let cleanupFailed = false;
           let cleanupError: unknown;
           try {
@@ -740,8 +832,14 @@ export async function runRepl(
         if (result.stopReason === "aborted") {
           handlers.onEvent({ type: "turnAborted" });
         }
-        sessionSpendUsd += result.cost.totalUsd;
-        io.err(formatReceipt(result, config.color, sessionSpendUsd));
+        if ("cost" in result) sessionSpendUsd += result.cost.totalUsd;
+        io.err(
+          formatReceipt(
+            result,
+            config.color,
+            "cost" in result ? sessionSpendUsd : undefined,
+          ),
+        );
       } catch (error) {
         io.err(
           config.unix
@@ -1272,6 +1370,7 @@ export async function handleReplModelCommand(
   }
 
   config.model = slug;
+  config.runner = undefined;
   if (approvePaid) config.approvePaid = true;
   await emitPosture();
   return true;
@@ -1809,6 +1908,7 @@ const VALUE_FLAGS = new Set([
   "--hint",
   "--session",
   "--workspace",
+  "--runner",
   "-p",
   "--print",
 ]);
@@ -1840,7 +1940,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (arg === "--socket") overrides.socket = value;
       else if (arg === "--key") overrides.key = value;
       else if (arg === "--model") overrides.model = value;
-      else if (arg === "--session") {
+      else if (arg === "--runner") {
+        if (value !== "fixture") return error("--runner must be fixture");
+        overrides.runner = value;
+      } else if (arg === "--session") {
         // normalizeSessionRef throws on garbage; route it through the standard
         // usage-error path (exit 2) instead of an uncaught stack trace.
         try {
@@ -1887,6 +1990,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   if (help) return { command: "help", json, overrides };
+  if (
+    overrides.runner !== undefined &&
+    (overrides.model !== undefined || overrides.tier !== undefined ||
+      overrides.hint !== undefined)
+  ) {
+    return error("--runner cannot be combined with --model, --tier, or --hint");
+  }
 
   if (printPrompt !== undefined) {
     return { command: "exec", prompt: printPrompt, json, overrides };
@@ -1975,6 +2085,7 @@ export function resolveConfig(
     model: overrides.model ?? env.get("DYFJ_WORKBENCH_MODEL"),
     tier: overrides.tier ?? tier,
     hint: overrides.hint ?? hint,
+    runner: overrides.runner,
     sessionId: overrides.sessionId,
     // Workspace follows the directory `dyfj` runs in; --workspace or
     // DYFJ_WORKSPACE override it. The implicit cwd is sent only to a loopback
@@ -2029,6 +2140,7 @@ Options:
   --unix           force the UDS seam (the local default; needed only to override --server)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
+  --runner fixture experimental local ACP fixture runner
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
