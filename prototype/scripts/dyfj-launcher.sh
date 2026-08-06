@@ -118,7 +118,7 @@ SOCKET_FLAG_SET=0
 # parse below never reads a flag VALUE as launcher control input.
 is_value_flag() {
   case "$1" in
-    --server|--socket|--key|--mode|--model|--tier|--hint|--session|--workspace|-p|--print)
+    --server|--socket|--key|--mode|--model|--tier|--hint|--session|--workspace|--runner|-p|--print)
       return 0
       ;;
   esac

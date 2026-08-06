@@ -38,6 +38,7 @@ export interface TurnRequestBody {
   routingOptions?: unknown;
   sessionId?: unknown;
   workspace?: unknown;
+  runner?: unknown;
   // explicit per-turn paid-inference opt-in + per-turn budget override.
   // Both are honored only on the loopback transport (see resolveTurnFromBody /
   // the confirmPaidEscalation injection).
@@ -157,10 +158,19 @@ function buildRuntimeInputFromJson(
   ) {
     return { error: "turnId must be a UUID" };
   }
+  if (body.runner !== undefined && body.runner !== "fixture") {
+    return { error: "runner must be fixture" };
+  }
+  if (body.runner === "fixture" && Object.keys(routingOptions).length > 0) {
+    return { error: "runner cannot be combined with model routing options" };
+  }
   return {
     mode,
     prompt: body.prompt,
     routingOptions,
+    ...(body.runner === "fixture"
+      ? { runner: { kind: "acp" as const, profile: "fixture" as const } }
+      : {}),
     ...(typeof body.turnId === "string" ? { turnId: body.turnId } : {}),
     // Honored only for a loopback operator; the runtime applies that gate.
     ...(typeof body.workspace === "string"
@@ -238,6 +248,12 @@ export function resolveTurnFromBody(
   const runtimeInput = buildRuntimeInputFromJson(body);
   if ("error" in runtimeInput) {
     return { error: runtimeInput.error, status: 400 };
+  }
+  if (runtimeInput.runner !== undefined && !loopback) {
+    return {
+      error: "external local runners are not available to remote callers",
+      status: 403,
+    };
   }
 
   let sessionId: string | undefined;
@@ -413,6 +429,9 @@ export function engineConfigToTurnDeps(
  * presentation belongs to clients; the receipt carries the full detail.
  */
 export function formatTurnSummaryLine(result: WorkbenchRuntimeResult): string {
+  if ("runner" in result) {
+    return `[turn] session=${result.sessionId} runner=${result.runner.profile} protocol=${result.runner.protocol} cost_basis=${result.runner.costBasis}`;
+  }
   const model = result.model?.slug ?? "unknown";
   const tokens = result.tokens
     ? `${result.tokens.input}in/${result.tokens.output}out`
@@ -442,6 +461,7 @@ function runExecuteTurn(
   deps: ExecuteTurnDeps,
   resume: Awaited<ReturnType<typeof buildResume>>,
 ): Promise<WorkbenchRuntimeResult> {
+  const confirmToolApproval = deps.confirmToolApproval;
   return deps.runRuntime({
     ...resolved.runtimeInput,
     ...resume,
@@ -483,6 +503,23 @@ function runExecuteTurn(
     // mutating tools run only after operator approval; the transport
     // supplies the approver (UDS = duplex round-trip), else the runtime denies.
     confirmToolApproval: deps.confirmToolApproval,
+    confirmExternalAgentPermission: confirmToolApproval === undefined
+      ? undefined
+      : async (prompt, signal) => {
+        const verdict = await confirmToolApproval({
+          commandId: "external_agent",
+          callId: prompt.toolCallId,
+          title: prompt.toolCall.title,
+          arguments: {
+            "ACP tool": prompt.toolCall.name ?? "(not supplied)",
+            "ACP kind": prompt.toolCall.kind ?? "(not supplied)",
+            "Requested input": prompt.toolCall.inputSummary,
+            "Permission options": prompt.options.map((option) => option.name)
+              .join(" / "),
+          },
+        }, signal);
+        return verdict.decision;
+      },
     // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
     confirmBudgetCeiling: deps.confirmBudgetCeiling,
     // runaway-anomaly hard stop; absent => fail closed at the halt.

@@ -94,13 +94,23 @@ export async function createWorkbenchSession(
 export async function fetchWorkbenchSessionWorkspace(
   input: { sessionId: string; query?: SessionQuery },
 ): Promise<string | null> {
+  return (await fetchWorkbenchSessionWorkspaceRecord(input)).workspace;
+}
+
+export async function fetchWorkbenchSessionWorkspaceRecord(
+  input: { sessionId: string; query?: SessionQuery },
+): Promise<{ exists: boolean; workspace: string | null }> {
   const query = input.query ?? doltQuery;
   const rows = await query(
     "SELECT workspace FROM sessions WHERE session_id = ? LIMIT 1;",
     [input.sessionId],
   );
+  if (rows.length === 0) return { exists: false, workspace: null };
   const value = rows[0]?.workspace;
-  return typeof value === "string" && value.length > 0 ? value : null;
+  return {
+    exists: true,
+    workspace: typeof value === "string" && value.length > 0 ? value : null,
+  };
 }
 
 export async function updateWorkbenchSession(
@@ -244,6 +254,21 @@ export interface WorkbenchSessionEvent {
   providerErrorClass: string | null;
   unparsedToolCallCount: number | null;
   unparsedToolCallCountIsLowerBound: boolean | null;
+  runnerKind: string | null;
+  runnerProfile: string | null;
+  runnerProtocol: string | null;
+  runnerProtocolVersion: string | null;
+  runnerStopReason: string | null;
+  runnerExternalSessionId: string | null;
+  runnerAgentName: string | null;
+  runnerAgentVersion: string | null;
+  runnerTransport: string | null;
+  runnerAccessRoute: string | null;
+  runnerCostBasis: string | null;
+  runnerWorkspace: string | null;
+  runnerCapabilities: string[] | null;
+  runnerEvidenceScope: string | null;
+  permissionVerdict: string | null;
   // tool-call audit fields, so resume can replay tool turns.
   toolName: string | null;
   toolCallId: string | null;
@@ -263,6 +288,7 @@ function eventQuery(
   asOfClause: string,
   historicalProviderCallSchema = false,
   historicalUnparsedToolCallSchema = false,
+  historicalRunnerSchema = false,
 ): string {
   const providerCallFields = historicalProviderCallSchema
     ? "NULL AS provider_call_order, NULL AS provider_call_purpose, " +
@@ -273,13 +299,50 @@ function eventQuery(
       "NULL AS unparsed_tool_call_count_is_lower_bound"
     : "unparsed_tool_call_count, " +
       "unparsed_tool_call_count_is_lower_bound";
+  const runnerFields = historicalRunnerSchema
+    ? "NULL AS runner_kind, NULL AS runner_profile, NULL AS runner_protocol, " +
+      "NULL AS runner_protocol_version, NULL AS runner_stop_reason, " +
+      "NULL AS runner_external_session_id, " +
+      "NULL AS runner_agent_name, NULL AS runner_agent_version, " +
+      "NULL AS runner_transport, NULL AS runner_access_route, " +
+      "NULL AS runner_cost_basis, " +
+      "NULL AS runner_workspace, NULL AS runner_capabilities, " +
+      "NULL AS runner_evidence_scope, NULL AS permission_verdict"
+    : "runner_kind, runner_profile, runner_protocol, runner_protocol_version, " +
+      "runner_stop_reason, runner_external_session_id, runner_agent_name, runner_agent_version, " +
+      "runner_transport, runner_access_route, runner_cost_basis, runner_workspace, " +
+      "CAST(runner_capabilities AS CHAR) AS runner_capabilities, " +
+      "runner_evidence_scope, permission_verdict";
   return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
     `principal_id, model_id, provider, api, content, stop_reason, ` +
     `tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, ` +
     `cost_total, duration_ms, ${providerCallFields}, ${unparsedToolCallFields}, ` +
+    `${runnerFields}, ` +
     `tool_name, tool_call_id, ` +
     `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
     `WHERE session_id = ? ORDER BY created_at ASC;`;
+}
+
+function isMissingRunnerColumn(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+    message?: unknown;
+    sqlMessage?: unknown;
+  };
+  const message = [candidate.message, candidate.sqlMessage]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  if (
+    !/runner_(?:kind|profile|protocol|stop|external|agent|transport|access|cost|workspace|capabilities|evidence)|permission_verdict/
+      .test(message)
+  ) {
+    return false;
+  }
+  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
+    /unknown column|column\s+["'](?:runner_[^"']+|permission_verdict)["']\s+could not be found/i
+      .test(message);
 }
 
 function isMissingProviderCallColumn(error: unknown): boolean {
@@ -347,9 +410,10 @@ export async function fetchWorkbenchSessionEvents(input: {
     // AS OF queries retain their durable provider-call values.
     const missingProviderCall = isMissingProviderCallColumn(error);
     const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
+    const missingRunner = isMissingRunnerColumn(error);
     if (
       input.asOf === undefined ||
-      (!missingProviderCall && !missingUnparsedToolCall)
+      (!missingProviderCall && !missingUnparsedToolCall && !missingRunner)
     ) {
       throw error;
     }
@@ -358,6 +422,7 @@ export async function fetchWorkbenchSessionEvents(input: {
         asOfClause,
         missingProviderCall,
         missingProviderCall || missingUnparsedToolCall,
+        missingProviderCall || missingUnparsedToolCall || missingRunner,
       ),
       [input.sessionId],
     );
@@ -390,6 +455,21 @@ export async function fetchWorkbenchSessionEvents(input: {
         row.unparsed_tool_call_count_is_lower_bound === ""
         ? null
         : Number(row.unparsed_tool_call_count_is_lower_bound) === 1,
+    runnerKind: nullableString(row.runner_kind),
+    runnerProfile: nullableString(row.runner_profile),
+    runnerProtocol: nullableString(row.runner_protocol),
+    runnerProtocolVersion: nullableString(row.runner_protocol_version),
+    runnerStopReason: nullableString(row.runner_stop_reason),
+    runnerExternalSessionId: nullableString(row.runner_external_session_id),
+    runnerAgentName: nullableString(row.runner_agent_name),
+    runnerAgentVersion: nullableString(row.runner_agent_version),
+    runnerTransport: nullableString(row.runner_transport),
+    runnerAccessRoute: nullableString(row.runner_access_route),
+    runnerCostBasis: nullableString(row.runner_cost_basis),
+    runnerWorkspace: nullableString(row.runner_workspace),
+    runnerCapabilities: normalizeStringArray(row.runner_capabilities),
+    runnerEvidenceScope: nullableString(row.runner_evidence_scope),
+    permissionVerdict: nullableString(row.permission_verdict),
     toolName: row.tool_name ? String(row.tool_name) : null,
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolArguments: normalizeToolArguments(row.tool_arguments),
@@ -466,7 +546,10 @@ export function buildConversationMessages(
     } else if (event.eventType === "session_start") {
       if (event.content === null) continue;
       messages.push({ role: "user", content: event.content });
-    } else if (event.eventType === "model_response") {
+    } else if (
+      event.eventType === "model_response" ||
+      event.eventType === "agent_response"
+    ) {
       if (event.content === null) continue;
       messages.push({ role: "assistant", content: event.content });
     } else if (event.eventType === "tool_call") {
@@ -502,6 +585,21 @@ export function buildConversationMessages(
     return [pinnedSummary, ...sliceToRecentTurns(messages.slice(1), maxTurns)];
   }
   return sliceToRecentTurns(messages, maxTurns);
+}
+
+function normalizeStringArray(raw: unknown): string[] | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? [...value]
+    : null;
 }
 
 function nullableString(raw: unknown): string | null {

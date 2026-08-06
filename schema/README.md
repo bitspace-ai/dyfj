@@ -23,6 +23,14 @@ Use the readable current baseline for new databases:
 The model and prompt catalogs are separated from structure because provider
 availability, pricing, and prompt text change faster than the table contracts.
 
+The `events` contract includes typed outer evidence for native provider calls
+and external-agent runner turns. External-agent rows distinguish
+profile-declared runner, transport, access-route, and cost-basis labels from
+bounded evidence derived from the resolved workspace and protocol-observed
+version, external session, stop reason, and a bounded subset of flattened
+capability paths. They also record permission verdicts without
+representing opaque inner activity as a provider call or model response.
+
 The historical replay files are provenance and validation input. They include
 the earlier reflection/skills/capability experiments, authn metadata, model
 catalog refreshes, session workspace/project fields, prompt table work, and

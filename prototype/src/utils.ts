@@ -47,6 +47,7 @@ function isThinkingContent(
 // Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.
 // sql-server is managed by launchd: org.dyfj.dolt-sql-server
 
+import mysqlCore from "mysql2";
 import mysql from "mysql2/promise";
 
 let _pool: any | null = null;
@@ -202,6 +203,7 @@ export function normaliseStopReason(
 
 export async function writeEvent(
   event: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {},
 ): Promise<void> {
   const columns = Object.keys(event).filter((k) => event[k] !== null);
   const placeholders = columns.map(() => "?").join(", ");
@@ -214,7 +216,44 @@ export async function writeEvent(
   const sql = `INSERT INTO events (${
     columns.join(", ")
   }) VALUES (${placeholders})`;
-  await getDoltPool().execute(sql, values);
+  if (options.signal === undefined) {
+    await getDoltPool().execute(sql, values);
+    return;
+  }
+  if (options.signal.aborted) {
+    throw new DOMException("Event write aborted", "AbortError");
+  }
+  const rawConnection = mysqlCore.createConnection(buildDoltPoolOptions());
+  const connection = rawConnection.promise();
+  let rejectAbort: ((reason: DOMException) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const abort = () => {
+    rawConnection.destroy();
+    rejectAbort?.(new DOMException("Event write aborted", "AbortError"));
+  };
+  options.signal.addEventListener("abort", abort, { once: true });
+  if (options.signal.aborted) abort();
+  try {
+    await Promise.race([connection.connect(), aborted]);
+    await connection.beginTransaction();
+    await connection.execute(sql, values);
+    if (options.signal.aborted) {
+      throw new DOMException("Event write aborted", "AbortError");
+    }
+    await connection.commit();
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch {
+      // A cancellation may already have destroyed the connection.
+    }
+    throw error;
+  } finally {
+    options.signal.removeEventListener("abort", abort);
+    rawConnection.destroy();
+  }
 }
 
 /**

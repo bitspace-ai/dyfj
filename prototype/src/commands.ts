@@ -157,6 +157,7 @@ export interface ToolApprovalVerdict {
  */
 export type ConfirmToolApproval = (
   request: ToolApprovalRequest,
+  signal?: AbortSignal,
 ) => Promise<ToolApprovalVerdict>;
 
 const denyToolApproval: ConfirmToolApproval = () =>
