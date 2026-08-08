@@ -170,6 +170,41 @@ const MAX_EXTERNAL_SESSION_ID_BYTES = 256;
 const MAX_AGENT_NAME_BYTES = 128;
 const MAX_AGENT_VERSION_BYTES = 64;
 
+export class ActivePromptDeadline {
+  #remainingMs: number;
+  #activeSince: number | undefined;
+
+  constructor(
+    timeoutMs: number,
+    private readonly now: () => number = performance.now.bind(performance),
+  ) {
+    this.#remainingMs = timeoutMs;
+    this.#activeSince = this.now();
+  }
+
+  get isPaused(): boolean {
+    return this.#activeSince === undefined;
+  }
+
+  get remainingMs(): number {
+    if (this.#activeSince === undefined) return this.#remainingMs;
+    return Math.max(0, this.#remainingMs - (this.now() - this.#activeSince));
+  }
+
+  pause(): void {
+    if (this.#activeSince === undefined) return;
+    const remainingMs = this.remainingMs;
+    if (remainingMs <= 0) return;
+    this.#remainingMs = remainingMs;
+    this.#activeSince = undefined;
+  }
+
+  resume(): void {
+    if (this.#activeSince !== undefined) return;
+    this.#activeSince = this.now();
+  }
+}
+
 class AcpAbortRequested extends Error {}
 
 interface ManagedAcpChild {
@@ -908,6 +943,28 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
   let pendingPermissionConfirmations = 0;
   let permissionConfirmationsSettled = Promise.withResolvers<void>();
   permissionConfirmationsSettled.resolve();
+  let promptDeadline: ActivePromptDeadline | undefined;
+  let promptDeadlineChanged = Promise.withResolvers<void>();
+  const notifyPromptDeadlineChanged = () => {
+    promptDeadlineChanged.resolve();
+    promptDeadlineChanged = Promise.withResolvers<void>();
+  };
+  const beginPermissionConfirmation = () => {
+    if (pendingPermissionConfirmations === 0) {
+      permissionConfirmationsSettled = Promise.withResolvers<void>();
+      promptDeadline?.pause();
+      notifyPromptDeadlineChanged();
+    }
+    pendingPermissionConfirmations += 1;
+  };
+  const endPermissionConfirmation = () => {
+    pendingPermissionConfirmations -= 1;
+    if (pendingPermissionConfirmations === 0) {
+      promptDeadline?.resume();
+      permissionConfirmationsSettled.resolve();
+      notifyPromptDeadlineChanged();
+    }
+  };
   const closePermissionWindow = () => {
     if (permissionsClosed) return;
     permissionsClosed = true;
@@ -1118,10 +1175,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             decisionOutcome = { kind: "decision", decision: "deny" };
           } else {
             const confirmationController = new AbortController();
-            if (pendingPermissionConfirmations === 0) {
-              permissionConfirmationsSettled = Promise.withResolvers<void>();
-            }
-            pendingPermissionConfirmations += 1;
+            beginPermissionConfirmation();
             try {
               decisionOutcome = await Promise.race([
                 Promise.resolve(
@@ -1138,10 +1192,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
               ]);
             } finally {
               confirmationController.abort();
-              pendingPermissionConfirmations -= 1;
-              if (pendingPermissionConfirmations === 0) {
-                permissionConfirmationsSettled.resolve();
-              }
+              endPermissionConfirmation();
             }
           }
           if (decisionOutcome.kind === "closed") {
@@ -1386,8 +1437,10 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             once: true,
           });
           try {
-            const promptDeadline = Date.now() +
-              (profile.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS);
+            promptDeadline = new ActivePromptDeadline(
+              profile.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS,
+            );
+            if (pendingPermissionConfirmations > 0) promptDeadline.pause();
             const promptFailed = Promise.withResolvers<void>();
             void session.prompt(input.prompt).catch(() => {
               promptFailed.resolve();
@@ -1397,9 +1450,6 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             let updateCount = 0;
             let pendingUpdate = session.nextUpdate();
             while (true) {
-              const deadline = cancelRequested
-                ? cancelDeadline ?? Date.now()
-                : promptDeadline;
               const next = Promise.race([
                 pendingUpdate.then((message) => ({
                   kind: "message" as const,
@@ -1411,16 +1461,35 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
                 promptFailed.promise.then(() => ({
                   kind: "prompt_failure" as const,
                 })),
+                ...(!cancelRequested
+                  ? [promptDeadlineChanged.promise.then(() => ({
+                    kind: "prompt_deadline_changed" as const,
+                  }))]
+                  : []),
                 ...(cancelRequested ? [] : [abortRequested.promise.then(() => ({
                   kind: "cancel" as const,
                 }))]),
               ]);
-              const outcome = await withTimeout(
-                next,
-                Math.max(1, deadline - Date.now()),
-                cancelRequested ? "cancel" : "prompt",
-              );
+              const timeoutMs = cancelRequested
+                ? Math.max(1, (cancelDeadline ?? Date.now()) - Date.now())
+                : promptDeadline.isPaused
+                ? undefined
+                : promptDeadline.remainingMs;
+              if (timeoutMs !== undefined && timeoutMs <= 0) {
+                throw new AcpRunnerError(
+                  `ACP ${cancelRequested ? "cancel" : "prompt"} timed out`,
+                  cancelRequested ? "cancel" : "prompt",
+                );
+              }
+              const outcome = timeoutMs === undefined
+                ? await next
+                : await withTimeout(
+                  next,
+                  timeoutMs,
+                  cancelRequested ? "cancel" : "prompt",
+                );
               if (outcome.kind === "cancel") continue;
+              if (outcome.kind === "prompt_deadline_changed") continue;
               if (outcome.kind === "protocol") {
                 throw protocolError ?? new AcpRunnerError(
                   "ACP protocol exchange failed",

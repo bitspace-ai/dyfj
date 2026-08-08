@@ -8,6 +8,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- ACP prompt deadlines now exclude the time spent in pending external-agent permission-confirmation races. The deadline resumes with its remaining prompt wall-clock budget after the last confirmation race settles. The Codex ChatGPT profile uses a 30-minute prompt window, while the fixture profile retains the generic default.
+
 - Rust event writes now bind `TIMESTAMP(6)` values as fixed-width text containing UTC clock fields, avoiding Dolt's prepared temporal-value decoding error for leading-zero fractional seconds; the live schema round trip pins the affected case after switching the connection from a non-UTC write timezone to UTC before reading.
 
 - The default prototype test gate now typechecks its Vitest sources under `src/`, `mcp/`, and `scripts/` before running them, so stale test fixtures and callbacks cannot bypass the repository's strict TypeScript check.

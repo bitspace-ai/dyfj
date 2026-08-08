@@ -228,6 +228,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
         const allowOnly = prompt.includes("FIXTURE_PERMISSION_ALLOW_ONLY");
         const lateReject = prompt.includes("FIXTURE_PERMISSION_LATE_REJECT");
         const rejectOnly = prompt.includes("FIXTURE_PERMISSION_REJECT_ONLY");
+        const overlapping = prompt.includes("FIXTURE_PERMISSION_OVERLAP");
         const duplicateIds = prompt.includes(
           "FIXTURE_PERMISSION_DUPLICATE_IDS",
         );
@@ -317,12 +318,39 @@ const app = agent({ name: "dyfj-acp-fixture" })
               ],
           },
         );
+        const permissionResponses = [permissionResponse];
+        if (overlapping) {
+          permissionResponses.push(context.request(
+            methods.client.session.requestPermission,
+            {
+              sessionId: params.sessionId,
+              toolCall: {
+                toolCallId: "fixture-tool-overlap",
+                title: "Write overlapping fixture file",
+                name: "write_file",
+                kind: "edit",
+                status: "pending",
+                rawInput: { path: "fixture-overlap.txt", content: "fixture" },
+              },
+              options: [{
+                optionId: "allow",
+                name: "Allow once",
+                kind: "allow_once",
+              }, {
+                optionId: "deny",
+                name: "Reject once",
+                kind: "reject_once",
+              }],
+            },
+          ));
+        }
         if (prompt.includes("FIXTURE_PERMISSION_EARLY_TERMINAL")) {
           await new Promise((resolve) => setTimeout(resolve, 10));
           void permissionResponse.catch(() => {});
           return { stopReason: "end_turn" };
         }
-        const response = await permissionResponse;
+        const responses = await Promise.all(permissionResponses);
+        const response = responses[0];
         if (scopeProbe || lateReject || rejectOnly) {
           if (fixture.cancelled) return { stopReason: "cancelled" };
           await chunk(
@@ -335,8 +363,10 @@ const app = agent({ name: "dyfj-acp-fixture" })
           return { stopReason: "end_turn" };
         }
         if (fixture.cancelled) return { stopReason: "cancelled" };
-        const verdict = response.outcome.outcome === "selected" &&
+        const verdict = responses.every((response) =>
+            response.outcome.outcome === "selected" &&
             response.outcome.optionId === "allow"
+          )
           ? "approved"
           : "denied";
         await chunk(context, params.sessionId, verdict);

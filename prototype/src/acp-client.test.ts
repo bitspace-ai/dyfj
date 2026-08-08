@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import {
   type AcpExecutionProfile,
+  ActivePromptDeadline,
   assertProcessGroupSignaler,
   drainStream,
   guardedProtocolInput,
@@ -119,6 +120,54 @@ async function expectContainedFailure(input: {
     await Deno.remove(pidFile).catch(() => {});
   }
 }
+
+describe("ActivePromptDeadline", () => {
+  test("excludes operator deliberation from active prompt execution", () => {
+    let now = 0;
+    const deadline = new ActivePromptDeadline(30, () => now);
+    now = 10;
+    deadline.pause();
+    now = 1_000;
+    expect(deadline.remainingMs).toBe(20);
+    deadline.resume();
+    now = 1_019;
+    expect(deadline.remainingMs).toBe(1);
+  });
+
+  test("resumes with the remaining budget instead of resetting it", () => {
+    let now = 0;
+    const deadline = new ActivePromptDeadline(100, () => now);
+    now = 40;
+    deadline.pause();
+    now = 1_000;
+    deadline.resume();
+    now = 1_060;
+    expect(deadline.remainingMs).toBe(0);
+  });
+
+  test("does not pause after the prompt budget has expired", () => {
+    let now = 0;
+    const deadline = new ActivePromptDeadline(30, () => now);
+    now = 31;
+    deadline.pause();
+    expect(deadline.isPaused).toBe(false);
+    expect(deadline.remainingMs).toBe(0);
+  });
+
+  test("does not double-count an overlapping paused interval", () => {
+    let now = 0;
+    const deadline = new ActivePromptDeadline(100, () => now);
+    now = 10;
+    deadline.pause();
+    now = 1_000;
+    deadline.pause();
+    now = 2_000;
+    expect(deadline.remainingMs).toBe(90);
+    deadline.resume();
+    now = 2_090;
+    expect(deadline.remainingMs).toBe(0);
+  });
+});
 
 describe("runAcpAgent", () => {
   test("contains an asynchronous spawn failure without an unhandled error", async () => {
@@ -548,13 +597,13 @@ describe("runAcpAgent", () => {
     expect(confirmationCancelled).toBe(true);
   });
 
-  test("discards a permission confirmation that resolves after prompt timeout", async () => {
+  test("allows approval after a confirmation outlasts the active prompt budget", async () => {
     const prompted = Promise.withResolvers<void>();
     const decision = Promise.withResolvers<"approve" | "deny">();
     const verdicts: string[] = [];
     let confirmationCancelled = false;
     const resultPromise = runAcpAgent({
-      profile: fixtureProfile({ promptTimeoutMs: 100 }),
+      profile: fixtureProfile({ promptTimeoutMs: 50 }),
       prompt: "FIXTURE_PERMISSION",
       confirmPermission: (_permission, signal) => {
         prompted.resolve();
@@ -568,11 +617,41 @@ describe("runAcpAgent", () => {
       },
     });
     await prompted.promise;
-    await expect(resultPromise).rejects.toMatchObject({ phase: "prompt" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
     decision.resolve("approve");
-    await Promise.resolve();
-    expect(verdicts).toEqual(["cancel"]);
+    await expect(resultPromise).resolves.toMatchObject({
+      text: "approved",
+      stopReason: "stop",
+    });
+    expect(verdicts).toEqual(["approve"]);
     expect(confirmationCancelled).toBe(true);
+  });
+
+  test("keeps the deadline paused until overlapping confirmations settle and honors both verdicts", async () => {
+    const prompted = Promise.withResolvers<void>();
+    const firstDecision = Promise.withResolvers<"approve" | "deny">();
+    const secondDecision = Promise.withResolvers<"approve" | "deny">();
+    let confirmations = 0;
+    const resultPromise = runAcpAgent({
+      profile: fixtureProfile({ promptTimeoutMs: 50 }),
+      prompt: "FIXTURE_PERMISSION_OVERLAP",
+      confirmPermission: () => {
+        confirmations += 1;
+        if (confirmations === 2) prompted.resolve();
+        return confirmations === 1
+          ? firstDecision.promise
+          : secondDecision.promise;
+      },
+    });
+    await prompted.promise;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    firstDecision.resolve("approve");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    secondDecision.resolve("deny");
+    await expect(resultPromise).resolves.toMatchObject({
+      text: "denied",
+      stopReason: "stop",
+    });
   });
 
   test("does not approve after cancellation while the verdict is being recorded", async () => {
