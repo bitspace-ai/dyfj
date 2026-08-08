@@ -154,7 +154,6 @@ export interface CodexChatGptProfileOptions {
 }
 
 export async function bundledCodexExecutable(
-  prototypeRoot: string,
   packageRoot: string,
 ): Promise<string> {
   const resolvedPackageRoot = await Deno.realPath(packageRoot);
@@ -243,7 +242,7 @@ export async function codexChatGptProfile(
   const nodePath = await operatorAuthorizedExecutable(
     options.nodePath ?? Deno.env.get("DYFJ_NODE_PATH"),
   );
-  const codexPath = await bundledCodexExecutable(prototypeRoot, packageRoot);
+  const codexPath = await bundledCodexExecutable(packageRoot);
   const environment: Record<string, string> = {
     HOME: isolatedHome,
     CODEX_HOME: codexHome,
