@@ -158,18 +158,21 @@ function buildRuntimeInputFromJson(
   ) {
     return { error: "turnId must be a UUID" };
   }
-  if (body.runner !== undefined && body.runner !== "fixture") {
-    return { error: "runner must be fixture" };
+  if (
+    body.runner !== undefined && body.runner !== "fixture" &&
+    body.runner !== "codex-chatgpt"
+  ) {
+    return { error: "runner must be fixture or codex-chatgpt" };
   }
-  if (body.runner === "fixture" && Object.keys(routingOptions).length > 0) {
+  if (body.runner !== undefined && Object.keys(routingOptions).length > 0) {
     return { error: "runner cannot be combined with model routing options" };
   }
   return {
     mode,
     prompt: body.prompt,
     routingOptions,
-    ...(body.runner === "fixture"
-      ? { runner: { kind: "acp" as const, profile: "fixture" as const } }
+    ...(body.runner === "fixture" || body.runner === "codex-chatgpt"
+      ? { runner: { kind: "acp" as const, profile: body.runner } }
       : {}),
     ...(typeof body.turnId === "string" ? { turnId: body.turnId } : {}),
     // Honored only for a loopback operator; the runtime applies that gate.
@@ -238,6 +241,8 @@ export interface ResolvedTurn {
 export interface ResolveTurnOptions {
   /** Standing paid posture when the request omits approvePaidInference (loopback only). */
   approvePaidDefault?: boolean;
+  /** Standing operator trust required before Codex may read workspace config. */
+  trustWorkspaceInstructions?: boolean;
 }
 
 export function resolveTurnFromBody(
@@ -255,9 +260,27 @@ export function resolveTurnFromBody(
       status: 403,
     };
   }
+  if (
+    runtimeInput.runner?.profile === "codex-chatgpt" &&
+    options.trustWorkspaceInstructions !== true
+  ) {
+    return {
+      error: "codex-chatgpt requires explicit workspace trust",
+      status: 403,
+    };
+  }
+  if (runtimeInput.runner?.profile === "codex-chatgpt") {
+    runtimeInput.trustWorkspaceInstructions = true;
+  }
 
   let sessionId: string | undefined;
   if (body.sessionId !== undefined) {
+    if (runtimeInput.runner?.profile === "codex-chatgpt") {
+      return {
+        error: "codex-chatgpt does not support session resume",
+        status: 400,
+      };
+    }
     if (
       typeof body.sessionId !== "string" ||
       !SESSION_ID_SHAPE.test(body.sessionId)

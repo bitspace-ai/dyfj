@@ -1247,6 +1247,8 @@ describe("session REST surface", () => {
     runnerWorkspace: null,
     runnerCapabilities: null,
     runnerEvidenceScope: null,
+    runnerRouteSource: null,
+    runnerAuthType: null,
     permissionVerdict: null,
     toolName: null,
     toolCallId: null,

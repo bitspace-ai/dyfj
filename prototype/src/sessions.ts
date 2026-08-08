@@ -268,6 +268,8 @@ export interface WorkbenchSessionEvent {
   runnerWorkspace: string | null;
   runnerCapabilities: string[] | null;
   runnerEvidenceScope: string | null;
+  runnerRouteSource: string | null;
+  runnerAuthType: string | null;
   permissionVerdict: string | null;
   // tool-call audit fields, so resume can replay tool turns.
   toolName: string | null;
@@ -289,6 +291,7 @@ function eventQuery(
   historicalProviderCallSchema = false,
   historicalUnparsedToolCallSchema = false,
   historicalRunnerSchema = false,
+  historicalRunnerAuthSchema = false,
 ): string {
   const providerCallFields = historicalProviderCallSchema
     ? "NULL AS provider_call_order, NULL AS provider_call_purpose, " +
@@ -307,12 +310,17 @@ function eventQuery(
       "NULL AS runner_transport, NULL AS runner_access_route, " +
       "NULL AS runner_cost_basis, " +
       "NULL AS runner_workspace, NULL AS runner_capabilities, " +
-      "NULL AS runner_evidence_scope, NULL AS permission_verdict"
+      "NULL AS runner_evidence_scope, NULL AS runner_route_source, " +
+      "NULL AS runner_auth_type, NULL AS permission_verdict"
     : "runner_kind, runner_profile, runner_protocol, runner_protocol_version, " +
       "runner_stop_reason, runner_external_session_id, runner_agent_name, runner_agent_version, " +
       "runner_transport, runner_access_route, runner_cost_basis, runner_workspace, " +
       "CAST(runner_capabilities AS CHAR) AS runner_capabilities, " +
-      "runner_evidence_scope, permission_verdict";
+      "runner_evidence_scope, " +
+      (historicalRunnerAuthSchema
+        ? "NULL AS runner_route_source, NULL AS runner_auth_type, "
+        : "runner_route_source, runner_auth_type, ") +
+      "permission_verdict";
   return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
     `principal_id, model_id, provider, api, content, stop_reason, ` +
     `tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, ` +
@@ -335,13 +343,30 @@ function isMissingRunnerColumn(error: unknown): boolean {
     .filter((value): value is string => typeof value === "string")
     .join(" ");
   if (
-    !/runner_(?:kind|profile|protocol|stop|external|agent|transport|access|cost|workspace|capabilities|evidence)|permission_verdict/
+    !/runner_(?:kind|profile|protocol|stop|external|agent_(?:name|version)|transport|access|cost|workspace|capabilities|evidence)|permission_verdict/
       .test(message)
   ) {
     return false;
   }
   return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
-    /unknown column|column\s+["'](?:runner_[^"']+|permission_verdict)["']\s+could not be found/i
+    /unknown column|column\s+["'](?:runner_(?:kind|profile|protocol[^"']*|stop[^"']*|external[^"']*|agent_(?:name|version)|transport|access[^"']*|cost[^"']*|workspace|capabilities|evidence[^"']*)|permission_verdict)["']\s+could not be found/i
+      .test(message);
+}
+
+function isMissingRunnerAuthColumn(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+    message?: unknown;
+    sqlMessage?: unknown;
+  };
+  const message = [candidate.message, candidate.sqlMessage]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  if (!/runner_(?:route_source|auth_type)/.test(message)) return false;
+  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
+    /unknown column|column\s+["']runner_(?:route_source|auth_type)["']\s+could not be found/i
       .test(message);
 }
 
@@ -411,9 +436,11 @@ export async function fetchWorkbenchSessionEvents(input: {
     const missingProviderCall = isMissingProviderCallColumn(error);
     const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
     const missingRunner = isMissingRunnerColumn(error);
+    const missingRunnerAuth = isMissingRunnerAuthColumn(error);
     if (
       input.asOf === undefined ||
-      (!missingProviderCall && !missingUnparsedToolCall && !missingRunner)
+      (!missingProviderCall && !missingUnparsedToolCall && !missingRunner &&
+        !missingRunnerAuth)
     ) {
       throw error;
     }
@@ -423,6 +450,8 @@ export async function fetchWorkbenchSessionEvents(input: {
         missingProviderCall,
         missingProviderCall || missingUnparsedToolCall,
         missingProviderCall || missingUnparsedToolCall || missingRunner,
+        missingProviderCall || missingUnparsedToolCall || missingRunner ||
+          missingRunnerAuth,
       ),
       [input.sessionId],
     );
@@ -469,6 +498,8 @@ export async function fetchWorkbenchSessionEvents(input: {
     runnerWorkspace: nullableString(row.runner_workspace),
     runnerCapabilities: normalizeStringArray(row.runner_capabilities),
     runnerEvidenceScope: nullableString(row.runner_evidence_scope),
+    runnerRouteSource: nullableString(row.runner_route_source),
+    runnerAuthType: nullableString(row.runner_auth_type),
     permissionVerdict: nullableString(row.permission_verdict),
     toolName: row.tool_name ? String(row.tool_name) : null,
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,

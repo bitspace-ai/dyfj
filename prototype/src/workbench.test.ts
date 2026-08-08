@@ -1156,6 +1156,29 @@ describe("buildWorkbenchRuntimeInput", () => {
   });
 });
 
+describe("runWorkbenchRuntime external-agent invariants", () => {
+  test("rejects the Codex ChatGPT route without explicit workspace trust", async () => {
+    await expect(runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "codex-chatgpt" },
+      trustWorkspaceInstructions: false,
+    })).rejects.toThrow("codex-chatgpt requires explicit workspace trust");
+  });
+
+  test("rejects Codex ChatGPT session resume at the runtime boundary", async () => {
+    await expect(runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "codex-chatgpt" },
+      trustWorkspaceInstructions: true,
+      sessionId: "01TEST00000000000000000001",
+    })).rejects.toThrow("codex-chatgpt does not support session resume");
+  });
+});
+
 describe("runWorkbenchRuntime observer events", () => {
   test("emits the runtime spine event sequence without leaking full prompt or response text", async () => {
     const events: unknown[] = [];
@@ -4836,6 +4859,8 @@ describe("runWorkbenchRuntime proactive context compression", () => {
         runnerWorkspace: null,
         runnerCapabilities: null,
         runnerEvidenceScope: null,
+        runnerRouteSource: null,
+        runnerAuthType: null,
         permissionVerdict: null,
         toolName: null,
         toolCallId: null,

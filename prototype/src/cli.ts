@@ -59,7 +59,7 @@ export interface TurnRequest {
   /** Working directory to scope the server's read-only file tools to. */
   workspace?: string;
   /** Experimental external-agent profile selector. */
-  runner?: "fixture";
+  runner?: "fixture" | "codex-chatgpt";
   /**
    * Per-turn opt-in to paid (hosted) inference. The engine honors it only on the
    * loopback transport AND only when set — a remote caller can never approve spend.
@@ -79,7 +79,7 @@ export interface CliConfig {
   model?: string;
   tier?: 0 | 1 | 2;
   hint?: "code" | "chat" | "reasoning";
-  runner?: "fixture";
+  runner?: "fixture" | "codex-chatgpt";
   sessionId?: string;
   /** Working directory sent to the server to scope read-only file tools. */
   workspace?: string;
@@ -459,7 +459,9 @@ export function formatReceipt(
         result.runner.protocolVersion === undefined
           ? " (not negotiated)"
           : ` v${result.runner.protocolVersion}`
-      } · ${result.runner.transport} · ${result.runner.accessRoute} · ${result.runner.costBasis} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
+      } · ${result.runner.transport} · ${
+        result.runner.accessRoute ?? "unverified"
+      } · ${result.runner.costBasis} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
     );
   }
   const cost = formatUsdShort(result.cost.totalUsd);
@@ -1604,6 +1606,9 @@ export function buildServeUnixArgs(
   envGrants?: string[] | null,
   autostarted = false,
 ): string[] {
+  if (runGrants?.some((grant) => grant.includes(","))) {
+    throw new Error("Deno run grants cannot contain commas");
+  }
   const socketGrant = `unix:${socketPath}`;
   let net = netGrants.includes(socketGrant)
     ? netGrants
@@ -1620,9 +1625,8 @@ export function buildServeUnixArgs(
     "-P=serve-unix",
     `--allow-net=${net.join(",")}`,
     // An explicit --allow-run REPLACES the profile's run list, so runGrants
-    // must already carry the profile's own grants plus the resolver binary.
-    // Omitted (null) when no [secrets] resolver is configured, so -P supplies
-    // the profile's run grants unchanged — a plain local-only start is untouched.
+    // must carry the profile grants plus the launch-resolved Node executable,
+    // /bin/kill, and any configured resolver binary.
     ...(runGrants != null ? [`--allow-run=${runGrants.join(",")}`] : []),
     // An explicit --allow-env likewise REPLACES the profile's env list, so
     // envGrants must carry the profile's own env plus the [secrets].inherit_env
@@ -1665,6 +1669,37 @@ export async function readServeUnixRunGrants(cwd: string): Promise<string[]> {
     );
   }
   return run;
+}
+
+/** Validate the selected executable and carry that same path into exact grants. */
+export async function nodeRunGrant(
+  env: { get(name: string): string | undefined } = Deno.env,
+): Promise<string | null> {
+  const configured = env.get("DYFJ_NODE_PATH");
+  if (configured === undefined || configured === "") return null;
+  if (!configured.startsWith("/")) {
+    throw new Error("DYFJ_NODE_PATH must name an absolute executable");
+  }
+  if (configured.includes(",") || configured.includes(":")) {
+    throw new Error("DYFJ_NODE_PATH contains an unsupported delimiter");
+  }
+  let resolved: string;
+  try {
+    resolved = await Deno.realPath(configured);
+    const info = await Deno.stat(resolved);
+    if (
+      !info.isFile ||
+      (Deno.build.os !== "windows" && ((info.mode ?? 0) & 0o111) === 0)
+    ) throw new Error("not executable");
+  } catch {
+    throw new Error("DYFJ_NODE_PATH executable is unavailable");
+  }
+  if (resolved.includes(",") || resolved.includes(":")) {
+    throw new Error(
+      "DYFJ_NODE_PATH canonical target contains an unsupported delimiter",
+    );
+  }
+  return configured;
 }
 
 /**
@@ -1808,18 +1843,17 @@ export async function startLocalRuntime(
   const autostarted = options.autostarted === true;
   const netGrants = await readServeUnixNetGrants(cwd);
   const memoryMcpGrant = await readMemoryMcpNetGrant(cwd);
-  // When a [secrets] resolver is configured, the child runtime must be granted
-  // --allow-run for the resolver binary (operator-private, so never committed
-  // to the serve-unix profile — same launch-resolved posture as the socket and
-  // memory-host net grants). No resolver → null → -P supplies the run grants.
+  // Node and any operator-private resolver binary are launch-resolved. The
+  // fixed /bin/kill grant supports the ACP process-group contract.
   const secretsCfg = await readLauncherSecretsConfig(cwd);
   const resolverBin = secretsRunGrant(secretsCfg);
-  let runGrants: string[] | null = null;
-  if (resolverBin !== null) {
-    const profileRun = await readServeUnixRunGrants(cwd);
-    runGrants = profileRun.includes(resolverBin)
-      ? profileRun
-      : [...profileRun, resolverBin];
+  const profileRun = await readServeUnixRunGrants(cwd);
+  const nodeGrant = await nodeRunGrant();
+  const dynamicRunGrants = [nodeGrant, "/bin/kill", resolverBin]
+    .filter((grant): grant is string => grant !== null);
+  const runGrants = [...profileRun];
+  for (const grant of dynamicRunGrants) {
+    if (!runGrants.includes(grant)) runGrants.push(grant);
   }
   // The resolver spawns with a cleared env and forwards only a minimal base plus
   // [secrets].inherit_env. The runtime must be able to READ those inherit_env
@@ -1941,7 +1975,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       else if (arg === "--key") overrides.key = value;
       else if (arg === "--model") overrides.model = value;
       else if (arg === "--runner") {
-        if (value !== "fixture") return error("--runner must be fixture");
+        if (value !== "fixture" && value !== "codex-chatgpt") {
+          return error("--runner must be fixture or codex-chatgpt");
+        }
         overrides.runner = value;
       } else if (arg === "--session") {
         // normalizeSessionRef throws on garbage; route it through the standard
@@ -1997,9 +2033,21 @@ export function parseArgs(argv: string[]): ParsedArgs {
   ) {
     return error("--runner cannot be combined with --model, --tier, or --hint");
   }
+  if (
+    overrides.runner === "codex-chatgpt" &&
+    overrides.sessionId !== undefined
+  ) {
+    return error("codex-chatgpt does not support --session");
+  }
 
   if (printPrompt !== undefined) {
     return { command: "exec", prompt: printPrompt, json, overrides };
+  }
+  if (
+    overrides.runner === "codex-chatgpt" &&
+    positional[0] !== "exec" && positional[0] !== "ask"
+  ) {
+    return error("codex-chatgpt supports one-shot turns only");
   }
   if (positional[0] === "models" && positional.length === 1) {
     return { command: "models", json, overrides };
@@ -2140,7 +2188,8 @@ Options:
   --unix           force the UDS seam (the local default; needed only to override --server)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
-  --runner fixture experimental local ACP fixture runner
+  --runner <name>  local ACP runner: fixture | codex-chatgpt (experimental;
+                   codex-chatgpt is one-shot and requires trusted workspace config)
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)

@@ -421,6 +421,53 @@ describe("fetchWorkbenchSessionEvents", () => {
     });
   });
 
+  test("retains migration-005 runner fields when auth evidence is absent", async () => {
+    const calls: string[] = [];
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      asOf: "2026-08-05 10:00:00",
+      query: (sql) => {
+        calls.push(sql);
+        if (!sql.includes("NULL AS runner_route_source")) {
+          return Promise.reject(
+            new Error(
+              'column "runner_route_source" could not be found in any table in scope',
+            ),
+          );
+        }
+        return Promise.resolve([{
+          event_id: "01PRE006",
+          event_type: "agent_response",
+          trace_id: "0123",
+          span_id: "runner-span",
+          principal_id: "workbench",
+          runner_kind: "external_agent",
+          runner_profile: "fixture",
+          runner_protocol: "acp",
+          runner_transport: "local_stdio",
+          runner_access_route: "local_sidecar",
+          runner_cost_basis: "local_free",
+          runner_workspace: "/tmp/workspace",
+          runner_capabilities: '["sessionCapabilities.close"]',
+          runner_evidence_scope: "outer_only",
+          permission_verdict: "approved",
+          created_at: "2026-08-05 10:00:00",
+        }]);
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain("runner_kind, runner_profile");
+    expect(calls[1]).toContain("NULL AS runner_route_source");
+    expect(event).toMatchObject({
+      runnerKind: "external_agent",
+      runnerProfile: "fixture",
+      runnerAccessRoute: "local_sidecar",
+      runnerCostBasis: "local_free",
+      runnerRouteSource: null,
+      runnerAuthType: null,
+    });
+  });
+
   test("rejects a malformed AS OF value before touching SQL", async () => {
     await expect(fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
@@ -485,6 +532,8 @@ describe("fetchWorkbenchSessionEvents", () => {
           runner_workspace: "/tmp/workspace",
           runner_capabilities: '["sessionCapabilities.close"]',
           runner_evidence_scope: "outer_only",
+          runner_route_source: "agent_auth_status",
+          runner_auth_type: "chat-gpt",
           permission_verdict: "approved",
           created_at: "2026-08-05 10:00:00",
         }]);
@@ -506,6 +555,8 @@ describe("fetchWorkbenchSessionEvents", () => {
       runnerCostBasis: "local_free",
       runnerCapabilities: ["sessionCapabilities.close"],
       runnerEvidenceScope: "outer_only",
+      runnerRouteSource: "agent_auth_status",
+      runnerAuthType: "chat-gpt",
       permissionVerdict: "approved",
     });
   });
@@ -640,6 +691,8 @@ describe("buildConversationMessages", () => {
     runnerWorkspace: null,
     runnerCapabilities: null,
     runnerEvidenceScope: null,
+    runnerRouteSource: null,
+    runnerAuthType: null,
     permissionVerdict: null,
     toolName: tool.name ?? null,
     toolCallId: tool.callId ?? null,

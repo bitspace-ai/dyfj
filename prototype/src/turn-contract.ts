@@ -111,11 +111,17 @@ export interface ExternalAgentTurnReceipt {
     capabilities: string[];
     workspace: string;
     transport: "local_stdio";
-    accessRoute: ExternalAgentAccessRoute;
+    accessRoute?: ExternalAgentAccessRoute;
     costBasis: ExternalAgentCostBasis;
     evidence: {
       source: "acp";
       innerState: "opaque";
+      routeSource?: "profile_declared" | "agent_auth_status";
+      authenticationType?:
+        | "chat-gpt"
+        | "api-key"
+        | "gateway"
+        | "unauthenticated";
     };
     elapsedMs: number;
   };

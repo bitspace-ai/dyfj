@@ -438,7 +438,10 @@ function peerIsLoopback(info?: Deno.ServeHandlerInfo): boolean {
 async function resolveTurnRequest(
   request: Request,
   loopback: boolean,
-  approvePaidDefault?: boolean,
+  options: {
+    approvePaidDefault?: boolean;
+    trustWorkspaceInstructions?: boolean;
+  } = {},
 ): Promise<ResolvedTurn | { error: string; status: number }> {
   let body: TurnRequestBody;
   try {
@@ -446,7 +449,7 @@ async function resolveTurnRequest(
   } catch {
     return { error: "request body must be JSON", status: 400 };
   }
-  return resolveTurnFromBody(body, loopback, { approvePaidDefault });
+  return resolveTurnFromBody(body, loopback, options);
 }
 
 async function handleJsonTurn(
@@ -462,7 +465,10 @@ async function handleJsonTurn(
   const resolved = await resolveTurnRequest(
     request,
     loopback,
-    engineDeps.approvePaidDefault,
+    {
+      approvePaidDefault: engineDeps.approvePaidDefault,
+      trustWorkspaceInstructions: engineDeps.trustWorkspaceInstructions,
+    },
   );
   if ("error" in resolved) {
     return jsonResponse({ error: resolved.error }, resolved.status);
@@ -514,7 +520,10 @@ async function handleStreamingTurn(
   const resolved = await resolveTurnRequest(
     request,
     loopback,
-    engineDeps.approvePaidDefault,
+    {
+      approvePaidDefault: engineDeps.approvePaidDefault,
+      trustWorkspaceInstructions: engineDeps.trustWorkspaceInstructions,
+    },
   );
   if ("error" in resolved) {
     // Request-shape errors occur before the stream opens, so report them as a

@@ -282,10 +282,12 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
   // System/runtime env not part of the DYFJ config surface.
   const SYSTEM_ENV = new Set([
     "PATH",
+    "DYFJ_NODE_PATH",
     "USER",
     "HOME",
     "XDG_RUNTIME_DIR",
     "NODE_DEBUG_NATIVE",
+    "NODE_V8_COVERAGE",
     "NODE_DISABLE_COMPILE_CACHE",
     "NODE_COMPILE_CACHE_PORTABLE",
     "NODE_COMPILE_CACHE",

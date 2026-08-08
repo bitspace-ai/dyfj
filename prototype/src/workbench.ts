@@ -162,7 +162,10 @@ export interface WorkbenchRuntimeInput {
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
   /** Explicit external-loop selection. Absent preserves the native model/tool loop. */
-  runner?: { kind: "acp"; profile: "fixture" };
+  runner?: {
+    kind: "acp";
+    profile: "fixture" | "codex-chatgpt";
+  };
   /** External-agent permission requests fail closed when this is absent. */
   confirmExternalAgentPermission?: (
     prompt: AcpPermissionPrompt,
@@ -1444,7 +1447,10 @@ export async function runWorkbench(
 
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput & {
-    runner: { kind: "acp"; profile: "fixture" };
+    runner: {
+      kind: "acp";
+      profile: "fixture" | "codex-chatgpt";
+    };
   },
 ): Promise<ExternalAgentWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
@@ -1457,6 +1463,20 @@ export async function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
 ): Promise<WorkbenchRuntimeResult> {
   if (runtimeInput.runner?.kind === "acp") {
+    if (
+      runtimeInput.runner.profile === "codex-chatgpt" &&
+      runtimeInput.trustWorkspaceInstructions !== true
+    ) {
+      throw new DomainError(
+        "codex-chatgpt requires explicit workspace trust",
+      );
+    }
+    if (
+      runtimeInput.runner.profile === "codex-chatgpt" &&
+      runtimeInput.sessionId !== undefined
+    ) {
+      throw new DomainError("codex-chatgpt does not support session resume");
+    }
     const { runExternalAgentWorkbenchRuntime } = await import(
       "./external-agent-runtime"
     );

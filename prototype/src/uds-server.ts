@@ -450,7 +450,10 @@ export function buildTurnHandlers(
       const resolved = resolveTurnFromBody(
         asRecord(params) as TurnRequestBody,
         true,
-        { approvePaidDefault: engineDeps.approvePaidDefault },
+        {
+          approvePaidDefault: engineDeps.approvePaidDefault,
+          trustWorkspaceInstructions: engineDeps.trustWorkspaceInstructions,
+        },
       );
       if ("error" in resolved) {
         throw new RpcError(RpcErrorCode.invalidParams, resolved.error);

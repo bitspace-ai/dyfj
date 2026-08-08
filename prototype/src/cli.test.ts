@@ -21,6 +21,7 @@ import {
   isLoopbackServerUrl,
   main,
   memoryMcpNetGrant,
+  nodeRunGrant,
   normalizeSessionRef,
   parseArgs,
   promptToolApproval,
@@ -2120,11 +2121,42 @@ describe("parseArgs", () => {
     const p = parseArgs(["-p", "hello"]);
     expect(p).toMatchObject({ command: "exec", prompt: "hello" });
   });
-  test("parses only the declared fixture runner", () => {
+  test("parses only the declared external runners", () => {
     expect(parseArgs(["--runner", "fixture", "exec", "hi"]).overrides.runner)
       .toBe("fixture");
+    expect(
+      parseArgs([
+        "--runner",
+        "codex-chatgpt",
+        "exec",
+        "hi",
+      ]).overrides.runner,
+    ).toBe("codex-chatgpt");
     expect(parseArgs(["--runner", "vendor", "exec", "hi"]).error)
-      .toContain("runner must be fixture");
+      .toContain("runner must be fixture or codex-chatgpt");
+  });
+
+  test("keeps the Codex ChatGPT runner one-shot", () => {
+    expect(parseArgs(["--runner", "codex-chatgpt"]).error).toContain(
+      "one-shot",
+    );
+    expect(
+      parseArgs([
+        "--runner",
+        "codex-chatgpt",
+        "--session",
+        "01ABCDEF0123456789ABCDEF01",
+        "exec",
+        "hi",
+      ]).error,
+    ).toContain("does not support --session");
+    for (const command of ["status", "models", "sessions", "start"]) {
+      expect(parseArgs(["--runner", "codex-chatgpt", command]).error)
+        .toContain("one-shot");
+    }
+    expect(
+      parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]),
+    ).toMatchObject({ command: "exec", prompt: "hi" });
   });
 
   test("rejects explicit model routing alongside a runner", () => {
@@ -2897,12 +2929,15 @@ describe("runtime lifecycle commands", () => {
       permissions: Record<string, { env?: string[] | boolean }>;
     };
     expect(parsed.permissions["cli"].env).toContain("DYFJ_MEMORY_MCP_URL");
+    expect(parsed.permissions["cli"].env).toContain("DYFJ_NODE_PATH");
     const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
       ?.[1];
     expect(compileEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
+    expect(compileEnv?.split(",")).toContain("DYFJ_NODE_PATH");
     const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
     expect(launcherEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
+    expect(launcherEnv?.split(",")).toContain("DYFJ_NODE_PATH");
   });
 
   test("the internal autostart marker is not ambient process state", async () => {
@@ -2928,17 +2963,99 @@ describe("runtime lifecycle commands", () => {
     expect(grants).toContain("127.0.0.1:3306");
   });
 
-  test("dyfj start spawn args stay in lockstep with the serve-unix task", async () => {
-    // buildServeUnixArgs reproduces the serve-unix task plus the socket net
-    // grant. If the task definition changes shape, change both together.
+  test("generic server tasks remain cross-platform and runner-neutral", async () => {
+    const raw = await Deno.readTextFile("deno.json");
+    const parsed = JSON.parse(raw) as {
+      tasks: Record<string, string>;
+      permissions: Record<string, {
+        env?: string[] | boolean;
+        read?: string[] | boolean;
+        run?: string[] | boolean;
+        sys?: string[] | boolean;
+      }>;
+    };
+    const tasks = parsed.tasks;
+    expect(tasks["codex-chatgpt-login"]).toContain(
+      '--allow-read=".,$node_path,$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt"',
+    );
+    expect(tasks["codex-chatgpt-login"]).toContain(
+      '--allow-write="$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt"',
+    );
+    expect(tasks["codex-chatgpt-login"]).toContain(
+      '--allow-run="bash,$node_path"',
+    );
+    expect(tasks["codex-chatgpt-login"]).toContain("--allow-sys=uid");
+    for (const task of ["serve-unix", "workbench", "workbench-http", "start"]) {
+      expect(tasks[task]).toMatch(/^deno run --no-prompt /);
+      expect(tasks[task]).not.toContain("/bin/sh");
+      expect(tasks[task]).not.toContain("DYFJ_NODE_PATH");
+    }
+    for (const profile of ["serve-unix", "workbench", "workbench-http"]) {
+      expect(parsed.permissions[profile].run).toContain("/bin/kill");
+      expect(parsed.permissions[profile].sys).toContain("uid");
+    }
+    expect(parsed.permissions["serve-unix"].env).toContain("NODE_V8_COVERAGE");
+    expect(parsed.permissions["serve-unix"].read).toBe(true);
+    for (const profile of ["workbench", "workbench-http"]) {
+      expect(parsed.permissions[profile].env).toContain("NODE_V8_COVERAGE");
+      expect(parsed.permissions[profile].read).toEqual([".."]);
+    }
+  });
+
+  test("codex-chatgpt-login fails clearly when Node is unavailable", async () => {
+    const dir = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const fakeDeno = `${dir}/deno`;
+    try {
+      await Deno.writeTextFile(
+        fakeDeno,
+        "#!/bin/sh\necho 'unexpected deno invocation' >&2\nexit 99\n",
+      );
+      await Deno.chmod(fakeDeno, 0o700);
+      const raw = await Deno.readTextFile("deno.json");
+      const tasks =
+        (JSON.parse(raw) as { tasks: Record<string, string> }).tasks;
+      for (
+        const env of [
+          { DYFJ_NODE_PATH: "", PATH: dir },
+          { DYFJ_NODE_PATH: dir, PATH: "/usr/bin:/bin" },
+        ]
+      ) {
+        const output = await new Deno.Command("/bin/sh", {
+          args: ["-c", tasks["codex-chatgpt-login"]],
+          cwd: Deno.cwd(),
+          env: { ...Deno.env.toObject(), ...env },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        const stderr = new TextDecoder().decode(output.stderr);
+        expect(output.code).toBe(1);
+        expect(stderr).toContain(
+          "dyfj: codex-chatgpt-login requires an absolute operator-authorized executable on PATH or in DYFJ_NODE_PATH",
+        );
+        expect(stderr).not.toContain("unexpected deno invocation");
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  test("codex-chatgpt-login rejects an unsafe home before Deno starts", async () => {
     const raw = await Deno.readTextFile("deno.json");
     const tasks = (JSON.parse(raw) as { tasks: Record<string, string> }).tasks;
-    expect(tasks["serve-unix"]).toBe(
-      "deno run --no-prompt -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
-    );
-    // Every server entrypoint must refuse to prompt.
-    for (const task of ["serve-unix", "workbench", "workbench-http", "start"]) {
-      expect(tasks[task]).toContain("--no-prompt");
+    for (const home of ["", "..", "/tmp/dyfj,home"]) {
+      const output = await new Deno.Command("/bin/sh", {
+        args: ["-c", tasks["codex-chatgpt-login"]],
+        cwd: Deno.cwd(),
+        env: { ...Deno.env.toObject(), HOME: home },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      expect(output.code).toBe(1);
+      expect(new TextDecoder().decode(output.stderr)).toContain(
+        home === "/tmp/dyfj,home"
+          ? "codex-chatgpt-login home path cannot contain a comma"
+          : "codex-chatgpt-login requires an absolute home path",
+      );
     }
   });
 });
@@ -3326,7 +3443,11 @@ describe("presentation", () => {
         transport: "local_stdio",
         accessRoute: "local_sidecar",
         costBasis: "local_free",
-        evidence: { source: "acp", innerState: "opaque" },
+        evidence: {
+          source: "acp",
+          innerState: "opaque",
+          routeSource: "profile_declared",
+        },
         elapsedMs: 12,
       },
       route: { reason: "explicit_external_agent" },
@@ -3577,7 +3698,59 @@ describe("readServeUnixRunGrants", () => {
   });
 });
 
-describe("buildServeUnixArgs with a resolver run grant", () => {
+describe("nodeRunGrant", () => {
+  test("carries the selected absolute executable after validating its target", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const target = `${root}/target`;
+    const executable = `${root}/selected`;
+    try {
+      await Deno.writeTextFile(target, "#!/bin/sh\nexit 0\n");
+      await Deno.chmod(target, 0o700);
+      const linked = await new Deno.Command("bash", {
+        args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, executable],
+      }).output();
+      expect(linked.success).toBe(true);
+      expect(await nodeRunGrant({ get: () => executable })).toBe(executable);
+      await expect(nodeRunGrant({ get: () => "node" })).rejects.toThrow(
+        "must name an absolute executable",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("allows a runtime without the optional Codex route", async () => {
+    expect(await nodeRunGrant({ get: () => undefined })).toBeNull();
+  });
+
+  test("rejects delimiter-unsafe selected and canonical paths", async () => {
+    for (const delimiter of [",", ":"]) {
+      const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+      const target = `${root}/node${delimiter}target`;
+      const selected = `${root}/node`;
+      try {
+        await Deno.writeTextFile(target, "#!/bin/sh\nexit 0\n");
+        await Deno.chmod(target, 0o700);
+        const linked = await new Deno.Command("bash", {
+          args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, selected],
+          stdout: "null",
+          stderr: "null",
+        }).output();
+        expect(linked.success).toBe(true);
+        await expect(nodeRunGrant({ get: () => selected })).rejects.toThrow(
+          "canonical target contains an unsupported delimiter",
+        );
+        await expect(nodeRunGrant({ get: () => target })).rejects.toThrow(
+          "contains an unsupported delimiter",
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    }
+  });
+});
+
+describe("buildServeUnixArgs with launch-resolved run grants", () => {
   const NET = ["127.0.0.1:3306"];
   const SOCK = "/run/dyfj/workbench.sock";
 
@@ -3589,8 +3762,24 @@ describe("buildServeUnixArgs with a resolver run grant", () => {
   });
 
   test("appends --allow-run with the profile grants plus the resolver binary", () => {
-    const args = buildServeUnixArgs(NET, SOCK, null, ["bash", "op"]);
-    expect(args).toContain("--allow-run=bash,op");
+    const args = buildServeUnixArgs(NET, SOCK, null, [
+      "bash",
+      "/opt/node/bin/node",
+      "/bin/kill",
+      "op",
+    ]);
+    expect(args).toContain(
+      "--allow-run=bash,/opt/node/bin/node,/bin/kill,op",
+    );
+  });
+
+  test("rejects delimiter-unsafe run grants", () => {
+    expect(() =>
+      buildServeUnixArgs(NET, SOCK, null, [
+        "bash",
+        "/opt/Node,Inc/bin/node",
+      ])
+    ).toThrow("Deno run grants cannot contain commas");
   });
 
   test("the socket grant is still present alongside the run grant", () => {
