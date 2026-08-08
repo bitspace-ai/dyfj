@@ -63,6 +63,10 @@ import {
 } from "./external-agent-runtime";
 
 describe("runExternalAgentWorkbenchRuntime", () => {
+  test("leaves the fixture prompt timeout at the generic ACP default", () => {
+    expect(fixtureProfile(Deno.cwd()).promptTimeoutMs).toBeUndefined();
+  });
+
   test("does not promote adapter authentication into route facts", () => {
     const profile = {
       ...fixtureProfile(Deno.cwd()),
@@ -281,6 +285,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         accessRoute: "subscription_oauth",
         costBasis: "subscription_quota",
         requiredAuthentication: "chat-gpt",
+        promptTimeoutMs: 30 * 60_000,
         environment: {
           HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home`,
           CODEX_HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex`,

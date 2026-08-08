@@ -57,6 +57,7 @@ export function fixtureProfile(workspace: string): AcpExecutionProfile {
 }
 
 export const CODEX_ACP_VERSION = "1.1.10";
+const CODEX_CHATGPT_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const MAX_ADAPTER_PACKAGE_METADATA_BYTES = 65_536;
 
 async function readBoundedTextFile(path: string, maxBytes: number) {
@@ -263,6 +264,7 @@ export async function codexChatGptProfile(
     accessRoute: "subscription_oauth",
     costBasis: "subscription_quota",
     requiredAuthentication: "chat-gpt",
+    promptTimeoutMs: CODEX_CHATGPT_PROMPT_TIMEOUT_MS,
   };
 }
 
