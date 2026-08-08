@@ -397,6 +397,19 @@ const app = agent({ name: "dyfj-acp-fixture" })
         await chunk(context, params.sessionId, "x".repeat(60_001));
         return { stopReason: "end_turn" };
       }
+      if (prompt.includes("FIXTURE_LONG_UPDATE_STREAM")) {
+        for (let index = 0; index < 1_025; index++) {
+          await chunk(context, params.sessionId, "");
+        }
+        await chunk(context, params.sessionId, "complete");
+        return { stopReason: "end_turn" };
+      }
+      if (prompt.includes("FIXTURE_LONG_UPDATE_FLOOD")) {
+        for (let index = 0; index < 8_193; index++) {
+          await chunk(context, params.sessionId, "");
+        }
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_UPDATE_FLOOD")) {
         for (let index = 0; index < 1_025; index++) {
           await chunk(context, params.sessionId, "");

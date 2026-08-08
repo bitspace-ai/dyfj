@@ -61,10 +61,32 @@ import {
   runExternalAgentWorkbenchRuntime,
   verifiedRouteFacts,
 } from "./external-agent-runtime";
+import { AcpSessionUpdateLimitError } from "./acp-client";
+import { summarizeError } from "./turn-contract";
 
 describe("runExternalAgentWorkbenchRuntime", () => {
   test("leaves the fixture prompt timeout at the generic ACP default", () => {
     expect(fixtureProfile(Deno.cwd()).promptTimeoutMs).toBeUndefined();
+  });
+
+  test("exposes the contained session-update ceiling diagnostic at the runtime boundary", async () => {
+    let thrown: unknown;
+    try {
+      await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "bounded update stream",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        workspaceRoot: Deno.cwd(),
+      }, {
+        runAgent: () => Promise.reject(new AcpSessionUpdateLimitError()),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(summarizeError(thrown)).toBe(
+      "ACP agent exceeded the session-update limit",
+    );
   });
 
   test("does not promote adapter authentication into route facts", () => {
@@ -286,6 +308,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         costBasis: "subscription_quota",
         requiredAuthentication: "chat-gpt",
         promptTimeoutMs: 30 * 60_000,
+        sessionUpdatePolicy: "long_running",
         environment: {
           HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home`,
           CODEX_HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex`,

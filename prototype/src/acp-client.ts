@@ -43,6 +43,7 @@ export interface AcpExecutionProfile {
   cancellationTimeoutMs?: number;
   permissionVerdictTimeoutMs?: number;
   terminationTimeoutMs?: number;
+  sessionUpdatePolicy?: "standard" | "long_running";
 }
 
 export interface AcpPermissionPrompt {
@@ -121,6 +122,12 @@ export class AcpRunnerError extends Error {
   }
 }
 
+export class AcpSessionUpdateLimitError extends AcpRunnerError {
+  constructor() {
+    super("ACP agent exceeded the session-update limit", "protocol");
+  }
+}
+
 export class AcpAuthenticationRequiredError extends DomainError {
   readonly phase = "authenticate" as const;
   constructor() {
@@ -156,7 +163,8 @@ const MAX_PROTOCOL_INPUT_BYTES = 16_777_216;
 const MAX_CHILD_STDERR_BYTES = 1_048_576;
 const MAX_PROMPT_BYTES = 60_000;
 const MAX_AGENT_RESPONSE_BYTES = 60_000;
-const MAX_SESSION_UPDATES = 1_024;
+const STANDARD_SESSION_UPDATE_LIMIT = 1_024;
+const LONG_RUNNING_SESSION_UPDATE_LIMIT = 8_192;
 const MAX_PERMISSION_REQUESTS = 128;
 const MAX_PERMISSION_OPTIONS = 16;
 const MAX_PERMISSION_LABEL_BYTES = 128;
@@ -535,6 +543,24 @@ function assertProfile(profile: AcpExecutionProfile): void {
       );
     }
   }
+  if (
+    profile.sessionUpdatePolicy !== undefined &&
+    profile.sessionUpdatePolicy !== "standard" &&
+    profile.sessionUpdatePolicy !== "long_running"
+  ) {
+    throw new AcpRunnerError(
+      "ACP profile has an invalid session-update policy",
+      "spawn",
+    );
+  }
+}
+
+export function resolveSessionUpdateLimit(
+  profile: AcpExecutionProfile,
+): number {
+  return profile.sessionUpdatePolicy === "long_running"
+    ? LONG_RUNNING_SESSION_UPDATE_LIMIT
+    : STANDARD_SESSION_UPDATE_LIMIT;
 }
 
 export function assertAcpPromptWithinLimit(prompt: string): void {
@@ -631,6 +657,7 @@ export function guardedProtocolInput(
   input: ReadableStream<Uint8Array>,
   activeSessionId: () => string | undefined,
   onProtocolError: (error: AcpRunnerError) => void,
+  sessionUpdateLimit = STANDARD_SESSION_UPDATE_LIMIT,
 ): ReadableStream<Uint8Array> {
   let pending = new Uint8Array();
   let pendingLength = 0;
@@ -660,8 +687,10 @@ export function guardedProtocolInput(
     const record = message as Record<string, unknown>;
     if (record.method !== methods.client.session.update) return;
     sessionUpdateCount += 1;
-    if (sessionUpdateCount > MAX_SESSION_UPDATES) {
-      reject("ACP agent exceeded the session-update limit");
+    if (sessionUpdateCount > sessionUpdateLimit) {
+      const error = new AcpSessionUpdateLimitError();
+      onProtocolError(error);
+      throw error;
     }
     const params = record.params;
     if (
@@ -903,6 +932,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
   assertAcpPromptWithinLimit(input.prompt);
   const startedAt = Date.now();
   const profile = input.profile;
+  const sessionUpdateLimit = resolveSessionUpdateLimit(profile);
   const abortedResult = (evidence: {
     protocolVersion?: number;
     externalSessionId?: string;
@@ -1264,6 +1294,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
           child.stdout,
           () => activeSessionId,
           noteProtocolError,
+          sessionUpdateLimit,
         ),
       ),
       async (context) => {
@@ -1506,11 +1537,8 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
               const message = outcome.message;
               if (message.kind === "session_update") {
                 updateCount += 1;
-                if (updateCount > MAX_SESSION_UPDATES) {
-                  throw new AcpRunnerError(
-                    "ACP agent exceeded the session-update limit",
-                    "protocol",
-                  );
+                if (updateCount > sessionUpdateLimit) {
+                  throw new AcpSessionUpdateLimitError();
                 }
                 if (message.notification.sessionId !== session.sessionId) {
                   throw new AcpRunnerError(

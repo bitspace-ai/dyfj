@@ -4,6 +4,7 @@ import {
   type AcpExecutionProfile,
   type AcpPermissionVerdict,
   type AcpRouteEvidence,
+  AcpSessionUpdateLimitError,
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client";
@@ -265,6 +266,7 @@ export async function codexChatGptProfile(
     costBasis: "subscription_quota",
     requiredAuthentication: "chat-gpt",
     promptTimeoutMs: CODEX_CHATGPT_PROMPT_TIMEOUT_MS,
+    sessionUpdatePolicy: "long_running",
   };
 }
 
@@ -765,6 +767,8 @@ export async function runExternalAgentWorkbenchRuntime(
       traceId,
       errorMessage: "External agent turn failed",
     });
-    throw error;
+    throw error instanceof AcpSessionUpdateLimitError
+      ? new DomainError("ACP agent exceeded the session-update limit")
+      : error;
   }
 }
