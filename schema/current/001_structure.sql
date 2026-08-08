@@ -68,6 +68,8 @@ CREATE TABLE events (
     runner_workspace          VARCHAR(1024),
     runner_capabilities       JSON,
     runner_evidence_scope     ENUM('outer_only'),
+    runner_route_source       ENUM('profile_declared', 'agent_auth_status'),
+    runner_auth_type          ENUM('chat-gpt', 'api-key', 'gateway', 'unauthenticated'),
     permission_verdict        ENUM('approved', 'denied', 'cancelled'),
 
     tokens_input              INT UNSIGNED,

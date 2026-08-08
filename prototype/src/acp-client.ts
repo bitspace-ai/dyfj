@@ -7,11 +7,25 @@ import {
   type StopReason as AcpStopReason,
 } from "@agentclientprotocol/sdk";
 import {
+  DomainError,
   type ExternalAgentAccessRoute,
   type ExternalAgentCostBasis,
   sanitizeBoundaryText,
 } from "./turn-contract";
 import { isAbsolute, win32 } from "node:path";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { Readable, Writable } from "node:stream";
+
+export type AcpAuthenticationType =
+  | "chat-gpt"
+  | "api-key"
+  | "gateway"
+  | "unauthenticated";
+
+export interface AcpRouteEvidence {
+  source: "profile_declared" | "agent_auth_status";
+  authenticationType?: AcpAuthenticationType;
+}
 
 export interface AcpExecutionProfile {
   slug: string;
@@ -22,6 +36,7 @@ export interface AcpExecutionProfile {
   transport: "local_stdio";
   accessRoute: ExternalAgentAccessRoute;
   costBasis: ExternalAgentCostBasis;
+  requiredAuthentication?: "chat-gpt";
   initializeTimeoutMs?: number;
   sessionTimeoutMs?: number;
   promptTimeoutMs?: number;
@@ -68,6 +83,10 @@ export interface AcpRunInput {
     verdict: AcpPermissionVerdict,
     signal: AbortSignal,
   ) => void | Promise<void>;
+  onRouteVerified?: (
+    evidence: AcpRouteEvidence,
+    signal: AbortSignal,
+  ) => void | Promise<void>;
 }
 
 export interface AcpRunResult {
@@ -79,6 +98,7 @@ export interface AcpRunResult {
   agentName?: string;
   agentVersion?: string;
   capabilities: string[];
+  routeEvidence?: AcpRouteEvidence;
   elapsedMs: number;
 }
 
@@ -88,6 +108,7 @@ export class AcpRunnerError extends Error {
     public readonly phase:
       | "spawn"
       | "initialize"
+      | "authenticate"
       | "session"
       | "prompt"
       | "cancel"
@@ -97,6 +118,30 @@ export class AcpRunnerError extends Error {
   ) {
     super(message);
     this.name = "AcpRunnerError";
+  }
+}
+
+export class AcpAuthenticationRequiredError extends DomainError {
+  readonly phase = "authenticate" as const;
+  constructor() {
+    super("Codex ChatGPT authentication is required");
+    this.name = "AcpAuthenticationRequiredError";
+  }
+}
+
+export class AcpAccessRouteMismatchError extends DomainError {
+  readonly phase = "authenticate" as const;
+  constructor() {
+    super("Codex ACP is not using ChatGPT authentication");
+    this.name = "AcpAccessRouteMismatchError";
+  }
+}
+
+export class AcpAuthenticationEvidenceError extends DomainError {
+  readonly phase = "authenticate" as const;
+  constructor() {
+    super("Codex ACP authentication evidence is unavailable");
+    this.name = "AcpAuthenticationEvidenceError";
   }
 }
 
@@ -126,6 +171,278 @@ const MAX_AGENT_NAME_BYTES = 128;
 const MAX_AGENT_VERSION_BYTES = 64;
 
 class AcpAbortRequested extends Error {}
+
+interface ManagedAcpChild {
+  pid: number;
+  stdin: WritableStream<Uint8Array>;
+  stdout: ReadableStream<Uint8Array>;
+  stderr: Readable;
+  status: Promise<void>;
+  hasExited: () => boolean;
+  signalGroup: (
+    signal: NodeJS.Signals | 0,
+    timeoutMs: number,
+  ) => Promise<boolean>;
+}
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true, () => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export async function runSignalCommand(
+  args: string[],
+  timeoutMs: number,
+  command = "/bin/kill",
+): Promise<boolean> {
+  const signaler = new Deno.Command(command, {
+    args,
+    stdout: "null",
+    stderr: "piped",
+    env: { LC_ALL: "C" },
+  }).spawn();
+  const diagnostic = collectBoundedReadable(signaler.stderr, 256);
+  const result = Promise.all([signaler.status, diagnostic.done]);
+  void result.catch(() => {});
+  try {
+    const [status, detail] = await withTimeout(
+      result,
+      timeoutMs,
+      "terminate",
+    );
+    if (status.success) return true;
+    if (detail.includes("No such process")) return false;
+    const summary = detail.trim().slice(0, 256);
+    throw new AcpRunnerError(
+      summary === ""
+        ? "ACP process-group signaling failed"
+        : `ACP process-group signaling failed (${summary})`,
+      "terminate",
+    );
+  } catch (error) {
+    try {
+      signaler.kill("SIGKILL");
+    } catch {
+      // The signal command may have exited at the timeout boundary.
+    }
+    await withTimeout(
+      diagnostic.cancel(),
+      timeoutMs,
+      "terminate",
+    ).catch(() => {});
+    throw error;
+  }
+}
+
+function collectBoundedReadable(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): { done: Promise<string>; cancel: () => Promise<void> } {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  let cancelled = false;
+  const cancel = async () => {
+    if (cancelled) return;
+    cancelled = true;
+    await reader.cancel().catch(() => {});
+  };
+  const done = (async () => {
+    try {
+      while (bytes < maxBytes) {
+        const result = await reader.read();
+        if (result.done) break;
+        const remaining = maxBytes - bytes;
+        const chunk = result.value.subarray(0, remaining);
+        chunks.push(chunk);
+        bytes += chunk.byteLength;
+        if (result.value.byteLength > remaining || bytes === maxBytes) {
+          await cancel();
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const collected = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      collected.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(collected);
+  })();
+  return { done, cancel };
+}
+
+async function spawnAcpChild(
+  profile: AcpExecutionProfile,
+): Promise<ManagedAcpChild> {
+  const useProcessGroup = Deno.build.os !== "windows";
+  if (!useProcessGroup && profile.slug === "codex-chatgpt") {
+    throw new AcpRunnerError(
+      "ACP process-group containment is unavailable on this platform",
+      "spawn",
+    );
+  }
+  if (useProcessGroup) {
+    await assertProcessGroupSignaler(
+      "/bin/kill",
+      profile.terminationTimeoutMs ?? DEFAULT_TERMINATION_TIMEOUT_MS,
+    );
+  }
+  let child: ChildProcessWithoutNullStreams;
+  try {
+    child = spawn(profile.command, [...profile.args], {
+      cwd: profile.workspace,
+      detached: useProcessGroup,
+      env: { ...profile.environment },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    throw new AcpRunnerError("ACP child could not be started", "spawn");
+  }
+  let exited = false;
+  const status = new Promise<void>((resolve, reject) => {
+    child.once("exit", () => {
+      exited = true;
+      resolve();
+    });
+    child.once("error", () => {
+      exited = true;
+      reject(
+        new AcpRunnerError("ACP child could not be started", "spawn"),
+      );
+    });
+  });
+  void status.catch(() => {});
+  if (child.pid === undefined) {
+    child.kill("SIGKILL");
+    throw new AcpRunnerError("ACP child could not be started", "spawn");
+  }
+  const pid = child.pid;
+  let groupMayExist = true;
+  return {
+    pid,
+    stdin: Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+    stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    stderr: child.stderr,
+    status,
+    hasExited: () => exited,
+    signalGroup: async (signal, timeoutMs) => {
+      if (!groupMayExist) return false;
+      if (!useProcessGroup) {
+        try {
+          const success = child.kill(signal);
+          if (signal === 0 && !success) groupMayExist = false;
+          return success;
+        } catch {
+          if (exited) {
+            groupMayExist = false;
+            return false;
+          }
+          throw new AcpRunnerError("ACP child signaling failed", "terminate");
+        }
+      }
+      const signalName = signal === 0 ? "0" : signal.replace("SIG", "");
+      let success: boolean;
+      try {
+        success = await runSignalCommand(
+          [`-${signalName}`, "--", `-${pid}`],
+          timeoutMs,
+        );
+      } catch (error) {
+        // macOS can briefly report EPERM after the group leader exits but
+        // before its exit event is reaped. Re-probe only after that direct
+        // child settles; a live or inaccessible descendant still surfaces.
+        if (
+          !(await settlesWithin(status, Math.min(timeoutMs, 100))) ||
+          await runSignalCommand(["-0", "--", `-${pid}`], timeoutMs)
+        ) {
+          throw error;
+        }
+        groupMayExist = false;
+        return false;
+      }
+      if (signal === 0 && !success) groupMayExist = false;
+      return success;
+    },
+  };
+}
+
+export async function assertProcessGroupSignaler(
+  command = "/bin/kill",
+  timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS,
+): Promise<void> {
+  const probe = spawn(Deno.execPath(), [
+    "eval",
+    "setInterval(() => {}, 60_000)",
+  ], {
+    detached: true,
+    env: {},
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  const probeStatus = new Promise<void>((resolve) => {
+    probe.once("exit", () => resolve());
+    probe.once("error", () => resolve());
+  });
+  try {
+    if (probe.pid === undefined) throw new Error("signal probe failed");
+    if (
+      !(await runSignalCommand(
+        ["-0", "--", `-${probe.pid}`],
+        timeoutMs,
+        command,
+      ))
+    ) {
+      throw new Error("signal probe failed");
+    }
+  } catch {
+    throw new AcpRunnerError(
+      "ACP process-group signaling is unavailable on this platform",
+      "spawn",
+    );
+  } finally {
+    try {
+      probe.kill("SIGKILL");
+    } catch {
+      // The inert probe exited while its capability check was running.
+    }
+    if (!(await settlesWithin(probeStatus, timeoutMs))) {
+      throw new AcpRunnerError(
+        "ACP process-group signaling is unavailable on this platform",
+        "spawn",
+      );
+    }
+  }
+}
+
+async function waitForProcessGroupExit(
+  child: ManagedAcpChild,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    if (
+      !(await child.signalGroup(
+        0,
+        Math.max(1, deadline - performance.now()),
+      ))
+    ) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
 
 function addUtf8BytesWithinLimit(
   value: string,
@@ -218,33 +535,61 @@ async function withTimeout<T>(
 }
 
 export function drainStream(
-  stream: ReadableStream<Uint8Array>,
+  stream: Readable,
   maxBytes = Number.POSITIVE_INFINITY,
 ): {
   done: Promise<void>;
   cancel: () => Promise<void>;
 } {
-  const reader = stream.getReader();
-  const done = (async () => {
-    let bytes = 0;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.byteLength;
-        if (bytes > maxBytes) {
-          await reader.cancel();
-          break;
-        }
-      }
-    } finally {
-      reader.releaseLock();
+  let bytes = 0;
+  let settled = false;
+  let resolveDone!: () => void;
+  const suppressLateError = () => {};
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    stream.off("data", onData);
+    stream.off("end", finish);
+    stream.off("close", finish);
+    stream.off("error", finish);
+    stream.on("error", suppressLateError);
+    resolveDone();
+  };
+  const onData = (chunk: Uint8Array | string) => {
+    bytes += typeof chunk === "string"
+      ? new TextEncoder().encode(chunk).byteLength
+      : chunk.byteLength;
+    if (bytes > maxBytes) {
+      stream.destroy();
+      finish();
     }
-  })();
+  };
+  stream.on("data", onData);
+  stream.once("end", finish);
+  stream.once("close", finish);
+  stream.once("error", finish);
   return {
     done,
-    cancel: () => reader.cancel().catch(() => {}),
+    cancel: async () => {
+      stream.destroy();
+      finish();
+    },
   };
+}
+
+export async function settleDrain(
+  drain: ReturnType<typeof drainStream>,
+  timeoutMs: number,
+): Promise<void> {
+  try {
+    await withTimeout(drain.done, timeoutMs, "terminate");
+  } catch {
+    void drain.cancel();
+    await withTimeout(drain.done, timeoutMs, "terminate").catch(() => {});
+  }
 }
 
 export function guardedProtocolInput(
@@ -490,33 +835,32 @@ function normalizeStopReason(
 }
 
 async function terminateChild(
-  child: Deno.ChildProcess,
-  status: Promise<Deno.CommandStatus>,
+  child: ManagedAcpChild,
   timeoutMs: number,
 ): Promise<void> {
-  try {
-    await withTimeout(status, timeoutMs, "terminate");
-    return;
-  } catch (error) {
-    if (!(error instanceof AcpRunnerError)) throw error;
+  if (child.hasExited()) {
+    if (!(await child.signalGroup(0, timeoutMs))) {
+      await withTimeout(child.status, timeoutMs, "terminate");
+      return;
+    }
   }
+  let groupExited = false;
   try {
-    child.kill("SIGTERM");
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    await child.signalGroup("SIGTERM", timeoutMs);
+    groupExited = await waitForProcessGroupExit(child, timeoutMs);
+  } catch {
+    // A failed or timed-out graceful signal still requires hard-stop cleanup.
   }
-  try {
-    await withTimeout(status, timeoutMs, "terminate");
-    return;
-  } catch (error) {
-    if (!(error instanceof AcpRunnerError)) throw error;
+  if (!groupExited) {
+    await child.signalGroup("SIGKILL", timeoutMs);
+    if (!(await waitForProcessGroupExit(child, timeoutMs))) {
+      throw new AcpRunnerError(
+        "ACP process group could not be terminated",
+        "terminate",
+      );
+    }
   }
-  try {
-    child.kill("SIGKILL");
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
-  await withTimeout(status, timeoutMs, "terminate");
+  await withTimeout(child.status, timeoutMs, "terminate");
 }
 
 export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
@@ -530,36 +874,28 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
     agentName?: string;
     agentVersion?: string;
     capabilities?: string[];
-  } = {}): AcpRunResult => ({
-    text: "",
-    stopReason: "aborted",
-    ...evidence,
-    capabilities: evidence.capabilities ?? [],
-    elapsedMs: Date.now() - startedAt,
-  });
+    routeEvidence?: AcpRouteEvidence;
+  } = {}): AcpRunResult => {
+    const { routeEvidence, ...verifiedEvidence } = evidence;
+    return {
+      text: "",
+      stopReason: "aborted",
+      ...verifiedEvidence,
+      capabilities: evidence.capabilities ?? [],
+      ...(routeEvidence === undefined ? {} : { routeEvidence }),
+      elapsedMs: Date.now() - startedAt,
+    };
+  };
   if (input.abortSignal?.aborted) return abortedResult();
-  let child: Deno.ChildProcess;
-  try {
-    child = new Deno.Command(profile.command, {
-      args: [...profile.args],
-      cwd: profile.workspace,
-      clearEnv: true,
-      env: { ...profile.environment },
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    }).spawn();
-  } catch {
-    throw new AcpRunnerError("ACP child could not be started", "spawn");
-  }
-
-  const status = child.status;
+  const child = await spawnAcpChild(profile);
   const stderr = drainStream(child.stderr, MAX_CHILD_STDERR_BYTES);
   let activeSessionId: string | undefined;
   let cancelRequested = false;
   let cancelDeadline: number | undefined;
   let cancelPromise: Promise<void> | undefined;
   let protocolError: AcpRunnerError | undefined;
+  let routeVerificationError: unknown;
+  let primaryFailure: unknown;
   let permissionCount = 0;
   const protocolErrorRaised = Promise.withResolvers<void>();
   const permissionWindowClosed = Promise.withResolvers<void>();
@@ -665,6 +1001,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
   let agentName: string | undefined;
   let agentVersion: string | undefined;
   let capabilities: string[] = [];
+  let routeEvidence: AcpRouteEvidence | undefined;
   const lifecycleAbort = Promise.withResolvers<void>();
   const noteLifecycleAbort = () => {
     closePermissionWindow();
@@ -908,6 +1245,86 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             initialized.agentInfo.version,
             MAX_AGENT_VERSION_BYTES,
           );
+        let pendingRouteEvidence: AcpRouteEvidence;
+        if (profile.requiredAuthentication === "chat-gpt") {
+          let authenticationStatus: unknown;
+          try {
+            authenticationStatus = await withTimeout(
+              abortableLifecycle(
+                (context as unknown as {
+                  request: (
+                    method: string,
+                    params: Record<string, never>,
+                  ) => Promise<unknown>;
+                }).request("authentication/status", {}),
+              ),
+              profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+              "authenticate",
+            );
+          } catch (error) {
+            if (error instanceof AcpAbortRequested) throw error;
+            throw new AcpAuthenticationEvidenceError();
+          }
+          if (
+            typeof authenticationStatus !== "object" ||
+            authenticationStatus === null ||
+            Array.isArray(authenticationStatus) ||
+            typeof (authenticationStatus as { type?: unknown }).type !==
+              "string"
+          ) {
+            throw new AcpAuthenticationEvidenceError();
+          }
+          const authenticationType = (authenticationStatus as {
+            type: string;
+          }).type;
+          if (authenticationType === "unauthenticated") {
+            throw new AcpAuthenticationRequiredError();
+          }
+          if (
+            authenticationType === "api-key" ||
+            authenticationType === "gateway"
+          ) {
+            throw new AcpAccessRouteMismatchError();
+          }
+          if (authenticationType !== "chat-gpt") {
+            throw new AcpAuthenticationEvidenceError();
+          }
+          pendingRouteEvidence = {
+            source: "profile_declared",
+            authenticationType: "chat-gpt",
+          };
+        } else {
+          pendingRouteEvidence = { source: "profile_declared" };
+        }
+        const routeVerificationController = new AbortController();
+        const forwardRouteAbort = () => routeVerificationController.abort();
+        input.abortSignal?.addEventListener("abort", forwardRouteAbort, {
+          once: true,
+        });
+        if (input.abortSignal?.aborted) routeVerificationController.abort();
+        try {
+          await withTimeout(
+            Promise.resolve(
+              input.onRouteVerified?.(
+                pendingRouteEvidence,
+                routeVerificationController.signal,
+              ),
+            ),
+            profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+            "authenticate",
+          );
+          routeEvidence = pendingRouteEvidence;
+        } catch (error) {
+          if (input.abortSignal?.aborted) throw new AcpAbortRequested();
+          routeVerificationError = error;
+          throw error;
+        } finally {
+          routeVerificationController.abort();
+          input.abortSignal?.removeEventListener(
+            "abort",
+            forwardRouteAbort,
+          );
+        }
         const session = await withTimeout(
           abortableLifecycle(context.buildSession(profile.workspace).start()),
           profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
@@ -938,6 +1355,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             agentName,
             agentVersion,
             capabilities,
+            routeEvidence,
           };
           if (input.abortSignal?.aborted) {
             await closeSession();
@@ -1080,7 +1498,19 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
       },
     );
   } catch (error) {
-    if (protocolError !== undefined) throw protocolError;
+    if (routeVerificationError !== undefined) {
+      primaryFailure = routeVerificationError instanceof Error
+        ? routeVerificationError
+        : new AcpRunnerError(
+          "ACP route verification could not be completed",
+          "authenticate",
+        );
+      throw primaryFailure;
+    }
+    if (protocolError !== undefined) {
+      primaryFailure = protocolError;
+      throw protocolError;
+    }
     if (error instanceof AcpAbortRequested) {
       return abortedResult({
         protocolVersion,
@@ -1088,13 +1518,18 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
         agentName,
         agentVersion,
         capabilities,
+        routeEvidence,
       });
     }
-    if (error instanceof AcpRunnerError) throw error;
-    throw new AcpRunnerError(
+    if (error instanceof AcpRunnerError || error instanceof DomainError) {
+      primaryFailure = error;
+      throw error;
+    }
+    primaryFailure = new AcpRunnerError(
       "ACP prompt exchange ended before a terminal response",
       "prompt",
     );
+    throw primaryFailure;
   } finally {
     const terminationTimeoutMs = profile.terminationTimeoutMs ??
       DEFAULT_TERMINATION_TIMEOUT_MS;
@@ -1108,18 +1543,25 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
     } catch {
       // The SDK may already have closed the protocol stream.
     }
+    let terminationFailure: unknown;
     try {
       await terminateChild(
         child,
-        status,
         terminationTimeoutMs,
       );
+    } catch (error) {
+      terminationFailure = error;
     } finally {
-      await withTimeout(
-        Promise.allSettled([stderr.cancel(), stderr.done]).then(() => {}),
-        terminationTimeoutMs,
-        "terminate",
-      ).catch(() => {});
+      await settleDrain(stderr, terminationTimeoutMs);
+    }
+    if (terminationFailure !== undefined) {
+      if (primaryFailure === undefined) throw terminationFailure;
+      if (primaryFailure instanceof Error) {
+        Object.defineProperty(primaryFailure, "cause", {
+          configurable: true,
+          value: terminationFailure,
+        });
+      }
     }
   }
 }

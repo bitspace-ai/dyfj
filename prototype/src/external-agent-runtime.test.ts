@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { dirname, join } from "node:path";
 
 const state = vi.hoisted(() => ({
   events: [] as Array<Record<string, unknown>>,
@@ -55,11 +56,33 @@ vi.mock("./sessions", () => ({
 }));
 
 import {
+  codexChatGptProfile,
   fixtureProfile,
   runExternalAgentWorkbenchRuntime,
+  verifiedRouteFacts,
 } from "./external-agent-runtime";
 
 describe("runExternalAgentWorkbenchRuntime", () => {
+  test("does not promote adapter authentication into route facts", () => {
+    const profile = {
+      ...fixtureProfile(Deno.cwd()),
+      accessRoute: "subscription_oauth" as const,
+      costBasis: "subscription_quota" as const,
+      requiredAuthentication: "chat-gpt" as const,
+    };
+    expect(verifiedRouteFacts(profile, {
+      source: "agent_auth_status",
+      authenticationType: "chat-gpt",
+    })).toEqual({ costBasis: "unknown" });
+    expect(verifiedRouteFacts(profile, {
+      source: "profile_declared",
+      authenticationType: "chat-gpt",
+    })).toEqual({
+      accessRoute: "subscription_oauth",
+      costBasis: "subscription_quota",
+    });
+  });
+
   beforeEach(() => {
     state.events.length = 0;
     state.createdSessions.length = 0;
@@ -90,6 +113,62 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       onCancellationClosed: () => cancellationClosed++,
     })).rejects.toThrow("unavailable to remote callers");
     expect(cancellationClosed).toBe(1);
+  });
+
+  test("does not claim subscription route evidence when authentication never verifies", async () => {
+    const result = await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "cancel during authentication",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "codex-chatgpt" },
+      workspaceRoot: Deno.cwd(),
+      trustWorkspaceInstructions: true,
+    }, {
+      resolveProfile: (_profile, workspace) => ({
+        slug: "codex-chatgpt",
+        command: Deno.execPath(),
+        args: [],
+        environment: {},
+        workspace,
+        transport: "local_stdio",
+        accessRoute: "subscription_oauth",
+        costBasis: "subscription_quota",
+        requiredAuthentication: "chat-gpt",
+      }),
+      runAgent: () =>
+        Promise.resolve({
+          text: "",
+          stopReason: "aborted",
+          capabilities: [],
+          routeEvidence: {
+            source: "profile_declared",
+            authenticationType: "chat-gpt",
+          },
+          elapsedMs: 5,
+        }),
+    });
+    expect(result.runner).toMatchObject({
+      costBasis: "unknown",
+      evidence: { source: "acp", innerState: "opaque" },
+    });
+    expect(result.runner).not.toHaveProperty("accessRoute");
+    expect(result.runner.evidence).not.toHaveProperty("routeSource");
+    expect(result.receipt).toContain("Access route: unverified");
+    expect(result.receipt).toContain("Cost basis: unknown");
+    expect(result.receipt).not.toContain("subscription_oauth");
+    expect(result.receipt).not.toContain("subscription_quota");
+
+    expect(state.events.some((event) => event.event_type === "runner_selected"))
+      .toBe(false);
+    const response = state.events.find((event) =>
+      event.event_type === "agent_response"
+    );
+    expect(response).toMatchObject({
+      runner_access_route: null,
+      runner_cost_basis: "unknown",
+      runner_route_source: null,
+      runner_auth_type: null,
+    });
   });
 
   test("rejects an unknown supplied session before writing events", async () => {
@@ -151,6 +230,294 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     } finally {
       if (original === undefined) Deno.env.delete("DENO_DIR");
       else Deno.env.set("DENO_DIR", original);
+    }
+  });
+
+  test("builds a pinned, isolated Codex ChatGPT profile without ambient secrets", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const packageRoot = `${root}/node_modules/@agentclientprotocol/codex-acp`;
+    const home = `${root}/operator-home`;
+    await Deno.mkdir(home);
+    await Deno.mkdir(`${packageRoot}/dist`, { recursive: true });
+    await Deno.writeTextFile(
+      `${packageRoot}/package.json`,
+      JSON.stringify({ version: "1.1.10" }),
+    );
+    await Deno.writeTextFile(`${packageRoot}/dist/index.js`, "");
+    const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
+    await Deno.mkdir(`${root}/node_modules/@openai/codex/bin`, {
+      recursive: true,
+    });
+    await Deno.writeTextFile(codexPath, "");
+    await Deno.chmod(codexPath, 0o700);
+    const nodePath = `${root}/node`;
+    await Deno.writeTextFile(
+      nodePath,
+      `#!/bin/sh\nprintf '%s\\n' '{"execPath":"${nodePath}","release":"node"}'\n`,
+    );
+    await Deno.chmod(nodePath, 0o700);
+    const ambientNames = [
+      "OPENAI_API_KEY",
+      "CODEX_API_KEY",
+      "DEFAULT_AUTH_REQUEST",
+      "MODEL_PROVIDER",
+      "APP_SERVER_LOGS",
+      "SSH_AUTH_SOCK",
+    ];
+    const originals = new Map(
+      ambientNames.map((name) => [name, Deno.env.get(name)]),
+    );
+    for (const name of ambientNames) Deno.env.set(name, "must-not-cross");
+    try {
+      const profile = await codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: root,
+        nodePath,
+      });
+      expect(profile).toMatchObject({
+        slug: "codex-chatgpt",
+        command: nodePath,
+        args: [await Deno.realPath(`${packageRoot}/dist/index.js`)],
+        accessRoute: "subscription_oauth",
+        costBasis: "subscription_quota",
+        requiredAuthentication: "chat-gpt",
+        environment: {
+          HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home`,
+          CODEX_HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex`,
+          CODEX_PATH: await Deno.realPath(codexPath),
+          NO_BROWSER: "1",
+          INITIAL_AGENT_MODE: "read-only",
+          PATH: `${dirname(nodePath)}:/usr/bin:/bin`,
+        },
+      });
+      for (const name of ambientNames) {
+        expect(profile.environment).not.toHaveProperty(name);
+      }
+      const privateDirectories = [
+        `${home}/.dyfj/runner-homes/codex-chatgpt`,
+        `${home}/.dyfj/runner-homes/codex-chatgpt/home`,
+        `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex`,
+      ];
+      for (const directory of privateDirectories) {
+        expect((await Deno.stat(directory)).mode! & 0o777).toBe(0o700);
+      }
+    } finally {
+      for (const [name, value] of originals) {
+        if (value === undefined) Deno.env.delete(name);
+        else Deno.env.set(name, value);
+      }
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("resolves the locked Codex executable from managed node_modules", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const nodePath = await Deno.makeTempFile({ dir: Deno.cwd() });
+    await Deno.writeTextFile(
+      nodePath,
+      `#!/bin/sh\nprintf '%s\\n' '{"execPath":"${nodePath}","release":"node"}'\n`,
+    );
+    await Deno.chmod(nodePath, 0o700);
+    try {
+      const profile = await codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath,
+      });
+      const codexPath = profile.environment.CODEX_PATH;
+      expect(codexPath).toBeDefined();
+      expect((await Deno.stat(codexPath!)).mode! & 0o111).not.toBe(0);
+      const packageMetadata = JSON.parse(
+        await Deno.readTextFile(
+          join(dirname(codexPath!), "..", "package.json"),
+        ),
+      );
+      expect(packageMetadata.version).toBe("0.146.1");
+    } finally {
+      await Deno.remove(nodePath);
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+
+  test("bounds adapter package metadata before parsing it", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const packageRoot = `${root}/node_modules/@agentclientprotocol/codex-acp`;
+    const home = `${root}/operator-home`;
+    await Deno.mkdir(home);
+    await Deno.mkdir(packageRoot, { recursive: true });
+    await Deno.writeTextFile(
+      `${packageRoot}/package.json`,
+      "x".repeat(65_537),
+    );
+    try {
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: root,
+        nodePath: Deno.execPath(),
+      })).rejects.toThrow("Pinned Codex ACP package is unavailable");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("does not claim to attest the operator-authorized executable", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const target = `${home}/not-node-target`;
+    const executable = `${home}/not-node`;
+    await Deno.writeTextFile(target, "#!/bin/sh\nexit 0\n");
+    await Deno.chmod(target, 0o700);
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, executable],
+    }).output();
+    expect(linked.success).toBe(true);
+    try {
+      const profile = await codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath: executable,
+      });
+      expect(profile.command).toBe(executable);
+    } finally {
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+
+  test("rejects executable authority outside the explicit path contract", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const nonExecutable = `${home}/not-executable`;
+    await Deno.writeTextFile(nonExecutable, "not executable\n");
+    try {
+      for (
+        const nodePath of [
+          "node",
+          `${home}/node,unsafe`,
+          `${home}/node:unsafe`,
+        ]
+      ) {
+        await expect(codexChatGptProfile(Deno.cwd(), {
+          home,
+          prototypeRoot: Deno.cwd(),
+          nodePath,
+        })).rejects.toThrow(
+          "Codex ACP requires an absolute, delimiter-safe DYFJ_NODE_PATH",
+        );
+      }
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath: nonExecutable,
+      })).rejects.toThrow("Codex ACP executable is unavailable");
+    } finally {
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+
+  test("rejects an operator home that Deno path grants cannot represent", async () => {
+    await expect(codexChatGptProfile(Deno.cwd(), {
+      home: "/tmp/operator,home",
+      prototypeRoot: Deno.cwd(),
+      nodePath: Deno.execPath(),
+    })).rejects.toThrow("absolute, comma-free operator home");
+  });
+
+  test("rejects a group- or world-writable operator home", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    await Deno.chmod(home, 0o777);
+    try {
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath: Deno.execPath(),
+      })).rejects.toThrow("operator home is unavailable");
+      expect((await Deno.stat(home)).mode! & 0o777).toBe(0o777);
+    } finally {
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+
+  test("rejects a symlinked runner-home ancestor before writing through it", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const home = `${root}/operator-home`;
+    const target = `${root}/redirect-target`;
+    await Deno.mkdir(home);
+    await Deno.mkdir(target);
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, `${home}/.dyfj`],
+    }).output();
+    expect(linked.success).toBe(true);
+    try {
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath: Deno.execPath(),
+      })).rejects.toThrow("runner home is unavailable");
+      await expect(Deno.stat(`${target}/runner-homes`)).rejects.toBeInstanceOf(
+        Deno.errors.NotFound,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("preserves modes on existing parent directories", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const dyfjRoot = `${home}/.dyfj`;
+    const runnerHomes = `${dyfjRoot}/runner-homes`;
+    const nodePath = `${home}/node`;
+    await Deno.mkdir(dyfjRoot, { mode: 0o755 });
+    await Deno.mkdir(runnerHomes, { mode: 0o750 });
+    await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
+    await Deno.chmod(nodePath, 0o700);
+    await Deno.chmod(dyfjRoot, 0o755);
+    await Deno.chmod(runnerHomes, 0o750);
+    try {
+      await codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath,
+      });
+      expect((await Deno.stat(dyfjRoot)).mode! & 0o777).toBe(0o755);
+      expect((await Deno.stat(runnerHomes)).mode! & 0o777).toBe(0o750);
+      expect(
+        (await Deno.stat(`${runnerHomes}/codex-chatgpt`)).mode! & 0o777,
+      ).toBe(0o700);
+    } finally {
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+
+  test("rejects writable existing runner-home ancestors", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const dyfjRoot = `${home}/.dyfj`;
+    await Deno.mkdir(dyfjRoot, { mode: 0o777 });
+    await Deno.chmod(dyfjRoot, 0o777);
+    try {
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath: Deno.execPath(),
+      })).rejects.toThrow("runner home is unavailable");
+      expect((await Deno.stat(dyfjRoot)).mode! & 0o777).toBe(0o777);
+    } finally {
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+
+  test("rejects a writable pre-existing Codex home", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const codexHome = `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex`;
+    await Deno.mkdir(codexHome, { recursive: true, mode: 0o700 });
+    await Deno.chmod(codexHome, 0o777);
+    await Deno.writeTextFile(`${codexHome}/config.toml`, "hostile = true\n");
+    try {
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath: Deno.execPath(),
+      })).rejects.toThrow("runner home is unavailable");
+      expect((await Deno.stat(codexHome)).mode! & 0o777).toBe(0o777);
+    } finally {
+      await Deno.remove(home, { recursive: true });
     }
   });
 
@@ -438,7 +805,11 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       transport: "local_stdio",
       accessRoute: "local_sidecar",
       costBasis: "local_free",
-      evidence: { source: "acp", innerState: "opaque" },
+      evidence: {
+        source: "acp",
+        innerState: "opaque",
+        routeSource: "profile_declared",
+      },
     });
     expect(result).not.toHaveProperty("model");
     expect(result).not.toHaveProperty("tokens");

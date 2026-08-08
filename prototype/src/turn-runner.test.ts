@@ -17,6 +17,58 @@ describe("resolveTurnFromBody paid posture", () => {
       .toMatchObject({ status: 403 });
   });
 
+  test("selects the Codex ChatGPT-authenticated runner only for a trusted loopback workspace", () => {
+    expect(resolveTurnFromBody(
+      {
+        prompt: "hi",
+        runner: "codex-chatgpt",
+      },
+      true,
+      { trustWorkspaceInstructions: true },
+    )).toMatchObject({
+      runtimeInput: {
+        runner: { kind: "acp", profile: "codex-chatgpt" },
+        trustWorkspaceInstructions: true,
+      },
+    });
+    expect(resolveTurnFromBody(
+      {
+        prompt: "hi",
+        runner: "codex-chatgpt",
+      },
+      true,
+      { trustWorkspaceInstructions: false },
+    )).toMatchObject({
+      status: 403,
+      error: "codex-chatgpt requires explicit workspace trust",
+    });
+    expect(resolveTurnFromBody(
+      {
+        prompt: "hi",
+        runner: "codex-chatgpt",
+      },
+      false,
+      { trustWorkspaceInstructions: true },
+    )).toMatchObject({
+      status: 403,
+    });
+  });
+
+  test("keeps the Codex ChatGPT route single-turn", () => {
+    expect(resolveTurnFromBody(
+      {
+        prompt: "hi",
+        runner: "codex-chatgpt",
+        sessionId: "01ABCDEF0123456789ABCDEF01",
+      },
+      true,
+      { trustWorkspaceInstructions: true },
+    )).toMatchObject({
+      status: 400,
+      error: "codex-chatgpt does not support session resume",
+    });
+  });
+
   test("keeps external runner selection distinct from model routing", () => {
     expect(resolveTurnFromBody({
       prompt: "hi",

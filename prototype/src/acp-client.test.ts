@@ -1,15 +1,20 @@
 import { describe, expect, test } from "vitest";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import {
   type AcpExecutionProfile,
+  assertProcessGroupSignaler,
   drainStream,
   guardedProtocolInput,
   runAcpAgent,
+  runSignalCommand,
+  settleDrain,
 } from "./acp-client";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},
   pidFile?: string,
+  grandchildPidFile?: string,
 ): AcpExecutionProfile {
   const home = Deno.env.get("HOME") ?? "/tmp";
   return {
@@ -18,13 +23,22 @@ function fixtureProfile(
     args: [
       "run",
       "--cached-only",
-      "--allow-env=ACP_FIXTURE_ALLOWED,ACP_FIXTURE_MODE,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DOLT_PASSWORD,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK",
+      "--allow-env=ACP_FIXTURE_ALLOWED,ACP_FIXTURE_MODE,ACP_FIXTURE_AUTH_STATUS,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DOLT_PASSWORD,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK",
+      ...(grandchildPidFile === undefined ? [] : ["--allow-run=bash"]),
       ...(pidFile === undefined ? [] : [`--allow-write=${pidFile}`]),
+      ...(grandchildPidFile === undefined ? [] : [
+        `--allow-read=${grandchildPidFile}`,
+        `--allow-write=${grandchildPidFile}`,
+      ]),
       join(import.meta.dirname!, "../scripts/acp-fixture-agent.ts"),
       ...(pidFile === undefined ? [] : [`--pid-file=${pidFile}`]),
+      ...(grandchildPidFile === undefined
+        ? []
+        : [`--grandchild-pid-file=${grandchildPidFile}`]),
     ],
     environment: {
       DENO_DIR: Deno.env.get("DENO_DIR") ?? join(home, ".cache/deno"),
+      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
     },
     workspace: Deno.cwd(),
@@ -42,11 +56,42 @@ function fixtureProfile(
 
 async function processIsAlive(pid: number): Promise<boolean> {
   const status = await new Deno.Command("bash", {
-    args: ["-c", 'kill -0 "$1" 2>/dev/null', "bash", String(pid)],
+    args: [
+      "-c",
+      'state=$(ps -o stat= -p "$1" 2>/dev/null) || exit 1; set -- $state; case "${1:-}" in ""|Z*) exit 1;; esac',
+      "bash",
+      String(pid),
+    ],
     stdout: "null",
     stderr: "null",
   }).output();
   return status.success;
+}
+
+async function forceStopRecordedProcessTree(
+  pidFile: string,
+  grandchildPidFile: string,
+): Promise<void> {
+  const readPid = async (path: string): Promise<number | null> => {
+    const pid = Number(await Deno.readTextFile(path).catch(() => ""));
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  };
+  const childPid = await readPid(pidFile);
+  const grandchildPid = await readPid(grandchildPidFile);
+  if (childPid !== null) {
+    await new Deno.Command("/bin/kill", {
+      args: ["-KILL", `-${childPid}`],
+      stdout: "null",
+      stderr: "null",
+    }).output().catch(() => undefined);
+  }
+  if (grandchildPid !== null) {
+    await new Deno.Command("/bin/kill", {
+      args: ["-KILL", String(grandchildPid)],
+      stdout: "null",
+      stderr: "null",
+    }).output().catch(() => undefined);
+  }
 }
 
 async function expectContainedFailure(input: {
@@ -76,36 +121,107 @@ async function expectContainedFailure(input: {
 }
 
 describe("runAcpAgent", () => {
-  test("cancels a stderr drain whose producer never closes", async () => {
-    let cancelled = false;
-    const drain = drainStream(
-      new ReadableStream<Uint8Array>({
-        cancel: () => {
-          cancelled = true;
-        },
+  test("contains an asynchronous spawn failure without an unhandled error", async () => {
+    await expect(runAcpAgent({
+      profile: fixtureProfile({
+        command: "/private/tmp/dyfj-acp-command-does-not-exist",
       }),
+      prompt: "unused",
+    })).rejects.toThrow("ACP child could not be started");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  test("rejects an unavailable process-group signaler before spawning", async () => {
+    await expect(
+      assertProcessGroupSignaler(
+        "/private/tmp/dyfj-process-group-signaler-does-not-exist",
+      ),
+    ).rejects.toThrow("ACP process-group signaling is unavailable");
+  });
+
+  test("rejects a signaler that cannot address a negative process group", async () => {
+    const signaler = await Deno.makeTempFile({ dir: Deno.cwd() });
+    try {
+      await Deno.writeTextFile(
+        signaler,
+        "#!/bin/sh\ncase \"$3\" in -*) exit 1;; *) exit 0;; esac\n",
+      );
+      await Deno.chmod(signaler, 0o700);
+      await expect(assertProcessGroupSignaler(signaler)).rejects.toThrow(
+        "ACP process-group signaling is unavailable",
+      );
+    } finally {
+      await Deno.remove(signaler).catch(() => {});
+    }
+  });
+
+  test("distinguishes an absent process group from a signaling failure", async () => {
+    await expect(runSignalCommand(
+      [
+        "-c",
+        'printf "%s\\n" "kill: -123: No such process" >&2; exit 1',
+      ],
+      500,
+      "bash",
+    )).resolves.toBe(false);
+    await expect(runSignalCommand(
+      [
+        "-c",
+        'printf "%s\\n" "kill: -123: Operation not permitted" >&2; exit 1',
+      ],
+      500,
+      "bash",
+    )).rejects.toMatchObject({
+      phase: "terminate",
+      message: expect.stringContaining("ACP process-group signaling failed"),
+    });
+  });
+
+  test("bounds signaler diagnostics while reading them", async () => {
+    const failure = runSignalCommand(
+      [
+        "-c",
+        "i=0; while [ $i -lt 10000 ]; do printf x >&2; i=$((i+1)); done; exit 1",
+      ],
+      500,
+      "bash",
     );
+    const error = await failure.then(
+      () => {
+        throw new Error("expected signaler failure");
+      },
+      (value) => value as Error,
+    );
+    expect(error).toMatchObject({ phase: "terminate" });
+    expect(error.message.length).toBeLessThan(320);
+  });
+
+  test("cancels a stderr drain whose producer never closes", async () => {
+    const stream = new Readable({ read() {} });
+    const drain = drainStream(stream);
     await drain.cancel();
     await drain.done;
-    expect(cancelled).toBe(true);
+    expect(stream.destroyed).toBe(true);
+    expect(() => stream.emit("error", new Error("late pipe error"))).not
+      .toThrow();
+  });
+
+  test("cancels a stderr drain when cleanup reaches its deadline", async () => {
+    const stream = new Readable({ read() {} });
+    const drain = drainStream(stream);
+    await settleDrain(drain, 1);
+    expect(stream.destroyed).toBe(true);
+    await drain.done;
   });
 
   test("bounds discarded stream bytes", async () => {
-    let cancelled = false;
-    const drain = drainStream(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new Uint8Array(8));
-          controller.enqueue(new Uint8Array(8));
-        },
-        cancel: () => {
-          cancelled = true;
-        },
-      }),
-      10,
-    );
+    const stream = Readable.from([
+      new Uint8Array(8),
+      new Uint8Array(8),
+    ]);
+    const drain = drainStream(stream, 10);
     await drain.done;
-    expect(cancelled).toBe(true);
+    expect(stream.destroyed).toBe(true);
   });
 
   test("negotiates v1, propagates an absolute workspace, and preserves update order", async () => {
@@ -125,6 +241,186 @@ describe("runAcpAgent", () => {
     expect(result.text).toBe(`first|cwd=${Deno.cwd()}|last`);
     expect(result.stopReason).toBe("stop");
     expect(result.acpStopReason).toBe("end_turn");
+    expect(result.routeEvidence).toEqual({ source: "profile_declared" });
+  });
+
+  test("verifies ChatGPT authentication before creating the external session", async () => {
+    const evidence: unknown[] = [];
+    const result = await runAcpAgent({
+      profile: fixtureProfile({
+        requiredAuthentication: "chat-gpt",
+        accessRoute: "subscription_oauth",
+        costBasis: "subscription_quota",
+        environment: {
+          DENO_DIR: Deno.env.get("DENO_DIR") ??
+            join(Deno.env.get("HOME") ?? "/tmp", ".cache/deno"),
+          ACP_FIXTURE_AUTH_STATUS: "chat-gpt",
+        },
+      }),
+      prompt: "ordered response",
+      onRouteVerified: (routeEvidence) => {
+        evidence.push(routeEvidence);
+      },
+    });
+    expect(result.text).toContain("first|");
+    expect(result.routeEvidence).toEqual({
+      source: "profile_declared",
+      authenticationType: "chat-gpt",
+    });
+    expect(evidence).toEqual([result.routeEvidence]);
+  });
+
+  test("returns an interrupted result when route persistence is cancelled", async () => {
+    const controller = new AbortController();
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "ordered response",
+      abortSignal: controller.signal,
+      onRouteVerified: (_evidence, signal) => {
+        controller.abort();
+        if (signal.aborted) {
+          return Promise.reject(new DOMException("aborted", "AbortError"));
+        }
+      },
+    });
+    expect(result).toMatchObject({
+      stopReason: "aborted",
+    });
+    expect(result).not.toHaveProperty("routeEvidence");
+  });
+
+  test("normalizes a non-Error route-verification rejection", async () => {
+    await expect(runAcpAgent({
+      profile: fixtureProfile({
+        requiredAuthentication: "chat-gpt",
+        environment: {
+          DENO_DIR: Deno.env.get("DENO_DIR") ??
+            join(Deno.env.get("HOME") ?? "/tmp", ".cache/deno"),
+          ACP_FIXTURE_AUTH_STATUS: "chat-gpt",
+        },
+      }),
+      prompt: "ordered response",
+      onRouteVerified: () => Promise.reject("not an Error"),
+    })).rejects.toMatchObject({
+      phase: "authenticate",
+      message: "ACP route verification could not be completed",
+    });
+  });
+
+  test("classifies a route-verification timeout as authentication failure", async () => {
+    await expect(runAcpAgent({
+      profile: fixtureProfile({ sessionTimeoutMs: 10 }),
+      prompt: "ordered response",
+      onRouteVerified: () => new Promise<void>(() => {}),
+    })).rejects.toMatchObject({ phase: "authenticate" });
+  });
+
+  test.each([
+    ["unauthenticated", "AcpAuthenticationRequiredError"],
+    ["api-key", "AcpAccessRouteMismatchError"],
+    ["gateway", "AcpAccessRouteMismatchError"],
+    ["malformed", "AcpAuthenticationEvidenceError"],
+    ["missing", "AcpAuthenticationEvidenceError"],
+  ])(
+    "rejects %s authentication before route verification",
+    async (status, name) => {
+      let routeVerified = false;
+      await expect(runAcpAgent({
+        profile: fixtureProfile({
+          requiredAuthentication: "chat-gpt",
+          accessRoute: "subscription_oauth",
+          costBasis: "subscription_quota",
+          environment: {
+            DENO_DIR: Deno.env.get("DENO_DIR") ??
+              join(Deno.env.get("HOME") ?? "/tmp", ".cache/deno"),
+            ACP_FIXTURE_AUTH_STATUS: status,
+          },
+        }),
+        prompt: "ordered response",
+        onRouteVerified: () => {
+          routeVerified = true;
+        },
+      })).rejects.toMatchObject({ name, phase: "authenticate" });
+      expect(routeVerified).toBe(false);
+    },
+  );
+
+  test("observes cancellation while authentication status is stalled", async () => {
+    const controller = new AbortController();
+    const result = runAcpAgent({
+      profile: fixtureProfile({
+        requiredAuthentication: "chat-gpt",
+        accessRoute: "subscription_oauth",
+        costBasis: "subscription_quota",
+        environment: {
+          DENO_DIR: Deno.env.get("DENO_DIR") ??
+            join(Deno.env.get("HOME") ?? "/tmp", ".cache/deno"),
+          ACP_FIXTURE_AUTH_STATUS: "mute",
+        },
+      }),
+      prompt: "unused",
+      abortSignal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 50);
+    const aborted = await result;
+    expect(aborted).toMatchObject({ stopReason: "aborted" });
+    expect(aborted).not.toHaveProperty("routeEvidence");
+  });
+
+  test("signals a stubborn descendant that remains in the ACP process group", async () => {
+    const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
+    const grandchildPidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
+    await Promise.all([
+      Deno.remove(pidFile),
+      Deno.remove(grandchildPidFile),
+    ]);
+    let verified = false;
+    try {
+      const result = await runAcpAgent({
+        profile: fixtureProfile({}, pidFile, grandchildPidFile),
+        prompt: "FIXTURE_STUBBORN_DESCENDANT ordered response",
+      });
+      expect(result.stopReason).toBe("stop");
+      expect(result.text).not.toContain("fixture descendant spawn failed");
+      const childPid = Number(await Deno.readTextFile(pidFile));
+      const grandchildPid = Number(await Deno.readTextFile(grandchildPidFile));
+      expect(await processIsAlive(childPid)).toBe(false);
+      expect(await processIsAlive(grandchildPid)).toBe(false);
+      verified = true;
+    } finally {
+      if (!verified) {
+        await forceStopRecordedProcessTree(pidFile, grandchildPidFile);
+      }
+      await Deno.remove(pidFile).catch(() => {});
+      await Deno.remove(grandchildPidFile).catch(() => {});
+    }
+  });
+
+  test("signals a stubborn descendant after the process-group leader exits", async () => {
+    const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
+    const grandchildPidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
+    await Promise.all([
+      Deno.remove(pidFile),
+      Deno.remove(grandchildPidFile),
+    ]);
+    let verified = false;
+    try {
+      await expect(runAcpAgent({
+        profile: fixtureProfile({}, pidFile, grandchildPidFile),
+        prompt: "FIXTURE_STUBBORN_DESCENDANT FIXTURE_EARLY_EXIT",
+      })).rejects.toMatchObject({ phase: "prompt" });
+      const childPid = Number(await Deno.readTextFile(pidFile));
+      const grandchildPid = Number(await Deno.readTextFile(grandchildPidFile));
+      expect(await processIsAlive(childPid)).toBe(false);
+      expect(await processIsAlive(grandchildPid)).toBe(false);
+      verified = true;
+    } finally {
+      if (!verified) {
+        await forceStopRecordedProcessTree(pidFile, grandchildPidFile);
+      }
+      await Deno.remove(pidFile).catch(() => {});
+      await Deno.remove(grandchildPidFile).catch(() => {});
+    }
   });
 
   test("denies permission when no approval callback exists", async () => {

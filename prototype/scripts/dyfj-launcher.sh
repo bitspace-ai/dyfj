@@ -358,7 +358,21 @@ compiled_is_fresh() {
 # DYFJ_ROOT is likewise engine config the launcher reads only to locate
 # ~/.dyfj/config.toml and derive the child's --allow-run resolver-binary grant.
 cli_env_allowlist() {
-  printf '%s' 'DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,DYFJ_ROOT,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,DYFJ_MEMORY_MCP_URL,NO_COLOR'
+  printf '%s' 'DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,DYFJ_ROOT,DYFJ_NODE_PATH,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,DYFJ_MEMORY_MCP_URL,NO_COLOR'
+}
+
+prepare_node_path() {
+  local candidate
+  candidate="${DYFJ_NODE_PATH:-}"
+  if [[ -z "$candidate" ]]; then
+    candidate="$(command -v node 2>/dev/null)" || return 0
+  fi
+  if [[ "$candidate" != /* || ! -f "$candidate" || ! -x "$candidate" || "$candidate" == *[,:]* ]]; then
+    unset DYFJ_NODE_PATH
+    return 0
+  fi
+  DYFJ_NODE_PATH="$candidate"
+  export DYFJ_NODE_PATH
 }
 
 route_cli() {
@@ -403,8 +417,13 @@ main() {
     autostart="no"
   fi
 
+  if [[ "$autostart" == "yes" || "$LAUNCHER_SUBCOMMAND" == "start" ]]; then
+    prepare_node_path
+  fi
+
   if [[ "${DYFJ_LAUNCHER_DRY_RUN:-}" == "1" ]]; then
-    printf 'route=%s autostart=%s sock=%s\n'       "$route" "$autostart" "$(resolve_socket_path)"
+    printf 'route=%s autostart=%s node_path=%s sock=%s\n' \
+      "$route" "$autostart" "${DYFJ_NODE_PATH:-}" "$(resolve_socket_path)"
     exit 0
   fi
 

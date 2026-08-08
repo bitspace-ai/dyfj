@@ -29,7 +29,12 @@ async function hasFreshCompiledBin(): Promise<boolean> {
 async function dryRun(
   env: Record<string, string>,
   args: string[] = [],
-): Promise<{ route: string; sock: string; autostart: string }> {
+): Promise<{
+  route: string;
+  sock: string;
+  autostart: string;
+  nodePath: string;
+}> {
   // parse-check spawns a deno child that derives its cache dir from HOME;
   // with the fake HOME these tests set, pin DENO_DIR to the real cache so
   // validity — not cache writability — is what the child reports.
@@ -56,13 +61,146 @@ async function dryRun(
   const route = text.match(/^route=(\w+)/)?.[1];
   const sock = text.match(/sock=(.+)$/)?.[1];
   const autostart = text.match(/autostart=(\w+)/)?.[1];
-  if (!route || !sock || !autostart) {
+  const nodePath = text.match(/node_path=(.*?) sock=/)?.[1];
+  if (!route || !sock || !autostart || nodePath === undefined) {
     throw new Error(`unexpected dry-run output: ${text}`);
   }
-  return { route, sock, autostart };
+  return { route, sock, autostart, nodePath };
 }
 
 describe("dyfj launcher routing", () => {
+  test("accepts an operator-authorized executable and ignores stale optional paths", async () => {
+    const node = await new Deno.Command("bash", {
+      args: ["-c", "node -p process.execPath"],
+      stdout: "piped",
+    }).output();
+    expect(node.success).toBe(true);
+    const nodePath = new TextDecoder().decode(node.stdout).trim();
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_NODE_PATH: nodePath,
+    })).resolves.toMatchObject({ autostart: "yes", nodePath });
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_NODE_PATH: "node",
+    }, ["-p", "inspect"])).resolves.toMatchObject({
+      autostart: "yes",
+      nodePath: "",
+    });
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_NODE_PATH: nodePath,
+    }, ["--runner", "fixture", "-p", "inspect"])).resolves.toMatchObject({
+      autostart: "yes",
+      nodePath,
+    });
+  });
+
+  test("accepts an executable selected from the operator's PATH", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const node = `${root}/node`;
+    await Deno.writeTextFile(node, "#!/bin/sh\nexit 1\n");
+    await Deno.chmod(node, 0o700);
+    try {
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_NODE_PATH: "",
+        PATH: `${root}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`,
+      })).resolves.toMatchObject({ autostart: "yes", nodePath: node });
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("rejects an executable directory as Node authority", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const directory = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    try {
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_NODE_PATH: directory,
+      }, ["-p", "inspect"])).resolves.toMatchObject({
+        autostart: "yes",
+        nodePath: "",
+      });
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
+  });
+
+  test("rejects delimiter-unsafe executable paths", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    try {
+      for (const delimiter of [",", ":"]) {
+        const node = `${root}/node${delimiter}unsafe`;
+        await Deno.writeTextFile(node, "#!/bin/sh\nexit 0\n");
+        await Deno.chmod(node, 0o700);
+        await expect(dryRun({
+          HOME: "/home/c",
+          DYFJ_NODE_PATH: node,
+        }, ["-p", "inspect"])).resolves.toMatchObject({
+          autostart: "yes",
+          nodePath: "",
+        });
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("does not inspect an optional executable path for status", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    const marker = `${root}/invoked`;
+    const node = `${root}/node`;
+    await Deno.writeTextFile(node, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`);
+    await Deno.chmod(node, 0o700);
+    try {
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_NODE_PATH: node,
+      }, ["status"])).resolves.toMatchObject({ autostart: "no" });
+      await expect(Deno.stat(marker)).rejects.toBeInstanceOf(
+        Deno.errors.NotFound,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("does not execute the operator-selected path during discovery", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+    const marker = `${root}/invoked`;
+    const node = `${root}/node`;
+    await Deno.writeTextFile(
+      node,
+      `#!/bin/sh\ntouch '${marker}'\nexec sleep 30\n`,
+    );
+    await Deno.chmod(node, 0o700);
+    try {
+      const startedAt = Date.now();
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_NODE_PATH: node,
+      }, ["-p", "inspect"])).resolves.toMatchObject({ autostart: "yes" });
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+      await expect(Deno.stat(marker)).rejects.toBeInstanceOf(
+        Deno.errors.NotFound,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   test("resolves its prototype root through a symlink chain", async () => {
     await Deno.mkdir(".vitest-tmp", { recursive: true });
     const root = await Deno.realPath(

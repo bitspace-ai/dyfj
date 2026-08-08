@@ -10,12 +10,26 @@ const pidFile = Deno.args.find((arg) => arg.startsWith("--pid-file="))?.slice(
   "--pid-file=".length,
 );
 if (pidFile !== undefined) await Deno.writeTextFile(pidFile, String(Deno.pid));
+const grandchildPidFile = Deno.args.find((arg) =>
+  arg.startsWith("--grandchild-pid-file=")
+)?.slice("--grandchild-pid-file=".length);
 
 const sessions = new Map<
   string,
   { cwd: string; cancel: PromiseWithResolvers<void>; cancelled: boolean }
 >();
 let nextSession = 1;
+let authenticationStatusRead = false;
+
+const emptyParams = (params: unknown): Record<string, never> => {
+  if (
+    typeof params !== "object" || params === null || Array.isArray(params) ||
+    Object.keys(params).length !== 0
+  ) {
+    throw new Error("expected empty object params");
+  }
+  return {};
+};
 
 async function chunk(
   context: AgentContext,
@@ -29,6 +43,20 @@ async function chunk(
       content: { type: "text", text },
     },
   });
+}
+
+async function waitForRecordedPid(path: string): Promise<void> {
+  const deadline = performance.now() + 1_000;
+  while (performance.now() < deadline) {
+    try {
+      const pid = Number(await Deno.readTextFile(path));
+      if (Number.isSafeInteger(pid) && pid > 0) return;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("fixture descendant readiness timed out");
 }
 
 const app = agent({ name: "dyfj-acp-fixture" })
@@ -45,7 +73,32 @@ const app = agent({ name: "dyfj-acp-fixture" })
       agentInfo: { name: "dyfj-acp-fixture", version: "1.0.0" },
     };
   })
+  .onRequest("authentication/status", emptyParams, () => {
+    authenticationStatusRead = true;
+    switch (Deno.env.get("ACP_FIXTURE_AUTH_STATUS")) {
+      case "mute":
+        return new Promise(() => {});
+      case "chat-gpt":
+        return { type: "chat-gpt", email: "fixture@example.invalid" };
+      case "api-key":
+        return { type: "api-key" };
+      case "gateway":
+        return { type: "gateway", name: "fixture" };
+      case "unauthenticated":
+        return { type: "unauthenticated" };
+      case "malformed":
+        return {};
+      default:
+        throw new Error("authentication/status unavailable");
+    }
+  })
   .onRequest(methods.agent.session.new, async ({ params, client: context }) => {
+    if (
+      Deno.env.get("ACP_FIXTURE_AUTH_STATUS") === "chat-gpt" &&
+      !authenticationStatusRead
+    ) {
+      throw new Error("session/new preceded authentication/status");
+    }
     if (Deno.env.get("ACP_FIXTURE_MODE") === "session_new_mute") {
       await new Promise(() => {});
     }
@@ -91,6 +144,33 @@ const app = agent({ name: "dyfj-acp-fixture" })
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("");
+      if (
+        prompt.includes("FIXTURE_STUBBORN_DESCENDANT") &&
+        grandchildPidFile !== undefined
+      ) {
+        try {
+          const grandchild = new Deno.Command("bash", {
+            args: [
+              "-c",
+              'trap "" TERM; echo "$$" > "$1"; while :; do sleep 1; done',
+              "bash",
+              grandchildPidFile,
+            ],
+            stdin: "null",
+            stdout: "null",
+            stderr: "null",
+          }).spawn();
+          grandchild.unref();
+          await waitForRecordedPid(grandchildPidFile);
+        } catch (error) {
+          await chunk(
+            context,
+            params.sessionId,
+            `fixture descendant spawn failed: ${String(error)}`,
+          );
+          return { stopReason: "end_turn" };
+        }
+      }
       if (prompt.includes("FIXTURE_EARLY_EXIT")) Deno.exit(17);
       if (prompt.includes("FIXTURE_MUTE")) await new Promise(() => {});
       if (prompt.includes("FIXTURE_ENV")) {
