@@ -110,6 +110,98 @@ async function operatorAuthorizedExecutable(pathValue: string | undefined) {
   throw new DomainError("Codex ACP executable is unavailable");
 }
 
+async function operatorAuthorizedToolchainDirectory(
+  pathValue: string | undefined,
+): Promise<string | undefined> {
+  if (pathValue === undefined || pathValue === "") return undefined;
+  if (
+    !pathValue.startsWith("/") || pathValue.includes(",") ||
+    pathValue.includes(":")
+  ) {
+    throw new DomainError(
+      "Codex ACP requires an absolute, delimiter-safe toolchain directory",
+    );
+  }
+  if (/^\/+$/u.test(pathValue)) {
+    throw new DomainError("Codex ACP toolchain directory is unavailable");
+  }
+  try {
+    const noFollowPath = pathValue === "/"
+      ? pathValue
+      : pathValue.replace(/\/+$/, "");
+    const info = await Deno.lstat(noFollowPath);
+    if (info.isDirectory && !info.isSymlink) {
+      const canonical = await Deno.realPath(noFollowPath);
+      if (canonical.includes(",") || canonical.includes(":")) {
+        throw new Error("canonical path contains an unsupported delimiter");
+      }
+      const canonicalInfo = await Deno.lstat(canonical);
+      if (
+        !canonicalInfo.isDirectory || canonicalInfo.isSymlink ||
+        (Deno.build.os !== "windows" &&
+          (canonicalInfo.uid !== Deno.uid() ||
+            ((canonicalInfo.mode ?? 0) & 0o100) === 0 ||
+            ((canonicalInfo.mode ?? 0) & 0o022) !== 0)) ||
+        (info.dev !== null && info.ino !== null &&
+          canonicalInfo.dev !== null && canonicalInfo.ino !== null &&
+          (canonicalInfo.dev !== info.dev || canonicalInfo.ino !== info.ino))
+      ) {
+        throw new Error("canonical directory authority changed");
+      }
+      return canonical;
+    }
+  } catch {
+    // Use the fixed diagnostic below instead of disclosing the supplied path.
+  }
+  throw new DomainError("Codex ACP toolchain directory is unavailable");
+}
+
+async function operatorAuthorizedRustupHomeDirectory(
+  pathValue: string | undefined,
+): Promise<string | undefined> {
+  if (pathValue === undefined || pathValue === "") return undefined;
+  if (
+    !pathValue.startsWith("/") || pathValue.includes(",") ||
+    pathValue.includes(":")
+  ) {
+    throw new DomainError(
+      "Codex ACP requires an absolute, delimiter-safe Rustup home directory",
+    );
+  }
+  if (/^\/+$/u.test(pathValue)) {
+    throw new DomainError("Codex ACP Rustup home directory is unavailable");
+  }
+  try {
+    const noFollowPath = pathValue === "/"
+      ? pathValue
+      : pathValue.replace(/\/+$/, "");
+    const info = await Deno.lstat(noFollowPath);
+    if (info.isDirectory && !info.isSymlink) {
+      const canonical = await Deno.realPath(noFollowPath);
+      if (canonical.includes(",") || canonical.includes(":")) {
+        throw new Error("canonical path contains an unsupported delimiter");
+      }
+      const canonicalInfo = await Deno.lstat(canonical);
+      if (
+        !canonicalInfo.isDirectory || canonicalInfo.isSymlink ||
+        (Deno.build.os !== "windows" &&
+          (canonicalInfo.uid !== Deno.uid() ||
+            ((canonicalInfo.mode ?? 0) & 0o700) !== 0o700 ||
+            ((canonicalInfo.mode ?? 0) & 0o022) !== 0)) ||
+        (info.dev !== null && info.ino !== null &&
+          canonicalInfo.dev !== null && canonicalInfo.ino !== null &&
+          (canonicalInfo.dev !== info.dev || canonicalInfo.ino !== info.ino))
+      ) {
+        throw new Error("canonical directory authority changed");
+      }
+      return canonical;
+    }
+  } catch {
+    // Use the fixed diagnostic below instead of disclosing the supplied path.
+  }
+  throw new DomainError("Codex ACP Rustup home directory is unavailable");
+}
+
 async function ensurePrivateDirectory(
   path: string,
   enforceExistingMode = true,
@@ -149,10 +241,67 @@ async function requireOwnedDirectory(path: string): Promise<void> {
   throw new DomainError("Codex ACP operator home is unavailable");
 }
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+async function writePrivateNodeShim(
+  directory: string,
+  nodePath: string,
+): Promise<void> {
+  const temporary = await Deno.makeTempFile({
+    dir: directory,
+    prefix: ".node-",
+  });
+  try {
+    await Deno.writeTextFile(
+      temporary,
+      `#!/bin/sh\nexec ${shellSingleQuote(nodePath)} "$@"\n`,
+    );
+    await Deno.chmod(temporary, 0o700);
+    await Deno.rename(temporary, join(directory, "node"));
+  } catch {
+    try {
+      await Deno.remove(temporary);
+    } catch {
+      // The rename may already have consumed the temporary path.
+    }
+    throw new DomainError("Codex ACP private Node shim is unavailable");
+  }
+}
+
+async function writePrivateShellProfile(
+  isolatedHome: string,
+  fileName: ".bash_profile" | ".zprofile",
+  childPath: string,
+): Promise<void> {
+  const temporary = await Deno.makeTempFile({
+    dir: isolatedHome,
+    prefix: `${fileName}-`,
+  });
+  try {
+    await Deno.writeTextFile(
+      temporary,
+      `export PATH=${shellSingleQuote(childPath)}\n`,
+    );
+    await Deno.chmod(temporary, 0o600);
+    await Deno.rename(temporary, join(isolatedHome, fileName));
+  } catch {
+    try {
+      await Deno.remove(temporary);
+    } catch {
+      // The rename may already have consumed the temporary path.
+    }
+    throw new DomainError("Codex ACP private shell profile is unavailable");
+  }
+}
+
 export interface CodexChatGptProfileOptions {
   home?: string;
   prototypeRoot?: string;
   nodePath?: string;
+  toolchainPath?: string;
+  rustupHome?: string;
 }
 
 export async function bundledCodexExecutable(
@@ -198,23 +347,20 @@ export async function codexChatGptProfile(
   const operatorHome = options.home ?? Deno.env.get("HOME");
   if (
     operatorHome === undefined || !operatorHome.startsWith("/") ||
-    operatorHome.includes(",")
+    operatorHome.includes(",") || operatorHome.includes(":")
   ) {
     throw new DomainError(
-      "Codex ACP requires an absolute, comma-free operator home",
+      "Codex ACP requires an absolute, delimiter-safe operator home",
     );
   }
   await requireOwnedDirectory(operatorHome);
   const dyfjRoot = join(operatorHome, ".dyfj");
   const runnerHomes = join(dyfjRoot, "runner-homes");
   const runnerRoot = join(runnerHomes, "codex-chatgpt");
+  const runnerBin = join(runnerRoot, "bin");
   const isolatedHome = join(runnerRoot, "home");
   const codexHome = join(isolatedHome, ".codex");
-  await ensurePrivateDirectory(dyfjRoot, false);
-  await ensurePrivateDirectory(runnerHomes, false);
-  await ensurePrivateDirectory(runnerRoot);
-  await ensurePrivateDirectory(isolatedHome);
-  await ensurePrivateDirectory(codexHome);
+  const cargoHome = join(isolatedHome, ".cargo");
 
   const prototypeRoot = options.prototypeRoot ??
     fileURLToPath(new URL("..", import.meta.url));
@@ -245,14 +391,44 @@ export async function codexChatGptProfile(
     options.nodePath ?? Deno.env.get("DYFJ_NODE_PATH"),
   );
   const codexPath = await bundledCodexExecutable(packageRoot);
+  const toolchainPath = await operatorAuthorizedToolchainDirectory(
+    options.toolchainPath ?? Deno.env.get("DYFJ_CODEX_TOOLCHAIN_PATH"),
+  );
+  const rustupHome = await operatorAuthorizedRustupHomeDirectory(
+    options.rustupHome ?? Deno.env.get("DYFJ_CODEX_RUSTUP_HOME"),
+  );
+  const projectedDirectories = new Set<string>();
+  if (toolchainPath !== undefined) projectedDirectories.add(toolchainPath);
+  if (rustupHome !== undefined) projectedDirectories.add(rustupHome);
+  const toolchainDirectoryCount = projectedDirectories.size as 0 | 1 | 2;
+
+  await ensurePrivateDirectory(dyfjRoot, false);
+  await ensurePrivateDirectory(runnerHomes, false);
+  await ensurePrivateDirectory(runnerRoot);
+  await ensurePrivateDirectory(runnerBin);
+  await ensurePrivateDirectory(isolatedHome);
+  await ensurePrivateDirectory(codexHome);
+  await ensurePrivateDirectory(cargoHome);
+  await writePrivateNodeShim(runnerBin, nodePath);
+
+  const childPath = [
+    runnerBin,
+    ...(toolchainPath === undefined ? [] : [toolchainPath]),
+    "/usr/bin",
+    "/bin",
+  ].join(":");
+  await writePrivateShellProfile(isolatedHome, ".zprofile", childPath);
+  await writePrivateShellProfile(isolatedHome, ".bash_profile", childPath);
   const environment: Record<string, string> = {
     HOME: isolatedHome,
     CODEX_HOME: codexHome,
     CODEX_PATH: codexPath,
+    CARGO_HOME: cargoHome,
     NO_BROWSER: "1",
     INITIAL_AGENT_MODE: "read-only",
-    PATH: `${dirname(nodePath)}:/usr/bin:/bin`,
+    PATH: childPath,
   };
+  if (rustupHome !== undefined) environment.RUSTUP_HOME = rustupHome;
   const user = Deno.env.get("USER");
   if (user !== undefined) environment.USER = user;
   return {
@@ -267,6 +443,7 @@ export async function codexChatGptProfile(
     requiredAuthentication: "chat-gpt",
     promptTimeoutMs: CODEX_CHATGPT_PROMPT_TIMEOUT_MS,
     sessionUpdatePolicy: "long_running",
+    toolchainDirectoryCount,
   };
 }
 
@@ -329,6 +506,7 @@ function receiptText(input: {
       `Agent authentication: ${input.routeEvidence.authenticationType}`,
     ]),
     `Cost basis: ${route.costBasis}`,
+    `Toolchain directories: ${input.profile.toolchainDirectoryCount ?? 0}`,
     `Outcome: ${input.result.stopReason}`,
     `Elapsed: ${input.result.elapsedMs} ms`,
     ...(input.sessionProjectionSkipped
@@ -679,6 +857,7 @@ export async function runExternalAgentWorkbenchRuntime(
         evidence: {
           source: "acp",
           innerState: "opaque",
+          toolchainDirectoryCount: profile.toolchainDirectoryCount ?? 0,
           ...(verifiedRouteEvidence === undefined ? {} : {
             routeSource: verifiedRouteEvidence.source,
             ...(verifiedRouteEvidence.authenticationType === undefined ? {} : {

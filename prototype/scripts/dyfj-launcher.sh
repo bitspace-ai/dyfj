@@ -232,10 +232,10 @@ socket_forward_args() {
 # launcher never mirrors the contract; it asks.
 client_parse_check() {
   local route
-  route="$(route_cli "${CLIENT_ARGS[@]}")"
+  route="$(route_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})"
   if [[ "$route" == "compiled" ]]; then
     DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)" \
-      --parse-check "${CLIENT_ARGS[@]}" >/dev/null 2>&1
+      --parse-check ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} >/dev/null 2>&1
   else
     local proto
     proto="$(prototype_root)"
@@ -244,7 +244,7 @@ client_parse_check() {
       --allow-read \
       --sloppy-imports \
       "${proto}/src/cli.ts" \
-      --parse-check "${CLIENT_ARGS[@]}" >/dev/null 2>&1
+      --parse-check ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} >/dev/null 2>&1
   fi
 }
 
@@ -275,12 +275,12 @@ probe_runtime() {
   local route
   route="$(route_cli "$@")"
   if [[ "$route" == "compiled" ]]; then
-    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)"       --unix "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
+    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)"       --unix ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
   else
     local sock proto
     sock="$(resolve_socket_path)"
     proto="$(prototype_root)"
-    DYFJ_PROTOTYPE_ROOT="$proto" deno run       --allow-env="$(cli_env_allowlist)"       --allow-read       --allow-write       --allow-run=deno       --allow-net="127.0.0.1,localhost,unix:${sock}"       --sloppy-imports       "${proto}/src/cli.ts"       --unix "${SOCKET_ARGS[@]}" status >/dev/null 2>&1
+    DYFJ_PROTOTYPE_ROOT="$proto" deno run       --allow-env="$(cli_env_allowlist)"       --allow-read       --allow-write       --allow-run=deno       --allow-net="127.0.0.1,localhost,unix:${sock}"       --sloppy-imports       "${proto}/src/cli.ts"       --unix ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
   fi
 }
 
@@ -307,7 +307,7 @@ ensure_runtime() {
   chmod 600 "$log" 2>/dev/null || true
   echo "dyfj: runtime not running at ${sock}; starting it (log: ${log})" >&2
   # Mark the background runtime to ignore a terminal SIGINT if it reaches it.
-  nohup bash "$LAUNCHER_SOURCE" "${SOCKET_ARGS[@]}" start --launcher-autostarted >>"$log" 2>&1 &
+  nohup bash "$LAUNCHER_SOURCE" ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} start --launcher-autostarted >>"$log" 2>&1 &
   disown
   local i
   for i in $(seq 1 50); do
@@ -358,7 +358,7 @@ compiled_is_fresh() {
 # DYFJ_ROOT is likewise engine config the launcher reads only to locate
 # ~/.dyfj/config.toml and derive the child's --allow-run resolver-binary grant.
 cli_env_allowlist() {
-  printf '%s' 'DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,DYFJ_ROOT,DYFJ_NODE_PATH,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,DYFJ_MEMORY_MCP_URL,NO_COLOR'
+  printf '%s' 'DYFJ_SERVER_URL,DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,DYFJ_ROOT,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_API_KEY,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_UNIX,DYFJ_MEMORY_MCP_URL,NO_COLOR'
 }
 
 prepare_node_path() {
@@ -373,6 +373,50 @@ prepare_node_path() {
   fi
   DYFJ_NODE_PATH="$candidate"
   export DYFJ_NODE_PATH
+}
+
+prepare_toolchain_path() {
+  local candidate no_follow
+  candidate="${DYFJ_CODEX_TOOLCHAIN_PATH:-}"
+  if [[ -z "$candidate" ]]; then
+    unset DYFJ_CODEX_TOOLCHAIN_PATH
+    return 0
+  fi
+  if [[ "$candidate" != /* || "$candidate" == *[,:]* ]]; then
+    echo "dyfj: Codex toolchain path must name an absolute, delimiter-safe directory" >&2
+    return 1
+  fi
+  no_follow="$candidate"
+  while [[ "$no_follow" != "/" && "$no_follow" == */ ]]; do
+    no_follow="${no_follow%/}"
+  done
+  if [[ "$no_follow" == "/" || ! -d "$candidate" || -L "$no_follow" ]]; then
+    echo "dyfj: Codex toolchain directory is unavailable" >&2
+    return 1
+  fi
+  export DYFJ_CODEX_TOOLCHAIN_PATH
+}
+
+prepare_rustup_home() {
+  local candidate no_follow
+  candidate="${DYFJ_CODEX_RUSTUP_HOME:-}"
+  if [[ -z "$candidate" ]]; then
+    unset DYFJ_CODEX_RUSTUP_HOME
+    return 0
+  fi
+  if [[ "$candidate" != /* || "$candidate" == *[,:]* ]]; then
+    echo "dyfj: Codex Rustup home must name an absolute, delimiter-safe directory" >&2
+    return 1
+  fi
+  no_follow="$candidate"
+  while [[ "$no_follow" != "/" && "$no_follow" == */ ]]; do
+    no_follow="${no_follow%/}"
+  done
+  if [[ "$no_follow" == "/" || ! -d "$candidate" || -L "$no_follow" ]]; then
+    echo "dyfj: Codex Rustup home directory is unavailable" >&2
+    return 1
+  fi
+  export DYFJ_CODEX_RUSTUP_HOME
 }
 
 route_cli() {
@@ -410,8 +454,8 @@ main() {
   parse_launcher_args "$@"
   socket_forward_args
   local route autostart
-  route="$(route_cli "${CLIENT_ARGS[@]}")"
-  if autostart_applies "${CLIENT_ARGS[@]}" && client_parse_check; then
+  route="$(route_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})"
+  if autostart_applies ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} && client_parse_check; then
     autostart="yes"
   else
     autostart="no"
@@ -419,24 +463,37 @@ main() {
 
   if [[ "$autostart" == "yes" || "$LAUNCHER_SUBCOMMAND" == "start" ]]; then
     prepare_node_path
+    prepare_toolchain_path || exit 1
+    prepare_rustup_home || exit 1
   fi
 
   if [[ "${DYFJ_LAUNCHER_DRY_RUN:-}" == "1" ]]; then
-    printf 'route=%s autostart=%s node_path=%s sock=%s\n' \
-      "$route" "$autostart" "${DYFJ_NODE_PATH:-}" "$(resolve_socket_path)"
+    local toolchain_count=0 toolchain_canonical="" rustup_canonical=""
+    if [[ -n "${DYFJ_CODEX_TOOLCHAIN_PATH:-}" ]]; then
+      toolchain_canonical="$(cd -P -- "$DYFJ_CODEX_TOOLCHAIN_PATH" && pwd -P)"
+      toolchain_count=1
+    fi
+    if [[ -n "${DYFJ_CODEX_RUSTUP_HOME:-}" ]]; then
+      rustup_canonical="$(cd -P -- "$DYFJ_CODEX_RUSTUP_HOME" && pwd -P)"
+      if [[ -z "$toolchain_canonical" || "$rustup_canonical" != "$toolchain_canonical" ]]; then
+        toolchain_count=$((toolchain_count + 1))
+      fi
+    fi
+    printf 'route=%s autostart=%s node_path=%s sock=%s toolchain_directories=%s\n' \
+      "$route" "$autostart" "${DYFJ_NODE_PATH:-}" "$(resolve_socket_path)" "$toolchain_count"
     exit 0
   fi
 
   if [[ "$autostart" == "yes" ]]; then
-    ensure_runtime "${CLIENT_ARGS[@]}" || exit 1
+    ensure_runtime ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} || exit 1
   fi
 
   case "$route" in
     compiled)
-      DYFJ_PROTOTYPE_ROOT="$(prototype_root)" exec "$(compiled_bin)" "${CLIENT_ARGS[@]}"
+      DYFJ_PROTOTYPE_ROOT="$(prototype_root)" exec "$(compiled_bin)" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
       ;;
     deno)
-      run_deno_cli "${CLIENT_ARGS[@]}"
+      run_deno_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
       ;;
     *)
       echo "dyfj launcher: unknown route '$route'" >&2
