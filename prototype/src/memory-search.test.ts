@@ -63,6 +63,38 @@ describe("memorySearchConfigFromEnv", () => {
     ).toBe("http://localhost:8080/mcp");
   });
 
+  test("rejects credentials embedded in https and loopback http URLs", () => {
+    for (
+      const url of [
+        "https://fixture-user:fixture-pass@memory.example/mcp",
+        "http://fixture-user:fixture-pass@127.0.0.1:8080/mcp",
+        "https://fixture-user@memory.example/mcp",
+      ]
+    ) {
+      expect(() =>
+        memorySearchConfigFromEnv({ DYFJ_MEMORY_MCP_URL: url })
+      ).toThrow("DYFJ_MEMORY_MCP_URL must not include credentials");
+    }
+  });
+
+  test("credential diagnostic does not echo the URL or its userinfo", () => {
+    const username = "fixture-user";
+    const password = "fixture-pass";
+    const url = `https://${username}:${password}@memory.example/mcp`;
+
+    let message = "";
+    try {
+      memorySearchConfigFromEnv({ DYFJ_MEMORY_MCP_URL: url });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("DYFJ_MEMORY_MCP_URL");
+    expect(message).not.toContain(username);
+    expect(message).not.toContain(password);
+    expect(message).not.toContain(url);
+  });
+
   test("a DNS name that merely starts with 127. is not loopback", () => {
     // 127/8 must be a strict IPv4 parse — 127.attacker.example is a routable
     // hostname, and classifying it loopback would license cleartext transport.
