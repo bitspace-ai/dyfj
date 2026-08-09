@@ -7,6 +7,7 @@ import {
   assertProcessGroupSignaler,
   drainStream,
   guardedProtocolInput,
+  resolveSessionUpdateLimit,
   runAcpAgent,
   runSignalCommand,
   settleDrain,
@@ -1015,6 +1016,26 @@ describe("runAcpAgent", () => {
     });
   });
 
+  test("allows a bounded long-running profile to complete after 1,024 updates", async () => {
+    const result = await runAcpAgent({
+      profile: fixtureProfile({ sessionUpdatePolicy: "long_running" }),
+      prompt: "FIXTURE_LONG_UPDATE_STREAM",
+    });
+    expect(result.text).toBe("complete");
+    expect(result.stopReason).toBe("stop");
+  });
+
+  test("bounds long-running session updates and reaps the child", async () => {
+    await expectContainedFailure({
+      prompt: "FIXTURE_LONG_UPDATE_FLOOD",
+      phase: "protocol",
+      profile: {
+        sessionUpdatePolicy: "long_running",
+        promptTimeoutMs: 30_000,
+      },
+    });
+  });
+
   test("the ingress guard rejects update floods independently of the SDK consumer", async () => {
     const payload = new TextEncoder().encode(`${
       JSON.stringify({
@@ -1047,6 +1068,44 @@ describe("runAcpAgent", () => {
     await expect(guarded.pipeTo(new WritableStream())).rejects.toThrow(
       "ACP agent exceeded the session-update limit",
     );
+  });
+
+  test("the ingress guard enforces the resolved long-running allowance", async () => {
+    const payload = new TextEncoder().encode(`${
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "fixture-1",
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "" },
+          },
+        },
+      })
+    }\n`);
+    const profile = fixtureProfile({ sessionUpdatePolicy: "long_running" });
+    const limit = resolveSessionUpdateLimit(profile);
+    let sent = 0;
+    const guarded = guardedProtocolInput(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent <= limit) {
+            sent += 1;
+            controller.enqueue(payload);
+          } else {
+            controller.close();
+          }
+        },
+      }),
+      () => "fixture-1",
+      () => {},
+      limit,
+    );
+    await expect(guarded.pipeTo(new WritableStream())).rejects.toThrow(
+      "ACP agent exceeded the session-update limit",
+    );
+    expect(limit).toBe(8_192);
   });
 
   test("bounds cumulative protocol input at ingress", async () => {

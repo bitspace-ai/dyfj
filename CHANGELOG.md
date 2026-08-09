@@ -8,6 +8,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- ACP session-update containment is now resolved once from the execution profile and shared by protocol ingress and the SDK consumer. Ordinary profiles retain the 1,024-update ceiling, while the bounded Codex ChatGPT profile permits up to 8,192 updates; either ceiling fails closed with a stable client diagnostic and leaves the independent byte, timeout, cancellation, and child-cleanup bounds unchanged.
+
 - ACP prompt deadlines now exclude the time spent in pending external-agent permission-confirmation races. The deadline resumes with its remaining prompt wall-clock budget after the last confirmation race settles. The Codex ChatGPT profile uses a 30-minute prompt window, while the fixture profile retains the generic default.
 
 - Rust event writes now bind `TIMESTAMP(6)` values as fixed-width text containing UTC clock fields, avoiding Dolt's prepared temporal-value decoding error for leading-zero fractional seconds; the live schema round trip pins the affected case after switching the connection from a non-UTC write timezone to UTC before reading.
