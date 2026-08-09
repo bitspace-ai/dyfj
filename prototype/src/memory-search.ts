@@ -72,6 +72,9 @@ export function assertSecureMemoryUrl(url: string): void {
   } catch {
     throw new Error("DYFJ_MEMORY_MCP_URL is not a valid URL");
   }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error("DYFJ_MEMORY_MCP_URL must not include credentials");
+  }
   if (parsed.protocol === "https:") return;
   if (parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname)) {
     return;
