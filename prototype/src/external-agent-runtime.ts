@@ -126,9 +126,7 @@ async function operatorAuthorizedToolchainDirectory(
     throw new DomainError("Codex ACP toolchain directory is unavailable");
   }
   try {
-    const noFollowPath = pathValue === "/"
-      ? pathValue
-      : pathValue.replace(/\/+$/, "");
+    const noFollowPath = pathValue.replace(/\/+$/, "");
     const info = await Deno.lstat(noFollowPath);
     if (info.isDirectory && !info.isSymlink) {
       const canonical = await Deno.realPath(noFollowPath);
@@ -172,9 +170,7 @@ async function operatorAuthorizedRustupHomeDirectory(
     throw new DomainError("Codex ACP Rustup home directory is unavailable");
   }
   try {
-    const noFollowPath = pathValue === "/"
-      ? pathValue
-      : pathValue.replace(/\/+$/, "");
+    const noFollowPath = pathValue.replace(/\/+$/, "");
     const info = await Deno.lstat(noFollowPath);
     if (info.isDirectory && !info.isSymlink) {
       const canonical = await Deno.realPath(noFollowPath);
@@ -249,11 +245,12 @@ async function writePrivateNodeShim(
   directory: string,
   nodePath: string,
 ): Promise<void> {
-  const temporary = await Deno.makeTempFile({
-    dir: directory,
-    prefix: ".node-",
-  });
+  let temporary: string | undefined;
   try {
+    temporary = await Deno.makeTempFile({
+      dir: directory,
+      prefix: ".node-",
+    });
     await Deno.writeTextFile(
       temporary,
       `#!/bin/sh\nexec ${shellSingleQuote(nodePath)} "$@"\n`,
@@ -261,10 +258,12 @@ async function writePrivateNodeShim(
     await Deno.chmod(temporary, 0o700);
     await Deno.rename(temporary, join(directory, "node"));
   } catch {
-    try {
-      await Deno.remove(temporary);
-    } catch {
-      // The rename may already have consumed the temporary path.
+    if (temporary !== undefined) {
+      try {
+        await Deno.remove(temporary);
+      } catch {
+        // The rename may already have consumed the temporary path.
+      }
     }
     throw new DomainError("Codex ACP private Node shim is unavailable");
   }
@@ -275,11 +274,12 @@ async function writePrivateShellProfile(
   fileName: ".bash_profile" | ".zprofile",
   childPath: string,
 ): Promise<void> {
-  const temporary = await Deno.makeTempFile({
-    dir: isolatedHome,
-    prefix: `${fileName}-`,
-  });
+  let temporary: string | undefined;
   try {
+    temporary = await Deno.makeTempFile({
+      dir: isolatedHome,
+      prefix: `${fileName}-`,
+    });
     await Deno.writeTextFile(
       temporary,
       `export PATH=${shellSingleQuote(childPath)}\n`,
@@ -287,10 +287,12 @@ async function writePrivateShellProfile(
     await Deno.chmod(temporary, 0o600);
     await Deno.rename(temporary, join(isolatedHome, fileName));
   } catch {
-    try {
-      await Deno.remove(temporary);
-    } catch {
-      // The rename may already have consumed the temporary path.
+    if (temporary !== undefined) {
+      try {
+        await Deno.remove(temporary);
+      } catch {
+        // The rename may already have consumed the temporary path.
+      }
     }
     throw new DomainError("Codex ACP private shell profile is unavailable");
   }

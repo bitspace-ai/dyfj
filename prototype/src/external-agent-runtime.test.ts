@@ -359,6 +359,50 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     }
   });
 
+  test("contains private runner-file creation failures", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const packageRoot = `${root}/node_modules/@agentclientprotocol/codex-acp`;
+    const home = `${root}/operator-home`;
+    await Deno.mkdir(home);
+    await Deno.mkdir(`${packageRoot}/dist`, { recursive: true });
+    await Deno.writeTextFile(
+      `${packageRoot}/package.json`,
+      JSON.stringify({ version: "1.1.10" }),
+    );
+    await Deno.writeTextFile(`${packageRoot}/dist/index.js`, "");
+    const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
+    await Deno.mkdir(`${root}/node_modules/@openai/codex/bin`, {
+      recursive: true,
+    });
+    await Deno.writeTextFile(codexPath, "");
+    await Deno.chmod(codexPath, 0o700);
+    const nodePath = `${root}/node`;
+    await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
+    await Deno.chmod(nodePath, 0o700);
+    const originalMakeTempFile = Deno.makeTempFile.bind(Deno);
+    const makeTempFile = vi.spyOn(Deno, "makeTempFile");
+    try {
+      makeTempFile.mockRejectedValueOnce(new Error("private path leaked"));
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: root,
+        nodePath,
+      })).rejects.toThrow("Codex ACP private Node shim is unavailable");
+
+      makeTempFile.mockImplementation(originalMakeTempFile);
+      makeTempFile.mockImplementationOnce(originalMakeTempFile);
+      makeTempFile.mockRejectedValueOnce(new Error("private path leaked"));
+      await expect(codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: root,
+        nodePath,
+      })).rejects.toThrow("Codex ACP private shell profile is unavailable");
+    } finally {
+      makeTempFile.mockRestore();
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   test("projects an explicit toolchain and Rustup home without inheriting ambient PATH", async () => {
     const home = await Deno.makeTempDir({ dir: Deno.cwd() });
     const toolchain = `${home}/toolchain-bin`;

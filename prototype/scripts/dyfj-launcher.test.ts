@@ -61,7 +61,7 @@ async function dryRun(
     throw new Error(`launcher dry-run failed (${code}): ${err || text}`);
   }
   const route = text.match(/^route=(\w+)/)?.[1];
-  const sock = text.match(/sock=(\S+)/)?.[1];
+  const sock = text.match(/sock=(.*?) toolchain_directories=/)?.[1];
   const autostart = text.match(/autostart=(\w+)/)?.[1];
   const nodePath = text.match(/node_path=(.*?) sock=/)?.[1];
   const toolchainDirectories = text.match(/toolchain_directories=(\d+)/)?.[1];
@@ -212,6 +212,71 @@ describe("dyfj launcher routing", () => {
       await Deno.remove(rustupLink);
       await Deno.remove(directory);
       await Deno.remove(rustupHome);
+    }
+  });
+
+  test("rejects delimiter-bearing canonical toolchain paths without disclosing them", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const unsafeParent = `${root}/private,parent`;
+    const unsafeDirectory = `${unsafeParent}/bin`;
+    const safeAlias = `${root}/selected`;
+    await Deno.mkdir(unsafeDirectory, { recursive: true });
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", unsafeParent, safeAlias],
+    }).output();
+    expect(linked.success).toBe(true);
+    const selected = `${safeAlias}/bin`;
+    try {
+      for (
+        const [envName, diagnostic] of [
+          [
+            "DYFJ_CODEX_TOOLCHAIN_PATH",
+            "Codex toolchain directory is unavailable",
+          ],
+          [
+            "DYFJ_CODEX_RUSTUP_HOME",
+            "Codex Rustup home directory is unavailable",
+          ],
+        ] as const
+      ) {
+        let failure: Error | undefined;
+        try {
+          await dryRun({
+            HOME: "/home/c",
+            [envName]: selected,
+          }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]);
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error));
+        }
+        expect(failure?.message).toContain(diagnostic);
+        expect(failure?.message).not.toContain(unsafeParent);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("counts canonical directories whose names differ only by trailing newlines", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const toolchain = `${root}/toolchain`;
+    const rustupHome = `${toolchain}\n`;
+    await Deno.mkdir(toolchain);
+    await Deno.mkdir(rustupHome);
+    try {
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_CODEX_TOOLCHAIN_PATH: toolchain,
+        DYFJ_CODEX_RUSTUP_HOME: rustupHome,
+      }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+        .resolves.toMatchObject({ toolchainDirectories: "2" });
+    } finally {
+      await Deno.remove(root, { recursive: true });
     }
   });
 
@@ -442,6 +507,65 @@ describe("dyfj launcher routing", () => {
     const text = await Deno.readTextFile(LAUNCHER);
     expect(text).not.toMatch(/\/Users\//);
     expect(text).not.toMatch(/\/home\/[a-z]/);
+  });
+
+  test("a socket path containing spaces remains intact in dry-run evidence", async () => {
+    const sock = "/tmp/dyfj workbench.sock";
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_SOCKET: sock,
+    }, ["--no-autostart", "status"])).resolves.toMatchObject({ sock });
+  });
+
+  test("dry-run validates optional paths when autostart is disabled", async () => {
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_CODEX_TOOLCHAIN_PATH: "relative-toolchain",
+    }, ["--no-autostart", "status"])).rejects.toThrow(
+      "absolute, delimiter-safe directory",
+    );
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_CODEX_RUSTUP_HOME: "relative-rustup-home",
+    }, ["--no-autostart", "status"])).rejects.toThrow(
+      "absolute, delimiter-safe directory",
+    );
+  });
+
+  test("a successful runtime probe bypasses stale optional start authority", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const bin = `${root}/bin`;
+    const deno = `${bin}/deno`;
+    await Deno.mkdir(bin);
+    await Deno.writeTextFile(deno, "#!/bin/sh\nexit 0\n");
+    await Deno.chmod(deno, 0o700);
+    try {
+      const proc = new Deno.Command(BASH, {
+        args: [
+          LAUNCHER,
+          "--socket",
+          `${root}/workbench.sock`,
+          "sessions",
+        ],
+        env: {
+          ...Deno.env.toObject(),
+          PATH: `${bin}:/usr/bin:/bin`,
+          DYFJ_CODEX_TOOLCHAIN_PATH: `${root}/missing-toolchain`,
+          DYFJ_CODEX_RUSTUP_HOME: `${root}/missing-rustup-home`,
+          DYFJ_LAUNCHER_DRY_RUN: "",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const { code, stderr } = await proc.output();
+      expect(code).toBe(0);
+      expect(new TextDecoder().decode(stderr)).not.toContain("unavailable");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   });
 });
 

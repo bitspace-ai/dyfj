@@ -288,6 +288,9 @@ ensure_runtime() {
   if probe_runtime "$@"; then
     return 0
   fi
+  prepare_node_path
+  prepare_toolchain_path || return 1
+  prepare_rustup_home || return 1
   local sock log
   sock="$(resolve_socket_path)"
   if ! log="$(runtime_log_path)"; then
@@ -419,6 +422,22 @@ prepare_rustup_home() {
   export DYFJ_CODEX_RUSTUP_HOME
 }
 
+canonical_toolchain_directory() {
+  local candidate marked
+  candidate="$1"
+  CANONICAL_DIRECTORY_RESULT=""
+  marked="$(
+    cd -P -- "$candidate" 2>/dev/null &&
+      pwd -P 2>/dev/null &&
+      printf '\001'
+  )" || return 1
+  marked="${marked%$'\001'}"
+  CANONICAL_DIRECTORY_RESULT="${marked%$'\n'}"
+  if [[ "$CANONICAL_DIRECTORY_RESULT" == *[,:]* ]]; then
+    return 1
+  fi
+}
+
 route_cli() {
   local resolved default
   resolved="$(resolve_socket_path)"
@@ -461,7 +480,11 @@ main() {
     autostart="no"
   fi
 
-  if [[ "$autostart" == "yes" || "$LAUNCHER_SUBCOMMAND" == "start" ]]; then
+  if [[ "$LAUNCHER_SUBCOMMAND" == "start" ]]; then
+    prepare_node_path
+    prepare_toolchain_path || exit 1
+    prepare_rustup_home || exit 1
+  elif [[ "${DYFJ_LAUNCHER_DRY_RUN:-}" == "1" ]]; then
     prepare_node_path
     prepare_toolchain_path || exit 1
     prepare_rustup_home || exit 1
@@ -470,11 +493,19 @@ main() {
   if [[ "${DYFJ_LAUNCHER_DRY_RUN:-}" == "1" ]]; then
     local toolchain_count=0 toolchain_canonical="" rustup_canonical=""
     if [[ -n "${DYFJ_CODEX_TOOLCHAIN_PATH:-}" ]]; then
-      toolchain_canonical="$(cd -P -- "$DYFJ_CODEX_TOOLCHAIN_PATH" && pwd -P)"
+      if ! canonical_toolchain_directory "$DYFJ_CODEX_TOOLCHAIN_PATH"; then
+        echo "dyfj: Codex toolchain directory is unavailable" >&2
+        exit 1
+      fi
+      toolchain_canonical="$CANONICAL_DIRECTORY_RESULT"
       toolchain_count=1
     fi
     if [[ -n "${DYFJ_CODEX_RUSTUP_HOME:-}" ]]; then
-      rustup_canonical="$(cd -P -- "$DYFJ_CODEX_RUSTUP_HOME" && pwd -P)"
+      if ! canonical_toolchain_directory "$DYFJ_CODEX_RUSTUP_HOME"; then
+        echo "dyfj: Codex Rustup home directory is unavailable" >&2
+        exit 1
+      fi
+      rustup_canonical="$CANONICAL_DIRECTORY_RESULT"
       if [[ -z "$toolchain_canonical" || "$rustup_canonical" != "$toolchain_canonical" ]]; then
         toolchain_count=$((toolchain_count + 1))
       fi
