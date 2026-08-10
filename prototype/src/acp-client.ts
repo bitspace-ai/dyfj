@@ -44,6 +44,7 @@ export interface AcpExecutionProfile {
   permissionVerdictTimeoutMs?: number;
   terminationTimeoutMs?: number;
   sessionUpdatePolicy?: "standard" | "long_running";
+  toolchainDirectoryCount?: 0 | 1 | 2;
 }
 
 export interface AcpPermissionPrompt {

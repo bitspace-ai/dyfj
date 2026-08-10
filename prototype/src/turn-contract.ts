@@ -116,6 +116,7 @@ export interface ExternalAgentTurnReceipt {
     evidence: {
       source: "acp";
       innerState: "opaque";
+      toolchainDirectoryCount: 0 | 1 | 2;
       routeSource?: "profile_declared" | "agent_auth_status";
       authenticationType?:
         | "chat-gpt"

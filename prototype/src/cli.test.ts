@@ -41,12 +41,14 @@ import {
   runStart,
   runStatus,
   runtimeEventIsVisible,
+  rustupHomeReadGrant,
   selectTurnInterruptSource,
   socketError,
   socketTurn,
   spinnerGuardedTurnHandlers,
   type StartRuntimeFn,
   streamTurn,
+  toolchainReadGrant,
   type TurnInterruptSource,
   type TurnResult,
 } from "./cli";
@@ -2930,14 +2932,22 @@ describe("runtime lifecycle commands", () => {
     };
     expect(parsed.permissions["cli"].env).toContain("DYFJ_MEMORY_MCP_URL");
     expect(parsed.permissions["cli"].env).toContain("DYFJ_NODE_PATH");
+    expect(parsed.permissions["cli"].env).toContain(
+      "DYFJ_CODEX_TOOLCHAIN_PATH",
+    );
+    expect(parsed.permissions["cli"].env).toContain("DYFJ_CODEX_RUSTUP_HOME");
     const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
       ?.[1];
     expect(compileEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
     expect(compileEnv?.split(",")).toContain("DYFJ_NODE_PATH");
+    expect(compileEnv?.split(",")).toContain("DYFJ_CODEX_TOOLCHAIN_PATH");
+    expect(compileEnv?.split(",")).toContain("DYFJ_CODEX_RUSTUP_HOME");
     const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1];
     expect(launcherEnv?.split(",")).toContain("DYFJ_MEMORY_MCP_URL");
     expect(launcherEnv?.split(",")).toContain("DYFJ_NODE_PATH");
+    expect(launcherEnv?.split(",")).toContain("DYFJ_CODEX_TOOLCHAIN_PATH");
+    expect(launcherEnv?.split(",")).toContain("DYFJ_CODEX_RUSTUP_HOME");
   });
 
   test("the internal autostart marker is not ambient process state", async () => {
@@ -2976,7 +2986,7 @@ describe("runtime lifecycle commands", () => {
     };
     const tasks = parsed.tasks;
     expect(tasks["codex-chatgpt-login"]).toContain(
-      '--allow-read=".,$node_path,$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt"',
+      '--allow-read=".,$node_path,$HOME,$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt"',
     );
     expect(tasks["codex-chatgpt-login"]).toContain(
       '--allow-write="$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt"',
@@ -2994,6 +3004,11 @@ describe("runtime lifecycle commands", () => {
       expect(parsed.permissions[profile].run).toContain("/bin/kill");
       expect(parsed.permissions[profile].sys).toContain("uid");
     }
+    expect(parsed.permissions["test"].run).toContain("/bin/bash");
+    const vitestRunner = await Deno.readTextFile("scripts/run-vitest.ts");
+    expect(vitestRunner).toContain(
+      "--allow-run=bash,/bin/bash,deno,/bin/kill,/bin/sh",
+    );
     expect(parsed.permissions["serve-unix"].env).toContain("NODE_V8_COVERAGE");
     expect(parsed.permissions["serve-unix"].read).toBe(true);
     for (const profile of ["workbench", "workbench-http"]) {
@@ -3042,7 +3057,7 @@ describe("runtime lifecycle commands", () => {
   test("codex-chatgpt-login rejects an unsafe home before Deno starts", async () => {
     const raw = await Deno.readTextFile("deno.json");
     const tasks = (JSON.parse(raw) as { tasks: Record<string, string> }).tasks;
-    for (const home of ["", "..", "/tmp/dyfj,home"]) {
+    for (const home of ["", "..", "/tmp/dyfj,home", "/tmp/dyfj:home"]) {
       const output = await new Deno.Command("/bin/sh", {
         args: ["-c", tasks["codex-chatgpt-login"]],
         cwd: Deno.cwd(),
@@ -3052,10 +3067,57 @@ describe("runtime lifecycle commands", () => {
       }).output();
       expect(output.code).toBe(1);
       expect(new TextDecoder().decode(output.stderr)).toContain(
-        home === "/tmp/dyfj,home"
-          ? "codex-chatgpt-login home path cannot contain a comma"
+        home.startsWith("/tmp/dyfj")
+          ? "codex-chatgpt-login home path contains an unsupported delimiter"
           : "codex-chatgpt-login requires an absolute home path",
       );
+    }
+  });
+
+  test("codex-chatgpt-login does not read or project the optional toolchain", async () => {
+    const raw = await Deno.readTextFile("deno.json");
+    const tasks = (JSON.parse(raw) as { tasks: Record<string, string> }).tasks;
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const fakeNode = `${home}/node`;
+    const marker = `${home}/.dyfj/runner-homes/codex-chatgpt/home/login-args`;
+    await Deno.writeTextFile(
+      fakeNode,
+      `#!/bin/sh
+if [ "$1" = "-p" ]; then
+  printf '%s\\n' '{"execPath":"${fakeNode}","release":"node"}'
+  exit 0
+fi
+printf '%s\\n' "$*" > "$HOME/login-args"
+`,
+    );
+    await Deno.chmod(fakeNode, 0o700);
+    try {
+      const output = await new Deno.Command("/bin/sh", {
+        args: ["-c", tasks["codex-chatgpt-login"]],
+        cwd: Deno.cwd(),
+        env: {
+          ...Deno.env.toObject(),
+          HOME: home,
+          DYFJ_NODE_PATH: fakeNode,
+          DYFJ_CODEX_TOOLCHAIN_PATH: `${home}/must-not-be-read`,
+          DYFJ_CODEX_RUSTUP_HOME: `${home}/must-not-be-read-either`,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(output.stderr);
+      expect(output.code).toBe(0);
+      expect(stderr).not.toContain(
+        'Requires env access to "DYFJ_CODEX_TOOLCHAIN_PATH"',
+      );
+      expect(stderr).not.toContain(
+        'Requires env access to "DYFJ_CODEX_RUSTUP_HOME"',
+      );
+      expect((await Deno.readTextFile(marker)).trim().endsWith(" login")).toBe(
+        true,
+      );
+    } finally {
+      await Deno.remove(home, { recursive: true });
     }
   });
 });
@@ -3446,6 +3508,7 @@ describe("presentation", () => {
         evidence: {
           source: "acp",
           innerState: "opaque",
+          toolchainDirectoryCount: 0,
           routeSource: "profile_declared",
         },
         elapsedMs: 12,
@@ -3800,6 +3863,103 @@ describe("buildServeUnixArgs with launch-resolved run grants", () => {
       "OP_SERVICE_ACCOUNT_TOKEN",
     ]);
     expect(args).toContain("--allow-env=PATH,HOME,OP_SERVICE_ACCOUNT_TOKEN");
+  });
+});
+
+describe("toolchainReadGrant", () => {
+  test("validates one readable directory and preserves its selected path", async () => {
+    const directory = await Deno.makeTempDir({ dir: Deno.cwd() });
+    try {
+      expect(await toolchainReadGrant({ get: () => directory })).toBe(
+        directory,
+      );
+      expect(await toolchainReadGrant({ get: () => undefined })).toBeNull();
+    } finally {
+      await Deno.remove(directory);
+    }
+  });
+
+  test("rejects relative, delimiter-bearing, missing, file, and symlink paths", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const file = `${root}/file`;
+    const link = `${root}/link`;
+    await Deno.writeTextFile(file, "x");
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", root, link],
+    }).output();
+    expect(linked.success).toBe(true);
+    try {
+      await expect(toolchainReadGrant({ get: () => "relative" })).rejects
+        .toThrow("absolute directory");
+      for (const value of [`${root},other`, `${root}:other`]) {
+        await expect(toolchainReadGrant({ get: () => value })).rejects.toThrow(
+          "unsupported delimiter",
+        );
+      }
+      for (
+        const value of ["/", "///", `${root}/missing`, file, link, `${link}/`]
+      ) {
+        await expect(toolchainReadGrant({ get: () => value })).rejects.toThrow(
+          "directory is unavailable",
+        );
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
+describe("rustupHomeReadGrant", () => {
+  test("validates one readable directory and preserves its selected path", async () => {
+    const directory = await Deno.makeTempDir({ dir: Deno.cwd() });
+    try {
+      expect(await rustupHomeReadGrant({ get: () => directory })).toBe(
+        directory,
+      );
+      expect(await rustupHomeReadGrant({ get: () => undefined })).toBeNull();
+    } finally {
+      await Deno.remove(directory);
+    }
+  });
+
+  test("rejects relative, delimiter-bearing, missing, file, and symlink paths", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const file = `${root}/file`;
+    const link = `${root}/link`;
+    await Deno.writeTextFile(file, "x");
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", root, link],
+    }).output();
+    expect(linked.success).toBe(true);
+    try {
+      await expect(rustupHomeReadGrant({ get: () => "relative" })).rejects
+        .toThrow("absolute directory");
+      for (const value of [`${root},other`, `${root}:other`]) {
+        await expect(rustupHomeReadGrant({ get: () => value })).rejects.toThrow(
+          "unsupported delimiter",
+        );
+      }
+      for (
+        const value of ["/", "///", `${root}/missing`, file, link, `${link}/`]
+      ) {
+        await expect(rustupHomeReadGrant({ get: () => value })).rejects.toThrow(
+          "directory is unavailable",
+        );
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
+describe("Codex toolchain runtime grant", () => {
+  test("the serve-unix profile may read the operator selection", async () => {
+    expect(await readServeUnixEnvGrants(".")).toContain(
+      "DYFJ_CODEX_TOOLCHAIN_PATH",
+    );
+    expect(await readServeUnixEnvGrants(".")).toContain(
+      "DYFJ_CODEX_RUSTUP_HOME",
+    );
   });
 });
 

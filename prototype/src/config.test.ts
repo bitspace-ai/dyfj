@@ -283,6 +283,8 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
   const SYSTEM_ENV = new Set([
     "PATH",
     "DYFJ_NODE_PATH",
+    "DYFJ_CODEX_TOOLCHAIN_PATH",
+    "DYFJ_CODEX_RUSTUP_HOME",
     "USER",
     "HOME",
     "XDG_RUNTIME_DIR",

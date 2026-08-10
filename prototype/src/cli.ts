@@ -1702,6 +1702,72 @@ export async function nodeRunGrant(
   return configured;
 }
 
+/** Validate the optional toolchain path using only the CLI's read authority. */
+export async function toolchainReadGrant(
+  env: { get(name: string): string | undefined } = Deno.env,
+): Promise<string | null> {
+  const configured = env.get("DYFJ_CODEX_TOOLCHAIN_PATH");
+  if (configured === undefined || configured === "") return null;
+  if (!configured.startsWith("/")) {
+    throw new Error("Codex toolchain path must name an absolute directory");
+  }
+  if (configured.includes(",") || configured.includes(":")) {
+    throw new Error("Codex toolchain path contains an unsupported delimiter");
+  }
+  if (/^\/+$/u.test(configured)) {
+    throw new Error("Codex toolchain directory is unavailable");
+  }
+  try {
+    const noFollowPath = configured === "/"
+      ? configured
+      : configured.replace(/\/+$/, "");
+    const info = await Deno.lstat(noFollowPath);
+    if (!info.isDirectory || info.isSymlink) {
+      throw new Error("unavailable directory");
+    }
+    const resolved = await Deno.realPath(noFollowPath);
+    if (resolved.includes(",") || resolved.includes(":")) {
+      throw new Error("unsafe canonical path");
+    }
+  } catch {
+    throw new Error("Codex toolchain directory is unavailable");
+  }
+  return configured;
+}
+
+/** Validate the optional Rustup home using only the CLI's read authority. */
+export async function rustupHomeReadGrant(
+  env: { get(name: string): string | undefined } = Deno.env,
+): Promise<string | null> {
+  const configured = env.get("DYFJ_CODEX_RUSTUP_HOME");
+  if (configured === undefined || configured === "") return null;
+  if (!configured.startsWith("/")) {
+    throw new Error("Codex Rustup home must name an absolute directory");
+  }
+  if (configured.includes(",") || configured.includes(":")) {
+    throw new Error("Codex Rustup home contains an unsupported delimiter");
+  }
+  if (/^\/+$/u.test(configured)) {
+    throw new Error("Codex Rustup home directory is unavailable");
+  }
+  try {
+    const noFollowPath = configured === "/"
+      ? configured
+      : configured.replace(/\/+$/, "");
+    const info = await Deno.lstat(noFollowPath);
+    if (!info.isDirectory || info.isSymlink) {
+      throw new Error("unavailable directory");
+    }
+    const resolved = await Deno.realPath(noFollowPath);
+    if (resolved.includes(",") || resolved.includes(":")) {
+      throw new Error("unsafe canonical path");
+    }
+  } catch {
+    throw new Error("Codex Rustup home directory is unavailable");
+  }
+  return configured;
+}
+
 /**
  * Derive the --allow-net grant for the external memory MCP endpoint from its
  * configured URL. The endpoint host is operator-private, so it must never be
@@ -1849,6 +1915,8 @@ export async function startLocalRuntime(
   const resolverBin = secretsRunGrant(secretsCfg);
   const profileRun = await readServeUnixRunGrants(cwd);
   const nodeGrant = await nodeRunGrant();
+  await toolchainReadGrant();
+  await rustupHomeReadGrant();
   const dynamicRunGrants = [nodeGrant, "/bin/kill", resolverBin]
     .filter((grant): grant is string => grant !== null);
   const runGrants = [...profileRun];

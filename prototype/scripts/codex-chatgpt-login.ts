@@ -1,6 +1,9 @@
 import { codexChatGptProfile } from "../src/external-agent-runtime";
 
-const profile = await codexChatGptProfile(Deno.cwd());
+const profile = await codexChatGptProfile(Deno.cwd(), {
+  toolchainPath: "",
+  rustupHome: "",
+});
 const environment = { ...profile.environment };
 delete environment.NO_BROWSER;
 

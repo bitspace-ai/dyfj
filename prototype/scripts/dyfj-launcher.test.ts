@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 const LAUNCHER = new URL("./dyfj-launcher.sh", import.meta.url).pathname;
 const COMPILED_BIN = new URL("../dist/dyfj-bin", import.meta.url).pathname;
+const BASH = Deno.build.os === "darwin" ? "/bin/bash" : "bash";
 
 async function hasCompiledBin(): Promise<boolean> {
   return await Deno.stat(COMPILED_BIN).then(() => true).catch(() => false);
@@ -34,6 +35,7 @@ async function dryRun(
   sock: string;
   autostart: string;
   nodePath: string;
+  toolchainDirectories: string;
 }> {
   // parse-check spawns a deno child that derives its cache dir from HOME;
   // with the fake HOME these tests set, pin DENO_DIR to the real cache so
@@ -41,7 +43,7 @@ async function dryRun(
   const realHome = Deno.env.get("HOME") ?? "";
   const denoDir = Deno.env.get("DENO_DIR") ??
     `${realHome}/Library/Caches/deno`;
-  const proc = new Deno.Command("bash", {
+  const proc = new Deno.Command(BASH, {
     args: [LAUNCHER, ...args],
     env: {
       ...Deno.env.toObject(),
@@ -59,13 +61,17 @@ async function dryRun(
     throw new Error(`launcher dry-run failed (${code}): ${err || text}`);
   }
   const route = text.match(/^route=(\w+)/)?.[1];
-  const sock = text.match(/sock=(.+)$/)?.[1];
+  const sock = text.match(/sock=(.*?) toolchain_directories=/)?.[1];
   const autostart = text.match(/autostart=(\w+)/)?.[1];
   const nodePath = text.match(/node_path=(.*?) sock=/)?.[1];
-  if (!route || !sock || !autostart || nodePath === undefined) {
+  const toolchainDirectories = text.match(/toolchain_directories=(\d+)/)?.[1];
+  if (
+    !route || !sock || !autostart || nodePath === undefined ||
+    toolchainDirectories === undefined
+  ) {
     throw new Error(`unexpected dry-run output: ${text}`);
   }
-  return { route, sock, autostart, nodePath };
+  return { route, sock, autostart, nodePath, toolchainDirectories };
 }
 
 describe("dyfj launcher routing", () => {
@@ -110,6 +116,165 @@ describe("dyfj launcher routing", () => {
         DYFJ_NODE_PATH: "",
         PATH: `${root}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`,
       })).resolves.toMatchObject({ autostart: "yes", nodePath: node });
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("projects only valid explicit toolchain directories as count-only evidence", async () => {
+    const directory = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const rustupHome = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const toolchainLink = `${directory}-link`;
+    const rustupLink = `${rustupHome}-link`;
+    const linked = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        '/bin/ln -s "$1" "$2" && /bin/ln -s "$3" "$4"',
+        "bash",
+        directory,
+        toolchainLink,
+        rustupHome,
+        rustupLink,
+      ],
+    }).output();
+    expect(linked.success).toBe(true);
+    try {
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_CODEX_TOOLCHAIN_PATH: directory,
+        DYFJ_CODEX_RUSTUP_HOME: rustupHome,
+      }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+        .resolves.toMatchObject({
+          toolchainDirectories: "2",
+        });
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_CODEX_TOOLCHAIN_PATH: directory,
+        DYFJ_CODEX_RUSTUP_HOME: directory,
+      }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+        .resolves.toMatchObject({
+          toolchainDirectories: "1",
+        });
+      for (
+        const value of ["relative", `${directory},extra`, `${directory}:extra`]
+      ) {
+        await expect(dryRun({
+          HOME: "/home/c",
+          DYFJ_CODEX_TOOLCHAIN_PATH: value,
+        }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+          .rejects.toThrow(
+            "absolute, delimiter-safe directory",
+          );
+      }
+      for (
+        const value of [
+          "relative",
+          `${rustupHome},extra`,
+          `${rustupHome}:extra`,
+        ]
+      ) {
+        await expect(dryRun({
+          HOME: "/home/c",
+          DYFJ_CODEX_RUSTUP_HOME: value,
+        }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+          .rejects.toThrow("absolute, delimiter-safe directory");
+      }
+      for (const value of [toolchainLink, `${toolchainLink}/`]) {
+        await expect(dryRun({
+          HOME: "/home/c",
+          DYFJ_CODEX_TOOLCHAIN_PATH: value,
+        }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+          .rejects.toThrow("toolchain directory is unavailable");
+      }
+      for (const value of ["/", "///"]) {
+        await expect(dryRun({
+          HOME: "/home/c",
+          DYFJ_CODEX_TOOLCHAIN_PATH: value,
+        }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+          .rejects.toThrow("toolchain directory is unavailable");
+      }
+      for (const value of [rustupLink, `${rustupLink}/`]) {
+        await expect(dryRun({
+          HOME: "/home/c",
+          DYFJ_CODEX_RUSTUP_HOME: value,
+        }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+          .rejects.toThrow("Rustup home directory is unavailable");
+      }
+      for (const value of ["/", "///"]) {
+        await expect(dryRun({
+          HOME: "/home/c",
+          DYFJ_CODEX_RUSTUP_HOME: value,
+        }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+          .rejects.toThrow("Rustup home directory is unavailable");
+      }
+    } finally {
+      await Deno.remove(toolchainLink);
+      await Deno.remove(rustupLink);
+      await Deno.remove(directory);
+      await Deno.remove(rustupHome);
+    }
+  });
+
+  test("rejects delimiter-bearing canonical toolchain paths without disclosing them", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const unsafeParent = `${root}/private,parent`;
+    const unsafeDirectory = `${unsafeParent}/bin`;
+    const safeAlias = `${root}/selected`;
+    await Deno.mkdir(unsafeDirectory, { recursive: true });
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", unsafeParent, safeAlias],
+    }).output();
+    expect(linked.success).toBe(true);
+    const selected = `${safeAlias}/bin`;
+    try {
+      for (
+        const [envName, diagnostic] of [
+          [
+            "DYFJ_CODEX_TOOLCHAIN_PATH",
+            "Codex toolchain directory is unavailable",
+          ],
+          [
+            "DYFJ_CODEX_RUSTUP_HOME",
+            "Codex Rustup home directory is unavailable",
+          ],
+        ] as const
+      ) {
+        let failure: Error | undefined;
+        try {
+          await dryRun({
+            HOME: "/home/c",
+            [envName]: selected,
+          }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]);
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error));
+        }
+        expect(failure?.message).toContain(diagnostic);
+        expect(failure?.message).not.toContain(unsafeParent);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  test("counts canonical directories whose names differ only by trailing newlines", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const toolchain = `${root}/toolchain`;
+    const rustupHome = `${toolchain}\n`;
+    await Deno.mkdir(toolchain);
+    await Deno.mkdir(rustupHome);
+    try {
+      await expect(dryRun({
+        HOME: "/home/c",
+        DYFJ_CODEX_TOOLCHAIN_PATH: toolchain,
+        DYFJ_CODEX_RUSTUP_HOME: rustupHome,
+      }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
+        .resolves.toMatchObject({ toolchainDirectories: "2" });
     } finally {
       await Deno.remove(root, { recursive: true });
     }
@@ -233,7 +398,7 @@ describe("dyfj launcher routing", () => {
         throw new Error(`symlink setup failed (${setupResult.code}): ${err}`);
       }
 
-      const proc = new Deno.Command("bash", {
+      const proc = new Deno.Command(BASH, {
         args: [
           link,
           "--parse-check",
@@ -342,6 +507,65 @@ describe("dyfj launcher routing", () => {
     const text = await Deno.readTextFile(LAUNCHER);
     expect(text).not.toMatch(/\/Users\//);
     expect(text).not.toMatch(/\/home\/[a-z]/);
+  });
+
+  test("a socket path containing spaces remains intact in dry-run evidence", async () => {
+    const sock = "/tmp/dyfj workbench.sock";
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_SOCKET: sock,
+    }, ["--no-autostart", "status"])).resolves.toMatchObject({ sock });
+  });
+
+  test("dry-run validates optional paths when autostart is disabled", async () => {
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_CODEX_TOOLCHAIN_PATH: "relative-toolchain",
+    }, ["--no-autostart", "status"])).rejects.toThrow(
+      "absolute, delimiter-safe directory",
+    );
+    await expect(dryRun({
+      HOME: "/home/c",
+      DYFJ_CODEX_RUSTUP_HOME: "relative-rustup-home",
+    }, ["--no-autostart", "status"])).rejects.toThrow(
+      "absolute, delimiter-safe directory",
+    );
+  });
+
+  test("a successful runtime probe bypasses stale optional start authority", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const root = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const bin = `${root}/bin`;
+    const deno = `${bin}/deno`;
+    await Deno.mkdir(bin);
+    await Deno.writeTextFile(deno, "#!/bin/sh\nexit 0\n");
+    await Deno.chmod(deno, 0o700);
+    try {
+      const proc = new Deno.Command(BASH, {
+        args: [
+          LAUNCHER,
+          "--socket",
+          `${root}/workbench.sock`,
+          "sessions",
+        ],
+        env: {
+          ...Deno.env.toObject(),
+          PATH: `${bin}:/usr/bin:/bin`,
+          DYFJ_CODEX_TOOLCHAIN_PATH: `${root}/missing-toolchain`,
+          DYFJ_CODEX_RUSTUP_HOME: `${root}/missing-rustup-home`,
+          DYFJ_LAUNCHER_DRY_RUN: "",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const { code, stderr } = await proc.output();
+      expect(code).toBe(0);
+      expect(new TextDecoder().decode(stderr)).not.toContain("unavailable");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   });
 });
 
@@ -496,7 +720,7 @@ describe("autostart requires an absolute private log home", () => {
     env: Record<string, string>,
     cwd: string,
   ): Promise<{ code: number; err: string }> {
-    const proc = new Deno.Command("bash", {
+    const proc = new Deno.Command(BASH, {
       args: [LAUNCHER, "sessions"],
       cwd,
       env: { ...Deno.env.toObject(), ...env, DYFJ_LAUNCHER_DRY_RUN: "" },
