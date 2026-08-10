@@ -44,6 +44,7 @@ export interface AcpExecutionProfile {
   permissionVerdictTimeoutMs?: number;
   terminationTimeoutMs?: number;
   sessionUpdatePolicy?: "standard" | "long_running";
+  protocolMessagePolicy?: "standard" | "long_running";
   toolchainDirectoryCount?: 0 | 1 | 2;
 }
 
@@ -129,6 +130,12 @@ export class AcpSessionUpdateLimitError extends AcpRunnerError {
   }
 }
 
+export class AcpProtocolMessageLimitError extends AcpRunnerError {
+  constructor() {
+    super("ACP agent exceeded the protocol-message limit", "protocol");
+  }
+}
+
 export class AcpAuthenticationRequiredError extends DomainError {
   readonly phase = "authenticate" as const;
   constructor() {
@@ -159,7 +166,8 @@ const DEFAULT_PROMPT_TIMEOUT_MS = 30_000;
 const DEFAULT_CANCELLATION_TIMEOUT_MS = 2_000;
 const DEFAULT_PERMISSION_VERDICT_TIMEOUT_MS = 2_000;
 const DEFAULT_TERMINATION_TIMEOUT_MS = 2_000;
-const MAX_PROTOCOL_LINE_BYTES = 393_216;
+const STANDARD_PROTOCOL_MESSAGE_LIMIT = 393_216;
+const LONG_RUNNING_PROTOCOL_MESSAGE_LIMIT = 1_048_576;
 const MAX_PROTOCOL_INPUT_BYTES = 16_777_216;
 const MAX_CHILD_STDERR_BYTES = 1_048_576;
 const MAX_PROMPT_BYTES = 60_000;
@@ -554,6 +562,16 @@ function assertProfile(profile: AcpExecutionProfile): void {
       "spawn",
     );
   }
+  if (
+    profile.protocolMessagePolicy !== undefined &&
+    profile.protocolMessagePolicy !== "standard" &&
+    profile.protocolMessagePolicy !== "long_running"
+  ) {
+    throw new AcpRunnerError(
+      "ACP profile has an invalid protocol-message policy",
+      "spawn",
+    );
+  }
 }
 
 export function resolveSessionUpdateLimit(
@@ -562,6 +580,14 @@ export function resolveSessionUpdateLimit(
   return profile.sessionUpdatePolicy === "long_running"
     ? LONG_RUNNING_SESSION_UPDATE_LIMIT
     : STANDARD_SESSION_UPDATE_LIMIT;
+}
+
+export function resolveProtocolMessageLimit(
+  profile: AcpExecutionProfile,
+): number {
+  return profile.protocolMessagePolicy === "long_running"
+    ? LONG_RUNNING_PROTOCOL_MESSAGE_LIMIT
+    : STANDARD_PROTOCOL_MESSAGE_LIMIT;
 }
 
 export function assertAcpPromptWithinLimit(prompt: string): void {
@@ -659,6 +685,7 @@ export function guardedProtocolInput(
   activeSessionId: () => string | undefined,
   onProtocolError: (error: AcpRunnerError) => void,
   sessionUpdateLimit = STANDARD_SESSION_UPDATE_LIMIT,
+  protocolMessageLimit = STANDARD_PROTOCOL_MESSAGE_LIMIT,
 ): ReadableStream<Uint8Array> {
   let pending = new Uint8Array();
   let pendingLength = 0;
@@ -669,6 +696,11 @@ export function guardedProtocolInput(
 
   const reject = (message: string): never => {
     const error = new AcpRunnerError(message, "protocol");
+    onProtocolError(error);
+    throw error;
+  };
+  const rejectProtocolMessageLimit = (): never => {
+    const error = new AcpProtocolMessageLimitError();
     onProtocolError(error);
     throw error;
   };
@@ -751,14 +783,14 @@ export function guardedProtocolInput(
         }
         const append = (part: Uint8Array) => {
           const required = pendingLength + part.length;
-          if (required > MAX_PROTOCOL_LINE_BYTES) {
-            reject("ACP agent sent an oversized protocol message");
+          if (required > protocolMessageLimit) {
+            rejectProtocolMessageLimit();
           }
           if (required > pending.length) {
             let capacity = Math.max(8_192, pending.length * 2);
             while (capacity < required) capacity *= 2;
             const grown = new Uint8Array(
-              Math.min(capacity, MAX_PROTOCOL_LINE_BYTES),
+              Math.min(capacity, protocolMessageLimit),
             );
             grown.set(pending.subarray(0, pendingLength));
             pending = grown;
@@ -934,6 +966,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
   const startedAt = Date.now();
   const profile = input.profile;
   const sessionUpdateLimit = resolveSessionUpdateLimit(profile);
+  const protocolMessageLimit = resolveProtocolMessageLimit(profile);
   const abortedResult = (evidence: {
     protocolVersion?: number;
     externalSessionId?: string;
@@ -1296,6 +1329,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
           () => activeSessionId,
           noteProtocolError,
           sessionUpdateLimit,
+          protocolMessageLimit,
         ),
       ),
       async (context) => {

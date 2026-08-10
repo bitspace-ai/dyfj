@@ -397,6 +397,27 @@ const app = agent({ name: "dyfj-acp-fixture" })
         await chunk(context, params.sessionId, "x".repeat(60_001));
         return { stopReason: "end_turn" };
       }
+      if (prompt.includes("FIXTURE_LONG_PROTOCOL_MESSAGE_FLOOD")) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "x".repeat(1_100_000) },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+      if (prompt.includes("FIXTURE_LARGE_PROTOCOL_MESSAGE")) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "x".repeat(450_000) },
+          },
+        });
+        await chunk(context, params.sessionId, "complete");
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_LONG_UPDATE_STREAM")) {
         for (let index = 0; index < 1_025; index++) {
           await chunk(context, params.sessionId, "");
