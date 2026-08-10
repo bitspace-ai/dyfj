@@ -7,6 +7,7 @@ import {
   assertProcessGroupSignaler,
   drainStream,
   guardedProtocolInput,
+  resolveProtocolMessageLimit,
   resolveSessionUpdateLimit,
   runAcpAgent,
   runSignalCommand,
@@ -101,6 +102,7 @@ async function expectContainedFailure(input: {
   phase: string;
   profile?: Partial<AcpExecutionProfile>;
   abortAfterDelta?: boolean;
+  message?: string;
 }): Promise<void> {
   const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
   const controller = new AbortController();
@@ -113,6 +115,7 @@ async function expectContainedFailure(input: {
     })).rejects.toMatchObject({
       name: "AcpRunnerError",
       phase: input.phase,
+      ...(input.message === undefined ? {} : { message: input.message }),
     });
     const pid = Number(await Deno.readTextFile(pidFile));
     expect(Number.isSafeInteger(pid) && pid > 0).toBe(true);
@@ -1014,6 +1017,49 @@ describe("runAcpAgent", () => {
       phase: "protocol",
       profile: { promptTimeoutMs: 10_000 },
     });
+  });
+
+  test("keeps the standard protocol-message ceiling for ordinary profiles", async () => {
+    await expectContainedFailure({
+      prompt: "FIXTURE_LARGE_PROTOCOL_MESSAGE",
+      phase: "protocol",
+      message: "ACP agent exceeded the protocol-message limit",
+    });
+  });
+
+  test("allows one bounded large message for a long-running profile", async () => {
+    const result = await runAcpAgent({
+      profile: fixtureProfile({ protocolMessagePolicy: "long_running" }),
+      prompt: "FIXTURE_LARGE_PROTOCOL_MESSAGE",
+    });
+    expect(result.text).toBe("complete");
+    expect(result.stopReason).toBe("stop");
+  });
+
+  test("bounds protocol messages for a long-running profile and reaps the child", async () => {
+    await expectContainedFailure({
+      prompt: "FIXTURE_LONG_PROTOCOL_MESSAGE_FLOOD",
+      phase: "protocol",
+      profile: { protocolMessagePolicy: "long_running" },
+      message: "ACP agent exceeded the protocol-message limit",
+    });
+  });
+
+  test("resolves protocol-message ceilings from the execution profile", () => {
+    expect(resolveProtocolMessageLimit(fixtureProfile())).toBe(393_216);
+    expect(resolveProtocolMessageLimit(fixtureProfile({
+      protocolMessagePolicy: "long_running",
+    }))).toBe(1_048_576);
+  });
+
+  test("rejects an invalid protocol-message policy before spawning", async () => {
+    await expect(runAcpAgent({
+      profile: {
+        ...fixtureProfile(),
+        protocolMessagePolicy: "invalid",
+      } as unknown as AcpExecutionProfile,
+      prompt: "unused",
+    })).rejects.toThrow("ACP profile has an invalid protocol-message policy");
   });
 
   test("allows a bounded long-running profile to complete after 1,024 updates", async () => {

@@ -4,6 +4,7 @@ import {
   type AcpExecutionProfile,
   type AcpPermissionVerdict,
   type AcpRouteEvidence,
+  AcpProtocolMessageLimitError,
   AcpSessionUpdateLimitError,
   assertAcpPromptWithinLimit,
   runAcpAgent,
@@ -445,6 +446,7 @@ export async function codexChatGptProfile(
     requiredAuthentication: "chat-gpt",
     promptTimeoutMs: CODEX_CHATGPT_PROMPT_TIMEOUT_MS,
     sessionUpdatePolicy: "long_running",
+    protocolMessagePolicy: "long_running",
     toolchainDirectoryCount,
   };
 }
@@ -948,8 +950,12 @@ export async function runExternalAgentWorkbenchRuntime(
       traceId,
       errorMessage: "External agent turn failed",
     });
-    throw error instanceof AcpSessionUpdateLimitError
-      ? new DomainError("ACP agent exceeded the session-update limit")
-      : error;
+    if (error instanceof AcpSessionUpdateLimitError) {
+      throw new DomainError("ACP agent exceeded the session-update limit");
+    }
+    if (error instanceof AcpProtocolMessageLimitError) {
+      throw new DomainError("ACP agent exceeded the protocol-message limit");
+    }
+    throw error;
   }
 }

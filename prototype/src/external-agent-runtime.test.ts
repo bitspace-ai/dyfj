@@ -61,7 +61,10 @@ import {
   runExternalAgentWorkbenchRuntime,
   verifiedRouteFacts,
 } from "./external-agent-runtime";
-import { AcpSessionUpdateLimitError } from "./acp-client";
+import {
+  AcpProtocolMessageLimitError,
+  AcpSessionUpdateLimitError,
+} from "./acp-client";
 import { summarizeError } from "./turn-contract";
 
 describe("runExternalAgentWorkbenchRuntime", () => {
@@ -86,6 +89,26 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     }
     expect(summarizeError(thrown)).toBe(
       "ACP agent exceeded the session-update limit",
+    );
+  });
+
+  test("exposes the contained protocol-message ceiling diagnostic at the runtime boundary", async () => {
+    let thrown: unknown;
+    try {
+      await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "bounded protocol message",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        workspaceRoot: Deno.cwd(),
+      }, {
+        runAgent: () => Promise.reject(new AcpProtocolMessageLimitError()),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(summarizeError(thrown)).toBe(
+      "ACP agent exceeded the protocol-message limit",
     );
   });
 
@@ -309,6 +332,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         requiredAuthentication: "chat-gpt",
         promptTimeoutMs: 30 * 60_000,
         sessionUpdatePolicy: "long_running",
+        protocolMessagePolicy: "long_running",
         toolchainDirectoryCount: 0,
         environment: {
           HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home`,
