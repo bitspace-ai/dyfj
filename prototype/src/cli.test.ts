@@ -3879,6 +3879,52 @@ describe("toolchainReadGrant", () => {
     }
   });
 
+  test("rejects whole dot components before resolving the selected path", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const child = `${root}/child`;
+    const dotted = [
+      `${root}/.cargo`,
+      `${root}/.rustup`,
+      `${root}/..cache`,
+      `${root}/tool.chain`,
+    ];
+    await Deno.mkdir(child);
+    for (const directory of dotted) await Deno.mkdir(directory);
+    try {
+      for (
+        const value of [
+          `${root}/./child`,
+          `${root}/../${root.split("/").at(-1)}/child`,
+          `${child}/.`,
+          `${child}/..`,
+          `${child}/./`,
+          `${child}/../`,
+          "/.",
+          "/..",
+          `${root}//.//child/`,
+          `${root}//..//${root.split("/").at(-1)}//child/`,
+        ]
+      ) {
+        let failure: Error | undefined;
+        try {
+          await toolchainReadGrant({ get: () => value });
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error));
+        }
+        expect(failure?.message).toBe(
+          "Codex toolchain path must not contain dot components",
+        );
+        expect(failure?.message).not.toContain(value);
+      }
+      for (const directory of dotted) {
+        await expect(toolchainReadGrant({ get: () => directory })).resolves
+          .toBe(directory);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   test("rejects relative, delimiter-bearing, missing, file, and symlink paths", async () => {
     const root = await Deno.makeTempDir({ dir: Deno.cwd() });
     const file = `${root}/file`;
@@ -3919,6 +3965,52 @@ describe("rustupHomeReadGrant", () => {
       expect(await rustupHomeReadGrant({ get: () => undefined })).toBeNull();
     } finally {
       await Deno.remove(directory);
+    }
+  });
+
+  test("rejects whole dot components before resolving the selected path", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const child = `${root}/child`;
+    const dotted = [
+      `${root}/.cargo`,
+      `${root}/.rustup`,
+      `${root}/..cache`,
+      `${root}/tool.chain`,
+    ];
+    await Deno.mkdir(child);
+    for (const directory of dotted) await Deno.mkdir(directory);
+    try {
+      for (
+        const value of [
+          `${root}/./child`,
+          `${root}/../${root.split("/").at(-1)}/child`,
+          `${child}/.`,
+          `${child}/..`,
+          `${child}/./`,
+          `${child}/../`,
+          "/.",
+          "/..",
+          `${root}//.//child/`,
+          `${root}//..//${root.split("/").at(-1)}//child/`,
+        ]
+      ) {
+        let failure: Error | undefined;
+        try {
+          await rustupHomeReadGrant({ get: () => value });
+        } catch (error) {
+          failure = error instanceof Error ? error : new Error(String(error));
+        }
+        expect(failure?.message).toBe(
+          "Codex Rustup home must not contain dot components",
+        );
+        expect(failure?.message).not.toContain(value);
+      }
+      for (const directory of dotted) {
+        await expect(rustupHomeReadGrant({ get: () => directory })).resolves
+          .toBe(directory);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
     }
   });
 

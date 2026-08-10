@@ -378,6 +378,13 @@ prepare_node_path() {
   export DYFJ_NODE_PATH
 }
 
+has_dot_path_component() {
+  case "$1/" in
+    *"/./"*|*"/../"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 prepare_toolchain_path() {
   local candidate no_follow
   candidate="${DYFJ_CODEX_TOOLCHAIN_PATH:-}"
@@ -387,6 +394,10 @@ prepare_toolchain_path() {
   fi
   if [[ "$candidate" != /* || "$candidate" == *[,:]* ]]; then
     echo "dyfj: Codex toolchain path must name an absolute, delimiter-safe directory" >&2
+    return 1
+  fi
+  if has_dot_path_component "$candidate"; then
+    echo "dyfj: Codex toolchain path must not contain dot components" >&2
     return 1
   fi
   no_follow="$candidate"
@@ -409,6 +420,10 @@ prepare_rustup_home() {
   fi
   if [[ "$candidate" != /* || "$candidate" == *[,:]* ]]; then
     echo "dyfj: Codex Rustup home must name an absolute, delimiter-safe directory" >&2
+    return 1
+  fi
+  if has_dot_path_component "$candidate"; then
+    echo "dyfj: Codex Rustup home must not contain dot components" >&2
     return 1
   fi
   no_follow="$candidate"

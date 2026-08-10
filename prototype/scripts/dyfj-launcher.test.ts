@@ -215,6 +215,78 @@ describe("dyfj launcher routing", () => {
     }
   });
 
+  test("rejects whole dot components before resolving toolchain directories", async () => {
+    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const child = `${root}/child`;
+    const alias = `${root}/alias`;
+    const dotted = [
+      `${root}/.cargo`,
+      `${root}/.rustup`,
+      `${root}/..cache`,
+      `${root}/tool.chain`,
+    ];
+    await Deno.mkdir(child);
+    for (const directory of dotted) await Deno.mkdir(directory);
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", child, alias],
+    }).output();
+    expect(linked.success).toBe(true);
+    try {
+      for (
+        const [envName, diagnostic] of [
+          [
+            "DYFJ_CODEX_TOOLCHAIN_PATH",
+            "dyfj: Codex toolchain path must not contain dot components",
+          ],
+          [
+            "DYFJ_CODEX_RUSTUP_HOME",
+            "dyfj: Codex Rustup home must not contain dot components",
+          ],
+        ] as const
+      ) {
+        for (
+          const value of [
+            `${root}/./child`,
+            `${root}/../${root.split("/").at(-1)}/child`,
+            `${child}/.`,
+            `${child}/..`,
+            `${child}/./`,
+            `${child}/../`,
+            "/.",
+            "/..",
+            `${root}//.//child/`,
+            `${root}//..//${root.split("/").at(-1)}//child/`,
+            `${alias}/../child`,
+          ]
+        ) {
+          let failure: Error | undefined;
+          try {
+            await dryRun({ HOME: "/home/c", [envName]: value }, [
+              "--socket",
+              "/tmp/dyfj-toolchain-test.sock",
+              "-p",
+              "inspect",
+            ]);
+          } catch (error) {
+            failure = error instanceof Error ? error : new Error(String(error));
+          }
+          expect(failure?.message).toContain(diagnostic);
+          expect(failure?.message).not.toContain(value);
+        }
+        for (const directory of dotted) {
+          await expect(dryRun({ HOME: "/home/c", [envName]: directory }, [
+            "--socket",
+            "/tmp/dyfj-toolchain-test.sock",
+            "-p",
+            "inspect",
+          ])).resolves.toMatchObject({ toolchainDirectories: "1" });
+        }
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   test("rejects delimiter-bearing canonical toolchain paths without disclosing them", async () => {
     await Deno.mkdir(".vitest-tmp", { recursive: true });
     const root = await Deno.realPath(

@@ -35,6 +35,7 @@ import { loadSecretsConfig } from "./config";
 import { secretsRunGrant } from "./secrets";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 import { type BusySpinner, createBusySpinner } from "./busy-spinner";
+import { hasDotPathComponent } from "./lexical-path";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
@@ -1714,6 +1715,9 @@ export async function toolchainReadGrant(
   if (configured.includes(",") || configured.includes(":")) {
     throw new Error("Codex toolchain path contains an unsupported delimiter");
   }
+  if (hasDotPathComponent(configured)) {
+    throw new Error("Codex toolchain path must not contain dot components");
+  }
   if (/^\/+$/u.test(configured)) {
     throw new Error("Codex toolchain directory is unavailable");
   }
@@ -1746,6 +1750,9 @@ export async function rustupHomeReadGrant(
   }
   if (configured.includes(",") || configured.includes(":")) {
     throw new Error("Codex Rustup home contains an unsupported delimiter");
+  }
+  if (hasDotPathComponent(configured)) {
+    throw new Error("Codex Rustup home must not contain dot components");
   }
   if (/^\/+$/u.test(configured)) {
     throw new Error("Codex Rustup home directory is unavailable");
