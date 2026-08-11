@@ -112,6 +112,15 @@ const runtimeMocks = vi.hoisted(() => {
     commandThrows: null as Error | null,
     commandCalls: [] as string[],
     commandHook: null as (() => void | Promise<void>) | null,
+    recallEnabled: false,
+    recallObserver: null as
+      | null
+      | ((diagnostic: {
+        era: "modern" | "legacy";
+        revision: string;
+        server?: { name: string; version: string };
+        extensions: string[];
+      }) => void | Promise<void>),
     agentsInstructions: null as
       | null
       | {
@@ -308,6 +317,20 @@ vi.mock("./memory", () => ({
   memoryClearanceFor: () => ["private", "shareable", "client_safe", "public"],
 }));
 
+vi.mock("./memory-search", () => ({
+  memorySearchConfigFromEnv: () =>
+    runtimeMocks.recallEnabled
+      ? { url: "http://127.0.0.1:43137/mcp", tool: "fixture-search" }
+      : null,
+  buildMemorySearch: (
+    _config: unknown,
+    observer: NonNullable<typeof runtimeMocks.recallObserver>,
+  ) => {
+    runtimeMocks.recallObserver = observer;
+    return async () => "fixture-result";
+  },
+}));
+
 vi.mock("./commands", () => ({
   createCommandRegistry: () => ({
     register: () => {},
@@ -374,6 +397,8 @@ beforeEach(() => {
   runtimeMocks.commandThrows = null;
   runtimeMocks.commandCalls.length = 0;
   runtimeMocks.commandHook = null;
+  runtimeMocks.recallEnabled = false;
+  runtimeMocks.recallObserver = null;
   runtimeMocks.agentsInstructions = null;
   runtimeMocks.askContextOptions.length = 0;
   runtimeMocks.askContextError = null;
@@ -1180,6 +1205,53 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
 });
 
 describe("runWorkbenchRuntime observer events", () => {
+  test("emits a structured negotiated-recall event on the transport channel", async () => {
+    runtimeMocks.recallEnabled = true;
+    const events: unknown[] = [];
+    runtimeMocks.runWorkbenchTurn.mockImplementationOnce(async () => {
+      await runtimeMocks.recallObserver?.({
+        era: "modern",
+        revision: "2026-07-28",
+        server: { name: "fixture-memory", version: "1.2.3" },
+        extensions: ["fixture.extension"],
+      });
+      return {
+        text: "runtime response",
+        model: runtimeMocks.model,
+        selection: {
+          selected: runtimeMocks.model,
+          considered: [runtimeMocks.model.slug],
+          reason: "default",
+        },
+        usage: {
+          input: 42,
+          output: 7,
+          cost: { total: 0 },
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        stopReason: "stop",
+        timings: { responseHeadersMs: 3, generationMs: 9, totalMs: 12 },
+      };
+    });
+
+    await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "exercise recall",
+      routingOptions: {},
+      onRuntimeEvent: (event) => void events.push(event),
+    });
+
+    expect(events).toContainEqual({
+      type: "memoryRecallNegotiated",
+      sessionId: "01TEST00000000000000000001",
+      era: "modern",
+      revision: "2026-07-28",
+      server: { name: "fixture-memory", version: "1.2.3" },
+      extensions: ["fixture.extension"],
+    });
+  });
+
   test("emits the runtime spine event sequence without leaking full prompt or response text", async () => {
     const events: unknown[] = [];
 

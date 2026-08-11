@@ -397,6 +397,15 @@ export type WorkbenchRuntimeEvent =
     errorMessage?: string;
   }
   | {
+    /** Bounded, content-free protocol evidence for one external recall connection. */
+    type: "memoryRecallNegotiated";
+    sessionId: string;
+    era: "modern" | "legacy";
+    revision: string;
+    server?: { name: string; version: string };
+    extensions: string[];
+  }
+  | {
     /**
      * A provider call stopped with stopReason "length", classified from the
      * catalog limits + reported usage. severity is "warn" for output-budget
@@ -1921,7 +1930,30 @@ async function runNativeWorkbenchRuntime(
       registerCoreCommands(commandRegistry, {
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
         searchMemory: recallConfig
-          ? buildMemorySearch(recallConfig)
+          ? buildMemorySearch(recallConfig, async (diagnostic) => {
+            if (runtimeInput.onRuntimeEvent !== undefined) {
+              await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
+                type: "memoryRecallNegotiated",
+                sessionId,
+                era: diagnostic.era,
+                revision: diagnostic.revision,
+                ...(diagnostic.server === undefined
+                  ? {}
+                  : { server: { ...diagnostic.server } }),
+                extensions: [...diagnostic.extensions],
+              });
+            } else {
+              const server = diagnostic.server === undefined
+                ? ""
+                : ` server=${diagnostic.server.name}@${diagnostic.server.version}`;
+              const extensions = diagnostic.extensions.length === 0
+                ? ""
+                : ` extensions=${diagnostic.extensions.join(",")}`;
+              log(
+                `Memory recall MCP: era=${diagnostic.era} revision=${diagnostic.revision}${server}${extensions}\n`,
+              );
+            }
+          })
           : undefined,
         // Read-only workspace file tools, scoped to the resolved root.
         workspaceRoot,

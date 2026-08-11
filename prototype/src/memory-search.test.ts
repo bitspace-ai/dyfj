@@ -2,8 +2,8 @@
  * Unit tests for the recall config resolver (src/memory-search.ts).
  *
  * The live transport path (buildMemorySearch → MCP client → external endpoint)
- * is exercised by an operator integration test against a configured backend, not
- * here; these cover the pure, vendor-neutral config surface.
+ * is exercised by a hermetic Deno integration test; these cover the pure,
+ * vendor-neutral config surface.
  */
 
 import { describe, expect, test } from "vitest";
@@ -71,9 +71,8 @@ describe("memorySearchConfigFromEnv", () => {
         "https://fixture-user@memory.example/mcp",
       ]
     ) {
-      expect(() =>
-        memorySearchConfigFromEnv({ DYFJ_MEMORY_MCP_URL: url })
-      ).toThrow("DYFJ_MEMORY_MCP_URL must not include credentials");
+      expect(() => memorySearchConfigFromEnv({ DYFJ_MEMORY_MCP_URL: url }))
+        .toThrow("DYFJ_MEMORY_MCP_URL must not include credentials");
     }
   });
 

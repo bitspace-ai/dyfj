@@ -45,6 +45,87 @@ export interface MemorySearchConfig {
 /** A bound recall function: natural-language query → formatted results text. */
 export type MemorySearch = (query: string) => Promise<string>;
 
+export interface MemorySearchDiagnostic {
+  era: "modern" | "legacy";
+  revision: string;
+  server?: { name: string; version: string };
+  extensions: string[];
+}
+
+export type MemorySearchDiagnosticObserver = (
+  diagnostic: MemorySearchDiagnostic,
+) => unknown;
+
+const DIAGNOSTIC_ITEM_LIMIT = 8;
+const DIAGNOSTIC_ITEM_BYTE_LIMIT = 64;
+const RECALL_PROBE_TIMEOUT_MS = 5_000;
+const RECALL_CALL_TIMEOUT_MS = 30_000;
+
+function boundedDiagnosticIdentifier(
+  value: string,
+  sensitiveValues: readonly string[],
+): string | undefined {
+  let redacted = sanitizedDiagnosticIdentifier(value);
+  for (const sensitive of sensitiveValues) {
+    const sanitizedSensitive = sanitizedDiagnosticIdentifier(sensitive);
+    if (sanitizedSensitive.length > 0) {
+      redacted = redacted.replaceAll(sanitizedSensitive, "redacted");
+    }
+  }
+  const bounded = redacted.slice(0, DIAGNOSTIC_ITEM_BYTE_LIMIT);
+  return bounded.length === 0 ? undefined : bounded;
+}
+
+function sanitizedDiagnosticIdentifier(value: string): string {
+  return [...value.normalize("NFKC")].map((character) =>
+    /[A-Za-z0-9._:/@+-]/.test(character) ? character : "_"
+  ).join("");
+}
+
+interface DiagnosticClientView {
+  getProtocolEra(): "modern" | "legacy" | undefined;
+  getNegotiatedProtocolVersion(): string | undefined;
+  getServerVersion(): { name: string; version: string } | undefined;
+  getServerCapabilities(): {
+    extensions?: Record<string, unknown>;
+  } | undefined;
+}
+
+function recallDiagnostic(
+  client: DiagnosticClientView,
+  sensitiveValues: readonly string[],
+): MemorySearchDiagnostic | undefined {
+  const era = client.getProtocolEra();
+  const negotiatedRevision = client.getNegotiatedProtocolVersion();
+  const revision = negotiatedRevision === undefined
+    ? undefined
+    : boundedDiagnosticIdentifier(negotiatedRevision, sensitiveValues);
+  if (era === undefined || revision === undefined) return undefined;
+
+  const serverVersion = client.getServerVersion();
+  const serverName = serverVersion === undefined
+    ? undefined
+    : boundedDiagnosticIdentifier(serverVersion.name, sensitiveValues);
+  const serverRevision = serverVersion === undefined
+    ? undefined
+    : boundedDiagnosticIdentifier(serverVersion.version, sensitiveValues);
+  const extensions = Object.keys(
+    client.getServerCapabilities()?.extensions ?? {},
+  ).sort().flatMap((identifier) => {
+    const bounded = boundedDiagnosticIdentifier(identifier, sensitiveValues);
+    return bounded === undefined ? [] : [bounded];
+  }).slice(0, DIAGNOSTIC_ITEM_LIMIT);
+
+  return {
+    era,
+    revision,
+    ...(serverName !== undefined && serverRevision !== undefined
+      ? { server: { name: serverName, version: serverRevision } }
+      : {}),
+    extensions,
+  };
+}
+
 /** Loopback hosts, the only place plain-http recall is tolerable. */
 export function isLoopbackHostname(hostname: string): boolean {
   if (
@@ -141,33 +222,61 @@ export function recallRequestInit(config: MemorySearchConfig): RequestInit {
  * memory MCP server and invokes its configured search tool with `{ query }`,
  * returning the tool's text content.
  */
-export function buildMemorySearch(config: MemorySearchConfig): MemorySearch {
+export function buildMemorySearch(
+  config: MemorySearchConfig,
+  onDiagnostic: MemorySearchDiagnosticObserver = () => {},
+): MemorySearch {
   return async (query: string): Promise<string> => {
     // SDK imported lazily: this module must load under the node-based test
     // runner, which cannot resolve Deno `npm:` specifiers. The SDK is only
     // needed when a recall actually executes under the Deno runtime.
-    const { Client } = await import(
-      "npm:@modelcontextprotocol/sdk@1.29.0/client"
-    );
-    // The .js suffix is load-bearing: the SDK's exports map is a bare
-    // `./*` → `./dist/esm/*` wildcard, so an extensionless subpath resolves
-    // to a file that does not exist (ERR_MODULE_NOT_FOUND at recall time).
-    const { StreamableHTTPClientTransport } = await import(
-      "npm:@modelcontextprotocol/sdk@1.29.0/client/streamableHttp.js"
+    const { Client, StreamableHTTPClientTransport } = await import(
+      "npm:@modelcontextprotocol/client@2.0.0"
     );
     const transport = new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: recallRequestInit(config),
     });
-    const client = new Client({
-      name: "dyfj-workbench-recall",
-      version: "1.0.0",
-    });
+    const client = new Client(
+      { name: "dyfj-workbench-recall", version: "1.0.0" },
+      {
+        versionNegotiation: {
+          mode: "auto",
+          probe: { timeoutMs: RECALL_PROBE_TIMEOUT_MS, maxRetries: 0 },
+        },
+      },
+    );
     try {
-      await client.connect(transport);
-      const result = await client.callTool({
-        name: config.tool,
-        arguments: { query },
-      });
+      await client.connect(transport, { timeout: RECALL_PROBE_TIMEOUT_MS });
+      const diagnostic = recallDiagnostic(client, [
+        query,
+        config.token ?? "",
+        config.url,
+      ]);
+      if (diagnostic !== undefined) {
+        try {
+          void Promise.resolve(onDiagnostic(diagnostic)).catch(() => {});
+        } catch {
+          // Diagnostics are observational and cannot break or delay recall.
+        }
+      }
+      const result = await client.callTool(
+        { name: config.tool, arguments: { query } },
+        {
+          timeout: RECALL_CALL_TIMEOUT_MS,
+          // The recall capability owns this one-field contract. Supplying it
+          // gives the SDK the known schema for parameter-header mirroring
+          // without a tools/list discovery.
+          toolDefinition: {
+            name: config.tool,
+            inputSchema: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+              additionalProperties: false,
+            },
+          },
+        },
+      );
       const content = (result.content ?? []) as Array<
         { type: string; text?: string }
       >;
@@ -177,9 +286,11 @@ export function buildMemorySearch(config: MemorySearchConfig): MemorySearch {
         .join("\n")
         .trim();
       if (result.isError) {
-        throw new Error(`recall tool '${config.tool}' returned error: ${text}`);
+        throw new Error("recall tool returned an error");
       }
       return text.length > 0 ? text : "No matching memories found.";
+    } catch {
+      throw new Error("External memory recall failed");
     } finally {
       await client.close().catch(() => {});
     }
