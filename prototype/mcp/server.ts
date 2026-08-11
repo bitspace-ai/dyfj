@@ -25,8 +25,8 @@
  * SQL directly in each client.
  */
 
-import { McpServer } from "npm:@modelcontextprotocol/sdk@1.29.0/server/mcp.js";
-import { StdioServerTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/server/stdio.js";
+import { McpServer } from "npm:@modelcontextprotocol/server@2.0.0";
+import { serveStdio } from "npm:@modelcontextprotocol/server@2.0.0/stdio";
 import { z } from "npm:zod@4.4.3";
 import { ulid } from "npm:ulid@2.4.0";
 import mysql from "npm:mysql2@3.22.3/promise";
@@ -68,293 +68,321 @@ async function doltExec(sql: string, params: SqlParam[] = []): Promise<void> {
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
-const server = new McpServer({
-  name: "dyfj-memory",
-  version: "1.0.0",
-});
+function createServer(): McpServer {
+  const server = new McpServer({
+    name: "dyfj-memory",
+    version: "1.0.0",
+  });
 
-// ── Tool: read_memory ─────────────────────────────────────────────────────────
+  // ── Tool: read_memory ─────────────────────────────────────────────────────────
 
-server.tool(
-  "read_memory",
-  "Load the full content of a client-safe or public project or reference memory. " +
-    "Call this before starting work to pull relevant context. " +
-    "Available slugs are listed by calling list_memories().",
-  {
-    slug: z.string().describe("Memory slug from list_memories"),
-  },
-  ({ slug }: { slug: string }) => readMcpMemory(doltQuery, slug),
-);
-
-// ── Tool: list_memories ───────────────────────────────────────────────────────
-
-server.tool(
-  "list_memories",
-  "List the client-safe and public memory projection. Returns slug, type, name, and description. " +
-    "Optionally filter by type: user | feedback | project | reference.",
-  {
-    type: z
-      .enum(["user", "feedback", "project", "reference"])
-      .optional()
-      .describe("Filter by memory type (omit for all)"),
-  },
-  ({ type }: { type?: McpMemoryType }) => listMcpMemories(doltQuery, type),
-);
-
-// ── Tool: write_memory ────────────────────────────────────────────────────────
-
-server.tool(
-  "write_memory",
-  "Create or update a memory in the DYFJ knowledge base. " +
-    "Uses INSERT ... ON DUPLICATE KEY UPDATE so it's safe to call on existing slugs.",
-  {
-    slug: z.string().describe("Stable identifier, e.g. 'project_dyfj'"),
-    name: z.string().describe("Human-readable name"),
-    type: z
-      .enum(["user", "feedback", "project", "reference"])
-      .describe("Memory category"),
-    description: z.string().describe("One-line summary for the index"),
-    content: z.string().describe("Full memory content (markdown)"),
-  },
-  async (
-    { slug, name, type, description, content }: {
-      slug: string;
-      name: string;
-      type: McpMemoryType;
-      description: string;
-      content: string;
+  server.registerTool(
+    "read_memory",
+    {
+      description:
+        "Load the full content of a client-safe or public project or reference memory. " +
+        "Call this before starting work to pull relevant context. " +
+        "Available slugs are listed by calling list_memories().",
+      inputSchema: z.object({
+        slug: z.string().describe("Memory slug from list_memories"),
+      }),
     },
-  ) => {
-    const id = ulid();
-    await doltExec(
-      `INSERT INTO memories (memory_id, slug, type, name, description, content) ` +
-        `VALUES (?, ?, ?, ?, ?, ?) ` +
-        `ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), content = VALUES(content), updated_at = CURRENT_TIMESTAMP(6);`,
-      [id, slug, type, name, description, content],
-    );
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Memory '${slug}' saved (type: ${type}).`,
-        },
-      ],
-    };
-  },
-);
+    ({ slug }: { slug: string }) => readMcpMemory(doltQuery, slug),
+  );
 
-// ── Tool: start_session ───────────────────────────────────────────────────────
+  // ── Tool: list_memories ───────────────────────────────────────────────────────
 
-server.tool(
-  "start_session",
-  "Create a new work session in Dolt. Returns the session_id. " +
-    "Call this when starting a durable Workbench session record.",
-  {
-    task_description: z
-      .string()
-      .max(256)
-      .describe("One-line description of the session"),
-    slug: z
-      .string()
-      .optional()
-      .describe(
-        "Optional stable slug, e.g. '20260415-dyfj-mcp-server'. " +
-          "Auto-generated from timestamp + task if omitted.",
-      ),
-    session_name: z
-      .string()
-      .optional()
-      .describe("Optional 4-word human-readable session name"),
-  },
-  async (
-    { task_description, slug, session_name }: {
-      task_description: string;
-      slug?: string;
-      session_name?: string;
+  server.registerTool(
+    "list_memories",
+    {
+      description:
+        "List the client-safe and public memory projection. Returns slug, type, name, and description. " +
+        "Optionally filter by type: user | feedback | project | reference.",
+      inputSchema: z.object({
+        type: z
+          .enum(["user", "feedback", "project", "reference"])
+          .optional()
+          .describe("Filter by memory type (omit for all)"),
+      }),
     },
-  ) => {
-    const id = ulid();
-    const now = new Date();
-    const ts = now.toISOString().slice(0, 10).replace(/-/g, "");
-    const hms = now.toISOString().slice(11, 23).replace(/[:.]/g, "");
-    const derivedSlug = slug ??
-      `${ts}T${hms}-${
-        task_description
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .slice(0, 40)
-          .replace(/-$/, "")
-      }`;
+    ({ type }: { type?: McpMemoryType }) => listMcpMemories(doltQuery, type),
+  );
 
-    await doltExec(
-      `INSERT INTO sessions (session_id, slug, session_name, task_description, status, progress_done, progress_total) ` +
-        `VALUES (?, ?, ?, ?, 'active', 0, 0);`,
-      [id, derivedSlug, session_name ?? null, task_description],
-    );
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({ session_id: id, slug: derivedSlug }),
-        },
-      ],
-    };
-  },
-);
+  // ── Tool: write_memory ────────────────────────────────────────────────────────
 
-// ── Tool: update_session ──────────────────────────────────────────────────────
-
-server.tool(
-  "update_session",
-  "Update an existing session's lifecycle status, progress, and content.",
-  {
-    session_id: z.string().describe("session_id returned by start_session"),
-    status: z
-      .enum(["active", "completed"])
-      .describe("Current session lifecycle status"),
-    progress_done: z
-      .number()
-      .int()
-      .min(0)
-      .describe("Number of progress units completed"),
-    progress_total: z
-      .number()
-      .int()
-      .min(0)
-      .describe("Total progress unit count"),
-    content: z
-      .string()
-      .optional()
-      .describe(
-        "Freeform session content — context, decisions, verification notes (markdown)",
-      ),
-  },
-  async (
-    { session_id, status, progress_done, progress_total, content }: {
-      session_id: string;
-      status: McpSessionStatus;
-      progress_done: number;
-      progress_total: number;
-      content?: string;
+  server.registerTool(
+    "write_memory",
+    {
+      description: "Create or update a memory in the DYFJ knowledge base. " +
+        "Uses INSERT ... ON DUPLICATE KEY UPDATE so it's safe to call on existing slugs.",
+      inputSchema: z.object({
+        slug: z.string().describe("Stable identifier, e.g. 'project_dyfj'"),
+        name: z.string().describe("Human-readable name"),
+        type: z
+          .enum(["user", "feedback", "project", "reference"])
+          .describe("Memory category"),
+        description: z.string().describe("One-line summary for the index"),
+        content: z.string().describe("Full memory content (markdown)"),
+      }),
     },
-  ) => {
-    await doltExec(
-      `UPDATE sessions SET status = ?, progress_done = ?, progress_total = ?, ` +
-        `content = COALESCE(?, content) WHERE session_id = ?;`,
-      [status, progress_done, progress_total, content ?? null, session_id],
-    );
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            `Session ${session_id} updated: status=${status} progress=${progress_done}/${progress_total}`,
-        },
-      ],
-    };
-  },
-);
-
-// ── Tool: list_sessions ──────────────────────────────────────────────────────────
-
-server.tool(
-  "list_sessions",
-  "List recent work sessions from Dolt. Returns session_id, slug, task_description, status, and progress. " +
-    "Use this to find a prior session to resume with get_session().",
-  {
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(50)
-      .optional()
-      .describe("Max sessions to return (default 10)"),
-    status: z
-      .enum(["active", "completed"])
-      .optional()
-      .describe("Filter by status (omit for all)"),
-  },
-  async (
-    { limit = 10, status }: { limit?: number; status?: McpSessionStatus },
-  ) => {
-    const where = status ? "WHERE status = ?" : "";
-    const params: SqlParam[] = status ? [status, limit] : [limit];
-    const rows = await doltQuery(
-      `SELECT session_id, slug, session_name, task_description, status, ` +
-        `progress_done, progress_total, created_at ` +
-        `FROM sessions ${where} ORDER BY created_at DESC LIMIT ?;`,
-      params,
-    );
-    if (rows.length === 0) {
-      return { content: [{ type: "text", text: "No sessions found." }] };
-    }
-    const lines = rows.map((r) => {
-      const name = r.session_name ? ` (${r.session_name})` : "";
-      const prog = r.progress_total !== "0"
-        ? ` [${r.progress_done}/${r.progress_total}]`
-        : "";
-      return `${
-        (r.created_at ?? "").slice(0, 16)
-      } | ${r.status}${prog} | ${r.task_description}${name}\n  id: ${r.session_id}\n  slug: ${r.slug}`;
-    });
-    return { content: [{ type: "text", text: lines.join("\n\n") }] };
-  },
-);
-
-// ── Tool: get_session ────────────────────────────────────────────────────────────
-
-server.tool(
-  "get_session",
-  "Load the full content of a prior session by session_id or slug. " +
-    "Use this to resume a session: load its context, decisions, and progress, " +
-    "then continue from where it left off using update_session().",
-  {
-    session_id: z.string().optional().describe("session_id from list_sessions"),
-    slug: z.string().optional().describe(
-      "session slug (alternative to session_id)",
-    ),
-  },
-  async ({ session_id, slug }: { session_id?: string; slug?: string }) => {
-    if (!session_id && !slug) {
+    async (
+      { slug, name, type, description, content }: {
+        slug: string;
+        name: string;
+        type: McpMemoryType;
+        description: string;
+        content: string;
+      },
+    ) => {
+      const id = ulid();
+      await doltExec(
+        `INSERT INTO memories (memory_id, slug, type, name, description, content) ` +
+          `VALUES (?, ?, ?, ?, ?, ?) ` +
+          `ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), content = VALUES(content), updated_at = CURRENT_TIMESTAMP(6);`,
+        [id, slug, type, name, description, content],
+      );
       return {
-        content: [{ type: "text", text: "Provide either session_id or slug." }],
-        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Memory '${slug}' saved (type: ${type}).`,
+          },
+        ],
       };
-    }
-    const where = session_id ? "WHERE session_id = ?" : "WHERE slug = ?";
-    const params = [session_id ?? slug!];
-    const rows = await doltQuery(
-      `SELECT session_id, slug, session_name, task_description, effort_level, ` +
-        `status, progress_done, progress_total, mode, content, created_at, updated_at ` +
-        `FROM sessions ${where} LIMIT 1;`,
-      params,
-    );
-    if (rows.length === 0) {
+    },
+  );
+
+  // ── Tool: start_session ───────────────────────────────────────────────────────
+
+  server.registerTool(
+    "start_session",
+    {
+      description:
+        "Create a new work session in Dolt. Returns the session_id. " +
+        "Call this when starting a durable Workbench session record.",
+      inputSchema: z.object({
+        task_description: z
+          .string()
+          .max(256)
+          .describe("One-line description of the session"),
+        slug: z
+          .string()
+          .optional()
+          .describe(
+            "Optional stable slug, e.g. '20260415-dyfj-mcp-server'. " +
+              "Auto-generated from timestamp + task if omitted.",
+          ),
+        session_name: z
+          .string()
+          .optional()
+          .describe("Optional 4-word human-readable session name"),
+      }),
+    },
+    async (
+      { task_description, slug, session_name }: {
+        task_description: string;
+        slug?: string;
+        session_name?: string;
+      },
+    ) => {
+      const id = ulid();
+      const now = new Date();
+      const ts = now.toISOString().slice(0, 10).replace(/-/g, "");
+      const hms = now.toISOString().slice(11, 23).replace(/[:.]/g, "");
+      const derivedSlug = slug ??
+        `${ts}T${hms}-${
+          task_description
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .slice(0, 40)
+            .replace(/-$/, "")
+        }`;
+
+      await doltExec(
+        `INSERT INTO sessions (session_id, slug, session_name, task_description, status, progress_done, progress_total) ` +
+          `VALUES (?, ?, ?, ?, 'active', 0, 0);`,
+        [id, derivedSlug, session_name ?? null, task_description],
+      );
       return {
-        content: [{
-          type: "text",
-          text: `Session not found. Use list_sessions() to find valid IDs.`,
-        }],
-        isError: true,
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ session_id: id, slug: derivedSlug }),
+          },
+        ],
       };
-    }
-    const s = rows[0]!;
-    const header = [
-      `# Session: ${s.task_description}`,
-      `**ID:** ${s.session_id}`,
-      `**Slug:** ${s.slug}`,
-      s.session_name ? `**Name:** ${s.session_name}` : "",
-      `**Status:** ${s.status}  **Progress:** ${s.progress_done}/${s.progress_total}`,
-      s.effort_level ? `**Effort:** ${s.effort_level}` : "",
-      `**Created:** ${s.created_at}  **Updated:** ${s.updated_at}`,
-      "",
-      s.content ? `## Session Content\n\n${s.content}` : "*(no content yet)*",
-    ].filter(Boolean).join("\n");
-    return { content: [{ type: "text", text: header }] };
-  },
-);
+    },
+  );
+
+  // ── Tool: update_session ──────────────────────────────────────────────────────
+
+  server.registerTool(
+    "update_session",
+    {
+      description:
+        "Update an existing session's lifecycle status, progress, and content.",
+      inputSchema: z.object({
+        session_id: z.string().describe("session_id returned by start_session"),
+        status: z
+          .enum(["active", "completed"])
+          .describe("Current session lifecycle status"),
+        progress_done: z
+          .number()
+          .int()
+          .min(0)
+          .describe("Number of progress units completed"),
+        progress_total: z
+          .number()
+          .int()
+          .min(0)
+          .describe("Total progress unit count"),
+        content: z
+          .string()
+          .optional()
+          .describe(
+            "Freeform session content — context, decisions, verification notes (markdown)",
+          ),
+      }),
+    },
+    async (
+      { session_id, status, progress_done, progress_total, content }: {
+        session_id: string;
+        status: McpSessionStatus;
+        progress_done: number;
+        progress_total: number;
+        content?: string;
+      },
+    ) => {
+      await doltExec(
+        `UPDATE sessions SET status = ?, progress_done = ?, progress_total = ?, ` +
+          `content = COALESCE(?, content) WHERE session_id = ?;`,
+        [status, progress_done, progress_total, content ?? null, session_id],
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Session ${session_id} updated: status=${status} progress=${progress_done}/${progress_total}`,
+          },
+        ],
+      };
+    },
+  );
+
+  // ── Tool: list_sessions ──────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "list_sessions",
+    {
+      description:
+        "List recent work sessions from Dolt. Returns session_id, slug, task_description, status, and progress. " +
+        "Use this to find a prior session to resume with get_session().",
+      inputSchema: z.object({
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe("Max sessions to return (default 10)"),
+        status: z
+          .enum(["active", "completed"])
+          .optional()
+          .describe("Filter by status (omit for all)"),
+      }),
+    },
+    async (
+      { limit = 10, status }: { limit?: number; status?: McpSessionStatus },
+    ) => {
+      const where = status ? "WHERE status = ?" : "";
+      const params: SqlParam[] = status ? [status, limit] : [limit];
+      const rows = await doltQuery(
+        `SELECT session_id, slug, session_name, task_description, status, ` +
+          `progress_done, progress_total, created_at ` +
+          `FROM sessions ${where} ORDER BY created_at DESC LIMIT ?;`,
+        params,
+      );
+      if (rows.length === 0) {
+        return { content: [{ type: "text", text: "No sessions found." }] };
+      }
+      const lines = rows.map((r) => {
+        const name = r.session_name ? ` (${r.session_name})` : "";
+        const prog = r.progress_total !== "0"
+          ? ` [${r.progress_done}/${r.progress_total}]`
+          : "";
+        return `${
+          (r.created_at ?? "").slice(0, 16)
+        } | ${r.status}${prog} | ${r.task_description}${name}\n  id: ${r.session_id}\n  slug: ${r.slug}`;
+      });
+      return { content: [{ type: "text", text: lines.join("\n\n") }] };
+    },
+  );
+
+  // ── Tool: get_session ────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "get_session",
+    {
+      description:
+        "Load the full content of a prior session by session_id or slug. " +
+        "Use this to resume a session: load its context, decisions, and progress, " +
+        "then continue from where it left off using update_session().",
+      inputSchema: z.object({
+        session_id: z.string().optional().describe(
+          "session_id from list_sessions",
+        ),
+        slug: z.string().optional().describe(
+          "session slug (alternative to session_id)",
+        ),
+      }),
+    },
+    async ({ session_id, slug }: { session_id?: string; slug?: string }) => {
+      if (!session_id && !slug) {
+        return {
+          content: [{
+            type: "text",
+            text: "Provide either session_id or slug.",
+          }],
+          isError: true,
+        };
+      }
+      const where = session_id ? "WHERE session_id = ?" : "WHERE slug = ?";
+      const params = [session_id ?? slug!];
+      const rows = await doltQuery(
+        `SELECT session_id, slug, session_name, task_description, effort_level, ` +
+          `status, progress_done, progress_total, mode, content, created_at, updated_at ` +
+          `FROM sessions ${where} LIMIT 1;`,
+        params,
+      );
+      if (rows.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: `Session not found. Use list_sessions() to find valid IDs.`,
+          }],
+          isError: true,
+        };
+      }
+      const s = rows[0]!;
+      const header = [
+        `# Session: ${s.task_description}`,
+        `**ID:** ${s.session_id}`,
+        `**Slug:** ${s.slug}`,
+        s.session_name ? `**Name:** ${s.session_name}` : "",
+        `**Status:** ${s.status}  **Progress:** ${s.progress_done}/${s.progress_total}`,
+        s.effort_level ? `**Effort:** ${s.effort_level}` : "",
+        `**Created:** ${s.created_at}  **Updated:** ${s.updated_at}`,
+        "",
+        s.content ? `## Session Content\n\n${s.content}` : "*(no content yet)*",
+      ].filter(Boolean).join("\n");
+      return { content: [{ type: "text", text: header }] };
+    },
+  );
+
+  return server;
+}
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+serveStdio(createServer, { legacy: "serve" });

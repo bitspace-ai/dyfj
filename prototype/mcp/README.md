@@ -22,7 +22,11 @@ or `public`; it does not expose private or shareable memory rows.
 deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE /path/to/dyfj/prototype/mcp/server.ts
 ```
 
-Transport: stdio (standard for CLI agents).
+Transport: stdio (standard for CLI agents). The server uses the MCP v2 split
+SDK and accepts both the modern `2026-07-28` opening and legacy `initialize`
+clients from one tool factory. The Workbench-owned client probes once with a
+bounded timeout, prefers the modern revision when advertised, and otherwise
+falls back to a fresh legacy session process.
 
 ## Agent Configuration
 
