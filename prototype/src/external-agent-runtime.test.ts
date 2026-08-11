@@ -576,6 +576,89 @@ Deno.exit(output.code);`,
     }
   });
 
+  test("rejects whole dot components in toolchain authority before resolution", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const child = `${home}/child`;
+    const alias = `${home}/alias`;
+    const nodePath = `${home}/node`;
+    const dotted = [`.cargo`, `.rustup`, `..cache`, `tool.chain`];
+    await Deno.mkdir(child, { mode: 0o700 });
+    await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
+    await Deno.chmod(nodePath, 0o700);
+    for (const name of dotted) {
+      await Deno.mkdir(`${home}/${name}`, { mode: 0o700 });
+    }
+    const linked = await new Deno.Command("bash", {
+      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", child, alias],
+    }).output();
+    expect(linked.success).toBe(true);
+    try {
+      for (
+        const [option, diagnostic] of [
+          [
+            "toolchainPath",
+            "Codex ACP toolchain path must not contain dot components",
+          ],
+          [
+            "rustupHome",
+            "Codex ACP Rustup home must not contain dot components",
+          ],
+        ] as const
+      ) {
+        for (
+          const value of [
+            `${home}/./child`,
+            `${home}/../${home.split("/").at(-1)}/child`,
+            `${child}/.`,
+            `${child}/..`,
+            `${child}/./`,
+            `${child}/../`,
+            "/.",
+            "/..",
+            `${home}//.//child/`,
+            `${home}//..//${home.split("/").at(-1)}//child/`,
+            `${alias}/../child`,
+          ]
+        ) {
+          let failure: Error | undefined;
+          try {
+            await codexChatGptProfile(Deno.cwd(), {
+              home,
+              prototypeRoot: Deno.cwd(),
+              nodePath,
+              toolchainPath: option === "toolchainPath" ? value : "",
+              rustupHome: option === "rustupHome" ? value : "",
+            });
+          } catch (error) {
+            failure = error instanceof Error ? error : new Error(String(error));
+          }
+          expect(failure?.message).toBe(diagnostic);
+          expect(failure?.message).not.toContain(value);
+        }
+        for (const name of dotted) {
+          const selected = `${home}/${name}`;
+          const profile = await codexChatGptProfile(Deno.cwd(), {
+            home,
+            prototypeRoot: Deno.cwd(),
+            nodePath,
+            toolchainPath: option === "toolchainPath" ? selected : "",
+            rustupHome: option === "rustupHome" ? selected : "",
+          });
+          expect(profile.toolchainDirectoryCount).toBe(1);
+          if (option === "toolchainPath") {
+            expect(profile.environment.PATH.split(":")).toContain(selected);
+            expect(profile.environment.RUSTUP_HOME).toBeUndefined();
+          } else {
+            expect(profile.environment.RUSTUP_HOME).toBe(selected);
+            expect(profile.environment.PATH.split(":")).not.toContain(selected);
+          }
+        }
+      }
+    } finally {
+      await Deno.remove(home, { recursive: true });
+    }
+  });
+
   test("rejects invalid Rustup home authority with fixed diagnostics", async () => {
     const home = await Deno.makeTempDir({ dir: Deno.cwd() });
     const file = `${home}/rustup-file`;

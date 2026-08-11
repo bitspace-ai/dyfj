@@ -35,6 +35,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Security
 
+- ACP toolchain and Rustup-home selections now reject whole `.` and `..` path components lexically at the launcher, CLI grant, and runtime-profile boundaries before filesystem resolution.
+
 - Memory recall now rejects endpoints containing URL-embedded usernames or passwords. Recall credentials must use the dedicated token configuration, and the configuration error does not echo the endpoint or its userinfo.
 
 - The standalone stdio MCP memory tools now expose only the conservative `client_safe` and `public` projection. Private and shareable rows are neither listed nor readable by slug, and an uncleared slug receives the same fixed not-found response as a nonexistent one.

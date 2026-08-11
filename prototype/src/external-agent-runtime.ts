@@ -30,6 +30,7 @@ import {
   writeEvent,
 } from "./utils";
 import { DomainError, sanitizeBoundaryText } from "./turn-contract";
+import { hasDotPathComponent } from "./lexical-path";
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
   const home = Deno.env.get("HOME");
@@ -123,6 +124,11 @@ async function operatorAuthorizedToolchainDirectory(
       "Codex ACP requires an absolute, delimiter-safe toolchain directory",
     );
   }
+  if (hasDotPathComponent(pathValue)) {
+    throw new DomainError(
+      "Codex ACP toolchain path must not contain dot components",
+    );
+  }
   if (/^\/+$/u.test(pathValue)) {
     throw new DomainError("Codex ACP toolchain directory is unavailable");
   }
@@ -165,6 +171,11 @@ async function operatorAuthorizedRustupHomeDirectory(
   ) {
     throw new DomainError(
       "Codex ACP requires an absolute, delimiter-safe Rustup home directory",
+    );
+  }
+  if (hasDotPathComponent(pathValue)) {
+    throw new DomainError(
+      "Codex ACP Rustup home must not contain dot components",
     );
   }
   if (/^\/+$/u.test(pathValue)) {
