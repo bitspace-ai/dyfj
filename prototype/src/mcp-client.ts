@@ -19,8 +19,11 @@
  *   server works unchanged. This is the vendor-agnosticism proof.
  */
 
-import { Client } from "npm:@modelcontextprotocol/sdk@1.29.0/client";
-import { StdioClientTransport } from "npm:@modelcontextprotocol/sdk@1.29.0/client/stdio.js";
+import {
+  Client,
+  type ProtocolEra,
+} from "npm:@modelcontextprotocol/client@2.0.0";
+import { StdioClientTransport } from "npm:@modelcontextprotocol/client@2.0.0/stdio";
 import process from "node:process";
 
 // ── Types (mirroring tool inputs/outputs) ─────────────────────────────────────
@@ -51,28 +54,63 @@ export interface SessionSummary {
 const SERVER_BIN = process.env.DENO_BIN ?? "deno";
 const DYFJ_ROOT = process.env.DYFJ_ROOT ?? `${process.env.HOME}/.dyfj`;
 const SERVER_SCRIPT = `${DYFJ_ROOT}/mcp/server.ts`;
+const CHILD_ENV_KEYS = [
+  "HOME",
+  "DOLT_HOST",
+  "DOLT_PORT",
+  "DOLT_USER",
+  "DOLT_PASSWORD",
+  "DOLT_DATABASE",
+] as const;
 
 export interface DyfjMcpClientOptions {
   serverExecutable?: string;
   serverScript?: string;
   childEnv?: Record<string, string>;
+  versionNegotiation?: "auto" | "legacy";
 }
 
 export class DyfjMcpClient {
   private client: Client;
   private transport: StdioClientTransport | null = null;
   private connected = false;
+  private readonly methodEvidence: string[] = [];
   private readonly options: DyfjMcpClientOptions;
 
   constructor(options: DyfjMcpClientOptions = {}) {
     this.options = options;
-    this.client = new Client({ name: "dyfj-extension", version: "1.0.0" });
+    this.client = new Client(
+      { name: "dyfj-extension", version: "1.0.0" },
+      {
+        versionNegotiation: {
+          mode: options.versionNegotiation ?? "auto",
+          probe: { timeoutMs: 5_000, maxRetries: 0 },
+        },
+      },
+    );
+  }
+
+  get protocolVersion(): string | undefined {
+    return this.client.getNegotiatedProtocolVersion();
+  }
+
+  get protocolEra(): ProtocolEra | undefined {
+    return this.client.getProtocolEra();
+  }
+
+  get sessionMethodEvidence(): readonly string[] {
+    return this.methodEvidence;
   }
 
   async connect(): Promise<void> {
     if (this.connected) return;
     const childEnv = this.options.childEnv === undefined
-      ? { ...process.env }
+      ? Object.fromEntries(
+        CHILD_ENV_KEYS.flatMap((name) => {
+          const value = process.env[name];
+          return value === undefined ? [] : [[name, value]];
+        }),
+      )
       : { ...this.options.childEnv };
     childEnv.HOME ??= process.env.HOME ?? "";
     const port = childEnv.DOLT_PORT ?? "3306";
@@ -87,14 +125,29 @@ export class DyfjMcpClient {
       ],
       env: childEnv,
     });
+    const send = this.transport.send.bind(this.transport);
+    this.transport.send = async (message) => {
+      if (
+        "method" in message &&
+        typeof message.method === "string" &&
+        this.methodEvidence.length < 32
+      ) {
+        this.methodEvidence.push(message.method);
+      }
+      await send(message);
+    };
     await this.client.connect(this.transport);
     this.connected = true;
   }
 
   async disconnect(): Promise<void> {
-    if (!this.connected) return;
-    await this.client.close();
-    this.connected = false;
+    if (!this.connected && !this.transport) return;
+    try {
+      await this.client.close();
+    } finally {
+      this.connected = false;
+      this.transport = null;
+    }
   }
 
   // ── Helper ──────────────────────────────────────────────────────────────────

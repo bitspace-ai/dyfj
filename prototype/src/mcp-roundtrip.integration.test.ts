@@ -1,4 +1,4 @@
-import { DyfjMcpClient } from "./mcp-client.ts";
+import { DyfjMcpClient, type DyfjMcpClientOptions } from "./mcp-client.ts";
 
 function requiredFixtureEnv(
   name: string,
@@ -13,7 +13,7 @@ function requiredFixtureEnv(
 
 function fixtureClientOptions(
   read: (name: string) => string | undefined = Deno.env.get,
-): ConstructorParameters<typeof DyfjMcpClient>[0] {
+): DyfjMcpClientOptions {
   return {
     serverExecutable: requiredFixtureEnv("DENO_BIN", read),
     serverScript: `${requiredFixtureEnv("DYFJ_ROOT", read)}/mcp/server.ts`,
@@ -52,12 +52,67 @@ function assertNotIncludes(value: string, expected: string): void {
   }
 }
 
+function assertEquals(actual: unknown, expected: unknown): void {
+  if (actual !== expected) {
+    throw new Error(
+      `expected ${JSON.stringify(actual)} to equal ${JSON.stringify(expected)}`,
+    );
+  }
+}
+
+async function processExists(pid: number): Promise<boolean> {
+  const output = await new Deno.Command("/bin/kill", {
+    args: ["-0", String(pid)],
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  return output.success;
+}
+
+async function waitForProcessExit(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (!await processExists(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`MCP child ${pid} was not reaped`);
+}
+
+async function instrumentedFixtureClient(
+  mode: "auto" | "legacy",
+): Promise<
+  { client: DyfjMcpClient; pidLog: string; cleanup: () => Promise<void> }
+> {
+  const tempDir = await Deno.makeTempDir({
+    dir: requiredFixtureEnv("DYFJ_MCP_TEST_TEMP_DIR"),
+    prefix: "mcp-child-",
+  });
+  const pidLog = `${tempDir}/pids`;
+  const options = fixtureClientOptions();
+  options.serverExecutable = `${
+    requiredFixtureEnv("DYFJ_ROOT")
+  }/scripts/mcp-child-wrapper.sh`;
+  options.childEnv = {
+    ...options.childEnv,
+    DYFJ_MCP_PID_LOG: pidLog,
+    DYFJ_REAL_DENO: requiredFixtureEnv("DENO_BIN"),
+  };
+  return {
+    client: new DyfjMcpClient({ ...options, versionNegotiation: mode }),
+    pidLog,
+    cleanup: () => Deno.remove(tempDir, { recursive: true }),
+  };
+}
+
 Deno.test(
-  "production MCP client/server lists public memory and withholds private rows",
+  "modern production MCP session negotiates 2026-07-28 without legacy lifecycle messages",
   async () => {
-    const client = new DyfjMcpClient(fixtureClientOptions());
+    const fixture = await instrumentedFixtureClient("auto");
+    const { client } = fixture;
+    let pids: number[] = [];
     try {
       await client.connect();
+      assertEquals(client.protocolEra, "modern");
+      assertEquals(client.protocolVersion, "2026-07-28");
       const list = await client.listMemories();
       assertIncludes(list, "fixture_project_public");
       assertIncludes(list, "fixture_reference_client_safe");
@@ -65,14 +120,66 @@ Deno.test(
 
       const publicMemory = await client.readMemory("fixture_project_public");
       assertIncludes(publicMemory, "public project content");
+      const sessionMethods = client.sessionMethodEvidence;
+      assertEquals(sessionMethods.includes("tools/call"), true);
+      assertEquals(sessionMethods.includes("initialize"), false);
+      assertEquals(sessionMethods.includes("notifications/initialized"), false);
+      assertEquals(sessionMethods.includes("server/discover"), false);
       await client.readMemory("fixture_user_private").then(
         () => {
           throw new Error("private fixture row was exposed through MCP");
         },
         (error: unknown) => assertIncludes(String(error), "Memory not found"),
       );
+
+      pids = (await Deno.readTextFile(fixture.pidLog)).trim().split("\n").map(
+        Number,
+      );
+      assertEquals(pids.length, 2);
+      await waitForProcessExit(pids[0]!);
+      assertEquals(await processExists(pids[1]!), true);
     } finally {
       await client.disconnect();
+      for (const pid of pids) await waitForProcessExit(pid);
+      await fixture.cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "deliberate legacy client reaches the dual-era production server with the same visibility",
+  async () => {
+    const fixture = await instrumentedFixtureClient("legacy");
+    const { client } = fixture;
+    let pids: number[] = [];
+    try {
+      await client.connect();
+      assertEquals(client.protocolEra, "legacy");
+      const list = await client.listMemories();
+      assertIncludes(list, "fixture_project_public");
+      assertIncludes(list, "fixture_reference_client_safe");
+      assertNotIncludes(list, "fixture_user_private");
+      const publicMemory = await client.readMemory("fixture_project_public");
+      assertIncludes(publicMemory, "public project content");
+      const sessionMethods = client.sessionMethodEvidence;
+      assertEquals(sessionMethods.includes("initialize"), true);
+      assertEquals(sessionMethods.includes("notifications/initialized"), true);
+      assertEquals(sessionMethods.includes("tools/call"), true);
+      await client.readMemory("fixture_user_private").then(
+        () => {
+          throw new Error("private fixture row was exposed through legacy MCP");
+        },
+        (error: unknown) => assertIncludes(String(error), "Memory not found"),
+      );
+      pids = (await Deno.readTextFile(fixture.pidLog)).trim().split("\n").map(
+        Number,
+      );
+      assertEquals(pids.length, 1);
+      assertEquals(await processExists(pids[0]!), true);
+    } finally {
+      await client.disconnect();
+      for (const pid of pids) await waitForProcessExit(pid);
+      await fixture.cleanup();
     }
   },
 );

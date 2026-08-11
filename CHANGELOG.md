@@ -6,6 +6,10 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ## [Unreleased]
 
+### Changed
+
+- The Workbench-owned stdio MCP memory client and server now use the MCP v2 split packages. The client performs one bounded, no-retry discovery probe and exposes its negotiated protocol era and revision; the server serves modern `2026-07-28` and legacy openings from the same tool factory while preserving the existing Dolt-backed memory visibility and session tools. The separate Streamable HTTP memory-recall client remains on its existing SDK path.
+
 ### Fixed
 
 - ACP protocol-message containment is now resolved from the execution profile before stream construction. Ordinary profiles retain the 384 KiB newline-delimited message ceiling, while the bounded Codex ChatGPT profile permits newline-delimited messages up to 1 MiB each. Either ceiling fails closed with a specific client diagnostic; the independent 16 MiB cumulative input, 60,000-byte agent-response, session-update, permission, timeout, cancellation, and process-cleanup bounds are unchanged.

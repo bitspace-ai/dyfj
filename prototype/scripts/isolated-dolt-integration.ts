@@ -109,6 +109,7 @@ Deno.addSignalListener("SIGINT", onSigint);
 Deno.addSignalListener("SIGTERM", onSigterm);
 
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
+let mcpTestTempDir: string | undefined;
 try {
   fixture = await startIsolatedDoltFixture({
     repoRoot,
@@ -123,6 +124,7 @@ try {
     DENO_BIN: Deno.execPath(),
     ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}`,
   };
+  mcpTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-mcp-roundtrip-" });
   await runChecked("deno", [
     "run",
     "-P=test",
@@ -138,12 +140,17 @@ try {
   ], { cwd: prototypeRoot, env, signal: abortController.signal });
   await runChecked("deno", [
     "test",
-    "--allow-env",
-    "--allow-read=.",
-    "--allow-run=deno",
+    "--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR",
+    `--allow-read=.,${mcpTestTempDir}`,
+    `--allow-write=${mcpTestTempDir}`,
+    "--allow-run=deno,scripts/mcp-child-wrapper.sh,/bin/kill",
     "--allow-net=127.0.0.1",
     ...integrationTestAssignments.deno,
-  ], { cwd: prototypeRoot, env, signal: abortController.signal });
+  ], {
+    cwd: prototypeRoot,
+    env: { ...env, DYFJ_MCP_TEST_TEMP_DIR: mcpTestTempDir },
+    signal: abortController.signal,
+  });
   await runChecked(
     "cargo",
     ["test", "--test", "schema_round_trip", "--", "--ignored"],
@@ -158,6 +165,9 @@ try {
   if (!abortController.signal.aborted) throw error;
 } finally {
   await fixture?.cleanup();
+  if (mcpTestTempDir !== undefined) {
+    await Deno.remove(mcpTestTempDir, { recursive: true });
+  }
   Deno.removeSignalListener("SIGINT", onSigint);
   Deno.removeSignalListener("SIGTERM", onSigterm);
 }
