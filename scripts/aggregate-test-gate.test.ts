@@ -199,10 +199,13 @@ Deno.test("an unselected executable remains denied", () => {
   const unselected = fileURLToPath(
     new URL("synthetic-unselected-runtime", import.meta.url),
   );
-  assertThrows(
-    () => new Deno.Command(unselected).outputSync(),
-    "Requires run access",
-  );
+  try {
+    new Deno.Command(unselected).outputSync();
+  } catch (error) {
+    if (error instanceof Deno.errors.NotCapable) return;
+    throw error;
+  }
+  throw new Error("unselected executable unexpectedly ran");
 });
 
 async function assertVitestLauncherRuns(selected: string): Promise<void> {
