@@ -1201,6 +1201,41 @@ export function formatRuntimeEvent(
       event.isError === true ? "failed" : "finished"
     }${duration}`;
   }
+  if (event.type === "memoryRecallNegotiated") {
+    const era = event.era === "modern" || event.era === "legacy"
+      ? event.era
+      : null;
+    const identifier = (value: unknown): string | null =>
+      typeof value === "string" &&
+        value.length > 0 && value.length <= 64 &&
+        /^[A-Za-z0-9._:/@+-]+$/.test(value)
+        ? value
+        : null;
+    const revision = identifier(event.revision);
+    const rawServer = typeof event.server === "object" &&
+        event.server !== null && !Array.isArray(event.server)
+      ? event.server as Record<string, unknown>
+      : null;
+    const serverName = rawServer === null ? null : identifier(rawServer.name);
+    const serverVersion = rawServer === null
+      ? null
+      : identifier(rawServer.version);
+    if (!Array.isArray(event.extensions) || event.extensions.length > 8) {
+      return null;
+    }
+    const extensions = event.extensions.map(identifier);
+    if (
+      era === null || revision === null ||
+      extensions.some((extension) => extension === null)
+    ) return null;
+    const server = serverName === null || serverVersion === null
+      ? ""
+      : ` server=${serverName}@${serverVersion}`;
+    const extensionText = extensions.length === 0
+      ? ""
+      : ` extensions=${extensions.join(",")}`;
+    return `Memory recall MCP: era=${era} revision=${revision}${server}${extensionText}`;
+  }
   if (event.type === "contextCompressed") {
     const turns = typeof event.turnsCompressed === "number"
       ? event.turnsCompressed

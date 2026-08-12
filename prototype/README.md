@@ -102,6 +102,16 @@ Before `session/new`, Workbench requires `authentication/status` to return an ob
 
 **Permission grants — committed profile vs. launch-resolved.** `deno.json` declares each entrypoint's static permission profile; the single declared engine surface (`CONFIG_SCHEMA` in `src/config.ts`) is asserted against those profiles by a parity test, so a runtime env var can't drift into one profile and out of another. A few grants are inherently machine- or operator-specific and so are *never* committed to a profile — the launcher resolves them at `dyfj start` and appends them to an explicit flag (which replaces, not extends, the profile list, so the launcher rebuilds the profile grants alongside): the concrete `unix:<socket>` path and the private memory-endpoint host on `--allow-net`, and — when a `[secrets]` resolver is configured — the resolver command binary on `--allow-run`. Fail-closed: `dyfj start` refuses to run when it can't establish a trusted prototype root (`DYFJ_PROTOTYPE_ROOT` or its own on-disk install location), rather than trusting the current directory's `deno.json`/`.env` for the child's grants. See "Hosted inference" in the root README for the `[secrets]` shape.
 
+For an operator-facing recall check without an external memory or credential,
+run `deno task memory-recall-uat-fixture`. It serves a strict modern MCP endpoint
+on loopback, prints its local URL, exposes only `fixture-search`, never prints
+the query, and returns fixed synthetic text. Point `DYFJ_MEMORY_MCP_URL` at the
+printed URL, set `DYFJ_MEMORY_MCP_TOOL=fixture-search`, and set
+`DYFJ_MEMORY_MCP_TOKEN` to the empty string before starting the isolated
+runtime. A successful UDS turn renders the bounded `Memory recall MCP:`
+negotiation line on the client event stream; it does not enable the runtime's
+general narration on the server console.
+
 For a compiled daily-driver binary (Deno 2.9+), build and put `dist/` on your `PATH`:
 
 ```sh

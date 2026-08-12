@@ -5,7 +5,11 @@ export const integrationTestAssignments = {
     "src/memory.integration.test.ts",
     "src/uds-canary.integration.test.ts",
   ],
-  deno: ["src/mcp-roundtrip.integration.test.ts"],
+  deno: [
+    "src/mcp-roundtrip.integration.test.ts",
+    "src/memory-search.integration.test.ts",
+    "scripts/memory-recall-uat-fixture.integration.test.ts",
+  ],
 } as const;
 
 export function assignedIntegrationTests(): string[] {

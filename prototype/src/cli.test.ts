@@ -1268,6 +1268,37 @@ describe("formatRuntimeEvent", () => {
     );
     expect(warning).not.toMatch(/edit_file|read_file|<tool_call>/);
   });
+
+  test("renders negotiated memory-recall diagnostics from structured fields", () => {
+    expect(formatRuntimeEvent({
+      type: "memoryRecallNegotiated",
+      era: "modern",
+      revision: "2026-07-28",
+      server: { name: "fixture-memory", version: "1.2.3" },
+      extensions: ["fixture.extension"],
+    })).toBe(
+      "Memory recall MCP: era=modern revision=2026-07-28 " +
+        "server=fixture-memory@1.2.3 extensions=fixture.extension",
+    );
+  });
+
+  test("drops malformed recall evidence instead of rendering foreign text", () => {
+    expect(formatRuntimeEvent({
+      type: "memoryRecallNegotiated",
+      era: "modern",
+      revision: "2026-07-28\nprivate-text",
+      extensions: [],
+    })).toBeNull();
+  });
+
+  test("drops an over-limit extension list instead of reporting none", () => {
+    expect(formatRuntimeEvent({
+      type: "memoryRecallNegotiated",
+      era: "modern",
+      revision: "2026-07-28",
+      extensions: Array.from({ length: 9 }, (_, index) => `extension.${index}`),
+    })).toBeNull();
+  });
 });
 
 describe("handleTurnRuntimeEvent", () => {
