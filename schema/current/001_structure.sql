@@ -26,6 +26,10 @@ CREATE TABLE events (
     trace_id                  VARCHAR(64)   NOT NULL,
     span_id                   VARCHAR(32)   NOT NULL,
     parent_span_id            VARCHAR(32),
+    trace_flags               TINYINT UNSIGNED,
+    trace_state               VARCHAR(512),
+    span_kind                 ENUM('internal', 'server', 'client', 'producer', 'consumer'),
+    parent_is_remote          BOOLEAN,
 
     principal_id              VARCHAR(128)  NOT NULL,
     principal_type            ENUM('human', 'agent', 'service') NOT NULL,

@@ -26,6 +26,10 @@
  */
 
 import process from "node:process";
+import {
+  injectMcpTraceContext,
+  type McpTraceContext,
+} from "./mcp-conformance.ts";
 
 export interface MemorySearchConfig {
   /** The external memory MCP endpoint. */
@@ -43,7 +47,10 @@ export interface MemorySearchConfig {
 }
 
 /** A bound recall function: natural-language query → formatted results text. */
-export type MemorySearch = (query: string) => Promise<string>;
+export type MemorySearch = (
+  query: string,
+  traceContext?: McpTraceContext,
+) => Promise<string>;
 
 export interface MemorySearchDiagnostic {
   era: "modern" | "legacy";
@@ -279,7 +286,10 @@ export function buildMemorySearch(
   config: MemorySearchConfig,
   onDiagnostic: MemorySearchDiagnosticObserver = () => {},
 ): MemorySearch {
-  return async (query: string): Promise<string> => {
+  return async (
+    query: string,
+    traceContext?: McpTraceContext,
+  ): Promise<string> => {
     // SDK imported lazily: this module must load under the node-based test
     // runner, which cannot resolve Deno `npm:` specifiers. The SDK is only
     // needed when a recall actually executes under the Deno runtime.
@@ -313,7 +323,13 @@ export function buildMemorySearch(
         }
       }
       const result = await client.callTool(
-        { name: config.tool, arguments: { query } },
+        {
+          name: config.tool,
+          arguments: { query },
+          ...(traceContext === undefined
+            ? {}
+            : { _meta: injectMcpTraceContext(undefined, traceContext) }),
+        },
         {
           timeout: RECALL_CALL_TIMEOUT_MS,
           // The recall capability owns this one-field contract. Supplying it

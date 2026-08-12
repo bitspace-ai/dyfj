@@ -6,6 +6,10 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ## [Unreleased]
 
+### Added
+
+- A reusable MCP conformance boundary now validates and propagates W3C trace context from Workbench's canonical trace and span identifiers. The production recall-tool span records its current trace flags, `client` kind, and local-parent evidence; the event schema and extraction helper support normalized trace state and remote-parent evidence for a future inbound consumer without storing raw `traceparent` or baggage. Deterministic fixtures cover modern multi-round-trip input, completion, request-stream cancellation, fresh-ID retry classification, stable list ordering, authorization-partitioned TTL/scope handling, and bounded local JSON Schema 2020-12 `$ref` resolution.
+
 ### Changed
 
 - The Workbench-owned MCP memory clients and server now use the MCP v2 split packages. The stdio client performs one bounded, no-retry discovery probe, and the Streamable HTTP recall client automatically negotiates strict `2026-07-28` or deliberate legacy serving without replaying rejected tool calls. HTTP negotiation uses a five-second no-retry probe and a five-second connect-handshake deadline, while the semantic-search call has a separate 30-second deadline. HTTP recall retains its fixed endpoint, redirect refusal, token-header, loopback-cleartext, and launch-derived network boundaries; eligible connections emit only bounded negotiated-era, revision, server-identity, and extension-identifier diagnostics. Diagnostic fields longer than 256 UTF-16 code units are omitted, and the entire diagnostic is omitted when the query, configured token, or endpoint exceeds that scan bound. Identifiers retaining a full supplied sensitive value or a 16-character fragment after redaction are omitted. At most the first eight enumerated extension keys are normalized; only retained identifiers are sorted for display. The server serves modern and legacy openings from one tool factory while preserving the existing Dolt-backed memory visibility and session tools.
