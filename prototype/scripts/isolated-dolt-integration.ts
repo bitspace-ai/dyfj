@@ -5,6 +5,7 @@ import {
 import { integrationTestAssignments } from "./integration-test-assignment.ts";
 import { resolveEsbuildBinary } from "./esbuild-binary.ts";
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
+import { selectedDenoExecutable } from "./deno-executable.ts";
 import { fileURLToPath } from "node:url";
 
 class IntegrationInterruptedError extends Error {
@@ -96,6 +97,7 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
   /[\\\/]$/,
   "",
 );
+const denoExecutable = selectedDenoExecutable();
 const abortController = new AbortController();
 let interruptedExitCode: number | undefined;
 const interrupt = (exitCode: number) => {
@@ -121,15 +123,15 @@ try {
   const env = {
     ...fixture.env,
     DYFJ_ROOT: prototypeRoot,
-    DENO_BIN: Deno.execPath(),
+    DENO_BIN: denoExecutable,
     ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}`,
   };
   mcpTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-mcp-roundtrip-" });
-  await runChecked("deno", [
+  await runChecked(denoExecutable, [
     "run",
     "-P=test",
     "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
-    `--allow-run=bash,deno,dolt,${esbuildBinary}`,
+    `--allow-run=bash,${denoExecutable},dolt,${esbuildBinary}`,
     "npm:vitest@3.2.6",
     "run",
     "--root",
@@ -138,12 +140,12 @@ try {
     "--poolOptions.forks.singleFork",
     ...integrationTestAssignments.vitest,
   ], { cwd: prototypeRoot, env, signal: abortController.signal });
-  await runChecked("deno", [
+  await runChecked(denoExecutable, [
     "test",
     "--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR",
     `--allow-read=.,${mcpTestTempDir}`,
     `--allow-write=${mcpTestTempDir}`,
-    "--allow-run=deno,scripts/mcp-child-wrapper.sh,/bin/kill",
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill`,
     "--allow-net=127.0.0.1",
     ...integrationTestAssignments.deno,
   ], {

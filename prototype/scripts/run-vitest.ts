@@ -1,4 +1,5 @@
 import { resolveEsbuildBinary } from "./esbuild-binary.ts";
+import { selectedDenoExecutable } from "./deno-executable.ts";
 import { fileURLToPath } from "node:url";
 
 const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
@@ -6,13 +7,14 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
   "",
 );
 const esbuildBinary = await resolveEsbuildBinary(prototypeRoot);
-const child = new Deno.Command(Deno.execPath(), {
+const denoExecutable = selectedDenoExecutable();
+const child = new Deno.Command(denoExecutable, {
   args: [
     "run",
     "-P=test",
     "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
     "--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
-    `--allow-run=bash,/bin/bash,deno,/bin/kill,/bin/sh,${esbuildBinary}`,
+    `--allow-run=bash,/bin/bash,${denoExecutable},/bin/kill,/bin/sh,${esbuildBinary}`,
     "npm:vitest@3.2.6",
     ...Deno.args,
   ],

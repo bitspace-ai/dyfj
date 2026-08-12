@@ -325,8 +325,10 @@ deno task verify-workbench-events
 prototype unit suite, current and historical schema checks, non-ignored Rust
 tests using offline SQLx metadata and no inherited `DATABASE_URL`, and an
 isolated-Dolt integration lane (including UDS and MCP round trips). The
-integration lane owns a temporary Dolt repository and SQL server, with cleanup
-on normal completion and handled failure. SIGINT and SIGTERM request
+task resolves the Deno executable selected for the invocation and uses that
+same absolute command identity for each nested Deno lane and permission grant.
+The integration lane owns a temporary Dolt repository and SQL server, with
+cleanup on normal completion and handled failure. SIGINT and SIGTERM request
 cooperative cancellation; the direct lane process receives SIGTERM followed by
 a bounded wait and possible SIGKILL. The Rust tracer test retains its
 manual-run `.env`
@@ -515,3 +517,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-08-08 - The external-agent section now documents profile-aware ACP session-update ceilings and the shared ingress/consumer enforcement boundary.
 - 2026-08-09 - The external-agent section now documents the optional, operator-authorized Codex toolchain-directory projection and its count-only evidence.
 - 2026-08-10 - The external-agent section now documents profile-aware ACP protocol-message ceilings and their independent containment boundaries.
+- 2026-08-12 - Validation guidance now documents the aggregate gate's selected-Deno executable authority.
