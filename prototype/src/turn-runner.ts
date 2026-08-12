@@ -363,6 +363,12 @@ export interface ExecuteTurnDeps {
    */
   confirmToolApproval?: ConfirmToolApproval;
   /**
+   * ACP permission-option selector. Kept distinct from binary tool approval so
+   * the operator's exact protocol option survives the transport round-trip.
+   */
+  confirmExternalAgentPermission?:
+    WorkbenchRuntimeInput["confirmExternalAgentPermission"];
+  /**
    * Engine default companion model (config ~/.dyfj/config.toml / env), loaded
    * once at the boundary and applied when a turn specifies no model/tier/hint.
    */
@@ -484,7 +490,6 @@ function runExecuteTurn(
   deps: ExecuteTurnDeps,
   resume: Awaited<ReturnType<typeof buildResume>>,
 ): Promise<WorkbenchRuntimeResult> {
-  const confirmToolApproval = deps.confirmToolApproval;
   return deps.runRuntime({
     ...resolved.runtimeInput,
     ...resume,
@@ -526,23 +531,7 @@ function runExecuteTurn(
     // mutating tools run only after operator approval; the transport
     // supplies the approver (UDS = duplex round-trip), else the runtime denies.
     confirmToolApproval: deps.confirmToolApproval,
-    confirmExternalAgentPermission: confirmToolApproval === undefined
-      ? undefined
-      : async (prompt, signal) => {
-        const verdict = await confirmToolApproval({
-          commandId: "external_agent",
-          callId: prompt.toolCallId,
-          title: prompt.toolCall.title,
-          arguments: {
-            "ACP tool": prompt.toolCall.name ?? "(not supplied)",
-            "ACP kind": prompt.toolCall.kind ?? "(not supplied)",
-            "Requested input": prompt.toolCall.inputSummary,
-            "Permission options": prompt.options.map((option) => option.name)
-              .join(" / "),
-          },
-        }, signal);
-        return verdict.decision;
-      },
+    confirmExternalAgentPermission: deps.confirmExternalAgentPermission,
     // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
     confirmBudgetCeiling: deps.confirmBudgetCeiling,
     // runaway-anomaly hard stop; absent => fail closed at the halt.

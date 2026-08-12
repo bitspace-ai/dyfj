@@ -1323,7 +1323,7 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      confirmExternalAgentPermission: async () => "approve",
+      confirmExternalAgentPermission: async () => ({ optionId: "allow" }),
     })).rejects.toMatchObject({ phase: "permission" });
     expect(state.events.map((event) => event.event_type)).not.toContain(
       "agent_response",

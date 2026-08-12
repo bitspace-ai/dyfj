@@ -64,6 +64,11 @@ export interface AcpPermissionPrompt {
   }>;
 }
 
+export interface AcpPermissionSelection {
+  optionId: string | null;
+  source?: "operator" | "policy";
+}
+
 export type AcpPermissionDecision = "approve" | "deny";
 
 export interface AcpPermissionVerdict {
@@ -81,7 +86,7 @@ export interface AcpRunInput {
   confirmPermission?: (
     prompt: AcpPermissionPrompt,
     signal: AbortSignal,
-  ) => Promise<AcpPermissionDecision>;
+  ) => Promise<AcpPermissionSelection>;
   onPermissionVerdict?: (
     verdict: AcpPermissionVerdict,
     signal: AbortSignal,
@@ -906,13 +911,18 @@ function permissionInputSummary(value: unknown): string {
   }
 }
 
-function selectPermissionOption(
+function selectRejectPermissionOption(
   options: RequestPermissionRequest["options"],
-  decision: AcpPermissionDecision,
 ): string | null {
-  const wanted = decision === "approve" ? "allow_once" : "reject_once";
-  return options.find((option) => option.kind === wanted)?.optionId ??
+  return options.find((option) => option.kind === "reject_once")?.optionId ??
+    options.find((option) => option.kind === "reject_always")?.optionId ??
     null;
+}
+
+function permissionDecisionForKind(
+  kind: RequestPermissionRequest["options"][number]["kind"],
+): AcpPermissionDecision {
+  return kind === "allow_once" || kind === "allow_always" ? "approve" : "deny";
 }
 
 function normalizeStopReason(
@@ -1179,8 +1189,31 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             );
             return { outcome: { outcome: "cancelled" } };
           }
+          if (
+            params.options.length === 0 ||
+            params.options.length > MAX_PERMISSION_OPTIONS
+          ) {
+            noteProtocolError(
+              new AcpRunnerError(
+                params.options.length === 0
+                  ? "ACP agent sent an empty permission option list"
+                  : "ACP agent exceeded the permission-option limit",
+                "protocol",
+              ),
+            );
+            return { outcome: { outcome: "cancelled" } };
+          }
           const optionIds = new Set<string>();
           for (const option of params.options) {
+            if (option.optionId.length === 0) {
+              noteProtocolError(
+                new AcpRunnerError(
+                  "ACP agent sent an empty permission option identifier",
+                  "protocol",
+                ),
+              );
+              return { outcome: { outcome: "cancelled" } };
+            }
             if (optionIds.has(option.optionId)) {
               noteProtocolError(
                 new AcpRunnerError(
@@ -1193,10 +1226,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             optionIds.add(option.optionId);
           }
           const permissionRef = `acp-permission-${permissionCount}`;
-          const offeredOptions = params.options.slice(
-            0,
-            MAX_PERMISSION_OPTIONS,
-          );
+          const offeredOptions = params.options;
           if (cancelRequested) {
             await recordPermissionVerdict({
               toolCallId: permissionRef,
@@ -1232,23 +1262,31 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
               kind,
             })),
           };
-          let decisionOutcome:
-            | { kind: "decision"; decision: AcpPermissionDecision }
+          let selectionOutcome:
+            | { kind: "selection"; selection: AcpPermissionSelection }
             | { kind: "closed" };
           if (input.confirmPermission === undefined) {
-            decisionOutcome = { kind: "decision", decision: "deny" };
+            selectionOutcome = {
+              kind: "selection",
+              selection: {
+                optionId: selectRejectPermissionOption(params.options),
+              },
+            };
           } else {
             const confirmationController = new AbortController();
             beginPermissionConfirmation();
             try {
-              decisionOutcome = await Promise.race([
+              selectionOutcome = await Promise.race([
                 Promise.resolve(
                   input.confirmPermission(
                     prompt,
                     confirmationController.signal,
                   ),
                 ).then(
-                  (decision) => ({ kind: "decision" as const, decision }),
+                  (selection) => ({
+                    kind: "selection" as const,
+                    selection,
+                  }),
                 ),
                 permissionWindowClosed.promise.then(() => ({
                   kind: "closed" as const,
@@ -1259,7 +1297,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
               endPermissionConfirmation();
             }
           }
-          if (decisionOutcome.kind === "closed") {
+          if (selectionOutcome.kind === "closed") {
             await recordPermissionVerdict({
               toolCallId: permissionRef,
               decision: "cancel",
@@ -1267,7 +1305,6 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             });
             return { outcome: { outcome: "cancelled" } };
           }
-          const decision = decisionOutcome.decision;
           if (cancelRequested) {
             await recordPermissionVerdict({
               toolCallId: permissionRef,
@@ -1276,26 +1313,23 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
             });
             return { outcome: { outcome: "cancelled" } };
           }
-          const selectedOptionId = selectPermissionOption(
-            decision === "deny" ? params.options : offeredOptions,
-            decision,
-          );
-          const optionId = selectedOptionId ??
-            (decision === "approve"
-              ? selectPermissionOption(params.options, "deny")
-              : null);
-          const recordedDecision = optionId === null
-            ? "cancel"
-            : selectedOptionId === null
-            ? "deny"
-            : decision;
+          const selectedOption = selectionOutcome.selection.optionId === null
+            ? undefined
+            : offeredOptions.find((option) =>
+              option.optionId === selectionOutcome.selection.optionId
+            );
+          const fallbackOptionId = selectRejectPermissionOption(params.options);
+          const optionId = selectedOption?.optionId ?? fallbackOptionId;
+          const recordedDecision = selectedOption === undefined
+            ? optionId === null ? "cancel" : "deny"
+            : permissionDecisionForKind(selectedOption.kind);
           try {
             await recordPermissionVerdict({
               toolCallId: permissionRef,
               decision: recordedDecision,
-              source: optionId === null || selectedOptionId === null
+              source: optionId === null || selectedOption === undefined
                 ? "policy"
-                : source,
+                : selectionOutcome.selection.source ?? source,
             });
           } catch (error) {
             if (!cancelRequested && !permissionsClosed) throw error;

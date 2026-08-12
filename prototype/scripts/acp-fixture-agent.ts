@@ -232,6 +232,12 @@ const app = agent({ name: "dyfj-acp-fixture" })
         const duplicateIds = prompt.includes(
           "FIXTURE_PERMISSION_DUPLICATE_IDS",
         );
+        const emptyAllowId = prompt.includes(
+          "FIXTURE_PERMISSION_EMPTY_ALLOW_ID",
+        );
+        const overLimitDuplicate = prompt.includes(
+          "FIXTURE_PERMISSION_OVER_LIMIT_DUPLICATE",
+        );
         const scopeProbe = prompt.includes("FIXTURE_PERMISSION_SCOPE");
         const permissionResponse = context.request(
           methods.client.session.requestPermission,
@@ -247,7 +253,19 @@ const app = agent({ name: "dyfj-acp-fixture" })
               status: "pending",
               rawInput: { path: "fixture.txt", content: "fixture" },
             },
-            options: duplicateIds
+            options: overLimitDuplicate
+              ? Array.from({ length: 17 }, () => ({
+                optionId: "duplicate",
+                name: "Allow once",
+                kind: "allow_once" as const,
+              }))
+              : emptyAllowId
+              ? [{
+                optionId: "",
+                name: "Allow once",
+                kind: "allow_once" as const,
+              }]
+              : duplicateIds
               ? [
                 {
                   optionId: "ambiguous",
