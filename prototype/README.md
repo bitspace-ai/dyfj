@@ -112,6 +112,20 @@ runtime. A successful UDS turn renders the bounded `Memory recall MCP:`
 negotiation line on the client event stream; it does not enable the runtime's
 general narration on the server console.
 
+Recall calls carry validated W3C trace context in MCP `_meta`, derived from the
+same canonical trace and tool-span identifiers written to the event log. The
+production recall-tool row records the current trace flags, `client` span kind,
+and local-parent evidence; raw `traceparent` and baggage are not stored. The
+event schema and reusable extraction helper support normalized trace state and
+remote-parent evidence for the first inbound MCP consumer, without claiming
+one exists today. The conformance fixtures also pin bounded multi-round-trip
+input, completion, request-stream cancellation, safe retry classification,
+stable list ordering, cache TTL/scope partitioning, and local JSON Schema
+2020-12 `$ref` handling for later MCP consumers. Workbench does not yet own an
+MCP OAuth consumer seam, so this boundary does not invent issuer-keyed
+credentials or an authorization callback solely to host conformance tests;
+issuer and RFC 9207 response checks belong with the first real consumer.
+
 For a compiled daily-driver binary (Deno 2.9+), build and put `dist/` on your `PATH`:
 
 ```sh

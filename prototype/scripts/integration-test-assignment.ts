@@ -6,6 +6,7 @@ export const integrationTestAssignments = {
     "src/uds-canary.integration.test.ts",
   ],
   deno: [
+    "src/mcp-conformance.integration.test.ts",
     "src/mcp-roundtrip.integration.test.ts",
     "src/memory-search.integration.test.ts",
     "scripts/memory-recall-uat-fixture.integration.test.ts",

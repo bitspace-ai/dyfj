@@ -83,6 +83,17 @@ export interface CommandCall {
 
 export interface CommandExecutionContext {
   authzBasis: string;
+  traceId?: string;
+  spanId?: string;
+  traceFlags?: number;
+  traceState?: string;
+}
+
+export interface CommandTraceContext {
+  traceId: string;
+  spanId: string;
+  traceFlags: number;
+  traceState?: string;
 }
 
 export interface CommandDefinition<TResult = unknown> {
@@ -98,6 +109,8 @@ export interface CommandDefinition<TResult = unknown> {
    * would otherwise persist into session/event history (CWE-532).
    */
   redactResult?: boolean;
+  /** OpenTelemetry span kind when this command crosses a protocol boundary. */
+  spanKind?: "client" | "server" | "producer" | "consumer" | "internal";
   executor: (
     call: CommandCall,
     context: CommandExecutionContext,
@@ -176,7 +189,10 @@ export interface CoreCommandDependencies {
    * Gated at registration: callers pass it only for loopback/operator turns with
    * an external memory endpoint configured, so the tool is absent otherwise.
    */
-  searchMemory?: (query: string) => Promise<string> | string;
+  searchMemory?: (
+    query: string,
+    traceContext?: CommandTraceContext,
+  ) => Promise<string> | string;
 }
 
 export interface CommandEventContext {
@@ -338,6 +354,7 @@ export async function invokeCommand<TResult = unknown>(
   call: CommandCall,
   confirmApproval: ConfirmToolApproval = denyToolApproval,
   policyContext: CommandPolicyContext = {},
+  executionContext: Omit<CommandExecutionContext, "authzBasis"> = {},
 ): Promise<CommandInvocationResult<TResult>> {
   const command = registry.lookup(call.commandId) as
     | CommandDefinition<TResult>
@@ -383,7 +400,10 @@ export async function invokeCommand<TResult = unknown>(
     authzBasis = "policy:allow:operator-approved";
   }
 
-  const result = await command.executor(call, { authzBasis });
+  const result = await command.executor(call, {
+    authzBasis,
+    ...executionContext,
+  });
   return {
     decision: "allow",
     authzBasis,
@@ -425,7 +445,10 @@ export function buildMemoryReadCommand(
 }
 
 export function buildMemorySearchCommand(
-  search: (query: string) => Promise<string> | string,
+  search: (
+    query: string,
+    traceContext?: CommandTraceContext,
+  ) => Promise<string> | string,
 ): CommandDefinition<string> {
   return {
     id: "memory.search",
@@ -453,7 +476,21 @@ export function buildMemorySearchCommand(
       filesystem: "none",
       cost: "none",
     },
-    executor: async (call) => search(String(call.arguments.query)),
+    spanKind: "client",
+    executor: async (call, context) =>
+      search(
+        String(call.arguments.query),
+        context.traceId !== undefined && context.spanId !== undefined
+          ? {
+            traceId: context.traceId,
+            spanId: context.spanId,
+            traceFlags: context.traceFlags ?? 0,
+            ...(context.traceState === undefined
+              ? {}
+              : { traceState: context.traceState }),
+          }
+          : undefined,
+      ),
   };
 }
 
@@ -916,6 +953,7 @@ export function buildCommandToolCallEventPayload(
   context: CommandEventContext,
   loggedArguments: Record<string, unknown> = call.arguments,
   redactResult = false,
+  spanKind?: CommandDefinition["spanKind"],
 ): Record<string, unknown> {
   const isError = result.isError;
   // An error reason is our own message (safe); a success result may carry the
@@ -933,6 +971,13 @@ export function buildCommandToolCallEventPayload(
     trace_id: context.traceId,
     span_id: context.spanId ?? generateSpanId(),
     parent_span_id: context.parentSpanId ?? null,
+    ...(spanKind === undefined
+      ? {}
+      : {
+        trace_flags: 0,
+        span_kind: spanKind,
+        parent_is_remote: false,
+      }),
     principal_id: call.caller.principalId,
     principal_type: call.caller.principalType,
     action: isError ? "deny" : "invoke",
@@ -957,11 +1002,13 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   confirmApproval: ConfirmToolApproval = denyToolApproval,
   policyContext: CommandPolicyContext = {},
 ): Promise<CommandInvocationResult<TResult>> {
+  const spanId = context.spanId ?? generateSpanId();
   const result = await invokeCommand<TResult>(
     registry,
     call,
     confirmApproval,
     policyContext,
+    { traceId: context.traceId, spanId, traceFlags: 0 },
   );
   // Redact payload-bearing arguments (e.g. write_file content) before the event
   // is persisted, so the durable log and session replay never retain the raw
@@ -971,9 +1018,10 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   const event = buildCommandToolCallEventPayload(
     call,
     result,
-    context,
+    { ...context, spanId },
     loggedArguments,
     command?.redactResult ?? false,
+    command?.spanKind,
   );
   await (context.writeEvent ?? writeDoltEvent)(event);
   return result;

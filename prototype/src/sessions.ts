@@ -237,6 +237,10 @@ export interface WorkbenchSessionEvent {
   traceId: string;
   spanId: string;
   parentSpanId: string | null;
+  traceFlags: number | null;
+  traceState: string | null;
+  spanKind: string | null;
+  parentIsRemote: boolean | null;
   principalId: string;
   modelId: string | null;
   provider: string | null;
@@ -292,7 +296,12 @@ function eventQuery(
   historicalUnparsedToolCallSchema = false,
   historicalRunnerSchema = false,
   historicalRunnerAuthSchema = false,
+  historicalTraceContextSchema = false,
 ): string {
+  const traceContextFields = historicalTraceContextSchema
+    ? "NULL AS trace_flags, NULL AS trace_state, NULL AS span_kind, " +
+      "NULL AS parent_is_remote"
+    : "trace_flags, trace_state, span_kind, parent_is_remote";
   const providerCallFields = historicalProviderCallSchema
     ? "NULL AS provider_call_order, NULL AS provider_call_purpose, " +
       "NULL AS provider_error_class"
@@ -322,6 +331,7 @@ function eventQuery(
         : "runner_route_source, runner_auth_type, ") +
       "permission_verdict";
   return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
+    `${traceContextFields}, ` +
     `principal_id, model_id, provider, api, content, stop_reason, ` +
     `tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, ` +
     `cost_total, duration_ms, ${providerCallFields}, ${unparsedToolCallFields}, ` +
@@ -367,6 +377,25 @@ function isMissingRunnerAuthColumn(error: unknown): boolean {
   if (!/runner_(?:route_source|auth_type)/.test(message)) return false;
   return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
     /unknown column|column\s+["']runner_(?:route_source|auth_type)["']\s+could not be found/i
+      .test(message);
+}
+
+function isMissingTraceContextColumn(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+    message?: unknown;
+    sqlMessage?: unknown;
+  };
+  const message = [candidate.message, candidate.sqlMessage]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  if (!/(?:trace_flags|trace_state|span_kind|parent_is_remote)/.test(message)) {
+    return false;
+  }
+  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
+    /unknown column|column\s+["'](?:trace_flags|trace_state|span_kind|parent_is_remote)["']\s+could not be found/i
       .test(message);
 }
 
@@ -425,43 +454,64 @@ export async function fetchWorkbenchSessionEvents(input: {
     }
     asOfClause = ` AS OF TIMESTAMP('${input.asOf.replace("T", " ")}')`;
   }
-  let rows: Record<string, string>[];
-  try {
-    rows = await query(eventQuery(asOfClause), [input.sessionId]);
-  } catch (error) {
-    // An AS OF snapshot predating migration 003 has no provider_call columns.
-    // Preserve the event surface by projecting NULL literals under the expected
-    // aliases only for that known historical shape; current and post-migration
-    // AS OF queries retain their durable provider-call values.
-    const missingProviderCall = isMissingProviderCallColumn(error);
-    const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
-    const missingRunner = isMissingRunnerColumn(error);
-    const missingRunnerAuth = isMissingRunnerAuthColumn(error);
-    if (
-      input.asOf === undefined ||
-      (!missingProviderCall && !missingUnparsedToolCall && !missingRunner &&
-        !missingRunnerAuth)
-    ) {
-      throw error;
-    }
-    rows = await query(
-      eventQuery(
+  let rows: Record<string, string>[] | undefined;
+  let historicalProviderCallSchema = false;
+  let historicalUnparsedToolCallSchema = false;
+  let historicalRunnerSchema = false;
+  let historicalRunnerAuthSchema = false;
+  let historicalTraceContextSchema = false;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      rows = await query(eventQuery(
         asOfClause,
-        missingProviderCall,
-        missingProviderCall || missingUnparsedToolCall,
-        missingProviderCall || missingUnparsedToolCall || missingRunner,
+        historicalProviderCallSchema,
+        historicalUnparsedToolCallSchema,
+        historicalRunnerSchema,
+        historicalRunnerAuthSchema,
+        historicalTraceContextSchema,
+      ), [input.sessionId]);
+      break;
+    } catch (error) {
+      if (input.asOf === undefined) throw error;
+      const missingProviderCall = isMissingProviderCallColumn(error);
+      const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
+      const missingRunner = isMissingRunnerColumn(error);
+      const missingRunnerAuth = isMissingRunnerAuthColumn(error);
+      const missingTraceContext = isMissingTraceContextColumn(error);
+      if (
+        !missingProviderCall && !missingUnparsedToolCall && !missingRunner &&
+        !missingRunnerAuth && !missingTraceContext
+      ) throw error;
+      historicalProviderCallSchema ||= missingProviderCall;
+      historicalUnparsedToolCallSchema ||=
+        missingProviderCall || missingUnparsedToolCall;
+      historicalRunnerSchema ||=
+        missingProviderCall || missingUnparsedToolCall || missingRunner;
+      historicalRunnerAuthSchema ||=
         missingProviderCall || missingUnparsedToolCall || missingRunner ||
-          missingRunnerAuth,
-      ),
-      [input.sessionId],
-    );
+        missingRunnerAuth;
+      // A snapshot missing any migration 003-006 column necessarily predates
+      // migration 007 too, regardless of which missing column the driver names.
+      historicalTraceContextSchema ||=
+        missingProviderCall || missingUnparsedToolCall || missingRunner ||
+        missingRunnerAuth || missingTraceContext;
+    }
   }
+  if (rows === undefined) throw new Error("historical event schema did not converge");
   return rows.map((row) => ({
     eventId: row.event_id,
     eventType: row.event_type,
     traceId: row.trace_id,
     spanId: row.span_id,
     parentSpanId: nullableString(row.parent_span_id),
+    traceFlags: nullableNumber(row.trace_flags),
+    traceState: nullableString(row.trace_state),
+    spanKind: nullableString(row.span_kind),
+    parentIsRemote:
+      row.parent_is_remote === null || row.parent_is_remote === undefined ||
+        row.parent_is_remote === ""
+        ? null
+        : Number(row.parent_is_remote) === 1,
     principalId: row.principal_id,
     modelId: nullableString(row.model_id),
     provider: nullableString(row.provider),

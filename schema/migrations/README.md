@@ -20,3 +20,7 @@ an explicit operator-reviewed migration outside the repository.
 
 `005_events_external_agent_runner.sql` adds the typed event fields used by the
 local ACP-client runner foundation.
+
+`007_events_otel_context.sql` adds minimized OpenTelemetry trace flags, state,
+span kind, and remote-parent evidence. Raw propagation envelopes are not
+stored.

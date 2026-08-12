@@ -320,6 +320,7 @@ describe("fetchWorkbenchSessionEvents", () => {
     );
     expect(calls[1]).toContain("NULL AS provider_call_order");
     expect(calls[1]).toContain("NULL AS unparsed_tool_call_count");
+    expect(calls[1]).toContain("NULL AS trace_flags");
     expect(event).toMatchObject({
       eventId: "01HISTORICAL",
       providerCallOrder: null,
@@ -329,6 +330,40 @@ describe("fetchWorkbenchSessionEvents", () => {
       unparsedToolCallCountIsLowerBound: null,
       tokensInput: null,
       tokensOutput: null,
+    });
+  });
+
+  test("projects trace-context nulls for an AS OF schema before migration 007", async () => {
+    const calls: string[] = [];
+    const [event] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      asOf: "2026-08-11 10:00:00",
+      query: (sql) => {
+        calls.push(sql);
+        if (!sql.includes("NULL AS trace_flags")) {
+          return Promise.reject(
+            new Error('column "trace_flags" could not be found in any table in scope'),
+          );
+        }
+        return Promise.resolve([{
+          event_id: "01PRETRACE",
+          event_type: "tool_call",
+          trace_id: "0123",
+          span_id: "tool-span",
+          parent_span_id: "provider-span",
+          principal_id: "workbench",
+          created_at: "2026-08-11 10:00:00",
+        }]);
+      },
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("trace_flags, trace_state, span_kind");
+    expect(calls[1]).toContain("NULL AS trace_flags");
+    expect(event).toMatchObject({
+      traceFlags: null,
+      traceState: null,
+      spanKind: null,
+      parentIsRemote: null,
     });
   });
 
@@ -361,6 +396,7 @@ describe("fetchWorkbenchSessionEvents", () => {
     expect(calls).toHaveLength(2);
     expect(calls[1]).toContain("provider_call_order, provider_call_purpose");
     expect(calls[1]).toContain("NULL AS unparsed_tool_call_count");
+    expect(calls[1]).toContain("NULL AS trace_flags");
     expect(event).toMatchObject({
       providerCallOrder: 1,
       providerCallPurpose: "initial",
@@ -571,6 +607,10 @@ describe("fetchWorkbenchSessionEvents", () => {
           trace_id: "0123",
           span_id: "tool-span",
           parent_span_id: "provider-span",
+          trace_flags: "1",
+          trace_state: "vendor=value",
+          span_kind: "client",
+          parent_is_remote: "0",
           principal_id: "workbench",
           api: "responses",
           tokens_cache_read: "3",
@@ -586,6 +626,10 @@ describe("fetchWorkbenchSessionEvents", () => {
     expect(event).toMatchObject({
       spanId: "tool-span",
       parentSpanId: "provider-span",
+      traceFlags: 1,
+      traceState: "vendor=value",
+      spanKind: "client",
+      parentIsRemote: false,
       api: "responses",
       tokensCacheRead: 3,
       tokensCacheWrite: 1,
@@ -660,6 +704,10 @@ describe("buildConversationMessages", () => {
     traceId: "t",
     spanId: "s",
     parentSpanId: null,
+    traceFlags: null,
+    traceState: null,
+    spanKind: null,
+    parentIsRemote: null,
     principalId: "chris",
     modelId: null,
     provider: null,

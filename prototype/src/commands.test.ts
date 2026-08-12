@@ -437,6 +437,43 @@ describe("search_memory (external recall)", () => {
     });
   });
 
+  test("propagates the canonical tool span and records client evidence", async () => {
+    const registry = createCommandRegistry();
+    const events: Record<string, unknown>[] = [];
+    let receivedTrace: unknown;
+    registerCoreCommands(registry, {
+      searchMemory: (_query, trace) => {
+        receivedTrace = trace;
+        return "result text";
+      },
+    });
+    await invokeCommandWithEvent(
+      registry,
+      call({ query: "the auth rewrite" }, { commandId: "memory.search" }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        spanId: "0123456789abcdef",
+        parentSpanId: "fedcba9876543210",
+        writeEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    expect(receivedTrace).toEqual({
+      traceId: "0123456789abcdef0123456789abcdef",
+      spanId: "0123456789abcdef",
+      traceFlags: 0,
+    });
+    expect(events[0]).toMatchObject({
+      trace_flags: 0,
+      span_kind: "client",
+      parent_is_remote: false,
+    });
+    expect(events[0]).not.toHaveProperty("traceparent");
+    expect(events[0]).not.toHaveProperty("baggage");
+  });
+
   test("denies a malformed call before reaching the recall function", async () => {
     const registry = createCommandRegistry();
     let called = false;
