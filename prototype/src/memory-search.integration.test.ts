@@ -621,3 +621,144 @@ Deno.test(
     }
   },
 );
+
+Deno.test(
+  "diagnostics bound normalization and retained extension processing",
+  async () => {
+    const sensitiveValue = "abcdefghijklmnopqrstuvwxyz".repeat(5).slice(0, 120);
+    const extensions = Object.fromEntries([
+      [`oversized-${"x".repeat(16_384)}`, {}],
+      [`partial-${sensitiveValue.slice(0, 64)}`, {}],
+      ...Array.from({ length: 6 }, (_, index) => [
+        `z-extension-${index}`,
+        {},
+      ]),
+      ["a-extension-after-the-bound", {}],
+    ]);
+    const diagnostics: MemorySearchDiagnostic[] = [];
+    const mcp = createMcpHandler(
+      () =>
+        fixtureServer(() => {}, {
+          name: `fixture-${sensitiveValue}`,
+          version: sensitiveValue,
+          extensions,
+        }),
+      { legacy: "reject" },
+    );
+    let http: LoopbackFixture | undefined;
+    const originalNormalize = String.prototype.normalize;
+
+    try {
+      http = startLoopbackServer((request) => mcp.fetch(request));
+      String.prototype.normalize = function (form?: string): string {
+        const value = String(this);
+        if (value.length > 256) {
+          throw new Error("diagnostic normalized an over-limit identifier");
+        }
+        return originalNormalize.call(value, form);
+      };
+      const recall = buildMemorySearch(
+        { url: http.url, tool: FIXTURE_TOOL, token: sensitiveValue },
+        (diagnostic) => diagnostics.push(diagnostic),
+      );
+      await recall("bounded diagnostic probe");
+    } finally {
+      String.prototype.normalize = originalNormalize;
+      const cleanup = await Promise.allSettled([
+        mcp.close(),
+        http?.close() ?? Promise.resolve(),
+      ]);
+      assert(
+        cleanup.every((result) => result.status === "fulfilled"),
+        "fixture cleanup failed",
+      );
+    }
+
+    assertEquals(diagnostics.length, 1);
+    assert(diagnostics[0]?.server !== undefined, "server identity was omitted");
+    assert(
+      !JSON.stringify(diagnostics[0]).includes(sensitiveValue.slice(0, 64)),
+      "diagnostic retained the prefix of a redacted sensitive value",
+    );
+    assert(
+      !JSON.stringify(diagnostics[0]).includes(sensitiveValue.slice(64)),
+      "diagnostic retained the suffix of a redacted sensitive value",
+    );
+    assertEquals(
+      diagnostics[0]?.extensions,
+      Array.from({ length: 6 }, (_, index) => `z-extension-${index}`),
+    );
+  },
+);
+
+Deno.test(
+  "diagnostics are omitted when a sensitive input exceeds the scan bound",
+  async () => {
+    const longQuery = `${"q".repeat(256)}distinct-sensitive-suffix`;
+    const diagnostics: MemorySearchDiagnostic[] = [];
+    const mcp = createMcpHandler(
+      () =>
+        fixtureServer(() => {}, {
+          version: longQuery.slice(256),
+        }),
+      { legacy: "reject" },
+    );
+    let http: LoopbackFixture | undefined;
+
+    try {
+      http = startLoopbackServer((request) => mcp.fetch(request));
+      const recall = buildMemorySearch(
+        { url: http.url, tool: FIXTURE_TOOL },
+        (diagnostic) => diagnostics.push(diagnostic),
+      );
+      await recall(longQuery);
+    } finally {
+      const cleanup = await Promise.allSettled([
+        mcp.close(),
+        http?.close() ?? Promise.resolve(),
+      ]);
+      assert(
+        cleanup.every((result) => result.status === "fulfilled"),
+        "fixture cleanup failed",
+      );
+    }
+
+    assertEquals(diagnostics, []);
+  },
+);
+
+Deno.test(
+  "diagnostics omit identifiers that collide with the redaction marker",
+  async () => {
+    const diagnostics: MemorySearchDiagnostic[] = [];
+    const mcp = createMcpHandler(
+      () =>
+        fixtureServer(() => {}, {
+          extensions: { redacted: {} },
+        }),
+      { legacy: "reject" },
+    );
+    let http: LoopbackFixture | undefined;
+
+    try {
+      http = startLoopbackServer((request) => mcp.fetch(request));
+      const recall = buildMemorySearch(
+        { url: http.url, tool: FIXTURE_TOOL },
+        (diagnostic) => diagnostics.push(diagnostic),
+      );
+      await recall("redacted");
+    } finally {
+      const cleanup = await Promise.allSettled([
+        mcp.close(),
+        http?.close() ?? Promise.resolve(),
+      ]);
+      assert(
+        cleanup.every((result) => result.status === "fulfilled"),
+        "fixture cleanup failed",
+      );
+    }
+
+    assertEquals(diagnostics.length, 1);
+    assertEquals(diagnostics[0]?.extensions, []);
+  },
+);

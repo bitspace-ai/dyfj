@@ -58,18 +58,45 @@ export type MemorySearchDiagnosticObserver = (
 
 const DIAGNOSTIC_ITEM_LIMIT = 8;
 const DIAGNOSTIC_ITEM_BYTE_LIMIT = 64;
+const DIAGNOSTIC_INPUT_CHARACTER_LIMIT = 256;
+const DIAGNOSTIC_SENSITIVE_FRAGMENT_CHARACTER_LIMIT = 16;
 const RECALL_PROBE_TIMEOUT_MS = 5_000;
 const RECALL_CALL_TIMEOUT_MS = 30_000;
 
 function boundedDiagnosticIdentifier(
   value: string,
-  sensitiveValues: readonly string[],
+  sanitizedSensitiveValues: readonly string[],
 ): string | undefined {
+  if (value.length > DIAGNOSTIC_INPUT_CHARACTER_LIMIT) return undefined;
   let redacted = sanitizedDiagnosticIdentifier(value);
-  for (const sensitive of sensitiveValues) {
-    const sanitizedSensitive = sanitizedDiagnosticIdentifier(sensitive);
-    if (sanitizedSensitive.length > 0) {
-      redacted = redacted.replaceAll(sanitizedSensitive, "redacted");
+  for (const sanitizedSensitive of sanitizedSensitiveValues) {
+    redacted = redacted.replaceAll(sanitizedSensitive, "redacted");
+  }
+  if (
+    sanitizedSensitiveValues.some((sanitizedSensitive) =>
+      redacted.includes(sanitizedSensitive)
+    )
+  ) return undefined;
+  for (const sanitizedSensitive of sanitizedSensitiveValues) {
+    if (
+      sanitizedSensitive.length <
+        DIAGNOSTIC_SENSITIVE_FRAGMENT_CHARACTER_LIMIT
+    ) continue;
+    for (
+      let offset = 0;
+      offset <=
+        sanitizedSensitive.length -
+          DIAGNOSTIC_SENSITIVE_FRAGMENT_CHARACTER_LIMIT;
+      offset++
+    ) {
+      if (
+        redacted.includes(
+          sanitizedSensitive.slice(
+            offset,
+            offset + DIAGNOSTIC_SENSITIVE_FRAGMENT_CHARACTER_LIMIT,
+          ),
+        )
+      ) return undefined;
     }
   }
   const bounded = redacted.slice(0, DIAGNOSTIC_ITEM_BYTE_LIMIT);
@@ -77,9 +104,9 @@ function boundedDiagnosticIdentifier(
 }
 
 function sanitizedDiagnosticIdentifier(value: string): string {
-  return [...value.normalize("NFKC")].map((character) =>
-    /[A-Za-z0-9._:/@+-]/.test(character) ? character : "_"
-  ).join("");
+  return [...value.normalize("NFKC")]
+    .map((character) => /[A-Za-z0-9._:/@+-]/.test(character) ? character : "_")
+    .join("");
 }
 
 interface DiagnosticClientView {
@@ -95,26 +122,52 @@ function recallDiagnostic(
   client: DiagnosticClientView,
   sensitiveValues: readonly string[],
 ): MemorySearchDiagnostic | undefined {
+  if (
+    sensitiveValues.some((value) =>
+      value.length > DIAGNOSTIC_INPUT_CHARACTER_LIMIT
+    )
+  ) return undefined;
+  const sanitizedSensitiveValues = sensitiveValues.flatMap((value) => {
+    const sanitized = sanitizedDiagnosticIdentifier(value);
+    return sanitized.length === 0 ? [] : [sanitized];
+  });
   const era = client.getProtocolEra();
   const negotiatedRevision = client.getNegotiatedProtocolVersion();
   const revision = negotiatedRevision === undefined
     ? undefined
-    : boundedDiagnosticIdentifier(negotiatedRevision, sensitiveValues);
+    : boundedDiagnosticIdentifier(
+      negotiatedRevision,
+      sanitizedSensitiveValues,
+    );
   if (era === undefined || revision === undefined) return undefined;
 
   const serverVersion = client.getServerVersion();
   const serverName = serverVersion === undefined
     ? undefined
-    : boundedDiagnosticIdentifier(serverVersion.name, sensitiveValues);
+    : boundedDiagnosticIdentifier(
+      serverVersion.name,
+      sanitizedSensitiveValues,
+    );
   const serverRevision = serverVersion === undefined
     ? undefined
-    : boundedDiagnosticIdentifier(serverVersion.version, sensitiveValues);
-  const extensions = Object.keys(
-    client.getServerCapabilities()?.extensions ?? {},
-  ).sort().flatMap((identifier) => {
-    const bounded = boundedDiagnosticIdentifier(identifier, sensitiveValues);
-    return bounded === undefined ? [] : [bounded];
-  }).slice(0, DIAGNOSTIC_ITEM_LIMIT);
+    : boundedDiagnosticIdentifier(
+      serverVersion.version,
+      sanitizedSensitiveValues,
+    );
+  const extensions: string[] = [];
+  const serverExtensions = client.getServerCapabilities()?.extensions ?? {};
+  let attemptedExtensions = 0;
+  for (const identifier in serverExtensions) {
+    if (attemptedExtensions === DIAGNOSTIC_ITEM_LIMIT) break;
+    attemptedExtensions++;
+    if (!Object.hasOwn(serverExtensions, identifier)) continue;
+    const bounded = boundedDiagnosticIdentifier(
+      identifier,
+      sanitizedSensitiveValues,
+    );
+    if (bounded !== undefined) extensions.push(bounded);
+  }
+  extensions.sort();
 
   return {
     era,
