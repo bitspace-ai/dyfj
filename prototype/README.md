@@ -161,7 +161,9 @@ lanes in addition to this prototype unit suite. It owns a temporary Dolt
 repository and SQL server, with cleanup on normal completion and handled
 failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane
 process receives SIGTERM followed by a bounded wait and possible SIGKILL. The
-Rust tracer test retains
+prototype and root test tasks resolve the selected Deno executable once per
+entrypoint and reuse that absolute command identity in nested run grants.
+The Rust tracer test retains
 its manual-run `.env` loader, but the fixture's explicit `DATABASE_URL` takes
 precedence, so the lane does not use an operator database.
 

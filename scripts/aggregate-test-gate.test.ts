@@ -1,11 +1,13 @@
 import { testSourcesFromPaths } from "../prototype/scripts/check-test-files.ts";
 import { assertIntegrationTestAssignments } from "../prototype/scripts/integration-test-assignment.ts";
 import { integrationChildEnvironment } from "../prototype/scripts/integration-child-environment.ts";
+import { DENO_EXECUTABLE_DIAGNOSTIC } from "../prototype/scripts/deno-executable.ts";
 import {
   type GateLane,
   productionLanes,
   runGate,
 } from "./aggregate-test-gate.ts";
+import { fileURLToPath } from "node:url";
 
 function assertEquals<T>(actual: T, expected: T): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -71,10 +73,17 @@ Deno.test("integration tests must have an explicit lane assignment", () => {
   );
 });
 
+Deno.test("aggregate gate source does not advertise a stale direct entrypoint", async () => {
+  const source = await Deno.readTextFile("scripts/aggregate-test-gate.ts");
+  if (source.startsWith("#!")) {
+    throw new Error("aggregate gate retained a direct-execution shebang");
+  }
+});
+
 Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", () => {
-  const lane = productionLanes("/repo").find((candidate) =>
-    candidate.label === "Isolated Dolt integration lane"
-  );
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "Isolated Dolt integration lane");
   if (!lane) throw new Error("isolated Dolt integration lane is missing");
   assertStringIncludes(lane.args.join(" "), "CARGO_HOME");
   assertStringIncludes(lane.args.join(" "), "RUSTUP_HOME");
@@ -96,6 +105,134 @@ Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", (
   );
 });
 
+Deno.test("aggregate lanes use one selected Deno command and grant identity", () => {
+  const selected = "/fixtures/runtime/deno";
+  const lanes = productionLanes("/repo", selected);
+  const denoLanes = lanes.filter((lane) => lane.commandLabel === "deno");
+  if (denoLanes.length === 0) throw new Error("no Deno lanes found");
+  for (const lane of denoLanes) {
+    assertEquals(lane.command, selected);
+    if (lane.args.some((argument) => argument.includes("--allow-run=deno"))) {
+      throw new Error(`${lane.label} retained a name-only Deno grant`);
+    }
+  }
+  for (
+    const label of [
+      "Aggregate gate orchestration tests",
+      "Prototype unit Vitest suite",
+      "Isolated Dolt integration lane",
+    ]
+  ) {
+    const lane = denoLanes.find((candidate) => candidate.label === label);
+    if (!lane) throw new Error(`${label} is missing`);
+    const runGrant = lane.args.find((argument) =>
+      argument.startsWith("--allow-run=")
+    );
+    if (!runGrant) throw new Error(`${label} has no run grant`);
+    const granted = runGrant.slice("--allow-run=".length).split(",");
+    if (!granted.includes(selected)) {
+      throw new Error(`${label} does not grant the selected Deno executable`);
+    }
+  }
+});
+
+Deno.test("the focused Vitest launcher runs through direct selected Deno", async () => {
+  await assertVitestLauncherRuns(Deno.execPath());
+});
+
+Deno.test({
+  name: "the focused Vitest launcher runs through symlink-selected Deno",
+  ignore: Deno.build.os === "windows",
+  async fn() {
+    const directory = await Deno.makeTempDir({
+      prefix: "dyfj-deno-authority-",
+    });
+    const selected = `${directory}/selected-runtime`;
+    try {
+      const linked = await new Deno.Command("ln", {
+        args: ["-s", Deno.execPath(), selected],
+        stdout: "null",
+        stderr: "piped",
+      }).output();
+      if (!linked.success) {
+        throw new Error(
+          `synthetic symlink setup failed (${linked.code}): ${
+            new TextDecoder().decode(linked.stderr)
+          }`,
+        );
+      }
+      await assertVitestLauncherRuns(selected);
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
+  },
+});
+
+Deno.test("Deno executable selector CLI has fixed success and failure output", async () => {
+  const script = "prototype/scripts/deno-executable.ts";
+  const success = await new Deno.Command(Deno.execPath(), {
+    args: ["run", script],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(success.code, 0);
+  assertEquals(
+    new TextDecoder().decode(success.stdout),
+    `${Deno.execPath()}\n`,
+  );
+  assertEquals(new TextDecoder().decode(success.stderr), "");
+
+  const failure = await new Deno.Command(Deno.execPath(), {
+    args: ["run", script, "/fixtures/other/deno"],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(failure.code, 64);
+  assertEquals(new TextDecoder().decode(failure.stdout), "");
+  assertEquals(
+    new TextDecoder().decode(failure.stderr),
+    `${DENO_EXECUTABLE_DIAGNOSTIC}\n`,
+  );
+});
+
+Deno.test("an unselected executable remains denied", () => {
+  const unselected = fileURLToPath(
+    new URL("synthetic-unselected-runtime", import.meta.url),
+  );
+  try {
+    new Deno.Command(unselected).outputSync();
+  } catch (error) {
+    if (error instanceof Deno.errors.NotCapable) return;
+    throw error;
+  }
+  throw new Error("unselected executable unexpectedly ran");
+});
+
+async function assertVitestLauncherRuns(selected: string): Promise<void> {
+  const prototypeRoot = fileURLToPath(new URL("../prototype", import.meta.url));
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--allow-env",
+      "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
+      `--allow-run=${selected}`,
+      "scripts/run-vitest.ts",
+      "--version",
+    ],
+    cwd: prototypeRoot,
+    env: { DENO_BIN: selected },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (result.code !== 0) {
+    throw new Error(
+      `focused Vitest launcher failed (${result.code}): ${
+        new TextDecoder().decode(result.stderr)
+      }`,
+    );
+  }
+}
+
 Deno.test("aggregate lane children do not inherit unrelated environment", async () => {
   const sentinel = "DYFJ_AGGREGATE_SENTINEL";
   const prior = Deno.env.get(sentinel);
@@ -106,7 +243,7 @@ Deno.test("aggregate lane children do not inherit unrelated environment", async 
     const code = await runGate({
       lanes: [{
         label: "environment lane",
-        command: "deno",
+        command: Deno.execPath(),
         args: [
           "eval",
           `if (Deno.env.get(${
@@ -129,11 +266,19 @@ Deno.test("aggregate gate fails fast when a required lane fails", async () => {
   const logs: string[] = [];
   const errors: string[] = [];
   const lanes: GateLane[] = [
-    { label: "ok lane", command: "deno", args: ["eval", "Deno.exit(0)"] },
-    { label: "broken lane", command: "deno", args: ["eval", "Deno.exit(12)"] },
+    {
+      label: "ok lane",
+      command: Deno.execPath(),
+      args: ["eval", "Deno.exit(0)"],
+    },
+    {
+      label: "broken lane",
+      command: Deno.execPath(),
+      args: ["eval", "Deno.exit(12)"],
+    },
     {
       label: "must not run",
-      command: "deno",
+      command: Deno.execPath(),
       args: ["eval", "console.log('ran')"],
     },
   ];
@@ -171,7 +316,7 @@ Deno.test("aggregate gate stops its active lane on interruption", async () => {
         lanes: [
           {
             label: "slow lane",
-            command: "deno",
+            command: Deno.execPath(),
             args: [
               "eval",
               "await new Promise((resolve) => setTimeout(resolve, 5_000))",
@@ -179,7 +324,7 @@ Deno.test("aggregate gate stops its active lane on interruption", async () => {
           },
           {
             label: "must not run",
-            command: "deno",
+            command: Deno.execPath(),
             args: ["eval", "console.log('ran')"],
           },
         ],
@@ -207,7 +352,7 @@ Deno.test("aggregate gate reports an interrupt after its final lane", async () =
     signal: abortController.signal,
     lanes: [{
       label: "final lane",
-      command: "deno",
+      command: Deno.execPath(),
       args: ["eval", "Deno.exit(0)"],
     }],
     out: {

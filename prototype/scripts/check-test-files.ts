@@ -1,4 +1,5 @@
 import { assertIntegrationTestAssignments } from "./integration-test-assignment.ts";
+import { selectedDenoExecutable } from "./deno-executable.ts";
 
 const ignoredDirectories = new Set([".git", ".vitest-tmp", "node_modules"]);
 const vitestTestSourcePattern = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -37,7 +38,7 @@ if (import.meta.main) {
   const files = await discoverTestSources(root);
   if (files.length === 0) throw new Error("no test files found");
   assertIntegrationTestAssignments(files.map((file) => relativeTo(root, file)));
-  const output = await new Deno.Command("deno", {
+  const output = await new Deno.Command(selectedDenoExecutable(), {
     args: ["check", "--sloppy-imports", ...files],
     cwd: root,
     clearEnv: true,

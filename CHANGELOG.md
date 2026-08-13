@@ -16,6 +16,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- The canonical test tasks now resolve the selected Deno executable once and use that same absolute path for nested commands and their narrow `--allow-run` grants. Package-manager symlinks and direct executable selections no longer fail before Vitest with a path-identity permission mismatch, while unrelated executables remain denied and unsafe selections fail with a fixed diagnostic.
+
 - Streamable HTTP memory-recall negotiation diagnostics now travel as a dedicated structured runtime event and render on streaming HTTP and Unix-socket clients. The transport servers remain silent by default, so surfacing the bounded era, revision, server identity, and extension identifiers does not enable general runtime narration. A loopback-only strict-modern fixture provides an operator UAT path without an external memory, credential, or private query/result logging.
 
 - ACP protocol-message containment is now resolved from the execution profile before stream construction. Ordinary profiles retain the 384 KiB newline-delimited message ceiling, while the bounded Codex ChatGPT profile permits newline-delimited messages up to 1 MiB each. Either ceiling fails closed with a specific client diagnostic; the independent 16 MiB cumulative input, 60,000-byte agent-response, session-update, permission, timeout, cancellation, and process-cleanup bounds are unchanged.

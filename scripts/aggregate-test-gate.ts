@@ -1,7 +1,9 @@
-#!/usr/bin/env -S deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME --allow-read=. --allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders --allow-run=deno,cargo,dolt --allow-net=127.0.0.1
+import { selectedDenoExecutable } from "../prototype/scripts/deno-executable.ts";
+
 export interface GateLane {
   label: string;
   command: string;
+  commandLabel?: string;
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
@@ -23,7 +25,7 @@ const inheritedEnvironmentNames = [
 const laneShutdownTimeoutMs = 10_000;
 
 function formatCommand(lane: GateLane): string {
-  return [lane.command, ...lane.args].join(" ");
+  return [lane.commandLabel ?? lane.command, ...lane.args].join(" ");
 }
 
 function safeEnvironment(): Record<string, string> {
@@ -94,25 +96,31 @@ async function statusOrAbort(
   return { aborted: true };
 }
 
-export function productionLanes(root = Deno.cwd()): GateLane[] {
+export function productionLanes(
+  root = Deno.cwd(),
+  denoExecutable = selectedDenoExecutable(),
+): GateLane[] {
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
   return [
     {
       label: "Aggregate gate orchestration tests",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: [
         "test",
         "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DYFJ_AGGREGATE_SENTINEL",
         "--allow-read=.",
-        "--allow-run=deno",
+        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
+        `--allow-run=${denoExecutable},ln`,
         "scripts/aggregate-test-gate.test.ts",
       ],
       cwd: root,
     },
     {
       label: "Prototype source typecheck",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: [
         "check",
         "--sloppy-imports",
@@ -128,6 +136,7 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
         "mcp/server.ts",
         "src/cli.ts",
         "scripts/esbuild-binary.ts",
+        "scripts/deno-executable.ts",
         "scripts/integration-child-environment.ts",
         "scripts/run-vitest.ts",
         "scripts/isolated-dolt-fixture.ts",
@@ -137,18 +146,21 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
     },
     {
       label: "Prototype test-file typecheck",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: ["task", "check:tests"],
       cwd: prototype,
+      env: { DENO_BIN: denoExecutable },
     },
     {
       label: "Prototype unit Vitest suite",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: [
         "run",
         "--allow-env",
         "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-run=deno",
+        `--allow-run=${denoExecutable}`,
         "scripts/run-vitest.ts",
         "run",
         "--root",
@@ -158,17 +170,19 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
         "**/*.integration.{test,spec}.?(c|m)[jt]s?(x)",
       ],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
     {
       label: "Schema unit tests",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: ["test", "--allow-read=schema", "schema/validate-schema.test.ts"],
       cwd: root,
     },
     {
       label: "Current-schema apply validation",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: [
         "run",
         "--allow-read=schema",
@@ -181,7 +195,8 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
     },
     {
       label: "Historical replay plus forward-migration validation",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: [
         "run",
         "--allow-read=schema",
@@ -201,18 +216,19 @@ export function productionLanes(root = Deno.cwd()): GateLane[] {
     },
     {
       label: "Isolated Dolt integration lane",
-      command: "deno",
+      command: denoExecutable,
+      commandLabel: "deno",
       args: [
         "run",
         "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DYFJ_ROOT",
         "--allow-read=.,..",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
-        "--allow-run=deno,dolt,cargo",
+        `--allow-run=${denoExecutable},dolt,cargo`,
         "--allow-net=127.0.0.1",
         "scripts/isolated-dolt-integration.ts",
       ],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
   ];
 }

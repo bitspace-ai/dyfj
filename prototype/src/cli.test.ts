@@ -3038,6 +3038,9 @@ describe("runtime lifecycle commands", () => {
     expect(parsed.permissions["test"].run).toContain("/bin/bash");
     const vitestRunner = await Deno.readTextFile("scripts/run-vitest.ts");
     expect(vitestRunner).toContain(
+      "--allow-run=bash,/bin/bash,${denoExecutable},/bin/kill,/bin/sh",
+    );
+    expect(vitestRunner).not.toContain(
       "--allow-run=bash,/bin/bash,deno,/bin/kill,/bin/sh",
     );
     expect(parsed.permissions["serve-unix"].env).toContain("NODE_V8_COVERAGE");
