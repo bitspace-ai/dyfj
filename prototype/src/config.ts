@@ -28,8 +28,8 @@
  *
  * The TOML parser (@std/toml) is imported lazily: the module must load under the
  * node-based test runner, which can't resolve Deno jsr specifiers — and the
- * parser only runs when a real config file is read under Deno. Tests inject a
- * parser, so they exercise the precedence/validation logic without it.
+ * parser only runs when a real config file is read under Deno. Node-runner
+ * tests inject a parser; a Deno integration test covers the real TOML parser.
  *
  * `WorkbenchConfig` + `loadConfig` thread the daily-driver engine defaults that
  * carry a config-file layer today (companion model, permission level). The budget
@@ -328,6 +328,25 @@ export interface WorkbenchConfig {
   maxToolSteps: number;
 }
 
+export type McpMinimumClearance = "loopback" | "remote";
+export type McpConfiguredToolEffect = "read" | "write_external";
+export type McpConfiguredToolApproval = "allow" | "ask";
+
+export interface McpConfiguredTool {
+  name: string;
+  effect: McpConfiguredToolEffect;
+  approval: McpConfiguredToolApproval;
+}
+
+export interface McpHttpServerConfig {
+  id: string;
+  transport: "streamable_http";
+  url: string;
+  minimumClearance: McpMinimumClearance;
+  auth: { type: "bearer"; secret: string };
+  tools: McpConfiguredTool[];
+}
+
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultCompanionModel: null,
   permissionLevel: "strict",
@@ -540,6 +559,7 @@ export async function loadConfig(
 
 /** Default resolver timeout: a locked/unavailable pointer degrades, not hangs. */
 export const DEFAULT_SECRET_TIMEOUT_MS = 10_000;
+const MAX_NAMED_SECRETS = 64;
 
 /**
  * Env names `[secrets.env]` may NOT set: overriding these would either break the
@@ -581,6 +601,8 @@ export interface SecretsConfig {
   timeoutMs: number;
   /** envVar → pointer string, restricted to declared secret env vars. */
   pointers: Readonly<Record<string, string>>;
+  /** Logical secret id → pointer, resolved into a private in-memory map. */
+  named?: Readonly<Record<string, string>>;
   /**
    * NON-secret env vars set only on the spawned resolver command, on top of the
    * minimal isolated base. A plaintext surface — a real secret must not live
@@ -627,6 +649,7 @@ export function parseSecretsConfig(
     "command",
     "timeout_ms",
     "pointers",
+    "named",
     "env",
     "inherit_env",
   ]);
@@ -634,7 +657,7 @@ export function parseSecretsConfig(
     if (!SECRETS_KEYS.has(key)) {
       throw new Error(
         `config: [secrets].${key} is not a recognized key (expected: command, ` +
-          `timeout_ms, pointers, env, inherit_env) in ${where}`,
+          `timeout_ms, pointers, named, env, inherit_env) in ${where}`,
       );
     }
   }
@@ -697,6 +720,36 @@ export function parseSecretsConfig(
         );
       }
       pointers[envVar] = ptr;
+    }
+  }
+
+  const named: Record<string, string> = {};
+  const rawNamed = section["named"];
+  if (rawNamed !== undefined) {
+    if (
+      typeof rawNamed !== "object" || rawNamed === null ||
+      Array.isArray(rawNamed)
+    ) {
+      throw new Error(`config: [secrets.named] must be a table in ${where}`);
+    }
+    const entries = Object.entries(rawNamed as Record<string, unknown>);
+    if (entries.length > MAX_NAMED_SECRETS) {
+      throw new Error(
+        `config: [secrets.named] exceeds ${MAX_NAMED_SECRETS} entries in ${where}`,
+      );
+    }
+    for (const [name, pointer] of entries) {
+      if (!/^[a-z][a-z0-9_]{0,63}$/.test(name)) {
+        throw new Error(
+          `config: [secrets.named] contains an invalid logical secret name in ${where}`,
+        );
+      }
+      if (typeof pointer !== "string" || pointer.length === 0) {
+        throw new Error(
+          `config: [secrets.named].${name} must be a non-empty string pointer (${where})`,
+        );
+      }
+      named[name] = pointer;
     }
   }
 
@@ -792,7 +845,208 @@ export function parseSecretsConfig(
     }
   }
 
-  return { command, timeoutMs, pointers, env, inheritEnv };
+  return { command, timeoutMs, pointers, named, env, inheritEnv };
+}
+
+const MCP_SERVER_ID = /^[a-z][a-z0-9_-]{0,31}$/;
+const MCP_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MCP_SECRET_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+const MAX_MCP_SERVERS = 8;
+const MAX_MCP_TOOLS_PER_SERVER = 32;
+
+function assertSecureMcpServerUrl(value: unknown, where: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(
+      `config: MCP server url must be a non-empty string in ${where}`,
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`config: MCP server url is not a valid URL in ${where}`);
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error(
+      `config: MCP server url must not include credentials in ${where}`,
+    );
+  }
+  if (parsed.hostname.includes(",")) {
+    throw new Error(
+      `config: MCP server hostname must not contain a comma in ${where}`,
+    );
+  }
+  const loopback = parsed.hostname === "::1" || parsed.hostname === "[::1]" ||
+    /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(parsed.hostname);
+  if (
+    parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)
+  ) {
+    throw new Error(
+      `config: MCP server url must use https (plain http is allowed only for loopback) in ${where}`,
+    );
+  }
+  return value;
+}
+
+function exactObject(
+  value: unknown,
+  label: string,
+  keys: readonly string[],
+  where: string,
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`config: ${label} must be a table in ${where}`);
+  }
+  const object = value as Record<string, unknown>;
+  const allowed = new Set(keys);
+  for (const key of Object.keys(object)) {
+    if (!allowed.has(key)) {
+      throw new Error(`config: ${label}.${key} is not recognized in ${where}`);
+    }
+  }
+  return object;
+}
+
+/** Parse the bounded HTTP-only external MCP capability declaration. */
+export function parseMcpServersConfig(
+  table: Record<string, unknown> | null,
+  path: string,
+  secrets?: SecretsConfig | null,
+): McpHttpServerConfig[] {
+  if (table === null || table.mcp === undefined) return [];
+  const where = configLabel(path);
+  const mcp = exactObject(table.mcp, "[mcp]", ["servers"], where);
+  const rawServers = mcp.servers;
+  if (!Array.isArray(rawServers)) {
+    throw new Error(
+      `config: [mcp].servers must be an array of tables in ${where}`,
+    );
+  }
+  if (rawServers.length > MAX_MCP_SERVERS) {
+    throw new Error(
+      `config: [mcp].servers exceeds ${MAX_MCP_SERVERS} entries in ${where}`,
+    );
+  }
+  const ids = new Set<string>();
+  const configured: McpHttpServerConfig[] = [];
+  for (const rawServer of rawServers) {
+    const server = exactObject(
+      rawServer,
+      "[[mcp.servers]]",
+      ["id", "transport", "url", "minimum_clearance", "auth", "tools"],
+      where,
+    );
+    if (typeof server.id !== "string" || !MCP_SERVER_ID.test(server.id)) {
+      throw new Error(
+        `config: MCP server id must match ${MCP_SERVER_ID} in ${where}`,
+      );
+    }
+    if (ids.has(server.id)) {
+      throw new Error(`config: duplicate MCP server id in ${where}`);
+    }
+    ids.add(server.id);
+    if (server.transport !== "streamable_http") {
+      throw new Error(
+        `config: MCP transport must be streamable_http in ${where}`,
+      );
+    }
+    const url = assertSecureMcpServerUrl(server.url, where);
+    if (
+      server.minimum_clearance !== "loopback" &&
+      server.minimum_clearance !== "remote"
+    ) {
+      throw new Error(
+        `config: MCP minimum_clearance must be loopback or remote in ${where}`,
+      );
+    }
+    const auth = exactObject(
+      server.auth,
+      "[[mcp.servers]].auth",
+      ["type", "secret"],
+      where,
+    );
+    if (auth.type !== "bearer") {
+      throw new Error(`config: MCP auth type must be bearer in ${where}`);
+    }
+    if (typeof auth.secret !== "string" || !MCP_SECRET_NAME.test(auth.secret)) {
+      throw new Error(
+        `config: MCP auth secret must name [secrets.named] in ${where}`,
+      );
+    }
+    if (
+      secrets !== undefined && !Object.hasOwn(secrets?.named ?? {}, auth.secret)
+    ) {
+      throw new Error(
+        `config: MCP auth secret ${auth.secret} is not declared in [secrets.named] in ${where}`,
+      );
+    }
+    if (!Array.isArray(server.tools) || server.tools.length === 0) {
+      throw new Error(`config: MCP tools must be a non-empty array in ${where}`);
+    }
+    if (server.tools.length > MAX_MCP_TOOLS_PER_SERVER) {
+      throw new Error(
+        `config: MCP tools exceed ${MAX_MCP_TOOLS_PER_SERVER} entries in ${where}`,
+      );
+    }
+    const toolNames = new Set<string>();
+    const tools: McpConfiguredTool[] = [];
+    for (const rawTool of server.tools) {
+      const tool = exactObject(
+        rawTool,
+        "[[mcp.servers.tools]]",
+        ["name", "effect", "approval"],
+        where,
+      );
+      if (typeof tool.name !== "string" || !MCP_TOOL_NAME.test(tool.name)) {
+        throw new Error(`config: MCP tool name is invalid in ${where}`);
+      }
+      if (toolNames.has(tool.name)) {
+        throw new Error(`config: duplicate MCP tool name in ${where}`);
+      }
+      toolNames.add(tool.name);
+      if (tool.effect !== "read" && tool.effect !== "write_external") {
+        throw new Error(
+          `config: MCP tool effect must be read or write_external in ${where}`,
+        );
+      }
+      if (tool.approval !== "allow" && tool.approval !== "ask") {
+        throw new Error(
+          `config: MCP tool approval must be allow or ask in ${where}`,
+        );
+      }
+      if (tool.effect === "write_external" && tool.approval !== "ask") {
+        throw new Error(
+          `config: MCP write_external tools must use approval ask in ${where}`,
+        );
+      }
+      tools.push({
+        name: tool.name,
+        effect: tool.effect,
+        approval: tool.approval,
+      });
+    }
+    configured.push({
+      id: server.id,
+      transport: "streamable_http",
+      url,
+      minimumClearance: server.minimum_clearance,
+      auth: { type: "bearer", secret: auth.secret },
+      tools,
+    });
+  }
+  return configured;
+}
+
+export async function loadMcpServersConfig(
+  deps: LoadConfigDeps = {},
+  secrets?: SecretsConfig | null,
+): Promise<McpHttpServerConfig[]> {
+  const env = deps.env ?? Deno.env;
+  const readTextFile = deps.readTextFile ?? Deno.readTextFile;
+  const parseToml = deps.parseToml ?? defaultParseToml;
+  const path = configFilePath(env);
+  const table = await readConfigFile(path, readTextFile, parseToml);
+  return parseMcpServersConfig(table, path, secrets);
 }
 
 /**

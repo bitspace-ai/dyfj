@@ -19,8 +19,10 @@ export type PrincipalType = "human" | "agent" | "service";
 export type PolicyDecision = "allow" | "ask" | "deny";
 export type CommandEffect =
   | "read.memory"
+  | "read.external"
   | "read.filesystem"
   | "write.filesystem"
+  | "write.external"
   | "run.checks"
   | "run.process"
   | "call.model.local"
@@ -47,9 +49,14 @@ export type JsonSchemaObject = {
 };
 
 export type JsonSchemaProperty = {
-  type: "string" | "number" | "boolean" | "object" | "array";
+  type: "string" | "number" | "integer" | "boolean" | "object" | "array";
   pattern?: string;
   description?: string;
+  required?: string[];
+  properties?: Record<string, JsonSchemaProperty>;
+  additionalProperties?: boolean;
+  items?: JsonSchemaProperty;
+  enum?: Array<string | number | boolean | null>;
   /**
    * Mark a payload-bearing argument (e.g. write_file `content`) sensitive: it is
    * replaced with a constant redaction sentinel before the tool-call event is
@@ -66,7 +73,7 @@ export interface PermissionEnvelope {
   // "recall": read-only egress to an operator-configured, fixed external memory
   // endpoint (the model picks the query, not the destination). Auto-allowed
   // without a per-call prompt — distinct from arbitrary "external" egress.
-  network?: "none" | "local" | "external" | "recall";
+  network?: "none" | "local" | "external" | "configured-external" | "recall";
   filesystem?: "none" | "read" | "write";
   cost?: "none" | "local" | "paid";
 }
@@ -109,6 +116,12 @@ export interface CommandDefinition<TResult = unknown> {
    * would otherwise persist into session/event history (CWE-532).
    */
   redactResult?: boolean;
+  /** Redact schema-declared argument values; undeclared keys are omitted. */
+  redactArguments?: boolean;
+  /** Minimum transport clearance required before this command is registered. */
+  minimumClearance?: "loopback" | "remote";
+  /** Optional bounded public-safe event content for protocol-backed tools. */
+  eventContent?: (isError: boolean) => string;
   /** OpenTelemetry span kind when this command crosses a protocol boundary. */
   spanKind?: "client" | "server" | "producer" | "consumer" | "internal";
   executor: (
@@ -141,6 +154,12 @@ export type CommandInvocationResult<TResult = unknown> =
     authzBasis: string;
     isError: false;
     result: TResult;
+  }
+  | {
+    decision: "allow";
+    authzBasis: string;
+    isError: true;
+    reason: string;
   }
   | {
     decision: "ask" | "deny";
@@ -178,6 +197,13 @@ const denyToolApproval: ConfirmToolApproval = () =>
     decision: "deny",
     reason: "tool approval is unavailable on this transport",
   });
+
+export class CommandExecutionError extends Error {
+  constructor(public readonly publicReason: string) {
+    super(publicReason);
+    this.name = "CommandExecutionError";
+  }
+}
 
 export interface CoreCommandDependencies {
   readMemory?: (slug: string) => Promise<string> | string;
@@ -272,6 +298,20 @@ export function evaluateCommandPolicy(
         call.arguments,
         validationError,
       ),
+    };
+  }
+
+  if (
+    command.permission.network === "configured-external" &&
+    command.permission.defaultDecision === "allow" &&
+    command.permission.effects.includes("read.external") &&
+    !command.permission.effects.includes("write.external") &&
+    command.permission.filesystem === "none" &&
+    command.permission.cost === "none"
+  ) {
+    return {
+      decision: "allow",
+      authzBasis: "policy:allow:operator-configured-external-read",
     };
   }
 
@@ -400,10 +440,23 @@ export async function invokeCommand<TResult = unknown>(
     authzBasis = "policy:allow:operator-approved";
   }
 
-  const result = await command.executor(call, {
-    authzBasis,
-    ...executionContext,
-  });
+  let result: TResult;
+  try {
+    result = await command.executor(call, {
+      authzBasis,
+      ...executionContext,
+    });
+  } catch (error) {
+    if (error instanceof CommandExecutionError) {
+      return {
+        decision: "allow",
+        authzBasis,
+        isError: true,
+        reason: error.publicReason,
+      };
+    }
+    throw error;
+  }
   return {
     decision: "allow",
     authzBasis,
@@ -870,14 +923,24 @@ const REDACTED = "[redacted]";
  * constant sentinel — REGARDLESS of the runtime value's type — so payload-bearing
  * values (write_file content) never reach the durable event log or session replay
  * (CWE-532), including for malformed (non-string) values and denied
- * calls (which are still logged). Returns the original object untouched when
- * nothing is redacted, so non-mutating tools are unaffected. Centralized here so
- * every future mutating tool inherits it.
+ * calls (which are still logged). Whole-call redaction retains only schema-declared
+ * keys, because an undeclared caller-controlled key can itself carry sensitive
+ * content. Returns the original object untouched when nothing is redacted, so
+ * non-mutating tools are unaffected. Centralized here so tools that opt into
+ * either redaction mode share one durable-event boundary.
  */
 export function redactCommandArguments(
   command: CommandDefinition | undefined,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
+  if (command?.redactArguments === true) {
+    const properties = command.inputSchema.properties ?? {};
+    return Object.fromEntries(
+      Object.keys(args)
+        .filter((key) => Object.hasOwn(properties, key))
+        .map((key) => [key, REDACTED]),
+    );
+  }
   const properties = command?.inputSchema.properties ?? {};
   let redactedAny = false;
   const out: Record<string, unknown> = {};
@@ -980,7 +1043,7 @@ export function buildCommandToolCallEventPayload(
       }),
     principal_id: call.caller.principalId,
     principal_type: call.caller.principalType,
-    action: isError ? "deny" : "invoke",
+    action: result.decision === "allow" ? "invoke" : "deny",
     resource: `command:${call.commandId}`,
     authz_basis: result.authzBasis,
     tool_name: call.commandId,
@@ -989,7 +1052,9 @@ export function buildCommandToolCallEventPayload(
     tool_result: truncateForEventColumn(resultText),
     tool_is_error: isError,
     content: isError
-      ? `${call.commandId} denied: ${result.reason}`
+      ? result.decision === "allow"
+        ? `${call.commandId} failed: ${result.reason}`
+        : `${call.commandId} denied: ${result.reason}`
       : `${call.commandId} allowed`,
     duration_ms: context.durationMs ?? null,
   };
@@ -1023,6 +1088,9 @@ export async function invokeCommandWithEvent<TResult = unknown>(
     command?.redactResult ?? false,
     command?.spanKind,
   );
+  if (command?.eventContent !== undefined) {
+    event.content = command.eventContent(result.isError);
+  }
   await (context.writeEvent ?? writeDoltEvent)(event);
   return result;
 }
@@ -1128,19 +1196,78 @@ function validateCommandArguments(
 
   for (const [field, property] of Object.entries(properties)) {
     if (!Object.hasOwn(args, field)) continue;
-    const value = args[field];
-    if (typeof value !== property.type) {
-      return `${field} must be a ${property.type}`;
-    }
-    if (
-      property.type === "string" &&
-      property.pattern &&
-      !new RegExp(property.pattern).test(String(value))
-    ) {
-      return `${field} does not match required pattern`;
-    }
+    const error = validateCommandArgumentValue(property, args[field], field);
+    if (error !== null) return error;
   }
 
+  return null;
+}
+
+function validateCommandArgumentValue(
+  property: JsonSchemaProperty,
+  value: unknown,
+  field: string,
+): string | null {
+  const actualType = Array.isArray(value)
+    ? "array"
+    : value === null
+    ? "null"
+    : typeof value;
+  if (property.type === "integer") {
+    if (actualType !== "number" || !Number.isInteger(value)) {
+      return `${field} must be an integer`;
+    }
+  } else if (actualType !== property.type) {
+    return `${field} must be a ${property.type}`;
+  }
+  if (
+    property.enum !== undefined &&
+    !property.enum.some((candidate) => Object.is(candidate, value))
+  ) {
+    return `${field} must be one of the declared values`;
+  }
+  if (
+    property.type === "string" &&
+    property.pattern &&
+    !new RegExp(property.pattern).test(String(value))
+  ) {
+    return `${field} does not match required pattern`;
+  }
+  if (property.type === "array" && property.items !== undefined) {
+    for (let index = 0; index < (value as unknown[]).length; index++) {
+      const error = validateCommandArgumentValue(
+        property.items,
+        (value as unknown[])[index],
+        `${field}[${index}]`,
+      );
+      if (error !== null) return error;
+    }
+  }
+  if (property.type === "object") {
+    const object = value as Record<string, unknown>;
+    const properties = property.properties ?? {};
+    for (const required of property.required ?? []) {
+      if (!Object.hasOwn(object, required)) {
+        return `${field}.${required} is required`;
+      }
+    }
+    if (property.additionalProperties === false) {
+      for (const key of Object.keys(object)) {
+        if (!Object.hasOwn(properties, key)) {
+          return `${field} has an unexpected property`;
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(properties)) {
+      if (!Object.hasOwn(object, key)) continue;
+      const error = validateCommandArgumentValue(
+        child,
+        object[key],
+        `${field}.${key}`,
+      );
+      if (error !== null) return error;
+    }
+  }
   return null;
 }
 

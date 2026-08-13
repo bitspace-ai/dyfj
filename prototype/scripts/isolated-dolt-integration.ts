@@ -142,6 +142,7 @@ try {
   ], { cwd: prototypeRoot, env, signal: abortController.signal });
   await runChecked(denoExecutable, [
     "test",
+    "--sloppy-imports",
     "--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR",
     `--allow-read=.,${mcpTestTempDir}`,
     `--allow-write=${mcpTestTempDir}`,

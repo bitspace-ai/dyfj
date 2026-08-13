@@ -19,7 +19,7 @@ import {
   buildConversationMessages,
   type WorkbenchSessionEvent,
 } from "./sessions";
-import type { ConfirmToolApproval } from "./commands";
+import type { CommandDefinition, ConfirmToolApproval } from "./commands";
 import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget";
 import type { PermissionLevel, WorkbenchConfig } from "./config";
 
@@ -362,6 +362,7 @@ export interface ExecuteTurnDeps {
    * duplex round-trip; HTTP omits it, so the runtime defaults to deny.
    */
   confirmToolApproval?: ConfirmToolApproval;
+  externalMcpCommands?: readonly CommandDefinition[];
   /**
    * ACP permission-option selector. Kept distinct from binary tool approval so
    * the operator's exact protocol option survives the transport round-trip.
@@ -531,6 +532,7 @@ function runExecuteTurn(
     // mutating tools run only after operator approval; the transport
     // supplies the approver (UDS = duplex round-trip), else the runtime denies.
     confirmToolApproval: deps.confirmToolApproval,
+    externalMcpCommands: deps.externalMcpCommands,
     confirmExternalAgentPermission: deps.confirmExternalAgentPermission,
     // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
     confirmBudgetCeiling: deps.confirmBudgetCeiling,

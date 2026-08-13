@@ -195,6 +195,67 @@ ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
   op run -- dyfj start
 ```
 
+### Configured external MCP tools
+
+The daily-driver runtime can expose an exact allowlist of tools from configured
+MCP Streamable HTTP servers. This first client surface pins MCP revision
+`2026-07-28`; it does not add stdio servers, OAuth, resources, or prompts. Use
+HTTPS endpoints. Cleartext HTTP is accepted only for loopback IP literals, and
+URL-embedded credentials are refused; `localhost` is not address-pinned and
+therefore still requires HTTPS.
+
+Declare a dedicated bearer credential by logical name under `[secrets.named]`.
+The resolver returns that credential to an in-memory map; Workbench does not add
+it to the runtime environment. The table accepts at most 64 entries; after one
+successful session probe, at most eight follower resolver subprocesses run at
+once. Then declare the server and each tool by its exact server-reported name:
+
+```toml
+[secrets]
+command = ["op", "read"]
+
+[secrets.named]
+records_mcp = "op://<vault>/<item>/credential"
+
+[[mcp.servers]]
+id = "records"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+minimum_clearance = "loopback"
+auth = { type = "bearer", secret = "records_mcp" }
+tools = [
+  { name = "read_record", effect = "read", approval = "allow" },
+  { name = "create_record_comment", effect = "write_external", approval = "ask" },
+]
+```
+
+Start this surface through `dyfj start`; the launcher derives the narrow Deno
+network grants from the configured hosts. At boot, Workbench discovers the
+server tools once and registers only the intersection with the configured
+allowlist. A missing credential or failed discovery disables every server that
+depends on it without disabling unrelated runtime capabilities. The shared
+resolver uses its first pending credential as a session probe; if that probe
+fails, later credentials are marked unavailable without spawning, so multiple
+configured servers may be withheld. Invalid configuration fails boot.
+
+`minimum_clearance = "loopback"` withholds the tools from remote turns.
+`minimum_clearance = "remote"` declares eligibility for both remote and
+loopback turns. The current boot integration is the UDS daily-driver runtime;
+the standalone HTTP server does not load configured external tools yet. A read
+tool can run without a per-call prompt only when its configured approval is
+`allow`. Every `write_external` tool must use `ask`, and Workbench still
+requires approval when the operator permission profile is active.
+
+Server descriptions and result text are untrusted data. Workbench supplies the
+model-facing tool description, caps cumulatively consumed response bodies on a
+discovery connection at 4 MiB total and on a tool-call connection at 256 KiB
+total before MCP body parsing, retains at most 64 KiB of sanitized discovered
+input schema, refuses redirects, and frames returned content as untrusted. Durable
+events redact all argument values and the result while retaining bounded
+server, tool, revision, and outcome metadata. Use a dedicated, minimally scoped
+server credential; the bearer token grants whatever authority the MCP server
+assigns to it.
+
 Which models exist, what they cost, and which tier they sit in is registry data, not code - see the current catalog in `schema/catalog/001_models.sql`. Catalog pricing and availability rows are operator-curated seed values, not authoritative provider price sheets. Historical catalog changes are preserved under `schema/history/`. Repricing or adding a model is a Dolt commit.
 
 ### Initialize Dolt and apply the schema

@@ -1008,6 +1008,35 @@ describe("redactCommandArguments (sensitive tool args)", () => {
       slug: "project_dyfj",
     });
   });
+
+  test("drops undeclared argument identities when redacting the whole call", async () => {
+    const registry = createCommandRegistry([
+      readCommand({ redactArguments: true }),
+    ]);
+    const events: Record<string, unknown>[] = [];
+    const result = await invokeCommandWithEvent(
+      registry,
+      call({
+        slug: "project_dyfj",
+        "unexpected-sensitive-name": "unexpected-sensitive-value",
+      }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        eventId: "01TESTEVENT0000000000000000",
+        spanId: "0123456789abcdef",
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    );
+
+    expect(result.decision).toBe("deny");
+    expect(JSON.parse(events[0].tool_arguments as string)).toEqual({
+      slug: "[redacted]",
+    });
+    expect(events[0].tool_arguments as string).not.toContain("unexpected");
+  });
 });
 
 describe("buildCommandToolCallEventPayload", () => {

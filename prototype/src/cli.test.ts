@@ -25,6 +25,7 @@ import {
   normalizeSessionRef,
   parseArgs,
   promptToolApproval,
+  readLauncherMcpServersConfig,
   readLauncherSecretsConfig,
   readLineOrNull,
   readlineTurnInterruptSource,
@@ -3012,6 +3013,35 @@ describe("runtime lifecycle commands", () => {
     );
   });
 
+  test("buildServeUnixArgs appends unique config-declared MCP endpoint grants", () => {
+    const args = buildServeUnixArgs(
+      ["127.0.0.1:3306", "mcp.linear.app:443"],
+      "/run/wb.sock",
+      null,
+      null,
+      null,
+      false,
+      ["mcp.linear.app:443", "127.0.0.1:43137"],
+    );
+    expect(args[3]).toBe(
+      "--allow-net=127.0.0.1:3306,mcp.linear.app:443,unix:/run/wb.sock,127.0.0.1:43137",
+    );
+  });
+
+  test("buildServeUnixArgs rejects comma-bearing network grants", () => {
+    expect(() =>
+      buildServeUnixArgs(
+        ["127.0.0.1:3306"],
+        "/run/wb.sock",
+        null,
+        null,
+        null,
+        false,
+        ["foo,bar.example:443"],
+      )
+    ).toThrow("Deno network grants cannot contain commas");
+  });
+
   test("buildServeUnixArgs adds no memory grant when recall is unconfigured", () => {
     const args = buildServeUnixArgs(["127.0.0.1:3306"], "/run/wb.sock", null);
     expect(args[3]).toBe("--allow-net=127.0.0.1:3306,unix:/run/wb.sock");
@@ -4403,6 +4433,46 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
     // Resolved against HOME, and .env was never consulted for the root.
     expect(readPaths).toContain("/home/x/.dyfj/config.toml");
     expect(readPaths).not.toContain("/cwd/.env");
+  });
+
+  test("loads external MCP servers from the same child-visible config", async () => {
+    const readTextFile = (path: string) => {
+      if (path === "/home/x/.dyfj/config.toml") return Promise.resolve(TOML);
+      return Promise.reject(new Deno.errors.NotFound());
+    };
+    const env = {
+      get: (name: string) => name === "HOME" ? "/home/x" : undefined,
+    };
+    const secrets = await readLauncherSecretsConfig(
+      "/cwd",
+      readTextFile,
+      env,
+      () => ({
+        secrets: {
+          command: ["op", "read"],
+          named: { linear_mcp: "op://v/linear/credential" },
+        },
+      }),
+    );
+    const servers = await readLauncherMcpServersConfig(
+      "/cwd",
+      secrets,
+      readTextFile,
+      env,
+      () => ({
+        mcp: {
+          servers: [{
+            id: "linear",
+            transport: "streamable_http",
+            url: "https://mcp.linear.app/mcp",
+            minimum_clearance: "loopback",
+            auth: { type: "bearer", secret: "linear_mcp" },
+            tools: [{ name: "get_issue", effect: "read", approval: "allow" }],
+          }],
+        },
+      }),
+    );
+    expect(servers.map((server) => server.id)).toEqual(["linear"]);
   });
 });
 

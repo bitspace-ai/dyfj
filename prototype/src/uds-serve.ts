@@ -5,8 +5,9 @@
 
 import { serveWorkbenchUnix } from "./uds-server";
 import { ensureSocketDir, resolveSocketPath } from "./uds-path";
-import { loadConfig, loadSecretsConfig } from "./config";
-import { resolveSecretsIntoEnv } from "./secrets";
+import { loadConfig, loadMcpServersConfig, loadSecretsConfig } from "./config";
+import { resolveSecrets } from "./secrets";
+import { buildExternalMcpCommands } from "./mcp-tools";
 import { installRuntimeSigintHandler } from "./runtime-sigint";
 
 const socketPath = resolveSocketPath();
@@ -22,7 +23,20 @@ const config = await loadConfig();
 // presence-only logging; a locked/unavailable pointer degrades that provider
 // fail-closed rather than hanging on a prompt. No [secrets] section → no-op, so
 // a plain local-only boot is unchanged.
-await resolveSecretsIntoEnv(await loadSecretsConfig());
+const secretsConfig = await loadSecretsConfig();
+const mcpServers = await loadMcpServersConfig({}, secretsConfig);
+const resolvedSecrets = await resolveSecrets(secretsConfig);
+const externalMcp = await buildExternalMcpCommands(
+  mcpServers,
+  resolvedSecrets.named,
+);
+for (const diagnostic of externalMcp.diagnostics) {
+  console.error(
+    diagnostic.status === "ready"
+      ? `external MCP ${diagnostic.serverId}: ready (${diagnostic.toolCount} tools, ${diagnostic.revision})`
+      : `external MCP ${diagnostic.serverId}: unavailable (${diagnostic.reason})`,
+  );
+}
 
 let resolveCloseServer!: (close: () => Promise<void>) => void;
 const closeServerReady = new Promise<() => Promise<void>>((resolve) => {
@@ -39,6 +53,7 @@ try {
   const server = await serveWorkbenchUnix(socketPath, {
     onParseError: (detail) => console.error(`[uds] ${detail}`),
     engineConfig: config,
+    externalMcpCommands: externalMcp.commands,
   });
   resolveCloseServer(() => server.close());
   console.error(
