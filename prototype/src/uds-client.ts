@@ -10,10 +10,9 @@ export interface UnixClient {
   close(): void;
 }
 
-export interface ToolApprovalVerdict {
-  decision: "approve" | "deny" | "abort";
-  reason?: string;
-}
+export type ToolApprovalVerdict =
+  | { decision: "approve" | "deny" | "abort"; reason?: string }
+  | { decision: "select"; optionId: string };
 
 export interface UnixClientOptions {
   /**
@@ -23,10 +22,10 @@ export interface UnixClientOptions {
    */
   onStream?: (params: unknown) => void;
   /**
-   * Answer the server's mid-turn `approval` request (the operator approving a
-   * mutating tool). Registered as the peer's `approval` request handler; the
-   * returned verdict is sent back as the response. Without it the peer has no
-   * `approval` handler, so the server's request fails and it denies — fail-closed.
+   * Answer the server's mid-turn `approval` request (a mutating tool, budget
+   * gate, or exact ACP permission option). Registered as the peer's `approval`
+   * request handler; the returned verdict is sent back as the response. Without
+   * it the peer has no `approval` handler, so the server fails closed.
    */
   onApproval?: (
     request: unknown,

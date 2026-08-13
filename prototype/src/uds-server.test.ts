@@ -845,6 +845,125 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
     };
   }
 
+  function acpPermissionProbeRuntime(): WorkbenchHttpRuntime {
+    return async (input) => {
+      const selection = await input.confirmExternalAgentPermission?.({
+        sessionId: "external-session",
+        toolCallId: "permission-1",
+        toolCall: {
+          title: "Run shell command?",
+          name: "terminal",
+          kind: "execute\u001b[31mforged",
+          inputSummary: "git status",
+        },
+        options: [{
+          optionId: "allow-once-id",
+          name: "Allow Once",
+          kind: "allow_once",
+        }, {
+          optionId: "remember-command-id",
+          name: "Always allow `git status`",
+          kind: "allow_always",
+        }, {
+          optionId: "reject-id",
+          name: "Reject",
+          kind: "reject_once",
+        }],
+      }, input.abortSignal ?? new AbortController().signal);
+      return anyVal({ selection });
+    };
+  }
+
+  function emptyAllowOnlyPermissionProbeRuntime(): WorkbenchHttpRuntime {
+    return async (input) => {
+      const selection = await input.confirmExternalAgentPermission?.({
+        sessionId: "external-session",
+        toolCallId: "permission-1",
+        toolCall: {
+          title: "Run shell command?",
+          inputSummary: "git status",
+        },
+        options: [{
+          optionId: "",
+          name: "Allow Once",
+          kind: "allow_once",
+        }],
+      }, input.abortSignal ?? new AbortController().signal);
+      return anyVal({ selection });
+    };
+  }
+
+  test("preserves the exact selected ACP option id across the duplex seam", async () => {
+    const asked: unknown[] = [];
+    const server = await startServer({
+      ...fakes,
+      runRuntime: acpPermissionProbeRuntime(),
+    });
+    const client = await connectClient(server, {
+      approval: (request) => {
+        asked.push(request);
+        return { decision: "select", optionId: "remember-command-id" };
+      },
+    });
+    await expect(client.request("turn", { prompt: "run it" })).resolves
+      .toMatchObject({
+        selection: { optionId: "remember-command-id", source: "operator" },
+      });
+    expect(asked).toEqual([expect.objectContaining({
+      kind: "external_agent_permission",
+      arguments: expect.objectContaining({
+        "ACP kind": "(not supplied)",
+      }),
+      options: expect.arrayContaining([
+        expect.objectContaining({
+          optionId: "remember-command-id",
+          name: "Always allow `git status`",
+        }),
+      ]),
+    })]);
+  });
+
+  test("a client policy denial selects the request rejection as policy", async () => {
+    const server = await startServer({
+      ...fakes,
+      runRuntime: acpPermissionProbeRuntime(),
+    });
+    const client = await connectClient(server, {
+      approval: () => ({
+        decision: "deny",
+        reason: "ACP permission selection unavailable",
+      }),
+    });
+    await expect(client.request("turn", { prompt: "run it" })).resolves
+      .toMatchObject({
+        selection: { optionId: "reject-id", source: "policy" },
+      });
+  });
+
+  test("a missing ACP approver selects the request rejection", async () => {
+    const server = await startServer({
+      ...fakes,
+      runRuntime: acpPermissionProbeRuntime(),
+    });
+    const client = await connectClient(server);
+    await expect(client.request("turn", { prompt: "run it" })).resolves
+      .toMatchObject({
+        selection: { optionId: "reject-id", source: "policy" },
+      });
+  });
+
+  test("a missing approver cannot select an empty allow id when rejection is absent", async () => {
+    const server = await startServer({
+      ...fakes,
+      runRuntime: emptyAllowOnlyPermissionProbeRuntime(),
+    });
+    const client = await connectClient(server);
+    await expect(client.request("turn", { prompt: "run it" })).resolves
+      .toMatchObject({
+        selection: { optionId: null, source: "policy" },
+      });
+  });
+
   test("server asks the client to approve a mutating tool mid-turn; approve flows back", async () => {
     const asked: unknown[] = [];
     const server = await startServer({

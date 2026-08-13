@@ -30,7 +30,7 @@ import type { AskContextProfile } from "./repo-context";
 import { loadAgentsInstructions } from "./repo-context";
 import type { WorkspaceRootIdentity } from "./repo-context";
 import type { ConfirmToolApproval } from "./commands";
-import type { AcpPermissionDecision, AcpPermissionPrompt } from "./acp-client";
+import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
 import type { PermissionLevel } from "./config";
 import type {
   ExternalAgentTurnReceipt,
@@ -170,7 +170,7 @@ export interface WorkbenchRuntimeInput {
   confirmExternalAgentPermission?: (
     prompt: AcpPermissionPrompt,
     signal: AbortSignal,
-  ) => Promise<AcpPermissionDecision>;
+  ) => Promise<AcpPermissionSelection>;
   turnId?: string;
   abortSignal?: AbortSignal;
   onCancellationClosed?: () => void;

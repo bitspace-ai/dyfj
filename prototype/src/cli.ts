@@ -914,6 +914,9 @@ export interface StartRuntimeOptions {
 export type ConnectFn = typeof connectUnixClient;
 export const TURN_CANCELLATION_TIMEOUT_MS = 5_000;
 export const TURN_CANCELLATION_SETTLE_TIMEOUT_MS = 30_000;
+const MAX_ACP_PERMISSION_OPTIONS = 16;
+const MAX_ACP_PERMISSION_SELECTION_ATTEMPTS = 3;
+const MAX_ACP_PERMISSION_SELECTION_CODE_UNITS = 64;
 
 class TurnCancellationUncertainError extends DomainError {}
 
@@ -1090,10 +1093,10 @@ export async function socketTurn(
 }
 
 /**
- * Prompt the operator to approve a mid-turn request over the UDS seam: mutating
- * tools or a budget-ceiling overrun. Non-interactive (no TTY) denies without
- * prompting, fail-closed. The prompt goes to stderr so a `--json` turn's stdout
- * stays clean.
+ * Prompt the operator for a mid-turn decision over the UDS seam: an exact ACP
+ * permission option, mutating-tool approval, or a budget gate. Non-interactive
+ * use fails closed. The prompt goes to stderr so a `--json` turn's stdout stays
+ * clean.
  */
 export async function promptMidTurnApproval(
   io: Io,
@@ -1101,15 +1104,95 @@ export async function promptMidTurnApproval(
   interactive: boolean,
   abortSignal?: AbortSignal,
 ): Promise<ToolApprovalVerdict> {
+  const r = (typeof request === "object" && request !== null)
+    ? request as Record<string, unknown>
+    : {};
+  if (r.kind === "external_agent_permission") {
+    const rawOptions = Array.isArray(r.options) && r.options.length > 0 &&
+        r.options.length <= MAX_ACP_PERMISSION_OPTIONS
+      ? r.options
+      : null;
+    const parsedOptions = (rawOptions ?? []).flatMap((value) => {
+      if (typeof value !== "object" || value === null) return [];
+      const option = value as Record<string, unknown>;
+      if (
+        typeof option.optionId !== "string" || option.optionId.length === 0 ||
+        typeof option.name !== "string" ||
+        (option.kind !== "allow_once" &&
+          option.kind !== "allow_always" &&
+          option.kind !== "reject_once" &&
+          option.kind !== "reject_always")
+      ) return [];
+      return [{
+        optionId: option.optionId,
+        name: option.name,
+        kind: option.kind,
+      }];
+    });
+    const optionIds = new Set(parsedOptions.map((option) => option.optionId));
+    const optionsValid = rawOptions !== null &&
+      parsedOptions.length === rawOptions.length &&
+      optionIds.size === parsedOptions.length;
+    const options = optionsValid ? parsedOptions : [];
+    const rejection = options.find((option) => option.kind === "reject_once") ??
+      options.find((option) => option.kind === "reject_always");
+    const reject = (): ToolApprovalVerdict =>
+      rejection === undefined
+        ? { decision: "deny", reason: "ACP rejection option unavailable" }
+        : { decision: "select", optionId: rejection.optionId };
+    const policyReject = (): ToolApprovalVerdict => ({
+      decision: "deny",
+      reason: "ACP permission selection unavailable",
+    });
+    if (!optionsValid) {
+      io.err("   ACP permission options were invalid; request rejected.");
+      return reject();
+    }
+    if (!interactive) return policyReject();
+
+    const title = typeof r.title === "string"
+      ? r.title
+      : "External agent action";
+    io.err(`\n⚠  ${title}`);
+    io.err(formatApprovalArgs(r.arguments));
+    for (const [index, option] of options.entries()) {
+      io.err(`   ${index + 1}. ${option.name}`);
+    }
+
+    for (
+      let attempt = 0;
+      attempt < MAX_ACP_PERMISSION_SELECTION_ATTEMPTS;
+      attempt += 1
+    ) {
+      const answer = await io.readLine(
+        `   select [1-${options.length}] (default reject): `,
+        abortSignal,
+      );
+      if (abortSignal?.aborted) return { decision: "abort" };
+      if (answer === null) return policyReject();
+      if (answer.length > MAX_ACP_PERMISSION_SELECTION_CODE_UNITS) {
+        io.err(`   Enter a number from 1 to ${options.length}.`);
+        continue;
+      }
+      const selection = answer.trim();
+      if (selection === "") return reject();
+      const selected = /^\d+$/u.test(selection) ? Number(selection) : 0;
+      if (selected >= 1 && selected <= options.length) {
+        return {
+          decision: "select",
+          optionId: options[selected - 1].optionId,
+        };
+      }
+      io.err(`   Enter a number from 1 to ${options.length}.`);
+    }
+    return policyReject();
+  }
   if (!interactive) {
     return {
       decision: "deny",
       reason: "approval needs an interactive terminal",
     };
   }
-  const r = (typeof request === "object" && request !== null)
-    ? request as Record<string, unknown>
-    : {};
   if (r.kind === "budget_ceiling") {
     const message = typeof r.message === "string"
       ? r.message

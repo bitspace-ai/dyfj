@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import {
   type AcpExecutionProfile,
+  type AcpRunInput,
   ActivePromptDeadline,
   assertProcessGroupSignaler,
   drainStream,
@@ -103,6 +104,7 @@ async function expectContainedFailure(input: {
   profile?: Partial<AcpExecutionProfile>;
   abortAfterDelta?: boolean;
   message?: string;
+  confirmPermission?: AcpRunInput["confirmPermission"];
 }): Promise<void> {
   const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
   const controller = new AbortController();
@@ -112,6 +114,7 @@ async function expectContainedFailure(input: {
       prompt: input.prompt,
       abortSignal: input.abortAfterDelta ? controller.signal : undefined,
       onTextDelta: input.abortAfterDelta ? () => controller.abort() : undefined,
+      confirmPermission: input.confirmPermission,
     })).rejects.toMatchObject({
       name: "AcpRunnerError",
       phase: input.phase,
@@ -489,42 +492,65 @@ describe("runAcpAgent", () => {
     expect(verdicts).toEqual(["deny"]);
   });
 
+  test("cancels an allow-only request when no approval callback exists", async () => {
+    const verdicts: Array<{ decision: string; source: string }> = [];
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_PERMISSION_ALLOW_ONLY",
+      onPermissionVerdict: (verdict) => {
+        verdicts.push({
+          decision: verdict.decision,
+          source: verdict.source,
+        });
+      },
+    });
+    expect(result.text).toBe("denied");
+    expect(verdicts).toEqual([{ decision: "cancel", source: "policy" }]);
+  });
+
   test("selects the agent's allow option only after explicit approval", async () => {
     const result = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION",
-      confirmPermission: async () => "approve",
+      confirmPermission: async () => ({ optionId: "allow" }),
     });
     expect(result.text).toBe("approved");
   });
 
-  test("maps binary decisions only to one-shot permission options", async () => {
-    const approved = await runAcpAgent({
+  test("returns each exact permission option identifier to the agent", async () => {
+    const allowAlways = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_SCOPE",
-      confirmPermission: async () => "approve",
+      confirmPermission: async () => ({ optionId: "allow-always" }),
     });
-    expect(approved.text).toBe("allow-once");
+    expect(allowAlways.text).toBe("allow-always");
 
-    const denied = await runAcpAgent({
+    const allowOnce = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_SCOPE",
-      confirmPermission: async () => "deny",
+      confirmPermission: async () => ({ optionId: "allow-once" }),
     });
-    expect(denied.text).toBe("reject-once");
+    expect(allowOnce.text).toBe("allow-once");
 
-    const lateDenied = await runAcpAgent({
+    const rejectAlways = await runAcpAgent({
       profile: fixtureProfile(),
-      prompt: "FIXTURE_PERMISSION_LATE_REJECT",
-      confirmPermission: async () => "deny",
+      prompt: "FIXTURE_PERMISSION_SCOPE",
+      confirmPermission: async () => ({ optionId: "reject-always" }),
     });
-    expect(lateDenied.text).toBe("reject-late");
+    expect(rejectAlways.text).toBe("reject-always");
+
+    const rejectOnce = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_PERMISSION_SCOPE",
+      confirmPermission: async () => ({ optionId: "reject-once" }),
+    });
+    expect(rejectOnce.text).toBe("reject-once");
 
     const fallbackVerdicts: Array<{ decision: string; source: string }> = [];
     const fallbackDenied = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_REJECT_ONLY",
-      confirmPermission: async () => "approve",
+      confirmPermission: async () => ({ optionId: "unavailable" }),
       onPermissionVerdict: (verdict) => {
         fallbackVerdicts.push({
           decision: verdict.decision,
@@ -553,7 +579,7 @@ describe("runAcpAgent", () => {
         expect(permission.toolCall.name).toBe("write_file");
         expect(permission.toolCall.kind).toBe("edit");
         expect(permission.toolCall.inputSummary).toContain("fixture.txt");
-        return "approve";
+        return { optionId: "allow" };
       },
       onPermissionVerdict: (verdict) => {
         verdicts.push(verdict.toolCallId);
@@ -572,7 +598,7 @@ describe("runAcpAgent", () => {
   test("does not approve after cancellation while confirmation is pending", async () => {
     const controller = new AbortController();
     const prompted = Promise.withResolvers<void>();
-    const decision = Promise.withResolvers<"approve" | "deny">();
+    const decision = Promise.withResolvers<{ optionId: string }>();
     const verdicts: string[] = [];
     let confirmationCancelled = false;
     const resultPromise = runAcpAgent({
@@ -592,7 +618,7 @@ describe("runAcpAgent", () => {
     });
     await prompted.promise;
     controller.abort();
-    decision.resolve("approve");
+    decision.resolve({ optionId: "allow" });
     await expect(resultPromise).resolves.toMatchObject({
       stopReason: "aborted",
       acpStopReason: "cancelled",
@@ -603,7 +629,7 @@ describe("runAcpAgent", () => {
 
   test("allows approval after a confirmation outlasts the active prompt budget", async () => {
     const prompted = Promise.withResolvers<void>();
-    const decision = Promise.withResolvers<"approve" | "deny">();
+    const decision = Promise.withResolvers<{ optionId: string }>();
     const verdicts: string[] = [];
     let confirmationCancelled = false;
     const resultPromise = runAcpAgent({
@@ -622,7 +648,7 @@ describe("runAcpAgent", () => {
     });
     await prompted.promise;
     await new Promise((resolve) => setTimeout(resolve, 100));
-    decision.resolve("approve");
+    decision.resolve({ optionId: "allow" });
     await expect(resultPromise).resolves.toMatchObject({
       text: "approved",
       stopReason: "stop",
@@ -633,8 +659,8 @@ describe("runAcpAgent", () => {
 
   test("keeps the deadline paused until overlapping confirmations settle and honors both verdicts", async () => {
     const prompted = Promise.withResolvers<void>();
-    const firstDecision = Promise.withResolvers<"approve" | "deny">();
-    const secondDecision = Promise.withResolvers<"approve" | "deny">();
+    const firstDecision = Promise.withResolvers<{ optionId: string }>();
+    const secondDecision = Promise.withResolvers<{ optionId: string }>();
     let confirmations = 0;
     const resultPromise = runAcpAgent({
       profile: fixtureProfile({ promptTimeoutMs: 50 }),
@@ -649,9 +675,9 @@ describe("runAcpAgent", () => {
     });
     await prompted.promise;
     await new Promise((resolve) => setTimeout(resolve, 100));
-    firstDecision.resolve("approve");
+    firstDecision.resolve({ optionId: "allow" });
     await new Promise((resolve) => setTimeout(resolve, 100));
-    secondDecision.resolve("deny");
+    secondDecision.resolve({ optionId: "deny" });
     await expect(resultPromise).resolves.toMatchObject({
       text: "denied",
       stopReason: "stop",
@@ -667,7 +693,7 @@ describe("runAcpAgent", () => {
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION",
       abortSignal: controller.signal,
-      confirmPermission: async () => "approve",
+      confirmPermission: async () => ({ optionId: "allow" }),
       onPermissionVerdict: async (verdict) => {
         verdicts.push(verdict.decision);
         if (verdict.decision === "approve") {
@@ -691,7 +717,7 @@ describe("runAcpAgent", () => {
     await expect(runAcpAgent({
       profile: fixtureProfile({ permissionVerdictTimeoutMs: 50 }),
       prompt: "FIXTURE_PERMISSION",
-      confirmPermission: async () => "approve",
+      confirmPermission: async () => ({ optionId: "allow" }),
       onPermissionVerdict: (_verdict, signal) =>
         new Promise((_resolve, reject) => {
           signal.addEventListener("abort", () => {
@@ -714,7 +740,7 @@ describe("runAcpAgent", () => {
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_EARLY_TERMINAL",
       abortSignal: controller.signal,
-      confirmPermission: async () => "approve",
+      confirmPermission: async () => ({ optionId: "allow" }),
       onPermissionVerdict: async (verdict, signal) => {
         verdicts.push(verdict.decision);
         if (verdict.decision === "approve") {
@@ -753,7 +779,7 @@ describe("runAcpAgent", () => {
       prompt: "FIXTURE_PERMISSION_EARLY_TERMINAL",
       confirmPermission: (_permission, signal) => {
         confirmationStarted.resolve();
-        return new Promise<"approve" | "deny">((_resolve, reject) => {
+        return new Promise<{ optionId: string }>((_resolve, reject) => {
           signal.addEventListener(
             "abort",
             () => reject(new DOMException("closed", "AbortError")),
@@ -782,7 +808,7 @@ describe("runAcpAgent", () => {
     const result = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_ALLOW_ONLY",
-      confirmPermission: async () => "deny",
+      confirmPermission: async () => ({ optionId: "unavailable" }),
       onPermissionVerdict: (verdict) => {
         verdicts.push({
           decision: verdict.decision,
@@ -801,6 +827,27 @@ describe("runAcpAgent", () => {
     });
   });
 
+  test("rejects an empty allow option identifier before confirmation", async () => {
+    let confirmations = 0;
+    await expectContainedFailure({
+      prompt: "FIXTURE_PERMISSION_EMPTY_ALLOW_ID",
+      phase: "protocol",
+      confirmPermission: async () => {
+        confirmations += 1;
+        return { optionId: "" };
+      },
+    });
+    expect(confirmations).toBe(0);
+  });
+
+  test("rejects a permission request that exceeds the bounded option list", async () => {
+    await expectContainedFailure({
+      prompt: "FIXTURE_PERMISSION_OVER_LIMIT_DUPLICATE",
+      phase: "protocol",
+      message: "ACP agent exceeded the permission-option limit",
+    });
+  });
+
   test("does not confirm permission requested after the prompt is terminal", async () => {
     let confirmations = 0;
     const result = await runAcpAgent({
@@ -814,7 +861,7 @@ describe("runAcpAgent", () => {
       prompt: "FIXTURE_LATE_PERMISSION",
       confirmPermission: async () => {
         confirmations += 1;
-        return "approve";
+        return { optionId: "allow" };
       },
     });
     expect(result.stopReason).toBe("stop");

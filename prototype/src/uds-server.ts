@@ -2,8 +2,9 @@
 // the canonical `loopback` transport — full clearance, gated by filesystem perms
 // — per the transport-seam contract. Wires the read-only methods plus `turn`,
 // which runs an agentic turn over the shared turn-runner core and streams text
-// deltas + runtime events back as `stream` notifications. The server-initiated
-// `approval` request (mutating tools) lands with the mutating-tools slice.
+// deltas + runtime events back as `stream` notifications. Server-initiated
+// `approval` requests carry mutating-tool, budget, and exact ACP permission
+// option decisions over the same duplex seam.
 
 import {
   defaultLocalWorkbenchModels,
@@ -55,6 +56,7 @@ import {
   registerCoreCommands,
   type ToolApprovalVerdict,
 } from "./commands";
+import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -411,6 +413,53 @@ function approvalWasAborted(response: unknown): boolean {
     (response as Record<string, unknown>).decision === "abort";
 }
 
+const ACP_TOOL_KINDS = new Set([
+  "read",
+  "edit",
+  "delete",
+  "move",
+  "search",
+  "execute",
+  "think",
+  "fetch",
+  "switch_mode",
+  "other",
+]);
+
+function terminalAcpToolKind(value: string | undefined): string {
+  return value !== undefined && ACP_TOOL_KINDS.has(value)
+    ? value
+    : "(not supplied)";
+}
+
+function rejectedAcpPermissionSelection(
+  prompt: AcpPermissionPrompt,
+): AcpPermissionSelection {
+  const rejection =
+    prompt.options.find((option) =>
+      option.kind === "reject_once" && option.optionId.length > 0
+    ) ?? prompt.options.find((option) =>
+      option.kind === "reject_always" && option.optionId.length > 0
+    );
+  return { optionId: rejection?.optionId ?? null, source: "policy" };
+}
+
+function toAcpPermissionSelection(
+  response: unknown,
+  prompt: AcpPermissionPrompt,
+): AcpPermissionSelection {
+  const record = typeof response === "object" && response !== null
+    ? response as Record<string, unknown>
+    : {};
+  if (
+    record.decision === "select" && typeof record.optionId === "string" &&
+    record.optionId.length > 0
+  ) {
+    return { optionId: record.optionId, source: "operator" };
+  }
+  return rejectedAcpPermissionSelection(prompt);
+}
+
 function resolveEngineTurnDeps(
   options: WorkbenchUnixServerOptions,
 ): ReturnType<typeof engineConfigToTurnDeps> {
@@ -547,6 +596,27 @@ export function buildTurnHandlers(
                 decision: "deny",
                 reason: "approval request failed (no client approver?)",
               };
+            },
+          ),
+        confirmExternalAgentPermission: (prompt, signal) =>
+          requestApproval({
+            kind: "external_agent_permission",
+            title: prompt.toolCall.title,
+            arguments: {
+              "ACP tool": prompt.toolCall.name ?? "(not supplied)",
+              "ACP kind": terminalAcpToolKind(prompt.toolCall.kind),
+              "Requested input": prompt.toolCall.inputSummary,
+            },
+            options: prompt.options,
+          }, signal).then(
+            (response) => {
+              abortIfApprovalWasInterrupted(response);
+              rejectStaleApprovalAfterCancellation();
+              return toAcpPermissionSelection(response, prompt);
+            },
+            (): AcpPermissionSelection => {
+              rejectStaleApprovalAfterCancellation();
+              return rejectedAcpPermissionSelection(prompt);
             },
           ),
         confirmBudgetCeiling: (warning) =>

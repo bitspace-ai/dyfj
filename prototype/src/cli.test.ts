@@ -912,6 +912,203 @@ function fakeApprovalConnect(
 }
 
 describe("promptToolApproval", () => {
+  const acpPermissionRequest = {
+    kind: "external_agent_permission",
+    title: "Run shell command?",
+    arguments: { "ACP tool": "terminal" },
+    options: [
+      {
+        optionId: "allow-once-id",
+        name: "Allow Once",
+        kind: "allow_once",
+      },
+      {
+        optionId: "allow-session-id",
+        name: "Allow for Session",
+        kind: "allow_always",
+      },
+      {
+        optionId: "reject-id",
+        name: "Reject",
+        kind: "reject_once",
+      },
+    ],
+  };
+  const emptyAllowOnlyRequest = {
+    kind: "external_agent_permission",
+    title: "Run shell command?",
+    options: [{
+      optionId: "",
+      name: "Allow Once",
+      kind: "allow_once",
+    }],
+  };
+
+  test.each([
+    ["1", "allow-once-id"],
+    ["2", "allow-session-id"],
+    ["3", "reject-id"],
+  ])(
+    "returns the exact ACP option id selected by number (%s)",
+    async (answer, optionId) => {
+      const { io } = fakeIo([answer]);
+      expect(
+        await promptToolApproval(io, acpPermissionRequest, true),
+      ).toEqual({ decision: "select", optionId });
+    },
+  );
+
+  test("renders every ACP label once, including a dynamic remembered-command option", async () => {
+    const dynamic = {
+      ...acpPermissionRequest,
+      options: [
+        ...acpPermissionRequest.options,
+        {
+          optionId: "remember-command-id",
+          name: "Always allow `git status`",
+          kind: "allow_always",
+        },
+      ],
+    };
+    const { io, stderr } = fakeIo(["4"]);
+    expect(await promptToolApproval(io, dynamic, true)).toEqual({
+      decision: "select",
+      optionId: "remember-command-id",
+    });
+    const rendered = stderr.join("\n");
+    for (const option of dynamic.options) {
+      expect(
+        rendered.match(
+          new RegExp(option.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+        ),
+      )
+        .toHaveLength(1);
+    }
+  });
+
+  test("an explicit empty ACP input selects the advertised default rejection", async () => {
+    const { io } = fakeIo([""]);
+    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+      decision: "select",
+      optionId: "reject-id",
+    });
+  });
+
+  test("closed ACP input defaults to policy rejection", async () => {
+    const { io } = fakeIo([]);
+    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+      decision: "deny",
+      reason: "ACP permission selection unavailable",
+    });
+  });
+
+  test("invalid ACP input corrects and re-prompts without duplicating the request", async () => {
+    const { io, stderr, prompts } = fakeIo(["later", "2"]);
+    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+      decision: "select",
+      optionId: "allow-session-id",
+    });
+    expect(prompts).toHaveLength(2);
+    expect(stderr.filter((line) => line.includes("Run shell command?")))
+      .toHaveLength(1);
+    expect(stderr.filter((line) => line.includes("Allow Once"))).toHaveLength(
+      1,
+    );
+    expect(stderr.join("\n")).toContain("Enter a number from 1 to 3.");
+  });
+
+  test("an oversized ACP selection is rejected before parsing", async () => {
+    const { io, prompts } = fakeIo([` 2${" ".repeat(63)}`, "1"]);
+    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+      decision: "select",
+      optionId: "allow-once-id",
+    });
+    expect(prompts).toHaveLength(2);
+  });
+
+  test("three invalid ACP selections exhaust the bounded prompt and reject", async () => {
+    const { io, stderr, prompts } = fakeIo(["later", "0", "4", "1"]);
+    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+      decision: "deny",
+      reason: "ACP permission selection unavailable",
+    });
+    expect(prompts).toHaveLength(3);
+    expect(stderr.filter((line) => line === "   Enter a number from 1 to 3."))
+      .toHaveLength(3);
+  });
+
+  test.each([
+    ["non-interactive", false, ["1"]],
+    ["closed input", true, []],
+  ])(
+    "an empty allow id with no rejection fails closed on %s",
+    async (_label, interactive, lines) => {
+      const { io, stderr } = fakeIo(lines);
+      expect(await promptToolApproval(io, emptyAllowOnlyRequest, interactive))
+        .toEqual({
+          decision: "deny",
+          reason: "ACP rejection option unavailable",
+        });
+      if (interactive) {
+        expect(
+          stderr.filter((line) =>
+            line === "   ACP permission options were invalid; request rejected."
+          ),
+        ).toHaveLength(1);
+      }
+    },
+  );
+
+  test("an all-or-nothing ACP option parse failure reports one fixed diagnostic", async () => {
+    const { io, stderr, prompts } = fakeIo(["1"]);
+    const duplicate = {
+      ...acpPermissionRequest,
+      options: acpPermissionRequest.options.map((option) => ({
+        ...option,
+        optionId: "duplicate",
+      })),
+    };
+    expect(await promptToolApproval(io, duplicate, true)).toEqual({
+      decision: "deny",
+      reason: "ACP rejection option unavailable",
+    });
+    expect(prompts).toHaveLength(0);
+    expect(
+      stderr.filter((line) =>
+        line === "   ACP permission options were invalid; request rejected."
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("cancellation aborts a pending ACP selection without choosing an option", async () => {
+    const controller = new AbortController();
+    const io: Io = {
+      out: () => {},
+      err: () => {},
+      readLine: (_prompt, signal) =>
+        new Promise((resolve) => {
+          signal?.addEventListener("abort", () => resolve(null), {
+            once: true,
+          });
+          controller.abort();
+        }),
+      close: () => {},
+    };
+    await expect(
+      promptToolApproval(io, acpPermissionRequest, true, controller.signal),
+    ).resolves.toEqual({ decision: "abort" });
+  });
+
+  test("a non-interactive ACP request defaults to policy rejection without prompting", async () => {
+    const { io, prompts } = fakeIo(["1"]);
+    await expect(promptToolApproval(io, acpPermissionRequest, false)).resolves
+      .toEqual({
+        decision: "deny",
+        reason: "ACP permission selection unavailable",
+      });
+    expect(prompts).toHaveLength(0);
+  });
+
   test("approves on y", async () => {
     const { io } = fakeIo(["y"]);
     expect(
