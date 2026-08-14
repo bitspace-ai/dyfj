@@ -37,6 +37,7 @@ import {
   type McpHttpServerConfig,
   type SecretsConfig,
 } from "./config";
+import { mcpServerNetGrants } from "./mcp-net-grants";
 import { secretsRunGrant } from "./secrets";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 import { type BusySpinner, createBusySpinner } from "./busy-spinner";
@@ -2055,21 +2056,6 @@ export async function readLauncherMcpServersConfig(
   );
 }
 
-function externalMcpNetGrants(
-  servers: readonly McpHttpServerConfig[],
-): string[] {
-  const grants: string[] = [];
-  for (const server of servers) {
-    const url = new URL(server.url);
-    const port = url.port === ""
-      ? url.protocol === "http:" ? "80" : "443"
-      : url.port;
-    const grant = `${url.hostname}:${port}`;
-    if (!grants.includes(grant)) grants.push(grant);
-  }
-  return grants;
-}
-
 /** Read the serve-unix profile's declared net grants from deno.json. */
 export async function readServeUnixNetGrants(cwd: string): Promise<string[]> {
   const raw = await Deno.readTextFile(`${cwd}/deno.json`);
@@ -2097,7 +2083,7 @@ export async function startLocalRuntime(
   // Node and any operator-private resolver binary are launch-resolved. The
   // fixed /bin/kill grant supports the ACP process-group contract.
   const secretsCfg = await readLauncherSecretsConfig(cwd);
-  const externalMcpGrants = externalMcpNetGrants(
+  const externalMcpGrants = mcpServerNetGrants(
     await readLauncherMcpServersConfig(cwd, secretsCfg),
   );
   const resolverBin = secretsRunGrant(secretsCfg);

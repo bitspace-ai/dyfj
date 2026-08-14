@@ -6,6 +6,7 @@ import type {
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
+export { mcpServerNetGrants } from "./mcp-net-grants.ts";
 
 const MCP_REVISION = "2026-07-28";
 const DISCOVERY_TIMEOUT_MS = 5_000;
@@ -504,21 +505,6 @@ export async function buildExternalMcpCommands(
     });
   }
   return { commands, diagnostics };
-}
-
-export function mcpServerNetGrants(
-  servers: readonly McpHttpServerConfig[],
-): string[] {
-  const grants: string[] = [];
-  for (const server of servers) {
-    const url = new URL(server.url);
-    const port = url.port === ""
-      ? url.protocol === "http:" ? "80" : "443"
-      : url.port;
-    const grant = `${url.hostname}:${port}`;
-    if (!grants.includes(grant)) grants.push(grant);
-  }
-  return grants;
 }
 
 export function externalMcpCommandsForTransport(
