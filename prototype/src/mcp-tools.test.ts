@@ -521,7 +521,7 @@ describe("MCP HTTP containment", () => {
     ).toBe("2026-07-28");
     expect(matching).toHaveBeenCalledTimes(1);
 
-    for (const revision of [undefined, "2025-11-25"]) {
+    for (const revision of [undefined, "unsupported-2020-01-01"]) {
       expect(() =>
         requireNegotiatedMcpRevision({
           getNegotiatedProtocolVersion: () => revision,

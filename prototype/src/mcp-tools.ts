@@ -120,11 +120,19 @@ export function boundedMcpFetch(
   };
 }
 
+export const SUPPORTED_MCP_REVISIONS = new Set([
+  "2026-07-28",
+  "2025-11-25",
+  "2024-11-05",
+]);
+
 export function requireNegotiatedMcpRevision(client: {
   getNegotiatedProtocolVersion: () => string | undefined;
 }): string {
   const revision = client.getNegotiatedProtocolVersion();
-  if (revision !== MCP_REVISION) {
+  if (
+    typeof revision !== "string" || !SUPPORTED_MCP_REVISIONS.has(revision)
+  ) {
     throw new Error("external MCP protocol revision mismatch");
   }
   return revision;
@@ -155,7 +163,12 @@ async function withClient<T>(
   });
   const client = new Client(
     { name: "dyfj-workbench-tools", version: "1.0.0" },
-    { versionNegotiation: { mode: { pin: MCP_REVISION } } },
+    {
+      versionNegotiation: {
+        mode: "auto",
+        probe: { timeoutMs: DISCOVERY_TIMEOUT_MS, maxRetries: 0 },
+      },
+    },
   );
   try {
     await client.connect(transport, { timeout: DISCOVERY_TIMEOUT_MS });
@@ -232,12 +245,16 @@ function sanitizeSchemaNode(
   if (Object.hasOwn(input, "$ref")) {
     throw new Error("external MCP tool schema refs are not supported");
   }
-  const type = input.type;
+  let type = input.type;
   if (
     type !== "object" && type !== "string" && type !== "number" &&
     type !== "integer" && type !== "boolean" && type !== "array"
   ) {
-    throw new Error("external MCP tool schema contains an unsupported type");
+    if (Array.isArray(input.anyOf)) {
+      type = "string";
+    } else {
+      throw new Error("external MCP tool schema contains an unsupported type");
+    }
   }
   const output: Record<string, unknown> = { type };
   if (type === "object") {
@@ -425,7 +442,7 @@ export async function buildExternalMcpCommands(
       });
       continue;
     }
-    if (discovery.revision !== MCP_REVISION) {
+    if (typeof discovery.revision !== "string" || !discovery.revision.trim()) {
       diagnostics.push({
         serverId: server.id,
         status: "unavailable",

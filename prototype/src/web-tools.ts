@@ -760,7 +760,12 @@ export function buildWebCommands(
           );
           const client = new Client(
             { name: "dyfj-workbench-tools", version: "1.0.0" },
-            { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+            {
+              versionNegotiation: {
+                mode: "auto",
+                probe: { timeoutMs: 5_000, maxRetries: 0 },
+              },
+            },
           );
           try {
             await client.connect(transport, { timeout: 5_000 });
@@ -796,8 +801,6 @@ export function buildWebCommands(
           upstreamArgs.count = limit;
         } else if ("num_results" in searchProps) {
           upstreamArgs.num_results = limit;
-        } else if (Object.keys(searchProps).length === 0) {
-          upstreamArgs.limit = limit;
         }
 
         let callResult: McpCallResult;
@@ -1019,7 +1022,12 @@ export function buildWebCommands(
           );
           const client = new Client(
             { name: "dyfj-workbench-tools", version: "1.0.0" },
-            { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+            {
+              versionNegotiation: {
+                mode: "auto",
+                probe: { timeoutMs: 5_000, maxRetries: 0 },
+              },
+            },
           );
           try {
             await client.connect(transport, { timeout: 5_000 });
@@ -1038,10 +1046,10 @@ export function buildWebCommands(
           {}) as Record<string, unknown>;
         const upstreamFetchArgs: Record<string, unknown> = {};
 
-        if ("url" in fetchProps) {
-          upstreamFetchArgs.url = canonicalUrl;
-        } else if ("urls" in fetchProps) {
+        if ("urls" in fetchProps) {
           upstreamFetchArgs.urls = [canonicalUrl];
+        } else if ("url" in fetchProps) {
+          upstreamFetchArgs.url = canonicalUrl;
         } else if ("link" in fetchProps) {
           upstreamFetchArgs.link = canonicalUrl;
         } else if ("target_url" in fetchProps) {
