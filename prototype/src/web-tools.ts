@@ -395,30 +395,30 @@ export function extractReadableContentFromHtml(html: string): string {
   let text = html;
 
   // Remove scripts, styles, metadata, and non-content tags
-  text = text.replace(/<script\b[\s\S]*?<\/script\s*>/gi, " ");
-  text = text.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ");
-  text = text.replace(/<noscript\b[\s\S]*?<\/noscript\s*>/gi, " ");
-  text = text.replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, " ");
+  text = text.replace(/<script\b[\s\S]*?<\/script[^>]*>/gi, " ");
+  text = text.replace(/<style\b[\s\S]*?<\/style[^>]*>/gi, " ");
+  text = text.replace(/<noscript\b[\s\S]*?<\/noscript[^>]*>/gi, " ");
+  text = text.replace(/<svg\b[\s\S]*?<\/svg[^>]*>/gi, " ");
   text = text.replace(/<!--[\s\S]*?-->/g, " ");
 
   // Remove navigation, headers, footers, forms, aside
-  text = text.replace(/<header\b[\s\S]*?<\/header\s*>/gi, " ");
-  text = text.replace(/<footer\b[\s\S]*?<\/footer\s*>/gi, " ");
-  text = text.replace(/<nav\b[\s\S]*?<\/nav\s*>/gi, " ");
-  text = text.replace(/<aside\b[\s\S]*?<\/aside\s*>/gi, " ");
-  text = text.replace(/<form\b[\s\S]*?<\/form\s*>/gi, " ");
+  text = text.replace(/<header\b[\s\S]*?<\/header[^>]*>/gi, " ");
+  text = text.replace(/<footer\b[\s\S]*?<\/footer[^>]*>/gi, " ");
+  text = text.replace(/<nav\b[\s\S]*?<\/nav[^>]*>/gi, " ");
+  text = text.replace(/<aside\b[\s\S]*?<\/aside[^>]*>/gi, " ");
+  text = text.replace(/<form\b[\s\S]*?<\/form[^>]*>/gi, " ");
 
   // Convert headings
-  text = text.replace(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/gi, "\n\n# $1\n\n");
-  text = text.replace(/<h2\b[^>]*>([\s\S]*?)<\/h2\s*>/gi, "\n\n## $1\n\n");
-  text = text.replace(/<h3\b[^>]*>([\s\S]*?)<\/h3\s*>/gi, "\n\n### $1\n\n");
-  text = text.replace(/<h4\b[^>]*>([\s\S]*?)<\/h4\s*>/gi, "\n\n#### $1\n\n");
-  text = text.replace(/<h5\b[^>]*>([\s\S]*?)<\/h5\s*>/gi, "\n\n##### $1\n\n");
-  text = text.replace(/<h6\b[^>]*>([\s\S]*?)<\/h6\s*>/gi, "\n\n###### $1\n\n");
+  text = text.replace(/<h1\b[^>]*>([\s\S]*?)<\/h1[^>]*>/gi, "\n\n# $1\n\n");
+  text = text.replace(/<h2\b[^>]*>([\s\S]*?)<\/h2[^>]*>/gi, "\n\n## $1\n\n");
+  text = text.replace(/<h3\b[^>]*>([\s\S]*?)<\/h3[^>]*>/gi, "\n\n### $1\n\n");
+  text = text.replace(/<h4\b[^>]*>([\s\S]*?)<\/h4[^>]*>/gi, "\n\n#### $1\n\n");
+  text = text.replace(/<h5\b[^>]*>([\s\S]*?)<\/h5[^>]*>/gi, "\n\n##### $1\n\n");
+  text = text.replace(/<h6\b[^>]*>([\s\S]*?)<\/h6[^>]*>/gi, "\n\n###### $1\n\n");
 
   // Convert links: <a href="url">text</a> -> [text](url)
   text = text.replace(
-    /<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a\s*>/gi,
+    /<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a[^>]*>/gi,
     (_, href, label) => {
       const cleanLabel = stripHtmlTags(label).trim();
       if (!cleanLabel) return "";
@@ -427,14 +427,14 @@ export function extractReadableContentFromHtml(html: string): string {
   );
 
   // Convert lists
-  text = text.replace(/<li\b[^>]*>([\s\S]*?)<\/li\s*>/gi, "\n- $1");
+  text = text.replace(/<li\b[^>]*>([\s\S]*?)<\/li[^>]*>/gi, "\n- $1");
 
   // Paragraphs & line breaks
   text = text.replace(/<br\s*\/?>/gi, "\n");
-  text = text.replace(/<\/p\s*>/gi, "\n\n");
+  text = text.replace(/<\/p[^>]*>/gi, "\n\n");
   text = text.replace(/<p\b[^>]*>/gi, "\n\n");
   text = text.replace(/<div\b[^>]*>/gi, "\n");
-  text = text.replace(/<\/div\s*>/gi, "\n");
+  text = text.replace(/<\/div[^>]*>/gi, "\n");
 
   // Strip remaining HTML tags
   text = stripHtmlTags(text);
