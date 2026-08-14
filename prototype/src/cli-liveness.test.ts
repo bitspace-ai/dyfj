@@ -277,9 +277,13 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
       } catch {}
     });
 
-    const preAborted = AbortSignal.abort(
-      new DOMException("The operation was aborted", "AbortError"),
+    const ac = new AbortController();
+    // Fire abort after 1ms so Deno.connect is already in flight
+    setTimeout(
+      () =>
+        ac.abort(new DOMException("The operation was aborted", "AbortError")),
+      1,
     );
-    await expect(connectUnixClient(socketPath, {}, preAborted)).rejects.toThrow();
+    await expect(connectUnixClient(socketPath, {}, ac.signal)).rejects.toThrow();
   });
 });
