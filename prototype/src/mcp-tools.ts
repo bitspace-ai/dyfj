@@ -6,6 +6,7 @@ import type {
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
+import { buildWebCommands, createWebToolsSessionState } from "./web-tools.ts";
 export { mcpServerNetGrants } from "./mcp-net-grants.ts";
 
 const MCP_REVISION = "2026-07-28";
@@ -119,11 +120,19 @@ export function boundedMcpFetch(
   };
 }
 
+export const SUPPORTED_MCP_REVISIONS = new Set([
+  "2026-07-28",
+  "2025-11-25",
+  "2024-11-05",
+]);
+
 export function requireNegotiatedMcpRevision(client: {
   getNegotiatedProtocolVersion: () => string | undefined;
 }): string {
   const revision = client.getNegotiatedProtocolVersion();
-  if (revision !== MCP_REVISION) {
+  if (
+    typeof revision !== "string" || !SUPPORTED_MCP_REVISIONS.has(revision)
+  ) {
     throw new Error("external MCP protocol revision mismatch");
   }
   return revision;
@@ -154,7 +163,12 @@ async function withClient<T>(
   });
   const client = new Client(
     { name: "dyfj-workbench-tools", version: "1.0.0" },
-    { versionNegotiation: { mode: { pin: MCP_REVISION } } },
+    {
+      versionNegotiation: {
+        mode: "auto",
+        probe: { timeoutMs: DISCOVERY_TIMEOUT_MS, maxRetries: 0 },
+      },
+    },
   );
   try {
     await client.connect(transport, { timeout: DISCOVERY_TIMEOUT_MS });
@@ -165,7 +179,7 @@ async function withClient<T>(
   }
 }
 
-async function discoverMcpTools(input: {
+export async function discoverMcpTools(input: {
   server: McpHttpServerConfig;
   token: string;
 }): Promise<McpDiscoveryResult> {
@@ -185,7 +199,7 @@ async function discoverMcpTools(input: {
   );
 }
 
-async function callMcpTool(input: {
+export async function callMcpTool(input: {
   server: McpHttpServerConfig;
   token: string;
   tool: string;
@@ -231,12 +245,16 @@ function sanitizeSchemaNode(
   if (Object.hasOwn(input, "$ref")) {
     throw new Error("external MCP tool schema refs are not supported");
   }
-  const type = input.type;
+  let type = input.type;
   if (
     type !== "object" && type !== "string" && type !== "number" &&
     type !== "integer" && type !== "boolean" && type !== "array"
   ) {
-    throw new Error("external MCP tool schema contains an unsupported type");
+    if (Array.isArray(input.anyOf)) {
+      type = "string";
+    } else {
+      throw new Error("external MCP tool schema contains an unsupported type");
+    }
   }
   const output: Record<string, unknown> = { type };
   if (type === "object") {
@@ -394,6 +412,12 @@ export async function buildExternalMcpCommands(
   const call = deps.call ?? callMcpTool;
   const commands: CommandDefinition<string>[] = [];
   const diagnostics: ExternalMcpDiagnostic[] = [];
+  const sharedWebState = createWebToolsSessionState();
+  const readyWebServers: Array<{
+    server: McpHttpServerConfig;
+    token: string;
+    discoveredByName: Map<string, { name: string; inputSchema: unknown }>;
+  }> = [];
 
   for (const server of servers) {
     const token = Object.hasOwn(credentials, server.auth.secret)
@@ -418,7 +442,7 @@ export async function buildExternalMcpCommands(
       });
       continue;
     }
-    if (discovery.revision !== MCP_REVISION) {
+    if (typeof discovery.revision !== "string" || !discovery.revision.trim()) {
       diagnostics.push({
         serverId: server.id,
         status: "unavailable",
@@ -431,6 +455,11 @@ export async function buildExternalMcpCommands(
     );
     let toolCount = 0;
     for (const configured of server.tools) {
+      const isCapabilityMapped =
+        configured.name === server.capabilities?.searchTool ||
+        configured.name === server.capabilities?.fetchTool;
+      if (isCapabilityMapped) continue;
+
       const discovered = discoveredByName.get(configured.name);
       if (discovered === undefined) continue;
       let inputSchema: JsonSchemaObject;
@@ -497,6 +526,18 @@ export async function buildExternalMcpCommands(
         },
       });
     }
+
+    const hasDiscoveredSearch = Boolean(
+      server.capabilities?.searchTool &&
+        discoveredByName.has(server.capabilities.searchTool),
+    );
+    const hasDiscoveredFetch = Boolean(
+      server.capabilities?.fetchTool &&
+        discoveredByName.has(server.capabilities.fetchTool),
+    );
+    if (hasDiscoveredSearch || hasDiscoveredFetch) {
+      readyWebServers.push({ server, token, discoveredByName });
+    }
     diagnostics.push({
       serverId: server.id,
       status: "ready",
@@ -504,6 +545,86 @@ export async function buildExternalMcpCommands(
       toolCount,
     });
   }
+
+  // Register web capability commands with exact capability precedence
+  if (readyWebServers.length > 0) {
+    const searchEntry = readyWebServers.find(
+      (entry) =>
+        entry.server.capabilities?.searchTool !== undefined &&
+        entry.discoveredByName.has(entry.server.capabilities.searchTool),
+    );
+    const fetchEntry = readyWebServers.find(
+      (entry) =>
+        entry.server.capabilities?.fetchTool !== undefined &&
+        entry.discoveredByName.has(entry.server.capabilities.fetchTool),
+    );
+
+    const resolvedDeps: ExternalMcpDeps = {
+      discover: deps.discover ?? discoverMcpTools,
+      call: deps.call ?? callMcpTool,
+    };
+
+    if (searchEntry) {
+      const searchToolName = searchEntry.server.capabilities?.searchTool;
+      const discoveredSearchTool = searchToolName
+        ? searchEntry.discoveredByName.get(searchToolName)
+        : undefined;
+      let searchSchema: JsonSchemaObject | undefined;
+      if (discoveredSearchTool) {
+        try {
+          searchSchema = sanitizeMcpInputSchema(
+            discoveredSearchTool.inputSchema,
+          );
+        } catch {
+          // Fall back to default
+        }
+      }
+
+      const searchCmds = buildWebCommands(
+        searchEntry.server,
+        searchEntry.token,
+        resolvedDeps,
+        sharedWebState,
+        false,
+        { searchSchema },
+      );
+      const searchCmd = searchCmds.find((c) => c.id === "web_search");
+      if (searchCmd && !commands.some((c) => c.id === "web_search")) {
+        commands.push(searchCmd);
+      }
+    }
+
+    if (fetchEntry) {
+      const fetchToolName = fetchEntry.server.capabilities?.fetchTool;
+      const discoveredFetchTool = fetchToolName
+        ? fetchEntry.discoveredByName.get(fetchToolName)
+        : undefined;
+      let fetchSchema: JsonSchemaObject | undefined;
+      if (discoveredFetchTool) {
+        try {
+          fetchSchema = sanitizeMcpInputSchema(
+            discoveredFetchTool.inputSchema,
+          );
+        } catch {
+          // Fall back to default
+        }
+      }
+
+      const fetchCmds = buildWebCommands(
+        fetchEntry.server,
+        fetchEntry.token,
+        resolvedDeps,
+        sharedWebState,
+        false,
+        { fetchSchema },
+      );
+      const fetchCmd = fetchCmds.find((c) => c.id === "web_fetch");
+      if (fetchCmd && !commands.some((c) => c.id === "web_fetch")) {
+        commands.push(fetchCmd);
+      }
+    }
+  }
+
   return { commands, diagnostics };
 }
 
