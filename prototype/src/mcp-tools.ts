@@ -396,6 +396,7 @@ export async function buildExternalMcpCommands(
   const commands: CommandDefinition<string>[] = [];
   const diagnostics: ExternalMcpDiagnostic[] = [];
   const sharedWebState = createWebToolsSessionState();
+  const readyWebServers: Array<{ server: McpHttpServerConfig; token: string }> = [];
 
   for (const server of servers) {
     const token = Object.hasOwn(credentials, server.auth.secret)
@@ -500,17 +501,7 @@ export async function buildExternalMcpCommands(
       });
     }
     if (server.capabilities?.searchTool || server.capabilities?.fetchTool) {
-      const webCommands = buildWebCommands(
-        server,
-        token,
-        deps,
-        sharedWebState,
-      );
-      for (const cmd of webCommands) {
-        if (!commands.some((existing) => existing.id === cmd.id)) {
-          commands.push(cmd);
-        }
-      }
+      readyWebServers.push({ server, token });
     }
     diagnostics.push({
       serverId: server.id,
@@ -519,6 +510,44 @@ export async function buildExternalMcpCommands(
       toolCount,
     });
   }
+
+  // Register web capability commands with exact capability precedence
+  if (readyWebServers.length > 0) {
+    const searchServer = readyWebServers.find(
+      (entry) => entry.server.capabilities?.searchTool !== undefined,
+    );
+    const fetchServer = readyWebServers.find(
+      (entry) => entry.server.capabilities?.fetchTool !== undefined,
+    );
+
+    if (searchServer) {
+      const searchCmds = buildWebCommands(
+        searchServer.server,
+        searchServer.token,
+        deps,
+        sharedWebState,
+      );
+      const searchCmd = searchCmds.find((c) => c.id === "web_search");
+      if (searchCmd && !commands.some((c) => c.id === "web_search")) {
+        commands.push(searchCmd);
+      }
+    }
+
+    const effectiveFetchServer = fetchServer ?? searchServer ?? readyWebServers[0];
+    if (effectiveFetchServer) {
+      const fetchCmds = buildWebCommands(
+        effectiveFetchServer.server,
+        effectiveFetchServer.token,
+        deps,
+        sharedWebState,
+      );
+      const fetchCmd = fetchCmds.find((c) => c.id === "web_fetch");
+      if (fetchCmd && !commands.some((c) => c.id === "web_fetch")) {
+        commands.push(fetchCmd);
+      }
+    }
+  }
+
   return { commands, diagnostics };
 }
 

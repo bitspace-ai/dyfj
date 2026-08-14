@@ -289,6 +289,9 @@ describe("safeFetchDocument", () => {
 
     const doc = await safeFetchDocument("https://example.com/huge", fakeFetch);
     expect(doc.text).toContain("[Content truncated at 40,000 characters]");
+    expect(doc.text.length).toBeLessThanOrEqual(
+      MAX_EXTRACTED_CHARS_PER_FETCH + 100,
+    );
   });
 });
 
@@ -475,5 +478,51 @@ describe("buildWebCommands", () => {
       caller: { principalId: "operator", principalType: "human" },
       arguments: { url: "https://example.com/item" },
     }, { authzBasis: "test" })).rejects.toThrow(/Web fetch call limit exceeded/);
+  });
+
+  test("automatically resets turn state when traceId changes between turns", async () => {
+    const state = createWebToolsSessionState();
+    const fakeCall = async () => ({
+      content: [{ type: "text", text: JSON.stringify({ results: [] }) }],
+    });
+    const commands = buildWebCommands(
+      server,
+      "test_token",
+      { call: fakeCall },
+      state,
+      true,
+    );
+    const searchCmd = commands.find((c) => c.id === "web_search")!;
+
+    // Run 3 searches under turn-1
+    for (let i = 1; i <= 3; i++) {
+      await searchCmd.executor({
+        callId: `call_${i}`,
+        commandId: "web_search",
+        caller: { principalId: "operator", principalType: "human" },
+        arguments: { query: `query ${i}` },
+      }, { authzBasis: "test", traceId: "turn-1" });
+    }
+
+    // 4th search in turn-1 fails
+    await expect(searchCmd.executor({
+      callId: "call_4",
+      commandId: "web_search",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: { query: "query 4" },
+    }, { authzBasis: "test", traceId: "turn-1" })).rejects.toThrow(
+      /Web search call limit exceeded/,
+    );
+
+    // 1st search in turn-2 automatically resets and succeeds
+    const res = await searchCmd.executor({
+      callId: "call_5",
+      commandId: "web_search",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: { query: "query 5" },
+    }, { authzBasis: "test", traceId: "turn-2" });
+
+    expect(res).toContain("<untrusted-mcp-result>");
+    expect(state.searchCount).toBe(1);
   });
 });

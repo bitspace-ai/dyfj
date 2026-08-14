@@ -39,6 +39,7 @@ export interface WebToolsSessionState {
   extractedChars: number;
   sourceUrlMap: Map<string, string>;
   currentTraceId?: string;
+  querySeq: number;
 }
 
 export function createWebToolsSessionState(): WebToolsSessionState {
@@ -47,6 +48,7 @@ export function createWebToolsSessionState(): WebToolsSessionState {
     fetchCount: 0,
     extractedChars: 0,
     sourceUrlMap: new Map<string, string>(),
+    querySeq: 0,
   };
 }
 
@@ -59,9 +61,9 @@ export function resetWebToolsTurnState(state: WebToolsSessionState): void {
 }
 
 /**
- * Check if a host string is an IP address literal within a private, loopback,
+ * Check if a host string is an IP address literal within an enumerated private, loopback,
  * link-local, multicast, documentation, or reserved network range.
- * Returns false for domain names.
+ * Returns false for standard domain names without IP octets/colons.
  */
 export function isPrivateOrLoopbackIp(rawHost: string): boolean {
   let host = rawHost.trim().toLowerCase();
@@ -140,6 +142,9 @@ export function isPrivateOrLoopbackIp(rawHost: string): boolean {
     if (host.startsWith("64:ff9b:")) {
       return true; // 64:ff9b::/96 IPv4/IPv6 translation
     }
+    if (host.startsWith("100::") || host.startsWith("0100::")) {
+      return true; // 100::/64 Discard-only prefix
+    }
   }
 
   return false;
@@ -201,6 +206,44 @@ export function assertPublicHttpsUrl(
   }
 
   return url;
+}
+
+/**
+ * Verify that a domain name does not resolve to private or internal IP addresses.
+ */
+export async function assertPublicDnsResolution(
+  hostname: string,
+  allowLoopbackHttpForTesting = false,
+): Promise<void> {
+  if (
+    allowLoopbackHttpForTesting &&
+    (hostname === "127.0.0.1" || hostname === "localhost")
+  ) {
+    return;
+  }
+  if (isPrivateOrLoopbackIp(hostname)) {
+    throw new CommandExecutionError(
+      `Target host '${hostname}' is a private or internal IP address`,
+    );
+  }
+  // If Deno.resolveDns is available, check resolved records
+  if (typeof Deno?.resolveDns === "function") {
+    try {
+      const aRecords = await Deno.resolveDns(hostname, "A").catch(() => []);
+      const aaaaRecords = await Deno.resolveDns(hostname, "AAAA").catch(() =>
+        []
+      );
+      for (const ip of [...aRecords, ...aaaaRecords]) {
+        if (isPrivateOrLoopbackIp(ip)) {
+          throw new CommandExecutionError(
+            `Target host '${hostname}' resolves to private or internal IP address ${ip}`,
+          );
+        }
+      }
+    } catch (err) {
+      if (err instanceof CommandExecutionError) throw err;
+    }
+  }
 }
 
 const NAMED_HTML_ENTITIES: Record<string, string> = {
@@ -339,6 +382,7 @@ export async function safeFetchDocument(
   allowLoopbackHttpForTesting = false,
 ): Promise<{ text: string; url: string; contentType: string; bytes: number }> {
   const url = assertPublicHttpsUrl(targetUrl, allowLoopbackHttpForTesting);
+  await assertPublicDnsResolution(url.hostname, allowLoopbackHttpForTesting);
 
   const boundedFetch = boundedMcpFetch(MAX_FETCH_DOWNLOAD_BYTES, fetchImpl);
   const controller = new AbortController();
@@ -391,7 +435,7 @@ export async function safeFetchDocument(
     if (!allowedTypes.has(contentType)) {
       await response.body?.cancel().catch(() => {});
       throw new CommandExecutionError(
-        `Unsupported content type '${contentType}'. Only HTML, Markdown, text, and JSON are supported.`,
+        `Unsupported content type '${contentType}'. Only HTML, Markdown, text, XML, and JSON are supported.`,
       );
     }
 
@@ -600,6 +644,10 @@ export function buildWebCommands(
         const rawLimit = Number(commandCall.arguments.limit ?? 5);
         const limit = Math.max(1, Math.min(10, isNaN(rawLimit) ? 5 : rawLimit));
 
+        // Clear prior search mappings immediately on new search invocation
+        state.sourceUrlMap.clear();
+        state.querySeq++;
+
         const call = deps.call ?? (async (input) => {
           const { Client, StreamableHTTPClientTransport } = await import(
             "npm:@modelcontextprotocol/client@2.0.0"
@@ -629,19 +677,22 @@ export function buildWebCommands(
           }
         });
 
+        // Adapt arguments to common search tool conventions
+        const upstreamArgs: Record<string, unknown> = {
+          query,
+          q: query,
+          limit,
+          max_results: limit,
+          count: limit,
+        };
+
         let callResult: McpCallResult;
         try {
           callResult = await call({
             server,
             token,
             tool: searchToolName,
-            arguments: {
-              query,
-              q: query,
-              limit,
-              max_results: limit,
-              count: limit,
-            },
+            arguments: upstreamArgs,
             inputSchema: searchSchema,
             ...(context.traceId !== undefined && context.spanId !== undefined
               ? {
@@ -669,9 +720,6 @@ export function buildWebCommands(
             "External search MCP tool returned an error",
           );
         }
-
-        // Always clear prior search mappings before processing the new query
-        state.sourceUrlMap.clear();
 
         const allNormalized: WebSearchResultItem[] = [];
         for (const item of callResult.content ?? []) {
@@ -837,17 +885,21 @@ export function buildWebCommands(
           }
         });
 
+        // Adapt arguments to common extraction tool shapes
+        const upstreamFetchArgs: Record<string, unknown> = {
+          url: targetUrl,
+          urls: [targetUrl],
+          link: targetUrl,
+          sourceId: rawSourceId,
+        };
+
         let callResult: McpCallResult;
         try {
           callResult = await call({
             server,
             token,
             tool: fetchToolName,
-            arguments: {
-              url: targetUrl,
-              link: targetUrl,
-              sourceId: rawSourceId,
-            },
+            arguments: upstreamFetchArgs,
             inputSchema: fetchSchema,
             ...(context.traceId !== undefined && context.spanId !== undefined
               ? {
