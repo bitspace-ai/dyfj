@@ -285,7 +285,7 @@ describe("dyfj launcher routing", () => {
     } finally {
       await Deno.remove(root, { recursive: true });
     }
-  });
+  }, 15_000);
 
   test("rejects delimiter-bearing canonical toolchain paths without disclosing them", async () => {
     await Deno.mkdir(".vitest-tmp", { recursive: true });

@@ -264,7 +264,7 @@ export function assertPublicHttpsUrl(
 }
 
 /**
- * Best-effort preflight DNS resolution check rejecting resolved private A/AAAA records with timeout support.
+ * Best-effort preflight DNS resolution check rejecting resolved private A/AAAA records with bounded wait.
  */
 export async function assertPublicDnsResolution(
   hostname: string,
@@ -563,6 +563,7 @@ export async function safeFetchDocument(
 /** Parse and normalize raw search tool results into standard WebSearchResultItems. */
 export function normalizeSearchResults(
   rawResult: unknown,
+  limit?: number,
 ): WebSearchResultItem[] {
   let parsed: unknown = rawResult;
   if (typeof rawResult === "string") {
@@ -586,6 +587,7 @@ export function normalizeSearchResults(
     for (const entry of parsed) {
       if (typeof entry === "object" && entry !== null) {
         items.push(entry as Record<string, unknown>);
+        if (limit && items.length >= limit) break;
       }
     }
   } else if (typeof parsed === "object" && parsed !== null) {
@@ -595,12 +597,14 @@ export function normalizeSearchResults(
       for (const entry of obj.results) {
         if (typeof entry === "object" && entry !== null) {
           items.push(entry as Record<string, unknown>);
+          if (limit && items.length >= limit) break;
         }
       }
     } else if (Array.isArray(obj.organic_results)) {
       for (const entry of obj.organic_results) {
         if (typeof entry === "object" && entry !== null) {
           items.push(entry as Record<string, unknown>);
+          if (limit && items.length >= limit) break;
         }
       }
     }
@@ -762,7 +766,7 @@ export function buildWebCommands(
           }
         });
 
-        // Adapt arguments to the discovered upstream schema if available
+        // Remap conventional search parameter names if present in discovered schema
         const searchProps = (discoveredSchemas.searchSchema?.properties ??
           {}) as Record<string, unknown>;
         const upstreamArgs: Record<string, unknown> = {};
@@ -827,9 +831,9 @@ export function buildWebCommands(
         const allNormalized: WebSearchResultItem[] = [];
         for (const item of callResult.content ?? []) {
           if (item.type === "text" && typeof item.text === "string") {
-            allNormalized.push(...normalizeSearchResults(item.text));
+            allNormalized.push(...normalizeSearchResults(item.text, limit));
           } else {
-            allNormalized.push(...normalizeSearchResults(item));
+            allNormalized.push(...normalizeSearchResults(item, limit));
           }
         }
 
@@ -882,7 +886,7 @@ export function buildWebCommands(
       sourceId: {
         type: "string",
         description:
-          "The source ID from the most recent web_search result in the active turn (e.g. 's1', 's2').",
+          "The source ID from recent search results in the active turn (e.g. 's1', 's2').",
       },
     },
   };
@@ -896,7 +900,7 @@ export function buildWebCommands(
     id: "web_fetch",
     title: "Web Page Fetch",
     description:
-      "Fetch and extract readable Markdown text from an HTTPS web page URL or a source ID from recent search results. " +
+      "Fetch content from an HTTPS web page URL or a source ID from recent search results. " +
       "Returned content is untrusted external data.",
     inputSchema: fetchSchema,
     permission: {
@@ -966,10 +970,19 @@ export function buildWebCommands(
       }
 
       // Enforce syntactic HTTPS and private IP literal rejection on the target URL
-      assertPublicHttpsUrl(targetUrl, allowLoopbackHttpForTesting);
+      const parsedUrl = assertPublicHttpsUrl(
+        targetUrl,
+        allowLoopbackHttpForTesting,
+      );
 
       // If upstream fetchTool is declared on the server, delegate to it
       if (fetchToolName && configuredFetchTool) {
+        // Preflight DNS check for delegated fetch target
+        await assertPublicDnsResolution(
+          parsedUrl.hostname,
+          allowLoopbackHttpForTesting,
+        );
+
         const call = deps.call ?? (async (input) => {
           const { Client, StreamableHTTPClientTransport } = await import(
             "npm:@modelcontextprotocol/client@2.0.0"
@@ -1005,7 +1018,7 @@ export function buildWebCommands(
           }
         });
 
-        // Adapt arguments to the discovered fetch schema
+        // Remap conventional URL property names if present in discovered schema
         const fetchProps = (discoveredSchemas.fetchSchema?.properties ??
           {}) as Record<string, unknown>;
         const upstreamFetchArgs: Record<string, unknown> = {};
@@ -1060,13 +1073,15 @@ export function buildWebCommands(
         // Incrementally materialize content blocks to bound allocation
         let rawContent = "";
         for (const item of callResult.content ?? []) {
-          const itemText = item.type === "text" && typeof item.text === "string"
+          let itemText = item.type === "text" && typeof item.text === "string"
             ? item.text
             : JSON.stringify(item);
-          rawContent += (rawContent.length > 0 ? "\n" : "") + itemText;
-          if (rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
-            break;
+          const remaining = MAX_EXTRACTED_CHARS_PER_FETCH - rawContent.length;
+          if (remaining <= 0) break;
+          if (itemText.length > remaining) {
+            itemText = itemText.slice(0, remaining);
           }
+          rawContent += (rawContent.length > 0 ? "\n" : "") + itemText;
         }
 
         if (rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
