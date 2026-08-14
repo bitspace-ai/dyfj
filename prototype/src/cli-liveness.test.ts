@@ -62,7 +62,7 @@ describe("isTimeoutError and socketError", () => {
     expect(isTimeoutError(plainAbortErr)).toBe(false);
 
     const messageTimeout = new Error("connection timed out");
-    expect(isTimeoutError(messageTimeout)).toBe(true);
+    expect(isTimeoutError(messageTimeout)).toBe(false);
 
     const regularErr = new Error("Something else failed");
     expect(isTimeoutError(regularErr)).toBe(false);
@@ -73,7 +73,7 @@ describe("isTimeoutError and socketError", () => {
     timeoutErr.name = "TimeoutError";
     const msg = socketError(timeoutErr, cfg({ socket: "/tmp/dyfj.sock" }));
     expect(msg).toBe(
-      "dyfj: runtime at /tmp/dyfj.sock is unresponsive (timed out after 5s)",
+      "dyfj: runtime at /tmp/dyfj.sock is unresponsive (liveness probe timed out)",
     );
   });
 
@@ -240,7 +240,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
     const formatted = socketError(caughtError, cfg({ socket: socketPath }));
     expect(formatted).toBe(
-      `dyfj: runtime at ${socketPath} is unresponsive (timed out after 5s)`,
+      `dyfj: runtime at ${socketPath} is unresponsive (liveness probe timed out)`,
     );
   });
 });

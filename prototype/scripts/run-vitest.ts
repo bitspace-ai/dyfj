@@ -12,7 +12,7 @@ const child = new Deno.Command(denoExecutable, {
   args: [
     "run",
     "-P=test",
-    "--allow-read=.,..,../..,../../..,../../../..,/tmp,/private/tmp,/var/folders,/private/var/folders",
+    "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
     "--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
     `--allow-run=bash,/bin/bash,${denoExecutable},/bin/kill,/bin/sh,${esbuildBinary}`,
     "npm:vitest@3.2.6",

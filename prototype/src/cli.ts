@@ -1370,16 +1370,13 @@ export function isTimeoutError(error: unknown): boolean {
     ) {
       return true;
     }
-    if (/timed out|operation timed out/i.test(error.message)) {
-      return true;
-    }
   }
   return false;
 }
 
 export function socketError(error: unknown, config: CliConfig): string {
   if (isTimeoutError(error)) {
-    return `dyfj: runtime at ${config.socket} is unresponsive (timed out after 5s)`;
+    return `dyfj: runtime at ${config.socket} is unresponsive (liveness probe timed out)`;
   }
   const message = error instanceof Error ? error.message : String(error);
   if (
@@ -1393,11 +1390,11 @@ export function socketError(error: unknown, config: CliConfig): string {
 }
 
 /**
- * Probe runtime liveness over UDS with a client-owned 5-second deadline.
+ * Probe runtime liveness over UDS with a client-owned deadline (default 5s).
  *
  * First attempts the lightweight `runtime/liveness` RPC (which does not load models,
  * query Dolt, or touch inference state). If the server is an older version that
- * does not implement `runtime/liveness` (RpcErrorCode.MethodNotFound / -32601),
+ * does not implement `runtime/liveness` (RpcErrorCode.methodNotFound / -32601),
  * falls back once to `runtime/status` within the SAME remaining deadline.
  */
 export async function probeRuntimeLiveness(

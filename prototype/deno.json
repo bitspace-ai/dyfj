@@ -23,13 +23,7 @@
       "env": true,
       "read": [
         "..",
-        "../..",
-        "../../..",
-        "../../../..",
-        "/tmp",
-        "/private/tmp",
-        "/var/folders",
-        "/private/var/folders"
+        "../.."
       ],
       "write": [
         "."

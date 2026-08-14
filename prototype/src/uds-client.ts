@@ -59,19 +59,33 @@ export async function connectUnixClient(
   let conn: Deno.Conn;
   if (signal) {
     let onAbort: (() => void) | undefined;
+    let aborted = false;
+    const connPromise = Deno.connect({ transport: "unix", path: socketPath });
+    // If the abort promise wins the race, close any connection that settles later
+    connPromise.then(
+      (c) => {
+        if (aborted) {
+          try {
+            c.close();
+          } catch {
+            // Already closed
+          }
+        }
+      },
+      () => {},
+    );
     const abortPromise = new Promise<never>((_, reject) => {
-      onAbort = () =>
+      onAbort = () => {
+        aborted = true;
         reject(
           signal.reason ??
             new DOMException("The operation was aborted", "AbortError"),
         );
+      };
       signal.addEventListener("abort", onAbort, { once: true });
     });
     try {
-      conn = await Promise.race([
-        Deno.connect({ transport: "unix", path: socketPath }),
-        abortPromise,
-      ]);
+      conn = await Promise.race([connPromise, abortPromise]);
     } finally {
       if (onAbort) signal.removeEventListener("abort", onAbort);
     }
