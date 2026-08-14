@@ -39,7 +39,12 @@ export interface UnixClientOptions {
 export async function connectUnixClient(
   socketPath: string,
   options: UnixClientOptions = {},
+  signal?: AbortSignal,
 ): Promise<UnixClient> {
+  if (signal?.aborted) {
+    throw signal.reason ??
+      new DOMException("The operation was aborted", "AbortError");
+  }
   const handlers: RpcHandlers = {};
   const onStream = options.onStream;
   if (onStream) {
@@ -51,11 +56,33 @@ export async function connectUnixClient(
   if (onApproval) {
     handlers.approval = (params) => onApproval(params);
   }
-  const conn = await Deno.connect({ transport: "unix", path: socketPath });
+  let conn: Deno.Conn;
+  if (signal) {
+    let onAbort: (() => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      onAbort = () =>
+        reject(
+          signal.reason ??
+            new DOMException("The operation was aborted", "AbortError"),
+        );
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      conn = await Promise.race([
+        Deno.connect({ transport: "unix", path: socketPath }),
+        abortPromise,
+      ]);
+    } finally {
+      if (onAbort) signal.removeEventListener("abort", onAbort);
+    }
+  } else {
+    conn = await Deno.connect({ transport: "unix", path: socketPath });
+  }
   const peer = new JsonRpcPeer(conn, { handlers });
   void peer.run();
   return {
-    request: (method, params, signal) => peer.request(method, params, signal),
+    request: (method, params, reqSignal) =>
+      peer.request(method, params, reqSignal),
     close: () => peer.close(),
   };
 }

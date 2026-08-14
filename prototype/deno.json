@@ -21,7 +21,16 @@
   "permissions": {
     "test": {
       "env": true,
-      "read": true,
+      "read": [
+        "..",
+        "../..",
+        "../../..",
+        "../../../..",
+        "/tmp",
+        "/private/tmp",
+        "/var/folders",
+        "/private/var/folders"
+      ],
       "write": [
         "."
       ],

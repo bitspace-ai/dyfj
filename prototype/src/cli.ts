@@ -1360,10 +1360,17 @@ export const LIVENESS_PROBE_TIMEOUT_MS = 5000;
 
 export function isTimeoutError(error: unknown): boolean {
   if (error instanceof Error) {
-    if (error.name === "TimeoutError" || error.name === "AbortError") {
+    if (error.name === "TimeoutError") {
       return true;
     }
-    if (/timed out|abort|timeout/i.test(error.message)) {
+    if (
+      error.name === "AbortError" &&
+      error.cause instanceof Error &&
+      error.cause.name === "TimeoutError"
+    ) {
+      return true;
+    }
+    if (/timed out|operation timed out/i.test(error.message)) {
       return true;
     }
   }
@@ -1372,11 +1379,11 @@ export function isTimeoutError(error: unknown): boolean {
 
 export function socketError(error: unknown, config: CliConfig): string {
   if (isTimeoutError(error)) {
-    return `dyfj: runtime at ${config.socket} is unresponsive (liveness probe timed out after 5s)`;
+    return `dyfj: runtime at ${config.socket} is unresponsive (timed out after 5s)`;
   }
   const message = error instanceof Error ? error.message : String(error);
   if (
-    /no such file|not found|connection refused|enoent|os error 2|os error 61/i
+    /no such file|not found|connection refused|econnrefused|enoent|os error 2|os error 61/i
       .test(message)
   ) {
     return `dyfj: runtime not reachable at ${config.socket}. ` +
@@ -1419,9 +1426,9 @@ export async function fetchModelSlugs(
   connect: ConnectFn = connectUnixClient,
 ): Promise<{ slugs: string[]; models: ModelRow[] } | { error: string }> {
   try {
-    const client = await connect(config.socket);
+    const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
+    const client = await connect(config.socket, undefined, signal);
     try {
-      const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
       const { models } = await client.request(
         "models/list",
         undefined,
@@ -1454,9 +1461,9 @@ export async function fetchSessionPosture(
   connect: ConnectFn = connectUnixClient,
 ): Promise<SessionPosture | { error: string }> {
   try {
-    const client = await connect(config.socket);
+    const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
+    const client = await connect(config.socket, undefined, signal);
     try {
-      const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
       const { runtime } = await client.request(
         "runtime/status",
         undefined,
@@ -1711,9 +1718,9 @@ export async function runStatus(
   connect: ConnectFn = connectUnixClient,
 ): Promise<number> {
   try {
-    const client = await connect(config.socket);
+    const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
+    const client = await connect(config.socket, undefined, signal);
     try {
-      const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
       const probeResult = await probeRuntimeLiveness(client, signal);
       const payload = probeResult.statusPayload ??
         (await client.request(

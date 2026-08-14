@@ -47,16 +47,21 @@ function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
 const anyVal = (v: unknown): any => v;
 
 describe("isTimeoutError and socketError", () => {
-  test("identifies TimeoutError and AbortError instances", () => {
+  test("identifies TimeoutError instances and rejects non-timeout aborts", () => {
     const timeoutErr = new Error("The operation timed out");
     timeoutErr.name = "TimeoutError";
     expect(isTimeoutError(timeoutErr)).toBe(true);
 
-    const abortErr = new Error("The operation was aborted");
-    abortErr.name = "AbortError";
-    expect(isTimeoutError(abortErr)).toBe(true);
+    const abortWithTimeoutCause = new Error("The operation was aborted");
+    abortWithTimeoutCause.name = "AbortError";
+    abortWithTimeoutCause.cause = timeoutErr;
+    expect(isTimeoutError(abortWithTimeoutCause)).toBe(true);
 
-    const messageTimeout = new Error("signal timed out");
+    const plainAbortErr = new Error("The operation was aborted");
+    plainAbortErr.name = "AbortError";
+    expect(isTimeoutError(plainAbortErr)).toBe(false);
+
+    const messageTimeout = new Error("connection timed out");
     expect(isTimeoutError(messageTimeout)).toBe(true);
 
     const regularErr = new Error("Something else failed");
@@ -68,15 +73,20 @@ describe("isTimeoutError and socketError", () => {
     timeoutErr.name = "TimeoutError";
     const msg = socketError(timeoutErr, cfg({ socket: "/tmp/dyfj.sock" }));
     expect(msg).toBe(
-      "dyfj: runtime at /tmp/dyfj.sock is unresponsive (liveness probe timed out after 5s)",
+      "dyfj: runtime at /tmp/dyfj.sock is unresponsive (timed out after 5s)",
     );
   });
 
   test("socketError produces start hint on connection refused or missing socket", () => {
     const enoentErr = new Error("No such file or directory (os error 2)");
-    const msg = socketError(enoentErr, cfg({ socket: "/tmp/dyfj.sock" }));
-    expect(msg).toContain("dyfj: runtime not reachable at /tmp/dyfj.sock.");
-    expect(msg).toContain("Start it with: dyfj start");
+    const msgEnoent = socketError(enoentErr, cfg({ socket: "/tmp/dyfj.sock" }));
+    expect(msgEnoent).toContain("dyfj: runtime not reachable at /tmp/dyfj.sock.");
+    expect(msgEnoent).toContain("Start it with: dyfj start");
+
+    const econnrefusedErr = new Error("connect ECONNREFUSED /tmp/dyfj.sock");
+    const msgRefused = socketError(econnrefusedErr, cfg({ socket: "/tmp/dyfj.sock" }));
+    expect(msgRefused).toContain("dyfj: runtime not reachable at /tmp/dyfj.sock.");
+    expect(msgRefused).toContain("Start it with: dyfj start");
   });
 });
 
@@ -178,7 +188,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     expect(out).toContain(socketPath);
   });
 
-  test("probe times out and cleans up when connected to a mute socket", async () => {
+  test("probe times out with a bounded deadline and cleans up when connected to a mute socket", async () => {
     const dir = await Deno.makeTempDir({ dir: "/tmp" });
     const socketPath = `${dir}/mute.sock`;
     // Create a raw UDS listener that accepts connections but writes nothing back
@@ -214,6 +224,23 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
     // Use a short 100ms signal to test timeout bounding without waiting 5 full seconds
     const timeoutSignal = AbortSignal.timeout(100);
-    await expect(probeRuntimeLiveness(client, timeoutSignal)).rejects.toThrow();
+    const start = Date.now();
+    let caughtError: unknown;
+    try {
+      await probeRuntimeLiveness(client, timeoutSignal);
+    } catch (err) {
+      caughtError = err;
+    }
+    const elapsed = Date.now() - start;
+
+    expect(caughtError).toBeDefined();
+    expect(isTimeoutError(caughtError)).toBe(true);
+    expect(elapsed).toBeGreaterThanOrEqual(80);
+    expect(elapsed).toBeLessThan(1500);
+
+    const formatted = socketError(caughtError, cfg({ socket: socketPath }));
+    expect(formatted).toBe(
+      `dyfj: runtime at ${socketPath} is unresponsive (timed out after 5s)`,
+    );
   });
 });
