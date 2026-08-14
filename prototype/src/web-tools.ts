@@ -289,12 +289,20 @@ export async function assertPublicDnsResolution(
       `Target host '${hostname}' is an enumerated private or internal IP address`,
     );
   }
-  if (typeof Deno?.resolveDns === "function") {
+  const denoGlobal = (globalThis as {
+    Deno?: {
+      resolveDns?: (
+        host: string,
+        recordType: "A" | "AAAA",
+      ) => Promise<string[]>;
+    };
+  }).Deno;
+  if (typeof denoGlobal?.resolveDns === "function") {
     try {
       if (signal?.aborted) return;
       const dnsPromise = Promise.all([
-        Deno.resolveDns(hostname, "A").catch(() => []),
-        Deno.resolveDns(hostname, "AAAA").catch(() => []),
+        denoGlobal.resolveDns(hostname, "A").catch(() => []),
+        denoGlobal.resolveDns(hostname, "AAAA").catch(() => []),
       ]);
       const abortPromise = new Promise<never>((_, reject) => {
         if (signal?.aborted) {
