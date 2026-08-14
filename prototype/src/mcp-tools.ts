@@ -6,7 +6,7 @@ import type {
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
-import { buildWebCommands } from "./web-tools.ts";
+import { buildWebCommands, createWebToolsSessionState } from "./web-tools.ts";
 export { mcpServerNetGrants } from "./mcp-net-grants.ts";
 
 const MCP_REVISION = "2026-07-28";
@@ -395,6 +395,7 @@ export async function buildExternalMcpCommands(
   const call = deps.call ?? callMcpTool;
   const commands: CommandDefinition<string>[] = [];
   const diagnostics: ExternalMcpDiagnostic[] = [];
+  const sharedWebState = createWebToolsSessionState();
 
   for (const server of servers) {
     const token = Object.hasOwn(credentials, server.auth.secret)
@@ -499,7 +500,12 @@ export async function buildExternalMcpCommands(
       });
     }
     if (server.capabilities?.searchTool || server.capabilities?.fetchTool) {
-      const webCommands = buildWebCommands(server, token, deps);
+      const webCommands = buildWebCommands(
+        server,
+        token,
+        deps,
+        sharedWebState,
+      );
       for (const cmd of webCommands) {
         if (!commands.some((existing) => existing.id === cmd.id)) {
           commands.push(cmd);

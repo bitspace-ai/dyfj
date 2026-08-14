@@ -57,23 +57,27 @@ describe("isPrivateOrLoopbackIp", () => {
     expect(isPrivateOrLoopbackIp("64:ff9b::1")).toBe(true);
   });
 
-  test("allows public IP addresses", () => {
+  test("allows public IP addresses and domain names with special prefixes", () => {
     expect(isPrivateOrLoopbackIp("8.8.8.8")).toBe(false);
     expect(isPrivateOrLoopbackIp("1.1.1.1")).toBe(false);
     expect(isPrivateOrLoopbackIp("93.184.216.34")).toBe(false);
     expect(isPrivateOrLoopbackIp("172.15.0.1")).toBe(false);
     expect(isPrivateOrLoopbackIp("172.32.0.1")).toBe(false);
     expect(isPrivateOrLoopbackIp("2606:4700:4700::1111")).toBe(false);
+    // Domain names starting with fd or ff must NOT be classified as private IPv6
+    expect(isPrivateOrLoopbackIp("fda.gov")).toBe(false);
+    expect(isPrivateOrLoopbackIp("ffmpeg.org")).toBe(false);
   });
 });
 
 describe("assertPublicHttpsUrl", () => {
-  test("accepts valid public HTTPS URLs", () => {
-    const url = assertPublicHttpsUrl(
-      "https://example.com/docs/api?q=test#heading",
-    );
-    expect(url.hostname).toBe("example.com");
-    expect(url.protocol).toBe("https:");
+  test("accepts valid public HTTPS URLs including fda.gov and ffmpeg.org", () => {
+    const url1 = assertPublicHttpsUrl("https://fda.gov/drugs");
+    expect(url1.hostname).toBe("fda.gov");
+    expect(url1.protocol).toBe("https:");
+
+    const url2 = assertPublicHttpsUrl("https://ffmpeg.org/documentation.html");
+    expect(url2.hostname).toBe("ffmpeg.org");
   });
 
   test("rejects non-HTTPS protocols", () => {
@@ -89,11 +93,17 @@ describe("assertPublicHttpsUrl", () => {
     );
   });
 
-  test("rejects localhost, private IPs, and IPv4-mapped IPv6 literals", () => {
+  test("rejects localhost (with or without trailing dots), private IPs, and IPv4-mapped IPv6 literals", () => {
     expect(() => assertPublicHttpsUrl("https://localhost/api")).toThrow(
       /localhost/,
     );
+    expect(() => assertPublicHttpsUrl("https://localhost./api")).toThrow(
+      /localhost/,
+    );
     expect(() => assertPublicHttpsUrl("https://sub.localhost/")).toThrow(
+      /localhost/,
+    );
+    expect(() => assertPublicHttpsUrl("https://sub.localhost./")).toThrow(
       /localhost/,
     );
     expect(() => assertPublicHttpsUrl("https://127.0.0.1:8080/")).toThrow(
@@ -246,10 +256,16 @@ describe("safeFetchDocument", () => {
     expect(doc.text).toContain("Test body");
   });
 
-  test("rejects unsupported content types like images", async () => {
+  test("rejects unsupported content types and cancels response stream", async () => {
+    let bodyCancelled = false;
+    const fakeStream = new ReadableStream({
+      cancel() {
+        bodyCancelled = true;
+      },
+    });
     const fakeFetch: typeof fetch = () =>
       Promise.resolve(
-        new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+        new Response(fakeStream, {
           status: 200,
           headers: { "Content-Type": "image/png" },
         }),
@@ -257,6 +273,7 @@ describe("safeFetchDocument", () => {
 
     await expect(safeFetchDocument("https://example.com/pic.png", fakeFetch))
       .rejects.toThrow(/Unsupported content type/);
+    expect(bodyCancelled).toBe(true);
   });
 
   test("truncates content exceeding character limit", async () => {
@@ -390,14 +407,53 @@ describe("buildWebCommands", () => {
     expect(fetchToolCalled).toBe(true);
     expect(fetchRes).toContain("<untrusted-mcp-result>");
     expect(fetchRes).toContain("# Tavily Extract Content");
+
+    // Delegated fetch on private URL must still be rejected
+    await expect(delegatedFetchCmd.executor({
+      callId: "call_3",
+      commandId: "web_fetch",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: { url: "https://192.168.1.1/admin" },
+    }, { authzBasis: "test" })).rejects.toThrow(/forbidden|private/);
+  });
+
+  test("empty search result clears prior source map", async () => {
+    const state = createWebToolsSessionState();
+    state.sourceUrlMap.set("s1", "https://stale.com");
+
+    const fakeEmptyCall = async () => ({
+      content: [{
+        type: "text",
+        text: JSON.stringify({ results: [] }),
+      }],
+    });
+
+    const commands = buildWebCommands(
+      server,
+      "test_token",
+      { call: fakeEmptyCall },
+      state,
+      true,
+    );
+    const searchCmd = commands.find((c) => c.id === "web_search")!;
+
+    await searchCmd.executor({
+      callId: "call_empty",
+      commandId: "web_search",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: { query: "empty query" },
+    }, { authzBasis: "test" });
+
+    expect(state.sourceUrlMap.size).toBe(0);
   });
 
   test("resets turn state and enforces max search and fetch calls per turn", async () => {
     const state = createWebToolsSessionState();
     state.searchCount = MAX_SEARCH_CALLS_PER_TURN;
-    const commands = buildWebCommands(server, "test_token", {}, state);
+    const commands = buildWebCommands(server, "test_token", {}, state, true);
     const searchCmd = commands.find((c) => c.id === "web_search")!;
 
+    // Max search calls exceeded
     await expect(searchCmd.executor({
       callId: "call_1",
       commandId: "web_search",
@@ -405,8 +461,19 @@ describe("buildWebCommands", () => {
       arguments: { query: "overflow" },
     }, { authzBasis: "test" })).rejects.toThrow(/Web search call limit exceeded/);
 
+    // Reset turn state
     resetWebToolsTurnState(state);
     expect(state.searchCount).toBe(0);
     expect(state.fetchCount).toBe(0);
+
+    // Max fetch calls exceeded
+    state.fetchCount = MAX_FETCH_CALLS_PER_TURN;
+    const fetchCmd = commands.find((c) => c.id === "web_fetch")!;
+    await expect(fetchCmd.executor({
+      callId: "call_fetch_over",
+      commandId: "web_fetch",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: { url: "https://example.com/item" },
+    }, { authzBasis: "test" })).rejects.toThrow(/Web fetch call limit exceeded/);
   });
 });

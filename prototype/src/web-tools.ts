@@ -38,6 +38,7 @@ export interface WebToolsSessionState {
   fetchCount: number;
   extractedChars: number;
   sourceUrlMap: Map<string, string>;
+  currentTraceId?: string;
 }
 
 export function createWebToolsSessionState(): WebToolsSessionState {
@@ -58,22 +59,23 @@ export function resetWebToolsTurnState(state: WebToolsSessionState): void {
 }
 
 /**
- * Check if an IP address literal is within a private, loopback, link-local,
- * multicast, documentation, or reserved network range.
+ * Check if a host string is an IP address literal within a private, loopback,
+ * link-local, multicast, documentation, or reserved network range.
+ * Returns false for domain names.
  */
-export function isPrivateOrLoopbackIp(rawIp: string): boolean {
-  let ip = rawIp.trim().toLowerCase();
+export function isPrivateOrLoopbackIp(rawHost: string): boolean {
+  let host = rawHost.trim().toLowerCase();
 
   // Strip IPv6 brackets if present
-  if (ip.startsWith("[") && ip.endsWith("]")) {
-    ip = ip.slice(1, -1);
+  if (host.startsWith("[") && host.endsWith("]")) {
+    host = host.slice(1, -1);
   }
 
   // Handle IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1)
-  if (ip.startsWith("::ffff:") || ip.startsWith("0:0:0:0:0:ffff:")) {
-    const mappedPart = ip.split("ffff:")[1] ?? "";
+  if (host.startsWith("::ffff:") || host.startsWith("0:0:0:0:0:ffff:")) {
+    const mappedPart = host.split("ffff:")[1] ?? "";
     if (mappedPart.includes(".")) {
-      ip = mappedPart;
+      host = mappedPart;
     } else if (mappedPart.includes(":")) {
       const parts = mappedPart.split(":");
       if (parts.length === 2) {
@@ -84,14 +86,14 @@ export function isPrivateOrLoopbackIp(rawIp: string): boolean {
           const b = hexA & 0xff;
           const c = (hexB >> 8) & 0xff;
           const d = hexB & 0xff;
-          ip = `${a}.${b}.${c}.${d}`;
+          host = `${a}.${b}.${c}.${d}`;
         }
       }
     }
   }
 
   // IPv4 checks
-  const ipv4Match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
     const octets = ipv4Match.slice(1, 5).map(Number);
     if (octets.some((o) => o > 255)) return true; // invalid octet -> reject
@@ -114,28 +116,30 @@ export function isPrivateOrLoopbackIp(rawIp: string): boolean {
     return false;
   }
 
-  // IPv6 checks
-  if (ip === "::1" || ip === "::") return true; // Loopback & Unspecified
-  if (
-    ip.startsWith("fe8") || ip.startsWith("fe9") || ip.startsWith("fea") ||
-    ip.startsWith("feb")
-  ) {
-    return true; // fe80::/10 link-local
-  }
-  if (ip.startsWith("fc") || ip.startsWith("fd")) {
-    return true; // fc00::/7 unique local
-  }
-  if (ip.startsWith("ff")) {
-    return true; // ff00::/8 multicast
-  }
-  if (ip.startsWith("2001:db8:") || ip.startsWith("2001:0db8:")) {
-    return true; // 2001:db8::/32 documentation
-  }
-  if (ip.startsWith("2001:2:") || ip.startsWith("2001:0002:")) {
-    return true; // 2001:2::/48 benchmarking
-  }
-  if (ip.startsWith("64:ff9b:")) {
-    return true; // 64:ff9b::/96 IPv4/IPv6 translation
+  // IPv6 checks only apply if the string contains a colon
+  if (host.includes(":")) {
+    if (host === "::1" || host === "::") return true; // Loopback & Unspecified
+    if (
+      host.startsWith("fe8") || host.startsWith("fe9") ||
+      host.startsWith("fea") || host.startsWith("feb")
+    ) {
+      return true; // fe80::/10 link-local
+    }
+    if (host.startsWith("fc") || host.startsWith("fd")) {
+      return true; // fc00::/7 unique local
+    }
+    if (host.startsWith("ff")) {
+      return true; // ff00::/8 multicast
+    }
+    if (host.startsWith("2001:db8:") || host.startsWith("2001:0db8:")) {
+      return true; // 2001:db8::/32 documentation
+    }
+    if (host.startsWith("2001:2:") || host.startsWith("2001:0002:")) {
+      return true; // 2001:2::/48 benchmarking
+    }
+    if (host.startsWith("64:ff9b:")) {
+      return true; // 64:ff9b::/96 IPv4/IPv6 translation
+    }
   }
 
   return false;
@@ -177,7 +181,8 @@ export function assertPublicHttpsUrl(
   }
 
   if (
-    hostname === "localhost" || hostname.endsWith(".localhost") ||
+    hostname === "localhost" || hostname === "localhost." ||
+    hostname.endsWith(".localhost") || hostname.endsWith(".localhost.") ||
     hostname === "0.0.0.0"
   ) {
     throw new CommandExecutionError(
@@ -365,6 +370,7 @@ export async function safeFetchDocument(
     }
 
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
       throw new CommandExecutionError(
         `Web fetch failed with HTTP status ${response.status} (${response.statusText})`,
       );
@@ -383,6 +389,7 @@ export async function safeFetchDocument(
     ]);
 
     if (!allowedTypes.has(contentType)) {
+      await response.body?.cancel().catch(() => {});
       throw new CommandExecutionError(
         `Unsupported content type '${contentType}'. Only HTML, Markdown, text, and JSON are supported.`,
       );
@@ -439,11 +446,13 @@ export function normalizeSearchResults(
     try {
       parsed = JSON.parse(rawResult);
     } catch {
+      const trimmed = rawResult.trim();
+      if (!trimmed) return [];
       return [{
         id: "s1",
         title: "Search Results",
         url: "",
-        snippet: rawResult.slice(0, 1000),
+        snippet: trimmed.slice(0, 1000),
         rank: 1,
       }];
     }
@@ -571,6 +580,11 @@ export function buildWebCommands(
           },
         }),
       executor: async (commandCall, context) => {
+        if (context.traceId && state.currentTraceId !== context.traceId) {
+          state.currentTraceId = context.traceId;
+          resetWebToolsTurnState(state);
+        }
+
         if (state.searchCount >= MAX_SEARCH_CALLS_PER_TURN) {
           throw new CommandExecutionError(
             `Web search call limit exceeded (${MAX_SEARCH_CALLS_PER_TURN} calls per turn maximum).`,
@@ -621,7 +635,13 @@ export function buildWebCommands(
             server,
             token,
             tool: searchToolName,
-            arguments: { query, max_results: limit, limit },
+            arguments: {
+              query,
+              q: query,
+              limit,
+              max_results: limit,
+              count: limit,
+            },
             inputSchema: searchSchema,
             ...(context.traceId !== undefined && context.spanId !== undefined
               ? {
@@ -650,14 +670,24 @@ export function buildWebCommands(
           );
         }
 
-        const rawContent = (callResult.content ?? []).map((item) =>
-          item.type === "text" && typeof item.text === "string"
-            ? item.text
-            : JSON.stringify(item)
-        ).join("\n");
+        // Always clear prior search mappings before processing the new query
+        state.sourceUrlMap.clear();
 
-        const allNormalized = normalizeSearchResults(rawContent);
-        const normalized = allNormalized.slice(0, limit);
+        const allNormalized: WebSearchResultItem[] = [];
+        for (const item of callResult.content ?? []) {
+          if (item.type === "text" && typeof item.text === "string") {
+            allNormalized.push(...normalizeSearchResults(item.text));
+          } else {
+            allNormalized.push(...normalizeSearchResults(item));
+          }
+        }
+
+        // Re-index ranks and slice to requested limit
+        const normalized = allNormalized.slice(0, limit).map((item, idx) => ({
+          ...item,
+          id: `s${idx + 1}`,
+          rank: idx + 1,
+        }));
 
         if (normalized.length === 0) {
           return formatUntrustedMcpResult(
@@ -665,8 +695,7 @@ export function buildWebCommands(
           );
         }
 
-        // Reset and cache source URLs for follow-up web_fetch on the current query
-        state.sourceUrlMap.clear();
+        // Cache source URLs for follow-up web_fetch on the current query
         for (const item of normalized) {
           if (item.url) {
             state.sourceUrlMap.set(item.id, item.url);
@@ -704,6 +733,8 @@ export function buildWebCommands(
     },
   };
 
+  const hasConfiguredFetchTool = Boolean(fetchToolName && configuredFetchTool);
+
   commands.push({
     id: "web_fetch",
     title: "Web Page Fetch",
@@ -713,14 +744,19 @@ export function buildWebCommands(
     inputSchema: fetchSchema,
     permission: {
       effects: [
-        configuredFetchTool?.effect === "write_external"
+        hasConfiguredFetchTool &&
+          configuredFetchTool?.effect === "write_external"
           ? "write.external"
           : "read.external",
         "emit.event",
       ],
-      defaultDecision: configuredFetchTool?.approval ?? "allow",
-      resources: [`mcp:${server.id}/${fetchToolName ?? "native_fetch"}`],
-      network: "configured-external",
+      defaultDecision: hasConfiguredFetchTool
+        ? (configuredFetchTool?.approval ?? "allow")
+        : "allow",
+      resources: hasConfiguredFetchTool
+        ? [`mcp:${server.id}/${fetchToolName}`]
+        : ["web:native_fetch"],
+      network: hasConfiguredFetchTool ? "configured-external" : "external",
       filesystem: "none",
       cost: "none",
     },
@@ -734,6 +770,11 @@ export function buildWebCommands(
         webCapability: { tool: "web_fetch", server: server.id },
       }),
     executor: async (commandCall, context) => {
+      if (context.traceId && state.currentTraceId !== context.traceId) {
+        state.currentTraceId = context.traceId;
+        resetWebToolsTurnState(state);
+      }
+
       if (state.fetchCount >= MAX_FETCH_CALLS_PER_TURN) {
         throw new CommandExecutionError(
           `Web fetch call limit exceeded (${MAX_FETCH_CALLS_PER_TURN} calls per turn maximum).`,
@@ -761,6 +802,9 @@ export function buildWebCommands(
           "Either 'url' or 'sourceId' must be provided to web_fetch",
         );
       }
+
+      // Enforce syntactic HTTPS and private-address rejection on the target URL
+      assertPublicHttpsUrl(targetUrl, allowLoopbackHttpForTesting);
 
       // If upstream fetchTool is declared on the server, delegate to it
       if (fetchToolName && configuredFetchTool) {
@@ -799,7 +843,11 @@ export function buildWebCommands(
             server,
             token,
             tool: fetchToolName,
-            arguments: { url: targetUrl },
+            arguments: {
+              url: targetUrl,
+              link: targetUrl,
+              sourceId: rawSourceId,
+            },
             inputSchema: fetchSchema,
             ...(context.traceId !== undefined && context.spanId !== undefined
               ? {
@@ -828,11 +876,16 @@ export function buildWebCommands(
           );
         }
 
-        const rawContent = (callResult.content ?? []).map((item) =>
+        let rawContent = (callResult.content ?? []).map((item) =>
           item.type === "text" && typeof item.text === "string"
             ? item.text
             : JSON.stringify(item)
         ).join("\n");
+
+        if (rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
+          rawContent = rawContent.slice(0, MAX_EXTRACTED_CHARS_PER_FETCH) +
+            `\n\n[Content truncated at ${MAX_EXTRACTED_CHARS_PER_FETCH.toLocaleString()} characters]`;
+        }
 
         if (
           state.extractedChars + rawContent.length >
