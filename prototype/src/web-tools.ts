@@ -87,10 +87,17 @@ export function createWebToolsSessionState(): WebToolsSessionState {
         return turn;
       }
 
-      // Evict oldest entry only when creating a new key at capacity
+      // Evict least recently active entry when creating a new key at capacity
       if (turns.size >= MAX_SESSION_TURNS_CAP) {
-        const oldestKey = turns.keys().next().value;
-        if (oldestKey !== undefined) turns.delete(oldestKey);
+        let lruTraceId: string | undefined;
+        let earliestTimestamp = Infinity;
+        for (const [id, t] of turns.entries()) {
+          if (t.lastActivity < earliestTimestamp) {
+            earliestTimestamp = t.lastActivity;
+            lruTraceId = id;
+          }
+        }
+        if (lruTraceId !== undefined) turns.delete(lruTraceId);
       }
 
       turn = createTurnWebState();
@@ -1025,21 +1032,22 @@ export function buildWebCommands(
           }
         });
 
-        // Remap conventional URL property names if present in discovered schema
+        // Remap conventional URL property names if present in discovered schema using canonical parsed URL
+        const canonicalUrl = parsedUrl.toString();
         const fetchProps = (discoveredSchemas.fetchSchema?.properties ??
           {}) as Record<string, unknown>;
         const upstreamFetchArgs: Record<string, unknown> = {};
 
         if ("url" in fetchProps) {
-          upstreamFetchArgs.url = targetUrl;
+          upstreamFetchArgs.url = canonicalUrl;
         } else if ("urls" in fetchProps) {
-          upstreamFetchArgs.urls = [targetUrl];
+          upstreamFetchArgs.urls = [canonicalUrl];
         } else if ("link" in fetchProps) {
-          upstreamFetchArgs.link = targetUrl;
+          upstreamFetchArgs.link = canonicalUrl;
         } else if ("target_url" in fetchProps) {
-          upstreamFetchArgs.target_url = targetUrl;
+          upstreamFetchArgs.target_url = canonicalUrl;
         } else {
-          upstreamFetchArgs.url = targetUrl;
+          upstreamFetchArgs.url = canonicalUrl;
         }
 
         let callResult: McpCallResult;
@@ -1121,7 +1129,7 @@ export function buildWebCommands(
 
       // Default: Safe native document fetch
       const doc = await safeFetchDocument(
-        targetUrl,
+        parsedUrl.toString(),
         fetch,
         allowLoopbackHttpForTesting,
       );
