@@ -53,6 +53,23 @@ boot, without storing secret values in the config file. An already-set env var
 wins. See the root README's "Hosted inference" section for the resolver shape,
 isolation, and fail-closed behavior.
 
+Configured external MCP tools join the same session-first resolution batch but
+use a separate `[secrets.named]` map. A successful probe lets the bounded
+followers run; a generic resolver is not guaranteed to share authentication
+between subprocesses. Named credentials remain in memory and are not projected
+into environment variables. `[[mcp.servers]]` currently accepts only strict MCP
+`2026-07-28` Streamable HTTP servers with bearer authentication. Each registered
+tool must be both discovered and named in the server's configured `tools`
+allowlist. Read tools may be configured with `approval = "allow"`; every
+`write_external` tool requires `approval = "ask"`. Set
+`minimum_clearance = "loopback"` to withhold a server's tools from remote turns,
+or `"remote"` to declare eligibility on both transport clearances. The current
+boot integration is the UDS daily-driver runtime; the standalone HTTP server
+does not load configured external tools yet. Use `dyfj start` so the launcher
+can derive the configured host grants. The complete configuration, trust,
+result-framing, and receipt-redaction contract is in the root README under
+"Configured external MCP tools."
+
 The operator commands are:
 
 ```sh
@@ -100,7 +117,7 @@ deno task codex-chatgpt-login
 
 Before `session/new`, Workbench requires `authentication/status` to return an object whose top-level `type` is exactly `chat-gpt`. A missing response or any other top-level type fails closed, and Workbench supplies no API-key or metered-provider fallback. Durable `runner_route_source` and `runner_auth_type` fields record the profile's declared route classification separately from the authentication type reported by the adapter and from caller `authn_*` fields. ACP can surface model and usage data, but Workbench does not collect or attest those optional signals on this route, so its outer receipt omits native model, token, and USD accounting. See the root README for the complete boundary and evidence contract.
 
-**Permission grants — committed profile vs. launch-resolved.** `deno.json` declares each entrypoint's static permission profile; the single declared engine surface (`CONFIG_SCHEMA` in `src/config.ts`) is asserted against those profiles by a parity test, so a runtime env var can't drift into one profile and out of another. A few grants are inherently machine- or operator-specific and so are *never* committed to a profile — the launcher resolves them at `dyfj start` and appends them to an explicit flag (which replaces, not extends, the profile list, so the launcher rebuilds the profile grants alongside): the concrete `unix:<socket>` path and the private memory-endpoint host on `--allow-net`, and — when a `[secrets]` resolver is configured — the resolver command binary on `--allow-run`. Fail-closed: `dyfj start` refuses to run when it can't establish a trusted prototype root (`DYFJ_PROTOTYPE_ROOT` or its own on-disk install location), rather than trusting the current directory's `deno.json`/`.env` for the child's grants. See "Hosted inference" in the root README for the `[secrets]` shape.
+**Permission grants — committed profile vs. launch-resolved.** `deno.json` declares each entrypoint's static permission profile; the single declared engine surface (`CONFIG_SCHEMA` in `src/config.ts`) is asserted against those profiles by a parity test, so a runtime env var can't drift into one profile and out of another. A few grants are inherently machine- or operator-specific and so are *never* committed to a profile — the launcher resolves them at `dyfj start` and appends them to an explicit flag (which replaces, not extends, the profile list, so the launcher rebuilds the profile grants alongside): the concrete `unix:<socket>` path, private memory-endpoint host, and configured external MCP hosts on `--allow-net`, and — when a `[secrets]` resolver is configured — the resolver command binary on `--allow-run`. Fail-closed: `dyfj start` refuses to run when it can't establish a trusted prototype root (`DYFJ_PROTOTYPE_ROOT` or its own on-disk install location), rather than trusting the current directory's `deno.json`/`.env` for the child's grants. See "Hosted inference" and "Configured external MCP tools" in the root README for the configuration shapes.
 
 For an operator-facing recall check without an external memory or credential,
 run `deno task memory-recall-uat-fixture`. It serves a strict modern MCP endpoint

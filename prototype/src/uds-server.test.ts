@@ -10,6 +10,7 @@ import { JsonRpcPeer } from "./jsonrpc-peer";
 import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
 import type { WorkbenchHttpRuntime } from "./turn-runner";
 import type { TurnStreamFrame } from "./turn-contract";
+import type { CommandDefinition } from "./commands";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -61,6 +62,23 @@ const fakes: WorkbenchUnixServerOptions = {
 // reconstructing the full WorkbenchRuntimeResult in each test.
 // deno-lint-ignore no-explicit-any
 const anyVal = (v: unknown): any => v;
+
+const externalReadCommand: CommandDefinition<string> = {
+  id: "mcp.linear.get_issue",
+  title: "External MCP: linear/get_issue",
+  description: "Configured external MCP read.",
+  inputSchema: { type: "object", additionalProperties: true },
+  permission: {
+    effects: ["read.external", "emit.event"],
+    defaultDecision: "allow",
+    resources: ["mcp:linear/get_issue"],
+    network: "configured-external",
+    filesystem: "none",
+    cost: "none",
+  },
+  minimumClearance: "loopback",
+  executor: () => "result",
+};
 
 type EngineConfig = NonNullable<WorkbenchUnixServerOptions["engineConfig"]>;
 function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
@@ -268,7 +286,12 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("tools/list exposes a catalog without executing tools", async () => {
-    const client = await connectClient(await startServer(fakes));
+    const client = await connectClient(
+      await startServer({
+        ...fakes,
+        externalMcpCommands: [externalReadCommand],
+      }),
+    );
     const result = anyVal(
       await client.request("tools/list", { workspace: "/workspace" }),
     );
@@ -281,12 +304,34 @@ describe("serveWorkbenchUnix read methods", () => {
       "write_file",
       "edit_file",
       "bash",
+      "mcp.linear.get_issue",
     ]);
     expect(result.tools.find((tool: { id: string }) => tool.id === "bash"))
       .toMatchObject({
         permission: { filesystem: "write", network: "external" },
         redactResult: true,
       });
+  });
+
+  test("threads boot-discovered external MCP commands into UDS turns", async () => {
+    let received: unknown;
+    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+      received = input.externalMcpCommands;
+      return anyVal({ receiptId: "r1" });
+    };
+    const handlers = buildTurnHandlers({
+      ...fakes,
+      runRuntime,
+      externalMcpCommands: [externalReadCommand],
+    });
+    await handlers.turn(
+      { prompt: "inspect issue" },
+      {
+        notify: () => Promise.resolve(),
+        request: () => Promise.reject(new Error("no approval expected")),
+      },
+    );
+    expect(received).toEqual([externalReadCommand]);
   });
 
   test("tools/inspect returns one tool schema", async () => {

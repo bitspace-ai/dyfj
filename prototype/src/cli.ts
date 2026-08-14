@@ -31,7 +31,13 @@ import {
 } from "./uds-client";
 import { resolveSocketPath } from "./uds-path";
 import { assertSecureMemoryUrl } from "./memory-search";
-import { loadSecretsConfig } from "./config";
+import {
+  loadMcpServersConfig,
+  loadSecretsConfig,
+  type McpHttpServerConfig,
+  type SecretsConfig,
+} from "./config";
+import { mcpServerNetGrants } from "./mcp-net-grants";
 import { secretsRunGrant } from "./secrets";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 import { type BusySpinner, createBusySpinner } from "./busy-spinner";
@@ -1724,16 +1730,28 @@ export function buildServeUnixArgs(
   runGrants?: string[] | null,
   envGrants?: string[] | null,
   autostarted = false,
+  externalMcpGrants: readonly string[] = [],
 ): string[] {
   if (runGrants?.some((grant) => grant.includes(","))) {
     throw new Error("Deno run grants cannot contain commas");
   }
   const socketGrant = `unix:${socketPath}`;
+  if (
+    [...netGrants, socketGrant, ...(memoryMcpGrant == null
+      ? []
+      : [memoryMcpGrant]), ...externalMcpGrants]
+      .some((grant) => grant.includes(","))
+  ) {
+    throw new Error("Deno network grants cannot contain commas");
+  }
   let net = netGrants.includes(socketGrant)
     ? netGrants
     : [...netGrants, socketGrant];
   if (memoryMcpGrant != null && !net.includes(memoryMcpGrant)) {
     net = [...net, memoryMcpGrant];
+  }
+  for (const grant of externalMcpGrants) {
+    if (!net.includes(grant)) net = [...net, grant];
   }
   return [
     "run",
@@ -2010,6 +2028,34 @@ export async function readLauncherSecretsConfig(
   return loadSecretsConfig({ env: configEnv, readTextFile, parseToml });
 }
 
+export async function readLauncherMcpServersConfig(
+  cwd: string,
+  secrets: SecretsConfig | null,
+  readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  env: { get(name: string): string | undefined } = Deno.env,
+  parseToml?: (raw: string) =>
+    | Record<string, unknown>
+    | Promise<Record<string, unknown>>,
+): Promise<McpHttpServerConfig[]> {
+  let root = env.get("DYFJ_ROOT");
+  if (root === undefined) {
+    try {
+      root = envFileVar(await readTextFile(`${cwd}/.env`), "DYFJ_ROOT");
+    } catch {
+      root = undefined;
+    }
+  }
+  const home = env.get("HOME");
+  const configEnv = {
+    get: (name: string): string | undefined =>
+      name === "DYFJ_ROOT" ? root : name === "HOME" ? home : undefined,
+  };
+  return loadMcpServersConfig(
+    { env: configEnv, readTextFile, parseToml },
+    secrets,
+  );
+}
+
 /** Read the serve-unix profile's declared net grants from deno.json. */
 export async function readServeUnixNetGrants(cwd: string): Promise<string[]> {
   const raw = await Deno.readTextFile(`${cwd}/deno.json`);
@@ -2037,6 +2083,9 @@ export async function startLocalRuntime(
   // Node and any operator-private resolver binary are launch-resolved. The
   // fixed /bin/kill grant supports the ACP process-group contract.
   const secretsCfg = await readLauncherSecretsConfig(cwd);
+  const externalMcpGrants = mcpServerNetGrants(
+    await readLauncherMcpServersConfig(cwd, secretsCfg),
+  );
   const resolverBin = secretsRunGrant(secretsCfg);
   const profileRun = await readServeUnixRunGrants(cwd);
   const nodeGrant = await nodeRunGrant();
@@ -2073,6 +2122,7 @@ export async function startLocalRuntime(
         runGrants,
         envGrants,
         autostarted,
+        externalMcpGrants,
       ),
       cwd,
       stdin: "inherit",

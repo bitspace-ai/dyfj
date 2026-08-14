@@ -124,6 +124,8 @@ export interface WorkbenchUnixServerOptions {
     input: { sessionId: string; asOf?: string },
   ) => Promise<WorkbenchSessionEvent[]>;
   onParseError?: (detail: string) => void;
+  /** Boot-discovered external MCP commands available to this runtime. */
+  externalMcpCommands?: readonly CommandDefinition[];
   /** Engine default companion model (config), applied to bare turns. */
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config); the seam is always loopback. */
@@ -246,13 +248,17 @@ function projectCommand(command: CommandDefinition): WorkbenchToolSummary {
   };
 }
 
-function buildToolCatalog(params: unknown): WorkbenchToolSummary[] {
+function buildToolCatalog(
+  params: unknown,
+  externalMcpCommands: readonly CommandDefinition[] = [],
+): WorkbenchToolSummary[] {
   const record = asRecord(params);
   const workspaceRoot = typeof record.workspace === "string"
     ? record.workspace
     : undefined;
   const registry = createCommandRegistry();
   registerCoreCommands(registry, { workspaceRoot });
+  for (const command of externalMcpCommands) registry.register(command);
   return registry.list().map(projectCommand);
 }
 
@@ -286,7 +292,7 @@ export function buildWorkbenchHandlers(
         runtime: runtimeStatus(options, models),
         models,
         projects,
-        tools: buildToolCatalog(params),
+        tools: buildToolCatalog(params, options.externalMcpCommands),
       } satisfies WorkbenchSurfaceSnapshot;
     },
 
@@ -301,7 +307,9 @@ export function buildWorkbenchHandlers(
       })),
     }),
 
-    "tools/list": async (params) => ({ tools: buildToolCatalog(params) }),
+    "tools/list": async (params) => ({
+      tools: buildToolCatalog(params, options.externalMcpCommands),
+    }),
 
     "tools/inspect": async (params) => {
       const record = asRecord(params);
@@ -312,9 +320,9 @@ export function buildWorkbenchHandlers(
           "tools/inspect requires a string commandId",
         );
       }
-      const tool = buildToolCatalog(params).find((candidate) =>
-        candidate.id === commandId
-      );
+      const tool = buildToolCatalog(params, options.externalMcpCommands).find((
+        candidate,
+      ) => candidate.id === commandId);
       if (tool === undefined) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
@@ -579,6 +587,7 @@ export function buildTurnHandlers(
         runRuntime,
         fetchSessionEvents,
         ...engineDeps,
+        externalMcpCommands: options.externalMcpCommands,
         // mid-turn approval over the duplex channel — the server asks
         // the connected client to approve a mutating tool or budget ceiling;
         // the client's response is the verdict. A failed request (no client

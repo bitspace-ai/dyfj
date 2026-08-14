@@ -29,7 +29,7 @@ import type { PackedContextSummary } from "./repo-context";
 import type { AskContextProfile } from "./repo-context";
 import { loadAgentsInstructions } from "./repo-context";
 import type { WorkspaceRootIdentity } from "./repo-context";
-import type { ConfirmToolApproval } from "./commands";
+import type { CommandDefinition, ConfirmToolApproval } from "./commands";
 import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
 import type { PermissionLevel } from "./config";
 import type {
@@ -251,6 +251,8 @@ export interface WorkbenchRuntimeInput {
    * duplex channel; HTTP has no such channel and so denies.
    */
   confirmToolApproval?: ConfirmToolApproval;
+  /** Boot-discovered external MCP commands; filtered again by turn clearance. */
+  externalMcpCommands?: readonly CommandDefinition[];
   /**
    * Principal identity recorded on this turn's events. Lifted to the boundary
    * : entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
@@ -1545,6 +1547,7 @@ async function runNativeWorkbenchRuntime(
     invokeCommandWithEvent,
     registerCoreCommands,
   } = await import("./commands");
+  const { externalMcpCommandsForTransport } = await import("./mcp-tools");
   const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
     "./memory-search"
   );
@@ -1958,6 +1961,14 @@ async function runNativeWorkbenchRuntime(
         // Read-only workspace file tools, scoped to the resolved root.
         workspaceRoot,
       });
+      for (
+        const command of externalMcpCommandsForTransport(
+          runtimeInput.externalMcpCommands ?? [],
+          authContext.transport,
+        )
+      ) {
+        commandRegistry.register(command);
+      }
       commandTools = commandRegistry.projectTools();
       systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
       // Gated on the operator's standing elevation (config, default off):

@@ -505,6 +505,7 @@ describe("parseSecretsConfig", () => {
         ANTHROPIC_API_KEY: "op://v/anthropic/credential",
         DYFJ_MEMORY_MCP_TOKEN: "op://v/brain/credential",
       },
+      named: {},
       env: {},
       inheritEnv: [],
     });
@@ -738,11 +739,28 @@ describe("loadSecretsConfig", () => {
         secrets: {
           command: ["op", "read"],
           pointers: { OPENAI_API_KEY: "op://v/openai/credential" },
+          named: { linear_mcp: "op://v/linear/credential" },
         },
       }),
     });
     expect(cfg?.command).toEqual(["op", "read"]);
     expect(cfg?.pointers.OPENAI_API_KEY).toBe("op://v/openai/credential");
+    expect(cfg?.named?.linear_mcp).toBe("op://v/linear/credential");
+  });
+
+  test("rejects more than 64 named credentials before resolver fan-out", () => {
+    const named = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [
+        `credential_${index}`,
+        `op://v/item-${index}/credential`,
+      ]),
+    );
+    expect(() =>
+      parseSecretsConfig(
+        { secrets: { command: ["op", "read"], named } },
+        "/h/.dyfj/config.toml",
+      )
+    ).toThrow(/secrets\.named.*64/);
   });
 });
 

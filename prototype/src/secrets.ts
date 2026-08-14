@@ -34,6 +34,40 @@ export interface SecretResolution {
   reason?: string;
 }
 
+export interface NamedSecretResolution {
+  name: string;
+  status: "resolved" | "unavailable";
+  reason?: string;
+}
+
+export interface ResolvedSecrets {
+  environment: SecretResolution[];
+  named: Readonly<Record<string, string>>;
+  namedResolutions: NamedSecretResolution[];
+}
+
+const MAX_RESOLVER_FOLLOWERS = 8;
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  limit: number,
+  fn: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, values.length) },
+    async () => {
+      while (next < values.length) {
+        const index = next++;
+        results[index] = await fn(values[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 /** Outcome of running the resolver command for one pointer. */
 export interface SecretCommandResult {
   ok: boolean;
@@ -205,41 +239,20 @@ export const runSecretCommand: RunSecretCommand = async (
   return { ok: true, value };
 };
 
-/** A resolution before its value (if any) is written back to the environment. */
-type StagedResolution =
-  | { envVar: string; status: "already-set" }
-  | { envVar: string; status: "resolved"; value: string }
-  | { envVar: string; status: "unavailable"; reason: string };
-
-function stagedFrom(
-  envVar: string,
-  outcome: SecretCommandResult,
-):
-  | { envVar: string; status: "resolved"; value: string }
-  | { envVar: string; status: "unavailable"; reason: string } {
-  if (outcome.ok && outcome.value !== undefined) {
-    return { envVar, status: "resolved", value: outcome.value };
-  }
-  return {
-    envVar,
-    status: "unavailable",
-    reason: outcome.reason ?? "unavailable",
-  };
-}
-
 /**
- * Resolve every declared pointer into `env`, presence-only. Returns the
- * per-pointer outcomes (useful for tests and a boot summary). A null config
- * (no `[secrets]` section) resolves nothing. env WINS: a set var is left alone
- * and never counts as the probe. A failed resolution leaves the var unset so
- * that provider fails closed at point of use with its own clear message.
+ * Resolve environment pointers into `env` and named pointers into the private
+ * result map, presence-only. Returns the per-pointer outcomes (useful for tests
+ * and a boot summary). A null config (no `[secrets]` section) resolves nothing.
+ * env WINS: a set var is left alone and never counts as the probe. A failed
+ * resolution leaves the var unset so that provider fails closed at point of use
+ * with its own clear message.
  *
  * SESSION-FIRST HYBRID (best-effort). The first pointer that needs resolving is
  * run ALONE — one invocation to establish the resolver's auth session (for a
  * session-caching manager, one unlock warms it for the followers) or to hit the
  * interactive / locked wall. Then:
  *   - probe RESOLVED: the session is warm, so the followers should reuse it
- *     rather than re-prompt — they resolve CONCURRENTLY. (A resolver that
+ *     rather than re-prompt — up to eight resolve concurrently. (A resolver that
  *     re-authenticates per invocation could still prompt; the engine cannot
  *     guarantee prompt count for a generic command.)
  *   - probe DID NOT resolve (timeout, declined unlock, or a bad first ref — not
@@ -255,11 +268,13 @@ function stagedFrom(
  * the operator's `inherit_env` forward-list, and `[secrets.env]` — never the
  * runtime's other provider keys, database password, or memory token.
  */
-export async function resolveSecretsIntoEnv(
+export async function resolveSecrets(
   secrets: SecretsConfig | null,
   deps: ResolveSecretsDeps = {},
-): Promise<SecretResolution[]> {
-  if (secrets === null) return [];
+): Promise<ResolvedSecrets> {
+  if (secrets === null) {
+    return { environment: [], named: {}, namedResolutions: [] };
+  }
   const env = deps.env ?? Deno.env;
   const run = deps.run ?? runSecretCommand;
   const log = deps.log ?? ((message: string) => console.error(message));
@@ -269,45 +284,92 @@ export async function resolveSecretsIntoEnv(
   // resolves is staged in — so a follower never receives an earlier value either.
   const cmdEnv = buildResolverEnv(secrets, env);
 
-  const entries = Object.entries(secrets.pointers);
-  const outcomes = new Map<string, StagedResolution>();
-  const pending: Array<{ envVar: string; pointer: string }> = [];
-  for (const [envVar, pointer] of entries) {
+  const envEntries = Object.entries(secrets.pointers);
+  const namedEntries = Object.entries(secrets.named ?? {});
+  type Pending = {
+    key: string;
+    label: string;
+    kind: "environment" | "named";
+    name: string;
+    pointer: string;
+  };
+  type Staged =
+    | { status: "already-set" }
+    | { status: "resolved"; value: string }
+    | { status: "unavailable"; reason: string };
+  const outcomes = new Map<string, Staged>();
+  const pending: Pending[] = [];
+  for (const [envVar, pointer] of envEntries) {
+    const key = `environment:${envVar}`;
     const existing = env.get(envVar);
     if (existing !== undefined && existing !== "") {
-      outcomes.set(envVar, { envVar, status: "already-set" });
+      outcomes.set(key, { status: "already-set" });
     } else {
-      pending.push({ envVar, pointer });
+      pending.push({
+        key,
+        label: envVar,
+        kind: "environment",
+        name: envVar,
+        pointer,
+      });
     }
+  }
+  for (const [name, pointer] of namedEntries) {
+    pending.push({
+      key: `named:${name}`,
+      label: `named:${name}`,
+      kind: "named",
+      name,
+      pointer,
+    });
   }
 
   if (pending.length > 0) {
-    // The SESSION PROBE: the first pending pointer in stable declaration order
-    // (never map-iteration order), run alone to warm the resolver's auth session
-    // (or hit the wall). A bad-ref probe failure is therefore reproducible, not
-    // intermittent.
+    // The SESSION PROBE: the first pending environment pointer, followed by the
+    // first pending named pointer when no environment pointer needs resolution.
+    // Object property-enumeration order is stable within each group. It runs
+    // alone to warm a caching resolver's auth session (or hit the wall), so a
+    // bad-ref probe failure is reproducible rather than intermittent.
     const probe = pending[0];
     const probeOutcome = await run(command, probe.pointer, timeoutMs, cmdEnv);
     const followers = pending.slice(1);
 
     if (probeOutcome.ok && probeOutcome.value !== undefined) {
       // Only a SUCCESSFUL probe establishes the session — so the followers
-      // should reuse it rather than re-prompt. Burst them concurrently.
-      outcomes.set(probe.envVar, {
-        envVar: probe.envVar,
+      // should reuse it rather than re-prompt, with bounded concurrency.
+      outcomes.set(probe.key, {
         status: "resolved",
         value: probeOutcome.value,
       });
-      const settled = await Promise.all(
-        followers.map(async (f) =>
-          stagedFrom(f.envVar, await run(command, f.pointer, timeoutMs, cmdEnv))
-        ),
+      const settled = await mapWithConcurrency(
+        followers,
+        MAX_RESOLVER_FOLLOWERS,
+        async (f): Promise<[string, Staged]> => {
+          const outcome = await run(command, f.pointer, timeoutMs, cmdEnv);
+          return [
+            f.key,
+            outcome.ok && outcome.value !== undefined
+              ? { status: "resolved", value: outcome.value }
+              : {
+                status: "unavailable",
+                reason: outcome.reason ?? "unavailable",
+              },
+          ];
+        },
       );
-      for (const s of settled) outcomes.set(s.envVar, s);
+      for (const [key, staged] of settled) outcomes.set(key, staged);
     } else if (followers.length === 0) {
       // Sole pending pointer — no session to gate for anyone else, so report its
       // raw failure without the session-probe framing.
-      outcomes.set(probe.envVar, stagedFrom(probe.envVar, probeOutcome));
+      outcomes.set(
+        probe.key,
+        probeOutcome.ok && probeOutcome.value !== undefined
+          ? { status: "resolved", value: probeOutcome.value }
+          : {
+            status: "unavailable",
+            reason: probeOutcome.reason ?? "unavailable",
+          },
+      );
     } else {
       // The probe did NOT resolve. We deliberately do NOT classify why from the
       // exit signal: a locked vault, a declined interactive unlock, and a
@@ -318,41 +380,62 @@ export async function resolveSecretsIntoEnv(
       // the skipped followers (which name the probe), so the operator knows the
       // one pointer to fix. Best-effort prompt/latency bound, NOT an auth
       // determination — put a reliable pointer first.
-      outcomes.set(probe.envVar, {
-        envVar: probe.envVar,
+      outcomes.set(probe.key, {
         status: "unavailable",
         reason: `session probe failed: ${probeOutcome.reason ?? "unavailable"}`,
       });
       for (const f of followers) {
-        outcomes.set(f.envVar, {
-          envVar: f.envVar,
+        outcomes.set(f.key, {
           status: "unavailable",
-          reason: `skipped: session probe ${probe.envVar} did not resolve`,
+          reason: `skipped: session probe ${probe.label} did not resolve`,
         });
       }
     }
   }
 
   // Emit in declaration order; apply env writes only now (staging preserved).
-  const results: SecretResolution[] = [];
-  for (const [envVar] of entries) {
-    const s = outcomes.get(envVar)!;
+  const environment: SecretResolution[] = [];
+  for (const [envVar] of envEntries) {
+    const s = outcomes.get(`environment:${envVar}`)!;
     if (s.status === "already-set") {
       log(`secret ${envVar}: already-set (env wins; pointer not consulted)`);
-      results.push({ envVar, status: "already-set" });
+      environment.push({ envVar, status: "already-set" });
     } else if (s.status === "resolved") {
       env.set(envVar, s.value);
       log(`secret ${envVar}: resolved`);
-      results.push({ envVar, status: "resolved" });
+      environment.push({ envVar, status: "resolved" });
     } else {
       log(
         `secret ${envVar}: unavailable (${s.reason}); ` +
           `that provider is degraded until the pointer resolves`,
       );
-      results.push({ envVar, status: "unavailable", reason: s.reason });
+      environment.push({ envVar, status: "unavailable", reason: s.reason });
     }
   }
-  return results;
+  const named: Record<string, string> = {};
+  const namedResolutions: NamedSecretResolution[] = [];
+  for (const [name] of namedEntries) {
+    const staged = outcomes.get(`named:${name}`)!;
+    if (staged.status === "resolved") {
+      named[name] = staged.value;
+      log(`secret named:${name}: resolved`);
+      namedResolutions.push({ name, status: "resolved" });
+    } else {
+      const reason = staged.status === "already-set"
+        ? "unavailable"
+        : staged.reason;
+      log(`secret named:${name}: unavailable (${reason})`);
+      namedResolutions.push({ name, status: "unavailable", reason });
+    }
+  }
+  return { environment, named, namedResolutions };
+}
+
+export async function resolveSecretsIntoEnv(
+  secrets: SecretsConfig | null,
+  deps: ResolveSecretsDeps = {},
+): Promise<SecretResolution[]> {
+  return (await resolveSecrets(secrets, deps)).environment;
 }
 
 /**

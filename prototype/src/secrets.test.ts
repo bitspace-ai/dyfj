@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildResolverEnv,
+  resolveSecrets,
   resolveSecretsIntoEnv,
   type RunSecretCommand,
   runSecretCommand,
@@ -167,6 +168,55 @@ describe("resolveSecretsIntoEnv", () => {
   });
 });
 
+describe("resolveSecrets named credentials", () => {
+  test("returns named values only in the private result map", async () => {
+    const env = fakeEnv();
+    const logs: string[] = [];
+    const resolved = await resolveSecrets(
+      cfg({}, { named: { linear_mcp: "op://v/linear/credential" } }),
+      {
+        env,
+        run: () => Promise.resolve({ ok: true, value: "linear-secret-value" }),
+        log: (message) => logs.push(message),
+      },
+    );
+    expect(resolved.named).toEqual({ linear_mcp: "linear-secret-value" });
+    expect(resolved.namedResolutions).toEqual([{
+      name: "linear_mcp",
+      status: "resolved",
+    }]);
+    expect(env.store).toEqual({});
+    expect(logs.join("\n")).not.toContain("linear-secret-value");
+    expect(logs.join("\n")).not.toContain("op://v/linear/credential");
+  });
+
+  test("shares the session-first probe across env and named pointers", async () => {
+    const env = fakeEnv();
+    const spawned: string[] = [];
+    const resolved = await resolveSecrets(
+      cfg(
+        { OPENAI_API_KEY: "op://v/openai/credential" },
+        { named: { linear_mcp: "op://v/linear/credential" } },
+      ),
+      {
+        env,
+        run: (_command, pointer) => {
+          spawned.push(pointer);
+          return Promise.resolve({ ok: false, reason: "resolver unavailable" });
+        },
+        log: () => {},
+      },
+    );
+    expect(spawned).toEqual(["op://v/openai/credential"]);
+    expect(env.store.OPENAI_API_KEY).toBeUndefined();
+    expect(resolved.named).toEqual({});
+    expect(resolved.namedResolutions[0]).toMatchObject({
+      name: "linear_mcp",
+      status: "unavailable",
+    });
+  });
+});
+
 describe("secretsRunGrant", () => {
   test("null config → no run grant", () => {
     expect(secretsRunGrant(null)).toBeNull();
@@ -227,6 +277,47 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
     // (in-flight peaks at 2).
     expect(inFlightAtEachStart[0]).toBe(1);
     expect(Math.max(...inFlightAtEachStart)).toBe(2);
+  });
+
+  test("bounds the successful session's follower concurrency", async () => {
+    const env = fakeEnv();
+    let inFlight = 0;
+    let peak = 0;
+    let callCount = 0;
+    let releaseFollowers!: () => void;
+    const followerGate = new Promise<void>((resolve) => {
+      releaseFollowers = resolve;
+    });
+    const named = Object.fromEntries(
+      Array.from({ length: 17 }, (_, index) => [
+        `credential_${index}`,
+        `op://v/item-${index}/credential`,
+      ]),
+    );
+    const run: RunSecretCommand = async () => {
+      callCount++;
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      if (callCount > 1) {
+        await followerGate;
+      }
+      inFlight--;
+      return { ok: true, value: "resolved" };
+    };
+
+    const resolving = resolveSecrets(
+      cfg({}, { named }),
+      { env, run, log: () => {} },
+    );
+    for (let turn = 0; turn < 100 && peak < 8; turn++) {
+      await Promise.resolve();
+    }
+    const peakBeforeRelease = peak;
+    releaseFollowers();
+    const result = await resolving;
+    expect(Object.keys(result.named)).toHaveLength(17);
+    expect(peakBeforeRelease).toBe(8);
+    expect(peak).toBe(8);
   });
 
   test("logging order follows pointer declaration order", async () => {
