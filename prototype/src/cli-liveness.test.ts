@@ -73,8 +73,15 @@ describe("isTimeoutError and socketError", () => {
     timeoutErr.name = "TimeoutError";
     const msg = socketError(timeoutErr, cfg({ socket: "/tmp/dyfj.sock" }));
     expect(msg).toBe(
-      "dyfj: runtime at /tmp/dyfj.sock is unresponsive (liveness probe timed out)",
+      "dyfj: runtime at /tmp/dyfj.sock is unresponsive (timed out)",
     );
+  });
+
+  test("socketError does not misclassify RpcError as unreachable socket", () => {
+    const rpcErr = new RpcError(RpcErrorCode.methodNotFound, "Method not found");
+    const msg = socketError(rpcErr, cfg({ socket: "/tmp/dyfj.sock" }));
+    expect(msg).toBe("dyfj: Method not found");
+    expect(msg).not.toContain("Start it with: dyfj start");
   });
 
   test("socketError produces start hint on connection refused or missing socket", () => {
@@ -240,7 +247,39 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
     const formatted = socketError(caughtError, cfg({ socket: socketPath }));
     expect(formatted).toBe(
-      `dyfj: runtime at ${socketPath} is unresponsive (liveness probe timed out)`,
+      `dyfj: runtime at ${socketPath} is unresponsive (timed out)`,
     );
+  });
+
+  test("connectUnixClient abort cleans up late-settling connection without leak", async () => {
+    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    const socketPath = `${dir}/late.sock`;
+    const listener = Deno.listen({ transport: "unix", path: socketPath });
+    const accepted: Deno.Conn[] = [];
+    (async () => {
+      try {
+        for await (const conn of listener) {
+          accepted.push(conn);
+        }
+      } catch {}
+    })();
+    cleanups.push(async () => {
+      try {
+        listener.close();
+      } catch {}
+      for (const c of accepted) {
+        try {
+          c.close();
+        } catch {}
+      }
+      try {
+        await Deno.remove(dir, { recursive: true });
+      } catch {}
+    });
+
+    const preAborted = AbortSignal.abort(
+      new DOMException("The operation was aborted", "AbortError"),
+    );
+    await expect(connectUnixClient(socketPath, {}, preAborted)).rejects.toThrow();
   });
 });

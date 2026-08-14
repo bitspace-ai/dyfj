@@ -1376,11 +1376,14 @@ export function isTimeoutError(error: unknown): boolean {
 
 export function socketError(error: unknown, config: CliConfig): string {
   if (isTimeoutError(error)) {
-    return `dyfj: runtime at ${config.socket} is unresponsive (liveness probe timed out)`;
+    return `dyfj: runtime at ${config.socket} is unresponsive (timed out)`;
+  }
+  if (error instanceof RpcError) {
+    return `dyfj: ${error.message}`;
   }
   const message = error instanceof Error ? error.message : String(error);
   if (
-    /no such file|not found|connection refused|econnrefused|enoent|os error 2|os error 61/i
+    /no such file|file not found|socket not found|connection refused|econnrefused|enoent|os error 2|os error 61/i
       .test(message)
   ) {
     return `dyfj: runtime not reachable at ${config.socket}. ` +
