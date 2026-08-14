@@ -288,10 +288,10 @@ describe("safeFetchDocument", () => {
       );
 
     const doc = await safeFetchDocument("https://example.com/huge", fakeFetch);
-    expect(doc.text).toContain("[Content truncated at 40,000 characters]");
-    expect(doc.text.length).toBeLessThanOrEqual(
-      MAX_EXTRACTED_CHARS_PER_FETCH + 100,
+    expect(doc.text.endsWith("[Content truncated at 40,000 characters]")).toBe(
+      true,
     );
+    expect(doc.text.length).toBe(MAX_EXTRACTED_CHARS_PER_FETCH);
   });
 });
 
@@ -375,8 +375,10 @@ describe("buildWebCommands", () => {
     expect(searchRes).toContain("Tavily Doc 1");
     expect(searchRes).not.toContain("Tavily Doc 2");
     expect(searchRes).toContain("ID: s1");
-    expect(state.sourceUrlMap.get("s1")).toBe("https://docs.tavily.com/1");
-    expect(state.sourceUrlMap.has("s2")).toBe(false);
+    expect(state.getTurnState().sourceUrlMap.get("s1")).toBe(
+      "https://docs.tavily.com/1",
+    );
+    expect(state.getTurnState().sourceUrlMap.has("s2")).toBe(false);
 
     // Test follow-up web_fetch with upstream fetchTool delegation
     const fetchCmd = commands.find((c) => c.id === "web_fetch")!;
@@ -422,7 +424,7 @@ describe("buildWebCommands", () => {
 
   test("empty search result clears prior source map", async () => {
     const state = createWebToolsSessionState();
-    state.sourceUrlMap.set("s1", "https://stale.com");
+    state.getTurnState().sourceUrlMap.set("s1", "https://stale.com");
 
     const fakeEmptyCall = async () => ({
       content: [{
@@ -447,12 +449,12 @@ describe("buildWebCommands", () => {
       arguments: { query: "empty query" },
     }, { authzBasis: "test" });
 
-    expect(state.sourceUrlMap.size).toBe(0);
+    expect(state.getTurnState().sourceUrlMap.size).toBe(0);
   });
 
   test("resets turn state and enforces max search and fetch calls per turn", async () => {
     const state = createWebToolsSessionState();
-    state.searchCount = MAX_SEARCH_CALLS_PER_TURN;
+    state.getTurnState().searchCount = MAX_SEARCH_CALLS_PER_TURN;
     const commands = buildWebCommands(server, "test_token", {}, state, true);
     const searchCmd = commands.find((c) => c.id === "web_search")!;
 
@@ -466,11 +468,11 @@ describe("buildWebCommands", () => {
 
     // Reset turn state
     resetWebToolsTurnState(state);
-    expect(state.searchCount).toBe(0);
-    expect(state.fetchCount).toBe(0);
+    expect(state.getTurnState().searchCount).toBe(0);
+    expect(state.getTurnState().fetchCount).toBe(0);
 
     // Max fetch calls exceeded
-    state.fetchCount = MAX_FETCH_CALLS_PER_TURN;
+    state.getTurnState().fetchCount = MAX_FETCH_CALLS_PER_TURN;
     const fetchCmd = commands.find((c) => c.id === "web_fetch")!;
     await expect(fetchCmd.executor({
       callId: "call_fetch_over",
@@ -523,6 +525,6 @@ describe("buildWebCommands", () => {
     }, { authzBasis: "test", traceId: "turn-2" });
 
     expect(res).toContain("<untrusted-mcp-result>");
-    expect(state.searchCount).toBe(1);
+    expect(state.getTurnState("turn-2").searchCount).toBe(1);
   });
 });

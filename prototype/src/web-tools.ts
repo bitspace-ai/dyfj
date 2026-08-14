@@ -33,31 +33,73 @@ export interface WebSearchOutput {
   results: WebSearchResultItem[];
 }
 
-export interface WebToolsSessionState {
+export interface TurnWebState {
   searchCount: number;
   fetchCount: number;
   extractedChars: number;
   sourceUrlMap: Map<string, string>;
-  currentTraceId?: string;
-  querySeq: number;
+  lastActivity: number;
 }
 
-export function createWebToolsSessionState(): WebToolsSessionState {
+function createTurnWebState(): TurnWebState {
   return {
     searchCount: 0,
     fetchCount: 0,
     extractedChars: 0,
     sourceUrlMap: new Map<string, string>(),
-    querySeq: 0,
+    lastActivity: Date.now(),
   };
 }
 
-/** Reset turn-scoped counters and cached source URLs on a session state container. */
-export function resetWebToolsTurnState(state: WebToolsSessionState): void {
-  state.searchCount = 0;
-  state.fetchCount = 0;
-  state.extractedChars = 0;
-  state.sourceUrlMap.clear();
+export interface WebToolsSessionState {
+  turns: Map<string, TurnWebState>;
+  getTurnState(traceId?: string): TurnWebState;
+  reset(traceId?: string): void;
+}
+
+export function createWebToolsSessionState(): WebToolsSessionState {
+  const turns = new Map<string, TurnWebState>();
+
+  return {
+    turns,
+    getTurnState(traceId?: string): TurnWebState {
+      const now = Date.now();
+      // Clean up stale turn states older than 5 minutes
+      for (const [key, t] of turns.entries()) {
+        if (now - t.lastActivity > 300_000) {
+          turns.delete(key);
+        }
+      }
+
+      const key = traceId && traceId.trim() ? traceId.trim() : "__default__";
+      let turn = turns.get(key);
+      if (!turn) {
+        turn = createTurnWebState();
+        turns.set(key, turn);
+      } else if (key === "__default__" && now - turn.lastActivity > 60_000) {
+        // Auto-reset untraced default state after 60s of inactivity
+        turn = createTurnWebState();
+        turns.set(key, turn);
+      }
+      turn.lastActivity = now;
+      return turn;
+    },
+    reset(traceId?: string): void {
+      if (traceId && traceId.trim()) {
+        turns.delete(traceId.trim());
+      } else {
+        turns.clear();
+      }
+    },
+  };
+}
+
+/** Reset turn-scoped state container. */
+export function resetWebToolsTurnState(
+  state: WebToolsSessionState,
+  traceId?: string,
+): void {
+  state.reset(traceId);
 }
 
 /**
@@ -152,7 +194,7 @@ export function isPrivateOrLoopbackIp(rawHost: string): boolean {
 
 /**
  * Validate that a target URL is an HTTPS address and does not target
- * localhost, private IP literals, or embedded credentials.
+ * localhost, enumerated private IP literals, or embedded credentials.
  */
 export function assertPublicHttpsUrl(
   rawUrl: string,
@@ -209,11 +251,12 @@ export function assertPublicHttpsUrl(
 }
 
 /**
- * Verify that a domain name does not resolve to private or internal IP addresses.
+ * Preflight check rejecting domain names whose resolved A/AAAA records match private IP ranges.
  */
 export async function assertPublicDnsResolution(
   hostname: string,
   allowLoopbackHttpForTesting = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (
     allowLoopbackHttpForTesting &&
@@ -223,12 +266,12 @@ export async function assertPublicDnsResolution(
   }
   if (isPrivateOrLoopbackIp(hostname)) {
     throw new CommandExecutionError(
-      `Target host '${hostname}' is a private or internal IP address`,
+      `Target host '${hostname}' is an enumerated private or internal IP address`,
     );
   }
-  // If Deno.resolveDns is available, check resolved records
   if (typeof Deno?.resolveDns === "function") {
     try {
+      if (signal?.aborted) return;
       const aRecords = await Deno.resolveDns(hostname, "A").catch(() => []);
       const aaaaRecords = await Deno.resolveDns(hostname, "AAAA").catch(() =>
         []
@@ -297,7 +340,7 @@ export function decodeHtmlEntities(html: string): string {
     });
 }
 
-/** Convert raw HTML content into readable, stripped Markdown text. */
+/** Convert raw HTML content into readable Markdown text. */
 export function extractReadableContentFromHtml(html: string): string {
   let text = html;
 
@@ -374,7 +417,7 @@ export function extractReadableContentFromHtml(html: string): string {
 
 /**
  * Execute a bounded HTTP GET with redirect rejection, size cap, and a strict timeout
- * covering both header arrival and response body consumption.
+ * covering DNS preflight, header arrival, and response body consumption.
  */
 export async function safeFetchDocument(
   targetUrl: string,
@@ -382,13 +425,18 @@ export async function safeFetchDocument(
   allowLoopbackHttpForTesting = false,
 ): Promise<{ text: string; url: string; contentType: string; bytes: number }> {
   const url = assertPublicHttpsUrl(targetUrl, allowLoopbackHttpForTesting);
-  await assertPublicDnsResolution(url.hostname, allowLoopbackHttpForTesting);
 
   const boundedFetch = boundedMcpFetch(MAX_FETCH_DOWNLOAD_BYTES, fetchImpl);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
+    await assertPublicDnsResolution(
+      url.hostname,
+      allowLoopbackHttpForTesting,
+      controller.signal,
+    );
+
     let response: Response;
     try {
       response = await boundedFetch(url.toString(), {
@@ -466,8 +514,10 @@ export async function safeFetchDocument(
     }
 
     if (extracted.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
-      extracted = extracted.slice(0, MAX_EXTRACTED_CHARS_PER_FETCH) +
+      const marker =
         `\n\n[Content truncated at ${MAX_EXTRACTED_CHARS_PER_FETCH.toLocaleString()} characters]`;
+      const keepChars = Math.max(0, MAX_EXTRACTED_CHARS_PER_FETCH - marker.length);
+      extracted = extracted.slice(0, keepChars) + marker;
     }
 
     return {
@@ -561,6 +611,10 @@ export function buildWebCommands(
   deps: ExternalMcpDeps = {},
   state: WebToolsSessionState = createWebToolsSessionState(),
   allowLoopbackHttpForTesting = false,
+  discoveredSchemas: {
+    searchSchema?: JsonSchemaObject;
+    fetchSchema?: JsonSchemaObject;
+  } = {},
 ): CommandDefinition<string>[] {
   const commands: CommandDefinition<string>[] = [];
   const searchToolName = server.capabilities?.searchTool;
@@ -624,17 +678,14 @@ export function buildWebCommands(
           },
         }),
       executor: async (commandCall, context) => {
-        if (context.traceId && state.currentTraceId !== context.traceId) {
-          state.currentTraceId = context.traceId;
-          resetWebToolsTurnState(state);
-        }
+        const turn = state.getTurnState(context.traceId);
 
-        if (state.searchCount >= MAX_SEARCH_CALLS_PER_TURN) {
+        if (turn.searchCount >= MAX_SEARCH_CALLS_PER_TURN) {
           throw new CommandExecutionError(
             `Web search call limit exceeded (${MAX_SEARCH_CALLS_PER_TURN} calls per turn maximum).`,
           );
         }
-        state.searchCount++;
+        turn.searchCount++;
 
         const query = String(commandCall.arguments.query ?? "").trim();
         if (!query) {
@@ -644,9 +695,8 @@ export function buildWebCommands(
         const rawLimit = Number(commandCall.arguments.limit ?? 5);
         const limit = Math.max(1, Math.min(10, isNaN(rawLimit) ? 5 : rawLimit));
 
-        // Clear prior search mappings immediately on new search invocation
-        state.sourceUrlMap.clear();
-        state.querySeq++;
+        // Clear prior search mappings in this turn immediately on new search invocation
+        turn.sourceUrlMap.clear();
 
         const call = deps.call ?? (async (input) => {
           const { Client, StreamableHTTPClientTransport } = await import(
@@ -677,14 +727,28 @@ export function buildWebCommands(
           }
         });
 
-        // Adapt arguments to common search tool conventions
-        const upstreamArgs: Record<string, unknown> = {
-          query,
-          q: query,
-          limit,
-          max_results: limit,
-          count: limit,
-        };
+        // Adapt arguments to the discovered upstream schema if available
+        const searchProps = (discoveredSchemas.searchSchema?.properties ??
+          {}) as Record<string, unknown>;
+        const upstreamArgs: Record<string, unknown> = {};
+
+        if ("query" in searchProps) {
+          upstreamArgs.query = query;
+        } else if ("q" in searchProps) {
+          upstreamArgs.q = query;
+        } else {
+          upstreamArgs.query = query;
+        }
+
+        if ("limit" in searchProps) {
+          upstreamArgs.limit = limit;
+        } else if ("max_results" in searchProps) {
+          upstreamArgs.max_results = limit;
+        } else if ("count" in searchProps) {
+          upstreamArgs.count = limit;
+        } else if (Object.keys(searchProps).length === 0) {
+          upstreamArgs.limit = limit;
+        }
 
         let callResult: McpCallResult;
         try {
@@ -743,10 +807,10 @@ export function buildWebCommands(
           );
         }
 
-        // Cache source URLs for follow-up web_fetch on the current query
+        // Cache source URLs for follow-up web_fetch on the current turn
         for (const item of normalized) {
           if (item.url) {
-            state.sourceUrlMap.set(item.id, item.url);
+            turn.sourceUrlMap.set(item.id, item.url);
           }
         }
 
@@ -771,12 +835,12 @@ export function buildWebCommands(
     properties: {
       url: {
         type: "string",
-        description: "The public HTTPS URL to fetch and extract content from.",
+        description: "The HTTPS URL to fetch and extract content from.",
       },
       sourceId: {
         type: "string",
         description:
-          "The source ID from the most recent web_search result (e.g. 's1', 's2').",
+          "The source ID from the most recent web_search result in the active turn (e.g. 's1', 's2').",
       },
     },
   };
@@ -787,7 +851,7 @@ export function buildWebCommands(
     id: "web_fetch",
     title: "Web Page Fetch",
     description:
-      "Fetch and extract readable Markdown text from a web page URL or a source ID from recent search results. " +
+      "Fetch and extract readable Markdown text from an HTTPS web page URL or a source ID from recent search results. " +
       "Returned content is untrusted external data.",
     inputSchema: fetchSchema,
     permission: {
@@ -818,17 +882,14 @@ export function buildWebCommands(
         webCapability: { tool: "web_fetch", server: server.id },
       }),
     executor: async (commandCall, context) => {
-      if (context.traceId && state.currentTraceId !== context.traceId) {
-        state.currentTraceId = context.traceId;
-        resetWebToolsTurnState(state);
-      }
+      const turn = state.getTurnState(context.traceId);
 
-      if (state.fetchCount >= MAX_FETCH_CALLS_PER_TURN) {
+      if (turn.fetchCount >= MAX_FETCH_CALLS_PER_TURN) {
         throw new CommandExecutionError(
           `Web fetch call limit exceeded (${MAX_FETCH_CALLS_PER_TURN} calls per turn maximum).`,
         );
       }
-      state.fetchCount++;
+      turn.fetchCount++;
 
       const rawUrl = commandCall.arguments.url;
       const rawSourceId = commandCall.arguments.sourceId;
@@ -836,7 +897,7 @@ export function buildWebCommands(
       let targetUrl: string;
       if (typeof rawSourceId === "string" && rawSourceId.trim()) {
         const id = rawSourceId.trim();
-        const resolved = state.sourceUrlMap.get(id);
+        const resolved = turn.sourceUrlMap.get(id);
         if (!resolved) {
           throw new CommandExecutionError(
             `Source ID '${id}' was not found in recent search results. Provide a direct URL or run web_search first.`,
@@ -851,7 +912,7 @@ export function buildWebCommands(
         );
       }
 
-      // Enforce syntactic HTTPS and private-address rejection on the target URL
+      // Enforce syntactic HTTPS and private IP literal rejection on the target URL
       assertPublicHttpsUrl(targetUrl, allowLoopbackHttpForTesting);
 
       // If upstream fetchTool is declared on the server, delegate to it
@@ -885,13 +946,20 @@ export function buildWebCommands(
           }
         });
 
-        // Adapt arguments to common extraction tool shapes
-        const upstreamFetchArgs: Record<string, unknown> = {
-          url: targetUrl,
-          urls: [targetUrl],
-          link: targetUrl,
-          sourceId: rawSourceId,
-        };
+        // Adapt arguments to the discovered fetch schema
+        const fetchProps = (discoveredSchemas.fetchSchema?.properties ??
+          {}) as Record<string, unknown>;
+        const upstreamFetchArgs: Record<string, unknown> = {};
+
+        if ("url" in fetchProps) {
+          upstreamFetchArgs.url = targetUrl;
+        } else if ("urls" in fetchProps) {
+          upstreamFetchArgs.urls = [targetUrl];
+        } else if ("link" in fetchProps) {
+          upstreamFetchArgs.link = targetUrl;
+        } else {
+          upstreamFetchArgs.url = targetUrl;
+        }
 
         let callResult: McpCallResult;
         try {
@@ -935,19 +1003,24 @@ export function buildWebCommands(
         ).join("\n");
 
         if (rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
-          rawContent = rawContent.slice(0, MAX_EXTRACTED_CHARS_PER_FETCH) +
+          const marker =
             `\n\n[Content truncated at ${MAX_EXTRACTED_CHARS_PER_FETCH.toLocaleString()} characters]`;
+          const keepChars = Math.max(
+            0,
+            MAX_EXTRACTED_CHARS_PER_FETCH - marker.length,
+          );
+          rawContent = rawContent.slice(0, keepChars) + marker;
         }
 
         if (
-          state.extractedChars + rawContent.length >
+          turn.extractedChars + rawContent.length >
             MAX_EXTRACTED_CHARS_PER_TURN
         ) {
           throw new CommandExecutionError(
             `Total extracted characters limit per turn exceeded (${MAX_EXTRACTED_CHARS_PER_TURN.toLocaleString()} chars maximum).`,
           );
         }
-        state.extractedChars += rawContent.length;
+        turn.extractedChars += rawContent.length;
 
         return formatUntrustedMcpResult(rawContent);
       }
@@ -960,13 +1033,13 @@ export function buildWebCommands(
       );
 
       if (
-        state.extractedChars + doc.text.length > MAX_EXTRACTED_CHARS_PER_TURN
+        turn.extractedChars + doc.text.length > MAX_EXTRACTED_CHARS_PER_TURN
       ) {
         throw new CommandExecutionError(
           `Total extracted characters limit per turn exceeded (${MAX_EXTRACTED_CHARS_PER_TURN.toLocaleString()} chars maximum).`,
         );
       }
-      state.extractedChars += doc.text.length;
+      turn.extractedChars += doc.text.length;
 
       const formatted = [
         `URL: ${doc.url}`,

@@ -396,7 +396,11 @@ export async function buildExternalMcpCommands(
   const commands: CommandDefinition<string>[] = [];
   const diagnostics: ExternalMcpDiagnostic[] = [];
   const sharedWebState = createWebToolsSessionState();
-  const readyWebServers: Array<{ server: McpHttpServerConfig; token: string }> = [];
+  const readyWebServers: Array<{
+    server: McpHttpServerConfig;
+    token: string;
+    discoveredByName: Map<string, { name: string; inputSchema: unknown }>;
+  }> = [];
 
   for (const server of servers) {
     const token = Object.hasOwn(credentials, server.auth.secret)
@@ -501,7 +505,7 @@ export async function buildExternalMcpCommands(
       });
     }
     if (server.capabilities?.searchTool || server.capabilities?.fetchTool) {
-      readyWebServers.push({ server, token });
+      readyWebServers.push({ server, token, discoveredByName });
     }
     diagnostics.push({
       serverId: server.id,
@@ -513,19 +517,36 @@ export async function buildExternalMcpCommands(
 
   // Register web capability commands with exact capability precedence
   if (readyWebServers.length > 0) {
-    const searchServer = readyWebServers.find(
+    const searchEntry = readyWebServers.find(
       (entry) => entry.server.capabilities?.searchTool !== undefined,
     );
-    const fetchServer = readyWebServers.find(
+    const fetchEntry = readyWebServers.find(
       (entry) => entry.server.capabilities?.fetchTool !== undefined,
     );
 
-    if (searchServer) {
+    if (searchEntry) {
+      const searchToolName = searchEntry.server.capabilities?.searchTool;
+      const discoveredSearchTool = searchToolName
+        ? searchEntry.discoveredByName.get(searchToolName)
+        : undefined;
+      let searchSchema: JsonSchemaObject | undefined;
+      if (discoveredSearchTool) {
+        try {
+          searchSchema = sanitizeMcpInputSchema(
+            discoveredSearchTool.inputSchema,
+          );
+        } catch {
+          // Fall back to default
+        }
+      }
+
       const searchCmds = buildWebCommands(
-        searchServer.server,
-        searchServer.token,
+        searchEntry.server,
+        searchEntry.token,
         deps,
         sharedWebState,
+        false,
+        { searchSchema },
       );
       const searchCmd = searchCmds.find((c) => c.id === "web_search");
       if (searchCmd && !commands.some((c) => c.id === "web_search")) {
@@ -533,13 +554,30 @@ export async function buildExternalMcpCommands(
       }
     }
 
-    const effectiveFetchServer = fetchServer ?? searchServer ?? readyWebServers[0];
-    if (effectiveFetchServer) {
+    const effectiveFetchEntry = fetchEntry ?? searchEntry ?? readyWebServers[0];
+    if (effectiveFetchEntry) {
+      const fetchToolName = effectiveFetchEntry.server.capabilities?.fetchTool;
+      const discoveredFetchTool = fetchToolName
+        ? effectiveFetchEntry.discoveredByName.get(fetchToolName)
+        : undefined;
+      let fetchSchema: JsonSchemaObject | undefined;
+      if (discoveredFetchTool) {
+        try {
+          fetchSchema = sanitizeMcpInputSchema(
+            discoveredFetchTool.inputSchema,
+          );
+        } catch {
+          // Fall back to default
+        }
+      }
+
       const fetchCmds = buildWebCommands(
-        effectiveFetchServer.server,
-        effectiveFetchServer.token,
+        effectiveFetchEntry.server,
+        effectiveFetchEntry.token,
         deps,
         sharedWebState,
+        false,
+        { fetchSchema },
       );
       const fetchCmd = fetchCmds.find((c) => c.id === "web_fetch");
       if (fetchCmd && !commands.some((c) => c.id === "web_fetch")) {
