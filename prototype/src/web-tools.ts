@@ -977,11 +977,18 @@ export function buildWebCommands(
 
       // If upstream fetchTool is declared on the server, delegate to it
       if (fetchToolName && configuredFetchTool) {
-        // Preflight DNS check for delegated fetch target
-        await assertPublicDnsResolution(
-          parsedUrl.hostname,
-          allowLoopbackHttpForTesting,
-        );
+        const controller = new AbortController();
+        const dnsTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        try {
+          // Preflight DNS check for delegated fetch target with timeout
+          await assertPublicDnsResolution(
+            parsedUrl.hostname,
+            allowLoopbackHttpForTesting,
+            controller.signal,
+          );
+        } finally {
+          clearTimeout(dnsTimeout);
+        }
 
         const call = deps.call ?? (async (input) => {
           const { Client, StreamableHTTPClientTransport } = await import(
@@ -1070,21 +1077,26 @@ export function buildWebCommands(
           );
         }
 
-        // Incrementally materialize content blocks to bound allocation
+        // Incrementally materialize content blocks to bound allocation and track truncation
         let rawContent = "";
+        let wasTruncated = false;
         for (const item of callResult.content ?? []) {
           let itemText = item.type === "text" && typeof item.text === "string"
             ? item.text
             : JSON.stringify(item);
           const remaining = MAX_EXTRACTED_CHARS_PER_FETCH - rawContent.length;
-          if (remaining <= 0) break;
+          if (remaining <= 0) {
+            wasTruncated = true;
+            break;
+          }
           if (itemText.length > remaining) {
             itemText = itemText.slice(0, remaining);
+            wasTruncated = true;
           }
           rawContent += (rawContent.length > 0 ? "\n" : "") + itemText;
         }
 
-        if (rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
+        if (wasTruncated || rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
           const marker =
             `\n\n[Content truncated at ${MAX_EXTRACTED_CHARS_PER_FETCH.toLocaleString()} characters]`;
           const keepChars = Math.max(
