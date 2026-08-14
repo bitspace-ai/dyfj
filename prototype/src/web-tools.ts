@@ -22,7 +22,7 @@ export const FETCH_TIMEOUT_MS = 10_000;
 export const MAX_SESSION_TURNS_CAP = 100;
 
 export interface WebSearchResultItem {
-  id: string;
+  id?: string;
   title: string;
   url: string;
   snippet: string;
@@ -74,23 +74,27 @@ export function createWebToolsSessionState(): WebToolsSessionState {
         }
       }
 
-      // Bound map cardinality
+      const key = traceId && traceId.trim() ? traceId.trim() : "__default__";
+      let turn = turns.get(key);
+
+      if (turn) {
+        if (key === "__default__" && now - turn.lastActivity > 60_000) {
+          // Auto-reset untraced default state after 60s of inactivity
+          turn = createTurnWebState();
+          turns.set(key, turn);
+        }
+        turn.lastActivity = now;
+        return turn;
+      }
+
+      // Evict oldest entry only when creating a new key at capacity
       if (turns.size >= MAX_SESSION_TURNS_CAP) {
         const oldestKey = turns.keys().next().value;
         if (oldestKey !== undefined) turns.delete(oldestKey);
       }
 
-      const key = traceId && traceId.trim() ? traceId.trim() : "__default__";
-      let turn = turns.get(key);
-      if (!turn) {
-        turn = createTurnWebState();
-        turns.set(key, turn);
-      } else if (key === "__default__" && now - turn.lastActivity > 60_000) {
-        // Auto-reset untraced default state after 60s of inactivity
-        turn = createTurnWebState();
-        turns.set(key, turn);
-      }
-      turn.lastActivity = now;
+      turn = createTurnWebState();
+      turns.set(key, turn);
       return turn;
     },
     reset(traceId?: string): void {
@@ -260,7 +264,7 @@ export function assertPublicHttpsUrl(
 }
 
 /**
- * Preflight DNS resolution check rejecting domains that resolve to private or internal IP addresses.
+ * Best-effort preflight DNS resolution check rejecting resolved private A/AAAA records with timeout support.
  */
 export async function assertPublicDnsResolution(
   hostname: string,
@@ -285,7 +289,19 @@ export async function assertPublicDnsResolution(
         Deno.resolveDns(hostname, "A").catch(() => []),
         Deno.resolveDns(hostname, "AAAA").catch(() => []),
       ]);
-      const [aRecords, aaaaRecords] = await dnsPromise;
+      const abortPromise = new Promise<never>((_, reject) => {
+        if (signal?.aborted) {
+          reject(new CommandExecutionError("DNS lookup timed out"));
+          return;
+        }
+        signal?.addEventListener("abort", () => {
+          reject(new CommandExecutionError("DNS lookup timed out"));
+        }, { once: true });
+      });
+      const [aRecords, aaaaRecords] = await Promise.race([
+        dnsPromise,
+        abortPromise,
+      ]);
       for (const ip of [...aRecords, ...aaaaRecords]) {
         if (isPrivateOrLoopbackIp(ip)) {
           throw new CommandExecutionError(
@@ -350,7 +366,7 @@ export function decodeHtmlEntities(html: string): string {
     });
 }
 
-/** Convert raw HTML content into readable Markdown text. */
+/** Convert raw HTML content into Markdown-formatted text. */
 export function extractReadableContentFromHtml(html: string): string {
   let text = html;
 
@@ -426,7 +442,7 @@ export function extractReadableContentFromHtml(html: string): string {
 }
 
 /**
- * Execute a bounded HTTP GET with redirect rejection, size cap, and a strict timeout
+ * Execute a bounded HTTP GET with redirect rejection, size cap, and an abortable timeout
  * covering DNS preflight, header arrival, and response body consumption.
  */
 export async function safeFetchDocument(
@@ -556,7 +572,6 @@ export function normalizeSearchResults(
       const trimmed = rawResult.trim();
       if (!trimmed) return [];
       return [{
-        id: "s1",
         title: "Search Results",
         url: "",
         snippet: trimmed.slice(0, 1000),
@@ -603,8 +618,9 @@ export function normalizeSearchResults(
     const publishedDate = item.published_date ?? item.publishedDate ??
       item.date;
 
+    const id = url ? `s${rank}` : undefined;
     normalized.push({
-      id: `s${rank}`,
+      ...(id ? { id } : {}),
       title: title || "Untitled",
       url,
       snippet: snippet.slice(0, 2000),
@@ -755,6 +771,8 @@ export function buildWebCommands(
           upstreamArgs.query = query;
         } else if ("q" in searchProps) {
           upstreamArgs.q = query;
+        } else if ("search_query" in searchProps) {
+          upstreamArgs.search_query = query;
         } else {
           upstreamArgs.query = query;
         }
@@ -765,6 +783,8 @@ export function buildWebCommands(
           upstreamArgs.max_results = limit;
         } else if ("count" in searchProps) {
           upstreamArgs.count = limit;
+        } else if ("num_results" in searchProps) {
+          upstreamArgs.num_results = limit;
         } else if (Object.keys(searchProps).length === 0) {
           upstreamArgs.limit = limit;
         }
@@ -813,12 +833,20 @@ export function buildWebCommands(
           }
         }
 
-        // Re-index ranks and slice to requested limit
-        const normalized = allNormalized.slice(0, limit).map((item, idx) => ({
-          ...item,
-          id: `s${idx + 1}`,
-          rank: idx + 1,
-        }));
+        let validSourceIdIdx = 1;
+        // Slice to requested limit and assign source IDs only when URL is present
+        const normalized = allNormalized.slice(0, limit).map((item, idx) => {
+          const hasUrl = Boolean(item.url && item.url.trim().length > 0);
+          const id = hasUrl ? `s${validSourceIdIdx++}` : undefined;
+          if (id && item.url) {
+            turn.sourceUrlMap.set(id, item.url);
+          }
+          return {
+            ...item,
+            id,
+            rank: idx + 1,
+          };
+        });
 
         if (normalized.length === 0) {
           return formatUntrustedMcpResult(
@@ -826,20 +854,15 @@ export function buildWebCommands(
           );
         }
 
-        // Cache source URLs for follow-up web_fetch on the current turn
-        for (const item of normalized) {
-          if (item.url) {
-            turn.sourceUrlMap.set(item.id, item.url);
-          }
-        }
-
         const formatted = [
           `Search results for "${query}":\n`,
           ...normalized.map((item) => {
+            const idLabel = item.id ? ` (ID: ${item.id})` : "";
             const dateStr = item.publishedDate
               ? ` (Date: ${item.publishedDate})`
               : "";
-            return `[${item.rank}] (ID: ${item.id}) ${item.title}${dateStr}\nURL: ${item.url}\nSnippet: ${item.snippet}\n`;
+            const urlStr = item.url ? `URL: ${item.url}\n` : "";
+            return `[${item.rank}]${idLabel} ${item.title}${dateStr}\n${urlStr}Snippet: ${item.snippet}\n`;
           }),
         ].join("\n");
 
@@ -993,6 +1016,8 @@ export function buildWebCommands(
           upstreamFetchArgs.urls = [targetUrl];
         } else if ("link" in fetchProps) {
           upstreamFetchArgs.link = targetUrl;
+        } else if ("target_url" in fetchProps) {
+          upstreamFetchArgs.target_url = targetUrl;
         } else {
           upstreamFetchArgs.url = targetUrl;
         }
@@ -1032,11 +1057,17 @@ export function buildWebCommands(
           );
         }
 
-        let rawContent = (callResult.content ?? []).map((item) =>
-          item.type === "text" && typeof item.text === "string"
+        // Incrementally materialize content blocks to bound allocation
+        let rawContent = "";
+        for (const item of callResult.content ?? []) {
+          const itemText = item.type === "text" && typeof item.text === "string"
             ? item.text
-            : JSON.stringify(item)
-        ).join("\n");
+            : JSON.stringify(item);
+          rawContent += (rawContent.length > 0 ? "\n" : "") + itemText;
+          if (rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
+            break;
+          }
+        }
 
         if (rawContent.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
           const marker =

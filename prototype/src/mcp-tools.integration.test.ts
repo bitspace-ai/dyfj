@@ -428,7 +428,7 @@ Deno.test("external search server capability registers web_search and web_fetch 
     assert(commandIds.includes("web_search"), "web_search command was not registered");
     assert(commandIds.includes("web_fetch"), "web_fetch command was not registered");
     assert(
-      !commandIds.includes("mcp.test_search_server.test_search"),
+      !commandIds.includes("mcp.search_engine.tavily_search"),
       "raw capability-mapped tool must not be registered as a raw mcp command",
     );
 
