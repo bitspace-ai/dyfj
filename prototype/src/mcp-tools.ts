@@ -6,6 +6,7 @@ import type {
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
+import { buildWebCommands } from "./web-tools.ts";
 export { mcpServerNetGrants } from "./mcp-net-grants.ts";
 
 const MCP_REVISION = "2026-07-28";
@@ -496,6 +497,10 @@ export async function buildExternalMcpCommands(
           return formatUntrustedMcpResult(resultText(result));
         },
       });
+    }
+    if (server.capabilities?.searchTool || server.capabilities?.fetchTool) {
+      const webCommands = buildWebCommands(server, token, deps);
+      commands.push(...webCommands);
     }
     diagnostics.push({
       serverId: server.id,

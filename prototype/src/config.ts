@@ -338,6 +338,11 @@ export interface McpConfiguredTool {
   approval: McpConfiguredToolApproval;
 }
 
+export interface McpServerCapabilities {
+  searchTool?: string;
+  fetchTool?: string;
+}
+
 export interface McpHttpServerConfig {
   id: string;
   transport: "streamable_http";
@@ -345,6 +350,7 @@ export interface McpHttpServerConfig {
   minimumClearance: McpMinimumClearance;
   auth: { type: "bearer"; secret: string };
   tools: McpConfiguredTool[];
+  capabilities?: McpServerCapabilities;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
@@ -933,7 +939,15 @@ export function parseMcpServersConfig(
     const server = exactObject(
       rawServer,
       "[[mcp.servers]]",
-      ["id", "transport", "url", "minimum_clearance", "auth", "tools"],
+      [
+        "id",
+        "transport",
+        "url",
+        "minimum_clearance",
+        "auth",
+        "tools",
+        "capabilities",
+      ],
       where,
     );
     if (typeof server.id !== "string" || !MCP_SERVER_ID.test(server.id)) {
@@ -1025,6 +1039,48 @@ export function parseMcpServersConfig(
         approval: tool.approval,
       });
     }
+    let capabilities: McpServerCapabilities | undefined = undefined;
+    if (server.capabilities !== undefined) {
+      const rawCaps = exactObject(
+        server.capabilities,
+        "[[mcp.servers]].capabilities",
+        ["search_tool", "fetch_tool"],
+        where,
+      );
+      if (
+        rawCaps.search_tool !== undefined &&
+        (typeof rawCaps.search_tool !== "string" ||
+          !MCP_TOOL_NAME.test(rawCaps.search_tool) ||
+          !toolNames.has(rawCaps.search_tool))
+      ) {
+        throw new Error(
+          `config: MCP capabilities.search_tool must be a declared tool in ${where}`,
+        );
+      }
+      if (
+        rawCaps.fetch_tool !== undefined &&
+        (typeof rawCaps.fetch_tool !== "string" ||
+          !MCP_TOOL_NAME.test(rawCaps.fetch_tool) ||
+          !toolNames.has(rawCaps.fetch_tool))
+      ) {
+        throw new Error(
+          `config: MCP capabilities.fetch_tool must be a declared tool in ${where}`,
+        );
+      }
+      if (rawCaps.search_tool === undefined && rawCaps.fetch_tool === undefined) {
+        throw new Error(
+          `config: MCP capabilities must declare search_tool or fetch_tool in ${where}`,
+        );
+      }
+      capabilities = {
+        ...(rawCaps.search_tool === undefined
+          ? {}
+          : { searchTool: rawCaps.search_tool }),
+        ...(rawCaps.fetch_tool === undefined
+          ? {}
+          : { fetchTool: rawCaps.fetch_tool }),
+      };
+    }
     configured.push({
       id: server.id,
       transport: "streamable_http",
@@ -1032,6 +1088,7 @@ export function parseMcpServersConfig(
       minimumClearance: server.minimum_clearance,
       auth: { type: "bearer", secret: auth.secret },
       tools,
+      ...(capabilities === undefined ? {} : { capabilities }),
     });
   }
   return configured;

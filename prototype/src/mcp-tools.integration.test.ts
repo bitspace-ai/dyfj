@@ -361,3 +361,98 @@ Deno.test("an oversized external MCP tool response fails at the transport bound"
   }
   assertEquals(toolCalls, 2);
 });
+
+Deno.test("external search server capability registers web_search and web_fetch commands", async () => {
+  let searchCalls = 0;
+  const mcp = createMcpHandler(() => {
+    const server = new McpServer({
+      name: "search-fixture",
+      version: "1.0.0",
+    });
+    server.registerTool(
+      "tavily_search",
+      {
+        inputSchema: z.object({
+          query: z.string(),
+          limit: z.number().optional(),
+          max_results: z.number().optional(),
+        }),
+      },
+      ({ query }) => {
+        searchCalls++;
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              results: [
+                {
+                  title: `Result for ${query}`,
+                  url: "https://example.com/item1",
+                  content: "Detailed content description",
+                  published_date: "2026-08-14",
+                },
+              ],
+            }),
+          }],
+        };
+      },
+    );
+    return server;
+  }, { legacy: "reject" });
+
+  const http = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    (request) => mcp.fetch(request),
+  );
+  const port = (http.addr as Deno.NetAddr).port;
+
+  try {
+    const serverConfig: McpHttpServerConfig = {
+      id: "search_engine",
+      transport: "streamable_http",
+      url: `http://127.0.0.1:${port}/mcp`,
+      minimumClearance: "loopback",
+      auth: { type: "bearer", secret: "search_mcp" },
+      tools: [{ name: "tavily_search", effect: "read", approval: "allow" }],
+      capabilities: {
+        searchTool: "tavily_search",
+      },
+    };
+
+    const built = await buildExternalMcpCommands(
+      [serverConfig],
+      { search_mcp: "secret-token" },
+    );
+
+    const commandIds = built.commands.map((c) => c.id);
+    assert(commandIds.includes("web_search"), "web_search command was not registered");
+    assert(commandIds.includes("web_fetch"), "web_fetch command was not registered");
+
+    const searchCmd = built.commands.find((c) => c.id === "web_search")!;
+    const searchRes = await searchCmd.executor(
+      {
+        commandId: "web_search",
+        callId: "call_search_1",
+        caller: { principalId: "operator", principalType: "human" },
+        arguments: { query: "workbench architecture" },
+      },
+      { authzBasis: "policy:allow" },
+    );
+
+    assert(
+      typeof searchRes === "string" && searchRes.includes("<untrusted-mcp-result>"),
+      "web_search output was not framed as untrusted",
+    );
+    assert(
+      typeof searchRes === "string" && searchRes.includes("Result for workbench architecture"),
+      "search results were not found in output",
+    );
+    assert(
+      typeof searchRes === "string" && searchRes.includes("ID: s1"),
+      "source ID s1 was not assigned",
+    );
+    assertEquals(searchCalls, 1);
+  } finally {
+    await Promise.all([mcp.close(), http.shutdown()]);
+  }
+});

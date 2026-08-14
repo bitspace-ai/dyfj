@@ -56,6 +56,45 @@ describe("parseMcpServersConfig", () => {
     }]);
   });
 
+  test("accepts declared capabilities mapping to declared tools", () => {
+    const table = serverTable({
+      tools: [
+        { name: "tavily_search", effect: "read", approval: "allow" },
+        { name: "tavily_extract", effect: "read", approval: "allow" },
+      ],
+      capabilities: {
+        search_tool: "tavily_search",
+        fetch_tool: "tavily_extract",
+      },
+    });
+    expect(parseMcpServersConfig(table, CONFIG_PATH)).toEqual([{
+      id: "linear",
+      transport: "streamable_http",
+      url: "https://mcp.linear.app/mcp",
+      minimumClearance: "loopback",
+      auth: { type: "bearer", secret: "linear_mcp" },
+      tools: [
+        { name: "tavily_search", effect: "read", approval: "allow" },
+        { name: "tavily_extract", effect: "read", approval: "allow" },
+      ],
+      capabilities: {
+        searchTool: "tavily_search",
+        fetchTool: "tavily_extract",
+      },
+    }]);
+  });
+
+  test("rejects capabilities pointing to undeclared tools", () => {
+    const table = serverTable({
+      capabilities: {
+        search_tool: "undeclared_search",
+      },
+    });
+    expect(() => parseMcpServersConfig(table, CONFIG_PATH)).toThrow(
+      /search_tool must be a declared tool/,
+    );
+  });
+
   test.each([
     [{ transport: "stdio" }, /streamable_http/],
     [{ url: "http://mcp.example/mcp" }, /https/],
