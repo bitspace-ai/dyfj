@@ -861,7 +861,7 @@ describe("socketTurn", () => {
 
 describe("socketTurn over a real Unix socket (integration)", () => {
   test("streams deltas and returns the receipt across the wire", async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await Deno.makeTempDir({ dir: "/tmp" });
     const sock = `${dir}/wb.sock`;
     const server = await serveWorkbenchUnix(sock, {
       // Stub runtime: stream two deltas, then return a receipt. Cast loosely so

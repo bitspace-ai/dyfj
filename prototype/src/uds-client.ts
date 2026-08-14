@@ -6,7 +6,11 @@ import { JsonRpcPeer } from "./jsonrpc-peer";
 import type { RpcHandlers } from "./jsonrpc";
 
 export interface UnixClient {
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(
+    method: string,
+    params?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
   close(): void;
 }
 
@@ -51,7 +55,7 @@ export async function connectUnixClient(
   const peer = new JsonRpcPeer(conn, { handlers });
   void peer.run();
   return {
-    request: (method, params) => peer.request(method, params),
+    request: (method, params, signal) => peer.request(method, params, signal),
     close: () => peer.close(),
   };
 }

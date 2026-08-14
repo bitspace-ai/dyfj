@@ -21,10 +21,7 @@
   "permissions": {
     "test": {
       "env": true,
-      "read": [
-        "..",
-        "../.."
-      ],
+      "read": true,
       "write": [
         "."
       ],
