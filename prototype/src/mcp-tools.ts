@@ -500,7 +500,11 @@ export async function buildExternalMcpCommands(
     }
     if (server.capabilities?.searchTool || server.capabilities?.fetchTool) {
       const webCommands = buildWebCommands(server, token, deps);
-      commands.push(...webCommands);
+      for (const cmd of webCommands) {
+        if (!commands.some((existing) => existing.id === cmd.id)) {
+          commands.push(cmd);
+        }
+      }
     }
     diagnostics.push({
       serverId: server.id,

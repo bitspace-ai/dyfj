@@ -10,16 +10,19 @@ import {
   MAX_FETCH_CALLS_PER_TURN,
   MAX_SEARCH_CALLS_PER_TURN,
   normalizeSearchResults,
+  resetWebToolsTurnState,
   safeFetchDocument,
 } from "./web-tools.ts";
 import type { McpHttpServerConfig } from "./config.ts";
 
 describe("isPrivateOrLoopbackIp", () => {
-  test("identifies loopback, private, link-local, and broadcast IPv4 addresses", () => {
+  test("identifies loopback, private, link-local, CGNAT, benchmark, and documentation IPv4 addresses", () => {
     expect(isPrivateOrLoopbackIp("127.0.0.1")).toBe(true);
     expect(isPrivateOrLoopbackIp("127.10.20.30")).toBe(true);
     expect(isPrivateOrLoopbackIp("10.0.0.1")).toBe(true);
     expect(isPrivateOrLoopbackIp("10.255.255.255")).toBe(true);
+    expect(isPrivateOrLoopbackIp("100.64.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("100.127.255.255")).toBe(true);
     expect(isPrivateOrLoopbackIp("172.16.0.1")).toBe(true);
     expect(isPrivateOrLoopbackIp("172.31.255.255")).toBe(true);
     expect(isPrivateOrLoopbackIp("192.168.1.1")).toBe(true);
@@ -27,15 +30,31 @@ describe("isPrivateOrLoopbackIp", () => {
     expect(isPrivateOrLoopbackIp("0.0.0.0")).toBe(true);
     expect(isPrivateOrLoopbackIp("255.255.255.255")).toBe(true);
     expect(isPrivateOrLoopbackIp("224.0.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("192.0.2.1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("198.18.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("198.51.100.1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("203.0.113.1")).toBe(true);
   });
 
-  test("identifies loopback, link-local, and unique-local IPv6 addresses", () => {
+  test("identifies IPv4-mapped IPv6 addresses targeting loopback or private ranges", () => {
+    expect(isPrivateOrLoopbackIp("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("::ffff:7f00:1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("[::ffff:7f00:1]")).toBe(true);
+    expect(isPrivateOrLoopbackIp("0:0:0:0:0:ffff:7f00:1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("::ffff:10.0.0.1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("::ffff:192.168.1.1")).toBe(true);
+  });
+
+  test("identifies loopback, link-local, unique-local, documentation, and multicast IPv6 addresses", () => {
     expect(isPrivateOrLoopbackIp("::1")).toBe(true);
     expect(isPrivateOrLoopbackIp("::")).toBe(true);
     expect(isPrivateOrLoopbackIp("fe80::1")).toBe(true);
     expect(isPrivateOrLoopbackIp("fc00::1")).toBe(true);
     expect(isPrivateOrLoopbackIp("fd12:3456::1")).toBe(true);
     expect(isPrivateOrLoopbackIp("ff02::1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("2001:db8::1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("2001:2::1")).toBe(true);
+    expect(isPrivateOrLoopbackIp("64:ff9b::1")).toBe(true);
   });
 
   test("allows public IP addresses", () => {
@@ -44,12 +63,15 @@ describe("isPrivateOrLoopbackIp", () => {
     expect(isPrivateOrLoopbackIp("93.184.216.34")).toBe(false);
     expect(isPrivateOrLoopbackIp("172.15.0.1")).toBe(false);
     expect(isPrivateOrLoopbackIp("172.32.0.1")).toBe(false);
+    expect(isPrivateOrLoopbackIp("2606:4700:4700::1111")).toBe(false);
   });
 });
 
 describe("assertPublicHttpsUrl", () => {
   test("accepts valid public HTTPS URLs", () => {
-    const url = assertPublicHttpsUrl("https://example.com/docs/api?q=test#heading");
+    const url = assertPublicHttpsUrl(
+      "https://example.com/docs/api?q=test#heading",
+    );
     expect(url.hostname).toBe("example.com");
     expect(url.protocol).toBe("https:");
   });
@@ -67,7 +89,7 @@ describe("assertPublicHttpsUrl", () => {
     );
   });
 
-  test("rejects localhost and private IPs", () => {
+  test("rejects localhost, private IPs, and IPv4-mapped IPv6 literals", () => {
     expect(() => assertPublicHttpsUrl("https://localhost/api")).toThrow(
       /localhost/,
     );
@@ -81,8 +103,13 @@ describe("assertPublicHttpsUrl", () => {
       /private/,
     );
     expect(() => assertPublicHttpsUrl("https://10.0.0.5/")).toThrow(/private/);
-    expect(() => assertPublicHttpsUrl("https://169.254.169.254/latest/meta-data/"))
+    expect(() =>
+      assertPublicHttpsUrl("https://169.254.169.254/latest/meta-data/")
+    )
       .toThrow(/private/);
+    expect(() => assertPublicHttpsUrl("https://[::ffff:7f00:1]/")).toThrow(
+      /private/,
+    );
   });
 
   test("allows loopback HTTP in testing mode when requested", () => {
@@ -94,8 +121,12 @@ describe("assertPublicHttpsUrl", () => {
 
 describe("decodeHtmlEntities", () => {
   test("decodes named and numeric entities", () => {
-    expect(decodeHtmlEntities("&lt;div&gt;&amp;&quot;&#39;&nbsp;&copy;&#65;&#x42;")).toBe(
-      '<div>&"\' ©AB',
+    expect(
+      decodeHtmlEntities(
+        "&lt;div&gt;&amp;&quot;&#39;&nbsp;&copy;&reg;&trade;&ndash;&mdash;&hellip;&ldquo;&rdquo;&lsquo;&rsquo;&bull;&cent;&pound;&yen;&euro;&#65;&#x42;",
+      ),
+    ).toBe(
+      '<div>&"\' ©®™–—…“”‘’•¢£¥€AB',
     );
   });
 });
@@ -229,7 +260,8 @@ describe("safeFetchDocument", () => {
   });
 
   test("truncates content exceeding character limit", async () => {
-    const hugeText = "<p>" + "A".repeat(MAX_EXTRACTED_CHARS_PER_FETCH + 5000) + "</p>";
+    const hugeText = "<p>" +
+      "A".repeat(MAX_EXTRACTED_CHARS_PER_FETCH + 5000) + "</p>";
     const fakeFetch: typeof fetch = () =>
       Promise.resolve(
         new Response(hugeText, {
@@ -260,17 +292,42 @@ describe("buildWebCommands", () => {
     },
   };
 
-  test("registers web_search and web_fetch commands with untrusted result framing", async () => {
+  test("inherits configured tool effects and approval decisions", () => {
+    const customServer: McpHttpServerConfig = {
+      ...server,
+      tools: [
+        {
+          name: "tavily_search",
+          effect: "write_external",
+          approval: "ask",
+        },
+        { name: "tavily_extract", effect: "read", approval: "allow" },
+      ],
+    };
+    const commands = buildWebCommands(customServer, "token");
+    const searchCmd = commands.find((c) => c.id === "web_search")!;
+    expect(searchCmd.permission.effects).toContain("write.external");
+    expect(searchCmd.permission.defaultDecision).toBe("ask");
+  });
+
+  test("registers web_search and web_fetch commands with untrusted result framing and clamps result limits", async () => {
     const state = createWebToolsSessionState();
     const fakeCall = async () => ({
       content: [{
         type: "text",
         text: JSON.stringify({
-          results: [{
-            title: "Tavily Doc",
-            url: "https://docs.tavily.com",
-            content: "Official Tavily Documentation",
-          }],
+          results: [
+            {
+              title: "Tavily Doc 1",
+              url: "https://docs.tavily.com/1",
+              content: "Official Tavily Documentation 1",
+            },
+            {
+              title: "Tavily Doc 2",
+              url: "https://docs.tavily.com/2",
+              content: "Official Tavily Documentation 2",
+            },
+          ],
         }),
       }],
     });
@@ -286,48 +343,56 @@ describe("buildWebCommands", () => {
     expect(commands.map((c) => c.id)).toEqual(["web_search", "web_fetch"]);
 
     const searchCmd = commands.find((c) => c.id === "web_search")!;
+    // Request limit = 1: verify only 1 result is returned
     const searchRes = await searchCmd.executor({
       callId: "call_1",
       commandId: "web_search",
       caller: { principalId: "operator", principalType: "human" },
-      arguments: { query: "tavily docs" },
+      arguments: { query: "tavily docs", limit: 1 },
     }, { authzBasis: "test" });
 
     expect(searchRes).toContain("<untrusted-mcp-result>");
-    expect(searchRes).toContain("Tavily Doc");
+    expect(searchRes).toContain("Tavily Doc 1");
+    expect(searchRes).not.toContain("Tavily Doc 2");
     expect(searchRes).toContain("ID: s1");
-    expect(state.sourceUrlMap.get("s1")).toBe("https://docs.tavily.com");
+    expect(state.sourceUrlMap.get("s1")).toBe("https://docs.tavily.com/1");
+    expect(state.sourceUrlMap.has("s2")).toBe(false);
 
-    // Test follow-up web_fetch using sourceId "s1"
+    // Test follow-up web_fetch with upstream fetchTool delegation
     const fetchCmd = commands.find((c) => c.id === "web_fetch")!;
+    let fetchToolCalled = false;
+    const fakeFetchCall = async () => {
+      fetchToolCalled = true;
+      return {
+        content: [{
+          type: "text",
+          text: "# Tavily Extract Content\nDetails from upstream extract tool",
+        }],
+      };
+    };
 
-    // Test fetching directly
-    const globalFetch = globalThis.fetch;
-    globalThis.fetch = () =>
-      Promise.resolve(
-        new Response("<h1>Tavily API Reference</h1><p>API details...</p>", {
-          status: 200,
-          headers: { "Content-Type": "text/html" },
-        }),
-      );
+    const fetchCommands = buildWebCommands(
+      server,
+      "test_token",
+      { call: fakeFetchCall },
+      state,
+      true,
+    );
+    const delegatedFetchCmd = fetchCommands.find((c) => c.id === "web_fetch")!;
 
-    try {
-      const fetchRes = await fetchCmd.executor({
-        callId: "call_2",
-        commandId: "web_fetch",
-        caller: { principalId: "operator", principalType: "human" },
-        arguments: { sourceId: "s1" },
-      }, { authzBasis: "test" });
+    const fetchRes = await delegatedFetchCmd.executor({
+      callId: "call_2",
+      commandId: "web_fetch",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: { sourceId: "s1" },
+    }, { authzBasis: "test" });
 
-      expect(fetchRes).toContain("<untrusted-mcp-result>");
-      expect(fetchRes).toContain("# Tavily API Reference");
-      expect(fetchRes).toContain("API details...");
-    } finally {
-      globalThis.fetch = globalFetch;
-    }
+    expect(fetchToolCalled).toBe(true);
+    expect(fetchRes).toContain("<untrusted-mcp-result>");
+    expect(fetchRes).toContain("# Tavily Extract Content");
   });
 
-  test("enforces max search and fetch calls per turn", async () => {
+  test("resets turn state and enforces max search and fetch calls per turn", async () => {
     const state = createWebToolsSessionState();
     state.searchCount = MAX_SEARCH_CALLS_PER_TURN;
     const commands = buildWebCommands(server, "test_token", {}, state);
@@ -340,13 +405,8 @@ describe("buildWebCommands", () => {
       arguments: { query: "overflow" },
     }, { authzBasis: "test" })).rejects.toThrow(/Web search call limit exceeded/);
 
-    state.fetchCount = MAX_FETCH_CALLS_PER_TURN;
-    const fetchCmd = commands.find((c) => c.id === "web_fetch")!;
-    await expect(fetchCmd.executor({
-      callId: "call_2",
-      commandId: "web_fetch",
-      caller: { principalId: "operator", principalType: "human" },
-      arguments: { url: "https://example.com" },
-    }, { authzBasis: "test" })).rejects.toThrow(/Web fetch call limit exceeded/);
+    resetWebToolsTurnState(state);
+    expect(state.searchCount).toBe(0);
+    expect(state.fetchCount).toBe(0);
   });
 });

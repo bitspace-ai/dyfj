@@ -4,7 +4,7 @@ import type {
   JsonSchemaObject,
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
-import type { McpHttpServerConfig } from "./config.ts";
+import type { McpConfiguredTool, McpHttpServerConfig } from "./config.ts";
 import {
   boundedMcpFetch,
   type ExternalMcpDeps,
@@ -49,41 +49,106 @@ export function createWebToolsSessionState(): WebToolsSessionState {
   };
 }
 
-/** Check if an IP address string is in a private, loopback, link-local, or reserved range. */
-export function isPrivateOrLoopbackIp(ip: string): boolean {
+/** Reset turn-scoped counters and cached source URLs on a session state container. */
+export function resetWebToolsTurnState(state: WebToolsSessionState): void {
+  state.searchCount = 0;
+  state.fetchCount = 0;
+  state.extractedChars = 0;
+  state.sourceUrlMap.clear();
+}
+
+/**
+ * Check if an IP address literal is within a private, loopback, link-local,
+ * multicast, documentation, or reserved network range.
+ */
+export function isPrivateOrLoopbackIp(rawIp: string): boolean {
+  let ip = rawIp.trim().toLowerCase();
+
+  // Strip IPv6 brackets if present
+  if (ip.startsWith("[") && ip.endsWith("]")) {
+    ip = ip.slice(1, -1);
+  }
+
+  // Handle IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1)
+  if (ip.startsWith("::ffff:") || ip.startsWith("0:0:0:0:0:ffff:")) {
+    const mappedPart = ip.split("ffff:")[1] ?? "";
+    if (mappedPart.includes(".")) {
+      ip = mappedPart;
+    } else if (mappedPart.includes(":")) {
+      const parts = mappedPart.split(":");
+      if (parts.length === 2) {
+        const hexA = parseInt(parts[0], 16);
+        const hexB = parseInt(parts[1], 16);
+        if (!isNaN(hexA) && !isNaN(hexB)) {
+          const a = (hexA >> 8) & 0xff;
+          const b = hexA & 0xff;
+          const c = (hexB >> 8) & 0xff;
+          const d = hexB & 0xff;
+          ip = `${a}.${b}.${c}.${d}`;
+        }
+      }
+    }
+  }
+
   // IPv4 checks
   const ipv4Match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
     const octets = ipv4Match.slice(1, 5).map(Number);
-    if (octets.some((o) => o > 255)) return true; // invalid -> reject
-    const [a, b] = octets;
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 127) return true; // 127.0.0.0/8 Loopback
+    if (octets.some((o) => o > 255)) return true; // invalid octet -> reject
+    const [a, b, c] = octets;
+    if (a === 0) return true; // 0.0.0.0/8 Current network
     if (a === 10) return true; // 10.0.0.0/8 Private
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 Private
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16 Private
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 Shared Address Space (CGNAT)
+    if (a === 127) return true; // 127.0.0.0/8 Loopback
     if (a === 169 && b === 254) return true; // 169.254.0.0/16 Link-local
-    if (a >= 224) return true; // Multicast / Reserved / Broadcast
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 Private
+    if (a === 192 && b === 0 && c === 0) return true; // 192.0.0.0/24 IETF Protocol Assignments
+    if (a === 192 && b === 0 && c === 2) return true; // 192.0.2.0/24 TEST-NET-1 (documentation)
+    if (a === 192 && b === 88 && c === 99) return true; // 192.88.99.0/24 6to4 Relay Anycast
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16 Private
+    if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 Network Benchmark Tests
+    if (a === 198 && b === 51 && c === 100) return true; // 198.51.100.0/24 TEST-NET-2 (documentation)
+    if (a === 203 && b === 0 && c === 113) return true; // 203.0.113.0/24 TEST-NET-3 (documentation)
+    if (a >= 224 && a <= 239) return true; // 224.0.0.0/4 Multicast
+    if (a >= 240) return true; // 240.0.0.0/4 Reserved / Broadcast
     return false;
   }
 
   // IPv6 checks
-  const lower = ip.toLowerCase();
-  if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
+  if (ip === "::1" || ip === "::") return true; // Loopback & Unspecified
+  if (
+    ip.startsWith("fe8") || ip.startsWith("fe9") || ip.startsWith("fea") ||
+    ip.startsWith("feb")
+  ) {
     return true; // fe80::/10 link-local
   }
-  if (lower.startsWith("fc") || lower.startsWith("fd")) {
+  if (ip.startsWith("fc") || ip.startsWith("fd")) {
     return true; // fc00::/7 unique local
   }
-  if (lower.startsWith("ff")) {
+  if (ip.startsWith("ff")) {
     return true; // ff00::/8 multicast
   }
+  if (ip.startsWith("2001:db8:") || ip.startsWith("2001:0db8:")) {
+    return true; // 2001:db8::/32 documentation
+  }
+  if (ip.startsWith("2001:2:") || ip.startsWith("2001:0002:")) {
+    return true; // 2001:2::/48 benchmarking
+  }
+  if (ip.startsWith("64:ff9b:")) {
+    return true; // 64:ff9b::/96 IPv4/IPv6 translation
+  }
+
   return false;
 }
 
-/** Validate that a target URL is an acceptable public HTTPS URL. */
-export function assertPublicHttpsUrl(rawUrl: string, allowLoopbackHttpForTesting = false): URL {
+/**
+ * Validate that a target URL is an HTTPS address and does not target
+ * localhost, private IP literals, or embedded credentials.
+ */
+export function assertPublicHttpsUrl(
+  rawUrl: string,
+  allowLoopbackHttpForTesting = false,
+): URL {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -92,13 +157,18 @@ export function assertPublicHttpsUrl(rawUrl: string, allowLoopbackHttpForTesting
   }
 
   if (url.username || url.password) {
-    throw new CommandExecutionError("URLs containing user credentials are not permitted");
+    throw new CommandExecutionError(
+      "URLs containing user credentials are not permitted",
+    );
   }
 
   const hostname = url.hostname.toLowerCase();
 
-  // Test exception for local mock server
-  if (allowLoopbackHttpForTesting && url.protocol === "http:" && (hostname === "127.0.0.1" || hostname === "localhost")) {
+  // Test exception for local in-process mock server
+  if (
+    allowLoopbackHttpForTesting && url.protocol === "http:" &&
+    (hostname === "127.0.0.1" || hostname === "localhost")
+  ) {
     return url;
   }
 
@@ -106,17 +176,23 @@ export function assertPublicHttpsUrl(rawUrl: string, allowLoopbackHttpForTesting
     throw new CommandExecutionError("Only HTTPS URLs are permitted");
   }
 
-  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "0.0.0.0") {
-    throw new CommandExecutionError("Requests to localhost or local addresses are forbidden");
+  if (
+    hostname === "localhost" || hostname.endsWith(".localhost") ||
+    hostname === "0.0.0.0"
+  ) {
+    throw new CommandExecutionError(
+      "Requests to localhost or local addresses are forbidden",
+    );
   }
 
-  // Strip IPv6 brackets if present
   const bareHost = hostname.startsWith("[") && hostname.endsWith("]")
     ? hostname.slice(1, -1)
     : hostname;
 
   if (isPrivateOrLoopbackIp(bareHost)) {
-    throw new CommandExecutionError("Requests to private, loopback, or internal addresses are forbidden");
+    throw new CommandExecutionError(
+      "Requests to private, loopback, or internal addresses are forbidden",
+    );
   }
 
   return url;
@@ -178,15 +254,27 @@ export function extractReadableContentFromHtml(html: string): string {
   let text = html;
 
   // Remove scripts, styles, metadata, and non-content tags
-  text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ");
+  text = text.replace(
+    /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+    " ",
+  );
   text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ");
-  text = text.replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ");
+  text = text.replace(
+    /<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi,
+    " ",
+  );
   text = text.replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, " ");
   text = text.replace(/<!--[\s\S]*?-->/g, " ");
 
   // Remove navigation, headers, footers, forms, aside
-  text = text.replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, " ");
-  text = text.replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, " ");
+  text = text.replace(
+    /<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi,
+    " ",
+  );
+  text = text.replace(
+    /<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi,
+    " ",
+  );
   text = text.replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, " ");
   text = text.replace(/<aside\b[^<]*(?:(?!<\/aside>)<[^<]*)*<\/aside>/gi, " ");
   text = text.replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, " ");
@@ -200,11 +288,14 @@ export function extractReadableContentFromHtml(html: string): string {
   text = text.replace(/<h6\b[^>]*>([\s\S]*?)<\/h6>/gi, "\n\n###### $1\n\n");
 
   // Convert links: <a href="url">text</a> -> [text](url)
-  text = text.replace(/<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => {
-    const cleanLabel = label.replace(/<[^>]+>/g, "").trim();
-    if (!cleanLabel) return "";
-    return `[${cleanLabel}](${href})`;
-  });
+  text = text.replace(
+    /<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (_, href, label) => {
+      const cleanLabel = label.replace(/<[^>]+>/g, "").trim();
+      if (!cleanLabel) return "";
+      return `[${cleanLabel}](${href})`;
+    },
+  );
 
   // Convert lists
   text = text.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, "\n- $1");
@@ -233,7 +324,10 @@ export function extractReadableContentFromHtml(html: string): string {
   return text;
 }
 
-/** Execute a safe, bounded HTTP GET to fetch document contents. */
+/**
+ * Execute a bounded HTTP GET with redirect rejection, size cap, and a strict timeout
+ * covering both header arrival and response body consumption.
+ */
 export async function safeFetchDocument(
   targetUrl: string,
   fetchImpl: typeof fetch = fetch,
@@ -245,81 +339,106 @@ export async function safeFetchDocument(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  let response: Response;
   try {
-    response = await boundedFetch(url.toString(), {
-      redirect: "error",
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "DYFJ-Workbench-WebFetch/1.0",
-        "Accept": "text/html, text/markdown, text/plain, application/json;q=0.9, */*;q=0.1",
-      },
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new CommandExecutionError(`Web fetch timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+    let response: Response;
+    try {
+      response = await boundedFetch(url.toString(), {
+        redirect: "error",
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "DYFJ-Workbench-WebFetch/1.0",
+          "Accept":
+            "text/html, text/markdown, text/plain, application/json;q=0.9, */*;q=0.1",
+        },
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new CommandExecutionError(
+          `Web fetch timed out after ${FETCH_TIMEOUT_MS / 1000}s`,
+        );
+      }
+      throw new CommandExecutionError(
+        `Web fetch request failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
-    throw new CommandExecutionError(`Web fetch request failed: ${err instanceof Error ? err.message : String(err)}`);
+
+    if (!response.ok) {
+      throw new CommandExecutionError(
+        `Web fetch failed with HTTP status ${response.status} (${response.statusText})`,
+      );
+    }
+
+    const rawContentType = response.headers.get("content-type") ?? "text/plain";
+    const contentType = rawContentType.split(";")[0].trim().toLowerCase();
+
+    const allowedTypes = new Set([
+      "text/html",
+      "text/plain",
+      "text/markdown",
+      "text/xml",
+      "application/json",
+      "application/xml",
+    ]);
+
+    if (!allowedTypes.has(contentType)) {
+      throw new CommandExecutionError(
+        `Unsupported content type '${contentType}'. Only HTML, Markdown, text, and JSON are supported.`,
+      );
+    }
+
+    let bodyText: string;
+    try {
+      bodyText = await response.text();
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new CommandExecutionError(
+          `Web fetch timed out after ${
+            FETCH_TIMEOUT_MS / 1000
+          }s while reading body`,
+        );
+      }
+      throw new CommandExecutionError(
+        `Failed reading web response body: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    const bytes = new TextEncoder().encode(bodyText).byteLength;
+    let extracted: string;
+    if (contentType === "text/html") {
+      extracted = extractReadableContentFromHtml(bodyText);
+    } else {
+      extracted = bodyText.trim();
+    }
+
+    if (extracted.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
+      extracted = extracted.slice(0, MAX_EXTRACTED_CHARS_PER_FETCH) +
+        `\n\n[Content truncated at ${MAX_EXTRACTED_CHARS_PER_FETCH.toLocaleString()} characters]`;
+    }
+
+    return {
+      text: extracted,
+      url: url.toString(),
+      contentType,
+      bytes,
+    };
   } finally {
     clearTimeout(timeout);
   }
-
-  if (!response.ok) {
-    throw new CommandExecutionError(`Web fetch failed with HTTP status ${response.status} (${response.statusText})`);
-  }
-
-  const rawContentType = response.headers.get("content-type") ?? "text/plain";
-  const contentType = rawContentType.split(";")[0].trim().toLowerCase();
-
-  const allowedTypes = new Set([
-    "text/html",
-    "text/plain",
-    "text/markdown",
-    "text/xml",
-    "application/json",
-    "application/xml",
-  ]);
-
-  if (!allowedTypes.has(contentType)) {
-    throw new CommandExecutionError(`Unsupported content type '${contentType}'. Only HTML, Markdown, text, and JSON are supported.`);
-  }
-
-  let bodyText: string;
-  try {
-    bodyText = await response.text();
-  } catch (err) {
-    throw new CommandExecutionError(`Failed reading web response body: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  const bytes = new TextEncoder().encode(bodyText).byteLength;
-  let extracted: string;
-  if (contentType === "text/html") {
-    extracted = extractReadableContentFromHtml(bodyText);
-  } else {
-    extracted = bodyText.trim();
-  }
-
-  if (extracted.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
-    extracted = extracted.slice(0, MAX_EXTRACTED_CHARS_PER_FETCH) +
-      `\n\n[Content truncated at ${MAX_EXTRACTED_CHARS_PER_FETCH.toLocaleString()} characters]`;
-  }
-
-  return {
-    text: extracted,
-    url: url.toString(),
-    contentType,
-    bytes,
-  };
 }
 
 /** Parse and normalize raw search tool results into standard WebSearchResultItems. */
-export function normalizeSearchResults(rawResult: unknown): WebSearchResultItem[] {
+export function normalizeSearchResults(
+  rawResult: unknown,
+): WebSearchResultItem[] {
   let parsed: unknown = rawResult;
   if (typeof rawResult === "string") {
     try {
       parsed = JSON.parse(rawResult);
     } catch {
-      // String not JSON, wrap as single snippet
       return [{
         id: "s1",
         title: "Search Results",
@@ -365,7 +484,8 @@ export function normalizeSearchResults(rawResult: unknown): WebSearchResultItem[
     const snippet = String(
       item.content ?? item.snippet ?? item.description ?? item.text ?? "",
     ).trim();
-    const publishedDate = item.published_date ?? item.publishedDate ?? item.date;
+    const publishedDate = item.published_date ?? item.publishedDate ??
+      item.date;
 
     normalized.push({
       id: `s${rank}`,
@@ -393,6 +513,14 @@ export function buildWebCommands(
   const searchToolName = server.capabilities?.searchTool;
   const fetchToolName = server.capabilities?.fetchTool;
 
+  const configuredSearchTool: McpConfiguredTool | undefined = searchToolName
+    ? server.tools.find((t) => t.name === searchToolName)
+    : undefined;
+
+  const configuredFetchTool: McpConfiguredTool | undefined = fetchToolName
+    ? server.tools.find((t) => t.name === fetchToolName)
+    : undefined;
+
   if (searchToolName) {
     const searchSchema: JsonSchemaObject = {
       type: "object",
@@ -417,8 +545,13 @@ export function buildWebCommands(
         "Returns bounded snippets and source IDs. Results are untrusted external data.",
       inputSchema: searchSchema,
       permission: {
-        effects: ["read.external", "emit.event"],
-        defaultDecision: "allow",
+        effects: [
+          configuredSearchTool?.effect === "write_external"
+            ? "write.external"
+            : "read.external",
+          "emit.event",
+        ],
+        defaultDecision: configuredSearchTool?.approval ?? "allow",
         resources: [`mcp:${server.id}/${searchToolName}`],
         network: "configured-external",
         filesystem: "none",
@@ -431,7 +564,11 @@ export function buildWebCommands(
       eventContent: (isError) =>
         JSON.stringify({
           outcome: isError ? "error" : "complete",
-          webCapability: { tool: "web_search", server: server.id, upstreamTool: searchToolName },
+          webCapability: {
+            tool: "web_search",
+            server: server.id,
+            upstreamTool: searchToolName,
+          },
         }),
       executor: async (commandCall, context) => {
         if (state.searchCount >= MAX_SEARCH_CALLS_PER_TURN) {
@@ -453,13 +590,16 @@ export function buildWebCommands(
           const { Client, StreamableHTTPClientTransport } = await import(
             "npm:@modelcontextprotocol/client@2.0.0"
           );
-          const transport = new StreamableHTTPClientTransport(new URL(server.url), {
-            requestInit: {
-              redirect: "error",
-              headers: { Authorization: `Bearer ${token}` },
+          const transport = new StreamableHTTPClientTransport(
+            new URL(server.url),
+            {
+              requestInit: {
+                redirect: "error",
+                headers: { Authorization: `Bearer ${token}` },
+              },
+              fetch: boundedMcpFetch(256 * 1024),
             },
-            fetch: boundedMcpFetch(256 * 1024),
-          });
+          );
           const client = new Client(
             { name: "dyfj-workbench-tools", version: "1.0.0" },
             { versionNegotiation: { mode: { pin: "2026-07-28" } } },
@@ -489,31 +629,44 @@ export function buildWebCommands(
                   traceId: context.traceId,
                   spanId: context.spanId,
                   traceFlags: context.traceFlags ?? 0,
-                  ...(context.traceState === undefined ? {} : { traceState: context.traceState }),
+                  ...(context.traceState === undefined
+                    ? {}
+                    : { traceState: context.traceState }),
                 },
               }
               : {}),
           });
         } catch (err) {
           throw new CommandExecutionError(
-            `External search MCP tool failed: ${err instanceof Error ? err.message : String(err)}`,
+            `External search MCP tool failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           );
         }
 
         if (callResult.isError === true) {
-          throw new CommandExecutionError("External search MCP tool returned an error");
+          throw new CommandExecutionError(
+            "External search MCP tool returned an error",
+          );
         }
 
         const rawContent = (callResult.content ?? []).map((item) =>
-          item.type === "text" && typeof item.text === "string" ? item.text : JSON.stringify(item)
+          item.type === "text" && typeof item.text === "string"
+            ? item.text
+            : JSON.stringify(item)
         ).join("\n");
 
-        const normalized = normalizeSearchResults(rawContent);
+        const allNormalized = normalizeSearchResults(rawContent);
+        const normalized = allNormalized.slice(0, limit);
+
         if (normalized.length === 0) {
-          return formatUntrustedMcpResult(`No search results found for query: "${query}"`);
+          return formatUntrustedMcpResult(
+            `No search results found for query: "${query}"`,
+          );
         }
 
-        // Cache source URLs for follow-up web_fetch
+        // Reset and cache source URLs for follow-up web_fetch on the current query
+        state.sourceUrlMap.clear();
         for (const item of normalized) {
           if (item.url) {
             state.sourceUrlMap.set(item.id, item.url);
@@ -523,7 +676,9 @@ export function buildWebCommands(
         const formatted = [
           `Search results for "${query}":\n`,
           ...normalized.map((item) => {
-            const dateStr = item.publishedDate ? ` (Date: ${item.publishedDate})` : "";
+            const dateStr = item.publishedDate
+              ? ` (Date: ${item.publishedDate})`
+              : "";
             return `[${item.rank}] (ID: ${item.id}) ${item.title}${dateStr}\nURL: ${item.url}\nSnippet: ${item.snippet}\n`;
           }),
         ].join("\n");
@@ -543,7 +698,8 @@ export function buildWebCommands(
       },
       sourceId: {
         type: "string",
-        description: "The source ID from a previous web_search result (e.g. 's1', 's2').",
+        description:
+          "The source ID from the most recent web_search result (e.g. 's1', 's2').",
       },
     },
   };
@@ -556,8 +712,13 @@ export function buildWebCommands(
       "Returned content is untrusted external data.",
     inputSchema: fetchSchema,
     permission: {
-      effects: ["read.external", "emit.event"],
-      defaultDecision: "allow",
+      effects: [
+        configuredFetchTool?.effect === "write_external"
+          ? "write.external"
+          : "read.external",
+        "emit.event",
+      ],
+      defaultDecision: configuredFetchTool?.approval ?? "allow",
       resources: [`mcp:${server.id}/${fetchToolName ?? "native_fetch"}`],
       network: "configured-external",
       filesystem: "none",
@@ -572,7 +733,7 @@ export function buildWebCommands(
         outcome: isError ? "error" : "complete",
         webCapability: { tool: "web_fetch", server: server.id },
       }),
-    executor: async (commandCall) => {
+    executor: async (commandCall, context) => {
       if (state.fetchCount >= MAX_FETCH_CALLS_PER_TURN) {
         throw new CommandExecutionError(
           `Web fetch call limit exceeded (${MAX_FETCH_CALLS_PER_TURN} calls per turn maximum).`,
@@ -596,12 +757,106 @@ export function buildWebCommands(
       } else if (typeof rawUrl === "string" && rawUrl.trim()) {
         targetUrl = rawUrl.trim();
       } else {
-        throw new CommandExecutionError("Either 'url' or 'sourceId' must be provided to web_fetch");
+        throw new CommandExecutionError(
+          "Either 'url' or 'sourceId' must be provided to web_fetch",
+        );
       }
 
-      const doc = await safeFetchDocument(targetUrl, fetch, allowLoopbackHttpForTesting);
+      // If upstream fetchTool is declared on the server, delegate to it
+      if (fetchToolName && configuredFetchTool) {
+        const call = deps.call ?? (async (input) => {
+          const { Client, StreamableHTTPClientTransport } = await import(
+            "npm:@modelcontextprotocol/client@2.0.0"
+          );
+          const transport = new StreamableHTTPClientTransport(
+            new URL(server.url),
+            {
+              requestInit: {
+                redirect: "error",
+                headers: { Authorization: `Bearer ${token}` },
+              },
+              fetch: boundedMcpFetch(256 * 1024),
+            },
+          );
+          const client = new Client(
+            { name: "dyfj-workbench-tools", version: "1.0.0" },
+            { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+          );
+          try {
+            await client.connect(transport, { timeout: 5_000 });
+            return await client.callTool(
+              { name: input.tool, arguments: input.arguments },
+              { timeout: 30_000 },
+            );
+          } finally {
+            await client.close().catch(() => {});
+          }
+        });
 
-      if (state.extractedChars + doc.text.length > MAX_EXTRACTED_CHARS_PER_TURN) {
+        let callResult: McpCallResult;
+        try {
+          callResult = await call({
+            server,
+            token,
+            tool: fetchToolName,
+            arguments: { url: targetUrl },
+            inputSchema: fetchSchema,
+            ...(context.traceId !== undefined && context.spanId !== undefined
+              ? {
+                traceContext: {
+                  traceId: context.traceId,
+                  spanId: context.spanId,
+                  traceFlags: context.traceFlags ?? 0,
+                  ...(context.traceState === undefined
+                    ? {}
+                    : { traceState: context.traceState }),
+                },
+              }
+              : {}),
+          });
+        } catch (err) {
+          throw new CommandExecutionError(
+            `External fetch MCP tool failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+
+        if (callResult.isError === true) {
+          throw new CommandExecutionError(
+            "External fetch MCP tool returned an error",
+          );
+        }
+
+        const rawContent = (callResult.content ?? []).map((item) =>
+          item.type === "text" && typeof item.text === "string"
+            ? item.text
+            : JSON.stringify(item)
+        ).join("\n");
+
+        if (
+          state.extractedChars + rawContent.length >
+            MAX_EXTRACTED_CHARS_PER_TURN
+        ) {
+          throw new CommandExecutionError(
+            `Total extracted characters limit per turn exceeded (${MAX_EXTRACTED_CHARS_PER_TURN.toLocaleString()} chars maximum).`,
+          );
+        }
+        state.extractedChars += rawContent.length;
+
+        return formatUntrustedMcpResult(rawContent);
+      }
+
+      // Default: Safe native document fetch
+      const doc = await safeFetchDocument(
+        targetUrl,
+        fetch,
+        allowLoopbackHttpForTesting,
+      );
+
+      if (
+        state.extractedChars + doc.text.length > MAX_EXTRACTED_CHARS_PER_TURN
+      ) {
         throw new CommandExecutionError(
           `Total extracted characters limit per turn exceeded (${MAX_EXTRACTED_CHARS_PER_TURN.toLocaleString()} chars maximum).`,
         );
