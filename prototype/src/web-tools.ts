@@ -5,6 +5,7 @@ import type {
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
 import type { McpConfiguredTool, McpHttpServerConfig } from "./config.ts";
+import { injectMcpTraceContext } from "./mcp-conformance.ts";
 import {
   boundedMcpFetch,
   type ExternalMcpDeps,
@@ -18,6 +19,7 @@ export const MAX_FETCH_DOWNLOAD_BYTES = 1024 * 1024; // 1 MB
 export const MAX_EXTRACTED_CHARS_PER_FETCH = 40_000;
 export const MAX_EXTRACTED_CHARS_PER_TURN = 100_000;
 export const FETCH_TIMEOUT_MS = 10_000;
+export const MAX_SESSION_TURNS_CAP = 100;
 
 export interface WebSearchResultItem {
   id: string;
@@ -64,11 +66,18 @@ export function createWebToolsSessionState(): WebToolsSessionState {
     turns,
     getTurnState(traceId?: string): TurnWebState {
       const now = Date.now();
+
       // Clean up stale turn states older than 5 minutes
       for (const [key, t] of turns.entries()) {
         if (now - t.lastActivity > 300_000) {
           turns.delete(key);
         }
+      }
+
+      // Bound map cardinality
+      if (turns.size >= MAX_SESSION_TURNS_CAP) {
+        const oldestKey = turns.keys().next().value;
+        if (oldestKey !== undefined) turns.delete(oldestKey);
       }
 
       const key = traceId && traceId.trim() ? traceId.trim() : "__default__";
@@ -251,7 +260,7 @@ export function assertPublicHttpsUrl(
 }
 
 /**
- * Preflight check rejecting domain names whose resolved A/AAAA records match private IP ranges.
+ * Preflight DNS resolution check rejecting domains that resolve to private or internal IP addresses.
  */
 export async function assertPublicDnsResolution(
   hostname: string,
@@ -272,10 +281,11 @@ export async function assertPublicDnsResolution(
   if (typeof Deno?.resolveDns === "function") {
     try {
       if (signal?.aborted) return;
-      const aRecords = await Deno.resolveDns(hostname, "A").catch(() => []);
-      const aaaaRecords = await Deno.resolveDns(hostname, "AAAA").catch(() =>
-        []
-      );
+      const dnsPromise = Promise.all([
+        Deno.resolveDns(hostname, "A").catch(() => []),
+        Deno.resolveDns(hostname, "AAAA").catch(() => []),
+      ]);
+      const [aRecords, aaaaRecords] = await dnsPromise;
       for (const ip of [...aRecords, ...aaaaRecords]) {
         if (isPrivateOrLoopbackIp(ip)) {
           throw new CommandExecutionError(
@@ -516,7 +526,10 @@ export async function safeFetchDocument(
     if (extracted.length > MAX_EXTRACTED_CHARS_PER_FETCH) {
       const marker =
         `\n\n[Content truncated at ${MAX_EXTRACTED_CHARS_PER_FETCH.toLocaleString()} characters]`;
-      const keepChars = Math.max(0, MAX_EXTRACTED_CHARS_PER_FETCH - marker.length);
+      const keepChars = Math.max(
+        0,
+        MAX_EXTRACTED_CHARS_PER_FETCH - marker.length,
+      );
       extracted = extracted.slice(0, keepChars) + marker;
     }
 
@@ -702,12 +715,18 @@ export function buildWebCommands(
           const { Client, StreamableHTTPClientTransport } = await import(
             "npm:@modelcontextprotocol/client@2.0.0"
           );
+          const headers: Record<string, string> = {
+            Authorization: `Bearer ${token}`,
+          };
+          if (input.traceContext) {
+            injectMcpTraceContext(headers, input.traceContext);
+          }
           const transport = new StreamableHTTPClientTransport(
             new URL(server.url),
             {
               requestInit: {
                 redirect: "error",
-                headers: { Authorization: `Bearer ${token}` },
+                headers,
               },
               fetch: boundedMcpFetch(256 * 1024),
             },
@@ -846,6 +865,9 @@ export function buildWebCommands(
   };
 
   const hasConfiguredFetchTool = Boolean(fetchToolName && configuredFetchTool);
+  const effectiveApproval = hasConfiguredFetchTool
+    ? (configuredFetchTool?.approval ?? "allow")
+    : (configuredSearchTool?.approval ?? "allow");
 
   commands.push({
     id: "web_fetch",
@@ -862,9 +884,7 @@ export function buildWebCommands(
           : "read.external",
         "emit.event",
       ],
-      defaultDecision: hasConfiguredFetchTool
-        ? (configuredFetchTool?.approval ?? "allow")
-        : "allow",
+      defaultDecision: effectiveApproval,
       resources: hasConfiguredFetchTool
         ? [`mcp:${server.id}/${fetchToolName}`]
         : ["web:native_fetch"],
@@ -894,9 +914,19 @@ export function buildWebCommands(
       const rawUrl = commandCall.arguments.url;
       const rawSourceId = commandCall.arguments.sourceId;
 
+      const hasUrl = typeof rawUrl === "string" && rawUrl.trim().length > 0;
+      const hasSourceId = typeof rawSourceId === "string" &&
+        rawSourceId.trim().length > 0;
+
+      if (hasUrl && hasSourceId) {
+        throw new CommandExecutionError(
+          "Provide either 'url' or 'sourceId' to web_fetch, not both.",
+        );
+      }
+
       let targetUrl: string;
-      if (typeof rawSourceId === "string" && rawSourceId.trim()) {
-        const id = rawSourceId.trim();
+      if (hasSourceId) {
+        const id = String(rawSourceId).trim();
         const resolved = turn.sourceUrlMap.get(id);
         if (!resolved) {
           throw new CommandExecutionError(
@@ -904,8 +934,8 @@ export function buildWebCommands(
           );
         }
         targetUrl = resolved;
-      } else if (typeof rawUrl === "string" && rawUrl.trim()) {
-        targetUrl = rawUrl.trim();
+      } else if (hasUrl) {
+        targetUrl = String(rawUrl).trim();
       } else {
         throw new CommandExecutionError(
           "Either 'url' or 'sourceId' must be provided to web_fetch",
@@ -921,12 +951,18 @@ export function buildWebCommands(
           const { Client, StreamableHTTPClientTransport } = await import(
             "npm:@modelcontextprotocol/client@2.0.0"
           );
+          const headers: Record<string, string> = {
+            Authorization: `Bearer ${token}`,
+          };
+          if (input.traceContext) {
+            injectMcpTraceContext(headers, input.traceContext);
+          }
           const transport = new StreamableHTTPClientTransport(
             new URL(server.url),
             {
               requestInit: {
                 redirect: "error",
-                headers: { Authorization: `Bearer ${token}` },
+                headers,
               },
               fetch: boundedMcpFetch(256 * 1024),
             },

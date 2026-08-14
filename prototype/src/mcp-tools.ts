@@ -438,6 +438,11 @@ export async function buildExternalMcpCommands(
     );
     let toolCount = 0;
     for (const configured of server.tools) {
+      const isCapabilityMapped =
+        configured.name === server.capabilities?.searchTool ||
+        configured.name === server.capabilities?.fetchTool;
+      if (isCapabilityMapped) continue;
+
       const discovered = discoveredByName.get(configured.name);
       if (discovered === undefined) continue;
       let inputSchema: JsonSchemaObject;
@@ -504,7 +509,16 @@ export async function buildExternalMcpCommands(
         },
       });
     }
-    if (server.capabilities?.searchTool || server.capabilities?.fetchTool) {
+
+    const hasDiscoveredSearch = Boolean(
+      server.capabilities?.searchTool &&
+        discoveredByName.has(server.capabilities.searchTool),
+    );
+    const hasDiscoveredFetch = Boolean(
+      server.capabilities?.fetchTool &&
+        discoveredByName.has(server.capabilities.fetchTool),
+    );
+    if (hasDiscoveredSearch || hasDiscoveredFetch) {
       readyWebServers.push({ server, token, discoveredByName });
     }
     diagnostics.push({
@@ -518,10 +532,14 @@ export async function buildExternalMcpCommands(
   // Register web capability commands with exact capability precedence
   if (readyWebServers.length > 0) {
     const searchEntry = readyWebServers.find(
-      (entry) => entry.server.capabilities?.searchTool !== undefined,
+      (entry) =>
+        entry.server.capabilities?.searchTool !== undefined &&
+        entry.discoveredByName.has(entry.server.capabilities.searchTool),
     );
     const fetchEntry = readyWebServers.find(
-      (entry) => entry.server.capabilities?.fetchTool !== undefined,
+      (entry) =>
+        entry.server.capabilities?.fetchTool !== undefined &&
+        entry.discoveredByName.has(entry.server.capabilities.fetchTool),
     );
 
     if (searchEntry) {

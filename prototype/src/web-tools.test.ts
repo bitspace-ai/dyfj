@@ -527,4 +527,24 @@ describe("buildWebCommands", () => {
     expect(res).toContain("<untrusted-mcp-result>");
     expect(state.getTurnState("turn-2").searchCount).toBe(1);
   });
+
+  test("rejects ambiguous web_fetch calls with both url and sourceId", async () => {
+    const commands = buildWebCommands(server, "test_token", {}, createWebToolsSessionState(), true);
+    const fetchCmd = commands.find((c) => c.id === "web_fetch")!;
+
+    await expect(fetchCmd.executor({
+      callId: "call_ambiguous",
+      commandId: "web_fetch",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: { url: "https://example.com/page", sourceId: "s1" },
+    }, { authzBasis: "test" })).rejects.toThrow(/either 'url' or 'sourceId'/);
+  });
+
+  test("bounds turn state cardinality at MAX_SESSION_TURNS_CAP", () => {
+    const state = createWebToolsSessionState();
+    for (let i = 0; i < 110; i++) {
+      state.getTurnState(`trace_${i}`);
+    }
+    expect(state.turns.size).toBeLessThanOrEqual(100);
+  });
 });
