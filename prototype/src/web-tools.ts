@@ -381,66 +381,63 @@ export function decodeHtmlEntities(html: string): string {
     });
 }
 
+function stripHtmlTags(str: string): string {
+  let prev = str;
+  while (true) {
+    const stripped = prev.replace(/<[^>]*>/g, "");
+    if (stripped === prev) return stripped;
+    prev = stripped;
+  }
+}
+
 /** Convert raw HTML content into Markdown-formatted text. */
 export function extractReadableContentFromHtml(html: string): string {
   let text = html;
 
   // Remove scripts, styles, metadata, and non-content tags
-  text = text.replace(
-    /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
-    " ",
-  );
-  text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ");
-  text = text.replace(
-    /<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi,
-    " ",
-  );
-  text = text.replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, " ");
+  text = text.replace(/<script\b[\s\S]*?<\/script\s*>/gi, " ");
+  text = text.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ");
+  text = text.replace(/<noscript\b[\s\S]*?<\/noscript\s*>/gi, " ");
+  text = text.replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, " ");
   text = text.replace(/<!--[\s\S]*?-->/g, " ");
 
   // Remove navigation, headers, footers, forms, aside
-  text = text.replace(
-    /<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi,
-    " ",
-  );
-  text = text.replace(
-    /<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi,
-    " ",
-  );
-  text = text.replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, " ");
-  text = text.replace(/<aside\b[^<]*(?:(?!<\/aside>)<[^<]*)*<\/aside>/gi, " ");
-  text = text.replace(/<form\b[^<]*(?:(?!<\/form>)<[^<]*)*<\/form>/gi, " ");
+  text = text.replace(/<header\b[\s\S]*?<\/header\s*>/gi, " ");
+  text = text.replace(/<footer\b[\s\S]*?<\/footer\s*>/gi, " ");
+  text = text.replace(/<nav\b[\s\S]*?<\/nav\s*>/gi, " ");
+  text = text.replace(/<aside\b[\s\S]*?<\/aside\s*>/gi, " ");
+  text = text.replace(/<form\b[\s\S]*?<\/form\s*>/gi, " ");
 
   // Convert headings
-  text = text.replace(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi, "\n\n# $1\n\n");
-  text = text.replace(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi, "\n\n## $1\n\n");
-  text = text.replace(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi, "\n\n### $1\n\n");
-  text = text.replace(/<h4\b[^>]*>([\s\S]*?)<\/h4>/gi, "\n\n#### $1\n\n");
-  text = text.replace(/<h5\b[^>]*>([\s\S]*?)<\/h5>/gi, "\n\n##### $1\n\n");
-  text = text.replace(/<h6\b[^>]*>([\s\S]*?)<\/h6>/gi, "\n\n###### $1\n\n");
+  text = text.replace(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/gi, "\n\n# $1\n\n");
+  text = text.replace(/<h2\b[^>]*>([\s\S]*?)<\/h2\s*>/gi, "\n\n## $1\n\n");
+  text = text.replace(/<h3\b[^>]*>([\s\S]*?)<\/h3\s*>/gi, "\n\n### $1\n\n");
+  text = text.replace(/<h4\b[^>]*>([\s\S]*?)<\/h4\s*>/gi, "\n\n#### $1\n\n");
+  text = text.replace(/<h5\b[^>]*>([\s\S]*?)<\/h5\s*>/gi, "\n\n##### $1\n\n");
+  text = text.replace(/<h6\b[^>]*>([\s\S]*?)<\/h6\s*>/gi, "\n\n###### $1\n\n");
 
   // Convert links: <a href="url">text</a> -> [text](url)
   text = text.replace(
-    /<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    /<a\b[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a\s*>/gi,
     (_, href, label) => {
-      const cleanLabel = label.replace(/<[^>]+>/g, "").trim();
+      const cleanLabel = stripHtmlTags(label).trim();
       if (!cleanLabel) return "";
       return `[${cleanLabel}](${href})`;
     },
   );
 
   // Convert lists
-  text = text.replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, "\n- $1");
+  text = text.replace(/<li\b[^>]*>([\s\S]*?)<\/li\s*>/gi, "\n- $1");
 
   // Paragraphs & line breaks
   text = text.replace(/<br\s*\/?>/gi, "\n");
-  text = text.replace(/<\/p>/gi, "\n\n");
+  text = text.replace(/<\/p\s*>/gi, "\n\n");
   text = text.replace(/<p\b[^>]*>/gi, "\n\n");
   text = text.replace(/<div\b[^>]*>/gi, "\n");
-  text = text.replace(/<\/div>/gi, "\n");
+  text = text.replace(/<\/div\s*>/gi, "\n");
 
   // Strip remaining HTML tags
-  text = text.replace(/<[^>]+>/g, " ");
+  text = stripHtmlTags(text);
 
   // Decode entities
   text = decodeHtmlEntities(text);
