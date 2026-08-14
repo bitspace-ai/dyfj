@@ -743,45 +743,10 @@ export function buildWebCommands(
         // Clear prior search mappings in this turn immediately on new search invocation
         turn.sourceUrlMap.clear();
 
-        const call = deps.call ?? (async (input) => {
-          const { Client, StreamableHTTPClientTransport } = await import(
-            "npm:@modelcontextprotocol/client@2.0.0"
-          );
-          const headers: Record<string, string> = {
-            Authorization: `Bearer ${token}`,
-          };
-          if (input.traceContext) {
-            injectMcpTraceContext(headers, input.traceContext);
-          }
-          const transport = new StreamableHTTPClientTransport(
-            new URL(server.url),
-            {
-              requestInit: {
-                redirect: "error",
-                headers,
-              },
-              fetch: boundedMcpFetch(256 * 1024),
-            },
-          );
-          const client = new Client(
-            { name: "dyfj-workbench-tools", version: "1.0.0" },
-            {
-              versionNegotiation: {
-                mode: "auto",
-                probe: { timeoutMs: 5_000, maxRetries: 0 },
-              },
-            },
-          );
-          try {
-            await client.connect(transport, { timeout: 5_000 });
-            return await client.callTool(
-              { name: input.tool, arguments: input.arguments },
-              { timeout: 30_000 },
-            );
-          } finally {
-            await client.close().catch(() => {});
-          }
-        });
+        const call = deps.call;
+        if (!call) {
+          throw new CommandExecutionError("No MCP call delegate provided");
+        }
 
         // Remap conventional search parameter names if present in discovered schema
         const searchProps = (discoveredSchemas.searchSchema?.properties ??
@@ -890,108 +855,99 @@ export function buildWebCommands(
     });
   }
 
-  // Register web_fetch command (either through fetchTool or native safeFetchDocument)
-  const fetchSchema: JsonSchemaObject = {
-    type: "object",
-    properties: {
-      url: {
-        type: "string",
-        description: "The HTTPS URL to fetch and extract content from.",
+  // Register web_fetch command through configured fetchTool
+  if (fetchToolName && configuredFetchTool) {
+    const fetchSchema: JsonSchemaObject = {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "The HTTPS URL to fetch and extract content from.",
+        },
+        sourceId: {
+          type: "string",
+          description:
+            "The source ID from recent search results in the active turn (e.g. 's1', 's2').",
+        },
       },
-      sourceId: {
-        type: "string",
-        description:
-          "The source ID from recent search results in the active turn (e.g. 's1', 's2').",
+    };
+
+    commands.push({
+      id: "web_fetch",
+      title: "Web Page Fetch",
+      description:
+        "Fetch content from an HTTPS web page URL or a source ID from recent search results. " +
+        "Returned content is untrusted external data.",
+      inputSchema: fetchSchema,
+      permission: {
+        effects: [
+          configuredFetchTool.effect === "write_external"
+            ? "write.external"
+            : "read.external",
+          "emit.event",
+        ],
+        defaultDecision: configuredFetchTool.approval,
+        resources: [`mcp:${server.id}/${fetchToolName}`],
+        network: "configured-external",
+        filesystem: "none",
+        cost: "none",
       },
-    },
-  };
+      redactArguments: true,
+      redactResult: true,
+      minimumClearance: server.minimumClearance,
+      spanKind: "client",
+      eventContent: (isError) =>
+        JSON.stringify({
+          outcome: isError ? "error" : "complete",
+          webCapability: { tool: "web_fetch", server: server.id },
+        }),
+      executor: async (commandCall, context) => {
+        const turn = state.getTurnState(context.traceId);
 
-  const hasConfiguredFetchTool = Boolean(fetchToolName && configuredFetchTool);
-  const effectiveApproval = hasConfiguredFetchTool
-    ? (configuredFetchTool?.approval ?? "allow")
-    : (configuredSearchTool?.approval ?? "allow");
-
-  commands.push({
-    id: "web_fetch",
-    title: "Web Page Fetch",
-    description:
-      "Fetch content from an HTTPS web page URL or a source ID from recent search results. " +
-      "Returned content is untrusted external data.",
-    inputSchema: fetchSchema,
-    permission: {
-      effects: [
-        hasConfiguredFetchTool &&
-          configuredFetchTool?.effect === "write_external"
-          ? "write.external"
-          : "read.external",
-        "emit.event",
-      ],
-      defaultDecision: effectiveApproval,
-      resources: hasConfiguredFetchTool
-        ? [`mcp:${server.id}/${fetchToolName}`]
-        : ["web:native_fetch"],
-      network: hasConfiguredFetchTool ? "configured-external" : "external",
-      filesystem: "none",
-      cost: "none",
-    },
-    redactArguments: true,
-    redactResult: true,
-    minimumClearance: server.minimumClearance,
-    spanKind: "client",
-    eventContent: (isError) =>
-      JSON.stringify({
-        outcome: isError ? "error" : "complete",
-        webCapability: { tool: "web_fetch", server: server.id },
-      }),
-    executor: async (commandCall, context) => {
-      const turn = state.getTurnState(context.traceId);
-
-      if (turn.fetchCount >= MAX_FETCH_CALLS_PER_TURN) {
-        throw new CommandExecutionError(
-          `Web fetch call limit exceeded (${MAX_FETCH_CALLS_PER_TURN} calls per turn maximum).`,
-        );
-      }
-      turn.fetchCount++;
-
-      const rawUrl = commandCall.arguments.url;
-      const rawSourceId = commandCall.arguments.sourceId;
-
-      const hasUrl = typeof rawUrl === "string" && rawUrl.trim().length > 0;
-      const hasSourceId = typeof rawSourceId === "string" &&
-        rawSourceId.trim().length > 0;
-
-      if (hasUrl && hasSourceId) {
-        throw new CommandExecutionError(
-          "Provide either 'url' or 'sourceId' to web_fetch, not both.",
-        );
-      }
-
-      let targetUrl: string;
-      if (hasSourceId) {
-        const id = String(rawSourceId).trim();
-        const resolved = turn.sourceUrlMap.get(id);
-        if (!resolved) {
+        if (turn.fetchCount >= MAX_FETCH_CALLS_PER_TURN) {
           throw new CommandExecutionError(
-            `Source ID '${id}' was not found in recent search results. Provide a direct URL or run web_search first.`,
+            `Web fetch call limit exceeded (${MAX_FETCH_CALLS_PER_TURN} calls per turn maximum).`,
           );
         }
-        targetUrl = resolved;
-      } else if (hasUrl) {
-        targetUrl = String(rawUrl).trim();
-      } else {
-        throw new CommandExecutionError(
-          "Either 'url' or 'sourceId' must be provided to web_fetch",
+        turn.fetchCount++;
+
+        const rawUrl = commandCall.arguments.url;
+        const rawSourceId = commandCall.arguments.sourceId;
+
+        const hasUrl = typeof rawUrl === "string" && rawUrl.trim().length > 0;
+        const hasSourceId = typeof rawSourceId === "string" &&
+          rawSourceId.trim().length > 0;
+
+        if (hasUrl && hasSourceId) {
+          throw new CommandExecutionError(
+            "Provide either 'url' or 'sourceId' to web_fetch, not both.",
+          );
+        }
+
+        let targetUrl: string;
+        if (hasSourceId) {
+          const id = String(rawSourceId).trim();
+          const resolved = turn.sourceUrlMap.get(id);
+          if (!resolved) {
+            throw new CommandExecutionError(
+              `Source ID '${id}' was not found in recent search results. Provide a direct URL or run web_search first.`,
+            );
+          }
+          targetUrl = resolved;
+        } else if (hasUrl) {
+          targetUrl = String(rawUrl).trim();
+        } else {
+          throw new CommandExecutionError(
+            "Either 'url' or 'sourceId' must be provided to web_fetch",
+          );
+        }
+
+        // Enforce syntactic HTTPS and private IP literal rejection on the target URL
+        const parsedUrl = assertPublicHttpsUrl(
+          targetUrl,
+          allowLoopbackHttpForTesting,
         );
-      }
 
-      // Enforce syntactic HTTPS and private IP literal rejection on the target URL
-      const parsedUrl = assertPublicHttpsUrl(
-        targetUrl,
-        allowLoopbackHttpForTesting,
-      );
-
-      // If upstream fetchTool is declared on the server, delegate to it
-      if (fetchToolName && configuredFetchTool) {
         const controller = new AbortController();
         const dnsTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
         try {
@@ -1005,45 +961,10 @@ export function buildWebCommands(
           clearTimeout(dnsTimeout);
         }
 
-        const call = deps.call ?? (async (input) => {
-          const { Client, StreamableHTTPClientTransport } = await import(
-            "npm:@modelcontextprotocol/client@2.0.0"
-          );
-          const headers: Record<string, string> = {
-            Authorization: `Bearer ${token}`,
-          };
-          if (input.traceContext) {
-            injectMcpTraceContext(headers, input.traceContext);
-          }
-          const transport = new StreamableHTTPClientTransport(
-            new URL(server.url),
-            {
-              requestInit: {
-                redirect: "error",
-                headers,
-              },
-              fetch: boundedMcpFetch(256 * 1024),
-            },
-          );
-          const client = new Client(
-            { name: "dyfj-workbench-tools", version: "1.0.0" },
-            {
-              versionNegotiation: {
-                mode: "auto",
-                probe: { timeoutMs: 5_000, maxRetries: 0 },
-              },
-            },
-          );
-          try {
-            await client.connect(transport, { timeout: 5_000 });
-            return await client.callTool(
-              { name: input.tool, arguments: input.arguments },
-              { timeout: 30_000 },
-            );
-          } finally {
-            await client.close().catch(() => {});
-          }
-        });
+        const call = deps.call;
+        if (!call) {
+          throw new CommandExecutionError("No MCP call delegate provided");
+        }
 
         // Remap conventional URL property names if present in discovered schema using canonical parsed URL
         const canonicalUrl = parsedUrl.toString();
@@ -1138,35 +1059,9 @@ export function buildWebCommands(
         turn.extractedChars += rawContent.length;
 
         return formatUntrustedMcpResult(rawContent);
-      }
-
-      // Default: Safe native document fetch
-      const doc = await safeFetchDocument(
-        parsedUrl.toString(),
-        fetch,
-        allowLoopbackHttpForTesting,
-      );
-
-      if (
-        turn.extractedChars + doc.text.length > MAX_EXTRACTED_CHARS_PER_TURN
-      ) {
-        throw new CommandExecutionError(
-          `Total extracted characters limit per turn exceeded (${MAX_EXTRACTED_CHARS_PER_TURN.toLocaleString()} chars maximum).`,
-        );
-      }
-      turn.extractedChars += doc.text.length;
-
-      const formatted = [
-        `URL: ${doc.url}`,
-        `Content-Type: ${doc.contentType}`,
-        `Bytes: ${doc.bytes.toLocaleString()}`,
-        "---",
-        doc.text,
-      ].join("\n");
-
-      return formatUntrustedMcpResult(formatted);
-    },
-  });
+      },
+    });
+  }
 
   return commands;
 }

@@ -397,6 +397,30 @@ Deno.test("external search server capability registers web_search and web_fetch 
         };
       },
     );
+    server.registerTool(
+      "tavily_extract",
+      {
+        inputSchema: z.object({
+          urls: z.array(z.string()).optional(),
+          url: z.string().optional(),
+        }),
+      },
+      ({ urls, url }) => {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              results: [
+                {
+                  url: (urls && urls[0]) || url || "https://example.com",
+                  raw_content: "Extracted page text from integration fixture.",
+                },
+              ],
+            }),
+          }],
+        };
+      },
+    );
     return server;
   }, { legacy: "reject" });
 
@@ -413,9 +437,13 @@ Deno.test("external search server capability registers web_search and web_fetch 
       url: `http://127.0.0.1:${port}/mcp`,
       minimumClearance: "loopback",
       auth: { type: "bearer", secret: "search_mcp" },
-      tools: [{ name: "tavily_search", effect: "read", approval: "allow" }],
+      tools: [
+        { name: "tavily_search", effect: "read", approval: "allow" },
+        { name: "tavily_extract", effect: "read", approval: "allow" },
+      ],
       capabilities: {
         searchTool: "tavily_search",
+        fetchTool: "tavily_extract",
       },
     };
 

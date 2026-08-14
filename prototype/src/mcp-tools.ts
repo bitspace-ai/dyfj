@@ -179,7 +179,7 @@ async function withClient<T>(
   }
 }
 
-async function discoverMcpTools(input: {
+export async function discoverMcpTools(input: {
   server: McpHttpServerConfig;
   token: string;
 }): Promise<McpDiscoveryResult> {
@@ -199,7 +199,7 @@ async function discoverMcpTools(input: {
   );
 }
 
-async function callMcpTool(input: {
+export async function callMcpTool(input: {
   server: McpHttpServerConfig;
   token: string;
   tool: string;
@@ -559,6 +559,11 @@ export async function buildExternalMcpCommands(
         entry.discoveredByName.has(entry.server.capabilities.fetchTool),
     );
 
+    const resolvedDeps: ExternalMcpDeps = {
+      discover: deps.discover ?? discoverMcpTools,
+      call: deps.call ?? callMcpTool,
+    };
+
     if (searchEntry) {
       const searchToolName = searchEntry.server.capabilities?.searchTool;
       const discoveredSearchTool = searchToolName
@@ -578,7 +583,7 @@ export async function buildExternalMcpCommands(
       const searchCmds = buildWebCommands(
         searchEntry.server,
         searchEntry.token,
-        deps,
+        resolvedDeps,
         sharedWebState,
         false,
         { searchSchema },
@@ -589,11 +594,10 @@ export async function buildExternalMcpCommands(
       }
     }
 
-    const effectiveFetchEntry = fetchEntry ?? searchEntry ?? readyWebServers[0];
-    if (effectiveFetchEntry) {
-      const fetchToolName = effectiveFetchEntry.server.capabilities?.fetchTool;
+    if (fetchEntry) {
+      const fetchToolName = fetchEntry.server.capabilities?.fetchTool;
       const discoveredFetchTool = fetchToolName
-        ? effectiveFetchEntry.discoveredByName.get(fetchToolName)
+        ? fetchEntry.discoveredByName.get(fetchToolName)
         : undefined;
       let fetchSchema: JsonSchemaObject | undefined;
       if (discoveredFetchTool) {
@@ -607,9 +611,9 @@ export async function buildExternalMcpCommands(
       }
 
       const fetchCmds = buildWebCommands(
-        effectiveFetchEntry.server,
-        effectiveFetchEntry.token,
-        deps,
+        fetchEntry.server,
+        fetchEntry.token,
+        resolvedDeps,
         sharedWebState,
         false,
         { fetchSchema },
