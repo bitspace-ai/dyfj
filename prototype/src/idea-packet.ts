@@ -424,9 +424,7 @@ export function markWorkbenchIdea(input: {
     const eventId = validateIdentifier(input.eventId, "eventId");
     if (input.events !== undefined) {
       const match = input.events.find(
-        (e) =>
-          e.eventId === eventId &&
-          (e.sessionId === undefined || e.sessionId === sessionId),
+        (e) => e.eventId === eventId && e.sessionId === sessionId,
       );
       if (!match) {
         throw new Error(
@@ -439,9 +437,12 @@ export function markWorkbenchIdea(input: {
     }
   } else if (description.length === 0 && input.events && input.events.length > 0) {
     const sessionEvents: WorkbenchSessionEvent[] = [];
+    let totalScanned = 0;
     for (let i = input.events.length - 1; i >= 0; i--) {
+      totalScanned++;
+      if (totalScanned > 200) break;
       const ev = input.events[i];
-      if (ev.sessionId === undefined || ev.sessionId === sessionId) {
+      if (ev.sessionId === sessionId) {
         sessionEvents.unshift(ev);
         if (sessionEvents.length >= 50) break;
       }
@@ -536,9 +537,7 @@ export function draftWorkPacketFromContext(input: {
   if (referencedEventId) {
     if (events !== undefined) {
       const match = events.find(
-        (e) =>
-          e.eventId === referencedEventId &&
-          (e.sessionId === undefined || e.sessionId === sessionId),
+        (e) => e.eventId === referencedEventId && e.sessionId === sessionId,
       );
       if (!match) {
         throw new Error(
@@ -551,7 +550,7 @@ export function draftWorkPacketFromContext(input: {
           : match.content;
         const trimmed = preSlice.trim();
         if (match.content.length > 4000) {
-          excerpt = closeDanglingFences(trimmed.slice(0, 3985)) + "...[truncated]";
+          excerpt = closeDanglingFences(trimmed.slice(0, 3950) + "\n...[truncated]");
         } else {
           excerpt = closeDanglingFences(trimmed);
         }
@@ -565,9 +564,12 @@ export function draftWorkPacketFromContext(input: {
     }
   } else if (events && events.length > 0) {
     const sessionEvents: WorkbenchSessionEvent[] = [];
+    let totalScanned = 0;
     for (let i = events.length - 1; i >= 0; i--) {
+      totalScanned++;
+      if (totalScanned > 200) break;
       const ev = events[i];
-      if (ev.sessionId === undefined || ev.sessionId === sessionId) {
+      if (ev.sessionId === sessionId) {
         sessionEvents.unshift(ev);
         if (sessionEvents.length >= 50) break;
       }
@@ -586,7 +588,7 @@ export function draftWorkPacketFromContext(input: {
         const preSlice = rawContent.length > 1000 ? rawContent.slice(0, 1000) : rawContent;
         const raw = preSlice.trim();
         const snippet = rawContent.length > 300 || raw.length > 300
-          ? closeDanglingFences(raw.slice(0, 300)) + "...[truncated]"
+          ? closeDanglingFences(raw.slice(0, 300) + "\n...[truncated]")
           : closeDanglingFences(raw);
         return `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${snippet}`;
       })
@@ -602,9 +604,12 @@ export function draftWorkPacketFromContext(input: {
 
   if (events) {
     let filesCount = 0;
+    let totalScanned = 0;
     for (let i = events.length - 1; i >= 0; i--) {
+      totalScanned++;
+      if (totalScanned > 200) break;
       const ev = events[i];
-      if (ev.sessionId === undefined || ev.sessionId === sessionId) {
+      if (ev.sessionId === sessionId) {
         if (ev.toolName === "read_file" && ev.toolArguments?.path) {
           const raw = String(ev.toolArguments.path).slice(0, 1000).trim();
           const p = raw.slice(0, 500);
@@ -661,17 +666,29 @@ function closeDanglingFences(text: string): string {
   let openChar: string | null = null;
   let openCount = 0;
   for (const line of lines) {
-    const match = line.match(/^[ \t]*(`{3,}|~{3,})/);
-    if (match) {
-      const fence = match[1];
-      const char = fence[0];
-      const count = fence.length;
-      if (!openChar) {
+    if (!openChar) {
+      const openMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})/);
+      if (openMatch) {
+        const fence = openMatch[1];
+        const char = fence[0];
+        const count = fence.length;
+        const rest = line.slice(openMatch[0].length);
+        if (char === "`" && rest.includes("`")) {
+          continue;
+        }
         openChar = char;
         openCount = count;
-      } else if (char === openChar && count >= openCount) {
-        openChar = null;
-        openCount = 0;
+      }
+    } else {
+      const closeMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (closeMatch) {
+        const fence = closeMatch[1];
+        const char = fence[0];
+        const count = fence.length;
+        if (char === openChar && count >= openCount) {
+          openChar = null;
+          openCount = 0;
+        }
       }
     }
   }

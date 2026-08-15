@@ -63,12 +63,14 @@ describe("markWorkbenchIdea", () => {
   test("derives description from matching eventId if not explicitly provided", () => {
     const events: WorkbenchSessionEvent[] = [
       {
+        sessionId: "01SESSION_001",
         eventId: "evt-001",
         eventType: "session_start",
         createdAt: "2026-08-15T12:00:00Z",
         content: "How should we handle background tasks?",
       } as any,
       {
+        sessionId: "01SESSION_001",
         eventId: "evt-002",
         eventType: "model_response",
         createdAt: "2026-08-15T12:01:00Z",
@@ -93,12 +95,14 @@ describe("markWorkbenchIdea", () => {
   test("derives description from latest response event if eventId not specified", () => {
     const events: WorkbenchSessionEvent[] = [
       {
+        sessionId: "01SESSION_001",
         eventId: "evt-001",
         eventType: "session_start",
         createdAt: "2026-08-15T12:00:00Z",
         content: "First turn",
       } as any,
       {
+        sessionId: "01SESSION_001",
         eventId: "evt-002",
         eventType: "agent_response",
         createdAt: "2026-08-15T12:01:00Z",
@@ -130,12 +134,14 @@ describe("draftWorkPacketFromContext", () => {
 
     const events: WorkbenchSessionEvent[] = [
       {
+        sessionId: "01SESSION_100",
         eventId: "evt-100",
         eventType: "session_start",
         createdAt: "2026-08-15T12:00:00Z",
         content: "Let's review DOLT_PORT handling.",
       } as any,
       {
+        sessionId: "01SESSION_100",
         eventId: "evt-101",
         eventType: "tool_call",
         toolName: "read_file",
@@ -143,6 +149,7 @@ describe("draftWorkPacketFromContext", () => {
         createdAt: "2026-08-15T12:00:10Z",
       } as any,
       {
+        sessionId: "01SESSION_100",
         eventId: "evt-102",
         eventType: "model_response",
         createdAt: "2026-08-15T12:00:20Z",
@@ -201,6 +208,7 @@ describe("draftWorkPacketFromContext", () => {
   test("throws when marking idea with an unknown eventId", () => {
     const events: WorkbenchSessionEvent[] = [
       {
+        sessionId: "01SESSION_001",
         eventId: "evt-001",
         eventType: "session_start",
         createdAt: "2026-08-15T12:00:00Z",
@@ -300,6 +308,7 @@ describe("draftWorkPacketFromContext", () => {
   test("referenced tool-call event with empty content extracts tool call details as excerpt", () => {
     const events: WorkbenchSessionEvent[] = [
       {
+        sessionId: "01SESSION_TC",
         eventId: "evt-tc-1",
         eventType: "tool_call",
         toolName: "execute_command",
@@ -389,6 +398,7 @@ describe("draftWorkPacketFromContext", () => {
     const longContent = "A".repeat(400);
     const events: WorkbenchSessionEvent[] = [
       {
+        sessionId: "01SESSION_TRUNC",
         eventId: "evt-long-1",
         eventType: "model_response",
         createdAt: "2026-08-15T12:00:00Z",
