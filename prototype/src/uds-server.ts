@@ -686,16 +686,22 @@ export function buildWorkbenchHandlers(
         { maxLen: 2000 },
       );
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      const idea = ideaId ? reg.getIdea(ideaId) : null;
+      if (ideaId && !idea) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          `idea "${ideaId}" not found`,
+        );
+      }
+      const referencedEventId = eventId ?? idea?.eventId ?? undefined;
+      const [events, workspaceRec] = await Promise.all([
+        referencedEventId
+          ? fetchSessionEvents({ sessionId, eventId: referencedEventId })
+          : fetchSessionEvents({ sessionId, limit: 50 }),
+        (options.fetchSessionWorkspaceRecord ??
+          fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
+      ]);
       try {
-        const idea = ideaId ? reg.getIdea(ideaId) : null;
-        const referencedEventId = eventId ?? idea?.eventId ?? undefined;
-        const [events, workspaceRec] = await Promise.all([
-          referencedEventId
-            ? fetchSessionEvents({ sessionId, eventId: referencedEventId })
-            : fetchSessionEvents({ sessionId, limit: 50 }),
-          (options.fetchSessionWorkspaceRecord ??
-            fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
-        ]);
         const packet = draftWorkPacketFromContext({
           sessionId,
           idea,

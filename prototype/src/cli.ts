@@ -1745,7 +1745,11 @@ export async function handleReplIdeaCommand(
     }
     let eventId: string | undefined;
     let labelParts: string[];
-    if (parts[2] === "--event") {
+    if (parts[2].startsWith("--")) {
+      if (parts[2] !== "--event") {
+        io.err(`error: unexpected argument "${parts[2]}"`);
+        return true;
+      }
       if (parts.length < 5 || parts[3].startsWith("--")) {
         io.err("usage: /idea mark --event <event-id> <label...>");
         return true;
@@ -1983,7 +1987,14 @@ export async function handleReplPacketCommand(
           "--title",
         ]);
         const titleTokens: string[] = [];
-        while (i < tokens.length && !knownOptionFlags.has(tokens[i])) {
+        while (i < tokens.length) {
+          if (tokens[i].startsWith("--")) {
+            if (!knownOptionFlags.has(tokens[i])) {
+              io.err(`error: unexpected argument "${tokens[i]}"`);
+              return true;
+            }
+            break;
+          }
           titleTokens.push(tokens[i]);
           i++;
         }

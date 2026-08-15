@@ -141,13 +141,16 @@ export class IdeaPacketRegistry {
   }
 
   registerIdea(idea: WorkbenchIdea): void {
+    const rawLabel = idea.label.length > 512 ? idea.label.slice(0, 512) : idea.label;
+    const rawDesc = idea.description.length > 4000 ? idea.description.slice(0, 4000) : idea.description;
+    const rawCreated = idea.createdAt.length > 128 ? idea.createdAt.slice(0, 128) : idea.createdAt;
     const sanitized: WorkbenchIdea = {
       ideaId: validateIdentifier(idea.ideaId, "ideaId"),
       sessionId: validateIdentifier(idea.sessionId, "sessionId"),
       eventId: idea.eventId ? validateIdentifier(idea.eventId, "eventId") : null,
-      label: idea.label.trim().slice(0, 256),
-      description: idea.description.trim().slice(0, 2000),
-      createdAt: idea.createdAt.trim().slice(0, 64),
+      label: rawLabel.trim().slice(0, 256),
+      description: rawDesc.trim().slice(0, 2000),
+      createdAt: rawCreated.trim().slice(0, 64),
     };
 
     const existing = this.ideasById.get(sanitized.ideaId);
@@ -200,13 +203,28 @@ export class IdeaPacketRegistry {
   }
 
   registerPacket(packet: WorkbenchWorkPacket): void {
+    const rawTitle = packet.title.length > 512 ? packet.title.slice(0, 512) : packet.title;
+    const rawWorkspace = packet.targetWorkspace && packet.targetWorkspace.length > 1000
+      ? packet.targetWorkspace.slice(0, 1000)
+      : packet.targetWorkspace;
+    const rawExcerpt = packet.sourceContext.excerpt.length > 8000
+      ? packet.sourceContext.excerpt.slice(0, 8000)
+      : packet.sourceContext.excerpt;
+    const rawIntent = packet.operatorIntent.length > 8000
+      ? packet.operatorIntent.slice(0, 8000)
+      : packet.operatorIntent;
+    const rawNotes = packet.verifierProvenance.independenceNotes.length > 2000
+      ? packet.verifierProvenance.independenceNotes.slice(0, 2000)
+      : packet.verifierProvenance.independenceNotes;
+    const rawCreated = packet.createdAt.length > 128 ? packet.createdAt.slice(0, 128) : packet.createdAt;
+
     const sanitized: WorkbenchWorkPacket = {
       packetId: validateIdentifier(packet.packetId, "packetId"),
       ideaId: packet.ideaId ? validateIdentifier(packet.ideaId, "ideaId") : null,
       sessionId: validateIdentifier(packet.sessionId, "sessionId"),
-      issueId: packet.issueId?.trim().slice(0, 64) ?? null,
-      title: packet.title.trim().slice(0, 256),
-      targetWorkspace: packet.targetWorkspace?.trim().slice(0, 500) ?? null,
+      issueId: packet.issueId ? validateIdentifier(packet.issueId, "issueId") : null,
+      title: rawTitle.trim().slice(0, 256),
+      targetWorkspace: rawWorkspace?.trim().slice(0, 500) ?? null,
       sourceContext: {
         sessionId: validateIdentifier(packet.sourceContext.sessionId, "sessionId"),
         referencedEventId: packet.sourceContext.referencedEventId
@@ -215,22 +233,20 @@ export class IdeaPacketRegistry {
             "referencedEventId",
           )
           : null,
-        excerpt: packet.sourceContext.excerpt.trim().slice(0, 4000),
+        excerpt: rawExcerpt.trim().slice(0, 4000),
         contextSources: (packet.sourceContext.contextSources ?? [])
           .slice(0, 50)
-          .map((s) => s.trim().slice(0, 500)),
+          .map((s) => (s.length > 1000 ? s.slice(0, 1000) : s).trim().slice(0, 500)),
       },
-      operatorIntent: packet.operatorIntent.trim().slice(0, 2000),
+      operatorIntent: rawIntent.trim().slice(0, 2000),
       proposedAcceptanceCriteria: (packet.proposedAcceptanceCriteria ?? [])
         .slice(0, 20)
-        .map((c) => c.trim().slice(0, 500)),
+        .map((c) => (c.length > 1000 ? c.slice(0, 1000) : c).trim().slice(0, 500)),
       verifierProvenance: {
         verifierType: packet.verifierProvenance.verifierType,
-        independenceNotes: packet.verifierProvenance.independenceNotes
-          .trim()
-          .slice(0, 1000),
+        independenceNotes: rawNotes.trim().slice(0, 1000),
       },
-      createdAt: packet.createdAt.trim().slice(0, 64),
+      createdAt: rawCreated.trim().slice(0, 64),
     };
 
     const existing = this.packetsById.get(sanitized.packetId);
@@ -522,7 +538,7 @@ export function draftWorkPacketFromContext(input: {
       : generateULID(),
     ideaId: idea?.ideaId ?? (input.ideaId ? validateIdentifier(input.ideaId, "ideaId") : null),
     sessionId,
-    issueId: input.issueId?.trim().slice(0, 64) || null,
+    issueId: input.issueId ? validateIdentifier(input.issueId, "issueId") : null,
     title: sanitizeSingleLine(title),
     targetWorkspace: input.workspace ?? null,
     sourceContext: {
@@ -545,16 +561,20 @@ export function draftWorkPacketFromContext(input: {
   return reg.getPacket(packet.packetId)!;
 }
 
+function escapeCodeSpan(str: string): string {
+  return sanitizeSingleLine(str).replace(/[`<>]/g, "");
+}
+
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
-  const safeTitle = sanitizeSingleLine(packet.title);
-  const safeSession = sanitizeSingleLine(packet.sessionId);
-  const safePacketId = sanitizeSingleLine(packet.packetId);
-  const safeDate = sanitizeSingleLine(packet.createdAt.split("T")[0]);
+  const safeTitle = sanitizeMarkdownHeading(sanitizeSingleLine(packet.title));
+  const safeSession = escapeCodeSpan(packet.sessionId);
+  const safePacketId = escapeCodeSpan(packet.packetId);
+  const safeDate = escapeCodeSpan(packet.createdAt.split("T")[0]);
   const safeIssue = packet.issueId
-    ? `\`${sanitizeSingleLine(packet.issueId).replace(/[`]/g, "")}\``
+    ? `\`${escapeCodeSpan(packet.issueId)}\``
     : "none";
   const safeWorkspace = packet.targetWorkspace
-    ? `\`${sanitizeSingleLine(packet.targetWorkspace).replace(/[`]/g, "")}\``
+    ? `\`${escapeCodeSpan(packet.targetWorkspace)}\``
     : "(current workspace)";
   const safeExcerpt = sanitizeMarkdownHeading(packet.sourceContext.excerpt);
   const safeIntent = sanitizeMarkdownHeading(packet.operatorIntent);
@@ -580,7 +600,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   ) {
     lines.push("### Context Files", "");
     for (const src of packet.sourceContext.contextSources) {
-      const safePath = sanitizeSingleLine(src).replace(/[`]/g, "");
+      const safePath = escapeCodeSpan(src);
       lines.push(`- \`${safePath}\``);
     }
     lines.push("");
@@ -604,7 +624,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
     "",
     "## 4. Verification & Provenance",
     "",
-    `- **Primary Verifier:** \`${packet.verifierProvenance.verifierType}\``,
+    `- **Primary Verifier:** \`${escapeCodeSpan(packet.verifierProvenance.verifierType)}\``,
     `- **Independence & Oracle Policy:** ${
       sanitizeSingleLine(packet.verifierProvenance.independenceNotes)
     }`,

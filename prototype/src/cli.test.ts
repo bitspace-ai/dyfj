@@ -3825,7 +3825,7 @@ describe("REPL /packet command", () => {
     expect(stdout.join("\n")).toContain("# Work Packet: Fix startup");
   });
 
-  test("/packet draft allows non-option tokens starting with -- in title", async () => {
+  test("/packet draft correctly parses multi-word title followed by --issue", async () => {
     const { io, stdout } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];
     const fakeConnect: ConnectFn = () =>
@@ -3839,7 +3839,7 @@ describe("REPL /packet command", () => {
               title: params.title,
               issueId: params.issueId,
             },
-            markdown: "# Work Packet: Document --session behavior",
+            markdown: "# Work Packet: Document session behavior",
           });
         },
         close: () => {},
@@ -3847,7 +3847,7 @@ describe("REPL /packet command", () => {
 
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const handled = await handleReplPacketCommand(
-      "/packet draft 01IDEA_1 --title Document --session behavior --issue BIT-258",
+      "/packet draft 01IDEA_1 --title Document session behavior --issue BIT-258",
       cfg({ unix: true }),
       io,
       state,
@@ -3862,11 +3862,11 @@ describe("REPL /packet command", () => {
           ideaId: "01IDEA_1",
           eventId: undefined,
           issueId: "BIT-258",
-          title: "Document --session behavior",
+          title: "Document session behavior",
         },
       },
     ]);
-    expect(stdout.join("\n")).toContain("# Work Packet: Document --session behavior");
+    expect(stdout.join("\n")).toContain("# Work Packet: Document session behavior");
   });
 
   test("/packet draft supports explicit --event and --idea flags", async () => {
@@ -4164,6 +4164,30 @@ describe("REPL /packet command", () => {
       state,
     );
     expect(stderr.join("\n")).toContain("usage: /idea mark --event <event-id> <label...>");
+  });
+
+  test("/idea mark rejects unrecognized options", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark --evnt evt-1 Fix startup",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: unexpected argument \"--evnt\"");
+  });
+
+  test("/packet draft rejects unexpected option flags following --title", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft --title Fix --isseu BIT-1",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: unexpected argument \"--isseu\"");
   });
 
   test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {
