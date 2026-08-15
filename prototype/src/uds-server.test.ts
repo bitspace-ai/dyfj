@@ -283,6 +283,7 @@ describe("serveWorkbenchUnix read methods", () => {
         methods: [
           "runtime/liveness",
           "runtime/status",
+          "runtime/stop",
           "surface/snapshot",
           "models/list",
           "sessions/list",
@@ -295,6 +296,7 @@ describe("serveWorkbenchUnix read methods", () => {
         methodCatalog: [
           { id: "runtime/liveness", namespace: "runtime", kind: "read" },
           { id: "runtime/status", namespace: "runtime", kind: "read" },
+          { id: "runtime/stop", namespace: "runtime", kind: "read" },
           { id: "surface/snapshot", namespace: "surface", kind: "read" },
           { id: "models/list", namespace: "models", kind: "read" },
           { id: "sessions/list", namespace: "sessions", kind: "read" },
@@ -310,6 +312,22 @@ describe("serveWorkbenchUnix read methods", () => {
         ],
       },
     });
+  });
+
+  test("runtime/stop triggers onShutdown callback and returns stopping status", async () => {
+    let shutdownCalled = false;
+    const shutdownPromise = new Promise<void>((resolve) => {
+      // onShutdown
+      fakes.onShutdown = () => {
+        shutdownCalled = true;
+        resolve();
+      };
+    });
+    const client = await connectClient(await startServer(fakes));
+    const res = await client.request("runtime/stop");
+    expect(res).toEqual({ status: "stopping" });
+    await shutdownPromise;
+    expect(shutdownCalled).toBe(true);
   });
 
   test("tools/list exposes a catalog without executing tools", async () => {

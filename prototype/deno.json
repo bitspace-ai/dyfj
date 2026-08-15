@@ -2,7 +2,7 @@
   "tasks": {
     "check": "deno check --sloppy-imports src/http.ts src/workbench.ts src/jsonrpc.ts src/jsonrpc-peer.ts src/uds-server.ts src/uds-path.ts src/uds-client.ts src/uds-serve.ts mcp/server.ts src/cli.ts scripts/codex-chatgpt-login.ts scripts/deno-executable.ts scripts/esbuild-binary.ts scripts/integration-child-environment.ts scripts/run-vitest.ts scripts/isolated-dolt-fixture.ts scripts/isolated-dolt-integration.ts scripts/integration-test-assignment.ts scripts/memory-recall-uat-fixture.ts && deno task check:tests",
     "check:tests": "DENO_BIN=$(deno run scripts/deno-executable.ts \"$DENO_BIN\") && DENO_BIN=\"$DENO_BIN\" deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN --allow-read=. --allow-run=\"$DENO_BIN\" scripts/check-test-files.ts",
-    "test": "DENO_BIN=$(deno run scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno task check && TMPDIR=.vitest-tmp DENO_BIN=\"$DENO_BIN\" deno run --allow-env --allow-read=. --allow-run=\"$DENO_BIN\" scripts/run-vitest.ts run --root . --pool=threads --exclude '**/*.integration.{test,spec}.?(c|m)[jt]s?(x)'",
+    "test": "DENO_BIN=$(deno run scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno task check && mkdir -p .vitest-tmp && TMPDIR=.vitest-tmp DENO_BIN=\"$DENO_BIN\" deno run --allow-env --allow-read=. --allow-run=\"$DENO_BIN\" scripts/run-vitest.ts run --root . --pool=threads --exclude '**/*.integration.{test,spec}.?(c|m)[jt]s?(x)'",
     "start": "deno run --no-prompt -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench": "deno run --no-prompt -P=workbench --env-file=.env --sloppy-imports src/workbench.ts",
     "workbench-http": "deno run --no-prompt -P=workbench-http --env-file=.env --sloppy-imports src/http.ts",

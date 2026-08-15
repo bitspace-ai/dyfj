@@ -209,7 +209,7 @@ autostart_applies() {
   # precedence.
   [[ "$LAUNCHER_SAW_PROMPT" == "1" ]] && return 0
   case "$LAUNCHER_SUBCOMMAND" in
-    start|status|help)
+    start|status|stop|help)
       return 1
       ;;
   esac
