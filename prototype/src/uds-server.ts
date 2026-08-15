@@ -227,7 +227,7 @@ function sanitizeRpcString(
   if (options.singleLine !== false) {
     s = s.replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ").replace(/\s+/g, " ");
   } else {
-    s = s.replace(/[\x00-\x09\x0B-\x1F\x7F\x1B]/g, "");
+    s = s.replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, " ");
   }
   const trimmed = s.trim();
   if (trimmed.length === 0) {

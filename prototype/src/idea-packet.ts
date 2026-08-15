@@ -551,7 +551,8 @@ export function draftWorkPacketFromContext(input: {
       }
     }
   } else if (events && events.length > 0) {
-    const sessionEvents = events.filter(
+    const rawTail = events.slice(-200);
+    const sessionEvents = rawTail.filter(
       (e) => e.sessionId === undefined || e.sessionId === sessionId,
     );
     const recent = sessionEvents.slice(-50);
@@ -583,7 +584,10 @@ export function draftWorkPacketFromContext(input: {
     excerpt = (idea?.description || operatorIntent).slice(0, 4000);
   }
 
-  const recentEvents = events ? events.slice(-20) : [];
+  const rawTailForFiles = events ? events.slice(-200) : [];
+  const recentEvents = rawTailForFiles
+    .filter((e) => e.sessionId === undefined || e.sessionId === sessionId)
+    .slice(-20);
   for (const ev of recentEvents) {
     if (ev.toolName === "read_file" && ev.toolArguments?.path) {
       const raw = String(ev.toolArguments.path).slice(0, 1000).trim();
@@ -634,9 +638,26 @@ export function draftWorkPacketFromContext(input: {
 }
 
 function closeDanglingFences(text: string): string {
-  const fences = text.match(/```/g) || [];
-  if (fences.length % 2 !== 0) {
-    return text + "\n```";
+  const lines = text.split("\n");
+  let openChar: string | null = null;
+  let openCount = 0;
+  for (const line of lines) {
+    const match = line.match(/^[ \t]*(`{3,}|~{3,})/);
+    if (match) {
+      const fence = match[1];
+      const char = fence[0];
+      const count = fence.length;
+      if (!openChar) {
+        openChar = char;
+        openCount = count;
+      } else if (char === openChar && count >= openCount) {
+        openChar = null;
+        openCount = 0;
+      }
+    }
+  }
+  if (openChar) {
+    return text + "\n" + openChar.repeat(openCount);
   }
   return text;
 }

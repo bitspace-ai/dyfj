@@ -1808,11 +1808,14 @@ export async function handleReplIdeaCommand(
             eventId,
             label,
           }) as { idea: WorkbenchIdea };
+          const cleanId = (res.idea.ideaId ?? "")
+            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .trim();
           const cleanLabel = (res.idea.label ?? "")
             .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
             .trim();
-          io.err(`marked idea [${res.idea.ideaId}]: "${cleanLabel}"`);
-          io.err(`draft packet with: /packet draft ${res.idea.ideaId}`);
+          io.err(`marked idea [${cleanId}]: "${cleanLabel}"`);
+          io.err(`draft packet with: /packet draft ${cleanId}`);
         } finally {
           client.close();
         }
@@ -1832,11 +1835,14 @@ export async function handleReplIdeaCommand(
           eventId,
           label,
         });
+        const cleanId = (idea.ideaId ?? "")
+          .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+          .trim();
         const cleanLabel = (idea.label ?? "")
           .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
           .trim();
-        io.err(`marked idea [${idea.ideaId}]: "${cleanLabel}"`);
-        io.err(`draft packet with: /packet draft ${idea.ideaId}`);
+        io.err(`marked idea [${cleanId}]: "${cleanLabel}"`);
+        io.err(`draft packet with: /packet draft ${cleanId}`);
       } catch (e) {
         io.err(`dyfj: failed to mark idea: ${summarizeError(e)}`);
       }
@@ -1861,6 +1867,9 @@ export async function handleReplIdeaCommand(
           } else {
             io.err(`Ideas for session ${sessionState.sessionId}:`);
             for (const item of res.ideas) {
+              const cleanId = (item.ideaId ?? "")
+                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .trim();
               const cleanLabel = (item.label ?? "")
                 .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
                 .trim();
@@ -1868,7 +1877,7 @@ export async function handleReplIdeaCommand(
                 .split("T")[0]
                 .replace(/[\x00-\x1F\x7F\x1B]/g, "")
                 .trim();
-              io.err(`  [${item.ideaId}] ${cleanLabel} (${cleanDate})`);
+              io.err(`  [${cleanId}] ${cleanLabel} (${cleanDate})`);
             }
           }
         } finally {
@@ -1884,6 +1893,9 @@ export async function handleReplIdeaCommand(
       } else {
         io.err(`Ideas for session ${sessionState.sessionId}:`);
         for (const item of ideas) {
+          const cleanId = (item.ideaId ?? "")
+            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .trim();
           const cleanLabel = (item.label ?? "")
             .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
             .trim();
@@ -1891,7 +1903,7 @@ export async function handleReplIdeaCommand(
             .split("T")[0]
             .replace(/[\x00-\x1F\x7F\x1B]/g, "")
             .trim();
-          io.err(`  [${item.ideaId}] ${cleanLabel} (${cleanDate})`);
+          io.err(`  [${cleanId}] ${cleanLabel} (${cleanDate})`);
         }
       }
     }
@@ -2108,8 +2120,11 @@ export async function handleReplPacketCommand(
             issueId,
             title,
           }) as { packet: WorkbenchWorkPacket; markdown: string };
+          const cleanPacketId = (res.packet.packetId ?? "")
+            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .trim();
           io.out(res.markdown);
-          io.err(`\ndraft work packet registered: [${res.packet.packetId}]`);
+          io.err(`\ndraft work packet registered: [${cleanPacketId}]`);
         } finally {
           client.close();
         }
@@ -2131,9 +2146,12 @@ export async function handleReplPacketCommand(
           issueId,
           title,
         });
+        const cleanPacketId = (packet.packetId ?? "")
+          .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+          .trim();
         const markdown = formatWorkPacketMarkdown(packet);
         io.out(markdown);
-        io.err(`\ndraft work packet registered: [${packet.packetId}]`);
+        io.err(`\ndraft work packet registered: [${cleanPacketId}]`);
       } catch (e) {
         io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
       }
