@@ -1672,12 +1672,10 @@ export async function handleReplSessionCommand(
       return true;
     }
     const rawTargetId = parts[2];
-    if (!rawTargetId || rawTargetId.trim().length === 0) {
-      io.err("usage: /session switch <sessionId>");
-      return true;
-    }
-    const targetId = rawTargetId.trim();
-    if (targetId.length > 256) {
+    const targetId = rawTargetId
+      .replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, "")
+      .trim();
+    if (targetId.length === 0 || targetId.length > 256) {
       io.err(
         "error: session identifier must be non-empty and <= 256 characters",
       );

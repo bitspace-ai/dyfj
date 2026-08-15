@@ -285,7 +285,7 @@ export class IdeaPacketRegistry {
         .map((c) => (c.length > 1000 ? c.slice(0, 1000) : c).trim().slice(0, 500)),
       verifierProvenance: {
         verifierType: packet.verifierProvenance.verifierType,
-        independenceNotes: rawNotes.trim().slice(0, 1000),
+        independenceNotes: sanitizeSingleLine(rawNotes).slice(0, 1000),
       },
       createdAt: rawCreated.trim().slice(0, 64),
     };
@@ -519,7 +519,7 @@ export function draftWorkPacketFromContext(input: {
           ? match.content.slice(0, 4000)
           : match.content;
         const trimmed = preSlice.trim();
-        if (match.content.length > 4000 || trimmed.length >= 4000) {
+        if (match.content.length > 4000) {
           excerpt = trimmed.slice(0, 3985) + "...[truncated]";
         } else {
           excerpt = trimmed;
@@ -578,7 +578,7 @@ export function draftWorkPacketFromContext(input: {
         `Verify outcomes against operator intent and documented constraints`,
       ];
   const proposedAcceptanceCriteria = rawCriteria
-    .map((c) => sanitizeSingleLine(c).slice(0, 500));
+    .map((c) => sanitizeSingleLine(c.length > 1000 ? c.slice(0, 1000) : c).slice(0, 500));
 
   const packet: WorkbenchWorkPacket = {
     packetId: input.packetId
