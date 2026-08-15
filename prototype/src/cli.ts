@@ -1567,19 +1567,25 @@ export async function handleReplSessionCommand(
     if (!sessionState.sessionId) {
       io.err("no session yet — send a prompt first");
     } else {
-      io.err(`session: ${sessionState.sessionId}`);
+      const cleanSessionId = (sessionState.sessionId ?? "")
+        .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+        .trim();
+      io.err(`session: ${cleanSessionId}`);
       if (sessionState.turnCount === 0 && config.unix) {
         try {
           const client = await connect(config.socket);
           try {
             const inspect = await client.request("sessions/inspect", {
-              sessionId: sessionState.sessionId,
+              sessionId: cleanSessionId,
             }) as { eventCount?: number; workspace?: string | null };
             if (inspect.eventCount !== undefined && inspect.eventCount > 0) {
               io.err(`events: ${inspect.eventCount}`);
             }
             if (inspect.workspace) {
-              io.err(`workspace: ${inspect.workspace}`);
+              const cleanWorkspace = inspect.workspace
+                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .trim();
+              io.err(`workspace: ${cleanWorkspace}`);
             }
           } finally {
             client.close();
@@ -1594,7 +1600,7 @@ export async function handleReplSessionCommand(
           sessionState.sessionSpendUsd.toFixed(4)
         }`,
       );
-      io.err(`resume later with: dyfj --session ${sessionState.sessionId}`);
+      io.err(`resume later with: dyfj --session ${cleanSessionId}`);
     }
     return true;
   }

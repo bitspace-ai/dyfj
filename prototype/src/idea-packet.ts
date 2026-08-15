@@ -98,27 +98,27 @@ function boundedCloneForJson(
     state.totalBytes += 2;
     const out: Record<string, unknown> = {};
     let count = 0;
-    for (const k in (val as Record<string, unknown>)) {
-      if (Object.prototype.hasOwnProperty.call(val, k)) {
-        if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
-          out["_truncated"] = true;
-          state.totalBytes += 18;
-          break;
-        }
-        if (count >= 20) {
-          out["_truncated"] = true;
-          state.totalBytes += 18;
-          break;
-        }
-        const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
-        state.totalBytes += key.length + 4;
-        out[key] = boundedCloneForJson(
-          (val as Record<string, unknown>)[k],
-          depth + 1,
-          state,
-        );
-        count++;
+    const keys = Object.keys(val as Record<string, unknown>);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
+        out["_truncated"] = true;
+        state.totalBytes += 18;
+        break;
       }
+      if (count >= 20) {
+        out["_truncated"] = true;
+        state.totalBytes += 18;
+        break;
+      }
+      const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
+      state.totalBytes += key.length + 4;
+      out[key] = boundedCloneForJson(
+        (val as Record<string, unknown>)[k],
+        depth + 1,
+        state,
+      );
+      count++;
     }
     return out;
   }
@@ -629,20 +629,30 @@ export function draftWorkPacketFromContext(input: {
   return reg.getPacket(packet.packetId)!;
 }
 
-function escapeCodeSpan(str: string): string {
-  return sanitizeSingleLine(str).replace(/`/g, "'");
+function formatCodeSpan(str: string): string {
+  const clean = sanitizeSingleLine(str);
+  const matches = clean.match(/`+/g) || [];
+  let maxTicks = 0;
+  for (const m of matches) {
+    if (m.length > maxTicks) maxTicks = m.length;
+  }
+  const delimiter = "`".repeat(maxTicks + 1);
+  const needsPadding = clean.startsWith("`") || clean.endsWith("`") || clean.startsWith(" ") || clean.endsWith(" ");
+  return needsPadding
+    ? `${delimiter} ${clean} ${delimiter}`
+    : `${delimiter}${clean}${delimiter}`;
 }
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   const safeTitle = sanitizeMarkdownHeading(sanitizeSingleLine(packet.title));
-  const safeSession = escapeCodeSpan(packet.sessionId);
-  const safePacketId = escapeCodeSpan(packet.packetId);
-  const safeDate = escapeCodeSpan(packet.createdAt.split("T")[0]);
+  const safeSession = formatCodeSpan(packet.sessionId);
+  const safePacketId = formatCodeSpan(packet.packetId);
+  const safeDate = formatCodeSpan(packet.createdAt.split("T")[0]);
   const safeIssue = packet.issueId
-    ? `\`${escapeCodeSpan(packet.issueId)}\``
+    ? formatCodeSpan(packet.issueId)
     : "none";
   const safeWorkspace = packet.targetWorkspace
-    ? `\`${escapeCodeSpan(packet.targetWorkspace)}\``
+    ? formatCodeSpan(packet.targetWorkspace)
     : "(current workspace)";
   const safeExcerpt = sanitizeMarkdownHeading(packet.sourceContext.excerpt);
   const safeIntent = sanitizeMarkdownHeading(packet.operatorIntent);
@@ -650,9 +660,9 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   const lines: string[] = [
     `# Work Packet: ${safeTitle}`,
     "",
-    `- **Packet ID:** \`${safePacketId}\``,
+    `- **Packet ID:** ${safePacketId}`,
     `- **Date:** ${safeDate}`,
-    `- **Session:** \`${safeSession}\``,
+    `- **Session:** ${safeSession}`,
     `- **Related Issue:** ${safeIssue}`,
     `- **Target Workspace:** ${safeWorkspace}`,
     "",
@@ -668,8 +678,8 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   ) {
     lines.push("### Context Files", "");
     for (const src of packet.sourceContext.contextSources) {
-      const safePath = escapeCodeSpan(src);
-      lines.push(`- \`${safePath}\``);
+      const safePath = formatCodeSpan(src);
+      lines.push(`- ${safePath}`);
     }
     lines.push("");
   }
@@ -692,10 +702,8 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
     "",
     "## 4. Verification & Provenance",
     "",
-    `- **Primary Verifier:** \`${escapeCodeSpan(packet.verifierProvenance.verifierType)}\``,
-    `- **Independence & Oracle Policy:** ${
-      sanitizeMarkdownHeading(sanitizeSingleLine(packet.verifierProvenance.independenceNotes)).replace(/[`<>]/g, "")
-    }`,
+    `- **Primary Verifier:** ${formatCodeSpan(packet.verifierProvenance.verifierType)}`,
+    `- **Independence Notes:** ${sanitizeMarkdownHeading(packet.verifierProvenance.independenceNotes)}`,
     "",
   );
 

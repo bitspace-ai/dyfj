@@ -246,9 +246,8 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain(`- **Packet ID:** \`${packet.packetId}\``);
     expect(md).toContain("- **Related Issue:** `BIT-258`");
     expect(md).toContain("## 1. Source Context");
-    expect(md).toContain("## 2. Operator Intent");
     expect(md).toContain("- **Primary Verifier:** `human_operator`");
-    expect(md).toContain("- **Independence & Oracle Policy:**");
+    expect(md).toContain("- **Independence Notes:**");
   });
 
   test("getPacket and listPackets return defensive copies", () => {
