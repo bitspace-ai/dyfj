@@ -1273,7 +1273,7 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
       }),
       fetchSessionWorkspaceRecord: async () => ({
         exists: true,
-        workspace: "/Users/chris/projects/dyfj",
+        workspace: "/workspaces/project",
       }),
       countSessionEvents: async () => 1,
     });
@@ -1285,7 +1285,7 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
 
     expect(inspectRes.exists).toBe(true);
     expect(inspectRes.session.taskDescription).toBe("Explore neutral sessions");
-    expect(inspectRes.workspace).toBe("/Users/chris/projects/dyfj");
+    expect(inspectRes.workspace).toBe("/workspaces/project");
     expect(inspectRes.eventCount).toBe(1);
   });
 
@@ -1332,7 +1332,7 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
       ...fakes,
       fetchSessionWorkspaceRecord: async () => ({
         exists: true,
-        workspace: "/Users/chris/projects/dyfj",
+        workspace: "/workspaces/project",
       }),
       fetchSessionEvents: async () => [
         {
@@ -1349,15 +1349,15 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
 
     const draftRes = (await client.request("packets/draft", {
       sessionId: "01TEST_PACKET_SESSION",
-      issueId: "BIT-258",
+      issueId: "ISSUE-258",
       title: "Neutral session model",
       operatorIntent: "Deliver Milestone 3 Packet 0",
     })) as any;
 
-    expect(draftRes.packet.issueId).toBe("BIT-258");
-    expect(draftRes.packet.targetWorkspace).toBe("/Users/chris/projects/dyfj");
+    expect(draftRes.packet.issueId).toBe("ISSUE-258");
+    expect(draftRes.packet.targetWorkspace).toBe("/workspaces/project");
     expect(draftRes.markdown).toContain("# Work Packet: Neutral session model");
-    expect(draftRes.markdown).toContain("- **Related Issue:** `BIT-258`");
+    expect(draftRes.markdown).toContain("- **Related Issue:** `ISSUE-258`");
 
     const packetId = draftRes.packet.packetId;
 

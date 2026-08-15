@@ -36,7 +36,7 @@ describe("IdeaPacketRegistry", () => {
     const packet1 = draftWorkPacketFromContext({
       sessionId: "01SESSION_A",
       ideaId: idea1.ideaId,
-      issueId: "BIT-340",
+      issueId: "ISSUE-340",
       registry: reg,
     });
 
@@ -161,20 +161,20 @@ describe("draftWorkPacketFromContext", () => {
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_100",
       ideaId: idea.ideaId,
-      issueId: "BIT-384",
+      issueId: "ISSUE-384",
       operatorIntent: "Prevent malformed ports from reaching net grants.",
-      workspace: "/Users/chris/projects/dyfj",
+      workspace: "/workspaces/project",
       events,
       registry: reg,
     });
 
     expect(packet.sessionId).toBe("01SESSION_100");
     expect(packet.ideaId).toBe(idea.ideaId);
-    expect(packet.issueId).toBe("BIT-384");
+    expect(packet.issueId).toBe("ISSUE-384");
     expect(packet.title).toBe(
       "Validate DOLT_PORT before constructing MCP net grants",
     );
-    expect(packet.targetWorkspace).toBe("/Users/chris/projects/dyfj");
+    expect(packet.targetWorkspace).toBe("/workspaces/project");
     expect(packet.operatorIntent).toBe(
       "Prevent malformed ports from reaching net grants.",
     );
@@ -238,7 +238,7 @@ describe("draftWorkPacketFromContext", () => {
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_200",
       ideaId: idea.ideaId,
-      issueId: "BIT-258",
+      issueId: "ISSUE-258",
       title: "Neutral session model and idea capture",
       acceptanceCriteria: [
         "Session identity is visible and resumable via /session and dyfj --session",
@@ -252,7 +252,7 @@ describe("draftWorkPacketFromContext", () => {
 
     expect(md).toContain("# Work Packet: Neutral session model and idea capture");
     expect(md).toContain(`- **Packet ID:** \`${packet.packetId}\``);
-    expect(md).toContain("- **Related Issue:** `BIT-258`");
+    expect(md).toContain("- **Related Issue:** `ISSUE-258`");
     expect(md).toContain("## 1. Source Context");
     expect(md).toContain("- **Primary Verifier:** `human_operator`");
     expect(md).toContain("- **Independence Notes:**");

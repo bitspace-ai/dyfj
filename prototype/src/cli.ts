@@ -750,6 +750,10 @@ export async function runRepl(
     for (;;) {
       const line = await io.readLine(replPrompt(config.color));
       if (line === null) break;
+      if (line.length > 32768) {
+        io.err("command line exceeds maximum length of 32768 characters");
+        continue;
+      }
       const prompt = line.trim();
       if (prompt.length === 0) continue;
       if (prompt === "/exit" || prompt === "/quit") break;
@@ -887,6 +891,9 @@ export async function runRepl(
             content: result.text,
             createdAt: new Date().toISOString(),
           }));
+        }
+        if (sessionState.events.length > 50) {
+          sessionState.events = sessionState.events.slice(-50);
         }
         io.err(
           formatReceipt(
@@ -1568,6 +1575,9 @@ function createCliSessionEvent(input: {
   content: string;
   createdAt: string;
 }): WorkbenchSessionEvent {
+  const boundedContent = input.content.length > 4000
+    ? input.content.slice(0, 4000)
+    : input.content;
   return {
     sessionId: input.sessionId,
     eventId: input.eventId,
@@ -1583,7 +1593,7 @@ function createCliSessionEvent(input: {
     modelId: null,
     provider: null,
     api: null,
-    content: input.content,
+    content: boundedContent,
     stopReason: null,
     tokensInput: null,
     tokensOutput: null,
@@ -1637,12 +1647,12 @@ export async function handleReplSessionCommand(
   sessionState: ReplSessionState,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const trimmed = line.trimStart();
-  if (!trimmed.startsWith("/session")) return false;
   if (line.length > 32768) {
     io.err("command line exceeds maximum length of 32768 characters");
     return true;
   }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/session")) return false;
   const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/session") return false;
 
@@ -1652,7 +1662,7 @@ export async function handleReplSessionCommand(
       io.err("no session yet — send a prompt first");
     } else {
       const cleanSessionId = (sessionState.sessionId ?? "")
-        .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+        .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
         .trim();
       io.err(`session: ${cleanSessionId}`);
       if (sessionState.turnCount === 0 && config.unix) {
@@ -1667,7 +1677,7 @@ export async function handleReplSessionCommand(
             }
             if (inspect.workspace) {
               const cleanWorkspace = inspect.workspace
-                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
                 .trim();
               io.err(`workspace: ${cleanWorkspace}`);
             }
@@ -1739,14 +1749,14 @@ export async function handleReplSessionCommand(
             io.err("Recent sessions:");
             for (const s of sessions) {
               const cleanId = (s.sessionId ?? "")
-                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
                 .trim();
               const cleanCreated = (s.createdAt ?? "")
                 .split("T")[0]
-                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
                 .trim();
               const cleanDesc = (s.taskDescription ?? "")
-                .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
                 .trim();
               io.err(
                 `  ${cleanId}  ${cleanCreated}  ${cleanDesc}`,
@@ -1781,7 +1791,7 @@ export async function handleReplSessionCommand(
       return true;
     }
     const targetId = rawTargetId
-      .replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, "")
+      .replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, "")
       .trim();
     if (targetId.length === 0 || targetId.length > 256) {
       io.err(
@@ -1831,12 +1841,12 @@ export async function handleReplIdeaCommand(
   sessionState: ReplSessionState,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const trimmed = line.trimStart();
-  if (!trimmed.startsWith("/idea")) return false;
   if (line.length > 32768) {
     io.err("command line exceeds maximum length of 32768 characters");
     return true;
   }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/idea")) return false;
   const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/idea") return false;
 
@@ -1912,10 +1922,10 @@ export async function handleReplIdeaCommand(
             eventId,
           }) as { idea: WorkbenchIdea };
           const cleanId = (res.idea.ideaId ?? "")
-            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
             .trim();
           const cleanLabel = (res.idea.label ?? "")
-            .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
             .trim();
           io.err(`marked idea [${cleanId}]: "${cleanLabel}"`);
           io.err(`draft packet with: /packet draft ${cleanId}`);
@@ -1940,10 +1950,10 @@ export async function handleReplIdeaCommand(
           events: sessionState.events,
         });
         const cleanId = (idea.ideaId ?? "")
-          .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+          .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
           .trim();
         const cleanLabel = (idea.label ?? "")
-          .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+          .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
           .trim();
         io.err(`marked idea [${cleanId}]: "${cleanLabel}"`);
         io.err(`draft packet with: /packet draft ${cleanId}`);
@@ -1972,14 +1982,14 @@ export async function handleReplIdeaCommand(
             io.err(`Ideas for session ${sessionState.sessionId}:`);
             for (const item of res.ideas) {
               const cleanId = (item.ideaId ?? "")
-                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
                 .trim();
               const cleanLabel = (item.label ?? "")
-                .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
                 .trim();
               const cleanDate = (item.createdAt ?? "")
                 .split("T")[0]
-                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
                 .trim();
               io.err(`  [${cleanId}] ${cleanLabel} (${cleanDate})`);
             }
@@ -1998,14 +2008,14 @@ export async function handleReplIdeaCommand(
         io.err(`Ideas for session ${sessionState.sessionId}:`);
         for (const item of ideas) {
           const cleanId = (item.ideaId ?? "")
-            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
             .trim();
           const cleanLabel = (item.label ?? "")
-            .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
             .trim();
           const cleanDate = (item.createdAt ?? "")
             .split("T")[0]
-            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
             .trim();
           io.err(`  [${cleanId}] ${cleanLabel} (${cleanDate})`);
         }
@@ -2031,15 +2041,15 @@ export async function handleReplIdeaCommand(
             io.err(`idea not found: ${ideaId}`);
           } else {
             const id = res.idea;
-            const cleanId = id.ideaId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
-            const cleanSession = id.sessionId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
-            const cleanEvent = id.eventId ? id.eventId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim() : null;
-            const cleanDate = (id.createdAt ?? "").replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+            const cleanId = id.ideaId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+            const cleanSession = id.sessionId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+            const cleanEvent = id.eventId ? id.eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim() : null;
+            const cleanDate = (id.createdAt ?? "").replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
             const cleanLabel = id.label
-              .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+              .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
               .trim();
             const cleanDesc = id.description
-              ? id.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
+              ? id.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "")
               : "";
             io.err(`Idea [${cleanId}]:`);
             io.err(`  Label: ${cleanLabel}`);
@@ -2060,15 +2070,15 @@ export async function handleReplIdeaCommand(
         if (!idea) {
           io.err(`idea not found: ${ideaId}`);
         } else {
-          const cleanId = idea.ideaId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
-          const cleanSession = idea.sessionId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
-          const cleanEvent = idea.eventId ? idea.eventId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim() : null;
-          const cleanDate = (idea.createdAt ?? "").replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+          const cleanId = idea.ideaId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+          const cleanSession = idea.sessionId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+          const cleanEvent = idea.eventId ? idea.eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim() : null;
+          const cleanDate = (idea.createdAt ?? "").replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
           const cleanLabel = idea.label
-            .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
             .trim();
           const cleanDesc = idea.description
-            ? idea.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
+            ? idea.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "")
             : "";
           io.err(`Idea [${cleanId}]:`);
           io.err(`  Label: ${cleanLabel}`);
@@ -2097,12 +2107,12 @@ export async function handleReplPacketCommand(
   sessionState: ReplSessionState,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const trimmed = line.trimStart();
-  if (!trimmed.startsWith("/packet")) return false;
   if (line.length > 32768) {
     io.err("command line exceeds maximum length of 32768 characters");
     return true;
   }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/packet")) return false;
   const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/packet") return false;
 
@@ -2241,10 +2251,10 @@ export async function handleReplPacketCommand(
             title,
           }) as { packet: WorkbenchWorkPacket; markdown: string };
           const cleanPacketId = (res.packet.packetId ?? "")
-            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
             .trim();
           const safeMarkdown = (res.markdown ?? "").replace(
-            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
             "",
           );
           io.out(safeMarkdown);
@@ -2272,11 +2282,11 @@ export async function handleReplPacketCommand(
           events: sessionState.events,
         });
         const cleanPacketId = (packet.packetId ?? "")
-          .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+          .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
           .trim();
         const markdown = formatWorkPacketMarkdown(packet);
         const safeMarkdown = markdown.replace(
-          /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+          /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
           "",
         );
         io.out(safeMarkdown);
@@ -2308,13 +2318,13 @@ export async function handleReplPacketCommand(
             io.err(`Work packets for session ${sessionState.sessionId}:`);
             for (const p of res.packets) {
               const cleanPacketId = (p.packetId ?? "")
-                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
                 .trim();
               const cleanTitle = (p.title ?? "")
-                .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
                 .trim();
               const cleanIssue = p.issueId
-                ? p.issueId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim()
+                ? p.issueId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim()
                 : "none";
               io.err(`  [${cleanPacketId}] ${cleanTitle} (Issue: ${cleanIssue})`);
             }
@@ -2336,13 +2346,13 @@ export async function handleReplPacketCommand(
           io.err(`Work packets for session ${sessionState.sessionId}:`);
           for (const p of packets) {
             const cleanPacketId = (p.packetId ?? "")
-              .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+              .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
               .trim();
             const cleanTitle = (p.title ?? "")
-              .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+              .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
               .trim();
             const cleanIssue = p.issueId
-              ? p.issueId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim()
+              ? p.issueId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim()
               : "none";
             io.err(`  [${cleanPacketId}] ${cleanTitle} (Issue: ${cleanIssue})`);
           }
@@ -2372,7 +2382,7 @@ export async function handleReplPacketCommand(
             io.err(`work packet not found: ${packetId}`);
           } else {
             const safeMarkdown = (res.markdown ?? "").replace(
-              /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+              /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
               "",
             );
             io.out(safeMarkdown);
@@ -2391,7 +2401,7 @@ export async function handleReplPacketCommand(
         } else {
           const markdown = formatWorkPacketMarkdown(packet);
           const safeMarkdown = markdown.replace(
-            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
             "",
           );
           io.out(safeMarkdown);
@@ -2415,12 +2425,12 @@ export async function handleReplModelCommand(
   io: Io,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const trimmed = line.trimStart();
-  if (!trimmed.startsWith("/model")) return false;
   if (line.length > 32768) {
     io.err("command line exceeds maximum length of 32768 characters");
     return true;
   }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/model")) return false;
   const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/model") return false;
   // `--approve-paid` mirrors the launch flag: it arms the SESSION's existing

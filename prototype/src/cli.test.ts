@@ -3705,7 +3705,7 @@ describe("REPL /packet command", () => {
       sessionSpendUsd: 0,
     };
     const handled = await handleReplPacketCommand(
-      "/packet draft 01IDEA_1 --issue BIT-258 --title Neutral session capture",
+      "/packet draft 01IDEA_1 --issue ISSUE-258 --title Neutral session capture",
       cfg({ unix: true }),
       io,
       state,
@@ -3719,7 +3719,7 @@ describe("REPL /packet command", () => {
           sessionId: "01ACTIVE_SESS",
           ideaId: "01IDEA_1",
           eventId: undefined,
-          issueId: "BIT-258",
+          issueId: "ISSUE-258",
           title: "Neutral session capture",
         },
       },
@@ -3803,7 +3803,7 @@ describe("REPL /packet command", () => {
 
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const handled = await handleReplPacketCommand(
-      "/packet draft 01IDEA_1 --title Fix startup --issue BIT-258",
+      "/packet draft 01IDEA_1 --title Fix startup --issue ISSUE-258",
       cfg({ unix: true }),
       io,
       state,
@@ -3817,7 +3817,7 @@ describe("REPL /packet command", () => {
           sessionId: "01ACTIVE_SESS",
           ideaId: "01IDEA_1",
           eventId: undefined,
-          issueId: "BIT-258",
+          issueId: "ISSUE-258",
           title: "Fix startup",
         },
       },
@@ -3847,7 +3847,7 @@ describe("REPL /packet command", () => {
 
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const handled = await handleReplPacketCommand(
-      "/packet draft 01IDEA_1 --title Document session behavior --issue BIT-258",
+      "/packet draft 01IDEA_1 --title Document session behavior --issue ISSUE-258",
       cfg({ unix: true }),
       io,
       state,
@@ -3861,7 +3861,7 @@ describe("REPL /packet command", () => {
           sessionId: "01ACTIVE_SESS",
           ideaId: "01IDEA_1",
           eventId: undefined,
-          issueId: "BIT-258",
+          issueId: "ISSUE-258",
           title: "Document session behavior",
         },
       },
@@ -3977,7 +3977,7 @@ describe("REPL /packet command", () => {
 
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const handled = await handleReplPacketCommand(
-      "/packet draft --issue BIT-258 --title Investigate startup",
+      "/packet draft --issue ISSUE-258 --title Investigate startup",
       cfg({ unix: true }),
       io,
       state,
@@ -3991,7 +3991,7 @@ describe("REPL /packet command", () => {
           sessionId: "01ACTIVE_SESS",
           ideaId: undefined,
           eventId: undefined,
-          issueId: "BIT-258",
+          issueId: "ISSUE-258",
           title: "Investigate startup",
         },
       },
@@ -4021,7 +4021,7 @@ describe("REPL /packet command", () => {
 
     const io3 = fakeIo();
     await handleReplPacketCommand(
-      "/packet draft 01IDEA --issue BIT-1 --issue BIT-2",
+      "/packet draft 01IDEA --issue ISSUE-1 --issue ISSUE-2",
       cfg({ unix: true }),
       io3.io,
       state,
@@ -4114,7 +4114,7 @@ describe("REPL /packet command", () => {
     const state = { sessionId: "01LOCAL_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const io1 = fakeIo();
     await handleReplPacketCommand(
-      "/packet draft --title Local Work Packet --issue BIT-100",
+      "/packet draft --title Local Work Packet --issue ISSUE-100",
       cfg({ unix: false }),
       io1.io,
       state,
@@ -4203,7 +4203,7 @@ describe("REPL /packet command", () => {
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const { io, stderr } = fakeIo();
     await handleReplPacketCommand(
-      "/packet draft --title Fix --isseu BIT-1",
+      "/packet draft --title Fix --isseu ISSUE-1",
       cfg({ unix: true }),
       io,
       state,
@@ -4215,7 +4215,7 @@ describe("REPL /packet command", () => {
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const { io, stderr } = fakeIo();
     await handleReplPacketCommand(
-      "/packet draft -isseu BIT-1",
+      "/packet draft -isseu ISSUE-1",
       cfg({ unix: true }),
       io,
       state,

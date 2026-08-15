@@ -96,25 +96,33 @@ function boundedCloneForJson(
   if (typeof val === "object") {
     state.totalBytes += 2;
     const out: Record<string, unknown> = {};
+    const record = val as Record<string, unknown>;
+    const keys = Object.keys(record);
+    const keyCount = Math.min(keys.length, 50);
     let count = 0;
-    let totalScanned = 0;
-    for (const k in (val as Record<string, unknown>)) {
-      totalScanned++;
-      if (totalScanned > 50 || count >= 20 || state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
+    for (let i = 0; i < keyCount; i++) {
+      const k = keys[i];
+      if (
+        count >= 20 ||
+        state.nodeCount > state.maxNodes ||
+        state.totalBytes >= state.budget
+      ) {
         out["_truncated"] = true;
         state.totalBytes += 18;
         break;
       }
-      if (Object.prototype.hasOwnProperty.call(val, k)) {
-        const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
-        state.totalBytes += key.length + 4;
-        out[key] = boundedCloneForJson(
-          (val as Record<string, unknown>)[k],
-          depth + 1,
-          state,
-        );
-        count++;
-      }
+      const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
+      state.totalBytes += key.length + 4;
+      out[key] = boundedCloneForJson(
+        record[k],
+        depth + 1,
+        state,
+      );
+      count++;
+    }
+    if (keys.length > 50 && !out["_truncated"]) {
+      out["_truncated"] = true;
+      state.totalBytes += 18;
     }
     return out;
   }
