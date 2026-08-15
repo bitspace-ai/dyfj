@@ -443,7 +443,9 @@ export function buildWorkbenchHandlers(
 
     "sessions/list": async (params) => {
       const record = asRecord(params);
-      const project = record.project;
+      const project = sanitizeRpcString(record.project, "project", {
+        maxLen: 256,
+      });
       if (
         record.limit !== undefined &&
         (typeof record.limit !== "number" ||
@@ -457,14 +459,11 @@ export function buildWorkbenchHandlers(
       }
       const limit = typeof record.limit === "number" && record.limit > 0
         ? Math.min(record.limit, 1000)
-        : undefined;
+        : 100;
       const projects = await listSessions({
-        project: typeof project === "string" ? project : undefined,
+        project,
         limit,
       });
-      if (limit === undefined) {
-        return { projects };
-      }
       const topSessions: Array<{
         projectIdx: number;
         session: WorkbenchSessionSummary;
@@ -509,7 +508,15 @@ export function buildWorkbenchHandlers(
             project: projects[i].project,
             sessions: pSessions,
           });
+        } else if (project !== undefined) {
+          boundedProjects.push({
+            project: projects[i].project,
+            sessions: [],
+          });
         }
+      }
+      if (boundedProjects.length === 0 && topSessions.length === 0 && projects.length > 0) {
+        return { projects };
       }
       return { projects: boundedProjects };
     },

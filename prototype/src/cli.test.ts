@@ -3847,7 +3847,7 @@ describe("REPL /packet command", () => {
 
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const handled = await handleReplPacketCommand(
-      "/packet draft 01IDEA_1 --title Document session behavior --issue BIT-258",
+      "/packet draft 01IDEA_1 --title Document --session behavior --issue BIT-258",
       cfg({ unix: true }),
       io,
       state,
@@ -3862,7 +3862,7 @@ describe("REPL /packet command", () => {
           ideaId: "01IDEA_1",
           eventId: undefined,
           issueId: "BIT-258",
-          title: "Document session behavior",
+          title: "Document --session behavior",
         },
       },
     ]);
@@ -4036,6 +4036,45 @@ describe("REPL /packet command", () => {
       state,
     );
     expect(io4.stderr.join("\n")).toContain("--issue requires an issue identifier");
+
+    const io5 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet list extra-arg",
+      cfg({ unix: true }),
+      io5.io,
+      state,
+    );
+    expect(io5.stderr.join("\n")).toContain("usage: /packet list");
+
+    const io6 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet show 01PACKET extra-arg",
+      cfg({ unix: true }),
+      io6.io,
+      state,
+    );
+    expect(io6.stderr.join("\n")).toContain("usage: /packet show <packet-id>");
+  });
+
+  test("/idea list and show validate trailing arguments", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const io1 = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea list extra-arg",
+      cfg({ unix: true }),
+      io1.io,
+      state,
+    );
+    expect(io1.stderr.join("\n")).toContain("usage: /idea list");
+
+    const io2 = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea show 01IDEA extra-arg",
+      cfg({ unix: true }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("usage: /idea show <idea-id>");
   });
 
   test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {

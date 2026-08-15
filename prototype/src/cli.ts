@@ -1789,6 +1789,10 @@ export async function handleReplIdeaCommand(
   }
 
   if (sub === "list") {
+    if (parts.length > 2) {
+      io.err("usage: /idea list");
+      return true;
+    }
     if (config.unix) {
       try {
         const client = await connect(config.socket);
@@ -1831,11 +1835,11 @@ export async function handleReplIdeaCommand(
   }
 
   if (sub === "show") {
-    const ideaId = parts[2];
-    if (!ideaId) {
+    if (parts.length !== 3) {
       io.err("usage: /idea show <idea-id>");
       return true;
     }
+    const ideaId = parts[2];
     if (config.unix) {
       try {
         const client = await connect(config.socket);
@@ -1964,8 +1968,9 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
+        const knownOptionFlags = new Set(["--issue", "--event", "--idea"]);
         const titleTokens: string[] = [];
-        while (i < tokens.length && !tokens[i].startsWith("--")) {
+        while (i < tokens.length && !knownOptionFlags.has(tokens[i])) {
           titleTokens.push(tokens[i]);
           i++;
         }
@@ -2044,6 +2049,10 @@ export async function handleReplPacketCommand(
   }
 
   if (sub === "list") {
+    if (parts.length > 2) {
+      io.err("usage: /packet list");
+      return true;
+    }
     if (config.unix) {
       try {
         const client = await connect(config.socket);
@@ -2088,11 +2097,11 @@ export async function handleReplPacketCommand(
   }
 
   if (sub === "show") {
-    const packetId = parts[2];
-    if (!packetId) {
+    if (parts.length !== 3) {
       io.err("usage: /packet show <packet-id>");
       return true;
     }
+    const packetId = parts[2];
     if (config.unix) {
       try {
         const client = await connect(config.socket);

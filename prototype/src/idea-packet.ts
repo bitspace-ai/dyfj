@@ -426,61 +426,60 @@ export function draftWorkPacketFromContext(input: {
   let excerpt = "";
   const contextSources: string[] = [];
 
-  if (input.events !== undefined) {
-    if (referencedEventId) {
-      const match = input.events.find((e) => e.eventId === referencedEventId);
-      if (!match) {
-        throw new Error(
-          `referenced event "${referencedEventId}" not found in session events`,
-        );
-      }
-      if (match.content && match.content.trim().length > 0) {
-        excerpt = match.content.trim().slice(0, 4000);
-      } else if (match.toolName) {
-        excerpt = `[Tool Call: ${match.toolName}]: ${
-          safeBoundedJson(match.toolArguments ?? {})
-        }`;
-      } else {
-        excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
-      }
-    } else if (input.events.length > 0) {
-      const recent = input.events.slice(-50);
-      const relevant = recent
-        .filter((e) =>
-          e.eventType === "session_start" ||
-          e.eventType === "model_response" ||
-          e.eventType === "agent_response"
-        )
-        .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
-        .slice(-4);
-      excerpt = relevant
-        .map((e) =>
-          `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${
-            (e.content ?? "").slice(0, 300)
-          }`
-        )
-        .join("\n\n");
-      if (relevant.length > 0 && !referencedEventId) {
-        referencedEventId = relevant[relevant.length - 1].eventId;
-      }
+  const events = input.events ?? [];
+  if (referencedEventId) {
+    const match = events.find((e) => e.eventId === referencedEventId);
+    if (!match && events.length > 0) {
+      throw new Error(
+        `referenced event "${referencedEventId}" not found in session events`,
+      );
     }
-
-    const recentEvents = input.events.slice(-20);
-    for (const ev of recentEvents) {
-      if (ev.toolName === "read_file" && ev.toolArguments?.path) {
-        const p = String(ev.toolArguments.path).trim().slice(0, 500);
-        if (!contextSources.includes(p) && contextSources.length < 50) {
-          contextSources.push(p);
-        }
-      }
+    if (match?.content && match.content.trim().length > 0) {
+      const raw = match.content.trim();
+      excerpt = raw.length > 4000
+        ? raw.slice(0, 4000) + "...[truncated]"
+        : raw;
+    } else if (match?.toolName) {
+      excerpt = `[Tool Call: ${match.toolName}]: ${
+        safeBoundedJson(match.toolArguments ?? {})
+      }`;
+    } else if (match) {
+      excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
+    }
+  } else if (events.length > 0) {
+    const recent = events.slice(-50);
+    const relevant = recent
+      .filter((e) =>
+        e.eventType === "session_start" ||
+        e.eventType === "model_response" ||
+        e.eventType === "agent_response"
+      )
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
+      .slice(-4);
+    excerpt = relevant
+      .map((e) =>
+        `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${
+          (e.content ?? "").slice(0, 300)
+        }`
+      )
+      .join("\n\n");
+    if (relevant.length > 0 && !referencedEventId) {
+      referencedEventId = relevant[relevant.length - 1].eventId;
     }
   }
 
   if (excerpt.length === 0) {
     excerpt = (idea?.description || operatorIntent).slice(0, 4000);
   }
-  if (excerpt.length > 4000) {
-    excerpt = excerpt.slice(0, 4000) + "\n...[truncated]";
+
+  const recentEvents = events.slice(-20);
+  for (const ev of recentEvents) {
+    if (ev.toolName === "read_file" && ev.toolArguments?.path) {
+      const p = String(ev.toolArguments.path).trim().slice(0, 500);
+      if (!contextSources.includes(p) && contextSources.length < 50) {
+        contextSources.push(p);
+      }
+    }
   }
 
   const rawCriteria =
@@ -526,6 +525,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   const safeTitle = sanitizeSingleLine(packet.title);
   const safeSession = sanitizeSingleLine(packet.sessionId);
   const safePacketId = sanitizeSingleLine(packet.packetId);
+  const safeDate = sanitizeSingleLine(packet.createdAt.split("T")[0]);
   const safeIssue = packet.issueId
     ? `\`${sanitizeSingleLine(packet.issueId).replace(/[`]/g, "")}\``
     : "none";
@@ -539,7 +539,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
     `# Work Packet: ${safeTitle}`,
     "",
     `- **Packet ID:** \`${safePacketId}\``,
-    `- **Date:** ${packet.createdAt.split("T")[0]}`,
+    `- **Date:** ${safeDate}`,
     `- **Session:** \`${safeSession}\``,
     `- **Related Issue:** ${safeIssue}`,
     `- **Target Workspace:** ${safeWorkspace}`,
