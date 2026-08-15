@@ -56,24 +56,49 @@ function validateIdentifier(id: string, fieldName = "identifier"): string {
   return trimmed;
 }
 
-function boundedCloneForJson(val: unknown, depth = 0): unknown {
+function boundedCloneForJson(
+  val: unknown,
+  depth = 0,
+  state = { totalBytes: 0, budget: 4096 },
+): unknown {
+  if (state.totalBytes >= state.budget) return "[truncated]";
   if (depth > 3) return "[truncated]";
   if (val === null || val === undefined) return val;
   if (typeof val === "string") {
-    return val.length > 500 ? val.slice(0, 500) + "...[truncated]" : val;
+    const s = val.length > 500 ? val.slice(0, 500) + "...[truncated]" : val;
+    state.totalBytes += s.length;
+    return s;
   }
-  if (typeof val === "number" || typeof val === "boolean") return val;
+  if (typeof val === "number" || typeof val === "boolean") {
+    state.totalBytes += 8;
+    return val;
+  }
   if (Array.isArray(val)) {
-    return val.slice(0, 20).map((item) => boundedCloneForJson(item, depth + 1));
+    const out: unknown[] = [];
+    for (let i = 0; i < val.length && i < 20; i++) {
+      if (state.totalBytes >= state.budget) {
+        out.push("[truncated]");
+        break;
+      }
+      out.push(boundedCloneForJson(val[i], depth + 1, state));
+    }
+    return out;
   }
   if (typeof val === "object") {
     const out: Record<string, unknown> = {};
     let count = 0;
     for (const k in (val as Record<string, unknown>)) {
       if (Object.prototype.hasOwnProperty.call(val, k)) {
-        out[k.slice(0, 100)] = boundedCloneForJson(
+        if (state.totalBytes >= state.budget) {
+          out["_truncated"] = true;
+          break;
+        }
+        const key = k.slice(0, 100);
+        state.totalBytes += key.length;
+        out[key] = boundedCloneForJson(
           (val as Record<string, unknown>)[k],
           depth + 1,
+          state,
         );
         count++;
         if (count >= 20) break;
@@ -81,16 +106,18 @@ function boundedCloneForJson(val: unknown, depth = 0): unknown {
     }
     return out;
   }
-  return String(val).slice(0, 100);
+  const s = String(val).slice(0, 100);
+  state.totalBytes += s.length;
+  return s;
 }
 
 function safeBoundedJson(obj: unknown, maxLen = 4000): string {
   if (obj === null || obj === undefined) return "{}";
   try {
-    const bounded = boundedCloneForJson(obj);
+    const bounded = boundedCloneForJson(obj, 0, { totalBytes: 0, budget: maxLen });
     const str = JSON.stringify(bounded);
     if (str.length <= maxLen) return str;
-    return str.slice(0, maxLen) + "...[truncated]";
+    return str.slice(0, Math.max(0, maxLen - 15)) + "...[truncated]";
   } catch {
     return "[unserializable arguments]";
   }
@@ -214,6 +241,10 @@ export class IdeaPacketRegistry {
       ? packet.verifierProvenance.independenceNotes.slice(0, 2000)
       : packet.verifierProvenance.independenceNotes;
     const rawCreated = packet.createdAt.length > 128 ? packet.createdAt.slice(0, 128) : packet.createdAt;
+    const trimmedExcerpt = rawExcerpt.trim();
+    const excerpt = trimmedExcerpt.length > 4000
+      ? trimmedExcerpt.slice(0, 3985) + "...[truncated]"
+      : trimmedExcerpt;
 
     const sanitized: WorkbenchWorkPacket = {
       packetId: validateIdentifier(packet.packetId, "packetId"),
@@ -230,7 +261,7 @@ export class IdeaPacketRegistry {
             "referencedEventId",
           )
           : null,
-        excerpt: rawExcerpt.trim().slice(0, 4000),
+        excerpt,
         contextSources: (packet.sourceContext.contextSources ?? [])
           .slice(0, 50)
           .map((s) => (s.length > 1000 ? s.slice(0, 1000) : s).trim().slice(0, 500)),
@@ -473,7 +504,7 @@ export function draftWorkPacketFromContext(input: {
       if (match.content && match.content.length > 0) {
         const raw = match.content.slice(0, 8000).trim();
         excerpt = raw.length > 4000
-          ? raw.slice(0, 4000) + "...[truncated]"
+          ? raw.slice(0, 3985) + "...[truncated]"
           : raw;
       } else if (match.toolName) {
         excerpt = `[Tool Call: ${match.toolName}]: ${
@@ -625,7 +656,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
     "",
     `- **Primary Verifier:** \`${escapeCodeSpan(packet.verifierProvenance.verifierType)}\``,
     `- **Independence & Oracle Policy:** ${
-      sanitizeSingleLine(packet.verifierProvenance.independenceNotes)
+      sanitizeMarkdownHeading(sanitizeSingleLine(packet.verifierProvenance.independenceNotes)).replace(/[`<>]/g, "")
     }`,
     "",
   );
