@@ -268,6 +268,25 @@ runtime_log_path() {
   printf '%s/.dyfj/log/runtime-%s-%s.log' "$HOME" "$base" "$hash"
 }
 
+# Start lock name = basename + 16-hex sha256 (or cksum fallback) of the FULL socket path:
+# mirrors runtime_log_path, keyed by socket. Uses exclusive file creation (noclobber)
+# to rate-limit and suppress duplicate background launcher autostart processes.
+# Fails when HOME is unset, empty, or relative.
+runtime_start_lock_path() {
+  case "${HOME:-}" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  local sock base hash
+  sock="$(resolve_socket_path)"
+  base="$(basename "${sock%.sock}")"
+  hash="$(printf '%s' "$sock" | shasum -a 256 2>/dev/null | cut -c1-16)"
+  if [[ -z "$hash" ]]; then
+    hash="$(printf '%s' "$sock" | cksum | cut -d' ' -f1)"
+  fi
+  printf '%s/.dyfj/run/start-%s-%s.lock' "$HOME" "$base" "$hash"
+}
+
 # Run the client without exec, on the same route main would use. --unix is
 # explicit: autostart applies only on the UDS seam, and without it an ambient
 # DYFJ_SERVER_URL would let the probe answer over HTTP for a dead socket.
@@ -275,17 +294,81 @@ probe_runtime() {
   local route
   route="$(route_cli "$@")"
   if [[ "$route" == "compiled" ]]; then
-    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)"       --unix ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
+    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)" \
+      --unix ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
   else
     local sock proto
     sock="$(resolve_socket_path)"
     proto="$(prototype_root)"
-    DYFJ_PROTOTYPE_ROOT="$proto" deno run       --allow-env="$(cli_env_allowlist)"       --allow-read       --allow-write       --allow-run=deno       --allow-net="127.0.0.1,localhost,unix:${sock}"       --sloppy-imports       "${proto}/src/cli.ts"       --unix ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
+    DYFJ_PROTOTYPE_ROOT="$proto" deno run \
+      --allow-env="$(cli_env_allowlist)" \
+      --allow-read \
+      --allow-write \
+      --allow-run=deno \
+      --allow-net="127.0.0.1,localhost,unix:${sock}" \
+      --sloppy-imports \
+      "${proto}/src/cli.ts" \
+      --unix ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
   fi
 }
 
+get_file_mtime() {
+  local f="$1" out
+  out="$(stat -c '%Y' "$f" 2>/dev/null || true)"
+  if [[ "$out" =~ ^[0-9]+$ ]]; then
+    echo "$out"
+    return
+  fi
+  out="$(stat -f '%m' "$f" 2>/dev/null || true)"
+  if [[ "$out" =~ ^[0-9]+$ ]]; then
+    echo "$out"
+    return
+  fi
+  echo 0
+}
+
+inspect_start_lock_in_flight() {
+  local lock_file="$1" now="$2" ttl="$3"
+  local info_data lock_ts lock_pid lock_age
+  info_data="$(head -c 128 "$lock_file" 2>/dev/null || true)"
+  if [[ -z "$info_data" ]]; then
+    local mtime grace=5
+    if [[ "$ttl" =~ ^[0-9]+$ ]] && [[ "$ttl" -lt "$grace" ]]; then
+      grace="$ttl"
+    fi
+    mtime="$(get_file_mtime "$lock_file")"
+    if [[ "$mtime" =~ ^[0-9]+$ ]] && [[ "$now" =~ ^[0-9]+$ ]] && [[ "$now" -ge "$mtime" ]] && [[ "$((now - mtime))" -lt "$grace" ]]; then
+      return 0
+    fi
+    return 1
+  fi
+  read -r lock_ts lock_pid <<<"$info_data"
+  if [[ "$lock_ts" =~ ^[0-9]+$ ]] && [[ "$now" =~ ^[0-9]+$ ]]; then
+    if [[ "$now" -ge "$lock_ts" ]]; then
+      lock_age=$((now - lock_ts))
+    elif [[ "$((lock_ts - now))" -le "$ttl" ]]; then
+      lock_age=0
+    else
+      lock_age=$((ttl + 1))
+    fi
+    if [[ "$lock_age" -lt "$ttl" ]]; then
+      if [[ "$lock_pid" =~ ^[1-9][0-9]*$ ]]; then
+        if kill -0 "$lock_pid" 2>/dev/null; then
+          return 0
+        fi
+      else
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
 ensure_runtime() {
+  local start_lock
+  start_lock="$(runtime_start_lock_path 2>/dev/null || true)"
   if probe_runtime "$@"; then
+    [[ -n "$start_lock" ]] && rm -f "$start_lock" 2>/dev/null || true
     return 0
   fi
   prepare_node_path
@@ -297,24 +380,93 @@ ensure_runtime() {
     echo "dyfj: autostart needs an absolute HOME for its log directory; set HOME or run 'dyfj start' yourself" >&2
     return 1
   fi
-  # Owner-only, and treated as sensitive wholesale: the spawned runtime's
-  # entire stdout/stderr lands here, and the launcher can vouch for none of
-  # it — the permission bits are the floor, not a claim about the contents.
+  if ! start_lock="$(runtime_start_lock_path)"; then
+    echo "dyfj: autostart needs an absolute HOME for its lock directory; set HOME or run 'dyfj start' yourself" >&2
+    return 1
+  fi
+
+  local lock_dir
+  lock_dir="$(dirname "$start_lock")"
   (
     umask 077
-    mkdir -p "$(dirname "$log")"
-    printf -- '── dyfj autostart at %s, socket %s ──\n' \
-      "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$sock" >>"$log"
-  )
-  chmod 700 "$(dirname "$log")" 2>/dev/null || true
-  chmod 600 "$log" 2>/dev/null || true
-  echo "dyfj: runtime not running at ${sock}; starting it (log: ${log})" >&2
-  # Mark the background runtime to ignore a terminal SIGINT if it reaches it.
-  nohup bash "$LAUNCHER_SOURCE" ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} start --launcher-autostarted >>"$log" 2>&1 &
-  disown
+    mkdir -p "$lock_dir"
+  ) || {
+    echo "dyfj: autostart cannot create lock directory ${lock_dir}" >&2
+    return 1
+  }
+  chmod 700 "$lock_dir" 2>/dev/null || true
+
+  local ttl=30
+  if [[ "${DYFJ_START_LOCK_TTL_SEC:-}" =~ ^[0-9]{1,6}$ ]]; then
+    ttl=$((10#${DYFJ_START_LOCK_TTL_SEC}))
+    if [[ "$ttl" -le 0 ]]; then
+      ttl=30
+    fi
+  fi
+
+  local now is_in_flight=0 acquired_lock=0
+  now="$(date +%s 2>/dev/null || echo 0)"
+
+  # Attempt exclusive lock acquisition via noclobber file creation
+  if ( umask 077 && set -C && printf '%s %s\n' "$now" "$$" > "$start_lock" ) 2>/dev/null; then
+    acquired_lock=1
+  elif [[ ! -f "$start_lock" ]]; then
+    echo "dyfj: autostart cannot create lock file ${start_lock}" >&2
+    return 1
+  else
+    if inspect_start_lock_in_flight "$start_lock" "$now" "$ttl"; then
+      is_in_flight=1
+    else
+      # Stale lock: remove and retry exclusive creation
+      rm -f "$start_lock" 2>/dev/null || true
+      if ( umask 077 && set -C && printf '%s %s\n' "$now" "$$" > "$start_lock" ) 2>/dev/null; then
+        acquired_lock=1
+      elif [[ -f "$start_lock" ]]; then
+        is_in_flight=1
+      else
+        echo "dyfj: autostart cannot create lock file ${start_lock}" >&2
+        return 1
+      fi
+    fi
+  fi
+
+  if [[ "$acquired_lock" == "1" ]]; then
+    # Owner-only, and treated as sensitive wholesale: the spawned runtime's
+    # entire stdout/stderr lands here, and the launcher can vouch for none of
+    # it — the permission bits are the floor, not a claim about the contents.
+    (
+      umask 077
+      mkdir -p "$(dirname "$log")"
+      printf -- '── dyfj autostart at %s, socket %s ──\n' \
+        "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$sock" >>"$log"
+    ) || {
+      rm -f "$start_lock" 2>/dev/null || true
+      echo "dyfj: autostart cannot write to log file ${log}" >&2
+      return 1
+    }
+    chmod 700 "$(dirname "$log")" 2>/dev/null || true
+    chmod 600 "$log" 2>/dev/null || true
+    echo "dyfj: runtime not running at ${sock}; starting it (log: ${log})" >&2
+    # Mark the background runtime to ignore a terminal SIGINT if it reaches it.
+    nohup bash "$LAUNCHER_SOURCE" ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} start --launcher-autostarted >>"$log" 2>&1 &
+    local spawn_pid=$!
+    disown "$spawn_pid" 2>/dev/null || true
+    # Best-effort update of lock file with spawned child PID
+    local tmp_lock="${start_lock}.$$.$RANDOM"
+    (
+      umask 077
+      set -C
+      printf '%s %s\n' "$now" "$spawn_pid" >"$tmp_lock"
+    ) 2>/dev/null && mv -f "$tmp_lock" "$start_lock" 2>/dev/null || rm -f "$tmp_lock" 2>/dev/null || true
+    chmod 600 "$start_lock" 2>/dev/null || true
+  else
+    echo "dyfj: a runtime start for ${sock} is already in flight (log: ${log}); waiting for it" >&2
+  fi
+
   local i
   for i in $(seq 1 50); do
     if probe_runtime "$@"; then
+      rm -f "$start_lock" 2>/dev/null || true
       echo "dyfj: runtime ready" >&2
       return 0
     fi
