@@ -420,9 +420,20 @@ export function buildWorkbenchHandlers(
           "events/query asOf must be a valid timestamp",
         );
       }
+      if (
+        record.limit !== undefined &&
+        (typeof record.limit !== "number" ||
+          !Number.isInteger(record.limit) ||
+          record.limit <= 0)
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "events/query limit must be a positive integer",
+        );
+      }
       const limit = typeof record.limit === "number" && record.limit > 0
         ? Math.min(record.limit, 1000)
-        : undefined;
+        : 500;
       return {
         events: await fetchSessionEvents({
           sessionId,
@@ -548,15 +559,19 @@ export function buildWorkbenchHandlers(
       const operatorIntent = typeof record.operatorIntent === "string"
         ? record.operatorIntent.trim()
         : undefined;
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      const idea = ideaId ? reg.getIdea(ideaId) : null;
+      const referencedEventId = eventId ?? idea?.eventId ?? undefined;
       const [events, workspaceRec] = await Promise.all([
-        eventId
-          ? fetchSessionEvents({ sessionId, eventId })
+        referencedEventId
+          ? fetchSessionEvents({ sessionId, eventId: referencedEventId })
           : fetchSessionEvents({ sessionId, limit: 50 }),
         (options.fetchSessionWorkspaceRecord ??
           fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
       ]);
       const packet = draftWorkPacketFromContext({
         sessionId,
+        idea,
         ideaId,
         eventId,
         issueId,
@@ -564,7 +579,7 @@ export function buildWorkbenchHandlers(
         operatorIntent,
         events,
         workspace: workspaceRec.workspace,
-        registry: options.ideaPacketRegistry ?? defaultIdeaPacketRegistry,
+        registry: reg,
       });
       const markdown = formatWorkPacketMarkdown(packet);
       return { packet, markdown };

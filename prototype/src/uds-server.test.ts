@@ -453,6 +453,28 @@ describe("serveWorkbenchUnix read methods", () => {
     ).rejects.toMatchObject({ code: RpcErrorCode.invalidParams });
   });
 
+  test("events/query with an invalid limit -> invalidParams", async () => {
+    const client = await connectClient(await startServer(fakes));
+    await expect(
+      client.request("events/query", {
+        sessionId: "s1",
+        limit: 0,
+      }),
+    ).rejects.toMatchObject({ code: RpcErrorCode.invalidParams });
+    await expect(
+      client.request("events/query", {
+        sessionId: "s1",
+        limit: -5,
+      }),
+    ).rejects.toMatchObject({ code: RpcErrorCode.invalidParams });
+    await expect(
+      client.request("events/query", {
+        sessionId: "s1",
+        limit: "100" as any,
+      }),
+    ).rejects.toMatchObject({ code: RpcErrorCode.invalidParams });
+  });
+
   test("an unknown method -> methodNotFound", async () => {
     const client = await connectClient(await startServer(fakes));
     await expect(client.request("does/not/exist")).rejects.toMatchObject({

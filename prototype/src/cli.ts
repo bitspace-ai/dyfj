@@ -1611,7 +1611,8 @@ export async function handleReplSessionCommand(
               }>;
             }>;
           };
-          const allSessions = res.projects?.flatMap((p) => p.sessions) ?? [];
+          const allSessions = (res.projects?.flatMap((p) => p.sessions) ?? [])
+            .slice(0, 100);
           const sessions = allSessions
             .sort((a, b) =>
               (b.createdAt || "").localeCompare(a.createdAt || "")
@@ -1692,9 +1693,9 @@ export async function handleReplIdeaCommand(
   const sub = parts[1];
   if (!sub || sub === "help") {
     io.err("Idea capture commands:");
-    io.err("  /idea mark [event-id] <label...>   mark an idea in this session");
-    io.err("  /idea list                         list marked ideas for this session");
-    io.err("  /idea show <idea-id>               show details of a marked idea");
+    io.err("  /idea mark [--event <event-id>] <label...>   mark an idea in this session");
+    io.err("  /idea list                                   list marked ideas for this session");
+    io.err("  /idea show <idea-id>                         show details of a marked idea");
     return true;
   }
 

@@ -91,12 +91,15 @@ export class IdeaPacketRegistry {
       title: packet.title.trim().slice(0, 256),
       operatorIntent: packet.operatorIntent.trim().slice(0, 2000),
       issueId: packet.issueId?.trim().slice(0, 64) ?? null,
-      proposedAcceptanceCriteria: packet.proposedAcceptanceCriteria
-        .map((c) => c.trim().slice(0, 500))
-        .slice(0, 20),
+      proposedAcceptanceCriteria: (packet.proposedAcceptanceCriteria ?? [])
+        .slice(0, 20)
+        .map((c) => c.trim().slice(0, 500)),
       sourceContext: {
         ...packet.sourceContext,
         excerpt: packet.sourceContext.excerpt.trim().slice(0, 4000),
+        contextSources: (packet.sourceContext.contextSources ?? [])
+          .slice(0, 50)
+          .map((s) => s.trim().slice(0, 500)),
       },
     };
     this.packetsById.set(sanitized.packetId, sanitized);
@@ -309,8 +312,10 @@ export function draftWorkPacketFromContext(input: {
     const recentEvents = input.events.slice(-20);
     for (const ev of recentEvents) {
       if (ev.toolName === "read_file" && ev.toolArguments?.path) {
-        const p = String(ev.toolArguments.path);
-        if (!contextSources.includes(p)) contextSources.push(p);
+        const p = String(ev.toolArguments.path).trim().slice(0, 500);
+        if (!contextSources.includes(p) && contextSources.length < 50) {
+          contextSources.push(p);
+        }
       }
     }
   }
@@ -324,14 +329,13 @@ export function draftWorkPacketFromContext(input: {
 
   const rawCriteria =
     input.acceptanceCriteria && input.acceptanceCriteria.length > 0
-      ? input.acceptanceCriteria
+      ? input.acceptanceCriteria.slice(0, 20)
       : [
         `Fulfill the objective: "${title}"`,
         `Verify outcomes against operator intent and documented constraints`,
       ];
   const proposedAcceptanceCriteria = rawCriteria
-    .map((c) => c.trim().slice(0, 500))
-    .slice(0, 20);
+    .map((c) => c.trim().slice(0, 500));
 
   const packet: WorkbenchWorkPacket = {
     packetId: input.packetId ?? generateULID(),
@@ -384,7 +388,8 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   ) {
     lines.push("### Context Files", "");
     for (const src of packet.sourceContext.contextSources) {
-      lines.push(`- \`${src}\``);
+      const safePath = src.replace(/[`\r\n]/g, "");
+      lines.push(`- \`${safePath}\``);
     }
     lines.push("");
   }
