@@ -98,23 +98,27 @@ function boundedCloneForJson(
     state.totalBytes += 2;
     const out: Record<string, unknown> = {};
     let count = 0;
-    const entries = Object.entries(val as Record<string, unknown>);
-    for (let i = 0; i < entries.length; i++) {
-      const [k, v] = entries[i];
-      if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
-        out["_truncated"] = true;
-        state.totalBytes += 18;
-        break;
+    for (const k in (val as Record<string, unknown>)) {
+      if (Object.prototype.hasOwnProperty.call(val, k)) {
+        if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
+          out["_truncated"] = true;
+          state.totalBytes += 18;
+          break;
+        }
+        if (count >= 20) {
+          out["_truncated"] = true;
+          state.totalBytes += 18;
+          break;
+        }
+        const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
+        state.totalBytes += key.length + 4;
+        out[key] = boundedCloneForJson(
+          (val as Record<string, unknown>)[k],
+          depth + 1,
+          state,
+        );
+        count++;
       }
-      if (count >= 20) {
-        out["_truncated"] = true;
-        state.totalBytes += 18;
-        break;
-      }
-      const key = k.slice(0, 100);
-      state.totalBytes += key.length + 4;
-      out[key] = boundedCloneForJson(v, depth + 1, state);
-      count++;
     }
     return out;
   }
@@ -625,7 +629,7 @@ export function draftWorkPacketFromContext(input: {
 }
 
 function escapeCodeSpan(str: string): string {
-  return sanitizeSingleLine(str).replace(/[`<>]/g, "");
+  return sanitizeSingleLine(str).replace(/`/g, "\\`");
 }
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
