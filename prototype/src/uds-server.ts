@@ -41,7 +41,7 @@ import {
   runawayAnomalyApprovalRequest,
 } from "./budget";
 import type { TurnStreamFrame } from "./turn-contract";
-import { isSupersedingRetryStarted } from "./turn-contract";
+import { isSupersedingRetryStarted, summarizeError } from "./turn-contract";
 import {
   engineConfigToTurnDeps,
   executeTurn,
@@ -303,9 +303,6 @@ export function buildWorkbenchHandlers(
           "runtime shutdown is not configured on this server",
         );
       }
-      setTimeout(() => {
-        Promise.resolve(options.onShutdown?.()).catch(() => {});
-      }, 20);
       return {
         status: "stopping",
       };
@@ -820,6 +817,20 @@ export async function serveWorkbenchUnix(
       const peer = new JsonRpcPeer(conn, {
         handlers,
         onParseError: options.onParseError,
+        onRequestSettled: async (req, res) => {
+          if (
+            req.method === "runtime/stop" && "result" in res &&
+            options.onShutdown
+          ) {
+            try {
+              await options.onShutdown();
+            } catch (err) {
+              options.onParseError?.(
+                `onShutdown error: ${summarizeError(err)}`,
+              );
+            }
+          }
+        },
       });
       peers.add(peer);
       peer.run().finally(() => peers.delete(peer));
