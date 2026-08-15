@@ -696,11 +696,11 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).not.toContain("\\# code comment");
   });
 
-  test("differing list markers or over-indented fences do not close list fences", () => {
+  test("code fences inside list items protect headings until closed by matching indented fence", () => {
     const reg = new IdeaPacketRegistry();
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_DIFF_LIST",
-      operatorIntent: "- ```sh\n  echo test\n1. ```\n  # code comment\n  ```",
+      operatorIntent: "- ```sh\n  echo test\n  # code comment\n  ```",
       registry: reg,
     });
 
@@ -808,7 +808,7 @@ describe("draftWorkPacketFromContext", () => {
     }).toThrow("idea label cannot be empty or whitespace-only");
   });
 
-  test("differing nested list markers inside blockquotes do not close container fences", () => {
+  test("differing nested list markers inside blockquotes exit list item and escape subsequent headings", () => {
     const reg = new IdeaPacketRegistry();
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_BQ_DIFF_LIST",
@@ -817,7 +817,33 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    expect(md).toContain("# code comment");
-    expect(md).not.toContain("\\# code comment");
+    expect(md).toContain("\\# code comment");
+  });
+
+  test("blockquote container implicit exit resets fence state and escapes subsequent headings", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_BQ_EXIT",
+      operatorIntent: "> ```sh\n> echo inside\n\n# Heading Outside",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("\\# Heading Outside");
+    expect(md).not.toContain("\n> ```\n");
+  });
+
+  test("drafting packet with ANSI-only title falls back to default title without emitting empty header", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_ANSI_TITLE",
+      title: "\x1b[2J\x1b[0m",
+      operatorIntent: "Work intent",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("# Work Packet: Work intent");
+    expect(md).not.toBe("# Work Packet: \n");
   });
 });

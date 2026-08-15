@@ -473,6 +473,12 @@ describe("serveWorkbenchUnix read methods", () => {
         limit: "100" as any,
       }),
     ).rejects.toMatchObject({ code: RpcErrorCode.invalidParams });
+    await expect(
+      client.request("events/query", {
+        sessionId: "s1",
+        limit: 1001,
+      }),
+    ).rejects.toMatchObject({ code: RpcErrorCode.invalidParams });
   });
 
   test("an unknown method -> methodNotFound", async () => {

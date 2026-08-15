@@ -594,15 +594,16 @@ export function buildWorkbenchHandlers(
         record.limit !== undefined &&
         (typeof record.limit !== "number" ||
           !Number.isInteger(record.limit) ||
-          record.limit <= 0)
+          record.limit <= 0 ||
+          record.limit > 1000)
       ) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
-          "events/query limit must be a positive integer",
+          "events/query limit must be a positive integer between 1 and 1000",
         );
       }
       const limit = typeof record.limit === "number" && record.limit > 0
-        ? Math.min(record.limit, 1000)
+        ? record.limit
         : 500;
       const fetched = await fetchSessionEvents({
         sessionId,

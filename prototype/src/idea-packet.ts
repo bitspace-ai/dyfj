@@ -264,6 +264,26 @@ function matchesContainerPrefix(linePrefix: string, openPrefix: string): boolean
   return false;
 }
 
+function hasContainerPrefix(line: string, openPrefix: string): boolean {
+  if (openPrefix === "") return true;
+  if (line.trim().length === 0) return false;
+  const lineGt = line.replace(/[^>]/g, "").length;
+  const openGt = openPrefix.replace(/[^>]/g, "").length;
+  if (openGt > 0) {
+    if (lineGt < openGt) return false;
+    const afterGt = line.slice(line.lastIndexOf(">") + 1);
+    const openAfterGt = openPrefix.slice(openPrefix.lastIndexOf(">") + 1);
+    if (openAfterGt.trim().length === 0) return true;
+    const normAfterGt = afterGt.replace(/[ \t]+/g, " ").trim();
+    const normOpenAfterGt = openAfterGt.replace(/[ \t]+/g, " ").trim();
+    if (normAfterGt.startsWith(normOpenAfterGt)) return true;
+    return /^[ ]+/.test(afterGt) && (afterGt.match(/^[ ]+/)?.[0].length ?? 0) >= openAfterGt.length;
+  }
+  if (line.startsWith(openPrefix)) return true;
+  const listIndent = " ".repeat(openPrefix.length);
+  return line.startsWith(listIndent);
+}
+
 function sanitizeMarkdownHeading(text: string): string {
   const clean = text
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
@@ -285,6 +305,12 @@ function sanitizeMarkdownHeading(text: string): string {
   };
 
   for (const line of lines) {
+    if (openChar && openPrefix !== "" && !hasContainerPrefix(line, openPrefix)) {
+      openChar = null;
+      openCount = 0;
+      openPrefix = "";
+    }
+
     if (!openChar) {
       const fenceMatch = parseCodeFence(line);
       if (fenceMatch) {
@@ -329,7 +355,6 @@ function sanitizeMarkdownHeading(text: string): string {
       result.push(line);
     }
   }
-
   flushNonFenceBuffer();
   return result.join("\n");
 }
@@ -895,11 +920,8 @@ export function draftWorkPacketFromContext(input: {
     operatorIntent = input.operatorIntent.slice(0, 4000).replace(/^[\r\n]+|[\r\n\s]+$/g, "").slice(0, 2000);
   }
 
-  if (!title) {
-    title = operatorIntent.length > 60
-      ? operatorIntent.slice(0, 60) + "..."
-      : operatorIntent || "Draft Work Packet";
-  }
+  const cleanTitle = sanitizeSingleLine(title);
+  title = cleanTitle || (operatorIntent ? sanitizeSingleLine(operatorIntent).slice(0, 60) : "") || "Draft Work Packet";
 
   if (!operatorIntent) {
     operatorIntent = title;
@@ -944,11 +966,11 @@ export function draftWorkPacketFromContext(input: {
     packetId: input.packetId
       ? validateIdentifier(input.packetId, "packetId")
       : generateULID(),
-    ideaId: idea?.ideaId ?? (input.ideaId ? validateIdentifier(input.ideaId, "ideaId") : null),
+    ideaId: idea ? idea.ideaId : null,
     sessionId,
     issueId: input.issueId ? validateIdentifier(input.issueId, "issueId") : null,
-    title: sanitizeSingleLine(title),
-    targetWorkspace: input.workspace ?? null,
+    title: title.slice(0, 256),
+    targetWorkspace: input.workspace ? input.workspace.trim().slice(0, 1024) : null,
     sourceContext: {
       sessionId,
       referencedEventId,
@@ -979,6 +1001,11 @@ function closeDanglingFences(text: string): string {
   let openCount = 0;
   let openPrefix = "";
   for (const line of lines) {
+    if (openChar && openPrefix !== "" && !hasContainerPrefix(line, openPrefix)) {
+      openChar = null;
+      openCount = 0;
+      openPrefix = "";
+    }
     if (!openChar) {
       const fenceMatch = parseCodeFence(line);
       if (fenceMatch) {
@@ -1029,7 +1056,8 @@ function formatCodeSpan(str: string): string {
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   const rawTitle = (packet.title ?? "").slice(0, 256);
-  const safeTitle = sanitizeMarkdownHeading(sanitizeSingleLine(rawTitle));
+  const cleanTitle = sanitizeSingleLine(rawTitle);
+  const safeTitle = sanitizeMarkdownHeading(cleanTitle.length > 0 ? cleanTitle : "Untitled Work Packet");
   const safeSession = formatCodeSpan(packet.sessionId);
   const safePacketId = formatCodeSpan(packet.packetId);
   const safeDate = formatCodeSpan(packet.createdAt.split("T")[0]);
