@@ -3847,7 +3847,7 @@ describe("REPL /packet command", () => {
 
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const handled = await handleReplPacketCommand(
-      "/packet draft 01IDEA_1 --title Document --session behavior --issue BIT-258",
+      "/packet draft 01IDEA_1 --title Document session behavior --issue BIT-258",
       cfg({ unix: true }),
       io,
       state,
@@ -3862,7 +3862,7 @@ describe("REPL /packet command", () => {
           ideaId: "01IDEA_1",
           eventId: undefined,
           issueId: "BIT-258",
-          title: "Document --session behavior",
+          title: "Document session behavior",
         },
       },
     ]);

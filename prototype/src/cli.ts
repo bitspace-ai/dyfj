@@ -1833,31 +1833,45 @@ export async function handleReplIdeaCommand(
   if (sub === "show") {
     const ideaId = parts[2];
     if (!ideaId) {
-      io.err("usage: /idea show <ideaId>");
+      io.err("usage: /idea show <idea-id>");
       return true;
     }
-    const client = await connect(config.socket);
-    try {
-      const resp = await client.request("ideas/get", { ideaId }) as {
-        idea: WorkbenchIdea | null;
-      };
-      if (!resp.idea) {
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("ideas/get", { ideaId }) as {
+            idea: WorkbenchIdea | null;
+          };
+          if (!res.idea) {
+            io.err(`idea not found: ${ideaId}`);
+          } else {
+            const id = res.idea;
+            io.err(`Idea [${id.ideaId}]:`);
+            io.err(`  Label: ${id.label}`);
+            io.err(`  Session: ${id.sessionId}`);
+            if (id.eventId) io.err(`  Event: ${id.eventId}`);
+            io.err(`  Date: ${id.createdAt}`);
+            if (id.description) io.err(`  Description: ${id.description}`);
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get idea: ${summarizeError(e)}`);
+      }
+    } else {
+      const idea = getWorkbenchIdea(ideaId);
+      if (!idea) {
         io.err(`idea not found: ${ideaId}`);
       } else {
-        const id = resp.idea;
-        io.out(
-          `Idea ${id.ideaId}:\n` +
-            `  Session:   ${id.sessionId}\n` +
-            `  Created:   ${id.createdAt}\n` +
-            `  Label:     ${id.label}\n` +
-            (id.eventId ? `  Event:     ${id.eventId}\n` : "") +
-            (id.description ? `  Desc:      ${id.description}\n` : ""),
-        );
+        io.err(`Idea [${idea.ideaId}]:`);
+        io.err(`  Label: ${idea.label}`);
+        io.err(`  Session: ${idea.sessionId}`);
+        if (idea.eventId) io.err(`  Event: ${idea.eventId}`);
+        io.err(`  Date: ${idea.createdAt}`);
+        if (idea.description) io.err(`  Description: ${idea.description}`);
       }
-    } catch (e) {
-      io.err(`error fetching idea: ${summarizeError(e)}`);
-    } finally {
-      client.close();
     }
     return true;
   }
@@ -1880,7 +1894,7 @@ export async function handleReplPacketCommand(
 
   if (parts.length === 1 || parts[1] === "help") {
     io.out("Workbench Work Packet Commands:\n" +
-      "  /packet draft [<idea-id|event-id>] [--idea <id>] [--event <id>] [--issue <id>] [--title <title>] Draft a work packet\n" +
+      "  /packet draft [<idea-id|evt-id>] [--idea <id>] [--event <id>] [--issue <id>] [--title <title>] Draft a work packet\n" +
       "  /packet list                          List generated work packets in this session\n" +
       "  /packet show <packetId>               Show rendered markdown for a work packet\n");
     return true;
@@ -1950,14 +1964,8 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
-        const knownOptionFlags = new Set([
-          "--issue",
-          "--event",
-          "--idea",
-          "--title",
-        ]);
         const titleTokens: string[] = [];
-        while (i < tokens.length && !knownOptionFlags.has(tokens[i])) {
+        while (i < tokens.length && !tokens[i].startsWith("--")) {
           titleTokens.push(tokens[i]);
           i++;
         }

@@ -581,7 +581,9 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
     "## 4. Verification & Provenance",
     "",
     `- **Primary Verifier:** \`${packet.verifierProvenance.verifierType}\``,
-    `- **Independence & Oracle Policy:** ${packet.verifierProvenance.independenceNotes}`,
+    `- **Independence & Oracle Policy:** ${
+      sanitizeSingleLine(packet.verifierProvenance.independenceNotes)
+    }`,
     "",
   );
 

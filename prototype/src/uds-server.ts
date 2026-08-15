@@ -132,7 +132,7 @@ export interface WorkbenchUnixServerOptions {
   runRuntime?: WorkbenchHttpRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
   listSessions?: (
-    options: { project?: string },
+    options: { project?: string; limit?: number },
   ) => Promise<WorkbenchProjectSessions[]>;
   fetchSessionEvents?: (
     input: {
@@ -194,6 +194,49 @@ function asRecord(params: unknown): Record<string, unknown> {
   return typeof params === "object" && params !== null
     ? params as Record<string, unknown>
     : {};
+}
+
+function sanitizeRpcString(
+  val: unknown,
+  fieldName: string,
+  options: { required?: boolean; maxLen?: number } = {},
+): string | undefined {
+  const maxLen = options.maxLen ?? 256;
+  if (val === undefined || val === null) {
+    if (options.required) {
+      throw new RpcError(
+        RpcErrorCode.invalidParams,
+        `${fieldName} is required`,
+      );
+    }
+    return undefined;
+  }
+  if (typeof val !== "string") {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} must be a string`,
+    );
+  }
+  if (val.length > maxLen * 2) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} exceeds maximum length of ${maxLen} characters`,
+    );
+  }
+  const trimmed = val.trim();
+  if (options.required && trimmed.length === 0) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} cannot be empty`,
+    );
+  }
+  if (trimmed.length > maxLen) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} exceeds maximum length of ${maxLen} characters`,
+    );
+  }
+  return trimmed;
 }
 
 const METHOD_CATALOG = [
@@ -473,19 +516,10 @@ export function buildWorkbenchHandlers(
 
     "events/query": async (params) => {
       const record = asRecord(params);
-      const rawSessionId = record.sessionId;
-      const sessionId = typeof rawSessionId === "string" &&
-          rawSessionId.length <= 512 &&
-          rawSessionId.trim().length > 0 &&
-          rawSessionId.trim().length <= 256
-        ? rawSessionId.trim()
-        : null;
-      if (!sessionId) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "events/query requires a valid non-empty string sessionId <= 256 characters",
-        );
-      }
+      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
       const asOf = record.asOf;
       if (
         asOf !== undefined &&
@@ -522,19 +556,10 @@ export function buildWorkbenchHandlers(
 
     "sessions/inspect": async (params) => {
       const record = asRecord(params);
-      const rawSessionId = record.sessionId;
-      const sessionId = typeof rawSessionId === "string" &&
-          rawSessionId.length <= 512 &&
-          rawSessionId.trim().length > 0 &&
-          rawSessionId.trim().length <= 256
-        ? rawSessionId.trim()
-        : null;
-      if (!sessionId) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "sessions/inspect requires a valid non-empty string sessionId <= 256 characters",
-        );
-      }
+      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
       const [session, workspaceRec, eventCount] = await Promise.all([
         (options.fetchSessionRecord ?? fetchWorkbenchSessionRecord)({
           sessionId,
@@ -555,41 +580,22 @@ export function buildWorkbenchHandlers(
 
     "ideas/mark": async (params) => {
       const record = asRecord(params);
-      const rawSessionId = record.sessionId;
-      const sessionId = typeof rawSessionId === "string" &&
-          rawSessionId.length <= 512 &&
-          rawSessionId.trim().length > 0 &&
-          rawSessionId.trim().length <= 256
-        ? rawSessionId.trim()
-        : "";
-      const label = typeof record.label === "string" ? record.label.trim() : "";
-      if (sessionId.length === 0 || label.length === 0) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "ideas/mark requires non-empty string sessionId (<= 256 chars) and label",
-        );
-      }
-      if (record.description !== undefined && typeof record.description !== "string") {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "ideas/mark description must be a string",
-        );
-      }
-      const eventId = typeof record.eventId === "string" &&
-          record.eventId.length <= 512 &&
-          record.eventId.trim().length > 0 &&
-          record.eventId.trim().length <= 256
-        ? record.eventId.trim()
-        : (record.eventId !== undefined ? null : undefined);
-      if (eventId === null) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "ideas/mark eventId must be <= 256 characters",
-        );
-      }
-      const description = typeof record.description === "string"
-        ? record.description.trim()
-        : undefined;
+      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const label = sanitizeRpcString(record.label, "label", {
+        required: true,
+        maxLen: 500,
+      })!;
+      const eventId = sanitizeRpcString(record.eventId, "eventId", {
+        maxLen: 256,
+      });
+      const description = sanitizeRpcString(
+        record.description,
+        "description",
+        { maxLen: 4000 },
+      );
       const events = eventId
         ? await fetchSessionEvents({ sessionId, eventId })
         : await fetchSessionEvents({ sessionId, limit: 20 });
@@ -613,21 +619,9 @@ export function buildWorkbenchHandlers(
 
     "ideas/list": async (params) => {
       const record = asRecord(params);
-      if (
-        record.sessionId !== undefined &&
-        (typeof record.sessionId !== "string" ||
-          record.sessionId.length > 512 ||
-          record.sessionId.trim().length === 0 ||
-          record.sessionId.trim().length > 256)
-      ) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "ideas/list requires a valid string sessionId <= 256 characters if provided",
-        );
-      }
-      const sessionId = typeof record.sessionId === "string"
-        ? record.sessionId.trim()
-        : undefined;
+      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+        maxLen: 256,
+      });
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {
         return { ideas: reg.listIdeas(sessionId) };
@@ -641,21 +635,13 @@ export function buildWorkbenchHandlers(
 
     "ideas/get": async (params) => {
       const record = asRecord(params);
-      const ideaId = record.ideaId;
-      if (
-        typeof ideaId !== "string" ||
-        ideaId.length > 512 ||
-        ideaId.trim().length === 0 ||
-        ideaId.trim().length > 256
-      ) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "ideas/get requires a valid string ideaId <= 256 characters",
-        );
-      }
+      const ideaId = sanitizeRpcString(record.ideaId, "ideaId", {
+        required: true,
+        maxLen: 256,
+      })!;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {
-        const idea = reg.getIdea(ideaId.trim());
+        const idea = reg.getIdea(ideaId);
         return { idea };
       } catch (e) {
         throw new RpcError(
@@ -667,91 +653,31 @@ export function buildWorkbenchHandlers(
 
     "packets/draft": async (params) => {
       const record = asRecord(params);
-      const rawSessionId = record.sessionId;
-      const sessionId = typeof rawSessionId === "string" &&
-          rawSessionId.length <= 512 &&
-          rawSessionId.trim().length > 0 &&
-          rawSessionId.trim().length <= 256
-        ? rawSessionId.trim()
-        : "";
-      if (sessionId.length === 0) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft requires non-empty string sessionId <= 256 characters",
-        );
-      }
-      if (record.ideaId !== undefined && typeof record.ideaId !== "string") {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft ideaId must be a string",
-        );
-      }
-      if (record.eventId !== undefined && typeof record.eventId !== "string") {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft eventId must be a string",
-        );
-      }
-      if (record.issueId !== undefined && typeof record.issueId !== "string") {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft issueId must be a string",
-        );
-      }
-      if (record.title !== undefined && typeof record.title !== "string") {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft title must be a string",
-        );
-      }
-      if (
-        record.operatorIntent !== undefined &&
-        typeof record.operatorIntent !== "string"
-      ) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft operatorIntent must be a string",
-        );
-      }
-      const ideaId = typeof record.ideaId === "string" &&
-          record.ideaId.length <= 512 &&
-          record.ideaId.trim().length > 0 &&
-          record.ideaId.trim().length <= 256
-        ? record.ideaId.trim()
-        : undefined;
-      if (record.ideaId !== undefined && !ideaId) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft ideaId must be non-empty and <= 256 characters",
-        );
-      }
-      const eventId = typeof record.eventId === "string" &&
-          record.eventId.length <= 512 &&
-          record.eventId.trim().length > 0 &&
-          record.eventId.trim().length <= 256
-        ? record.eventId.trim()
-        : undefined;
-      if (record.eventId !== undefined && !eventId) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft eventId must be non-empty and <= 256 characters",
-        );
-      }
+      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const ideaId = sanitizeRpcString(record.ideaId, "ideaId", {
+        maxLen: 256,
+      });
+      const eventId = sanitizeRpcString(record.eventId, "eventId", {
+        maxLen: 256,
+      });
       if (ideaId && eventId) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
           "packets/draft cannot specify both ideaId and eventId",
         );
       }
-      const issueId = typeof record.issueId === "string"
-        ? record.issueId.trim()
-        : undefined;
-      const title = typeof record.title === "string"
-        ? record.title.trim()
-        : undefined;
-      const operatorIntent = typeof record.operatorIntent === "string"
-        ? record.operatorIntent.trim()
-        : undefined;
+      const issueId = sanitizeRpcString(record.issueId, "issueId", {
+        maxLen: 256,
+      });
+      const title = sanitizeRpcString(record.title, "title", { maxLen: 500 });
+      const operatorIntent = sanitizeRpcString(
+        record.operatorIntent,
+        "operatorIntent",
+        { maxLen: 8000 },
+      );
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {
         const idea = ideaId ? reg.getIdea(ideaId) : null;
@@ -787,20 +713,9 @@ export function buildWorkbenchHandlers(
 
     "packets/list": async (params) => {
       const record = asRecord(params);
-      if (
-        record.sessionId !== undefined &&
-        (typeof record.sessionId !== "string" ||
-          record.sessionId.trim().length === 0 ||
-          record.sessionId.trim().length > 256)
-      ) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/list requires a valid string sessionId <= 256 characters if provided",
-        );
-      }
-      const sessionId = typeof record.sessionId === "string"
-        ? record.sessionId.trim()
-        : undefined;
+      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+        maxLen: 256,
+      });
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {
         return { packets: reg.listPackets(sessionId) };
@@ -814,20 +729,13 @@ export function buildWorkbenchHandlers(
 
     "packets/get": async (params) => {
       const record = asRecord(params);
-      const packetId = record.packetId;
-      if (
-        typeof packetId !== "string" ||
-        packetId.trim().length === 0 ||
-        packetId.trim().length > 256
-      ) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/get requires a valid string packetId <= 256 characters",
-        );
-      }
+      const packetId = sanitizeRpcString(record.packetId, "packetId", {
+        required: true,
+        maxLen: 256,
+      })!;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {
-        const packet = reg.getPacket(packetId.trim());
+        const packet = reg.getPacket(packetId);
         const markdown = packet ? formatWorkPacketMarkdown(packet) : null;
         return { packet, markdown };
       } catch (e) {
