@@ -4355,6 +4355,84 @@ describe("REPL /packet command", () => {
     const newIdx = output.indexOf("01NEW_SESS");
     expect(oldIdx).toBeLessThan(newIdx);
   });
+
+  test("/idea mark and /packet draft support -- delimiter for option-looking tokens", async () => {
+    const { io, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          if (method === "ideas/mark") {
+            return Promise.resolve({
+              idea: {
+                ideaId: "01IDEA_WERROR",
+                sessionId: params.sessionId,
+                label: params.label,
+                createdAt: "2026-08-15T12:00:00Z",
+              },
+            });
+          }
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_WERROR",
+              sessionId: params.sessionId,
+              title: params.title,
+            },
+            markdown: "# Work Packet: Document -Werror",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handledIdea = await handleReplIdeaCommand(
+      "/idea mark -- Support -Werror builds",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handledIdea).toBe(true);
+    expect(recordedCalls[0].params.label).toBe("Support -Werror builds");
+
+    const handledPacket = await handleReplPacketCommand(
+      "/packet draft --title -- Document -Werror",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handledPacket).toBe(true);
+    expect(recordedCalls[1].params.title).toBe("Document -Werror");
+  });
+
+  test("/session switch resets local session events", async () => {
+    const state: any = {
+      sessionId: "01SESSION_A",
+      turnCount: 3,
+      sessionSpendUsd: 0.1,
+      events: [{ eventId: "evt_u_1", sessionId: "01SESSION_A" }],
+    };
+    const { io } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: () => Promise.resolve({ exists: true }),
+        close: () => {},
+      });
+
+    await handleReplSessionCommand(
+      "/session switch 01SESSION_B",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+
+    expect(state.sessionId).toBe("01SESSION_B");
+    expect(state.turnCount).toBe(0);
+    expect(state.events).toEqual([]);
+  });
 });
 
 describe("session posture", () => {

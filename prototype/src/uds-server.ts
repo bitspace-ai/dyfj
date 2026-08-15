@@ -229,7 +229,7 @@ function sanitizeRpcIdentifier(
       `${fieldName} cannot be empty or whitespace-only`,
     );
   }
-  if (/[\x00-\x20\x7F\x1B]/.test(val)) {
+  if (/[\x00-\x20\x7F-\x9F\x1B]/.test(val)) {
     throw new RpcError(
       RpcErrorCode.invalidParams,
       `${fieldName} cannot contain control characters or whitespace`,

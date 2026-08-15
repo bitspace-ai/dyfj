@@ -565,4 +565,31 @@ describe("draftWorkPacketFromContext", () => {
     expect(packet.title).not.toContain("\u009B");
     expect(packet.operatorIntent).not.toContain("\u0080");
   });
+
+  test("escapes multiline HTML headings outside code blocks", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_ML_HTML",
+      operatorIntent: "<h1\nclass=\"injected\">Injected Heading</h1>",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("\\<h1\nclass=\"injected\"\\>");
+    expect(md).toContain("\\</h1\\>");
+  });
+
+  test("preserves multiple internal spaces in metadata code spans and criteria", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_SPACES",
+      workspace: "/work/My  Custom  Path",
+      acceptanceCriteria: ["Verify `printf 'a  b'` output"],
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("`/work/My  Custom  Path`");
+    expect(md).toContain("`printf 'a  b'`");
+  });
 });

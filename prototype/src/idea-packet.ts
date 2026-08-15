@@ -230,6 +230,15 @@ function sanitizeMarkdownHeading(text: string): string {
   let openChar: string | null = null;
   let openCount = 0;
   let openPrefix = "";
+  let nonFenceBuffer: string[] = [];
+
+  const flushNonFenceBuffer = () => {
+    if (nonFenceBuffer.length === 0) return;
+    const blockText = nonFenceBuffer.join("\n");
+    const escaped = sanitizeHtmlHeadingsOutsideCodeSpans(blockText);
+    result.push(...escaped.split("\n"));
+    nonFenceBuffer = [];
+  };
 
   for (const line of lines) {
     if (!openChar) {
@@ -239,6 +248,7 @@ function sanitizeMarkdownHeading(text: string): string {
         const fence = fenceMatch[2];
         const info = fenceMatch[3];
         if (fence[0] !== "`" || !info.includes("`")) {
+          flushNonFenceBuffer();
           openPrefix = prefix;
           openChar = fence[0];
           openCount = fence.length;
@@ -248,7 +258,7 @@ function sanitizeMarkdownHeading(text: string): string {
       }
 
       // Outside code fences: escape ATX and Setext headings
-      let sanitizedLine = line
+      const sanitizedLine = line
         .replace(
           /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(#+)/,
           (_match, prefix, hashes) => `${prefix}\\${hashes}`,
@@ -258,8 +268,7 @@ function sanitizeMarkdownHeading(text: string): string {
           (_match, prefix, underline) => `${prefix}\\${underline}`,
         );
 
-      sanitizedLine = sanitizeHtmlHeadingsOutsideCodeSpans(sanitizedLine);
-      result.push(sanitizedLine);
+      nonFenceBuffer.push(sanitizedLine);
     } else {
       const closeMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})[ \t]*$/);
       if (
@@ -277,6 +286,7 @@ function sanitizeMarkdownHeading(text: string): string {
     }
   }
 
+  flushNonFenceBuffer();
   return result.join("\n");
 }
 
@@ -288,9 +298,73 @@ function sanitizeSingleLine(text: string): string {
     .trim();
 }
 
+function sanitizeCodeSpanText(str: string): string {
+  return str
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+    .replace(/[\r\n\x00-\x1F\x7F-\x9F\x1B]/g, "")
+    .trim();
+}
+
 function sanitizeCriterion(text: string): string {
-  const clean = sanitizeSingleLine(text);
-  return sanitizeHtmlHeadingsOutsideCodeSpans(clean);
+  const noControls = text
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+    .replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, " ");
+  let result = "";
+  let i = 0;
+  while (i < noControls.length) {
+    if (noControls[i] === "`") {
+      let tickCount = 0;
+      while (i + tickCount < noControls.length && noControls[i + tickCount] === "`") {
+        tickCount++;
+      }
+      let closeIdx = -1;
+      let j = i + tickCount;
+      while (j < noControls.length) {
+        if (noControls[j] === "`") {
+          let closeCount = 0;
+          while (j + closeCount < noControls.length && noControls[j + closeCount] === "`") {
+            closeCount++;
+          }
+          if (closeCount === tickCount) {
+            closeIdx = j;
+            break;
+          }
+          j += closeCount;
+        } else {
+          j++;
+        }
+      }
+      if (closeIdx !== -1) {
+        const span = noControls.slice(i, closeIdx + tickCount);
+        result += span;
+        i = closeIdx + tickCount;
+        continue;
+      }
+      result += noControls.slice(i, i + tickCount);
+      i += tickCount;
+    } else if (noControls[i] === "<") {
+      const sub = noControls.slice(i);
+      const match = sub.match(/^<(\/?[hH][1-6](?:[\s/][^>]*)?)>/);
+      if (match) {
+        result += `\\<${match[1]}\\>`;
+        i += match[0].length;
+      } else {
+        result += "<";
+        i++;
+      }
+    } else if (/\s/.test(noControls[i])) {
+      if (!result.endsWith(" ") && result.length > 0) {
+        result += " ";
+      }
+      while (i < noControls.length && /\s/.test(noControls[i])) {
+        i++;
+      }
+    } else {
+      result += noControls[i];
+      i++;
+    }
+  }
+  return result.trim();
 }
 
 export class IdeaPacketRegistry {
@@ -779,7 +853,7 @@ export function draftWorkPacketFromContext(input: {
         `Verify outcomes against operator intent and documented constraints`,
       ];
   const proposedAcceptanceCriteria = rawCriteria
-    .map((c) => sanitizeSingleLine(c.length > 1000 ? c.slice(0, 1000) : c).slice(0, 500));
+    .map((c) => sanitizeCriterion(c.length > 1000 ? c.slice(0, 1000) : c).slice(0, 500));
 
   const packet: WorkbenchWorkPacket = {
     packetId: input.packetId
@@ -854,7 +928,7 @@ function closeDanglingFences(text: string): string {
 }
 
 function formatCodeSpan(str: string): string {
-  const clean = sanitizeSingleLine(str);
+  const clean = sanitizeCodeSpanText(str);
   const matches = clean.match(/`+/g) || [];
   let maxTicks = 0;
   for (const m of matches) {

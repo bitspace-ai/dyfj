@@ -1397,5 +1397,17 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
       code: RpcErrorCode.invalidParams,
     });
   });
+
+  test("RPC methods reject C1 control characters in identifiers", async () => {
+    const server = await startServer(fakes);
+    const client = await connectClient(server);
+
+    await expect(client.request("sessions/inspect", {
+      sessionId: "01TEST\u009BSESSION",
+    })).rejects.toMatchObject({
+      code: RpcErrorCode.invalidParams,
+      message: expect.stringContaining("cannot contain control characters"),
+    });
+  });
 });
 

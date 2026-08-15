@@ -876,8 +876,9 @@ export async function runRepl(
         sessionState.turnCount++;
         if ("cost" in result) sessionState.sessionSpendUsd += result.cost.totalUsd;
         if (!sessionState.events) sessionState.events = [];
+        const eventNum = sessionState.events.length + 1;
         sessionState.events.push(createCliSessionEvent({
-          eventId: `evt_u_${sessionState.turnCount}`,
+          eventId: `evt_u_${eventNum}`,
           sessionId: result.sessionId,
           eventType: "session_start",
           content: prompt,
@@ -885,7 +886,7 @@ export async function runRepl(
         }));
         if (result.text) {
           sessionState.events.push(createCliSessionEvent({
-            eventId: `evt_a_${sessionState.turnCount}`,
+            eventId: `evt_a_${eventNum}`,
             sessionId: result.sessionId,
             eventType: "model_response",
             content: result.text,
@@ -1829,6 +1830,7 @@ export async function handleReplSessionCommand(
     config.sessionId = targetId;
     sessionState.turnCount = 0;
     sessionState.sessionSpendUsd = 0;
+    sessionState.events = [];
     io.err(`switched to session: ${targetId}`);
     return true;
   }
@@ -1862,7 +1864,7 @@ export async function handleReplIdeaCommand(
   const sub = parts[1];
   if (!sub || sub === "help") {
     io.err("Idea capture commands:");
-    io.err("  /idea mark [--event <event-id>] <label...>   mark an idea in this session");
+    io.err("  /idea mark [--event <event-id>] [--] <label...>   mark an idea in this session");
     io.err("  /idea list                                   list marked ideas for this session");
     io.err("  /idea show <idea-id>                         show details of a marked idea");
     return true;
@@ -1884,6 +1886,14 @@ export async function handleReplIdeaCommand(
     let i = 0;
     while (i < tokens.length) {
       const token = tokens[i];
+      if (token === "--") {
+        i++;
+        while (i < tokens.length) {
+          labelParts.push(tokens[i]);
+          i++;
+        }
+        break;
+      }
       if (token === "--event" || token === "-e") {
         if (eventId !== undefined) {
           io.err("error: --event specified multiple times");
@@ -2156,6 +2166,16 @@ export async function handleReplPacketCommand(
     let i = 0;
     while (i < tokens.length) {
       const token = tokens[i];
+      if (token === "--") {
+        i++;
+        while (i < tokens.length) {
+          if (!targetRef) {
+            targetRef = tokens[i];
+          }
+          i++;
+        }
+        break;
+      }
       if (token === "--issue") {
         if (issueId !== undefined) {
           io.err("error: --issue specified multiple times");
@@ -2209,6 +2229,14 @@ export async function handleReplPacketCommand(
         ]);
         const titleTokens: string[] = [];
         while (i < tokens.length) {
+          if (tokens[i] === "--") {
+            i++;
+            while (i < tokens.length) {
+              titleTokens.push(tokens[i]);
+              i++;
+            }
+            break;
+          }
           if (isOptionLike(tokens[i])) {
             if (!knownOptionFlags.has(tokens[i])) {
               io.err(`error: unexpected argument "${tokens[i]}"`);
