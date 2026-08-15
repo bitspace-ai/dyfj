@@ -142,7 +142,9 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
 }
 
 function sanitizeMarkdownHeading(text: string): string {
-  const clean = text.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
+  const clean = text
+    .replace(/\r\n|\r/g, "\n")
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
   const lines = clean.split("\n");
   const result: string[] = [];
   let openChar: string | null = null;
@@ -203,6 +205,15 @@ function sanitizeSingleLine(text: string): string {
     .replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function sanitizeCriterion(text: string): string {
+  const clean = sanitizeSingleLine(text);
+  const parts = clean.split(/(`+[^`]*`+)/g);
+  for (let i = 0; i < parts.length; i += 2) {
+    parts[i] = parts[i].replace(/<(\/?[hH][1-6]\b[^>]*)>/g, "\\<$1\\>");
+  }
+  return parts.join("");
 }
 
 export class IdeaPacketRegistry {
@@ -331,7 +342,7 @@ export class IdeaPacketRegistry {
           .slice(0, 50)
           .map((s) => (s.length > 1000 ? s.slice(0, 1000) : s).trim().slice(0, 500)),
       },
-      operatorIntent: rawIntent.trim().slice(0, 2000),
+      operatorIntent: closeDanglingFences(rawIntent.trim().slice(0, 2000)),
       proposedAcceptanceCriteria: (packet.proposedAcceptanceCriteria ?? [])
         .slice(0, 20)
         .map((c) => (c.length > 1000 ? c.slice(0, 1000) : c).trim().slice(0, 500)),
@@ -781,8 +792,8 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   const safeWorkspace = packet.targetWorkspace
     ? formatCodeSpan(packet.targetWorkspace)
     : "(current workspace)";
-  const safeExcerpt = sanitizeMarkdownHeading(packet.sourceContext.excerpt);
-  const safeIntent = sanitizeMarkdownHeading(packet.operatorIntent);
+  const safeExcerpt = closeDanglingFences(sanitizeMarkdownHeading(packet.sourceContext.excerpt));
+  const safeIntent = closeDanglingFences(sanitizeMarkdownHeading(packet.operatorIntent));
 
   const lines: string[] = [
     `# Work Packet: ${safeTitle}`,
@@ -821,7 +832,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   );
 
   for (const criterion of packet.proposedAcceptanceCriteria) {
-    const safeCriterion = sanitizeSingleLine(criterion);
+    const safeCriterion = sanitizeCriterion(criterion);
     lines.push(`- [ ] ${safeCriterion}`);
   }
 

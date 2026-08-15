@@ -1955,26 +1955,30 @@ export async function handleReplIdeaCommand(
         io.err(`dyfj: failed to get idea: ${summarizeError(e)}`);
       }
     } else {
-      const idea = getWorkbenchIdea(ideaId);
-      if (!idea) {
-        io.err(`idea not found: ${ideaId}`);
-      } else {
-        const cleanId = idea.ideaId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
-        const cleanSession = idea.sessionId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
-        const cleanEvent = idea.eventId ? idea.eventId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim() : null;
-        const cleanDate = (idea.createdAt ?? "").replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
-        const cleanLabel = idea.label
-          .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
-          .trim();
-        const cleanDesc = idea.description
-          ? idea.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
-          : "";
-        io.err(`Idea [${cleanId}]:`);
-        io.err(`  Label: ${cleanLabel}`);
-        io.err(`  Session: ${cleanSession}`);
-        if (cleanEvent) io.err(`  Event: ${cleanEvent}`);
-        io.err(`  Date: ${cleanDate}`);
-        if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
+      try {
+        const idea = getWorkbenchIdea(ideaId);
+        if (!idea) {
+          io.err(`idea not found: ${ideaId}`);
+        } else {
+          const cleanId = idea.ideaId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+          const cleanSession = idea.sessionId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+          const cleanEvent = idea.eventId ? idea.eventId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim() : null;
+          const cleanDate = (idea.createdAt ?? "").replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+          const cleanLabel = idea.label
+            .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+            .trim();
+          const cleanDesc = idea.description
+            ? idea.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
+            : "";
+          io.err(`Idea [${cleanId}]:`);
+          io.err(`  Label: ${cleanLabel}`);
+          io.err(`  Session: ${cleanSession}`);
+          if (cleanEvent) io.err(`  Event: ${cleanEvent}`);
+          io.err(`  Date: ${cleanDate}`);
+          if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get idea: ${summarizeError(e)}`);
       }
     }
     return true;

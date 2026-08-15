@@ -217,16 +217,16 @@ function sanitizeRpcIdentifier(
       `${fieldName} must be a string`,
     );
   }
+  if (val.length === 0 || val.length > maxLen) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} must be between 1 and ${maxLen} characters`,
+    );
+  }
   if (val.trim().length === 0) {
     throw new RpcError(
       RpcErrorCode.invalidParams,
       `${fieldName} cannot be empty or whitespace-only`,
-    );
-  }
-  if (val.length > maxLen) {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} exceeds maximum length of ${maxLen} characters`,
     );
   }
   if (/[\x00-\x20\x7F\x1B]/.test(val)) {
@@ -269,7 +269,7 @@ function sanitizeRpcString(
   if (options.singleLine !== false) {
     s = s.replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ").replace(/\s+/g, " ");
   } else {
-    s = s.replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, " ");
+    s = s.replace(/\r\n|\r/g, "\n").replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, " ");
   }
   const trimmed = s.trim();
   if (trimmed.length === 0) {
