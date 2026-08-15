@@ -265,8 +265,8 @@ export class IdeaPacketRegistry {
     const rawCreated = packet.createdAt.length > 128 ? packet.createdAt.slice(0, 128) : packet.createdAt;
     const trimmedExcerpt = rawExcerpt.trim();
     const excerpt = trimmedExcerpt.length > 4000
-      ? trimmedExcerpt.slice(0, 3985) + "...[truncated]"
-      : trimmedExcerpt;
+      ? closeDanglingFences(trimmedExcerpt.slice(0, 3980)) + "...[truncated]"
+      : closeDanglingFences(trimmedExcerpt);
 
     const sanitized: WorkbenchWorkPacket = {
       packetId: validateIdentifier(packet.packetId, "packetId"),
@@ -423,17 +423,30 @@ export function markWorkbenchIdea(input: {
   if (input.eventId !== undefined && input.eventId !== null) {
     const eventId = validateIdentifier(input.eventId, "eventId");
     if (input.events !== undefined) {
-      const match = input.events.find((e) => e.eventId === eventId);
+      const match = input.events.find(
+        (e) =>
+          e.eventId === eventId &&
+          (e.sessionId === undefined || e.sessionId === sessionId),
+      );
       if (!match) {
-        throw new Error(`event "${eventId}" not found in session events`);
+        throw new Error(
+          `event "${eventId}" not found in session events for session "${sessionId}"`,
+        );
       }
       if (description.length === 0 && match.content) {
         description = match.content.slice(0, 4000).trim().slice(0, 2000);
       }
     }
   } else if (description.length === 0 && input.events && input.events.length > 0) {
-    const recent = input.events.slice(-50);
-    const candidates = recent
+    const sessionEvents: WorkbenchSessionEvent[] = [];
+    for (let i = input.events.length - 1; i >= 0; i--) {
+      const ev = input.events[i];
+      if (ev.sessionId === undefined || ev.sessionId === sessionId) {
+        sessionEvents.unshift(ev);
+        if (sessionEvents.length >= 50) break;
+      }
+    }
+    const candidates = sessionEvents
       .filter((e) =>
         (e.eventType === "model_response" ||
           e.eventType === "agent_response" ||
@@ -551,12 +564,15 @@ export function draftWorkPacketFromContext(input: {
       }
     }
   } else if (events && events.length > 0) {
-    const rawTail = events.slice(-200);
-    const sessionEvents = rawTail.filter(
-      (e) => e.sessionId === undefined || e.sessionId === sessionId,
-    );
-    const recent = sessionEvents.slice(-50);
-    const relevant = recent
+    const sessionEvents: WorkbenchSessionEvent[] = [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (ev.sessionId === undefined || ev.sessionId === sessionId) {
+        sessionEvents.unshift(ev);
+        if (sessionEvents.length >= 50) break;
+      }
+    }
+    const relevant = sessionEvents
       .filter((e) =>
         e.eventType === "session_start" ||
         e.eventType === "model_response" ||
@@ -584,16 +600,19 @@ export function draftWorkPacketFromContext(input: {
     excerpt = (idea?.description || operatorIntent).slice(0, 4000);
   }
 
-  const rawTailForFiles = events ? events.slice(-200) : [];
-  const recentEvents = rawTailForFiles
-    .filter((e) => e.sessionId === undefined || e.sessionId === sessionId)
-    .slice(-20);
-  for (const ev of recentEvents) {
-    if (ev.toolName === "read_file" && ev.toolArguments?.path) {
-      const raw = String(ev.toolArguments.path).slice(0, 1000).trim();
-      const p = raw.slice(0, 500);
-      if (!contextSources.includes(p) && contextSources.length < 50) {
-        contextSources.push(p);
+  if (events) {
+    let filesCount = 0;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (ev.sessionId === undefined || ev.sessionId === sessionId) {
+        if (ev.toolName === "read_file" && ev.toolArguments?.path) {
+          const raw = String(ev.toolArguments.path).slice(0, 1000).trim();
+          const p = raw.slice(0, 500);
+          if (!contextSources.includes(p) && contextSources.length < 50) {
+            contextSources.push(p);
+          }
+        }
+        if (++filesCount >= 50) break;
       }
     }
   }

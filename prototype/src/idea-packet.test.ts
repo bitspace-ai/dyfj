@@ -403,4 +403,54 @@ describe("draftWorkPacketFromContext", () => {
 
     expect(packet.sourceContext.excerpt).toContain("...[truncated]");
   });
+
+  test("markWorkbenchIdea rejects event belonging to a different session", () => {
+    const events: WorkbenchSessionEvent[] = [
+      {
+        sessionId: "01SESSION_OTHER",
+        eventId: "evt-diff-sess",
+        eventType: "model_response",
+        createdAt: "2026-08-15T12:00:00Z",
+        content: "Other session response",
+      } as any,
+    ];
+
+    expect(() =>
+      markWorkbenchIdea({
+        sessionId: "01SESSION_TARGET",
+        eventId: "evt-diff-sess",
+        label: "Cross session idea",
+        events,
+      })
+    ).toThrow(/not found in session events for session "01SESSION_TARGET"/);
+  });
+
+  test("draftWorkPacketFromContext ignores events and file reads from other sessions", () => {
+    const events: WorkbenchSessionEvent[] = [
+      {
+        sessionId: "01SESSION_FOREIGN",
+        eventId: "evt-foreign-1",
+        eventType: "tool_call",
+        toolName: "read_file",
+        toolArguments: { path: "foreign/secret.ts" },
+        createdAt: "2026-08-15T12:00:00Z",
+      } as any,
+      {
+        sessionId: "01SESSION_NATIVE",
+        eventId: "evt-native-1",
+        eventType: "tool_call",
+        toolName: "read_file",
+        toolArguments: { path: "native/file.ts" },
+        createdAt: "2026-08-15T12:01:00Z",
+      } as any,
+    ];
+
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_NATIVE",
+      events,
+    });
+
+    expect(packet.sourceContext.contextSources).toEqual(["native/file.ts"]);
+    expect(packet.sourceContext.contextSources).not.toContain("foreign/secret.ts");
+  });
 });

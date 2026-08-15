@@ -1657,11 +1657,15 @@ export async function handleReplSessionCommand(
               const cleanId = (s.sessionId ?? "")
                 .replace(/[\x00-\x1F\x7F\x1B]/g, "")
                 .trim();
+              const cleanCreated = (s.createdAt ?? "")
+                .split("T")[0]
+                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .trim();
               const cleanDesc = (s.taskDescription ?? "")
                 .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
                 .trim();
               io.err(
-                `  ${cleanId}  ${s.createdAt?.split("T")[0] ?? ""}  ${cleanDesc}`,
+                `  ${cleanId}  ${cleanCreated}  ${cleanDesc}`,
               );
             }
             io.err(

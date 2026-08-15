@@ -477,7 +477,9 @@ export function buildWorkbenchHandlers(
       for (let i = 0; i < projects.length; i++) {
         const p = projects[i];
         if (Array.isArray(p.sessions)) {
+          let count = 0;
           for (const s of p.sessions) {
+            if (++count > limit * 2) break;
             const createdAt = s.createdAt || "";
             if (topSessions.length < limit) {
               topSessions.push({ projectIdx: i, session: s });
