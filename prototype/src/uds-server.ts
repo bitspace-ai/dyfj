@@ -399,12 +399,28 @@ export function buildWorkbenchHandlers(
     },
 
     "sessions/list": async (params) => {
-      const project = asRecord(params).project;
-      return {
-        projects: await listSessions({
-          project: typeof project === "string" ? project : undefined,
-        }),
-      };
+      const record = asRecord(params);
+      const project = record.project;
+      const limit = typeof record.limit === "number" && record.limit > 0
+        ? Math.min(record.limit, 1000)
+        : undefined;
+      const projects = await listSessions({
+        project: typeof project === "string" ? project : undefined,
+      });
+      if (limit === undefined) {
+        return { projects };
+      }
+      let remaining = limit;
+      const boundedProjects: WorkbenchProjectSessions[] = [];
+      for (const p of projects) {
+        if (remaining <= 0) break;
+        const sessions = Array.isArray(p.sessions)
+          ? p.sessions.slice(0, remaining)
+          : [];
+        remaining -= sessions.length;
+        boundedProjects.push({ ...p, sessions });
+      }
+      return { projects: boundedProjects };
     },
 
     "events/query": async (params) => {

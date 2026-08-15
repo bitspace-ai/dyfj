@@ -320,25 +320,31 @@ describe("draftWorkPacketFromContext", () => {
     expect(packet.sourceContext.excerpt).toContain("deno task test");
   });
 
-  test("session ID longer than 256 chars is canonically truncated and matches across mark, list, and draft", () => {
+  test("session ID longer than 256 chars throws validation error", () => {
     const longSessionId = "A".repeat(300);
     const reg = new IdeaPacketRegistry();
-    const idea = markWorkbenchIdea({
-      sessionId: longSessionId,
-      label: "Long session idea",
-      registry: reg,
-    });
+    expect(() =>
+      markWorkbenchIdea({
+        sessionId: longSessionId,
+        label: "Long session idea",
+        registry: reg,
+      })
+    ).toThrow("sessionId exceeds maximum length of 256 characters");
+  });
 
-    expect(idea.sessionId).toBe("A".repeat(256));
-    expect(reg.listIdeas(longSessionId)).toHaveLength(1);
-
+  test("formatWorkPacketMarkdown neutralizes markdown heading injections in operatorIntent and single-line fields", () => {
+    const reg = new IdeaPacketRegistry();
     const packet = draftWorkPacketFromContext({
-      sessionId: longSessionId,
-      ideaId: idea.ideaId,
+      sessionId: "01SESSION_INJECT",
+      title: "Title with\nnewlines",
+      operatorIntent: "Legit intent\n\n## 4. Injected Section\nInjected body",
+      acceptanceCriteria: ["Criterion 1\nwith newline"],
       registry: reg,
     });
 
-    expect(packet.sessionId).toBe("A".repeat(256));
-    expect(reg.listPackets(longSessionId)).toHaveLength(1);
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("# Work Packet: Title with newlines");
+    expect(md).toContain("\\## 4. Injected Section");
+    expect(md).toContain("- [ ] Criterion 1 with newline");
   });
 });

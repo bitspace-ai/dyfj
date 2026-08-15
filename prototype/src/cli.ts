@@ -1602,7 +1602,7 @@ export async function handleReplSessionCommand(
       try {
         const client = await connect(config.socket);
         try {
-          const res = await client.request("sessions/list", {}) as {
+          const res = await client.request("sessions/list", { limit: 15 }) as {
             projects?: Array<{
               sessions: Array<{
                 sessionId: string;
@@ -1902,10 +1902,12 @@ export async function handleReplPacketCommand(
   }
 
   if (sub === "draft") {
-    let targetRef: string | undefined;
+    let ideaId: string | undefined;
+    let eventId: string | undefined;
     let issueId: string | undefined;
     let title: string | undefined;
-    const knownOptions = new Set(["--issue", "--title"]);
+    let targetRef: string | undefined;
+
     const tokens = parts.slice(2);
     let i = 0;
     while (i < tokens.length) {
@@ -1918,10 +1920,33 @@ export async function handleReplPacketCommand(
         }
         issueId = tokens[i];
         i++;
+      } else if (token === "--event") {
+        i++;
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
+          io.err("error: --event requires an event identifier");
+          return true;
+        }
+        eventId = tokens[i];
+        i++;
+      } else if (token === "--idea") {
+        i++;
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
+          io.err("error: --idea requires an idea identifier");
+          return true;
+        }
+        ideaId = tokens[i];
+        i++;
       } else if (token === "--title") {
         i++;
         const titleTokens: string[] = [];
-        while (i < tokens.length && !knownOptions.has(tokens[i])) {
+        const isNextOption = (t: string) => {
+          if (!t.startsWith("--")) return false;
+          if (t === "--issue" && issueId === undefined) return true;
+          if (t === "--event" && eventId === undefined) return true;
+          if (t === "--idea" && ideaId === undefined) return true;
+          return false;
+        };
+        while (i < tokens.length && !isNextOption(tokens[i])) {
           titleTokens.push(tokens[i]);
           i++;
         }
@@ -1939,16 +1964,20 @@ export async function handleReplPacketCommand(
       }
     }
 
-    if (!targetRef) {
+    if (!ideaId && !eventId && !targetRef) {
       io.err(
-        "usage: /packet draft <idea-id|event-id> [--issue <BIT-id>] [--title <title>]",
+        "usage: /packet draft [<idea-id|event-id>] [--idea <id>] [--event <id>] [--issue <BIT-id>] [--title <title>]",
       );
       return true;
     }
 
-    const isEventRef = targetRef.startsWith("evt-");
-    const ideaId = isEventRef ? undefined : targetRef;
-    const eventId = isEventRef ? targetRef : undefined;
+    if (targetRef && !ideaId && !eventId) {
+      if (targetRef.startsWith("evt-")) {
+        eventId = targetRef;
+      } else {
+        ideaId = targetRef;
+      }
+    }
 
     if (config.unix) {
       try {
@@ -1970,7 +1999,7 @@ export async function handleReplPacketCommand(
         io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
       }
     } else {
-      if (isEventRef) {
+      if (eventId) {
         io.err(
           "error: drafting packets from event references requires connecting to a local runtime over Unix domain socket",
         );

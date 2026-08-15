@@ -3854,6 +3854,49 @@ describe("REPL /packet command", () => {
     expect(stdout.join("\n")).toContain("# Work Packet: Document --session behavior");
   });
 
+  test("/packet draft supports explicit --event and --idea flags", async () => {
+    const { io, stdout } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_5",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Event Flag Test",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft --event custom-event-id --title Event Flag Test",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: undefined,
+          eventId: "custom-event-id",
+          issueId: undefined,
+          title: "Event Flag Test",
+        },
+      },
+    ]);
+  });
+
   test("/packet draft diagnoses missing target reference", async () => {
     const { io, stderr } = fakeIo();
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };

@@ -39,6 +39,36 @@ export interface WorkbenchWorkPacket {
   createdAt: string;
 }
 
+function validateIdentifier(id: string, fieldName = "identifier"): string {
+  const trimmed = id.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`${fieldName} cannot be empty`);
+  }
+  if (trimmed.length > 256) {
+    throw new Error(`${fieldName} exceeds maximum length of 256 characters`);
+  }
+  return trimmed;
+}
+
+function safeBoundedJson(obj: unknown, maxLen = 4000): string {
+  if (obj === null || obj === undefined) return "{}";
+  try {
+    const str = JSON.stringify(obj);
+    if (str.length <= maxLen) return str;
+    return str.slice(0, maxLen) + "...[truncated]";
+  } catch {
+    return "[unserializable arguments]";
+  }
+}
+
+function sanitizeMarkdownHeading(text: string): string {
+  return text.replace(/^([ \t]*#+)/gm, (_match, g1) => `\\${g1}`);
+}
+
+function sanitizeSingleLine(text: string): string {
+  return text.replace(/[\r\n]/g, " ").trim();
+}
+
 export class IdeaPacketRegistry {
   private readonly ideasById = new Map<string, WorkbenchIdea>();
   private readonly ideasBySession = new Map<string, WorkbenchIdea[]>();
@@ -46,10 +76,6 @@ export class IdeaPacketRegistry {
   private readonly packetsBySession = new Map<string, WorkbenchWorkPacket[]>();
   private readonly maxSessions = 100;
   private readonly maxEntriesPerSession = 50;
-
-  private sanitizeId(id: string): string {
-    return id.trim().slice(0, 256);
-  }
 
   private cloneIdea(idea: WorkbenchIdea): WorkbenchIdea {
     return { ...idea };
@@ -69,9 +95,9 @@ export class IdeaPacketRegistry {
 
   registerIdea(idea: WorkbenchIdea): void {
     const sanitized: WorkbenchIdea = {
-      ideaId: this.sanitizeId(idea.ideaId),
-      sessionId: this.sanitizeId(idea.sessionId),
-      eventId: idea.eventId ? this.sanitizeId(idea.eventId) : null,
+      ideaId: validateIdentifier(idea.ideaId, "ideaId"),
+      sessionId: validateIdentifier(idea.sessionId, "sessionId"),
+      eventId: idea.eventId ? validateIdentifier(idea.eventId, "eventId") : null,
       label: idea.label.trim().slice(0, 256),
       description: idea.description.trim().slice(0, 2000),
       createdAt: idea.createdAt.trim().slice(0, 64),
@@ -108,13 +134,14 @@ export class IdeaPacketRegistry {
   }
 
   getIdea(ideaId: string): WorkbenchIdea | null {
-    const match = this.ideasById.get(this.sanitizeId(ideaId));
+    const validId = validateIdentifier(ideaId, "ideaId");
+    const match = this.ideasById.get(validId);
     return match ? this.cloneIdea(match) : null;
   }
 
   listIdeas(sessionId?: string): WorkbenchIdea[] {
     if (sessionId !== undefined) {
-      const cleanSessionId = this.sanitizeId(sessionId);
+      const cleanSessionId = validateIdentifier(sessionId, "sessionId");
       return (this.ideasBySession.get(cleanSessionId) ?? []).map((i) =>
         this.cloneIdea(i)
       );
@@ -124,16 +151,19 @@ export class IdeaPacketRegistry {
 
   registerPacket(packet: WorkbenchWorkPacket): void {
     const sanitized: WorkbenchWorkPacket = {
-      packetId: this.sanitizeId(packet.packetId),
-      ideaId: packet.ideaId ? this.sanitizeId(packet.ideaId) : null,
-      sessionId: this.sanitizeId(packet.sessionId),
+      packetId: validateIdentifier(packet.packetId, "packetId"),
+      ideaId: packet.ideaId ? validateIdentifier(packet.ideaId, "ideaId") : null,
+      sessionId: validateIdentifier(packet.sessionId, "sessionId"),
       issueId: packet.issueId?.trim().slice(0, 64) ?? null,
       title: packet.title.trim().slice(0, 256),
       targetWorkspace: packet.targetWorkspace?.trim().slice(0, 500) ?? null,
       sourceContext: {
-        sessionId: this.sanitizeId(packet.sourceContext.sessionId),
+        sessionId: validateIdentifier(packet.sourceContext.sessionId, "sessionId"),
         referencedEventId: packet.sourceContext.referencedEventId
-          ? this.sanitizeId(packet.sourceContext.referencedEventId)
+          ? validateIdentifier(
+            packet.sourceContext.referencedEventId,
+            "referencedEventId",
+          )
           : null,
         excerpt: packet.sourceContext.excerpt.trim().slice(0, 4000),
         contextSources: (packet.sourceContext.contextSources ?? [])
@@ -184,13 +214,14 @@ export class IdeaPacketRegistry {
   }
 
   getPacket(packetId: string): WorkbenchWorkPacket | null {
-    const match = this.packetsById.get(this.sanitizeId(packetId));
+    const validId = validateIdentifier(packetId, "packetId");
+    const match = this.packetsById.get(validId);
     return match ? this.clonePacket(match) : null;
   }
 
   listPackets(sessionId?: string): WorkbenchWorkPacket[] {
     if (sessionId !== undefined) {
-      const cleanSessionId = this.sanitizeId(sessionId);
+      const cleanSessionId = validateIdentifier(sessionId, "sessionId");
       return (this.packetsBySession.get(cleanSessionId) ?? []).map((p) =>
         this.clonePacket(p)
       );
@@ -250,7 +281,7 @@ export function markWorkbenchIdea(input: {
   createdAt?: string;
   registry?: IdeaPacketRegistry;
 }): WorkbenchIdea {
-  const sessionId = input.sessionId.trim().slice(0, 256);
+  const sessionId = validateIdentifier(input.sessionId, "sessionId");
   const label = input.label.trim().slice(0, 256);
   if (label.length === 0) {
     throw new Error("idea label cannot be empty");
@@ -258,10 +289,11 @@ export function markWorkbenchIdea(input: {
 
   let description = input.description?.trim().slice(0, 2000) ?? "";
   if (input.eventId !== undefined && input.eventId !== null) {
+    const eventId = validateIdentifier(input.eventId, "eventId");
     if (input.events !== undefined) {
-      const match = input.events.find((e) => e.eventId === input.eventId);
+      const match = input.events.find((e) => e.eventId === eventId);
       if (!match) {
-        throw new Error(`event "${input.eventId}" not found in session events`);
+        throw new Error(`event "${eventId}" not found in session events`);
       }
       if (description.length === 0 && match.content) {
         description = match.content.trim().slice(0, 2000);
@@ -289,9 +321,9 @@ export function markWorkbenchIdea(input: {
   }
 
   const idea: WorkbenchIdea = {
-    ideaId: input.ideaId ?? generateULID(),
+    ideaId: input.ideaId ? validateIdentifier(input.ideaId, "ideaId") : generateULID(),
     sessionId,
-    eventId: input.eventId ?? null,
+    eventId: input.eventId ? validateIdentifier(input.eventId, "eventId") : null,
     label,
     description,
     createdAt: input.createdAt ?? new Date().toISOString(),
@@ -318,7 +350,7 @@ export function draftWorkPacketFromContext(input: {
   registry?: IdeaPacketRegistry;
 }): WorkbenchWorkPacket {
   const reg = input.registry ?? defaultIdeaPacketRegistry;
-  const sessionId = input.sessionId.trim().slice(0, 256);
+  const sessionId = validateIdentifier(input.sessionId, "sessionId");
   let idea: WorkbenchIdea | null = null;
   if (input.idea) {
     idea = input.idea;
@@ -341,7 +373,9 @@ export function draftWorkPacketFromContext(input: {
   const operatorIntent = (input.operatorIntent?.trim() || idea?.label || title)
     .slice(0, 2000);
 
-  let referencedEventId = input.eventId ?? idea?.eventId ?? null;
+  let referencedEventId = input.eventId
+    ? validateIdentifier(input.eventId, "eventId")
+    : (idea?.eventId ? validateIdentifier(idea.eventId, "eventId") : null);
   let excerpt = "";
   const contextSources: string[] = [];
 
@@ -357,7 +391,7 @@ export function draftWorkPacketFromContext(input: {
         excerpt = match.content.trim().slice(0, 4000);
       } else if (match.toolName) {
         excerpt = `[Tool Call: ${match.toolName}]: ${
-          JSON.stringify(match.toolArguments ?? {})
+          safeBoundedJson(match.toolArguments ?? {})
         }`;
       } else {
         excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
@@ -410,14 +444,16 @@ export function draftWorkPacketFromContext(input: {
         `Verify outcomes against operator intent and documented constraints`,
       ];
   const proposedAcceptanceCriteria = rawCriteria
-    .map((c) => c.trim().slice(0, 500));
+    .map((c) => sanitizeSingleLine(c).slice(0, 500));
 
   const packet: WorkbenchWorkPacket = {
-    packetId: input.packetId ?? generateULID(),
-    ideaId: idea?.ideaId ?? input.ideaId ?? null,
+    packetId: input.packetId
+      ? validateIdentifier(input.packetId, "packetId")
+      : generateULID(),
+    ideaId: idea?.ideaId ?? (input.ideaId ? validateIdentifier(input.ideaId, "ideaId") : null),
     sessionId,
     issueId: input.issueId?.trim().slice(0, 64) || null,
-    title,
+    title: sanitizeSingleLine(title),
     targetWorkspace: input.workspace ?? null,
     sourceContext: {
       sessionId,
@@ -440,23 +476,30 @@ export function draftWorkPacketFromContext(input: {
 }
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
+  const safeTitle = sanitizeSingleLine(packet.title);
+  const safeSession = sanitizeSingleLine(packet.sessionId);
+  const safePacketId = sanitizeSingleLine(packet.packetId);
+  const safeIssue = packet.issueId
+    ? `\`${sanitizeSingleLine(packet.issueId).replace(/[`]/g, "")}\``
+    : "none";
   const safeWorkspace = packet.targetWorkspace
-    ? packet.targetWorkspace.replace(/[`\r\n]/g, "")
-    : null;
+    ? `\`${sanitizeSingleLine(packet.targetWorkspace).replace(/[`]/g, "")}\``
+    : "(current workspace)";
+  const safeExcerpt = sanitizeMarkdownHeading(packet.sourceContext.excerpt);
+  const safeIntent = sanitizeMarkdownHeading(packet.operatorIntent);
+
   const lines: string[] = [
-    `# Work Packet: ${packet.title}`,
+    `# Work Packet: ${safeTitle}`,
     "",
-    `- **Packet ID:** \`${packet.packetId}\``,
+    `- **Packet ID:** \`${safePacketId}\``,
     `- **Date:** ${packet.createdAt.split("T")[0]}`,
-    `- **Session:** \`${packet.sessionId}\``,
-    `- **Related Issue:** ${packet.issueId ? `\`${packet.issueId}\`` : "none"}`,
-    `- **Target Workspace:** ${
-      safeWorkspace ? `\`${safeWorkspace}\`` : "(current workspace)"
-    }`,
+    `- **Session:** \`${safeSession}\``,
+    `- **Related Issue:** ${safeIssue}`,
+    `- **Target Workspace:** ${safeWorkspace}`,
     "",
     "## 1. Source Context",
     "",
-    packet.sourceContext.excerpt,
+    safeExcerpt,
     "",
   ];
 
@@ -466,7 +509,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   ) {
     lines.push("### Context Files", "");
     for (const src of packet.sourceContext.contextSources) {
-      const safePath = src.replace(/[`\r\n]/g, "");
+      const safePath = sanitizeSingleLine(src).replace(/[`]/g, "");
       lines.push(`- \`${safePath}\``);
     }
     lines.push("");
@@ -475,14 +518,15 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   lines.push(
     "## 2. Operator Intent",
     "",
-    packet.operatorIntent,
+    safeIntent,
     "",
     "## 3. Proposed Acceptance Criteria",
     "",
   );
 
   for (const criterion of packet.proposedAcceptanceCriteria) {
-    lines.push(`- [ ] ${criterion}`);
+    const safeCriterion = sanitizeSingleLine(criterion);
+    lines.push(`- [ ] ${safeCriterion}`);
   }
 
   lines.push(
