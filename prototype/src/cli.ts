@@ -2139,7 +2139,11 @@ export async function handleReplPacketCommand(
           const cleanPacketId = (res.packet.packetId ?? "")
             .replace(/[\x00-\x1F\x7F\x1B]/g, "")
             .trim();
-          io.out(res.markdown);
+          const safeMarkdown = (res.markdown ?? "").replace(
+            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+            "",
+          );
+          io.out(safeMarkdown);
           io.err(`\ndraft work packet registered: [${cleanPacketId}]`);
         } finally {
           client.close();
@@ -2166,7 +2170,11 @@ export async function handleReplPacketCommand(
           .replace(/[\x00-\x1F\x7F\x1B]/g, "")
           .trim();
         const markdown = formatWorkPacketMarkdown(packet);
-        io.out(markdown);
+        const safeMarkdown = markdown.replace(
+          /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+          "",
+        );
+        io.out(safeMarkdown);
         io.err(`\ndraft work packet registered: [${cleanPacketId}]`);
       } catch (e) {
         io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
@@ -2258,7 +2266,11 @@ export async function handleReplPacketCommand(
           if (!res.packet || !res.markdown) {
             io.err(`work packet not found: ${packetId}`);
           } else {
-            io.out(res.markdown);
+            const safeMarkdown = (res.markdown ?? "").replace(
+              /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+              "",
+            );
+            io.out(safeMarkdown);
           }
         } finally {
           client.close();
@@ -2272,7 +2284,12 @@ export async function handleReplPacketCommand(
         if (!packet) {
           io.err(`work packet not found: ${packetId}`);
         } else {
-          io.out(formatWorkPacketMarkdown(packet));
+          const markdown = formatWorkPacketMarkdown(packet);
+          const safeMarkdown = markdown.replace(
+            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g,
+            "",
+          );
+          io.out(safeMarkdown);
         }
       } catch (e) {
         io.err(`dyfj: failed to get packet: ${summarizeError(e)}`);

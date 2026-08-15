@@ -43,17 +43,16 @@ function validateIdentifier(id: string, fieldName = "identifier"): string {
   if (typeof id !== "string") {
     throw new Error(`${fieldName} must be a string`);
   }
-  if (id.length > 512) {
-    throw new Error(`${fieldName} exceeds maximum length of 256 characters`);
-  }
-  const clean = id.replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ").replace(/\s+/g, " ").trim();
-  if (clean.length === 0) {
+  if (id.length === 0) {
     throw new Error(`${fieldName} cannot be empty`);
   }
-  if (clean.length > 256) {
+  if (id.length > 256) {
     throw new Error(`${fieldName} exceeds maximum length of 256 characters`);
   }
-  return clean;
+  if (/\s|[\x00-\x1F\x7F-\x9F\x1B]/.test(id)) {
+    throw new Error(`${fieldName} cannot contain control characters or whitespace`);
+  }
+  return id;
 }
 
 function boundedCloneForJson(
@@ -141,6 +140,63 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
   }
 }
 
+function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
+  let result = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "`") {
+      let openLen = 0;
+      while (i + openLen < text.length && text[i + openLen] === "`") {
+        openLen++;
+      }
+      const openTicks = text.slice(i, i + openLen);
+      let closeIdx = -1;
+      let j = i + openLen;
+      while (j < text.length) {
+        if (text[j] === "`") {
+          let closeLen = 0;
+          while (j + closeLen < text.length && text[j + closeLen] === "`") {
+            closeLen++;
+          }
+          if (closeLen === openLen) {
+            closeIdx = j;
+            break;
+          }
+          j += closeLen;
+        } else {
+          j++;
+        }
+      }
+      if (closeIdx !== -1) {
+        const span = text.slice(i, closeIdx + openLen);
+        result += span;
+        i = closeIdx + openLen;
+        continue;
+      } else {
+        result += openTicks;
+        i += openLen;
+        continue;
+      }
+    } else if (text[i] === "<") {
+      const sub = text.slice(i);
+      const match = sub.match(/^<(\/?[hH][1-6]\b[^>]*)>/);
+      if (match) {
+        result += `\\<${match[1]}\\>`;
+        i += match[0].length;
+        continue;
+      } else {
+        result += "<";
+        i++;
+        continue;
+      }
+    } else {
+      result += text[i];
+      i++;
+    }
+  }
+  return result;
+}
+
 function sanitizeMarkdownHeading(text: string): string {
   const clean = text
     .replace(/\r\n|\r/g, "\n")
@@ -149,14 +205,17 @@ function sanitizeMarkdownHeading(text: string): string {
   const result: string[] = [];
   let openChar: string | null = null;
   let openCount = 0;
+  let openPrefix = "";
 
   for (const line of lines) {
     if (!openChar) {
-      const openMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})(.*)$/);
-      if (openMatch) {
-        const fence = openMatch[1];
-        const info = openMatch[2];
+      const fenceMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+      if (fenceMatch) {
+        const prefix = fenceMatch[1];
+        const fence = fenceMatch[2];
+        const info = fenceMatch[3];
         if (fence[0] !== "`" || !info.includes("`")) {
+          openPrefix = prefix;
           openChar = fence[0];
           openCount = fence.length;
           result.push(line);
@@ -175,22 +234,16 @@ function sanitizeMarkdownHeading(text: string): string {
           (_match, prefix, underline) => `${prefix}\\${underline}`,
         );
 
-      // Neutralize HTML headings <h1-h6> outside inline code spans
-      const parts = sanitizedLine.split(/(`+[^`]*`+)/g);
-      for (let i = 0; i < parts.length; i += 2) {
-        parts[i] = parts[i].replace(/<(\/?[hH][1-6]\b[^>]*)>/g, "\\<$1\\>");
-      }
-      sanitizedLine = parts.join("");
-
+      sanitizedLine = sanitizeHtmlHeadingsOutsideCodeSpans(sanitizedLine);
       result.push(sanitizedLine);
     } else {
-      // Inside code fence: check for closing fence
-      const closeMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
-      if (closeMatch) {
-        const fence = closeMatch[1];
+      const closeMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (closeMatch && closeMatch[1] === openPrefix) {
+        const fence = closeMatch[2];
         if (fence[0] === openChar && fence.length >= openCount) {
           openChar = null;
           openCount = 0;
+          openPrefix = "";
         }
       }
       result.push(line);
@@ -209,11 +262,7 @@ function sanitizeSingleLine(text: string): string {
 
 function sanitizeCriterion(text: string): string {
   const clean = sanitizeSingleLine(text);
-  const parts = clean.split(/(`+[^`]*`+)/g);
-  for (let i = 0; i < parts.length; i += 2) {
-    parts[i] = parts[i].replace(/<(\/?[hH][1-6]\b[^>]*)>/g, "\\<$1\\>");
-  }
-  return parts.join("");
+  return sanitizeHtmlHeadingsOutsideCodeSpans(clean);
 }
 
 export class IdeaPacketRegistry {
@@ -731,38 +780,40 @@ export function draftWorkPacketFromContext(input: {
 }
 
 function closeDanglingFences(text: string): string {
-  const lines = text.split("\n");
+  const clean = text
+    .replace(/\r\n|\r/g, "\n")
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
+  const lines = clean.split("\n");
   let openChar: string | null = null;
   let openCount = 0;
+  let openPrefix = "";
   for (const line of lines) {
     if (!openChar) {
-      const openMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})/);
+      const openMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
       if (openMatch) {
-        const fence = openMatch[1];
-        const char = fence[0];
-        const count = fence.length;
-        const rest = line.slice(openMatch[0].length);
-        if (char === "`" && rest.includes("`")) {
-          continue;
+        const prefix = openMatch[1];
+        const fence = openMatch[2];
+        const info = openMatch[3];
+        if (fence[0] !== "`" || !info.includes("`")) {
+          openPrefix = prefix;
+          openChar = fence[0];
+          openCount = fence.length;
         }
-        openChar = char;
-        openCount = count;
       }
     } else {
-      const closeMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
-      if (closeMatch) {
-        const fence = closeMatch[1];
-        const char = fence[0];
-        const count = fence.length;
-        if (char === openChar && count >= openCount) {
+      const closeMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (closeMatch && closeMatch[1] === openPrefix) {
+        const fence = closeMatch[2];
+        if (fence[0] === openChar && fence.length >= openCount) {
           openChar = null;
           openCount = 0;
+          openPrefix = "";
         }
       }
     }
   }
   if (openChar) {
-    return text + "\n" + openChar.repeat(openCount);
+    return text + "\n" + openPrefix + openChar.repeat(openCount);
   }
   return text;
 }

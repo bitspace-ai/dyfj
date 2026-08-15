@@ -516,12 +516,13 @@ export function buildWorkbenchHandlers(
         projectIdx: number;
         session: WorkbenchSessionSummary;
       }> = [];
-      for (let i = 0; i < projects.length; i++) {
+      const projectCount = Math.min(projects.length, limit);
+      for (let i = 0; i < projectCount; i++) {
         const p = projects[i];
         if (Array.isArray(p.sessions)) {
-          let count = 0;
-          for (const s of p.sessions) {
-            if (++count > limit * 2) break;
+          const sessionCount = Math.min(p.sessions.length, limit);
+          for (let j = 0; j < sessionCount; j++) {
+            const s = p.sessions[j];
             const createdAt = s.createdAt || "";
             if (topSessions.length < limit) {
               topSessions.push({ projectIdx: i, session: s });
