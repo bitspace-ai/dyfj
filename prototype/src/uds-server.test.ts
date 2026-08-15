@@ -287,7 +287,14 @@ describe("serveWorkbenchUnix read methods", () => {
           "surface/snapshot",
           "models/list",
           "sessions/list",
+          "sessions/inspect",
           "events/query",
+          "ideas/mark",
+          "ideas/list",
+          "ideas/get",
+          "packets/draft",
+          "packets/list",
+          "packets/get",
           "tools/list",
           "tools/inspect",
           "turn",
@@ -300,7 +307,14 @@ describe("serveWorkbenchUnix read methods", () => {
           { id: "surface/snapshot", namespace: "surface", kind: "read" },
           { id: "models/list", namespace: "models", kind: "read" },
           { id: "sessions/list", namespace: "sessions", kind: "read" },
+          { id: "sessions/inspect", namespace: "sessions", kind: "read" },
           { id: "events/query", namespace: "events", kind: "read" },
+          { id: "ideas/mark", namespace: "ideas", kind: "interactive" },
+          { id: "ideas/list", namespace: "ideas", kind: "read" },
+          { id: "ideas/get", namespace: "ideas", kind: "read" },
+          { id: "packets/draft", namespace: "packets", kind: "interactive" },
+          { id: "packets/list", namespace: "packets", kind: "read" },
+          { id: "packets/get", namespace: "packets", kind: "read" },
           { id: "tools/list", namespace: "tools", kind: "read" },
           { id: "tools/inspect", namespace: "tools", kind: "read" },
           { id: "turn", namespace: "turn", kind: "interactive" },
@@ -1220,3 +1234,129 @@ describe("socket bind safety", () => {
     await Deno.remove(dir, { recursive: true });
   });
 });
+
+describe("sessions/inspect, ideas, and packets over UDS", () => {
+  test("sessions/inspect returns session summary, workspace, and event counts", async () => {
+    const server = await startServer({
+      ...fakes,
+      fetchSessionRecord: async () => ({
+        sessionId: "01TEST_SESSION",
+        slug: "workbench-01test_session",
+        sessionName: null,
+        taskDescription: "Explore neutral sessions",
+        project: "DYFJ Context",
+        status: "active",
+        createdAt: "2026-08-15T12:00:00Z",
+        updatedAt: "2026-08-15T12:00:00Z",
+      }),
+      fetchSessionWorkspaceRecord: async () => ({
+        exists: true,
+        workspace: "/Users/chris/projects/dyfj",
+      }),
+      fetchSessionEvents: async () => [
+        {
+          eventId: "evt-1",
+          sessionId: "01TEST_SESSION",
+          eventType: "session_start",
+          createdAt: "2026-08-15T12:00:00Z",
+          content: "Starting session",
+        } as any,
+      ],
+    });
+
+    const client = await connectClient(server);
+    const inspectRes = (await client.request("sessions/inspect", {
+      sessionId: "01TEST_SESSION",
+    })) as any;
+
+    expect(inspectRes.exists).toBe(true);
+    expect(inspectRes.session.taskDescription).toBe("Explore neutral sessions");
+    expect(inspectRes.workspace).toBe("/Users/chris/projects/dyfj");
+    expect(inspectRes.eventCount).toBe(1);
+    expect(inspectRes.latestEvent.eventId).toBe("evt-1");
+  });
+
+  test("ideas/mark, ideas/list, ideas/get flow", async () => {
+    const server = await startServer({
+      ...fakes,
+      fetchSessionEvents: async () => [
+        {
+          eventId: "evt-idea-1",
+          sessionId: "01TEST_IDEA_SESSION",
+          eventType: "model_response",
+          createdAt: "2026-08-15T12:00:00Z",
+          content: "Let us capture candidate work items as ideas.",
+        } as any,
+      ],
+    });
+
+    const client = await connectClient(server);
+
+    const markRes = (await client.request("ideas/mark", {
+      sessionId: "01TEST_IDEA_SESSION",
+      eventId: "evt-idea-1",
+      label: "Capture ideas",
+    })) as any;
+
+    expect(markRes.idea.label).toBe("Capture ideas");
+    expect(markRes.idea.description).toBe(
+      "Let us capture candidate work items as ideas.",
+    );
+    const ideaId = markRes.idea.ideaId;
+
+    const listRes = (await client.request("ideas/list", {
+      sessionId: "01TEST_IDEA_SESSION",
+    })) as any;
+    expect(listRes.ideas).toHaveLength(1);
+    expect(listRes.ideas[0].ideaId).toBe(ideaId);
+
+    const getRes = (await client.request("ideas/get", { ideaId })) as any;
+    expect(getRes.idea.ideaId).toBe(ideaId);
+  });
+
+  test("packets/draft, packets/list, packets/get flow", async () => {
+    const server = await startServer({
+      ...fakes,
+      fetchSessionWorkspaceRecord: async () => ({
+        exists: true,
+        workspace: "/Users/chris/projects/dyfj",
+      }),
+      fetchSessionEvents: async () => [
+        {
+          eventId: "evt-pk-1",
+          sessionId: "01TEST_PACKET_SESSION",
+          eventType: "model_response",
+          createdAt: "2026-08-15T12:00:00Z",
+          content: "Drafting bounded work packets.",
+        } as any,
+      ],
+    });
+
+    const client = await connectClient(server);
+
+    const draftRes = (await client.request("packets/draft", {
+      sessionId: "01TEST_PACKET_SESSION",
+      issueId: "BIT-258",
+      title: "Neutral session model",
+      operatorIntent: "Deliver Milestone 3 Packet 0",
+    })) as any;
+
+    expect(draftRes.packet.issueId).toBe("BIT-258");
+    expect(draftRes.packet.targetWorkspace).toBe("/Users/chris/projects/dyfj");
+    expect(draftRes.markdown).toContain("# Work Packet: Neutral session model");
+    expect(draftRes.markdown).toContain("- **Related Issue:** `BIT-258`");
+
+    const packetId = draftRes.packet.packetId;
+
+    const listRes = (await client.request("packets/list", {
+      sessionId: "01TEST_PACKET_SESSION",
+    })) as any;
+    expect(listRes.packets).toHaveLength(1);
+    expect(listRes.packets[0].packetId).toBe(packetId);
+
+    const getRes = (await client.request("packets/get", { packetId })) as any;
+    expect(getRes.packet.packetId).toBe(packetId);
+    expect(getRes.markdown).toContain("# Work Packet: Neutral session model");
+  });
+});
+

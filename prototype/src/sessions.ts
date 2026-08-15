@@ -113,6 +113,32 @@ export async function fetchWorkbenchSessionWorkspaceRecord(
   };
 }
 
+export async function fetchWorkbenchSessionRecord(
+  input: { sessionId: string; query?: SessionQuery },
+): Promise<WorkbenchSessionSummary | null> {
+  const query = input.query ?? doltQuery;
+  const rows = await query(
+    "SELECT session_id, slug, session_name, task_description, project, " +
+      "status, created_at, updated_at FROM sessions WHERE session_id = ? LIMIT 1;",
+    [input.sessionId],
+  );
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  const project = row.project === "" ? null : row.project;
+  return {
+    sessionId: row.session_id,
+    slug: row.slug,
+    sessionName: row.session_name,
+    taskDescription: row.task_description,
+    project,
+    status: row.status || "active",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export * from "./idea-packet";
+
 export async function updateWorkbenchSession(
   input: UpdateWorkbenchSessionInput,
 ): Promise<void> {
@@ -139,7 +165,7 @@ function truncateTaskDescription(value: string): string {
 export interface WorkbenchSessionSummary {
   sessionId: string;
   slug: string;
-  sessionName: string;
+  sessionName: string | null;
   taskDescription: string;
   project: string | null;
   status: string;

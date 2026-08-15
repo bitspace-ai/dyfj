@@ -44,6 +44,18 @@ import { secretsRunGrant } from "./secrets";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 import { type BusySpinner, createBusySpinner } from "./busy-spinner";
 import { hasDotPathComponent } from "./lexical-path";
+import {
+  defaultIdeaPacketRegistry,
+  draftWorkPacketFromContext,
+  formatWorkPacketMarkdown,
+  getWorkbenchIdea,
+  getWorkbenchPacket,
+  listWorkbenchIdeas,
+  listWorkbenchPackets,
+  markWorkbenchIdea,
+  type WorkbenchIdea,
+  type WorkbenchWorkPacket,
+} from "./idea-packet";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
@@ -727,11 +739,11 @@ export async function runRepl(
     const posture = await fetchSessionPosture(config, connect);
     if (!("error" in posture)) io.err(formatPostureLine(posture));
   }
-  let sessionId = config.sessionId;
-  // Running spend across this REPL session: the sum of per-turn receipt costs,
-  // accumulated client-side so the displayed total always matches the receipts
-  // the operator has seen.
-  let sessionSpendUsd = 0;
+  const sessionState: ReplSessionState = {
+    sessionId: config.sessionId,
+    turnCount: 0,
+    sessionSpendUsd: 0,
+  };
   let exitCode = 0;
   try {
     for (;;) {
@@ -740,17 +752,30 @@ export async function runRepl(
       const prompt = line.trim();
       if (prompt.length === 0) continue;
       if (prompt === "/exit" || prompt === "/quit") break;
-      if (prompt === "/session") {
-        if (sessionId === undefined) {
-          io.err("no session yet — send a prompt first");
-        } else {
-          io.err(`session: ${sessionId}`);
-          io.err(`resume later with: dyfj --session ${sessionId}`);
-        }
-        continue;
-      }
+      if (
+        await handleReplSessionCommand(
+          prompt,
+          config,
+          io,
+          sessionState,
+          connect,
+        )
+      ) continue;
+      if (
+        await handleReplIdeaCommand(prompt, config, io, sessionState, connect)
+      ) continue;
+      if (
+        await handleReplPacketCommand(
+          prompt,
+          config,
+          io,
+          sessionState,
+          connect,
+        )
+      ) continue;
       if (await handleReplModelCommand(prompt, config, io, connect)) continue;
       try {
+        const body = buildTurnBody(prompt, config, sessionState.sessionId);
         const output = createTurnOutputHandlers(config, io);
         const spinner = createTurnSpinner(config, io);
         const abortController = config.unix ? new AbortController() : undefined;
@@ -774,7 +799,6 @@ export async function runRepl(
             handlers.onEvent(event);
           },
         };
-        const body = buildTurnBody(prompt, config, sessionId);
         let interruptRequested = false;
         const interrupt = () => {
           if (interruptRequested) return;
@@ -813,7 +837,7 @@ export async function runRepl(
               connect,
             )
             : await streamTurn(config, body, terminalHandlers, fetchFn);
-          sessionId = result.sessionId;
+          sessionState.sessionId = result.sessionId;
         } catch (error) {
           turnFailed = true;
           throw error;
@@ -843,12 +867,14 @@ export async function runRepl(
         if (result.stopReason === "aborted") {
           handlers.onEvent({ type: "turnAborted" });
         }
-        if ("cost" in result) sessionSpendUsd += result.cost.totalUsd;
+        sessionState.sessionId = result.sessionId;
+        sessionState.turnCount++;
+        if ("cost" in result) sessionState.sessionSpendUsd += result.cost.totalUsd;
         io.err(
           formatReceipt(
             result,
             config.color,
-            "cost" in result ? sessionSpendUsd : undefined,
+            "cost" in result ? sessionState.sessionSpendUsd : undefined,
           ),
         );
       } catch (error) {
@@ -1515,6 +1541,427 @@ export async function fetchSessionPosture(
   } catch (error) {
     return { error: socketError(error, config) };
   }
+}
+
+export interface ReplSessionState {
+  sessionId?: string;
+  turnCount: number;
+  sessionSpendUsd: number;
+  workspace?: string;
+}
+
+export async function handleReplSessionCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  sessionState: ReplSessionState,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  const parts = line.trim().split(/\s+/);
+  if (parts[0] !== "/session") return false;
+
+  const sub = parts[1];
+  if (!sub) {
+    if (!sessionState.sessionId) {
+      io.err("no session yet — send a prompt first");
+    } else {
+      io.err(`session: ${sessionState.sessionId}`);
+      io.err(`turns: ${sessionState.turnCount}`);
+      io.err(`spend: $${sessionState.sessionSpendUsd.toFixed(4)}`);
+      io.err(`resume later with: dyfj --session ${sessionState.sessionId}`);
+    }
+    return true;
+  }
+
+  if (sub === "list") {
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("sessions/list", {}) as {
+            projects?: Array<{
+              sessions: Array<{
+                sessionId: string;
+                taskDescription: string;
+                createdAt: string;
+              }>;
+            }>;
+          };
+          const sessions = res.projects?.flatMap((p) => p.sessions) ?? [];
+          if (sessions.length === 0) {
+            io.err("no sessions found");
+          } else {
+            io.err("Recent sessions:");
+            for (const s of sessions.slice(0, 15)) {
+              io.err(
+                `  ${s.sessionId}  ${s.createdAt?.split("T")[0] ?? ""}  ${s.taskDescription}`,
+              );
+            }
+            io.err(
+              "resume with: /session switch <sessionId> or dyfj --session <sessionId>",
+            );
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to list sessions: ${summarizeError(e)}`);
+      }
+    } else {
+      io.err("session listing over HTTP is not supported in REPL");
+    }
+    return true;
+  }
+
+  if (sub === "switch") {
+    const targetId = parts[2];
+    if (!targetId) {
+      io.err("usage: /session switch <sessionId>");
+      return true;
+    }
+    sessionState.sessionId = targetId;
+    config.sessionId = targetId;
+    sessionState.turnCount = 0;
+    sessionState.sessionSpendUsd = 0;
+    io.err(`switched to session: ${targetId}`);
+    return true;
+  }
+
+  io.err(
+    "unknown /session subcommand. Usage: /session, /session list, /session switch <sessionId>",
+  );
+  return true;
+}
+
+export async function handleReplIdeaCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  sessionState: ReplSessionState,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  const parts = line.trim().split(/\s+/);
+  if (parts[0] !== "/idea") return false;
+
+  const sub = parts[1];
+  if (!sub || sub === "help") {
+    io.err("Idea capture commands:");
+    io.err("  /idea mark [event-id] <label...>   mark an idea in this session");
+    io.err("  /idea list                         list marked ideas for this session");
+    io.err("  /idea show <idea-id>               show details of a marked idea");
+    return true;
+  }
+
+  if (!sessionState.sessionId) {
+    io.err("no session yet — send a prompt first before marking ideas");
+    return true;
+  }
+
+  if (sub === "mark") {
+    if (parts.length < 3) {
+      io.err("usage: /idea mark [event-id] <label...>");
+      return true;
+    }
+    let eventId: string | undefined;
+    let labelParts: string[];
+    if (
+      parts[2].startsWith("evt-") ||
+      (parts[2].length >= 26 && /^[0-9A-Za-z_-]+$/.test(parts[2]))
+    ) {
+      eventId = parts[2];
+      labelParts = parts.slice(3);
+    } else {
+      labelParts = parts.slice(2);
+    }
+    const label = labelParts.join(" ").trim();
+    if (label.length === 0) {
+      io.err("usage: /idea mark [event-id] <label...>");
+      return true;
+    }
+
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("ideas/mark", {
+            sessionId: sessionState.sessionId,
+            eventId,
+            label,
+          }) as { idea: WorkbenchIdea };
+          io.err(`marked idea [${res.idea.ideaId}]: "${res.idea.label}"`);
+          io.err(`draft packet with: /packet draft ${res.idea.ideaId}`);
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to mark idea: ${summarizeError(e)}`);
+      }
+    } else {
+      const idea = markWorkbenchIdea({
+        sessionId: sessionState.sessionId,
+        eventId,
+        label,
+      });
+      io.err(`marked idea [${idea.ideaId}]: "${idea.label}"`);
+      io.err(`draft packet with: /packet draft ${idea.ideaId}`);
+    }
+    return true;
+  }
+
+  if (sub === "list") {
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("ideas/list", {
+            sessionId: sessionState.sessionId,
+          }) as { ideas: WorkbenchIdea[] };
+          if (res.ideas.length === 0) {
+            io.err(`no ideas marked for session ${sessionState.sessionId}`);
+          } else {
+            io.err(`Ideas for session ${sessionState.sessionId}:`);
+            for (const item of res.ideas) {
+              io.err(
+                `  [${item.ideaId}] ${item.label} (${item.createdAt.split("T")[0]})`,
+              );
+            }
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to list ideas: ${summarizeError(e)}`);
+      }
+    } else {
+      const ideas = listWorkbenchIdeas({ sessionId: sessionState.sessionId });
+      if (ideas.length === 0) {
+        io.err(`no ideas marked for session ${sessionState.sessionId}`);
+      } else {
+        io.err(`Ideas for session ${sessionState.sessionId}:`);
+        for (const item of ideas) {
+          io.err(
+            `  [${item.ideaId}] ${item.label} (${item.createdAt.split("T")[0]})`,
+          );
+        }
+      }
+    }
+    return true;
+  }
+
+  if (sub === "show") {
+    const ideaId = parts[2];
+    if (!ideaId) {
+      io.err("usage: /idea show <idea-id>");
+      return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("ideas/get", { ideaId }) as {
+            idea: WorkbenchIdea | null;
+          };
+          if (!res.idea) {
+            io.err(`idea not found: ${ideaId}`);
+          } else {
+            io.err(`Idea [${res.idea.ideaId}]:`);
+            io.err(`  Label: ${res.idea.label}`);
+            io.err(`  Session: ${res.idea.sessionId}`);
+            if (res.idea.eventId) io.err(`  Event: ${res.idea.eventId}`);
+            io.err(`  Date: ${res.idea.createdAt}`);
+            io.err(`  Description: ${res.idea.description}`);
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get idea: ${summarizeError(e)}`);
+      }
+    } else {
+      const idea = getWorkbenchIdea(ideaId);
+      if (!idea) {
+        io.err(`idea not found: ${ideaId}`);
+      } else {
+        io.err(`Idea [${idea.ideaId}]:`);
+        io.err(`  Label: ${idea.label}`);
+        io.err(`  Session: ${idea.sessionId}`);
+        if (idea.eventId) io.err(`  Event: ${idea.eventId}`);
+        io.err(`  Date: ${idea.createdAt}`);
+        io.err(`  Description: ${idea.description}`);
+      }
+    }
+    return true;
+  }
+
+  io.err(
+    "unknown /idea subcommand. Usage: /idea mark, /idea list, /idea show <id>",
+  );
+  return true;
+}
+
+export async function handleReplPacketCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  sessionState: ReplSessionState,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  const raw = line.trim();
+  const parts = raw.split(/\s+/);
+  if (parts[0] !== "/packet") return false;
+
+  const sub = parts[1];
+  if (!sub || sub === "help") {
+    io.err("Work packet commands:");
+    io.err(
+      "  /packet draft <idea-id|event-id> [--issue <BIT-id>] [--title <title>]",
+    );
+    io.err("  /packet list");
+    io.err("  /packet show <packet-id>");
+    return true;
+  }
+
+  if (!sessionState.sessionId) {
+    io.err("no session yet — send a prompt first before drafting packets");
+    return true;
+  }
+
+  if (sub === "draft") {
+    if (parts.length < 3) {
+      io.err(
+        "usage: /packet draft <idea-id|event-id> [--issue <BIT-id>] [--title <title>]",
+      );
+      return true;
+    }
+    const targetRef = parts[2];
+    let issueId: string | undefined;
+    let title: string | undefined;
+    for (let i = 3; i < parts.length; i++) {
+      if (parts[i] === "--issue" && i + 1 < parts.length) {
+        issueId = parts[i + 1];
+        i++;
+      } else if (parts[i] === "--title" && i + 1 < parts.length) {
+        title = parts.slice(i + 1).join(" ");
+        break;
+      }
+    }
+
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("packets/draft", {
+            sessionId: sessionState.sessionId,
+            ideaId: targetRef,
+            issueId,
+            title,
+          }) as { packet: WorkbenchWorkPacket; markdown: string };
+          io.out(res.markdown);
+          io.err(`\ndraft work packet registered: [${res.packet.packetId}]`);
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
+      }
+    } else {
+      const packet = draftWorkPacketFromContext({
+        sessionId: sessionState.sessionId,
+        ideaId: targetRef,
+        issueId,
+        title,
+      });
+      const markdown = formatWorkPacketMarkdown(packet);
+      io.out(markdown);
+      io.err(`\ndraft work packet registered: [${packet.packetId}]`);
+    }
+    return true;
+  }
+
+  if (sub === "list") {
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("packets/list", {
+            sessionId: sessionState.sessionId,
+          }) as { packets: WorkbenchWorkPacket[] };
+          if (res.packets.length === 0) {
+            io.err(
+              `no work packets drafted for session ${sessionState.sessionId}`,
+            );
+          } else {
+            io.err(`Work packets for session ${sessionState.sessionId}:`);
+            for (const p of res.packets) {
+              io.err(
+                `  [${p.packetId}] ${p.title} (Issue: ${p.issueId ?? "none"})`,
+              );
+            }
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to list packets: ${summarizeError(e)}`);
+      }
+    } else {
+      const packets = listWorkbenchPackets({
+        sessionId: sessionState.sessionId,
+      });
+      if (packets.length === 0) {
+        io.err(`no work packets drafted for session ${sessionState.sessionId}`);
+      } else {
+        io.err(`Work packets for session ${sessionState.sessionId}:`);
+        for (const p of packets) {
+          io.err(
+            `  [${p.packetId}] ${p.title} (Issue: ${p.issueId ?? "none"})`,
+          );
+        }
+      }
+    }
+    return true;
+  }
+
+  if (sub === "show") {
+    const packetId = parts[2];
+    if (!packetId) {
+      io.err("usage: /packet show <packet-id>");
+      return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("packets/get", { packetId }) as {
+            packet: WorkbenchWorkPacket | null;
+            markdown: string | null;
+          };
+          if (!res.packet || !res.markdown) {
+            io.err(`work packet not found: ${packetId}`);
+          } else {
+            io.out(res.markdown);
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get packet: ${summarizeError(e)}`);
+      }
+    } else {
+      const packet = getWorkbenchPacket(packetId);
+      if (!packet) {
+        io.err(`work packet not found: ${packetId}`);
+      } else {
+        io.out(formatWorkPacketMarkdown(packet));
+      }
+    }
+    return true;
+  }
+
+  io.err(
+    "unknown /packet subcommand. Usage: /packet draft, /packet list, /packet show <id>",
+  );
+  return true;
 }
 
 export async function handleReplModelCommand(

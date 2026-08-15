@@ -16,11 +16,23 @@ import {
   type WorkbenchModel,
 } from "./provider";
 import {
+  defaultIdeaPacketRegistry,
+  draftWorkPacketFromContext,
+  formatWorkPacketMarkdown,
+  type IdeaPacketRegistry,
+  markWorkbenchIdea,
+  type WorkbenchIdea,
+  type WorkbenchWorkPacket,
+} from "./idea-packet";
+import {
   fetchWorkbenchSessionEvents,
+  fetchWorkbenchSessionRecord,
+  fetchWorkbenchSessionWorkspaceRecord,
   isValidAsOfTimestamp,
   listWorkbenchSessions,
   type WorkbenchProjectSessions,
   type WorkbenchSessionEvent,
+  type WorkbenchSessionSummary,
 } from "./sessions";
 import {
   type RpcContext,
@@ -124,6 +136,13 @@ export interface WorkbenchUnixServerOptions {
   fetchSessionEvents?: (
     input: { sessionId: string; asOf?: string },
   ) => Promise<WorkbenchSessionEvent[]>;
+  fetchSessionRecord?: (
+    input: { sessionId: string },
+  ) => Promise<WorkbenchSessionSummary | null>;
+  fetchSessionWorkspaceRecord?: (
+    input: { sessionId: string },
+  ) => Promise<{ exists: boolean; workspace: string | null }>;
+  ideaPacketRegistry?: IdeaPacketRegistry;
   onParseError?: (detail: string) => void;
   /** Callback invoked when a client sends a runtime/stop RPC request. */
   onShutdown?: () => Promise<void> | void;
@@ -174,7 +193,14 @@ const METHOD_CATALOG = [
   { id: "surface/snapshot", namespace: "surface", kind: "read" },
   { id: "models/list", namespace: "models", kind: "read" },
   { id: "sessions/list", namespace: "sessions", kind: "read" },
+  { id: "sessions/inspect", namespace: "sessions", kind: "read" },
   { id: "events/query", namespace: "events", kind: "read" },
+  { id: "ideas/mark", namespace: "ideas", kind: "interactive" },
+  { id: "ideas/list", namespace: "ideas", kind: "read" },
+  { id: "ideas/get", namespace: "ideas", kind: "read" },
+  { id: "packets/draft", namespace: "packets", kind: "interactive" },
+  { id: "packets/list", namespace: "packets", kind: "read" },
+  { id: "packets/get", namespace: "packets", kind: "read" },
   { id: "tools/list", namespace: "tools", kind: "read" },
   { id: "tools/inspect", namespace: "tools", kind: "read" },
   { id: "turn", namespace: "turn", kind: "interactive" },
@@ -396,6 +422,129 @@ export function buildWorkbenchHandlers(
           asOf: typeof asOf === "string" ? asOf : undefined,
         }),
       };
+    },
+
+    "sessions/inspect": async (params) => {
+      const record = asRecord(params);
+      const sessionId = record.sessionId;
+      if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "sessions/inspect requires a string sessionId",
+        );
+      }
+      const [session, workspaceRec, events] = await Promise.all([
+        (options.fetchSessionRecord ?? fetchWorkbenchSessionRecord)({ sessionId }),
+        (options.fetchSessionWorkspaceRecord ?? fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
+        fetchSessionEvents({ sessionId }),
+      ]);
+      return {
+        session,
+        workspace: workspaceRec.workspace,
+        exists: session !== null || workspaceRec.exists,
+        eventCount: events.length,
+        latestEvent: events.length > 0 ? events[events.length - 1] : null,
+      };
+    },
+
+    "ideas/mark": async (params) => {
+      const record = asRecord(params);
+      const sessionId = record.sessionId;
+      const label = record.label;
+      if (typeof sessionId !== "string" || typeof label !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "ideas/mark requires string sessionId and label",
+        );
+      }
+      const eventId = typeof record.eventId === "string" ? record.eventId : undefined;
+      const description = typeof record.description === "string" ? record.description : undefined;
+      const events = await fetchSessionEvents({ sessionId });
+      const idea = markWorkbenchIdea({
+        sessionId,
+        label,
+        eventId,
+        description,
+        events,
+        registry: options.ideaPacketRegistry ?? defaultIdeaPacketRegistry,
+      });
+      return { idea };
+    },
+
+    "ideas/list": async (params) => {
+      const record = asRecord(params);
+      const sessionId = typeof record.sessionId === "string" ? record.sessionId : undefined;
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      return { ideas: reg.listIdeas(sessionId) };
+    },
+
+    "ideas/get": async (params) => {
+      const record = asRecord(params);
+      const ideaId = record.ideaId;
+      if (typeof ideaId !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "ideas/get requires a string ideaId",
+        );
+      }
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      const idea = reg.getIdea(ideaId);
+      return { idea };
+    },
+
+    "packets/draft": async (params) => {
+      const record = asRecord(params);
+      const sessionId = record.sessionId;
+      if (typeof sessionId !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/draft requires a string sessionId",
+        );
+      }
+      const ideaId = typeof record.ideaId === "string" ? record.ideaId : undefined;
+      const eventId = typeof record.eventId === "string" ? record.eventId : undefined;
+      const issueId = typeof record.issueId === "string" ? record.issueId : undefined;
+      const title = typeof record.title === "string" ? record.title : undefined;
+      const operatorIntent = typeof record.operatorIntent === "string" ? record.operatorIntent : undefined;
+      const [events, workspaceRec] = await Promise.all([
+        fetchSessionEvents({ sessionId }),
+        (options.fetchSessionWorkspaceRecord ?? fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
+      ]);
+      const packet = draftWorkPacketFromContext({
+        sessionId,
+        ideaId,
+        eventId,
+        issueId,
+        title,
+        operatorIntent,
+        events,
+        workspace: workspaceRec.workspace,
+        registry: options.ideaPacketRegistry ?? defaultIdeaPacketRegistry,
+      });
+      const markdown = formatWorkPacketMarkdown(packet);
+      return { packet, markdown };
+    },
+
+    "packets/list": async (params) => {
+      const record = asRecord(params);
+      const sessionId = typeof record.sessionId === "string" ? record.sessionId : undefined;
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      return { packets: reg.listPackets(sessionId) };
+    },
+
+    "packets/get": async (params) => {
+      const record = asRecord(params);
+      const packetId = record.packetId;
+      if (typeof packetId !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/get requires a string packetId",
+        );
+      }
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      const packet = reg.getPacket(packetId);
+      const markdown = packet ? formatWorkPacketMarkdown(packet) : null;
+      return { packet, markdown };
     },
   };
 }
