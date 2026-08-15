@@ -674,4 +674,30 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("10. ```sh\n    echo multi\n    ```");
     expect(md).toContain("\\# Injected Heading");
   });
+
+  test("tab-indented fences do not close root code fences", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_TAB_FENCE",
+      operatorIntent: "```sh\necho test\n\t```\n# code comment\n```",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("```sh\necho test\n\t```\n# code comment\n```");
+    expect(md).not.toContain("\\# code comment");
+  });
+
+  test("differing list markers or over-indented fences do not close list fences", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_DIFF_LIST",
+      operatorIntent: "- ```sh\n  echo test\n1. ```\n  # code comment\n  ```",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("# code comment");
+    expect(md).not.toContain("\\# code comment");
+  });
 });
