@@ -50,10 +50,32 @@ function validateIdentifier(id: string, fieldName = "identifier"): string {
   return trimmed;
 }
 
+function boundedCloneForJson(val: unknown, depth = 0): unknown {
+  if (depth > 3) return "[truncated]";
+  if (val === null || val === undefined) return val;
+  if (typeof val === "string") {
+    return val.length > 500 ? val.slice(0, 500) + "...[truncated]" : val;
+  }
+  if (typeof val === "number" || typeof val === "boolean") return val;
+  if (Array.isArray(val)) {
+    return val.slice(0, 20).map((item) => boundedCloneForJson(item, depth + 1));
+  }
+  if (typeof val === "object") {
+    const out: Record<string, unknown> = {};
+    const entries = Object.entries(val as Record<string, unknown>).slice(0, 20);
+    for (const [k, v] of entries) {
+      out[k.slice(0, 100)] = boundedCloneForJson(v, depth + 1);
+    }
+    return out;
+  }
+  return String(val).slice(0, 100);
+}
+
 function safeBoundedJson(obj: unknown, maxLen = 4000): string {
   if (obj === null || obj === undefined) return "{}";
   try {
-    const str = JSON.stringify(obj);
+    const bounded = boundedCloneForJson(obj);
+    const str = JSON.stringify(bounded);
     if (str.length <= maxLen) return str;
     return str.slice(0, maxLen) + "...[truncated]";
   } catch {
@@ -62,7 +84,10 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
 }
 
 function sanitizeMarkdownHeading(text: string): string {
-  return text.replace(/^([ \t]*#+)/gm, (_match, g1) => `\\${g1}`);
+  return text
+    .replace(/^([ \t]*#+)/gm, (_match, g1) => `\\${g1}`)
+    .replace(/^([ \t]*[=-]{2,}[ \t]*)$/gm, (_match, g1) => `\\${g1}`)
+    .replace(/^([ \t]*<[hH][1-6])/gm, (_match, g1) => `\\${g1}`);
 }
 
 function sanitizeSingleLine(text: string): string {
@@ -331,7 +356,7 @@ export function markWorkbenchIdea(input: {
 
   const reg = input.registry ?? defaultIdeaPacketRegistry;
   reg.registerIdea(idea);
-  return idea;
+  return reg.getIdea(idea.ideaId)!;
 }
 
 export function draftWorkPacketFromContext(input: {
@@ -472,7 +497,7 @@ export function draftWorkPacketFromContext(input: {
   };
 
   reg.registerPacket(packet);
-  return packet;
+  return reg.getPacket(packet.packetId)!;
 }
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {

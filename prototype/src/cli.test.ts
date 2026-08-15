@@ -3910,6 +3910,37 @@ describe("REPL /packet command", () => {
     expect(stderr.join("\n")).toContain("usage: /packet draft");
   });
 
+  test("/packet draft diagnoses duplicate or conflicting options", async () => {
+    const { io, stderr } = fakeIo();
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --event evt-1",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("cannot specify both positional target and explicit --idea/--event flag");
+
+    const io2 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft --idea 01IDEA --event evt-1",
+      cfg({ unix: true }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("cannot specify both --idea and --event");
+
+    const io3 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --issue BIT-1 --issue BIT-2",
+      cfg({ unix: true }),
+      io3.io,
+      state,
+    );
+    expect(io3.stderr.join("\n")).toContain("--issue specified multiple times");
+  });
+
   test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {
     const { io, stderr } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];

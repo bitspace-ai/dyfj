@@ -401,6 +401,17 @@ export function buildWorkbenchHandlers(
     "sessions/list": async (params) => {
       const record = asRecord(params);
       const project = record.project;
+      if (
+        record.limit !== undefined &&
+        (typeof record.limit !== "number" ||
+          !Number.isInteger(record.limit) ||
+          record.limit <= 0)
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "sessions/list limit must be a positive integer",
+        );
+      }
       const limit = typeof record.limit === "number" && record.limit > 0
         ? Math.min(record.limit, 1000)
         : undefined;
@@ -410,15 +421,40 @@ export function buildWorkbenchHandlers(
       if (limit === undefined) {
         return { projects };
       }
-      let remaining = limit;
+      const flattened: Array<{
+        projectIdx: number;
+        session: WorkbenchSessionSummary;
+      }> = [];
+      for (let i = 0; i < projects.length; i++) {
+        const p = projects[i];
+        if (Array.isArray(p.sessions)) {
+          for (const s of p.sessions) {
+            flattened.push({ projectIdx: i, session: s });
+          }
+        }
+      }
+      flattened.sort((a, b) =>
+        (b.session.createdAt || "").localeCompare(a.session.createdAt || "")
+      );
+      const topSlice = flattened.slice(0, limit);
+      const projectMap = new Map<number, WorkbenchSessionSummary[]>();
+      for (const item of topSlice) {
+        let list = projectMap.get(item.projectIdx);
+        if (!list) {
+          list = [];
+          projectMap.set(item.projectIdx, list);
+        }
+        list.push(item.session);
+      }
       const boundedProjects: WorkbenchProjectSessions[] = [];
-      for (const p of projects) {
-        if (remaining <= 0) break;
-        const sessions = Array.isArray(p.sessions)
-          ? p.sessions.slice(0, remaining)
-          : [];
-        remaining -= sessions.length;
-        boundedProjects.push({ ...p, sessions });
+      for (let i = 0; i < projects.length; i++) {
+        const pSessions = projectMap.get(i);
+        if (pSessions && pSessions.length > 0) {
+          boundedProjects.push({
+            project: projects[i].project,
+            sessions: pSessions,
+          });
+        }
       }
       return { projects: boundedProjects };
     },
@@ -546,7 +582,14 @@ export function buildWorkbenchHandlers(
         ? record.sessionId
         : undefined;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      return { ideas: reg.listIdeas(sessionId) };
+      try {
+        return { ideas: reg.listIdeas(sessionId) };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
     },
 
     "ideas/get": async (params) => {
@@ -559,8 +602,15 @@ export function buildWorkbenchHandlers(
         );
       }
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      const idea = reg.getIdea(ideaId);
-      return { idea };
+      try {
+        const idea = reg.getIdea(ideaId);
+        return { idea };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
     },
 
     "packets/draft": async (params) => {
@@ -590,16 +640,16 @@ export function buildWorkbenchHandlers(
         ? record.operatorIntent.trim()
         : undefined;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      const idea = ideaId ? reg.getIdea(ideaId) : null;
-      const referencedEventId = eventId ?? idea?.eventId ?? undefined;
-      const [events, workspaceRec] = await Promise.all([
-        referencedEventId
-          ? fetchSessionEvents({ sessionId, eventId: referencedEventId })
-          : fetchSessionEvents({ sessionId, limit: 50 }),
-        (options.fetchSessionWorkspaceRecord ??
-          fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
-      ]);
       try {
+        const idea = ideaId ? reg.getIdea(ideaId) : null;
+        const referencedEventId = eventId ?? idea?.eventId ?? undefined;
+        const [events, workspaceRec] = await Promise.all([
+          referencedEventId
+            ? fetchSessionEvents({ sessionId, eventId: referencedEventId })
+            : fetchSessionEvents({ sessionId, limit: 50 }),
+          (options.fetchSessionWorkspaceRecord ??
+            fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
+        ]);
         const packet = draftWorkPacketFromContext({
           sessionId,
           idea,
@@ -636,7 +686,14 @@ export function buildWorkbenchHandlers(
         ? record.sessionId
         : undefined;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      return { packets: reg.listPackets(sessionId) };
+      try {
+        return { packets: reg.listPackets(sessionId) };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
     },
 
     "packets/get": async (params) => {
@@ -649,9 +706,16 @@ export function buildWorkbenchHandlers(
         );
       }
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      const packet = reg.getPacket(packetId);
-      const markdown = packet ? formatWorkPacketMarkdown(packet) : null;
-      return { packet, markdown };
+      try {
+        const packet = reg.getPacket(packetId);
+        const markdown = packet ? formatWorkPacketMarkdown(packet) : null;
+        return { packet, markdown };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
     },
   };
 }

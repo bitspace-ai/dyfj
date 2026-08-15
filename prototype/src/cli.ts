@@ -1908,45 +1908,55 @@ export async function handleReplPacketCommand(
     let title: string | undefined;
     let targetRef: string | undefined;
 
+    const knownOptions = new Set(["--issue", "--event", "--idea", "--title"]);
     const tokens = parts.slice(2);
     let i = 0;
     while (i < tokens.length) {
       const token = tokens[i];
       if (token === "--issue") {
+        if (issueId !== undefined) {
+          io.err("error: --issue specified multiple times");
+          return true;
+        }
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || knownOptions.has(tokens[i])) {
           io.err("error: --issue requires an issue identifier");
           return true;
         }
         issueId = tokens[i];
         i++;
       } else if (token === "--event") {
+        if (eventId !== undefined) {
+          io.err("error: --event specified multiple times");
+          return true;
+        }
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || knownOptions.has(tokens[i])) {
           io.err("error: --event requires an event identifier");
           return true;
         }
         eventId = tokens[i];
         i++;
       } else if (token === "--idea") {
+        if (ideaId !== undefined) {
+          io.err("error: --idea specified multiple times");
+          return true;
+        }
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || knownOptions.has(tokens[i])) {
           io.err("error: --idea requires an idea identifier");
           return true;
         }
         ideaId = tokens[i];
         i++;
       } else if (token === "--title") {
+        if (title !== undefined) {
+          io.err("error: --title specified multiple times");
+          return true;
+        }
         i++;
         const titleTokens: string[] = [];
-        const isNextOption = (t: string) => {
-          if (!t.startsWith("--")) return false;
-          if (t === "--issue" && issueId === undefined) return true;
-          if (t === "--event" && eventId === undefined) return true;
-          if (t === "--idea" && ideaId === undefined) return true;
-          return false;
-        };
-        while (i < tokens.length && !isNextOption(tokens[i])) {
+        while (i < tokens.length && !knownOptions.has(tokens[i])) {
           titleTokens.push(tokens[i]);
           i++;
         }
@@ -1962,6 +1972,18 @@ export async function handleReplPacketCommand(
         io.err(`error: unexpected argument "${token}"`);
         return true;
       }
+    }
+
+    if (ideaId && eventId) {
+      io.err("error: cannot specify both --idea and --event");
+      return true;
+    }
+
+    if (targetRef && (ideaId || eventId)) {
+      io.err(
+        "error: cannot specify both positional target and explicit --idea/--event flag",
+      );
+      return true;
     }
 
     if (!ideaId && !eventId && !targetRef) {
