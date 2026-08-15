@@ -47,15 +47,45 @@ export class IdeaPacketRegistry {
   private readonly maxSessions = 100;
   private readonly maxEntriesPerSession = 50;
 
+  private sanitizeId(id: string): string {
+    return id.trim().slice(0, 64);
+  }
+
+  private cloneIdea(idea: WorkbenchIdea): WorkbenchIdea {
+    return { ...idea };
+  }
+
+  private clonePacket(packet: WorkbenchWorkPacket): WorkbenchWorkPacket {
+    return {
+      ...packet,
+      sourceContext: {
+        ...packet.sourceContext,
+        contextSources: [...packet.sourceContext.contextSources],
+      },
+      proposedAcceptanceCriteria: [...packet.proposedAcceptanceCriteria],
+      verifierProvenance: { ...packet.verifierProvenance },
+    };
+  }
+
   registerIdea(idea: WorkbenchIdea): void {
     const sanitized: WorkbenchIdea = {
-      ideaId: idea.ideaId.trim().slice(0, 64),
-      sessionId: idea.sessionId.trim().slice(0, 64),
-      eventId: idea.eventId?.trim().slice(0, 64) ?? null,
+      ideaId: this.sanitizeId(idea.ideaId),
+      sessionId: this.sanitizeId(idea.sessionId),
+      eventId: idea.eventId ? this.sanitizeId(idea.eventId) : null,
       label: idea.label.trim().slice(0, 256),
       description: idea.description.trim().slice(0, 2000),
       createdAt: idea.createdAt.trim().slice(0, 64),
     };
+
+    const existing = this.ideasById.get(sanitized.ideaId);
+    if (existing) {
+      const prevList = this.ideasBySession.get(existing.sessionId);
+      if (prevList) {
+        const idx = prevList.findIndex((i) => i.ideaId === sanitized.ideaId);
+        if (idx >= 0) prevList.splice(idx, 1);
+      }
+    }
+
     this.ideasById.set(sanitized.ideaId, sanitized);
     let list = this.ideasBySession.get(sanitized.sessionId);
     if (!list) {
@@ -77,30 +107,15 @@ export class IdeaPacketRegistry {
     list.push(sanitized);
   }
 
-  private cloneIdea(idea: WorkbenchIdea): WorkbenchIdea {
-    return { ...idea };
-  }
-
-  private clonePacket(packet: WorkbenchWorkPacket): WorkbenchWorkPacket {
-    return {
-      ...packet,
-      sourceContext: {
-        ...packet.sourceContext,
-        contextSources: [...packet.sourceContext.contextSources],
-      },
-      proposedAcceptanceCriteria: [...packet.proposedAcceptanceCriteria],
-      verifierProvenance: { ...packet.verifierProvenance },
-    };
-  }
-
   getIdea(ideaId: string): WorkbenchIdea | null {
-    const match = this.ideasById.get(ideaId);
+    const match = this.ideasById.get(this.sanitizeId(ideaId));
     return match ? this.cloneIdea(match) : null;
   }
 
   listIdeas(sessionId?: string): WorkbenchIdea[] {
     if (sessionId !== undefined) {
-      return (this.ideasBySession.get(sessionId) ?? []).map((i) =>
+      const cleanSessionId = this.sanitizeId(sessionId);
+      return (this.ideasBySession.get(cleanSessionId) ?? []).map((i) =>
         this.cloneIdea(i)
       );
     }
@@ -109,16 +124,17 @@ export class IdeaPacketRegistry {
 
   registerPacket(packet: WorkbenchWorkPacket): void {
     const sanitized: WorkbenchWorkPacket = {
-      packetId: packet.packetId.trim().slice(0, 64),
-      ideaId: packet.ideaId?.trim().slice(0, 64) ?? null,
-      sessionId: packet.sessionId.trim().slice(0, 64),
+      packetId: this.sanitizeId(packet.packetId),
+      ideaId: packet.ideaId ? this.sanitizeId(packet.ideaId) : null,
+      sessionId: this.sanitizeId(packet.sessionId),
       issueId: packet.issueId?.trim().slice(0, 64) ?? null,
       title: packet.title.trim().slice(0, 256),
       targetWorkspace: packet.targetWorkspace?.trim().slice(0, 500) ?? null,
       sourceContext: {
-        sessionId: packet.sourceContext.sessionId.trim().slice(0, 64),
-        referencedEventId:
-          packet.sourceContext.referencedEventId?.trim().slice(0, 64) ?? null,
+        sessionId: this.sanitizeId(packet.sourceContext.sessionId),
+        referencedEventId: packet.sourceContext.referencedEventId
+          ? this.sanitizeId(packet.sourceContext.referencedEventId)
+          : null,
         excerpt: packet.sourceContext.excerpt.trim().slice(0, 4000),
         contextSources: (packet.sourceContext.contextSources ?? [])
           .slice(0, 50)
@@ -136,6 +152,16 @@ export class IdeaPacketRegistry {
       },
       createdAt: packet.createdAt.trim().slice(0, 64),
     };
+
+    const existing = this.packetsById.get(sanitized.packetId);
+    if (existing) {
+      const prevList = this.packetsBySession.get(existing.sessionId);
+      if (prevList) {
+        const idx = prevList.findIndex((p) => p.packetId === sanitized.packetId);
+        if (idx >= 0) prevList.splice(idx, 1);
+      }
+    }
+
     this.packetsById.set(sanitized.packetId, sanitized);
     let list = this.packetsBySession.get(sanitized.sessionId);
     if (!list) {
@@ -158,13 +184,14 @@ export class IdeaPacketRegistry {
   }
 
   getPacket(packetId: string): WorkbenchWorkPacket | null {
-    const match = this.packetsById.get(packetId);
+    const match = this.packetsById.get(this.sanitizeId(packetId));
     return match ? this.clonePacket(match) : null;
   }
 
   listPackets(sessionId?: string): WorkbenchWorkPacket[] {
     if (sessionId !== undefined) {
-      return (this.packetsBySession.get(sessionId) ?? []).map((p) =>
+      const cleanSessionId = this.sanitizeId(sessionId);
+      return (this.packetsBySession.get(cleanSessionId) ?? []).map((p) =>
         this.clonePacket(p)
       );
     }
@@ -223,6 +250,7 @@ export function markWorkbenchIdea(input: {
   createdAt?: string;
   registry?: IdeaPacketRegistry;
 }): WorkbenchIdea {
+  const sessionId = input.sessionId.trim().slice(0, 64);
   const label = input.label.trim().slice(0, 256);
   if (label.length === 0) {
     throw new Error("idea label cannot be empty");
@@ -262,7 +290,7 @@ export function markWorkbenchIdea(input: {
 
   const idea: WorkbenchIdea = {
     ideaId: input.ideaId ?? generateULID(),
-    sessionId: input.sessionId,
+    sessionId,
     eventId: input.eventId ?? null,
     label,
     description,
@@ -290,6 +318,7 @@ export function draftWorkPacketFromContext(input: {
   registry?: IdeaPacketRegistry;
 }): WorkbenchWorkPacket {
   const reg = input.registry ?? defaultIdeaPacketRegistry;
+  const sessionId = input.sessionId.trim().slice(0, 64);
   let idea: WorkbenchIdea | null = null;
   if (input.idea) {
     idea = input.idea;
@@ -300,9 +329,9 @@ export function draftWorkPacketFromContext(input: {
     }
   }
 
-  if (idea && idea.sessionId !== input.sessionId) {
+  if (idea && idea.sessionId !== sessionId) {
     throw new Error(
-      `idea "${idea.ideaId}" belongs to session "${idea.sessionId}", not requested session "${input.sessionId}"`,
+      `idea "${idea.ideaId}" belongs to session "${idea.sessionId}", not requested session "${sessionId}"`,
     );
   }
 
@@ -381,12 +410,12 @@ export function draftWorkPacketFromContext(input: {
   const packet: WorkbenchWorkPacket = {
     packetId: input.packetId ?? generateULID(),
     ideaId: idea?.ideaId ?? input.ideaId ?? null,
-    sessionId: input.sessionId,
+    sessionId,
     issueId: input.issueId?.trim().slice(0, 64) || null,
     title,
     targetWorkspace: input.workspace ?? null,
     sourceContext: {
-      sessionId: input.sessionId,
+      sessionId,
       referencedEventId,
       excerpt,
       contextSources,

@@ -268,4 +268,50 @@ describe("draftWorkPacketFromContext", () => {
     expect(secondRetrieval!.sourceContext.contextSources).toEqual([]);
     expect(secondRetrieval!.proposedAcceptanceCriteria).toHaveLength(2);
   });
+
+  test("registering duplicate idea ID cleans up previous session list and keeps lookup in sync", () => {
+    const reg = new IdeaPacketRegistry();
+    const idea1 = markWorkbenchIdea({
+      sessionId: "01SESSION_A",
+      ideaId: "SAME_IDEA_ID",
+      label: "Initial Idea",
+      registry: reg,
+    });
+
+    expect(reg.listIdeas("01SESSION_A")).toHaveLength(1);
+
+    const idea2 = markWorkbenchIdea({
+      sessionId: "01SESSION_B",
+      ideaId: "SAME_IDEA_ID",
+      label: "Updated Idea in New Session",
+      registry: reg,
+    });
+
+    expect(reg.listIdeas("01SESSION_A")).toHaveLength(0);
+    expect(reg.listIdeas("01SESSION_B")).toHaveLength(1);
+    expect(reg.getIdea("SAME_IDEA_ID")?.sessionId).toBe("01SESSION_B");
+    expect(reg.getIdea("SAME_IDEA_ID")?.label).toBe("Updated Idea in New Session");
+  });
+
+  test("session ID longer than 64 chars is canonically truncated and matches across mark, list, and draft", () => {
+    const longSessionId = "A".repeat(80);
+    const reg = new IdeaPacketRegistry();
+    const idea = markWorkbenchIdea({
+      sessionId: longSessionId,
+      label: "Long session idea",
+      registry: reg,
+    });
+
+    expect(idea.sessionId).toBe("A".repeat(64));
+    expect(reg.listIdeas(longSessionId)).toHaveLength(1);
+
+    const packet = draftWorkPacketFromContext({
+      sessionId: longSessionId,
+      ideaId: idea.ideaId,
+      registry: reg,
+    });
+
+    expect(packet.sessionId).toBe("A".repeat(64));
+    expect(reg.listPackets(longSessionId)).toHaveLength(1);
+  });
 });

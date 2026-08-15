@@ -1611,21 +1611,32 @@ export async function handleReplSessionCommand(
               }>;
             }>;
           };
-          const allSessions: Array<{
+          const sessions: Array<{
             sessionId: string;
             taskDescription: string;
             createdAt: string;
           }> = [];
           for (const p of res.projects ?? []) {
             if (Array.isArray(p.sessions)) {
-              allSessions.push(...p.sessions);
+              for (const s of p.sessions) {
+                if (sessions.length < 15) {
+                  sessions.push(s);
+                  sessions.sort((a, b) =>
+                    (b.createdAt || "").localeCompare(a.createdAt || "")
+                  );
+                } else if (
+                  (s.createdAt || "").localeCompare(
+                    sessions[sessions.length - 1].createdAt || "",
+                  ) > 0
+                ) {
+                  sessions[sessions.length - 1] = s;
+                  sessions.sort((a, b) =>
+                    (b.createdAt || "").localeCompare(a.createdAt || "")
+                  );
+                }
+              }
             }
           }
-          const sessions = allSessions
-            .sort((a, b) =>
-              (b.createdAt || "").localeCompare(a.createdAt || "")
-            )
-            .slice(0, 15);
           if (sessions.length === 0) {
             io.err("no sessions found");
           } else {
