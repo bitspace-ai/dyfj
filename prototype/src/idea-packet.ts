@@ -199,6 +199,7 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
 
 function sanitizeMarkdownHeading(text: string): string {
   const clean = text
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
     .replace(/\r\n|\r/g, "\n")
     .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
   const lines = clean.split("\n");
@@ -238,7 +239,10 @@ function sanitizeMarkdownHeading(text: string): string {
       result.push(sanitizedLine);
     } else {
       const closeMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
-      if (closeMatch && closeMatch[1] === openPrefix) {
+      if (
+        closeMatch &&
+        closeMatch[1].replace(/[^>]/g, "") === openPrefix.replace(/[^>]/g, "")
+      ) {
         const fence = closeMatch[2];
         if (fence[0] === openChar && fence.length >= openCount) {
           openChar = null;
@@ -255,6 +259,7 @@ function sanitizeMarkdownHeading(text: string): string {
 
 function sanitizeSingleLine(text: string): string {
   return text
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
     .replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -525,26 +530,29 @@ export function markWorkbenchIdea(input: {
   let description = rawDesc;
   if (input.eventId !== undefined && input.eventId !== null) {
     const eventId = validateIdentifier(input.eventId, "eventId");
-    if (input.events !== undefined) {
-      let match: WorkbenchSessionEvent | undefined;
-      let scanned = 0;
-      for (let i = input.events.length - 1; i >= 0; i--) {
-        scanned++;
-        if (scanned > 5000) break;
-        const ev = input.events[i];
-        if (ev.eventId === eventId && ev.sessionId === sessionId) {
-          match = ev;
-          break;
-        }
+    if (input.events === undefined) {
+      throw new Error(
+        `cannot mark idea with eventId "${eventId}" without supplying session events for session "${sessionId}"`,
+      );
+    }
+    let match: WorkbenchSessionEvent | undefined;
+    let scanned = 0;
+    for (let i = input.events.length - 1; i >= 0; i--) {
+      scanned++;
+      if (scanned > 5000) break;
+      const ev = input.events[i];
+      if (ev.eventId === eventId && ev.sessionId === sessionId) {
+        match = ev;
+        break;
       }
-      if (!match) {
-        throw new Error(
-          `event "${eventId}" not found in session events for session "${sessionId}"`,
-        );
-      }
-      if (description.length === 0 && match.content) {
-        description = match.content.slice(0, 4000).trim().slice(0, 2000);
-      }
+    }
+    if (!match) {
+      throw new Error(
+        `event "${eventId}" not found in session events for session "${sessionId}"`,
+      );
+    }
+    if (description.length === 0 && match.content) {
+      description = match.content.slice(0, 4000).trim().slice(0, 2000);
     }
   } else if (description.length === 0 && input.events && input.events.length > 0) {
     const sessionEvents: WorkbenchSessionEvent[] = [];
@@ -646,40 +654,43 @@ export function draftWorkPacketFromContext(input: {
 
   const events = input.events;
   if (referencedEventId) {
-    if (events !== undefined) {
-      let match: WorkbenchSessionEvent | undefined;
-      let scanned = 0;
-      for (let i = events.length - 1; i >= 0; i--) {
-        scanned++;
-        if (scanned > 5000) break;
-        const ev = events[i];
-        if (ev.eventId === referencedEventId && ev.sessionId === sessionId) {
-          match = ev;
-          break;
-        }
+    if (events === undefined) {
+      throw new Error(
+        `cannot draft packet with referenced event "${referencedEventId}" without supplying session events for session "${sessionId}"`,
+      );
+    }
+    let match: WorkbenchSessionEvent | undefined;
+    let scanned = 0;
+    for (let i = events.length - 1; i >= 0; i--) {
+      scanned++;
+      if (scanned > 5000) break;
+      const ev = events[i];
+      if (ev.eventId === referencedEventId && ev.sessionId === sessionId) {
+        match = ev;
+        break;
       }
-      if (!match) {
-        throw new Error(
-          `referenced event "${referencedEventId}" not found in session events for session "${sessionId}"`,
-        );
-      }
-      if (match.content && match.content.length > 0) {
-        const preSlice = match.content.length > 4000
-          ? match.content.slice(0, 4000)
-          : match.content;
-        const trimmed = preSlice.trim();
-        if (match.content.length > 4000) {
-          excerpt = closeDanglingFences(trimmed.slice(0, 3950) + "\n...[truncated]");
-        } else {
-          excerpt = closeDanglingFences(trimmed);
-        }
-      } else if (match.toolName) {
-        excerpt = `[Tool Call: ${match.toolName}]: ${
-          safeBoundedJson(match.toolArguments ?? {})
-        }`;
+    }
+    if (!match) {
+      throw new Error(
+        `referenced event "${referencedEventId}" not found in session events for session "${sessionId}"`,
+      );
+    }
+    if (match.content && match.content.length > 0) {
+      const preSlice = match.content.length > 4000
+        ? match.content.slice(0, 4000)
+        : match.content;
+      const trimmed = preSlice.trim();
+      if (match.content.length > 4000) {
+        excerpt = closeDanglingFences(trimmed.slice(0, 3950) + "\n...[truncated]");
       } else {
-        excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
+        excerpt = closeDanglingFences(trimmed);
       }
+    } else if (match.toolName) {
+      excerpt = `[Tool Call: ${match.toolName}]: ${
+        safeBoundedJson(match.toolArguments ?? {})
+      }`;
+    } else {
+      excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
     }
   } else if (events && events.length > 0) {
     const sessionEvents: WorkbenchSessionEvent[] = [];
@@ -712,9 +723,6 @@ export function draftWorkPacketFromContext(input: {
         return `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${snippet}`;
       })
       .join("\n\n");
-    if (relevant.length > 0 && !referencedEventId) {
-      referencedEventId = relevant[relevant.length - 1].eventId;
-    }
   }
 
   if (excerpt.length === 0) {
@@ -781,6 +789,7 @@ export function draftWorkPacketFromContext(input: {
 
 function closeDanglingFences(text: string): string {
   const clean = text
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
     .replace(/\r\n|\r/g, "\n")
     .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
   const lines = clean.split("\n");
@@ -802,7 +811,10 @@ function closeDanglingFences(text: string): string {
       }
     } else {
       const closeMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
-      if (closeMatch && closeMatch[1] === openPrefix) {
+      if (
+        closeMatch &&
+        closeMatch[1].replace(/[^>]/g, "") === openPrefix.replace(/[^>]/g, "")
+      ) {
         const fence = closeMatch[2];
         if (fence[0] === openChar && fence.length >= openCount) {
           openChar = null;
@@ -813,9 +825,9 @@ function closeDanglingFences(text: string): string {
     }
   }
   if (openChar) {
-    return text + "\n" + openPrefix + openChar.repeat(openCount);
+    return clean + "\n" + openPrefix + openChar.repeat(openCount);
   }
-  return text;
+  return clean;
 }
 
 function formatCodeSpan(str: string): string {

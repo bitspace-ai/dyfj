@@ -468,4 +468,68 @@ describe("draftWorkPacketFromContext", () => {
     expect(packet.sourceContext.contextSources).toEqual(["native/file.ts"]);
     expect(packet.sourceContext.contextSources).not.toContain("foreign/secret.ts");
   });
+
+  test("markWorkbenchIdea throws when eventId is provided without events array", () => {
+    expect(() =>
+      markWorkbenchIdea({
+        sessionId: "01SESSION_TEST",
+        eventId: "evt-123",
+        label: "Orphan event idea",
+      })
+    ).toThrow(/cannot mark idea with eventId "evt-123" without supplying session events/);
+  });
+
+  test("draftWorkPacketFromContext throws when eventId is provided without events array", () => {
+    expect(() =>
+      draftWorkPacketFromContext({
+        sessionId: "01SESSION_TEST",
+        eventId: "evt-123",
+        title: "Orphan event packet",
+      })
+    ).toThrow(/cannot draft packet with referenced event "evt-123" without supplying session events/);
+  });
+
+  test("blockquote code fences close correctly across varying whitespace and strip escape codes", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_FENCES",
+      title: "Fence Whitespace Title",
+      operatorIntent: ">```ts\n> const y = 2;\n> ```\n\x1b[31m# Heading Outside Fence\x1b[0m",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain(">```ts\n> const y = 2;\n> ```");
+    expect(md).toContain("\\# Heading Outside Fence");
+    expect(md).not.toContain("\x1b[31m");
+    expect(packet.operatorIntent).not.toContain("\x1b[31m");
+  });
+
+  test("multi-event aggregated excerpt sets referencedEventId to null", () => {
+    const events: WorkbenchSessionEvent[] = [
+      {
+        sessionId: "01SESSION_MULTI",
+        eventId: "evt-1",
+        eventType: "session_start",
+        content: "What is the plan?",
+        createdAt: "2026-08-15T12:00:00Z",
+      } as any,
+      {
+        sessionId: "01SESSION_MULTI",
+        eventId: "evt-2",
+        eventType: "model_response",
+        content: "Here is the plan.",
+        createdAt: "2026-08-15T12:01:00Z",
+      } as any,
+    ];
+
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_MULTI",
+      events,
+    });
+
+    expect(packet.sourceContext.referencedEventId).toBeNull();
+    expect(packet.sourceContext.excerpt).toContain("[User]: What is the plan?");
+    expect(packet.sourceContext.excerpt).toContain("[Assistant]: Here is the plan.");
+  });
 });

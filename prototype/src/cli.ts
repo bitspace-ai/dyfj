@@ -56,6 +56,7 @@ import {
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
 } from "./idea-packet";
+import type { WorkbenchSessionEvent } from "./sessions";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
@@ -870,6 +871,23 @@ export async function runRepl(
         sessionState.sessionId = result.sessionId;
         sessionState.turnCount++;
         if ("cost" in result) sessionState.sessionSpendUsd += result.cost.totalUsd;
+        if (!sessionState.events) sessionState.events = [];
+        sessionState.events.push(createCliSessionEvent({
+          eventId: `evt_u_${sessionState.turnCount}`,
+          sessionId: result.sessionId,
+          eventType: "session_start",
+          content: prompt,
+          createdAt: new Date().toISOString(),
+        }));
+        if (result.text) {
+          sessionState.events.push(createCliSessionEvent({
+            eventId: `evt_a_${sessionState.turnCount}`,
+            sessionId: result.sessionId,
+            eventType: "model_response",
+            content: result.text,
+            createdAt: new Date().toISOString(),
+          }));
+        }
         io.err(
           formatReceipt(
             result,
@@ -1543,11 +1561,73 @@ export async function fetchSessionPosture(
   }
 }
 
+function createCliSessionEvent(input: {
+  sessionId?: string;
+  eventId: string;
+  eventType: string;
+  content: string;
+  createdAt: string;
+}): WorkbenchSessionEvent {
+  return {
+    sessionId: input.sessionId,
+    eventId: input.eventId,
+    eventType: input.eventType,
+    traceId: "cli_trace",
+    spanId: "cli_span",
+    parentSpanId: null,
+    traceFlags: null,
+    traceState: null,
+    spanKind: null,
+    parentIsRemote: null,
+    principalId: "operator",
+    modelId: null,
+    provider: null,
+    api: null,
+    content: input.content,
+    stopReason: null,
+    tokensInput: null,
+    tokensOutput: null,
+    tokensCacheRead: null,
+    tokensCacheWrite: null,
+    costTotal: null,
+    durationMs: null,
+    providerCallOrder: null,
+    providerCallPurpose: null,
+    providerErrorClass: null,
+    unparsedToolCallCount: null,
+    unparsedToolCallCountIsLowerBound: null,
+    runnerKind: null,
+    runnerProfile: null,
+    runnerProtocol: null,
+    runnerProtocolVersion: null,
+    runnerStopReason: null,
+    runnerExternalSessionId: null,
+    runnerAgentName: null,
+    runnerAgentVersion: null,
+    runnerTransport: null,
+    runnerAccessRoute: null,
+    runnerCostBasis: null,
+    runnerWorkspace: null,
+    runnerCapabilities: null,
+    runnerEvidenceScope: null,
+    runnerRouteSource: null,
+    runnerAuthType: null,
+    permissionVerdict: null,
+    toolName: null,
+    toolCallId: null,
+    toolArguments: null,
+    toolResult: null,
+    toolIsError: null,
+    createdAt: input.createdAt,
+  };
+}
+
 export interface ReplSessionState {
   sessionId?: string;
   turnCount: number;
   sessionSpendUsd: number;
   workspace?: string;
+  events?: WorkbenchSessionEvent[];
 }
 
 export async function handleReplSessionCommand(
@@ -1559,6 +1639,10 @@ export async function handleReplSessionCommand(
 ): Promise<boolean> {
   const trimmed = line.trimStart();
   if (!trimmed.startsWith("/session")) return false;
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
   const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/session") return false;
 
@@ -1749,6 +1833,10 @@ export async function handleReplIdeaCommand(
 ): Promise<boolean> {
   const trimmed = line.trimStart();
   if (!trimmed.startsWith("/idea")) return false;
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
   const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/idea") return false;
 
@@ -1789,6 +1877,18 @@ export async function handleReplIdeaCommand(
         }
         eventId = tokens[i];
         i++;
+      } else if (token.startsWith("--event=")) {
+        if (eventId !== undefined) {
+          io.err("error: --event specified multiple times");
+          return true;
+        }
+        const val = token.slice("--event=".length);
+        if (val.length === 0 || isOptionLike(val)) {
+          io.err("usage: /idea mark --event <event-id> <label...>");
+          return true;
+        }
+        eventId = val;
+        i++;
       } else if (isOptionLike(token)) {
         io.err(`error: unexpected argument "${token}"`);
         return true;
@@ -1802,15 +1902,14 @@ export async function handleReplIdeaCommand(
       io.err("usage: /idea mark [--event <event-id>] <label...>");
       return true;
     }
-
     if (config.unix) {
       try {
         const client = await connect(config.socket);
         try {
           const res = await client.request("ideas/mark", {
             sessionId: sessionState.sessionId,
-            eventId,
             label,
+            eventId,
           }) as { idea: WorkbenchIdea };
           const cleanId = (res.idea.ideaId ?? "")
             .replace(/[\x00-\x1F\x7F\x1B]/g, "")
@@ -1838,6 +1937,7 @@ export async function handleReplIdeaCommand(
           sessionId: sessionState.sessionId,
           eventId,
           label,
+          events: sessionState.events,
         });
         const cleanId = (idea.ideaId ?? "")
           .replace(/[\x00-\x1F\x7F\x1B]/g, "")
@@ -1999,6 +2099,10 @@ export async function handleReplPacketCommand(
 ): Promise<boolean> {
   const trimmed = line.trimStart();
   if (!trimmed.startsWith("/packet")) return false;
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
   const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/packet") return false;
 
@@ -2165,6 +2269,7 @@ export async function handleReplPacketCommand(
           eventId,
           issueId,
           title,
+          events: sessionState.events,
         });
         const cleanPacketId = (packet.packetId ?? "")
           .replace(/[\x00-\x1F\x7F\x1B]/g, "")
@@ -2310,7 +2415,13 @@ export async function handleReplModelCommand(
   io: Io,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const parts = line.trim().split(/\s+/);
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/model")) return false;
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
+  const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/model") return false;
   // `--approve-paid` mirrors the launch flag: it arms the SESSION's existing
   // per-turn paid opt-in (buildTurnBody sends it each turn), so escalating to a
