@@ -1130,7 +1130,9 @@ describe("buildConversationMessages", () => {
       },
     });
 
-    expect(executedSql[0]).toContain("ORDER BY created_at DESC LIMIT 10");
+    expect(executedSql[0]).toContain(
+      "ORDER BY created_at DESC, event_id DESC LIMIT 10",
+    );
     expect(events.map((e) => e.eventId)).toEqual(["evt-2", "evt-1"]);
   });
 });

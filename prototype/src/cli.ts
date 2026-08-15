@@ -1557,7 +1557,9 @@ export async function handleReplSessionCommand(
   sessionState: ReplSessionState,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const parts = line.trim().split(/\s+/);
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/session")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/session") return false;
 
   const sub = parts[1];
@@ -1672,6 +1674,12 @@ export async function handleReplSessionCommand(
       return true;
     }
     const rawTargetId = parts[2];
+    if (rawTargetId.length > 512) {
+      io.err(
+        "error: session identifier must be non-empty and <= 256 characters",
+      );
+      return true;
+    }
     const targetId = rawTargetId
       .replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, "")
       .trim();
@@ -1723,7 +1731,9 @@ export async function handleReplIdeaCommand(
   sessionState: ReplSessionState,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const parts = line.trim().split(/\s+/);
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/idea")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/idea") return false;
 
   const sub = parts[1];
@@ -1921,7 +1931,9 @@ export async function handleReplPacketCommand(
   sessionState: ReplSessionState,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const parts = line.trim().split(/\s+/);
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/packet")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/packet") return false;
 
   if (parts.length === 1 || parts[1] === "help") {

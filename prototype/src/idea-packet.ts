@@ -290,6 +290,10 @@ export class IdeaPacketRegistry {
       createdAt: rawCreated.trim().slice(0, 64),
     };
 
+    if (sanitized.sourceContext.sessionId !== sanitized.sessionId) {
+      throw new Error("packet sessionId and sourceContext sessionId must match");
+    }
+
     const existing = this.packetsById.get(sanitized.packetId);
     if (existing) {
       const prevList = this.packetsBySession.get(existing.sessionId);
@@ -544,7 +548,7 @@ export function draftWorkPacketFromContext(input: {
       .slice(-4);
     excerpt = relevant
       .map((e) => {
-        const raw = (e.content ?? "").slice(0, 600).trim();
+        const raw = (e.content ?? "").trim();
         const snippet = raw.length > 300
           ? raw.slice(0, 300) + "...[truncated]"
           : raw;
@@ -563,7 +567,8 @@ export function draftWorkPacketFromContext(input: {
   const recentEvents = events ? events.slice(-20) : [];
   for (const ev of recentEvents) {
     if (ev.toolName === "read_file" && ev.toolArguments?.path) {
-      const p = String(ev.toolArguments.path).trim().slice(0, 500);
+      const raw = String(ev.toolArguments.path).slice(0, 1000).trim();
+      const p = raw.slice(0, 500);
       if (!contextSources.includes(p) && contextSources.length < 50) {
         contextSources.push(p);
       }
@@ -664,7 +669,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   );
 
   for (const criterion of packet.proposedAcceptanceCriteria) {
-    const safeCriterion = sanitizeMarkdownHeading(sanitizeSingleLine(criterion)).replace(/[`<>]/g, "");
+    const safeCriterion = sanitizeMarkdownHeading(sanitizeSingleLine(criterion)).replace(/[`]/g, "");
     lines.push(`- [ ] ${safeCriterion}`);
   }
 

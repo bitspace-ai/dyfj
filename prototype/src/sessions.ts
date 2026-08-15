@@ -388,7 +388,7 @@ function eventQuery(
     `${runnerFields}, ` +
     `tool_name, tool_call_id, ` +
     `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
-    `WHERE session_id = ?${eventClause} ORDER BY created_at ${orderClause}${limitClause};`;
+    `WHERE session_id = ?${eventClause} ORDER BY created_at ${orderClause}, event_id ${orderClause}${limitClause};`;
 }
 
 function isMissingRunnerColumn(error: unknown): boolean {

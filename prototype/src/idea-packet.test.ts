@@ -332,13 +332,17 @@ describe("draftWorkPacketFromContext", () => {
     ).toThrow("sessionId exceeds maximum length of 256 characters");
   });
 
-  test("formatWorkPacketMarkdown neutralizes markdown heading injections and HTML headings", () => {
+  test("formatWorkPacketMarkdown neutralizes markdown heading injections and HTML headings while preserving comparison operators", () => {
     const reg = new IdeaPacketRegistry();
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_INJECT",
       title: "Title with\nnewlines",
       operatorIntent: "Legit intent\n\n## 4. Injected Section\n> > # Injected Section\n1. > # List Quoted Heading\n<div><h1>Injected HTML</h1></div>",
-      acceptanceCriteria: ["Criterion 1\nwith newline", "<h1>Injected Heading in Checklist</h1>"],
+      acceptanceCriteria: [
+        "Criterion 1\nwith newline",
+        "<h1>Injected Heading in Checklist</h1>",
+        "p95 latency < 200 ms and memory > 50 MB",
+      ],
       registry: reg,
     });
 
@@ -349,7 +353,35 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("1. > \\# List Quoted Heading");
     expect(md).toContain("<div>\\<h1\\>Injected HTML\\</h1\\></div>");
     expect(md).toContain("- [ ] Criterion 1 with newline");
-    expect(md).toContain("- [ ] \\h1\\Injected Heading in Checklist\\/h1\\");
+    expect(md).toContain("- [ ] \\<h1\\>Injected Heading in Checklist\\</h1\\>");
+    expect(md).toContain("- [ ] p95 latency < 200 ms and memory > 50 MB");
+  });
+
+  test("registerPacket rejects mismatched packet and sourceContext session IDs", () => {
+    const reg = new IdeaPacketRegistry();
+    expect(() => {
+      reg.registerPacket({
+        packetId: "01PACKET000000000000000001",
+        ideaId: null,
+        sessionId: "01SESSION_A",
+        issueId: null,
+        title: "Cross session packet",
+        targetWorkspace: null,
+        sourceContext: {
+          sessionId: "01SESSION_B",
+          referencedEventId: null,
+          excerpt: "Excerpt from B",
+          contextSources: [],
+        },
+        operatorIntent: "Intent",
+        proposedAcceptanceCriteria: [],
+        verifierProvenance: {
+          verifierType: "human_operator",
+          independenceNotes: "Notes",
+        },
+        createdAt: "2026-08-15T12:00:00Z",
+      });
+    }).toThrow("packet sessionId and sourceContext sessionId must match");
   });
 
   test("recent session events longer than 300 chars include truncation indicator", () => {
