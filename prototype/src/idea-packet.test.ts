@@ -293,16 +293,24 @@ describe("draftWorkPacketFromContext", () => {
     expect(reg.listIdeas("01SESSION_A")).toHaveLength(1);
 
     const idea2 = markWorkbenchIdea({
-      sessionId: "01SESSION_B",
+      sessionId: "01SESSION_A",
       ideaId: "SAME_IDEA_ID",
-      label: "Updated Idea in New Session",
+      label: "Updated Idea in Same Session",
       registry: reg,
     });
 
-    expect(reg.listIdeas("01SESSION_A")).toHaveLength(0);
-    expect(reg.listIdeas("01SESSION_B")).toHaveLength(1);
-    expect(reg.getIdea("SAME_IDEA_ID")?.sessionId).toBe("01SESSION_B");
-    expect(reg.getIdea("SAME_IDEA_ID")?.label).toBe("Updated Idea in New Session");
+    expect(reg.listIdeas("01SESSION_A")).toHaveLength(1);
+    expect(reg.getIdea("SAME_IDEA_ID")?.sessionId).toBe("01SESSION_A");
+    expect(reg.getIdea("SAME_IDEA_ID")?.label).toBe("Updated Idea in Same Session");
+
+    expect(() => {
+      markWorkbenchIdea({
+        sessionId: "01SESSION_B",
+        ideaId: "SAME_IDEA_ID",
+        label: "Attempted Cross-Session Hijack",
+        registry: reg,
+      });
+    }).toThrow("cannot re-register idea");
   });
 
   test("referenced tool-call event with empty content extracts tool call details as excerpt", () => {
@@ -699,5 +707,53 @@ describe("draftWorkPacketFromContext", () => {
     const md = formatWorkPacketMarkdown(packet);
     expect(md).toContain("# code comment");
     expect(md).not.toContain("\\# code comment");
+  });
+
+  test("re-registering idea or packet under a different session throws an error", () => {
+    const reg = new IdeaPacketRegistry();
+    const idea1 = markWorkbenchIdea({
+      sessionId: "01SESSION_A",
+      ideaId: "01IDEA_CROSS_SESS",
+      label: "Idea in Session A",
+      registry: reg,
+    });
+    expect(idea1.ideaId).toBe("01IDEA_CROSS_SESS");
+
+    expect(() => {
+      markWorkbenchIdea({
+        sessionId: "01SESSION_B",
+        ideaId: "01IDEA_CROSS_SESS",
+        label: "Idea Hijack",
+        registry: reg,
+      });
+    }).toThrow("cannot re-register idea");
+  });
+
+  test("event resolution searches beyond 2000 events without failing", () => {
+    const reg = new IdeaPacketRegistry();
+    const events = [];
+    events.push({
+      eventId: "evt_early",
+      sessionId: "01SESSION_DEEP_EVTS",
+      eventType: "user_prompt",
+      content: "Early event content",
+    } as any);
+    for (let i = 0; i < 2500; i++) {
+      events.push({
+        eventId: `evt_filler_${i}`,
+        sessionId: "01SESSION_DEEP_EVTS",
+        eventType: "turn_start",
+      } as any);
+    }
+
+    const idea = markWorkbenchIdea({
+      sessionId: "01SESSION_DEEP_EVTS",
+      eventId: "evt_early",
+      label: "Deep Event Idea",
+      events,
+      registry: reg,
+    });
+
+    expect(idea.description).toBe("Early event content");
   });
 });

@@ -444,13 +444,15 @@ export class IdeaPacketRegistry {
 
     const existing = this.ideasById.get(sanitized.ideaId);
     if (existing) {
+      if (existing.sessionId !== sanitized.sessionId) {
+        throw new Error(
+          `cannot re-register idea "${sanitized.ideaId}" under session "${sanitized.sessionId}" because it is already registered under session "${existing.sessionId}"`,
+        );
+      }
       const prevList = this.ideasBySession.get(existing.sessionId);
       if (prevList) {
         const idx = prevList.findIndex((i) => i.ideaId === sanitized.ideaId);
         if (idx >= 0) prevList.splice(idx, 1);
-        if (prevList.length === 0 && existing.sessionId !== sanitized.sessionId) {
-          this.ideasBySession.delete(existing.sessionId);
-        }
       }
     }
 
@@ -548,13 +550,15 @@ export class IdeaPacketRegistry {
 
     const existing = this.packetsById.get(sanitized.packetId);
     if (existing) {
+      if (existing.sessionId !== sanitized.sessionId) {
+        throw new Error(
+          `cannot re-register packet "${sanitized.packetId}" under session "${sanitized.sessionId}" because it is already registered under session "${existing.sessionId}"`,
+        );
+      }
       const prevList = this.packetsBySession.get(existing.sessionId);
       if (prevList) {
         const idx = prevList.findIndex((p) => p.packetId === sanitized.packetId);
         if (idx >= 0) prevList.splice(idx, 1);
-        if (prevList.length === 0 && existing.sessionId !== sanitized.sessionId) {
-          this.packetsBySession.delete(existing.sessionId);
-        }
       }
     }
 
@@ -671,9 +675,7 @@ export function markWorkbenchIdea(input: {
       );
     }
     let match: WorkbenchSessionEvent | undefined;
-    let totalScanned = 0;
     for (let i = input.events.length - 1; i >= 0; i--) {
-      if (++totalScanned > 2000) break;
       const ev = input.events[i];
       if (ev.sessionId === sessionId && ev.eventId === eventId) {
         match = ev;
@@ -794,9 +796,7 @@ export function draftWorkPacketFromContext(input: {
     }
     let match: WorkbenchSessionEvent | undefined;
     if (input.events && input.events.length > 0) {
-      let totalScanned = 0;
       for (let i = input.events.length - 1; i >= 0; i--) {
-        if (++totalScanned > 2000) break;
         const ev = input.events[i];
         if (ev.sessionId === sessionId && ev.eventId === referencedEventId) {
           match = ev;
