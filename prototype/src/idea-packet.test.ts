@@ -338,7 +338,7 @@ describe("draftWorkPacketFromContext", () => {
       sessionId: "01SESSION_INJECT",
       title: "Title with\nnewlines",
       operatorIntent: "Legit intent\n\n## 4. Injected Section\n> > # Injected Section\n1. > # List Quoted Heading\n<div><h1>Injected HTML</h1></div>",
-      acceptanceCriteria: ["Criterion 1\nwith newline"],
+      acceptanceCriteria: ["Criterion 1\nwith newline", "<h1>Injected Heading in Checklist</h1>"],
       registry: reg,
     });
 
@@ -349,6 +349,7 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("1. > \\# List Quoted Heading");
     expect(md).toContain("<div>\\<h1\\>Injected HTML\\</h1\\></div>");
     expect(md).toContain("- [ ] Criterion 1 with newline");
+    expect(md).toContain("- [ ] \\h1\\Injected Heading in Checklist\\/h1\\");
   });
 
   test("recent session events longer than 300 chars include truncation indicator", () => {

@@ -59,10 +59,13 @@ function validateIdentifier(id: string, fieldName = "identifier"): string {
 function boundedCloneForJson(
   val: unknown,
   depth = 0,
-  state = { totalBytes: 0, budget: 4096 },
+  state = { totalBytes: 0, budget: 4096, nodeCount: 0, maxNodes: 100 },
 ): unknown {
-  if (state.totalBytes >= state.budget) return "[truncated]";
-  if (depth > 3) return "[truncated]";
+  state.nodeCount++;
+  if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget || depth > 3) {
+    state.totalBytes += 13;
+    return "[truncated]";
+  }
   if (val === null || val === undefined) return val;
   if (typeof val === "string") {
     const s = val.length > 500 ? val.slice(0, 500) + "...[truncated]" : val;
@@ -74,27 +77,32 @@ function boundedCloneForJson(
     return val;
   }
   if (Array.isArray(val)) {
+    state.totalBytes += 2;
     const out: unknown[] = [];
     for (let i = 0; i < val.length && i < 20; i++) {
-      if (state.totalBytes >= state.budget) {
+      if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
+        state.totalBytes += 13;
         out.push("[truncated]");
         break;
       }
+      state.totalBytes += 2;
       out.push(boundedCloneForJson(val[i], depth + 1, state));
     }
     return out;
   }
   if (typeof val === "object") {
+    state.totalBytes += 2;
     const out: Record<string, unknown> = {};
     let count = 0;
     for (const k in (val as Record<string, unknown>)) {
       if (Object.prototype.hasOwnProperty.call(val, k)) {
-        if (state.totalBytes >= state.budget) {
+        if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
           out["_truncated"] = true;
+          state.totalBytes += 18;
           break;
         }
         const key = k.slice(0, 100);
-        state.totalBytes += key.length;
+        state.totalBytes += key.length + 4;
         out[key] = boundedCloneForJson(
           (val as Record<string, unknown>)[k],
           depth + 1,
@@ -114,7 +122,12 @@ function boundedCloneForJson(
 function safeBoundedJson(obj: unknown, maxLen = 4000): string {
   if (obj === null || obj === undefined) return "{}";
   try {
-    const bounded = boundedCloneForJson(obj, 0, { totalBytes: 0, budget: maxLen });
+    const bounded = boundedCloneForJson(obj, 0, {
+      totalBytes: 0,
+      budget: maxLen,
+      nodeCount: 0,
+      maxNodes: 100,
+    });
     const str = JSON.stringify(bounded);
     if (str.length <= maxLen) return str;
     return str.slice(0, Math.max(0, maxLen - 15)) + "...[truncated]";
@@ -502,10 +515,12 @@ export function draftWorkPacketFromContext(input: {
         );
       }
       if (match.content && match.content.length > 0) {
-        const raw = match.content.slice(0, 8000).trim();
-        excerpt = raw.length > 4000
-          ? raw.slice(0, 3985) + "...[truncated]"
-          : raw;
+        const trimmed = match.content.trim();
+        if (match.content.length > 4000 || trimmed.length > 4000) {
+          excerpt = trimmed.slice(0, 3985) + "...[truncated]";
+        } else {
+          excerpt = trimmed;
+        }
       } else if (match.toolName) {
         excerpt = `[Tool Call: ${match.toolName}]: ${
           safeBoundedJson(match.toolArguments ?? {})
@@ -646,7 +661,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   );
 
   for (const criterion of packet.proposedAcceptanceCriteria) {
-    const safeCriterion = sanitizeSingleLine(criterion);
+    const safeCriterion = sanitizeMarkdownHeading(sanitizeSingleLine(criterion)).replace(/[`<>]/g, "");
     lines.push(`- [ ] ${safeCriterion}`);
   }
 

@@ -1714,6 +1714,10 @@ export async function handleReplSessionCommand(
   return true;
 }
 
+function isOptionLike(token: string): boolean {
+  return token.startsWith("-") && token.length > 1;
+}
+
 export async function handleReplIdeaCommand(
   line: string,
   config: CliConfig,
@@ -1749,19 +1753,19 @@ export async function handleReplIdeaCommand(
     let i = 0;
     while (i < tokens.length) {
       const token = tokens[i];
-      if (token === "--event") {
+      if (token === "--event" || token === "-e") {
         if (eventId !== undefined) {
           io.err("error: --event specified multiple times");
           return true;
         }
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
           io.err("usage: /idea mark --event <event-id> <label...>");
           return true;
         }
         eventId = tokens[i];
         i++;
-      } else if (token.startsWith("--")) {
+      } else if (isOptionLike(token)) {
         io.err(`error: unexpected argument "${token}"`);
         return true;
       } else {
@@ -1954,19 +1958,19 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
           io.err("error: --issue requires an issue identifier");
           return true;
         }
         issueId = tokens[i];
         i++;
-      } else if (token === "--event") {
+      } else if (token === "--event" || token === "-e") {
         if (eventId !== undefined) {
           io.err("error: --event specified multiple times");
           return true;
         }
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
           io.err("error: --event requires an event identifier");
           return true;
         }
@@ -1978,13 +1982,13 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
           io.err("error: --idea requires an idea identifier");
           return true;
         }
         ideaId = tokens[i];
         i++;
-      } else if (token === "--title") {
+      } else if (token === "--title" || token === "-t") {
         if (title !== undefined) {
           io.err("error: --title specified multiple times");
           return true;
@@ -1995,10 +1999,13 @@ export async function handleReplPacketCommand(
           "--event",
           "--idea",
           "--title",
+          "-i",
+          "-e",
+          "-t",
         ]);
         const titleTokens: string[] = [];
         while (i < tokens.length) {
-          if (tokens[i].startsWith("--")) {
+          if (isOptionLike(tokens[i])) {
             if (!knownOptionFlags.has(tokens[i])) {
               io.err(`error: unexpected argument "${tokens[i]}"`);
               return true;
@@ -2013,7 +2020,7 @@ export async function handleReplPacketCommand(
           return true;
         }
         title = titleTokens.join(" ").trim();
-      } else if (!targetRef && !token.startsWith("--")) {
+      } else if (!targetRef && !isOptionLike(token)) {
         targetRef = token;
         i++;
       } else {
