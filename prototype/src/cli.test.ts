@@ -3534,8 +3534,8 @@ describe("REPL /session command", () => {
     expect(handled).toBe(true);
     const out = stderr.join("\n");
     expect(out).toContain("session: 01TEST_ACTIVE");
-    expect(out).toContain("turns: 3");
-    expect(out).toContain("spend: $0.0425");
+    expect(out).toContain("repl turns (this session): 3");
+    expect(out).toContain("repl spend (this session): $0.0425");
     expect(out).toContain("resume later with: dyfj --session 01TEST_ACTIVE");
   });
 
