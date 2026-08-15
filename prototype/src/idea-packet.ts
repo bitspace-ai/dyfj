@@ -62,9 +62,16 @@ function boundedCloneForJson(val: unknown, depth = 0): unknown {
   }
   if (typeof val === "object") {
     const out: Record<string, unknown> = {};
-    const entries = Object.entries(val as Record<string, unknown>).slice(0, 20);
-    for (const [k, v] of entries) {
-      out[k.slice(0, 100)] = boundedCloneForJson(v, depth + 1);
+    let count = 0;
+    for (const k in (val as Record<string, unknown>)) {
+      if (Object.prototype.hasOwnProperty.call(val, k)) {
+        out[k.slice(0, 100)] = boundedCloneForJson(
+          (val as Record<string, unknown>)[k],
+          depth + 1,
+        );
+        count++;
+        if (count >= 20) break;
+      }
     }
     return out;
   }
@@ -85,9 +92,18 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
 
 function sanitizeMarkdownHeading(text: string): string {
   return text
-    .replace(/^([ \t]*#+)/gm, (_match, g1) => `\\${g1}`)
-    .replace(/^([ \t]*[=-]{2,}[ \t]*)$/gm, (_match, g1) => `\\${g1}`)
-    .replace(/^([ \t]*<[hH][1-6])/gm, (_match, g1) => `\\${g1}`);
+    .replace(
+      /^([ \t]*(?:[>*+-]|\d+[.)])*[ \t]*#+)/gm,
+      (_match, g1) => `\\${g1}`,
+    )
+    .replace(
+      /^([ \t]*(?:[>*+-]|\d+[.)])*[ \t]*[=-]{2,}[ \t]*)$/gm,
+      (_match, g1) => `\\${g1}`,
+    )
+    .replace(
+      /^([ \t]*(?:[>*+-]|\d+[.)])*[ \t]*<[hH][1-6])/gm,
+      (_match, g1) => `\\${g1}`,
+    );
 }
 
 function sanitizeSingleLine(text: string): string {
