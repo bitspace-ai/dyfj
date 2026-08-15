@@ -98,27 +98,24 @@ function boundedCloneForJson(
     state.totalBytes += 2;
     const out: Record<string, unknown> = {};
     let count = 0;
-    const keys = Object.keys(val as Record<string, unknown>);
-    for (let i = 0; i < keys.length; i++) {
-      const k = keys[i];
-      if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
+    let totalScanned = 0;
+    for (const k in (val as Record<string, unknown>)) {
+      totalScanned++;
+      if (totalScanned > 50 || count >= 20 || state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
         out["_truncated"] = true;
         state.totalBytes += 18;
         break;
       }
-      if (count >= 20) {
-        out["_truncated"] = true;
-        state.totalBytes += 18;
-        break;
+      if (Object.prototype.hasOwnProperty.call(val, k)) {
+        const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
+        state.totalBytes += key.length + 4;
+        out[key] = boundedCloneForJson(
+          (val as Record<string, unknown>)[k],
+          depth + 1,
+          state,
+        );
+        count++;
       }
-      const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
-      state.totalBytes += key.length + 4;
-      out[key] = boundedCloneForJson(
-        (val as Record<string, unknown>)[k],
-        depth + 1,
-        state,
-      );
-      count++;
     }
     return out;
   }
@@ -525,10 +522,14 @@ export function draftWorkPacketFromContext(input: {
   const events = input.events;
   if (referencedEventId) {
     if (events !== undefined) {
-      const match = events.find((e) => e.eventId === referencedEventId);
+      const match = events.find(
+        (e) =>
+          e.eventId === referencedEventId &&
+          (e.sessionId === undefined || e.sessionId === sessionId),
+      );
       if (!match) {
         throw new Error(
-          `referenced event "${referencedEventId}" not found in session events`,
+          `referenced event "${referencedEventId}" not found in session events for session "${sessionId}"`,
         );
       }
       if (match.content && match.content.length > 0) {
@@ -537,9 +538,9 @@ export function draftWorkPacketFromContext(input: {
           : match.content;
         const trimmed = preSlice.trim();
         if (match.content.length > 4000) {
-          excerpt = trimmed.slice(0, 3985) + "...[truncated]";
+          excerpt = closeDanglingFences(trimmed.slice(0, 3985)) + "...[truncated]";
         } else {
-          excerpt = trimmed;
+          excerpt = closeDanglingFences(trimmed);
         }
       } else if (match.toolName) {
         excerpt = `[Tool Call: ${match.toolName}]: ${
@@ -550,7 +551,10 @@ export function draftWorkPacketFromContext(input: {
       }
     }
   } else if (events && events.length > 0) {
-    const recent = events.slice(-50);
+    const sessionEvents = events.filter(
+      (e) => e.sessionId === undefined || e.sessionId === sessionId,
+    );
+    const recent = sessionEvents.slice(-50);
     const relevant = recent
       .filter((e) =>
         e.eventType === "session_start" ||
@@ -565,8 +569,8 @@ export function draftWorkPacketFromContext(input: {
         const preSlice = rawContent.length > 1000 ? rawContent.slice(0, 1000) : rawContent;
         const raw = preSlice.trim();
         const snippet = rawContent.length > 300 || raw.length > 300
-          ? raw.slice(0, 300) + "...[truncated]"
-          : raw;
+          ? closeDanglingFences(raw.slice(0, 300)) + "...[truncated]"
+          : closeDanglingFences(raw);
         return `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${snippet}`;
       })
       .join("\n\n");
@@ -627,6 +631,14 @@ export function draftWorkPacketFromContext(input: {
 
   reg.registerPacket(packet);
   return reg.getPacket(packet.packetId)!;
+}
+
+function closeDanglingFences(text: string): string {
+  const fences = text.match(/```/g) || [];
+  if (fences.length % 2 !== 0) {
+    return text + "\n```";
+  }
+  return text;
 }
 
 function formatCodeSpan(str: string): string {

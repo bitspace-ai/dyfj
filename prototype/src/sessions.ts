@@ -272,6 +272,7 @@ export async function createProjectWorkbenchSession(input: {
 }
 
 export interface WorkbenchSessionEvent {
+  sessionId?: string;
   eventId: string;
   eventType: string;
   traceId: string;
@@ -508,7 +509,7 @@ export async function fetchWorkbenchSessionEvents(input: {
   }
   const effectiveLimit = input.limit ?? (input.eventId ? 10 : 5000);
   const explicitOrder = input.order;
-  const order = explicitOrder ?? (input.limit ? "desc" : "asc");
+  const order = explicitOrder ?? "desc";
   // AS OF cannot be parameterized; the timestamp is validated against a
   // strict shape before being inlined.
   let asOfClause = "";
@@ -575,6 +576,7 @@ export async function fetchWorkbenchSessionEvents(input: {
     rows.reverse();
   }
   return rows.map((row) => ({
+    sessionId: input.sessionId,
     eventId: row.event_id,
     eventType: row.event_type,
     traceId: row.trace_id,

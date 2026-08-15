@@ -255,7 +255,7 @@ describe("fetchWorkbenchSessionEvents", () => {
     });
     expect(calls[0].sql).toContain("WHERE session_id = ?");
     expect(calls[0].sql).toContain(
-      "ORDER BY created_at ASC, event_id ASC LIMIT 5000;",
+      "ORDER BY created_at DESC, event_id DESC LIMIT 5000;",
     );
     expect(calls[0].sql).not.toContain("AS OF");
     expect(calls[0].params).toEqual(["01ABCDEF0123456789ABCDEF01"]);
@@ -677,7 +677,10 @@ describe("fetchWorkbenchSessionEvents", () => {
     }));
     const events = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () => Promise.resolve(rows as unknown as Record<string, string>[]),
+      query: () =>
+        Promise.resolve(
+          rows.slice().reverse() as unknown as Record<string, string>[],
+        ),
     });
     expect(events.map((e) => e.toolIsError)).toEqual([
       true,

@@ -1808,7 +1808,10 @@ export async function handleReplIdeaCommand(
             eventId,
             label,
           }) as { idea: WorkbenchIdea };
-          io.err(`marked idea [${res.idea.ideaId}]: "${res.idea.label}"`);
+          const cleanLabel = (res.idea.label ?? "")
+            .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+            .trim();
+          io.err(`marked idea [${res.idea.ideaId}]: "${cleanLabel}"`);
           io.err(`draft packet with: /packet draft ${res.idea.ideaId}`);
         } finally {
           client.close();
@@ -1829,7 +1832,10 @@ export async function handleReplIdeaCommand(
           eventId,
           label,
         });
-        io.err(`marked idea [${idea.ideaId}]: "${idea.label}"`);
+        const cleanLabel = (idea.label ?? "")
+          .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+          .trim();
+        io.err(`marked idea [${idea.ideaId}]: "${cleanLabel}"`);
         io.err(`draft packet with: /packet draft ${idea.ideaId}`);
       } catch (e) {
         io.err(`dyfj: failed to mark idea: ${summarizeError(e)}`);
@@ -1855,11 +1861,14 @@ export async function handleReplIdeaCommand(
           } else {
             io.err(`Ideas for session ${sessionState.sessionId}:`);
             for (const item of res.ideas) {
-              io.err(
-                `  [${item.ideaId}] ${item.label} (${
-                  item.createdAt.split("T")[0]
-                })`,
-              );
+              const cleanLabel = (item.label ?? "")
+                .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+                .trim();
+              const cleanDate = (item.createdAt ?? "")
+                .split("T")[0]
+                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .trim();
+              io.err(`  [${item.ideaId}] ${cleanLabel} (${cleanDate})`);
             }
           }
         } finally {
@@ -1875,9 +1884,14 @@ export async function handleReplIdeaCommand(
       } else {
         io.err(`Ideas for session ${sessionState.sessionId}:`);
         for (const item of ideas) {
-          io.err(
-            `  [${item.ideaId}] ${item.label} (${item.createdAt.split("T")[0]})`,
-          );
+          const cleanLabel = (item.label ?? "")
+            .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+            .trim();
+          const cleanDate = (item.createdAt ?? "")
+            .split("T")[0]
+            .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+            .trim();
+          io.err(`  [${item.ideaId}] ${cleanLabel} (${cleanDate})`);
         }
       }
     }
@@ -2146,9 +2160,13 @@ export async function handleReplPacketCommand(
           } else {
             io.err(`Work packets for session ${sessionState.sessionId}:`);
             for (const p of res.packets) {
-              io.err(
-                `  [${p.packetId}] ${p.title} (Issue: ${p.issueId ?? "none"})`,
-              );
+              const cleanTitle = (p.title ?? "")
+                .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+                .trim();
+              const cleanIssue = p.issueId
+                ? p.issueId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim()
+                : "none";
+              io.err(`  [${p.packetId}] ${cleanTitle} (Issue: ${cleanIssue})`);
             }
           }
         } finally {
@@ -2167,9 +2185,13 @@ export async function handleReplPacketCommand(
         } else {
           io.err(`Work packets for session ${sessionState.sessionId}:`);
           for (const p of packets) {
-            io.err(
-              `  [${p.packetId}] ${p.title} (Issue: ${p.issueId ?? "none"})`,
-            );
+            const cleanTitle = (p.title ?? "")
+              .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+              .trim();
+            const cleanIssue = p.issueId
+              ? p.issueId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim()
+              : "none";
+            io.err(`  [${p.packetId}] ${cleanTitle} (Issue: ${cleanIssue})`);
           }
         }
       } catch (e) {
