@@ -433,12 +433,14 @@ export class IdeaPacketRegistry {
     const rawLabel = idea.label.length > 512 ? idea.label.slice(0, 512) : idea.label;
     const rawDesc = idea.description.length > 4000 ? idea.description.slice(0, 4000) : idea.description;
     const rawCreated = idea.createdAt.length > 128 ? idea.createdAt.slice(0, 128) : idea.createdAt;
+    const cleanLabel = sanitizeSingleLine(rawLabel).slice(0, 256);
+    const cleanDesc = rawDesc.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, " ").trim().slice(0, 2000);
     const sanitized: WorkbenchIdea = {
       ideaId: validateIdentifier(idea.ideaId, "ideaId"),
       sessionId: validateIdentifier(idea.sessionId, "sessionId"),
       eventId: idea.eventId ? validateIdentifier(idea.eventId, "eventId") : null,
-      label: rawLabel.trim().slice(0, 256),
-      description: rawDesc.trim().slice(0, 2000),
+      label: cleanLabel,
+      description: cleanDesc,
       createdAt: rawCreated.trim().slice(0, 64),
     };
 
@@ -546,6 +548,15 @@ export class IdeaPacketRegistry {
 
     if (sanitized.sourceContext.sessionId !== sanitized.sessionId) {
       throw new Error("packet sessionId and sourceContext sessionId must match");
+    }
+
+    if (sanitized.ideaId) {
+      const referencedIdea = this.ideasById.get(sanitized.ideaId);
+      if (referencedIdea && referencedIdea.sessionId !== sanitized.sessionId) {
+        throw new Error(
+          `packet idea "${sanitized.ideaId}" belongs to session "${referencedIdea.sessionId}", not packet session "${sanitized.sessionId}"`,
+        );
+      }
     }
 
     const existing = this.packetsById.get(sanitized.packetId);
@@ -675,7 +686,8 @@ export function markWorkbenchIdea(input: {
       );
     }
     let match: WorkbenchSessionEvent | undefined;
-    for (let i = input.events.length - 1; i >= 0; i--) {
+    const maxScan = Math.min(input.events.length, 10000);
+    for (let count = 0, i = input.events.length - 1; i >= 0 && count < maxScan; i--, count++) {
       const ev = input.events[i];
       if (ev.sessionId === sessionId && ev.eventId === eventId) {
         match = ev;
@@ -796,7 +808,8 @@ export function draftWorkPacketFromContext(input: {
     }
     let match: WorkbenchSessionEvent | undefined;
     if (input.events && input.events.length > 0) {
-      for (let i = input.events.length - 1; i >= 0; i--) {
+      const maxScan = Math.min(input.events.length, 10000);
+      for (let count = 0, i = input.events.length - 1; i >= 0 && count < maxScan; i--, count++) {
         const ev = input.events[i];
         if (ev.sessionId === sessionId && ev.eventId === referencedEventId) {
           match = ev;

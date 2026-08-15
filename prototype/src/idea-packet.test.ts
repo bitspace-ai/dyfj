@@ -756,4 +756,44 @@ describe("draftWorkPacketFromContext", () => {
 
     expect(idea.description).toBe("Early event content");
   });
+
+  test("idea label sanitizes ANSI escape sequences and C1 control bytes upon registration", () => {
+    const reg = new IdeaPacketRegistry();
+    const idea = markWorkbenchIdea({
+      sessionId: "01SESSION_LABEL_SAN",
+      label: "Clean \x1b[2JLabel \u009Bwith ANSI",
+      registry: reg,
+    });
+
+    expect(idea.label).not.toContain("\x1b[2J");
+    expect(idea.label).not.toContain("\u009B");
+    expect(idea.label).toBe("Clean Label with ANSI");
+  });
+
+  test("registering a packet referencing an idea from a different session throws an error", () => {
+    const reg = new IdeaPacketRegistry();
+    const ideaA = markWorkbenchIdea({
+      sessionId: "01SESSION_OWNER_A",
+      ideaId: "01IDEA_OWNER_A",
+      label: "Idea in session A",
+      registry: reg,
+    });
+
+    const packetDraft = draftWorkPacketFromContext({
+      sessionId: "01SESSION_OWNER_A",
+      idea: ideaA,
+      registry: reg,
+    });
+
+    expect(() => {
+      reg.registerPacket({
+        ...packetDraft,
+        sessionId: "01SESSION_OWNER_B",
+        sourceContext: {
+          ...packetDraft.sourceContext,
+          sessionId: "01SESSION_OWNER_B",
+        },
+      });
+    }).toThrow("packet idea \"01IDEA_OWNER_A\" belongs to session \"01SESSION_OWNER_A\"");
+  });
 });

@@ -2288,7 +2288,34 @@ export async function handleReplPacketCommand(
 
     if (targetRef && !ideaId && !eventId) {
       if (targetRef.startsWith("evt-") || targetRef.startsWith("evt_")) {
-        eventId = targetRef;
+        let ideaExists = false;
+        if (config.unix) {
+          try {
+            const client = await connect(config.socket);
+            try {
+              const res = await client.request("ideas/get", {
+                ideaId: targetRef,
+              }) as { idea: WorkbenchIdea };
+              if (res.idea && res.idea.sessionId === sessionState.sessionId) {
+                ideaExists = true;
+              }
+            } catch {
+              // ignore
+            }
+          } catch {
+            // ignore
+          }
+        } else {
+          const matchingIdea = defaultIdeaPacketRegistry.getIdea(targetRef);
+          if (matchingIdea && matchingIdea.sessionId === sessionState.sessionId) {
+            ideaExists = true;
+          }
+        }
+        if (ideaExists) {
+          ideaId = targetRef;
+        } else {
+          eventId = targetRef;
+        }
       } else {
         ideaId = targetRef;
       }

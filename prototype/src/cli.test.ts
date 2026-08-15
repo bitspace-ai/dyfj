@@ -3737,6 +3737,9 @@ describe("REPL /packet command", () => {
       Promise.resolve({
         request: (method: string, params: any) => {
           recordedCalls.push({ method, params });
+          if (method === "ideas/get") {
+            return Promise.resolve({ idea: null });
+          }
           return Promise.resolve({
             packet: {
               packetId: "01PACKET_2",
@@ -3765,6 +3768,12 @@ describe("REPL /packet command", () => {
     expect(handled).toBe(true);
     expect(recordedCalls).toEqual([
       {
+        method: "ideas/get",
+        params: {
+          ideaId: "evt-0123456789",
+        },
+      },
+      {
         method: "packets/draft",
         params: {
           sessionId: "01ACTIVE_SESS",
@@ -3778,6 +3787,72 @@ describe("REPL /packet command", () => {
     expect(stdout.join("\n")).toContain("# Work Packet: Event packet");
     expect(stderr.join("\n")).toContain(
       "draft work packet registered: [01PACKET_2]",
+    );
+  });
+
+  test("/packet draft with positional evt- target prioritizes existing idea ID", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          if (method === "ideas/get") {
+            return Promise.resolve({
+              idea: {
+                ideaId: "evt-custom-idea",
+                sessionId: "01ACTIVE_SESS",
+                label: "Custom Idea Named Evt",
+              },
+            });
+          }
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_3",
+              sessionId: params.sessionId,
+              title: "Idea packet",
+              issueId: null,
+            },
+            markdown: "# Work Packet: Idea packet",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
+    const handled = await handleReplPacketCommand(
+      "/packet draft evt-custom-idea",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "ideas/get",
+        params: {
+          ideaId: "evt-custom-idea",
+        },
+      },
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "evt-custom-idea",
+          eventId: undefined,
+          issueId: undefined,
+          title: undefined,
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Idea packet");
+    expect(stderr.join("\n")).toContain(
+      "draft work packet registered: [01PACKET_3]",
     );
   });
 
