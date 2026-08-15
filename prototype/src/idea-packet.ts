@@ -337,14 +337,19 @@ function sanitizeMarkdownHeading(text: string): string {
         }
       }
 
+      if (/^[ ]{4,}/.test(line)) {
+        nonFenceBuffer.push(line);
+        continue;
+      }
+
       // Outside code fences: escape ATX and Setext headings
       const sanitizedLine = line
         .replace(
-          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(#+)/,
+          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]{0,3})(#+)/,
           (_match, prefix, hashes) => `${prefix}\\${hashes}`,
         )
         .replace(
-          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)([=-]+[ \t]*)$/,
+          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]{0,3})([=-]+[ \t]*)$/,
           (_match, prefix, underline) => `${prefix}\\${underline}`,
         );
 
@@ -454,6 +459,13 @@ export class IdeaPacketRegistry {
   private readonly maxEntriesPerSession = 50;
   private readonly maxTombstones = 20000;
 
+  private hasRetainedPacketForIdea(ideaId: string): boolean {
+    for (const packet of this.packetsById.values()) {
+      if (packet.ideaId === ideaId) return true;
+    }
+    return false;
+  }
+
   private cloneIdea(idea: WorkbenchIdea): WorkbenchIdea {
     return { ...idea };
   }
@@ -521,7 +533,11 @@ export class IdeaPacketRegistry {
         const oldestSession = this.ideasBySession.keys().next().value;
         if (oldestSession !== undefined) {
           const evictedList = this.ideasBySession.get(oldestSession) ?? [];
-          for (const ev of evictedList) this.ideasById.delete(ev.ideaId);
+          for (const ev of evictedList) {
+            if (!this.hasRetainedPacketForIdea(ev.ideaId)) {
+              this.ideasById.delete(ev.ideaId);
+            }
+          }
           this.ideasBySession.delete(oldestSession);
         }
       }
@@ -530,7 +546,9 @@ export class IdeaPacketRegistry {
     }
     if (list.length >= this.maxEntriesPerSession) {
       const evicted = list.shift();
-      if (evicted) this.ideasById.delete(evicted.ideaId);
+      if (evicted && !this.hasRetainedPacketForIdea(evicted.ideaId)) {
+        this.ideasById.delete(evicted.ideaId);
+      }
     }
     list.push(sanitized);
   }
@@ -652,7 +670,15 @@ export class IdeaPacketRegistry {
         const oldestSession = this.packetsBySession.keys().next().value;
         if (oldestSession !== undefined) {
           const evictedList = this.packetsBySession.get(oldestSession) ?? [];
-          for (const ev of evictedList) this.packetsById.delete(ev.packetId);
+          for (const ev of evictedList) {
+            this.packetsById.delete(ev.packetId);
+            if (ev.ideaId && !this.hasRetainedPacketForIdea(ev.ideaId)) {
+              const idea = this.ideasById.get(ev.ideaId);
+              if (idea && !this.ideasBySession.has(idea.sessionId)) {
+                this.ideasById.delete(ev.ideaId);
+              }
+            }
+          }
           this.packetsBySession.delete(oldestSession);
         }
       }
@@ -661,7 +687,15 @@ export class IdeaPacketRegistry {
     }
     if (list.length >= this.maxEntriesPerSession) {
       const evicted = list.shift();
-      if (evicted) this.packetsById.delete(evicted.packetId);
+      if (evicted) {
+        this.packetsById.delete(evicted.packetId);
+        if (evicted.ideaId && !this.hasRetainedPacketForIdea(evicted.ideaId)) {
+          const idea = this.ideasById.get(evicted.ideaId);
+          if (idea && !this.ideasBySession.has(idea.sessionId)) {
+            this.ideasById.delete(evicted.ideaId);
+          }
+        }
+      }
     }
     list.push(sanitized);
   }

@@ -902,4 +902,48 @@ describe("draftWorkPacketFromContext", () => {
       });
     }).toThrow("cannot re-register idea \"01IDEA_SHARED_ID\" under session \"01SESSION_EVICT_B\"");
   });
+
+  test("four-space indented code blocks preserve comments without heading escaping", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_INDENTED_CODE",
+      operatorIntent: "Here is code:\n    # comment\n    def foo(): pass",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("    # comment");
+    expect(md).not.toContain("    \\# comment");
+  });
+
+  test("idea remains resolvable when its session is evicted if an active packet references it", () => {
+    const reg = new IdeaPacketRegistry();
+    const idea = markWorkbenchIdea({
+      sessionId: "01SESSION_RETAIN_A",
+      ideaId: "01IDEA_RETAINED",
+      label: "Retained idea",
+      registry: reg,
+    });
+
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_RETAIN_A",
+      ideaId: idea.ideaId,
+      registry: reg,
+    });
+
+    // Evict session A's ideas by adding 105 other idea sessions
+    for (let i = 0; i < 105; i++) {
+      markWorkbenchIdea({
+        sessionId: `01SESSION_OTHER_${i}`,
+        label: `Other ${i}`,
+        registry: reg,
+      });
+    }
+
+    // Session A is evicted from ideasBySession
+    expect(reg.listIdeas("01SESSION_RETAIN_A")).toHaveLength(0);
+    // But getIdea still resolves the idea because the packet references it!
+    expect(reg.getIdea("01IDEA_RETAINED")).not.toBeNull();
+    expect(reg.getIdea("01IDEA_RETAINED")?.label).toBe("Retained idea");
+  });
 });
