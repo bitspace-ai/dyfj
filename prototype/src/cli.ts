@@ -1931,17 +1931,21 @@ export async function handleReplIdeaCommand(
             io.err(`idea not found: ${ideaId}`);
           } else {
             const id = res.idea;
+            const cleanId = id.ideaId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+            const cleanSession = id.sessionId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+            const cleanEvent = id.eventId ? id.eventId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim() : null;
+            const cleanDate = (id.createdAt ?? "").replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
             const cleanLabel = id.label
               .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
               .trim();
             const cleanDesc = id.description
               ? id.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
               : "";
-            io.err(`Idea [${id.ideaId}]:`);
+            io.err(`Idea [${cleanId}]:`);
             io.err(`  Label: ${cleanLabel}`);
-            io.err(`  Session: ${id.sessionId}`);
-            if (id.eventId) io.err(`  Event: ${id.eventId}`);
-            io.err(`  Date: ${id.createdAt}`);
+            io.err(`  Session: ${cleanSession}`);
+            if (cleanEvent) io.err(`  Event: ${cleanEvent}`);
+            io.err(`  Date: ${cleanDate}`);
             if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
           }
         } finally {
@@ -1955,17 +1959,21 @@ export async function handleReplIdeaCommand(
       if (!idea) {
         io.err(`idea not found: ${ideaId}`);
       } else {
+        const cleanId = idea.ideaId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+        const cleanSession = idea.sessionId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
+        const cleanEvent = idea.eventId ? idea.eventId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim() : null;
+        const cleanDate = (idea.createdAt ?? "").replace(/[\x00-\x1F\x7F\x1B]/g, "").trim();
         const cleanLabel = idea.label
           .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
           .trim();
         const cleanDesc = idea.description
           ? idea.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
           : "";
-        io.err(`Idea [${idea.ideaId}]:`);
+        io.err(`Idea [${cleanId}]:`);
         io.err(`  Label: ${cleanLabel}`);
-        io.err(`  Session: ${idea.sessionId}`);
-        if (idea.eventId) io.err(`  Event: ${idea.eventId}`);
-        io.err(`  Date: ${idea.createdAt}`);
+        io.err(`  Session: ${cleanSession}`);
+        if (cleanEvent) io.err(`  Event: ${cleanEvent}`);
+        io.err(`  Date: ${cleanDate}`);
         if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
       }
     }
@@ -2182,13 +2190,16 @@ export async function handleReplPacketCommand(
           } else {
             io.err(`Work packets for session ${sessionState.sessionId}:`);
             for (const p of res.packets) {
+              const cleanPacketId = (p.packetId ?? "")
+                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .trim();
               const cleanTitle = (p.title ?? "")
                 .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
                 .trim();
               const cleanIssue = p.issueId
                 ? p.issueId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim()
                 : "none";
-              io.err(`  [${p.packetId}] ${cleanTitle} (Issue: ${cleanIssue})`);
+              io.err(`  [${cleanPacketId}] ${cleanTitle} (Issue: ${cleanIssue})`);
             }
           }
         } finally {
@@ -2207,13 +2218,16 @@ export async function handleReplPacketCommand(
         } else {
           io.err(`Work packets for session ${sessionState.sessionId}:`);
           for (const p of packets) {
+            const cleanPacketId = (p.packetId ?? "")
+              .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+              .trim();
             const cleanTitle = (p.title ?? "")
               .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
               .trim();
             const cleanIssue = p.issueId
               ? p.issueId.replace(/[\x00-\x1F\x7F\x1B]/g, "").trim()
               : "none";
-            io.err(`  [${p.packetId}] ${cleanTitle} (Issue: ${cleanIssue})`);
+            io.err(`  [${cleanPacketId}] ${cleanTitle} (Issue: ${cleanIssue})`);
           }
         }
       } catch (e) {

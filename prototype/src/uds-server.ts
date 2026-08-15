@@ -491,7 +491,7 @@ export function buildWorkbenchHandlers(
 
     "sessions/list": async (params) => {
       const record = asRecord(params);
-      const project = sanitizeRpcIdentifier(record.project, "project", {
+      const project = sanitizeRpcString(record.project, "project", {
         maxLen: 256,
       });
       if (

@@ -345,10 +345,10 @@ describe("draftWorkPacketFromContext", () => {
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_INJECT",
       title: "Title with\nnewlines",
-      operatorIntent: "Legit intent\n\n## 4. Injected Section\n> > # Injected Section\n1. > # List Quoted Heading\n<div><h1>Injected HTML</h1></div>\nInjected Setext\n=\nInjected H2 Setext\n-",
+      operatorIntent: "Legit intent\n\n## 4. Injected Section\n> > # Injected Section\n1. > # List Quoted Heading\n<div><h1>Injected HTML</h1></div>\nInjected Setext\n=\nInjected H2 Setext\n-\n```sh\n# shell comment\n<h1>inside block</h1>\n```",
       acceptanceCriteria: [
         "Criterion 1\nwith newline",
-        "<h1>Injected Heading in Checklist</h1>",
+        "`<h1>` Injected Heading in Code Span",
         "p95 latency < 200 ms and memory > 50 MB",
       ],
       registry: reg,
@@ -362,8 +362,9 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("<div>\\<h1\\>Injected HTML\\</h1\\></div>");
     expect(md).toContain("Injected Setext\n\\=");
     expect(md).toContain("Injected H2 Setext\n\\-");
+    expect(md).toContain("```sh\n# shell comment\n<h1>inside block</h1>\n```");
     expect(md).toContain("- [ ] Criterion 1 with newline");
-    expect(md).toContain("- [ ] \\<h1\\>Injected Heading in Checklist\\</h1\\>");
+    expect(md).toContain("- [ ] `<h1>` Injected Heading in Code Span");
     expect(md).toContain("- [ ] p95 latency < 200 ms and memory > 50 MB");
   });
 

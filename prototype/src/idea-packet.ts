@@ -143,16 +143,59 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
 
 function sanitizeMarkdownHeading(text: string): string {
   const clean = text.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
-  return clean
-    .replace(
-      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(#+)/gm,
-      (_match, prefix, hashes) => `${prefix}\\${hashes}`,
-    )
-    .replace(
-      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)([=-]+[ \t]*)$/gm,
-      (_match, prefix, underline) => `${prefix}\\${underline}`,
-    )
-    .replace(/<(\/?[hH][1-6]\b[^>]*)>/g, "\\<$1\\>");
+  const lines = clean.split("\n");
+  const result: string[] = [];
+  let openChar: string | null = null;
+  let openCount = 0;
+
+  for (const line of lines) {
+    if (!openChar) {
+      const openMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+      if (openMatch) {
+        const fence = openMatch[1];
+        const info = openMatch[2];
+        if (fence[0] !== "`" || !info.includes("`")) {
+          openChar = fence[0];
+          openCount = fence.length;
+          result.push(line);
+          continue;
+        }
+      }
+
+      // Outside code fences: escape ATX and Setext headings
+      let sanitizedLine = line
+        .replace(
+          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(#+)/,
+          (_match, prefix, hashes) => `${prefix}\\${hashes}`,
+        )
+        .replace(
+          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)([=-]+[ \t]*)$/,
+          (_match, prefix, underline) => `${prefix}\\${underline}`,
+        );
+
+      // Neutralize HTML headings <h1-h6> outside inline code spans
+      const parts = sanitizedLine.split(/(`+[^`]*`+)/g);
+      for (let i = 0; i < parts.length; i += 2) {
+        parts[i] = parts[i].replace(/<(\/?[hH][1-6]\b[^>]*)>/g, "\\<$1\\>");
+      }
+      sanitizedLine = parts.join("");
+
+      result.push(sanitizedLine);
+    } else {
+      // Inside code fence: check for closing fence
+      const closeMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (closeMatch) {
+        const fence = closeMatch[1];
+        if (fence[0] === openChar && fence.length >= openCount) {
+          openChar = null;
+          openCount = 0;
+        }
+      }
+      result.push(line);
+    }
+  }
+
+  return result.join("\n");
 }
 
 function sanitizeSingleLine(text: string): string {
@@ -265,7 +308,7 @@ export class IdeaPacketRegistry {
     const rawCreated = packet.createdAt.length > 128 ? packet.createdAt.slice(0, 128) : packet.createdAt;
     const trimmedExcerpt = rawExcerpt.trim();
     const excerpt = trimmedExcerpt.length > 4000
-      ? closeDanglingFences(trimmedExcerpt.slice(0, 3980)) + "...[truncated]"
+      ? closeDanglingFences(trimmedExcerpt.slice(0, 3950) + "\n...[truncated]")
       : closeDanglingFences(trimmedExcerpt);
 
     const sanitized: WorkbenchWorkPacket = {
@@ -778,7 +821,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   );
 
   for (const criterion of packet.proposedAcceptanceCriteria) {
-    const safeCriterion = sanitizeMarkdownHeading(sanitizeSingleLine(criterion));
+    const safeCriterion = sanitizeSingleLine(criterion);
     lines.push(`- [ ] ${safeCriterion}`);
   }
 
@@ -787,7 +830,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
     "## 4. Verification & Provenance",
     "",
     `- **Primary Verifier:** ${formatCodeSpan(packet.verifierProvenance.verifierType)}`,
-    `- **Independence Notes:** ${sanitizeMarkdownHeading(packet.verifierProvenance.independenceNotes)}`,
+    `- **Independence Notes:** ${sanitizeSingleLine(packet.verifierProvenance.independenceNotes)}`,
     "",
   );
 
