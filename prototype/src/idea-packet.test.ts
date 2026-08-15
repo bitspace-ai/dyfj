@@ -332,12 +332,12 @@ describe("draftWorkPacketFromContext", () => {
     ).toThrow("sessionId exceeds maximum length of 256 characters");
   });
 
-  test("formatWorkPacketMarkdown neutralizes markdown heading injections in operatorIntent and single-line fields", () => {
+  test("formatWorkPacketMarkdown neutralizes markdown heading injections and HTML headings", () => {
     const reg = new IdeaPacketRegistry();
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_INJECT",
       title: "Title with\nnewlines",
-      operatorIntent: "Legit intent\n\n## 4. Injected Section\n> > # Injected Section\n1. > # List Quoted Heading\nInjected body",
+      operatorIntent: "Legit intent\n\n## 4. Injected Section\n> > # Injected Section\n1. > # List Quoted Heading\n<div><h1>Injected HTML</h1></div>",
       acceptanceCriteria: ["Criterion 1\nwith newline"],
       registry: reg,
     });
@@ -347,6 +347,26 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("\\## 4. Injected Section");
     expect(md).toContain("> > \\# Injected Section");
     expect(md).toContain("1. > \\# List Quoted Heading");
+    expect(md).toContain("<div>\\<h1\\>Injected HTML\\</h1\\></div>");
     expect(md).toContain("- [ ] Criterion 1 with newline");
+  });
+
+  test("recent session events longer than 300 chars include truncation indicator", () => {
+    const longContent = "A".repeat(400);
+    const events: WorkbenchSessionEvent[] = [
+      {
+        eventId: "evt-long-1",
+        eventType: "model_response",
+        createdAt: "2026-08-15T12:00:00Z",
+        content: longContent,
+      } as any,
+    ];
+
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_TRUNC",
+      events,
+    });
+
+    expect(packet.sourceContext.excerpt).toContain("...[truncated]");
   });
 });

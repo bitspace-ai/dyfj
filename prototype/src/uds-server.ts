@@ -224,10 +224,10 @@ function sanitizeRpcString(
     );
   }
   const trimmed = val.trim();
-  if (options.required && trimmed.length === 0) {
+  if (trimmed.length === 0) {
     throw new RpcError(
       RpcErrorCode.invalidParams,
-      `${fieldName} cannot be empty`,
+      `${fieldName} cannot be empty or whitespace-only`,
     );
   }
   if (trimmed.length > maxLen) {
@@ -527,11 +527,8 @@ export function buildWorkbenchHandlers(
         required: true,
         maxLen: 256,
       })!;
-      const asOf = record.asOf;
-      if (
-        asOf !== undefined &&
-        (typeof asOf !== "string" || !isValidAsOfTimestamp(asOf))
-      ) {
+      const asOf = sanitizeRpcString(record.asOf, "asOf", { maxLen: 64 });
+      if (asOf !== undefined && !isValidAsOfTimestamp(asOf)) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
           "events/query asOf must be a valid timestamp",

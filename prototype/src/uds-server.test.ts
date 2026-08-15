@@ -1371,5 +1371,31 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
     expect(getRes.packet.packetId).toBe(packetId);
     expect(getRes.markdown).toContain("# Work Packet: Neutral session model");
   });
+
+  test("packets/draft rejects whitespace-only optional issueId", async () => {
+    const server = await startServer(fakes);
+    const client = await connectClient(server);
+
+    await expect(client.request("packets/draft", {
+      sessionId: "01TEST_PACKET_SESSION",
+      issueId: "   ",
+      title: "Neutral session model",
+    })).rejects.toMatchObject({
+      code: RpcErrorCode.invalidParams,
+      message: "issueId cannot be empty or whitespace-only",
+    });
+  });
+
+  test("events/query rejects asOf longer than 64 characters", async () => {
+    const server = await startServer(fakes);
+    const client = await connectClient(server);
+
+    await expect(client.request("events/query", {
+      sessionId: "01TEST_EVENTS_SESSION",
+      asOf: "2026-08-15T12:00:00.000Z" + "0".repeat(100),
+    })).rejects.toMatchObject({
+      code: RpcErrorCode.invalidParams,
+    });
+  });
 });
 

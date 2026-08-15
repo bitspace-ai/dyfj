@@ -1743,21 +1743,31 @@ export async function handleReplIdeaCommand(
       io.err("usage: /idea mark [--event <event-id>] <label...>");
       return true;
     }
+    const tokens = parts.slice(2);
     let eventId: string | undefined;
-    let labelParts: string[];
-    if (parts[2].startsWith("--")) {
-      if (parts[2] !== "--event") {
-        io.err(`error: unexpected argument "${parts[2]}"`);
+    const labelParts: string[] = [];
+    let i = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (token === "--event") {
+        if (eventId !== undefined) {
+          io.err("error: --event specified multiple times");
+          return true;
+        }
+        i++;
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
+          io.err("usage: /idea mark --event <event-id> <label...>");
+          return true;
+        }
+        eventId = tokens[i];
+        i++;
+      } else if (token.startsWith("--")) {
+        io.err(`error: unexpected argument "${token}"`);
         return true;
+      } else {
+        labelParts.push(token);
+        i++;
       }
-      if (parts.length < 5 || parts[3].startsWith("--")) {
-        io.err("usage: /idea mark --event <event-id> <label...>");
-        return true;
-      }
-      eventId = parts[3];
-      labelParts = parts.slice(4);
-    } else {
-      labelParts = parts.slice(2);
     }
     const label = labelParts.join(" ").trim();
     if (label.length === 0) {

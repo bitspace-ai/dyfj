@@ -106,10 +106,7 @@ function sanitizeMarkdownHeading(text: string): string {
       /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)([=-]{2,}[ \t]*)$/gm,
       (_match, prefix, underline) => `${prefix}\\${underline}`,
     )
-    .replace(
-      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(<[hH][1-6])/gm,
-      (_match, prefix, tag) => `${prefix}\\${tag}`,
-    );
+    .replace(/<(\/?[hH][1-6]\b[^>]*)>/g, "\\<$1\\>");
 }
 
 function sanitizeSingleLine(text: string): string {
@@ -497,11 +494,13 @@ export function draftWorkPacketFromContext(input: {
       .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
       .slice(-4);
     excerpt = relevant
-      .map((e) =>
-        `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${
-          (e.content ?? "").slice(0, 600).trim().slice(0, 300)
-        }`
-      )
+      .map((e) => {
+        const raw = (e.content ?? "").slice(0, 600).trim();
+        const snippet = raw.length > 300
+          ? raw.slice(0, 300) + "...[truncated]"
+          : raw;
+        return `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${snippet}`;
+      })
       .join("\n\n");
     if (relevant.length > 0 && !referencedEventId) {
       referencedEventId = relevant[relevant.length - 1].eventId;
