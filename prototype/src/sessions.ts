@@ -496,7 +496,17 @@ export async function fetchWorkbenchSessionEvents(input: {
   query?: SessionQuery;
 }): Promise<WorkbenchSessionEvent[]> {
   const query = input.query ?? doltQuery;
-  const order = input.order ?? (input.limit ? "desc" : "asc");
+  if (input.limit !== undefined) {
+    if (
+      typeof input.limit !== "number" ||
+      !Number.isInteger(input.limit) ||
+      input.limit <= 0
+    ) {
+      throw new Error("limit must be a positive integer");
+    }
+  }
+  const explicitOrder = input.order;
+  const order = explicitOrder ?? (input.limit ? "desc" : "asc");
   // AS OF cannot be parameterized; the timestamp is validated against a
   // strict shape before being inlined.
   let asOfClause = "";
@@ -559,7 +569,7 @@ export async function fetchWorkbenchSessionEvents(input: {
     }
   }
   if (rows === undefined) throw new Error("historical event schema did not converge");
-  if (order === "desc") {
+  if (!explicitOrder && order === "desc") {
     rows.reverse();
   }
   return rows.map((row) => ({

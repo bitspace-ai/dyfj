@@ -49,9 +49,12 @@ export class IdeaPacketRegistry {
 
   registerIdea(idea: WorkbenchIdea): void {
     const sanitized: WorkbenchIdea = {
-      ...idea,
+      ideaId: idea.ideaId.trim().slice(0, 64),
+      sessionId: idea.sessionId.trim().slice(0, 64),
+      eventId: idea.eventId?.trim().slice(0, 64) ?? null,
       label: idea.label.trim().slice(0, 256),
       description: idea.description.trim().slice(0, 2000),
+      createdAt: idea.createdAt.trim().slice(0, 64),
     };
     this.ideasById.set(sanitized.ideaId, sanitized);
     let list = this.ideasBySession.get(sanitized.sessionId);
@@ -87,20 +90,32 @@ export class IdeaPacketRegistry {
 
   registerPacket(packet: WorkbenchWorkPacket): void {
     const sanitized: WorkbenchWorkPacket = {
-      ...packet,
-      title: packet.title.trim().slice(0, 256),
-      operatorIntent: packet.operatorIntent.trim().slice(0, 2000),
+      packetId: packet.packetId.trim().slice(0, 64),
+      ideaId: packet.ideaId?.trim().slice(0, 64) ?? null,
+      sessionId: packet.sessionId.trim().slice(0, 64),
       issueId: packet.issueId?.trim().slice(0, 64) ?? null,
-      proposedAcceptanceCriteria: (packet.proposedAcceptanceCriteria ?? [])
-        .slice(0, 20)
-        .map((c) => c.trim().slice(0, 500)),
+      title: packet.title.trim().slice(0, 256),
+      targetWorkspace: packet.targetWorkspace?.trim().slice(0, 500) ?? null,
       sourceContext: {
-        ...packet.sourceContext,
+        sessionId: packet.sourceContext.sessionId.trim().slice(0, 64),
+        referencedEventId:
+          packet.sourceContext.referencedEventId?.trim().slice(0, 64) ?? null,
         excerpt: packet.sourceContext.excerpt.trim().slice(0, 4000),
         contextSources: (packet.sourceContext.contextSources ?? [])
           .slice(0, 50)
           .map((s) => s.trim().slice(0, 500)),
       },
+      operatorIntent: packet.operatorIntent.trim().slice(0, 2000),
+      proposedAcceptanceCriteria: (packet.proposedAcceptanceCriteria ?? [])
+        .slice(0, 20)
+        .map((c) => c.trim().slice(0, 500)),
+      verifierProvenance: {
+        verifierType: packet.verifierProvenance.verifierType,
+        independenceNotes: packet.verifierProvenance.independenceNotes
+          .trim()
+          .slice(0, 1000),
+      },
+      createdAt: packet.createdAt.trim().slice(0, 64),
     };
     this.packetsById.set(sanitized.packetId, sanitized);
     let list = this.packetsBySession.get(sanitized.sessionId);
@@ -201,7 +216,8 @@ export function markWorkbenchIdea(input: {
       }
     }
   } else if (description.length === 0 && input.events && input.events.length > 0) {
-    const candidates = input.events
+    const recent = input.events.slice(-50);
+    const candidates = recent
       .filter((e) =>
         (e.eventType === "model_response" ||
           e.eventType === "agent_response" ||
@@ -289,7 +305,8 @@ export function draftWorkPacketFromContext(input: {
       }
     }
     if (excerpt.length === 0 && input.events.length > 0) {
-      const relevant = input.events
+      const recent = input.events.slice(-50);
+      const relevant = recent
         .filter((e) =>
           e.eventType === "session_start" ||
           e.eventType === "model_response" ||

@@ -1611,8 +1611,16 @@ export async function handleReplSessionCommand(
               }>;
             }>;
           };
-          const allSessions = (res.projects?.flatMap((p) => p.sessions) ?? [])
-            .slice(0, 100);
+          const allSessions: Array<{
+            sessionId: string;
+            taskDescription: string;
+            createdAt: string;
+          }> = [];
+          for (const p of res.projects ?? []) {
+            if (Array.isArray(p.sessions)) {
+              allSessions.push(...p.sessions);
+            }
+          }
           const sessions = allSessions
             .sort((a, b) =>
               (b.createdAt || "").localeCompare(a.createdAt || "")
@@ -1745,6 +1753,12 @@ export async function handleReplIdeaCommand(
         io.err(`dyfj: failed to mark idea: ${summarizeError(e)}`);
       }
     } else {
+      if (eventId) {
+        io.err(
+          "error: --event requires connecting to a local runtime over Unix domain socket",
+        );
+        return true;
+      }
       const idea = markWorkbenchIdea({
         sessionId: sessionState.sessionId,
         eventId,
@@ -1945,6 +1959,12 @@ export async function handleReplPacketCommand(
         io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
       }
     } else {
+      if (isEventRef) {
+        io.err(
+          "error: drafting packets from event references requires connecting to a local runtime over Unix domain socket",
+        );
+        return true;
+      }
       const packet = draftWorkPacketFromContext({
         sessionId: sessionState.sessionId,
         ideaId,
