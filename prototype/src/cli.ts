@@ -27,8 +27,10 @@ import {
 import {
   connectUnixClient,
   type ToolApprovalVerdict,
+  type UnixClient,
   type UnixClientOptions,
 } from "./uds-client";
+import { RpcError, RpcErrorCode } from "./jsonrpc";
 import { resolveSocketPath } from "./uds-path";
 import { assertSecureMemoryUrl } from "./memory-search";
 import {
@@ -1354,10 +1356,34 @@ function formatApprovalArgs(args: unknown): string {
   return lines.join("\n");
 }
 
+export const LIVENESS_PROBE_TIMEOUT_MS = 5000;
+
+export function isTimeoutError(error: unknown): boolean {
+  if (error instanceof Error) {
+    if (error.name === "TimeoutError") {
+      return true;
+    }
+    if (
+      error.name === "AbortError" &&
+      error.cause instanceof Error &&
+      error.cause.name === "TimeoutError"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function socketError(error: unknown, config: CliConfig): string {
+  if (isTimeoutError(error)) {
+    return `dyfj: runtime at ${config.socket} is unresponsive (timed out)`;
+  }
+  if (error instanceof RpcError) {
+    return `dyfj: ${error.message}`;
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (
-    /no such file|not found|connection refused|enoent|os error 2|os error 61/i
+    /no such file|file not found|socket not found|connection refused|econnrefused|enoent|os error 2|os error 61/i
       .test(message)
   ) {
     return `dyfj: runtime not reachable at ${config.socket}. ` +
@@ -1366,14 +1392,48 @@ export function socketError(error: unknown, config: CliConfig): string {
   return `dyfj: ${summarizeError(error)}`;
 }
 
+/**
+ * Probe runtime liveness over UDS with a client-owned deadline (default 5s).
+ *
+ * First attempts the lightweight `runtime/liveness` RPC (which does not load models,
+ * query Dolt, or touch inference state). If the server is an older version that
+ * does not implement `runtime/liveness` (RpcErrorCode.methodNotFound / -32601),
+ * falls back once to `runtime/status` within the SAME remaining deadline.
+ */
+export async function probeRuntimeLiveness(
+  client: UnixClient,
+  signal: AbortSignal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS),
+): Promise<{ live: true; statusPayload?: RuntimeStatusPayload }> {
+  try {
+    await client.request("runtime/liveness", undefined, signal);
+    return { live: true };
+  } catch (error) {
+    // If the server returns methodNotFound (-32601), fall back once to runtime/status on the same signal
+    if (error instanceof RpcError && error.code === RpcErrorCode.methodNotFound) {
+      const statusPayload = await client.request(
+        "runtime/status",
+        undefined,
+        signal,
+      ) as RuntimeStatusPayload;
+      return { live: true, statusPayload };
+    }
+    throw error;
+  }
+}
+
 export async function fetchModelSlugs(
   config: CliConfig,
   connect: ConnectFn = connectUnixClient,
 ): Promise<{ slugs: string[]; models: ModelRow[] } | { error: string }> {
   try {
-    const client = await connect(config.socket);
+    const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
+    const client = await connect(config.socket, undefined, signal);
     try {
-      const { models } = await client.request("models/list") as {
+      const { models } = await client.request(
+        "models/list",
+        undefined,
+        signal,
+      ) as {
         models: ModelRow[];
       };
       const slugs = models
@@ -1401,16 +1461,23 @@ export async function fetchSessionPosture(
   connect: ConnectFn = connectUnixClient,
 ): Promise<SessionPosture | { error: string }> {
   try {
-    const client = await connect(config.socket);
+    const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
+    const client = await connect(config.socket, undefined, signal);
     try {
       const { runtime } = await client.request(
         "runtime/status",
+        undefined,
+        signal,
       ) as RuntimeStatusPayload;
       let slug = config.model;
       let tier: number | undefined;
       let local: boolean | undefined;
       if (slug !== undefined) {
-        const { models } = await client.request("models/list") as {
+        const { models } = await client.request(
+          "models/list",
+          undefined,
+          signal,
+        ) as {
           models: ModelRow[];
         };
         const row = models.find((m) => m.slug === slug);
@@ -1651,11 +1718,16 @@ export async function runStatus(
   connect: ConnectFn = connectUnixClient,
 ): Promise<number> {
   try {
-    const client = await connect(config.socket);
+    const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
+    const client = await connect(config.socket, undefined, signal);
     try {
-      const payload = await client.request(
-        "runtime/status",
-      ) as RuntimeStatusPayload;
+      const probeResult = await probeRuntimeLiveness(client, signal);
+      const payload = probeResult.statusPayload ??
+        (await client.request(
+          "runtime/status",
+          undefined,
+          signal,
+        ) as RuntimeStatusPayload);
       io.out(`${formatRuntimeStatus(config, payload)}\n`);
       return 0;
     } finally {

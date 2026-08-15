@@ -163,6 +163,7 @@ function asRecord(params: unknown): Record<string, unknown> {
 }
 
 const METHOD_CATALOG = [
+  { id: "runtime/liveness", namespace: "runtime", kind: "read" },
   { id: "runtime/status", namespace: "runtime", kind: "read" },
   { id: "surface/snapshot", namespace: "surface", kind: "read" },
   { id: "models/list", namespace: "models", kind: "read" },
@@ -273,6 +274,14 @@ export function buildWorkbenchHandlers(
     fetchWorkbenchSessionEvents;
 
   return {
+    "runtime/liveness": () => {
+      return {
+        status: "ok",
+        transport: "uds",
+        clearance: "loopback",
+      };
+    },
+
     "runtime/status": async () => {
       const models = await loadModels();
       return { runtime: runtimeStatus(options, models) };

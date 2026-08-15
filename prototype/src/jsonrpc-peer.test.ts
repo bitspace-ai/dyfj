@@ -20,7 +20,7 @@ async function connectPair(
   serverHandlers: RpcHandlers = {},
   clientHandlers: RpcHandlers = {},
 ): Promise<{ server: JsonRpcPeer; client: JsonRpcPeer }> {
-  const dir = await Deno.makeTempDir();
+  const dir = await Deno.makeTempDir({ dir: "/tmp" });
   const sock = `${dir}/peer.sock`;
   const listener = Deno.listen({ transport: "unix", path: sock });
   const accepting = listener.accept();
@@ -187,7 +187,7 @@ describe("JsonRpcPeer", () => {
     // The pending promise must settle by rejection in both cases — request()
     // has no timeout, so a throw after the pending entry is removed would be
     // a permanent hang for the caller.
-    const dir = await Deno.makeTempDir();
+    const dir = await Deno.makeTempDir({ dir: "/tmp" });
     const sock = `${dir}/peer.sock`;
     const listener = Deno.listen({ transport: "unix", path: sock });
     const accepting = listener.accept();

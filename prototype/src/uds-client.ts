@@ -6,7 +6,11 @@ import { JsonRpcPeer } from "./jsonrpc-peer";
 import type { RpcHandlers } from "./jsonrpc";
 
 export interface UnixClient {
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(
+    method: string,
+    params?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
   close(): void;
 }
 
@@ -35,7 +39,12 @@ export interface UnixClientOptions {
 export async function connectUnixClient(
   socketPath: string,
   options: UnixClientOptions = {},
+  signal?: AbortSignal,
 ): Promise<UnixClient> {
+  if (signal?.aborted) {
+    throw signal.reason ??
+      new DOMException("The operation was aborted", "AbortError");
+  }
   const handlers: RpcHandlers = {};
   const onStream = options.onStream;
   if (onStream) {
@@ -47,11 +56,47 @@ export async function connectUnixClient(
   if (onApproval) {
     handlers.approval = (params) => onApproval(params);
   }
-  const conn = await Deno.connect({ transport: "unix", path: socketPath });
+  let conn: Deno.Conn;
+  if (signal) {
+    let onAbort: (() => void) | undefined;
+    let aborted = false;
+    const connPromise = Deno.connect({ transport: "unix", path: socketPath });
+    // If the abort promise wins the race, close any connection that settles later
+    connPromise.then(
+      (c) => {
+        if (aborted) {
+          try {
+            c.close();
+          } catch {
+            // Already closed
+          }
+        }
+      },
+      () => {},
+    );
+    const abortPromise = new Promise<never>((_, reject) => {
+      onAbort = () => {
+        aborted = true;
+        reject(
+          signal.reason ??
+            new DOMException("The operation was aborted", "AbortError"),
+        );
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      conn = await Promise.race([connPromise, abortPromise]);
+    } finally {
+      if (onAbort) signal.removeEventListener("abort", onAbort);
+    }
+  } else {
+    conn = await Deno.connect({ transport: "unix", path: socketPath });
+  }
   const peer = new JsonRpcPeer(conn, { handlers });
   void peer.run();
   return {
-    request: (method, params) => peer.request(method, params),
+    request: (method, params, reqSignal) =>
+      peer.request(method, params, reqSignal),
     close: () => peer.close(),
   };
 }

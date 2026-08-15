@@ -20,7 +20,7 @@ afterEach(async () => {
 async function startServer(
   options: WorkbenchUnixServerOptions,
 ): Promise<WorkbenchUnixServer> {
-  const dir = await Deno.makeTempDir();
+  const dir = await Deno.makeTempDir({ dir: "/tmp" });
   const server = await serveWorkbenchUnix(`${dir}/wb.sock`, options);
   cleanups.push(async () => {
     await server.close();
@@ -251,11 +251,37 @@ describe("serveWorkbenchUnix read methods", () => {
     });
   });
 
+  test("runtime/liveness returns immediately without loading models or sessions", async () => {
+    let loadModelsCalled = false;
+    let listSessionsCalled = false;
+    const client = await connectClient(
+      await startServer({
+        loadModels: async () => {
+          loadModelsCalled = true;
+          return [{ slug: "local-x" } as any];
+        },
+        listSessions: async () => {
+          listSessionsCalled = true;
+          return [];
+        },
+      }),
+    );
+    const result = anyVal(await client.request("runtime/liveness"));
+    expect(result).toEqual({
+      status: "ok",
+      transport: "uds",
+      clearance: "loopback",
+    });
+    expect(loadModelsCalled).toBe(false);
+    expect(listSessionsCalled).toBe(false);
+  });
+
   test("runtime/status exposes method catalog metadata", async () => {
     const client = await connectClient(await startServer(fakes));
     expect(await client.request("runtime/status")).toMatchObject({
       runtime: {
         methods: [
+          "runtime/liveness",
           "runtime/status",
           "surface/snapshot",
           "models/list",
@@ -267,6 +293,7 @@ describe("serveWorkbenchUnix read methods", () => {
           "turn/cancel",
         ],
         methodCatalog: [
+          { id: "runtime/liveness", namespace: "runtime", kind: "read" },
           { id: "runtime/status", namespace: "runtime", kind: "read" },
           { id: "surface/snapshot", namespace: "surface", kind: "read" },
           { id: "models/list", namespace: "models", kind: "read" },
@@ -1137,7 +1164,7 @@ describe("socket bind safety", () => {
   });
 
   test("clears a genuinely stale socket and binds", async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await Deno.makeTempDir({ dir: "/tmp" });
     const sock = `${dir}/wb.sock`;
     // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its
     // socket file behind with nothing accepting. (A cleanly closed Deno
@@ -1156,7 +1183,7 @@ describe("socket bind safety", () => {
   });
 
   test("refuses to bind over a non-socket path", async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await Deno.makeTempDir({ dir: "/tmp" });
     const path = `${dir}/wb.sock`;
     await Deno.writeTextFile(path, "not a socket");
     await expect(assertSocketBindable(path)).rejects.toThrow(
