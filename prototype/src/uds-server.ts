@@ -196,6 +196,48 @@ function asRecord(params: unknown): Record<string, unknown> {
     : {};
 }
 
+function sanitizeRpcIdentifier(
+  val: unknown,
+  fieldName: string,
+  options: { required?: boolean; maxLen?: number } = {},
+): string | undefined {
+  const maxLen = options.maxLen ?? 256;
+  if (val === undefined || val === null) {
+    if (options.required) {
+      throw new RpcError(
+        RpcErrorCode.invalidParams,
+        `${fieldName} is required`,
+      );
+    }
+    return undefined;
+  }
+  if (typeof val !== "string") {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} must be a string`,
+    );
+  }
+  if (val.trim().length === 0) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} cannot be empty or whitespace-only`,
+    );
+  }
+  if (val.length > maxLen) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} exceeds maximum length of ${maxLen} characters`,
+    );
+  }
+  if (/[\x00-\x20\x7F\x1B]/.test(val)) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} cannot contain control characters or whitespace`,
+    );
+  }
+  return val;
+}
+
 function sanitizeRpcString(
   val: unknown,
   fieldName: string,
@@ -449,7 +491,7 @@ export function buildWorkbenchHandlers(
 
     "sessions/list": async (params) => {
       const record = asRecord(params);
-      const project = sanitizeRpcString(record.project, "project", {
+      const project = sanitizeRpcIdentifier(record.project, "project", {
         maxLen: 256,
       });
       if (
@@ -510,11 +552,11 @@ export function buildWorkbenchHandlers(
       }
       const boundedProjects: WorkbenchProjectSessions[] = [];
       for (let i = 0; i < projects.length && boundedProjects.length < limit; i++) {
-        const pSessions = projectMap.get(i);
-        if (pSessions && pSessions.length > 0) {
+        const matching = projectMap.get(i);
+        if (matching && matching.length > 0) {
           boundedProjects.push({
             project: projects[i].project,
-            sessions: pSessions,
+            sessions: matching,
           });
         } else if (project !== undefined) {
           boundedProjects.push({
@@ -531,7 +573,7 @@ export function buildWorkbenchHandlers(
 
     "events/query": async (params) => {
       const record = asRecord(params);
-      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
         required: true,
         maxLen: 256,
       })!;
@@ -568,7 +610,7 @@ export function buildWorkbenchHandlers(
 
     "sessions/inspect": async (params) => {
       const record = asRecord(params);
-      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
         required: true,
         maxLen: 256,
       })!;
@@ -592,7 +634,7 @@ export function buildWorkbenchHandlers(
 
     "ideas/mark": async (params) => {
       const record = asRecord(params);
-      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
         required: true,
         maxLen: 256,
       })!;
@@ -600,7 +642,7 @@ export function buildWorkbenchHandlers(
         required: true,
         maxLen: 256,
       })!;
-      const eventId = sanitizeRpcString(record.eventId, "eventId", {
+      const eventId = sanitizeRpcIdentifier(record.eventId, "eventId", {
         maxLen: 256,
       });
       const description = sanitizeRpcString(
@@ -631,7 +673,7 @@ export function buildWorkbenchHandlers(
 
     "ideas/list": async (params) => {
       const record = asRecord(params);
-      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
         maxLen: 256,
       });
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
@@ -647,7 +689,7 @@ export function buildWorkbenchHandlers(
 
     "ideas/get": async (params) => {
       const record = asRecord(params);
-      const ideaId = sanitizeRpcString(record.ideaId, "ideaId", {
+      const ideaId = sanitizeRpcIdentifier(record.ideaId, "ideaId", {
         required: true,
         maxLen: 256,
       })!;
@@ -665,14 +707,14 @@ export function buildWorkbenchHandlers(
 
     "packets/draft": async (params) => {
       const record = asRecord(params);
-      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
         required: true,
         maxLen: 256,
       })!;
-      const ideaId = sanitizeRpcString(record.ideaId, "ideaId", {
+      const ideaId = sanitizeRpcIdentifier(record.ideaId, "ideaId", {
         maxLen: 256,
       });
-      const eventId = sanitizeRpcString(record.eventId, "eventId", {
+      const eventId = sanitizeRpcIdentifier(record.eventId, "eventId", {
         maxLen: 256,
       });
       if (ideaId && eventId) {
@@ -681,7 +723,7 @@ export function buildWorkbenchHandlers(
           "packets/draft cannot specify both ideaId and eventId",
         );
       }
-      const issueId = sanitizeRpcString(record.issueId, "issueId", {
+      const issueId = sanitizeRpcIdentifier(record.issueId, "issueId", {
         maxLen: 256,
       });
       const title = sanitizeRpcString(record.title, "title", { maxLen: 256 });
@@ -731,7 +773,7 @@ export function buildWorkbenchHandlers(
 
     "packets/list": async (params) => {
       const record = asRecord(params);
-      const sessionId = sanitizeRpcString(record.sessionId, "sessionId", {
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
         maxLen: 256,
       });
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
@@ -747,7 +789,7 @@ export function buildWorkbenchHandlers(
 
     "packets/get": async (params) => {
       const record = asRecord(params);
-      const packetId = sanitizeRpcString(record.packetId, "packetId", {
+      const packetId = sanitizeRpcIdentifier(record.packetId, "packetId", {
         required: true,
         maxLen: 256,
       })!;

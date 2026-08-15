@@ -423,9 +423,17 @@ export function markWorkbenchIdea(input: {
   if (input.eventId !== undefined && input.eventId !== null) {
     const eventId = validateIdentifier(input.eventId, "eventId");
     if (input.events !== undefined) {
-      const match = input.events.find(
-        (e) => e.eventId === eventId && e.sessionId === sessionId,
-      );
+      let match: WorkbenchSessionEvent | undefined;
+      let scanned = 0;
+      for (let i = input.events.length - 1; i >= 0; i--) {
+        scanned++;
+        if (scanned > 5000) break;
+        const ev = input.events[i];
+        if (ev.eventId === eventId && ev.sessionId === sessionId) {
+          match = ev;
+          break;
+        }
+      }
       if (!match) {
         throw new Error(
           `event "${eventId}" not found in session events for session "${sessionId}"`,
@@ -536,9 +544,17 @@ export function draftWorkPacketFromContext(input: {
   const events = input.events;
   if (referencedEventId) {
     if (events !== undefined) {
-      const match = events.find(
-        (e) => e.eventId === referencedEventId && e.sessionId === sessionId,
-      );
+      let match: WorkbenchSessionEvent | undefined;
+      let scanned = 0;
+      for (let i = events.length - 1; i >= 0; i--) {
+        scanned++;
+        if (scanned > 5000) break;
+        const ev = events[i];
+        if (ev.eventId === referencedEventId && ev.sessionId === sessionId) {
+          match = ev;
+          break;
+        }
+      }
       if (!match) {
         throw new Error(
           `referenced event "${referencedEventId}" not found in session events for session "${sessionId}"`,
@@ -603,21 +619,20 @@ export function draftWorkPacketFromContext(input: {
   }
 
   if (events) {
-    let filesCount = 0;
-    let totalScanned = 0;
+    let scanned = 0;
     for (let i = events.length - 1; i >= 0; i--) {
-      totalScanned++;
-      if (totalScanned > 200) break;
+      scanned++;
+      if (scanned > 500) break;
       const ev = events[i];
       if (ev.sessionId === sessionId) {
         if (ev.toolName === "read_file" && ev.toolArguments?.path) {
           const raw = String(ev.toolArguments.path).slice(0, 1000).trim();
           const p = raw.slice(0, 500);
-          if (!contextSources.includes(p) && contextSources.length < 50) {
+          if (!contextSources.includes(p)) {
             contextSources.push(p);
+            if (contextSources.length >= 50) break;
           }
         }
-        if (++filesCount >= 50) break;
       }
     }
   }
@@ -763,7 +778,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
   );
 
   for (const criterion of packet.proposedAcceptanceCriteria) {
-    const safeCriterion = sanitizeMarkdownHeading(sanitizeSingleLine(criterion)).replace(/[`]/g, "");
+    const safeCriterion = sanitizeMarkdownHeading(sanitizeSingleLine(criterion));
     lines.push(`- [ ] ${safeCriterion}`);
   }
 
