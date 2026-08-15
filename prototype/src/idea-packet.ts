@@ -40,6 +40,12 @@ export interface WorkbenchWorkPacket {
 }
 
 function validateIdentifier(id: string, fieldName = "identifier"): string {
+  if (typeof id !== "string") {
+    throw new Error(`${fieldName} must be a string`);
+  }
+  if (id.length > 512) {
+    throw new Error(`${fieldName} exceeds maximum length of 256 characters`);
+  }
   const trimmed = id.trim();
   if (trimmed.length === 0) {
     throw new Error(`${fieldName} cannot be empty`);
@@ -93,16 +99,16 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
 function sanitizeMarkdownHeading(text: string): string {
   return text
     .replace(
-      /^([ \t]*(?:[>*+-]|\d+[.)])*[ \t]*#+)/gm,
-      (_match, g1) => `\\${g1}`,
+      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(#+)/gm,
+      (_match, prefix, hashes) => `${prefix}\\${hashes}`,
     )
     .replace(
-      /^([ \t]*(?:[>*+-]|\d+[.)])*[ \t]*[=-]{2,}[ \t]*)$/gm,
-      (_match, g1) => `\\${g1}`,
+      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)([=-]{2,}[ \t]*)$/gm,
+      (_match, prefix, underline) => `${prefix}\\${underline}`,
     )
     .replace(
-      /^([ \t]*(?:[>*+-]|\d+[.)])*[ \t]*<[hH][1-6])/gm,
-      (_match, g1) => `\\${g1}`,
+      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(<[hH][1-6])/gm,
+      (_match, prefix, tag) => `${prefix}\\${tag}`,
     );
 }
 

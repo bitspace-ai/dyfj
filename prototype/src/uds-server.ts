@@ -422,7 +422,7 @@ export function buildWorkbenchHandlers(
       if (limit === undefined) {
         return { projects };
       }
-      const flattened: Array<{
+      const topSessions: Array<{
         projectIdx: number;
         session: WorkbenchSessionSummary;
       }> = [];
@@ -430,16 +430,27 @@ export function buildWorkbenchHandlers(
         const p = projects[i];
         if (Array.isArray(p.sessions)) {
           for (const s of p.sessions) {
-            flattened.push({ projectIdx: i, session: s });
+            const createdAt = s.createdAt || "";
+            if (topSessions.length < limit) {
+              topSessions.push({ projectIdx: i, session: s });
+              topSessions.sort((a, b) =>
+                (b.session.createdAt || "").localeCompare(a.session.createdAt || "")
+              );
+            } else if (
+              createdAt.localeCompare(
+                topSessions[topSessions.length - 1].session.createdAt || "",
+              ) > 0
+            ) {
+              topSessions[topSessions.length - 1] = { projectIdx: i, session: s };
+              topSessions.sort((a, b) =>
+                (b.session.createdAt || "").localeCompare(a.session.createdAt || "")
+              );
+            }
           }
         }
       }
-      flattened.sort((a, b) =>
-        (b.session.createdAt || "").localeCompare(a.session.createdAt || "")
-      );
-      const topSlice = flattened.slice(0, limit);
       const projectMap = new Map<number, WorkbenchSessionSummary[]>();
-      for (const item of topSlice) {
+      for (const item of topSessions) {
         let list = projectMap.get(item.projectIdx);
         if (!list) {
           list = [];
@@ -462,10 +473,12 @@ export function buildWorkbenchHandlers(
 
     "events/query": async (params) => {
       const record = asRecord(params);
-      const sessionId = typeof record.sessionId === "string" &&
-          record.sessionId.trim().length > 0 &&
-          record.sessionId.trim().length <= 256
-        ? record.sessionId.trim()
+      const rawSessionId = record.sessionId;
+      const sessionId = typeof rawSessionId === "string" &&
+          rawSessionId.length <= 512 &&
+          rawSessionId.trim().length > 0 &&
+          rawSessionId.trim().length <= 256
+        ? rawSessionId.trim()
         : null;
       if (!sessionId) {
         throw new RpcError(
@@ -509,10 +522,12 @@ export function buildWorkbenchHandlers(
 
     "sessions/inspect": async (params) => {
       const record = asRecord(params);
-      const sessionId = typeof record.sessionId === "string" &&
-          record.sessionId.trim().length > 0 &&
-          record.sessionId.trim().length <= 256
-        ? record.sessionId.trim()
+      const rawSessionId = record.sessionId;
+      const sessionId = typeof rawSessionId === "string" &&
+          rawSessionId.length <= 512 &&
+          rawSessionId.trim().length > 0 &&
+          rawSessionId.trim().length <= 256
+        ? rawSessionId.trim()
         : null;
       if (!sessionId) {
         throw new RpcError(
@@ -540,10 +555,12 @@ export function buildWorkbenchHandlers(
 
     "ideas/mark": async (params) => {
       const record = asRecord(params);
-      const sessionId = typeof record.sessionId === "string" &&
-          record.sessionId.trim().length > 0 &&
-          record.sessionId.trim().length <= 256
-        ? record.sessionId.trim()
+      const rawSessionId = record.sessionId;
+      const sessionId = typeof rawSessionId === "string" &&
+          rawSessionId.length <= 512 &&
+          rawSessionId.trim().length > 0 &&
+          rawSessionId.trim().length <= 256
+        ? rawSessionId.trim()
         : "";
       const label = typeof record.label === "string" ? record.label.trim() : "";
       if (sessionId.length === 0 || label.length === 0) {
@@ -552,7 +569,14 @@ export function buildWorkbenchHandlers(
           "ideas/mark requires non-empty string sessionId (<= 256 chars) and label",
         );
       }
+      if (record.description !== undefined && typeof record.description !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "ideas/mark description must be a string",
+        );
+      }
       const eventId = typeof record.eventId === "string" &&
+          record.eventId.length <= 512 &&
           record.eventId.trim().length > 0 &&
           record.eventId.trim().length <= 256
         ? record.eventId.trim()
@@ -592,6 +616,7 @@ export function buildWorkbenchHandlers(
       if (
         record.sessionId !== undefined &&
         (typeof record.sessionId !== "string" ||
+          record.sessionId.length > 512 ||
           record.sessionId.trim().length === 0 ||
           record.sessionId.trim().length > 256)
       ) {
@@ -619,6 +644,7 @@ export function buildWorkbenchHandlers(
       const ideaId = record.ideaId;
       if (
         typeof ideaId !== "string" ||
+        ideaId.length > 512 ||
         ideaId.trim().length === 0 ||
         ideaId.trim().length > 256
       ) {
@@ -641,10 +667,12 @@ export function buildWorkbenchHandlers(
 
     "packets/draft": async (params) => {
       const record = asRecord(params);
-      const sessionId = typeof record.sessionId === "string" &&
-          record.sessionId.trim().length > 0 &&
-          record.sessionId.trim().length <= 256
-        ? record.sessionId.trim()
+      const rawSessionId = record.sessionId;
+      const sessionId = typeof rawSessionId === "string" &&
+          rawSessionId.length <= 512 &&
+          rawSessionId.trim().length > 0 &&
+          rawSessionId.trim().length <= 256
+        ? rawSessionId.trim()
         : "";
       if (sessionId.length === 0) {
         throw new RpcError(
@@ -652,7 +680,41 @@ export function buildWorkbenchHandlers(
           "packets/draft requires non-empty string sessionId <= 256 characters",
         );
       }
+      if (record.ideaId !== undefined && typeof record.ideaId !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/draft ideaId must be a string",
+        );
+      }
+      if (record.eventId !== undefined && typeof record.eventId !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/draft eventId must be a string",
+        );
+      }
+      if (record.issueId !== undefined && typeof record.issueId !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/draft issueId must be a string",
+        );
+      }
+      if (record.title !== undefined && typeof record.title !== "string") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/draft title must be a string",
+        );
+      }
+      if (
+        record.operatorIntent !== undefined &&
+        typeof record.operatorIntent !== "string"
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/draft operatorIntent must be a string",
+        );
+      }
       const ideaId = typeof record.ideaId === "string" &&
+          record.ideaId.length <= 512 &&
           record.ideaId.trim().length > 0 &&
           record.ideaId.trim().length <= 256
         ? record.ideaId.trim()
@@ -660,10 +722,11 @@ export function buildWorkbenchHandlers(
       if (record.ideaId !== undefined && !ideaId) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
-          "packets/draft ideaId must be <= 256 characters",
+          "packets/draft ideaId must be non-empty and <= 256 characters",
         );
       }
       const eventId = typeof record.eventId === "string" &&
+          record.eventId.length <= 512 &&
           record.eventId.trim().length > 0 &&
           record.eventId.trim().length <= 256
         ? record.eventId.trim()
@@ -671,7 +734,7 @@ export function buildWorkbenchHandlers(
       if (record.eventId !== undefined && !eventId) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
-          "packets/draft eventId must be <= 256 characters",
+          "packets/draft eventId must be non-empty and <= 256 characters",
         );
       }
       if (ideaId && eventId) {

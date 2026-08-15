@@ -337,7 +337,7 @@ describe("draftWorkPacketFromContext", () => {
     const packet = draftWorkPacketFromContext({
       sessionId: "01SESSION_INJECT",
       title: "Title with\nnewlines",
-      operatorIntent: "Legit intent\n\n## 4. Injected Section\n> ## 5. Quoted Heading\n1. # List Heading\nInjected body",
+      operatorIntent: "Legit intent\n\n## 4. Injected Section\n> > # Injected Section\n1. > # List Quoted Heading\nInjected body",
       acceptanceCriteria: ["Criterion 1\nwith newline"],
       registry: reg,
     });
@@ -345,8 +345,8 @@ describe("draftWorkPacketFromContext", () => {
     const md = formatWorkPacketMarkdown(packet);
     expect(md).toContain("# Work Packet: Title with newlines");
     expect(md).toContain("\\## 4. Injected Section");
-    expect(md).toContain("\\> ## 5. Quoted Heading");
-    expect(md).toContain("\\1. # List Heading");
+    expect(md).toContain("> > \\# Injected Section");
+    expect(md).toContain("1. > \\# List Quoted Heading");
     expect(md).toContain("- [ ] Criterion 1 with newline");
   });
 });

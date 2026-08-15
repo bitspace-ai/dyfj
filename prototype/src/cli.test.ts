@@ -3557,6 +3557,21 @@ describe("REPL /session command", () => {
     expect(stderr.join("\n")).toContain("switched to session: 01NEW");
   });
 
+  test("/session switch rejects oversized session identifiers", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    const state = { sessionId: "01OLD", turnCount: 2, sessionSpendUsd: 0.1 };
+    const handled = await handleReplSessionCommand(
+      `/session switch ${"A".repeat(300)}`,
+      config,
+      io,
+      state,
+    );
+    expect(handled).toBe(true);
+    expect(state.sessionId).toBe("01OLD");
+    expect(stderr.join("\n")).toContain("session identifier must be non-empty and <= 256 characters");
+  });
+
   test("/session list lists sessions from RPC seam", async () => {
     const { io, stderr } = fakeIo();
     const fakeConnect: ConnectFn = () =>
@@ -3940,20 +3955,50 @@ describe("REPL /packet command", () => {
     ]);
   });
 
-  test("/packet draft diagnoses missing target reference", async () => {
-    const { io, stderr } = fakeIo();
+  test("/packet draft supports targetless drafting from session context", async () => {
+    const { io, stdout } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_GENERIC",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Generic Session Task",
+          });
+        },
+        close: () => {},
+      });
+
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
     const handled = await handleReplPacketCommand(
-      "/packet draft --issue BIT-258",
+      "/packet draft --issue BIT-258 --title Investigate startup",
       cfg({ unix: true }),
       io,
       state,
+      fakeConnect,
     );
     expect(handled).toBe(true);
-    expect(stderr.join("\n")).toContain("usage: /packet draft");
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: undefined,
+          eventId: undefined,
+          issueId: "BIT-258",
+          title: "Investigate startup",
+        },
+      },
+    ]);
   });
 
-  test("/packet draft diagnoses duplicate or conflicting options", async () => {
+  test("/packet draft diagnoses duplicate or conflicting options and invalid option values", async () => {
     const { io, stderr } = fakeIo();
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
 
@@ -3982,6 +4027,15 @@ describe("REPL /packet command", () => {
       state,
     );
     expect(io3.stderr.join("\n")).toContain("--issue specified multiple times");
+
+    const io4 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --issue --isseu",
+      cfg({ unix: true }),
+      io4.io,
+      state,
+    );
+    expect(io4.stderr.join("\n")).toContain("--issue requires an issue identifier");
   });
 
   test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {

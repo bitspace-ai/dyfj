@@ -1663,9 +1663,16 @@ export async function handleReplSessionCommand(
   }
 
   if (sub === "switch") {
-    const targetId = parts[2];
-    if (!targetId) {
+    const rawTargetId = parts[2];
+    if (!rawTargetId || rawTargetId.trim().length === 0) {
       io.err("usage: /session switch <sessionId>");
+      return true;
+    }
+    const targetId = rawTargetId.trim();
+    if (targetId.length > 256) {
+      io.err(
+        "error: session identifier must be non-empty and <= 256 characters",
+      );
       return true;
     }
     if (config.unix) {
@@ -1826,50 +1833,37 @@ export async function handleReplIdeaCommand(
   if (sub === "show") {
     const ideaId = parts[2];
     if (!ideaId) {
-      io.err("usage: /idea show <idea-id>");
+      io.err("usage: /idea show <ideaId>");
       return true;
     }
-    if (config.unix) {
-      try {
-        const client = await connect(config.socket);
-        try {
-          const res = await client.request("ideas/get", { ideaId }) as {
-            idea: WorkbenchIdea | null;
-          };
-          if (!res.idea) {
-            io.err(`idea not found: ${ideaId}`);
-          } else {
-            io.err(`Idea [${res.idea.ideaId}]:`);
-            io.err(`  Label: ${res.idea.label}`);
-            io.err(`  Session: ${res.idea.sessionId}`);
-            if (res.idea.eventId) io.err(`  Event: ${res.idea.eventId}`);
-            io.err(`  Date: ${res.idea.createdAt}`);
-            io.err(`  Description: ${res.idea.description}`);
-          }
-        } finally {
-          client.close();
-        }
-      } catch (e) {
-        io.err(`dyfj: failed to get idea: ${summarizeError(e)}`);
-      }
-    } else {
-      const idea = getWorkbenchIdea(ideaId);
-      if (!idea) {
+    const client = await connect(config.socket);
+    try {
+      const resp = await client.request("ideas/get", { ideaId }) as {
+        idea: WorkbenchIdea | null;
+      };
+      if (!resp.idea) {
         io.err(`idea not found: ${ideaId}`);
       } else {
-        io.err(`Idea [${idea.ideaId}]:`);
-        io.err(`  Label: ${idea.label}`);
-        io.err(`  Session: ${idea.sessionId}`);
-        if (idea.eventId) io.err(`  Event: ${idea.eventId}`);
-        io.err(`  Date: ${idea.createdAt}`);
-        io.err(`  Description: ${idea.description}`);
+        const id = resp.idea;
+        io.out(
+          `Idea ${id.ideaId}:\n` +
+            `  Session:   ${id.sessionId}\n` +
+            `  Created:   ${id.createdAt}\n` +
+            `  Label:     ${id.label}\n` +
+            (id.eventId ? `  Event:     ${id.eventId}\n` : "") +
+            (id.description ? `  Desc:      ${id.description}\n` : ""),
+        );
       }
+    } catch (e) {
+      io.err(`error fetching idea: ${summarizeError(e)}`);
+    } finally {
+      client.close();
     }
     return true;
   }
 
   io.err(
-    "unknown /idea subcommand. Usage: /idea mark, /idea list, /idea show <id>",
+    "unknown /idea subcommand. Usage: /idea mark [--event <id>] <label...>, /idea list, /idea show <ideaId>",
   );
   return true;
 }
@@ -1881,18 +1875,20 @@ export async function handleReplPacketCommand(
   sessionState: ReplSessionState,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const raw = line.trim();
-  const parts = raw.split(/\s+/);
+  const parts = line.trim().split(/\s+/);
   if (parts[0] !== "/packet") return false;
 
+  if (parts.length === 1 || parts[1] === "help") {
+    io.out("Workbench Work Packet Commands:\n" +
+      "  /packet draft [<idea-id|event-id>] [--idea <id>] [--event <id>] [--issue <id>] [--title <title>] Draft a work packet\n" +
+      "  /packet list                          List generated work packets in this session\n" +
+      "  /packet show <packetId>               Show rendered markdown for a work packet\n");
+    return true;
+  }
+
   const sub = parts[1];
-  if (!sub || sub === "help") {
-    io.err("Work packet commands:");
-    io.err(
-      "  /packet draft <idea-id|event-id> [--issue <BIT-id>] [--title <title>]",
-    );
-    io.err("  /packet list");
-    io.err("  /packet show <packet-id>");
+  if (!config.unix) {
+    io.err("packet drafting is only supported in Unix domain socket mode");
     return true;
   }
 
@@ -1908,7 +1904,6 @@ export async function handleReplPacketCommand(
     let title: string | undefined;
     let targetRef: string | undefined;
 
-    const knownOptions = new Set(["--issue", "--event", "--idea", "--title"]);
     const tokens = parts.slice(2);
     let i = 0;
     while (i < tokens.length) {
@@ -1919,7 +1914,7 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
-        if (i >= tokens.length || knownOptions.has(tokens[i])) {
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
           io.err("error: --issue requires an issue identifier");
           return true;
         }
@@ -1931,7 +1926,7 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
-        if (i >= tokens.length || knownOptions.has(tokens[i])) {
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
           io.err("error: --event requires an event identifier");
           return true;
         }
@@ -1943,7 +1938,7 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
-        if (i >= tokens.length || knownOptions.has(tokens[i])) {
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
           io.err("error: --idea requires an idea identifier");
           return true;
         }
@@ -1955,8 +1950,14 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
+        const knownOptionFlags = new Set([
+          "--issue",
+          "--event",
+          "--idea",
+          "--title",
+        ]);
         const titleTokens: string[] = [];
-        while (i < tokens.length && !knownOptions.has(tokens[i])) {
+        while (i < tokens.length && !knownOptionFlags.has(tokens[i])) {
           titleTokens.push(tokens[i]);
           i++;
         }
@@ -1982,13 +1983,6 @@ export async function handleReplPacketCommand(
     if (targetRef && (ideaId || eventId)) {
       io.err(
         "error: cannot specify both positional target and explicit --idea/--event flag",
-      );
-      return true;
-    }
-
-    if (!ideaId && !eventId && !targetRef) {
-      io.err(
-        "usage: /packet draft [<idea-id|event-id>] [--idea <id>] [--event <id>] [--issue <BIT-id>] [--title <title>]",
       );
       return true;
     }
