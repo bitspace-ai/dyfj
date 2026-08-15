@@ -4122,6 +4122,9 @@ describe("REPL /packet command", () => {
     expect(io1.stdout.join("\n")).toContain("# Work Packet: Local Work Packet");
     expect(io1.stderr.join("\n")).toContain("draft work packet registered");
 
+    const match = io1.stderr.join("\n").match(/draft work packet registered: \[([^\]]+)\]/);
+    const packetId = match ? match[1] : "01PACKET";
+
     const io2 = fakeIo();
     await handleReplPacketCommand(
       "/packet list",
@@ -4131,6 +4134,36 @@ describe("REPL /packet command", () => {
     );
     expect(io2.stderr.join("\n")).toContain("Work packets for session 01LOCAL_SESS:");
     expect(io2.stderr.join("\n")).toContain("Local Work Packet");
+
+    const io3 = fakeIo();
+    await handleReplPacketCommand(
+      `/packet show ${packetId}`,
+      cfg({ unix: false }),
+      io3.io,
+      state,
+    );
+    expect(io3.stdout.join("\n")).toContain("# Work Packet: Local Work Packet");
+
+    const io4 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft MISSING_IDEA",
+      cfg({ unix: false }),
+      io4.io,
+      state,
+    );
+    expect(io4.stderr.join("\n")).toContain("dyfj: failed to draft packet");
+  });
+
+  test("/idea mark --event rejects option-looking event ID", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark --event --evnt evt-1 Fix startup",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("usage: /idea mark --event <event-id> <label...>");
   });
 
   test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {

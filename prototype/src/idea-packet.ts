@@ -358,7 +358,7 @@ export function markWorkbenchIdea(input: {
         throw new Error(`event "${eventId}" not found in session events`);
       }
       if (description.length === 0 && match.content) {
-        description = match.content.trim().slice(0, 2000);
+        description = match.content.slice(0, 4000).trim().slice(0, 2000);
       }
     }
   } else if (description.length === 0 && input.events && input.events.length > 0) {
@@ -373,6 +373,7 @@ export function markWorkbenchIdea(input: {
       .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
     if (candidates.length > 0) {
       description = (candidates[candidates.length - 1].content ?? "")
+        .slice(0, 4000)
         .trim()
         .slice(0, 2000);
     }
@@ -456,8 +457,8 @@ export function draftWorkPacketFromContext(input: {
           `referenced event "${referencedEventId}" not found in session events`,
         );
       }
-      if (match.content && match.content.trim().length > 0) {
-        const raw = match.content.trim();
+      if (match.content && match.content.length > 0) {
+        const raw = match.content.slice(0, 8000).trim();
         excerpt = raw.length > 4000
           ? raw.slice(0, 4000) + "...[truncated]"
           : raw;
@@ -482,7 +483,7 @@ export function draftWorkPacketFromContext(input: {
     excerpt = relevant
       .map((e) =>
         `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${
-          (e.content ?? "").slice(0, 300)
+          (e.content ?? "").slice(0, 600).trim().slice(0, 300)
         }`
       )
       .join("\n\n");

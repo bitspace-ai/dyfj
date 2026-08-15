@@ -1746,7 +1746,7 @@ export async function handleReplIdeaCommand(
     let eventId: string | undefined;
     let labelParts: string[];
     if (parts[2] === "--event") {
-      if (parts.length < 5) {
+      if (parts.length < 5 || parts[3].startsWith("--")) {
         io.err("usage: /idea mark --event <event-id> <label...>");
         return true;
       }
@@ -1785,13 +1785,17 @@ export async function handleReplIdeaCommand(
         );
         return true;
       }
-      const idea = markWorkbenchIdea({
-        sessionId: sessionState.sessionId,
-        eventId,
-        label,
-      });
-      io.err(`marked idea [${idea.ideaId}]: "${idea.label}"`);
-      io.err(`draft packet with: /packet draft ${idea.ideaId}`);
+      try {
+        const idea = markWorkbenchIdea({
+          sessionId: sessionState.sessionId,
+          eventId,
+          label,
+        });
+        io.err(`marked idea [${idea.ideaId}]: "${idea.label}"`);
+        io.err(`draft packet with: /packet draft ${idea.ideaId}`);
+      } catch (e) {
+        io.err(`dyfj: failed to mark idea: ${summarizeError(e)}`);
+      }
     }
     return true;
   }
@@ -1906,7 +1910,7 @@ export async function handleReplPacketCommand(
 
   if (parts.length === 1 || parts[1] === "help") {
     io.out("Workbench Work Packet Commands:\n" +
-      "  /packet draft [<idea-id|evt-id>] [--idea <id>] [--event <id>] [--issue <id>] [--title <title>] Draft a work packet\n" +
+      "  /packet draft [<idea-id>] [--idea <id>] [--event <id>] [--issue <id>] [--title <title>] Draft a work packet\n" +
       "  /packet list                          List generated work packets in this session\n" +
       "  /packet show <packetId>               Show rendered markdown for a work packet\n");
     return true;
@@ -2043,16 +2047,20 @@ export async function handleReplPacketCommand(
         );
         return true;
       }
-      const packet = draftWorkPacketFromContext({
-        sessionId: sessionState.sessionId,
-        ideaId,
-        eventId,
-        issueId,
-        title,
-      });
-      const markdown = formatWorkPacketMarkdown(packet);
-      io.out(markdown);
-      io.err(`\ndraft work packet registered: [${packet.packetId}]`);
+      try {
+        const packet = draftWorkPacketFromContext({
+          sessionId: sessionState.sessionId,
+          ideaId,
+          eventId,
+          issueId,
+          title,
+        });
+        const markdown = formatWorkPacketMarkdown(packet);
+        io.out(markdown);
+        io.err(`\ndraft work packet registered: [${packet.packetId}]`);
+      } catch (e) {
+        io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
+      }
     }
     return true;
   }
@@ -2088,18 +2096,22 @@ export async function handleReplPacketCommand(
         io.err(`dyfj: failed to list packets: ${summarizeError(e)}`);
       }
     } else {
-      const packets = listWorkbenchPackets({
-        sessionId: sessionState.sessionId,
-      });
-      if (packets.length === 0) {
-        io.err(`no work packets drafted for session ${sessionState.sessionId}`);
-      } else {
-        io.err(`Work packets for session ${sessionState.sessionId}:`);
-        for (const p of packets) {
-          io.err(
-            `  [${p.packetId}] ${p.title} (Issue: ${p.issueId ?? "none"})`,
-          );
+      try {
+        const packets = listWorkbenchPackets({
+          sessionId: sessionState.sessionId,
+        });
+        if (packets.length === 0) {
+          io.err(`no work packets drafted for session ${sessionState.sessionId}`);
+        } else {
+          io.err(`Work packets for session ${sessionState.sessionId}:`);
+          for (const p of packets) {
+            io.err(
+              `  [${p.packetId}] ${p.title} (Issue: ${p.issueId ?? "none"})`,
+            );
+          }
         }
+      } catch (e) {
+        io.err(`dyfj: failed to list packets: ${summarizeError(e)}`);
       }
     }
     return true;
@@ -2131,11 +2143,15 @@ export async function handleReplPacketCommand(
         io.err(`dyfj: failed to get packet: ${summarizeError(e)}`);
       }
     } else {
-      const packet = getWorkbenchPacket(packetId);
-      if (!packet) {
-        io.err(`work packet not found: ${packetId}`);
-      } else {
-        io.out(formatWorkPacketMarkdown(packet));
+      try {
+        const packet = getWorkbenchPacket(packetId);
+        if (!packet) {
+          io.err(`work packet not found: ${packetId}`);
+        } else {
+          io.out(formatWorkPacketMarkdown(packet));
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get packet: ${summarizeError(e)}`);
       }
     }
     return true;
