@@ -180,6 +180,43 @@ describe("draftWorkPacketFromContext", () => {
     );
   });
 
+  test("throws when idea belongs to a different session", () => {
+    const reg = new IdeaPacketRegistry();
+    const idea = markWorkbenchIdea({
+      sessionId: "01SESSION_A",
+      label: "Session A idea",
+      registry: reg,
+    });
+
+    expect(() =>
+      draftWorkPacketFromContext({
+        sessionId: "01SESSION_B",
+        ideaId: idea.ideaId,
+        registry: reg,
+      })
+    ).toThrow(/belongs to session/);
+  });
+
+  test("throws when marking idea with an unknown eventId", () => {
+    const events: WorkbenchSessionEvent[] = [
+      {
+        eventId: "evt-001",
+        eventType: "session_start",
+        createdAt: "2026-08-15T12:00:00Z",
+        content: "Turn",
+      } as any,
+    ];
+
+    expect(() =>
+      markWorkbenchIdea({
+        sessionId: "01SESSION_001",
+        eventId: "evt-nonexistent",
+        label: "Unknown event idea",
+        events,
+      })
+    ).toThrow(/not found in session events/);
+  });
+
   test("formatWorkPacketMarkdown renders clean markdown with all sections", () => {
     const reg = new IdeaPacketRegistry();
     const idea = markWorkbenchIdea({
@@ -209,13 +246,13 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("- **Related Issue:** `BIT-258`");
     expect(md).toContain("## 1. Source Context");
     expect(md).toContain("## 2. Operator Intent");
-    expect(md).toContain("Support /session, /idea mark, and /packet draft");
+    expect(md).toContain("Expose neutral session model");
     expect(md).toContain("## 3. Proposed Acceptance Criteria");
     expect(md).toContain(
       "- [ ] Session identity is visible and resumable via /session and dyfj --session",
     );
     expect(md).toContain("## 4. Verification & Provenance");
-    expect(md).toContain("- **Primary Verifier:** `automated_test`");
+    expect(md).toContain("- **Primary Verifier:** `human_operator`");
     expect(md).toContain("- **Independence & Oracle Policy:**");
   });
 });

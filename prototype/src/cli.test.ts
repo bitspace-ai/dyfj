@@ -3665,22 +3665,30 @@ describe("REPL /idea command", () => {
 describe("REPL /packet command", () => {
   test("/packet draft generates work packet markdown and registers packet", async () => {
     const { io, stdout, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
     const fakeConnect: ConnectFn = () =>
       Promise.resolve({
-        request: (_method: string, params: any) =>
-          Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
             packet: {
               packetId: "01PACKET_1",
               sessionId: params.sessionId,
               title: params.title ?? "Draft work packet",
               issueId: params.issueId ?? null,
             },
-            markdown: "# Work Packet: Draft work packet\n\n## 1. Source Context\n\nContext excerpt\n\n## 2. Operator Intent\n\nIntent\n\n## 3. Proposed Acceptance Criteria\n\n- [ ] Criteria\n\n## 4. Verification & Provenance\n\n- **Primary Verifier:** `automated_test`",
-          }),
+            markdown:
+              "# Work Packet: Draft work packet\n\n## 1. Source Context\n\nContext excerpt\n\n## 2. Operator Intent\n\nIntent\n\n## 3. Proposed Acceptance Criteria\n\n- [ ] Criteria\n\n## 4. Verification & Provenance\n\n- **Primary Verifier:** `human_operator`",
+          });
+        },
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplPacketCommand(
       "/packet draft 01IDEA_1 --issue BIT-258 --title Neutral session capture",
       cfg({ unix: true }),
@@ -3689,8 +3697,73 @@ describe("REPL /packet command", () => {
       fakeConnect,
     );
     expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "01IDEA_1",
+          eventId: undefined,
+          issueId: "BIT-258",
+          title: "Neutral session capture",
+        },
+      },
+    ]);
     expect(stdout.join("\n")).toContain("# Work Packet: Draft work packet");
-    expect(stderr.join("\n")).toContain("draft work packet registered: [01PACKET_1]");
+    expect(stderr.join("\n")).toContain(
+      "draft work packet registered: [01PACKET_1]",
+    );
+  });
+
+  test("/packet draft with event-id passes eventId parameter", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_2",
+              sessionId: params.sessionId,
+              title: "Event packet",
+              issueId: null,
+            },
+            markdown: "# Work Packet: Event packet",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
+    const handled = await handleReplPacketCommand(
+      "/packet draft evt-0123456789",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: undefined,
+          eventId: "evt-0123456789",
+          issueId: undefined,
+          title: undefined,
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Event packet");
+    expect(stderr.join("\n")).toContain(
+      "draft work packet registered: [01PACKET_2]",
+    );
   });
 });
 

@@ -473,7 +473,17 @@ export function buildWorkbenchHandlers(
 
     "ideas/list": async (params) => {
       const record = asRecord(params);
-      const sessionId = typeof record.sessionId === "string" ? record.sessionId : undefined;
+      if (
+        record.sessionId !== undefined && typeof record.sessionId !== "string"
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "ideas/list requires a string sessionId if provided",
+        );
+      }
+      const sessionId = typeof record.sessionId === "string"
+        ? record.sessionId
+        : undefined;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       return { ideas: reg.listIdeas(sessionId) };
     },
@@ -501,14 +511,23 @@ export function buildWorkbenchHandlers(
           "packets/draft requires a string sessionId",
         );
       }
-      const ideaId = typeof record.ideaId === "string" ? record.ideaId : undefined;
-      const eventId = typeof record.eventId === "string" ? record.eventId : undefined;
-      const issueId = typeof record.issueId === "string" ? record.issueId : undefined;
+      const ideaId = typeof record.ideaId === "string"
+        ? record.ideaId
+        : undefined;
+      const eventId = typeof record.eventId === "string"
+        ? record.eventId
+        : undefined;
+      const issueId = typeof record.issueId === "string"
+        ? record.issueId
+        : undefined;
       const title = typeof record.title === "string" ? record.title : undefined;
-      const operatorIntent = typeof record.operatorIntent === "string" ? record.operatorIntent : undefined;
+      const operatorIntent = typeof record.operatorIntent === "string"
+        ? record.operatorIntent
+        : undefined;
       const [events, workspaceRec] = await Promise.all([
         fetchSessionEvents({ sessionId }),
-        (options.fetchSessionWorkspaceRecord ?? fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
+        (options.fetchSessionWorkspaceRecord ??
+          fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
       ]);
       const packet = draftWorkPacketFromContext({
         sessionId,
@@ -527,7 +546,17 @@ export function buildWorkbenchHandlers(
 
     "packets/list": async (params) => {
       const record = asRecord(params);
-      const sessionId = typeof record.sessionId === "string" ? record.sessionId : undefined;
+      if (
+        record.sessionId !== undefined && typeof record.sessionId !== "string"
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/list requires a string sessionId if provided",
+        );
+      }
+      const sessionId = typeof record.sessionId === "string"
+        ? record.sessionId
+        : undefined;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       return { packets: reg.listPackets(sessionId) };
     },

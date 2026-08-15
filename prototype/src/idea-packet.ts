@@ -1,5 +1,5 @@
 // Idea marking and Work Packet drafting domain model for Workbench.
-// Implements Milestone 3 / Packet 0 (BIT-258): purpose-neutral session capture,
+// Implements Milestone 3 / Packet 0 (BIT-258): session capture,
 // idea marking from conversational turns, and draft work packet generation.
 
 import { generateULID } from "./utils";
@@ -41,40 +41,61 @@ export interface WorkbenchWorkPacket {
 }
 
 export class IdeaPacketRegistry {
-  private readonly ideas = new Map<string, WorkbenchIdea>();
-  private readonly packets = new Map<string, WorkbenchWorkPacket>();
+  private readonly ideasById = new Map<string, WorkbenchIdea>();
+  private readonly ideasBySession = new Map<string, WorkbenchIdea[]>();
+  private readonly packetsById = new Map<string, WorkbenchWorkPacket>();
+  private readonly packetsBySession = new Map<string, WorkbenchWorkPacket[]>();
+  private readonly maxEntriesPerSession = 500;
 
   registerIdea(idea: WorkbenchIdea): void {
-    this.ideas.set(idea.ideaId, idea);
+    this.ideasById.set(idea.ideaId, idea);
+    const list = this.ideasBySession.get(idea.sessionId) ?? [];
+    if (list.length >= this.maxEntriesPerSession) {
+      const evicted = list.shift();
+      if (evicted) this.ideasById.delete(evicted.ideaId);
+    }
+    list.push(idea);
+    this.ideasBySession.set(idea.sessionId, list);
   }
 
   getIdea(ideaId: string): WorkbenchIdea | null {
-    return this.ideas.get(ideaId) ?? null;
+    return this.ideasById.get(ideaId) ?? null;
   }
 
   listIdeas(sessionId?: string): WorkbenchIdea[] {
-    const all = Array.from(this.ideas.values());
-    if (sessionId === undefined) return all;
-    return all.filter((i) => i.sessionId === sessionId);
+    if (sessionId !== undefined) {
+      return [...(this.ideasBySession.get(sessionId) ?? [])];
+    }
+    return Array.from(this.ideasById.values());
   }
 
   registerPacket(packet: WorkbenchWorkPacket): void {
-    this.packets.set(packet.packetId, packet);
+    this.packetsById.set(packet.packetId, packet);
+    const list = this.packetsBySession.get(packet.sessionId) ?? [];
+    if (list.length >= this.maxEntriesPerSession) {
+      const evicted = list.shift();
+      if (evicted) this.packetsById.delete(evicted.packetId);
+    }
+    list.push(packet);
+    this.packetsBySession.set(packet.sessionId, list);
   }
 
   getPacket(packetId: string): WorkbenchWorkPacket | null {
-    return this.packets.get(packetId) ?? null;
+    return this.packetsById.get(packetId) ?? null;
   }
 
   listPackets(sessionId?: string): WorkbenchWorkPacket[] {
-    const all = Array.from(this.packets.values());
-    if (sessionId === undefined) return all;
-    return all.filter((p) => p.sessionId === sessionId);
+    if (sessionId !== undefined) {
+      return [...(this.packetsBySession.get(sessionId) ?? [])];
+    }
+    return Array.from(this.packetsById.values());
   }
 
   clear(): void {
-    this.ideas.clear();
-    this.packets.clear();
+    this.ideasById.clear();
+    this.ideasBySession.clear();
+    this.packetsById.clear();
+    this.packetsBySession.clear();
   }
 }
 
@@ -129,11 +150,13 @@ export function markWorkbenchIdea(input: {
   if (description.length === 0 && input.events && input.events.length > 0) {
     if (input.eventId) {
       const match = input.events.find((e) => e.eventId === input.eventId);
-      if (match && match.content) {
+      if (!match) {
+        throw new Error(`event "${input.eventId}" not found in session events`);
+      }
+      if (match.content) {
         description = match.content.trim().slice(0, 1000);
       }
-    }
-    if (description.length === 0) {
+    } else {
       // Find the latest response or start event
       for (let i = input.events.length - 1; i >= 0; i--) {
         const ev = input.events[i];
@@ -184,15 +207,28 @@ export function draftWorkPacketFromContext(input: {
   registry?: IdeaPacketRegistry;
 }): WorkbenchWorkPacket {
   const reg = input.registry ?? defaultIdeaPacketRegistry;
-  const idea = input.idea ??
-    (input.ideaId ? reg.getIdea(input.ideaId) : null);
+  let idea: WorkbenchIdea | null = null;
+  if (input.idea) {
+    idea = input.idea;
+  } else if (input.ideaId) {
+    idea = reg.getIdea(input.ideaId);
+    if (!idea) {
+      throw new Error(`idea "${input.ideaId}" not found`);
+    }
+  }
+
+  if (idea && idea.sessionId !== input.sessionId) {
+    throw new Error(
+      `idea "${idea.ideaId}" belongs to session "${idea.sessionId}", not requested session "${input.sessionId}"`,
+    );
+  }
 
   const title = input.title?.trim() ||
     idea?.label ||
     "Draft Work Packet";
 
   const operatorIntent = input.operatorIntent?.trim() ||
-    idea?.description ||
+    idea?.label ||
     title;
 
   let referencedEventId = input.eventId ?? idea?.eventId ?? null;
@@ -203,7 +239,7 @@ export function draftWorkPacketFromContext(input: {
     if (referencedEventId) {
       const match = input.events.find((e) => e.eventId === referencedEventId);
       if (match && match.content) {
-        excerpt = match.content.trim();
+        excerpt = match.content.trim().slice(0, 4000);
       }
     }
     if (excerpt.length === 0) {
@@ -225,7 +261,7 @@ export function draftWorkPacketFromContext(input: {
       }
     }
 
-    // Extract any mentioned files
+    // Collect file paths referenced in read_file tool calls
     for (const ev of input.events) {
       if (ev.toolName === "read_file" && ev.toolArguments?.path) {
         const p = String(ev.toolArguments.path);
@@ -237,6 +273,9 @@ export function draftWorkPacketFromContext(input: {
   if (excerpt.length === 0) {
     excerpt = idea?.description || operatorIntent;
   }
+  if (excerpt.length > 4000) {
+    excerpt = excerpt.slice(0, 4000) + "\n...[truncated]";
+  }
 
   const proposedAcceptanceCriteria: string[] = [];
   if (
@@ -245,9 +284,8 @@ export function draftWorkPacketFromContext(input: {
     proposedAcceptanceCriteria.push(...input.acceptanceCriteria);
   } else {
     proposedAcceptanceCriteria.push(
-      `Implement core capability for "${title}" without regressing existing test suite`,
-      `Add automated test coverage validating expected behavior and error cases`,
-      `Verify changes against operator acceptance criteria and run publish gate`,
+      `Fulfill the objective: "${title}"`,
+      `Verify outcomes against operator intent and documented constraints`,
     );
   }
 
@@ -267,7 +305,7 @@ export function draftWorkPacketFromContext(input: {
     operatorIntent,
     proposedAcceptanceCriteria,
     verifierProvenance: {
-      verifierType: "automated_test",
+      verifierType: "human_operator",
       independenceNotes:
         "Verifier evaluation must be independent of generation. Machine and model assertions serve as evidence, not self-certifying truth.",
     },

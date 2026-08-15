@@ -1566,6 +1566,26 @@ export async function handleReplSessionCommand(
       io.err("no session yet — send a prompt first");
     } else {
       io.err(`session: ${sessionState.sessionId}`);
+      if (sessionState.turnCount === 0 && config.unix) {
+        try {
+          const client = await connect(config.socket);
+          try {
+            const inspect = await client.request("sessions/inspect", {
+              sessionId: sessionState.sessionId,
+            }) as { eventCount?: number; workspace?: string | null };
+            if (inspect.eventCount !== undefined && inspect.eventCount > 0) {
+              io.err(`events: ${inspect.eventCount}`);
+            }
+            if (inspect.workspace) {
+              io.err(`workspace: ${inspect.workspace}`);
+            }
+          } finally {
+            client.close();
+          }
+        } catch {
+          // inspection optional
+        }
+      }
       io.err(`turns: ${sessionState.turnCount}`);
       io.err(`spend: $${sessionState.sessionSpendUsd.toFixed(4)}`);
       io.err(`resume later with: dyfj --session ${sessionState.sessionId}`);
@@ -1587,7 +1607,10 @@ export async function handleReplSessionCommand(
               }>;
             }>;
           };
-          const sessions = res.projects?.flatMap((p) => p.sessions) ?? [];
+          const sessions = (res.projects?.flatMap((p) => p.sessions) ?? [])
+            .sort((a, b) =>
+              (b.createdAt || "").localeCompare(a.createdAt || "")
+            );
           if (sessions.length === 0) {
             io.err("no sessions found");
           } else {
@@ -1664,12 +1687,12 @@ export async function handleReplIdeaCommand(
     }
     let eventId: string | undefined;
     let labelParts: string[];
-    if (
-      parts[2].startsWith("evt-") ||
-      (parts[2].length >= 26 && /^[0-9A-Za-z_-]+$/.test(parts[2]))
-    ) {
+    if (parts[2].startsWith("evt-")) {
       eventId = parts[2];
       labelParts = parts.slice(3);
+    } else if (parts[2] === "--event" && parts[3]) {
+      eventId = parts[3];
+      labelParts = parts.slice(4);
     } else {
       labelParts = parts.slice(2);
     }
@@ -1846,13 +1869,18 @@ export async function handleReplPacketCommand(
       }
     }
 
+    const isEventRef = targetRef.startsWith("evt-");
+    const ideaId = isEventRef ? undefined : targetRef;
+    const eventId = isEventRef ? targetRef : undefined;
+
     if (config.unix) {
       try {
         const client = await connect(config.socket);
         try {
           const res = await client.request("packets/draft", {
             sessionId: sessionState.sessionId,
-            ideaId: targetRef,
+            ideaId,
+            eventId,
             issueId,
             title,
           }) as { packet: WorkbenchWorkPacket; markdown: string };
@@ -1867,7 +1895,8 @@ export async function handleReplPacketCommand(
     } else {
       const packet = draftWorkPacketFromContext({
         sessionId: sessionState.sessionId,
-        ideaId: targetRef,
+        ideaId,
+        eventId,
         issueId,
         title,
       });
