@@ -199,7 +199,7 @@ function asRecord(params: unknown): Record<string, unknown> {
 function sanitizeRpcString(
   val: unknown,
   fieldName: string,
-  options: { required?: boolean; maxLen?: number } = {},
+  options: { required?: boolean; maxLen?: number; singleLine?: boolean } = {},
 ): string | undefined {
   const maxLen = options.maxLen ?? 256;
   if (val === undefined || val === null) {
@@ -223,7 +223,13 @@ function sanitizeRpcString(
       `${fieldName} exceeds maximum length of ${maxLen} characters`,
     );
   }
-  const trimmed = val.trim();
+  let s = val;
+  if (options.singleLine !== false) {
+    s = s.replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ").replace(/\s+/g, " ");
+  } else {
+    s = s.replace(/[\x00-\x09\x0B-\x1F\x7F\x1B]/g, "");
+  }
+  const trimmed = s.trim();
   if (trimmed.length === 0) {
     throw new RpcError(
       RpcErrorCode.invalidParams,
@@ -598,7 +604,7 @@ export function buildWorkbenchHandlers(
       const description = sanitizeRpcString(
         record.description,
         "description",
-        { maxLen: 2000 },
+        { maxLen: 2000, singleLine: false },
       );
       const events = eventId
         ? await fetchSessionEvents({ sessionId, eventId })
@@ -680,7 +686,7 @@ export function buildWorkbenchHandlers(
       const operatorIntent = sanitizeRpcString(
         record.operatorIntent,
         "operatorIntent",
-        { maxLen: 2000 },
+        { maxLen: 2000, singleLine: false },
       );
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       const idea = ideaId ? reg.getIdea(ideaId) : null;

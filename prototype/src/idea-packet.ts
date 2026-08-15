@@ -46,14 +46,14 @@ function validateIdentifier(id: string, fieldName = "identifier"): string {
   if (id.length > 512) {
     throw new Error(`${fieldName} exceeds maximum length of 256 characters`);
   }
-  const trimmed = id.trim();
-  if (trimmed.length === 0) {
+  const clean = id.replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ").replace(/\s+/g, " ").trim();
+  if (clean.length === 0) {
     throw new Error(`${fieldName} cannot be empty`);
   }
-  if (trimmed.length > 256) {
+  if (clean.length > 256) {
     throw new Error(`${fieldName} exceeds maximum length of 256 characters`);
   }
-  return trimmed;
+  return clean;
 }
 
 function boundedCloneForJson(
@@ -515,8 +515,11 @@ export function draftWorkPacketFromContext(input: {
         );
       }
       if (match.content && match.content.length > 0) {
-        const trimmed = match.content.trim();
-        if (match.content.length > 4000 || trimmed.length > 4000) {
+        const preSlice = match.content.length > 4000
+          ? match.content.slice(0, 4000)
+          : match.content;
+        const trimmed = preSlice.trim();
+        if (match.content.length > 4000 || trimmed.length >= 4000) {
           excerpt = trimmed.slice(0, 3985) + "...[truncated]";
         } else {
           excerpt = trimmed;
