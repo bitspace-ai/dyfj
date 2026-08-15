@@ -88,29 +88,33 @@ function boundedCloneForJson(
       state.totalBytes += 2;
       out.push(boundedCloneForJson(val[i], depth + 1, state));
     }
+    if (val.length > 20 && out[out.length - 1] !== "[truncated]") {
+      state.totalBytes += 13;
+      out.push("[truncated]");
+    }
     return out;
   }
   if (typeof val === "object") {
     state.totalBytes += 2;
     const out: Record<string, unknown> = {};
     let count = 0;
-    for (const k in (val as Record<string, unknown>)) {
-      if (Object.prototype.hasOwnProperty.call(val, k)) {
-        if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
-          out["_truncated"] = true;
-          state.totalBytes += 18;
-          break;
-        }
-        const key = k.slice(0, 100);
-        state.totalBytes += key.length + 4;
-        out[key] = boundedCloneForJson(
-          (val as Record<string, unknown>)[k],
-          depth + 1,
-          state,
-        );
-        count++;
-        if (count >= 20) break;
+    const entries = Object.entries(val as Record<string, unknown>);
+    for (let i = 0; i < entries.length; i++) {
+      const [k, v] = entries[i];
+      if (state.nodeCount > state.maxNodes || state.totalBytes >= state.budget) {
+        out["_truncated"] = true;
+        state.totalBytes += 18;
+        break;
       }
+      if (count >= 20) {
+        out["_truncated"] = true;
+        state.totalBytes += 18;
+        break;
+      }
+      const key = k.slice(0, 100);
+      state.totalBytes += key.length + 4;
+      out[key] = boundedCloneForJson(v, depth + 1, state);
+      count++;
     }
     return out;
   }
@@ -137,20 +141,24 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
 }
 
 function sanitizeMarkdownHeading(text: string): string {
-  return text
+  const clean = text.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
+  return clean
     .replace(
       /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(#+)/gm,
       (_match, prefix, hashes) => `${prefix}\\${hashes}`,
     )
     .replace(
-      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)([=-]{2,}[ \t]*)$/gm,
+      /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)([=-]+[ \t]*)$/gm,
       (_match, prefix, underline) => `${prefix}\\${underline}`,
     )
     .replace(/<(\/?[hH][1-6]\b[^>]*)>/g, "\\<$1\\>");
 }
 
 function sanitizeSingleLine(text: string): string {
-  return text.replace(/[\r\n]/g, " ").trim();
+  return text
+    .replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export class IdeaPacketRegistry {
@@ -548,8 +556,10 @@ export function draftWorkPacketFromContext(input: {
       .slice(-4);
     excerpt = relevant
       .map((e) => {
-        const raw = (e.content ?? "").trim();
-        const snippet = raw.length > 300
+        const rawContent = e.content ?? "";
+        const preSlice = rawContent.length > 1000 ? rawContent.slice(0, 1000) : rawContent;
+        const raw = preSlice.trim();
+        const snippet = rawContent.length > 300 || raw.length > 300
           ? raw.slice(0, 300) + "...[truncated]"
           : raw;
         return `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${snippet}`;
