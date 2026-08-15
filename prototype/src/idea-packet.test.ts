@@ -155,6 +155,7 @@ describe("draftWorkPacketFromContext", () => {
       sessionId: "01SESSION_100",
       ideaId: idea.ideaId,
       issueId: "BIT-384",
+      operatorIntent: "Prevent malformed ports from reaching net grants.",
       workspace: "/Users/chris/projects/dyfj",
       events,
       registry: reg,
@@ -174,7 +175,7 @@ describe("draftWorkPacketFromContext", () => {
       "prototype/src/mcp-net-grants.ts",
     );
     expect(packet.proposedAcceptanceCriteria.length).toBeGreaterThanOrEqual(2);
-    expect(packet.verifierProvenance.verifierType).toBe("automated_test");
+    expect(packet.verifierProvenance.verifierType).toBe("human_operator");
     expect(packet.verifierProvenance.independenceNotes).toContain(
       "Verifier evaluation must be independent of generation",
     );
