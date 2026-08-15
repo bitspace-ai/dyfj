@@ -1579,7 +1579,7 @@ function createCliSessionEvent(input: {
   createdAt: string;
 }): WorkbenchSessionEvent {
   const boundedContent = input.content.length > 4000
-    ? input.content.slice(0, 4000)
+    ? input.content.slice(0, 3950) + "\n...[truncated]"
     : input.content;
   return {
     sessionId: input.sessionId,

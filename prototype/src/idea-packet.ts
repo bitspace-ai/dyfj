@@ -214,6 +214,7 @@ function stripAnsiEscapes(text: string): string {
   return text
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
     .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
+    .replace(/\x1b[()*+-./][0-9A-Za-z]/g, "")
     .replace(/\x1b[@-Z\\-_]/g, "");
 }
 
@@ -448,8 +449,10 @@ export class IdeaPacketRegistry {
   private readonly packetsById = new Map<string, WorkbenchWorkPacket>();
   private readonly packetsBySession = new Map<string, WorkbenchWorkPacket[]>();
   private readonly knownIdeaOwners = new Map<string, string>();
+  private readonly knownPacketOwners = new Map<string, string>();
   private readonly maxSessions = 100;
   private readonly maxEntriesPerSession = 50;
+  private readonly maxTombstones = 20000;
 
   private cloneIdea(idea: WorkbenchIdea): WorkbenchIdea {
     return { ...idea };
@@ -507,6 +510,10 @@ export class IdeaPacketRegistry {
     }
 
     this.ideasById.set(sanitized.ideaId, sanitized);
+    if (this.knownIdeaOwners.size >= this.maxTombstones) {
+      const oldest = this.knownIdeaOwners.keys().next().value;
+      if (oldest !== undefined) this.knownIdeaOwners.delete(oldest);
+    }
     this.knownIdeaOwners.set(sanitized.ideaId, sanitized.sessionId);
     let list = this.ideasBySession.get(sanitized.sessionId);
     if (!list) {
@@ -612,6 +619,13 @@ export class IdeaPacketRegistry {
       }
     }
 
+    const knownPacketOwner = this.knownPacketOwners.get(sanitized.packetId);
+    if (knownPacketOwner && knownPacketOwner !== sanitized.sessionId) {
+      throw new Error(
+        `cannot re-register packet "${sanitized.packetId}" under session "${sanitized.sessionId}" because it is already registered under session "${knownPacketOwner}"`,
+      );
+    }
+
     const existing = this.packetsById.get(sanitized.packetId);
     if (existing) {
       if (existing.sessionId !== sanitized.sessionId) {
@@ -627,6 +641,11 @@ export class IdeaPacketRegistry {
     }
 
     this.packetsById.set(sanitized.packetId, sanitized);
+    if (this.knownPacketOwners.size >= this.maxTombstones) {
+      const oldest = this.knownPacketOwners.keys().next().value;
+      if (oldest !== undefined) this.knownPacketOwners.delete(oldest);
+    }
+    this.knownPacketOwners.set(sanitized.packetId, sanitized.sessionId);
     let list = this.packetsBySession.get(sanitized.sessionId);
     if (!list) {
       if (this.packetsBySession.size >= this.maxSessions) {
@@ -668,6 +687,8 @@ export class IdeaPacketRegistry {
     this.ideasBySession.clear();
     this.packetsById.clear();
     this.packetsBySession.clear();
+    this.knownIdeaOwners.clear();
+    this.knownPacketOwners.clear();
   }
 }
 
@@ -737,7 +758,8 @@ export function markWorkbenchIdea(input: {
       );
     }
     let match: WorkbenchSessionEvent | undefined;
-    for (let i = input.events.length - 1; i >= 0; i--) {
+    const maxScan = Math.min(input.events.length, 10000);
+    for (let count = 0, i = input.events.length - 1; i >= 0 && count < maxScan; i--, count++) {
       const ev = input.events[i];
       if (ev.sessionId === sessionId && ev.eventId === eventId) {
         match = ev;
@@ -858,7 +880,8 @@ export function draftWorkPacketFromContext(input: {
     }
     let match: WorkbenchSessionEvent | undefined;
     if (input.events && input.events.length > 0) {
-      for (let i = input.events.length - 1; i >= 0; i--) {
+      const maxScan = Math.min(input.events.length, 10000);
+      for (let count = 0, i = input.events.length - 1; i >= 0 && count < maxScan; i--, count++) {
         const ev = input.events[i];
         if (ev.sessionId === sessionId && ev.eventId === referencedEventId) {
           match = ev;

@@ -242,6 +242,7 @@ function stripAnsiEscapes(text: string): string {
   return text
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
     .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
+    .replace(/\x1b[()*+-./][0-9A-Za-z]/g, "")
     .replace(/\x1b[@-Z\\-_]/g, "");
 }
 
