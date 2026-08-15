@@ -4432,6 +4432,20 @@ describe("REPL /packet command", () => {
     expect(state.sessionId).toBe("01SESSION_B");
     expect(state.turnCount).toBe(0);
     expect(state.events).toEqual([]);
+    expect(state.eventCounter).toBe(0);
+  });
+
+  test("/packet draft -- rejects extra positional arguments", async () => {
+    const { io, stderr } = fakeIo();
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft -- IDEA_A IDEA_B",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain('error: unexpected argument "IDEA_B"');
   });
 });
 

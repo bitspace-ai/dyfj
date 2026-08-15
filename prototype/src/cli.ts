@@ -744,6 +744,7 @@ export async function runRepl(
     sessionId: config.sessionId,
     turnCount: 0,
     sessionSpendUsd: 0,
+    eventCounter: 0,
   };
   let exitCode = 0;
   try {
@@ -874,9 +875,10 @@ export async function runRepl(
         }
         sessionState.sessionId = result.sessionId;
         sessionState.turnCount++;
+        sessionState.eventCounter = (sessionState.eventCounter ?? 0) + 1;
+        const eventNum = sessionState.eventCounter;
         if ("cost" in result) sessionState.sessionSpendUsd += result.cost.totalUsd;
         if (!sessionState.events) sessionState.events = [];
-        const eventNum = sessionState.events.length + 1;
         sessionState.events.push(createCliSessionEvent({
           eventId: `evt_u_${eventNum}`,
           sessionId: result.sessionId,
@@ -1639,6 +1641,7 @@ export interface ReplSessionState {
   sessionSpendUsd: number;
   workspace?: string;
   events?: WorkbenchSessionEvent[];
+  eventCounter?: number;
 }
 
 export async function handleReplSessionCommand(
@@ -1831,6 +1834,7 @@ export async function handleReplSessionCommand(
     sessionState.turnCount = 0;
     sessionState.sessionSpendUsd = 0;
     sessionState.events = [];
+    sessionState.eventCounter = 0;
     io.err(`switched to session: ${targetId}`);
     return true;
   }
@@ -2171,6 +2175,9 @@ export async function handleReplPacketCommand(
         while (i < tokens.length) {
           if (!targetRef) {
             targetRef = tokens[i];
+          } else {
+            io.err(`error: unexpected argument "${tokens[i]}"`);
+            return true;
           }
           i++;
         }

@@ -592,4 +592,61 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("`/work/My  Custom  Path`");
     expect(md).toContain("`printf 'a  b'`");
   });
+
+  test("4-space indented code blocks do not suppress heading escaping", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_4SP",
+      operatorIntent: "    ```\n# Injected Heading\n    ```",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("\\# Injected Heading");
+  });
+
+  test("escaped backticks do not bypass HTML heading escaping in criteria", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_ESC_TICKS",
+      acceptanceCriteria: ["\\`<h1>Injected</h1>\\`"],
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("\\<h1\\>Injected\\</h1\\>");
+  });
+
+  test("markWorkbenchIdea strips C1 controls from event-derived description", () => {
+    const reg = new IdeaPacketRegistry();
+    const idea = markWorkbenchIdea({
+      sessionId: "01SESSION_C1_DESC",
+      label: "C1 Test Idea",
+      eventId: "evt_1",
+      events: [
+        {
+          eventId: "evt_1",
+          sessionId: "01SESSION_C1_DESC",
+          eventType: "model_response",
+          content: "Response with \u009B2J C1 control byte",
+        } as any,
+      ],
+      registry: reg,
+    });
+
+    expect(idea.description).not.toContain("\u009B");
+  });
+
+  test("list-nested dangling code fence closes with whitespace indentation", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_LIST_DANGLE",
+      operatorIntent: "- ```sh\n  echo hello",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("- ```sh\n  echo hello\n  ```");
+    expect(md).not.toContain("- ```sh\n  echo hello\n- ```");
+  });
 });

@@ -145,11 +145,19 @@ function safeBoundedJson(obj: unknown, maxLen = 4000): string {
   }
 }
 
+function countPrecedingBackslashes(str: string, index: number): number {
+  let count = 0;
+  for (let k = index - 1; k >= 0 && str[k] === "\\"; k--) {
+    count++;
+  }
+  return count;
+}
+
 function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
   let result = "";
   let i = 0;
   while (i < text.length) {
-    if (text[i] === "`") {
+    if (text[i] === "`" && countPrecedingBackslashes(text, i) % 2 === 0) {
       let openLen = 0;
       while (i + openLen < text.length && text[i + openLen] === "`") {
         openLen++;
@@ -158,7 +166,7 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
       let closeIdx = -1;
       let j = i + openLen;
       while (j < text.length) {
-        if (text[j] === "`") {
+        if (text[j] === "`" && countPrecedingBackslashes(text, j) % 2 === 0) {
           let closeLen = 0;
           while (j + closeLen < text.length && text[j + closeLen] === "`") {
             closeLen++;
@@ -184,7 +192,7 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
       }
     } else if (text[i] === "<") {
       const sub = text.slice(i);
-      const match = sub.match(/^<(\/?[hH][1-6]\b[^>]*)>/);
+      const match = sub.match(/^<(\/?[hH][1-6](?:[\s/][^>]*)?)>/);
       if (match) {
         result += `\\<${match[1]}\\>`;
         i += match[0].length;
@@ -200,6 +208,30 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
     }
   }
   return result;
+}
+
+function parseCodeFence(line: string): { prefix: string; fence: string; info: string } | null {
+  const containerMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+  if (containerMatch) {
+    return { prefix: containerMatch[1], fence: containerMatch[2], info: containerMatch[3] };
+  }
+  const rootMatch = line.match(/^[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+  if (rootMatch) {
+    return { prefix: "", fence: rootMatch[1], info: rootMatch[2] };
+  }
+  return null;
+}
+
+function parseCloseCodeFence(line: string): { prefix: string; fence: string } | null {
+  const containerMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+  if (containerMatch) {
+    return { prefix: containerMatch[1], fence: containerMatch[2] };
+  }
+  const rootMatch = line.match(/^([ \t]*)(`{3,}|~{3,})[ \t]*$/);
+  if (rootMatch) {
+    return { prefix: rootMatch[1], fence: rootMatch[2] };
+  }
+  return null;
 }
 
 function matchesContainerPrefix(linePrefix: string, openPrefix: string): boolean {
@@ -242,11 +274,11 @@ function sanitizeMarkdownHeading(text: string): string {
 
   for (const line of lines) {
     if (!openChar) {
-      const fenceMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})(.*)$/);
+      const fenceMatch = parseCodeFence(line);
       if (fenceMatch) {
-        const prefix = fenceMatch[1];
-        const fence = fenceMatch[2];
-        const info = fenceMatch[3];
+        const prefix = fenceMatch.prefix;
+        const fence = fenceMatch.fence;
+        const info = fenceMatch.info;
         if (fence[0] !== "`" || !info.includes("`")) {
           flushNonFenceBuffer();
           openPrefix = prefix;
@@ -270,12 +302,12 @@ function sanitizeMarkdownHeading(text: string): string {
 
       nonFenceBuffer.push(sanitizedLine);
     } else {
-      const closeMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})[ \t]*$/);
+      const closeMatch = parseCloseCodeFence(line);
       if (
         closeMatch &&
-        matchesContainerPrefix(closeMatch[1], openPrefix)
+        matchesContainerPrefix(closeMatch.prefix, openPrefix)
       ) {
-        const fence = closeMatch[2];
+        const fence = closeMatch.fence;
         if (fence[0] === openChar && fence.length >= openCount) {
           openChar = null;
           openCount = 0;
@@ -312,7 +344,7 @@ function sanitizeCriterion(text: string): string {
   let result = "";
   let i = 0;
   while (i < noControls.length) {
-    if (noControls[i] === "`") {
+    if (noControls[i] === "`" && countPrecedingBackslashes(noControls, i) % 2 === 0) {
       let tickCount = 0;
       while (i + tickCount < noControls.length && noControls[i + tickCount] === "`") {
         tickCount++;
@@ -320,7 +352,7 @@ function sanitizeCriterion(text: string): string {
       let closeIdx = -1;
       let j = i + tickCount;
       while (j < noControls.length) {
-        if (noControls[j] === "`") {
+        if (noControls[j] === "`" && countPrecedingBackslashes(noControls, j) % 2 === 0) {
           let closeCount = 0;
           while (j + closeCount < noControls.length && noControls[j + closeCount] === "`") {
             closeCount++;
@@ -468,7 +500,7 @@ export class IdeaPacketRegistry {
       ? packet.verifierProvenance.independenceNotes.slice(0, 2000)
       : packet.verifierProvenance.independenceNotes;
     const rawCreated = packet.createdAt.length > 128 ? packet.createdAt.slice(0, 128) : packet.createdAt;
-    const trimmedExcerpt = rawExcerpt.trim();
+    const trimmedExcerpt = rawExcerpt.replace(/^[\r\n]+|[\r\n\s]+$/g, "");
     const excerpt = trimmedExcerpt.length > 4000
       ? closeDanglingFences(trimmedExcerpt.slice(0, 3950) + "\n...[truncated]")
       : closeDanglingFences(trimmedExcerpt);
@@ -493,7 +525,7 @@ export class IdeaPacketRegistry {
           .slice(0, 50)
           .map((s) => (s.length > 1000 ? s.slice(0, 1000) : s).trim().slice(0, 500)),
       },
-      operatorIntent: closeDanglingFences(rawIntent.trim().slice(0, 2000)),
+      operatorIntent: closeDanglingFences(rawIntent.replace(/^[\r\n]+|[\r\n\s]+$/g, "").slice(0, 2000)),
       proposedAcceptanceCriteria: (packet.proposedAcceptanceCriteria ?? [])
         .slice(0, 20)
         .map((c) => (c.length > 1000 ? c.slice(0, 1000) : c).trim().slice(0, 500)),
@@ -682,7 +714,7 @@ export function markWorkbenchIdea(input: {
   if (description.length === 0) {
     description = label;
   }
-  description = description.replace(/[\x00-\x1F\x7F\x1B]/g, " ").trim().slice(0, 2000);
+  description = description.replace(/[\u0000-\u001F\u007F-\u009F\u001B]/g, " ").trim().slice(0, 2000);
 
   const idea: WorkbenchIdea = {
     ideaId: input.ideaId
@@ -708,61 +740,57 @@ export function draftWorkPacketFromContext(input: {
   issueId?: string | null;
   title?: string;
   operatorIntent?: string;
+  workspace?: string | null;
+  contextSources?: string[];
   acceptanceCriteria?: string[];
   events?: WorkbenchSessionEvent[];
-  workspace?: string | null;
-  packetId?: string;
   createdAt?: string;
+  packetId?: string;
   registry?: IdeaPacketRegistry;
 }): WorkbenchWorkPacket {
-  const reg = input.registry ?? defaultIdeaPacketRegistry;
   const sessionId = validateIdentifier(input.sessionId, "sessionId");
-  let idea: WorkbenchIdea | null = null;
-  if (input.idea) {
-    idea = input.idea;
-  } else if (input.ideaId) {
-    idea = reg.getIdea(input.ideaId);
+  const reg = input.registry ?? defaultIdeaPacketRegistry;
+
+  let idea = input.idea;
+  if (!idea && input.ideaId) {
+    const cleanIdeaId = validateIdentifier(input.ideaId, "ideaId");
+    idea = reg.getIdea(cleanIdeaId);
     if (!idea) {
-      throw new Error(`idea "${input.ideaId}" not found`);
+      throw new Error(
+        `idea "${cleanIdeaId}" not found for session "${sessionId}"`,
+      );
     }
   }
-
-  if (idea && idea.sessionId !== sessionId) {
-    throw new Error(
-      `idea "${idea.ideaId}" belongs to session "${idea.sessionId}", not requested session "${sessionId}"`,
-    );
-  }
-
-  const rawTitle = typeof input.title === "string"
-    ? (input.title.length > 512 ? input.title.slice(0, 512) : input.title).trim().slice(0, 256)
-    : (idea?.label || "Draft Work Packet");
-  const title = rawTitle.length > 0 ? rawTitle : "Draft Work Packet";
-
-  const rawIntent = typeof input.operatorIntent === "string"
-    ? (input.operatorIntent.length > 8000 ? input.operatorIntent.slice(0, 8000) : input.operatorIntent).trim().slice(0, 2000)
-    : (idea?.description || idea?.label || title);
-  const operatorIntent = rawIntent.length > 0 ? rawIntent : title;
 
   let referencedEventId = input.eventId
     ? validateIdentifier(input.eventId, "eventId")
     : (idea?.eventId ? validateIdentifier(idea.eventId, "eventId") : null);
   let excerpt = "";
-  const contextSources: string[] = [];
+  let operatorIntent = "";
+  let title = input.title?.trim() || "";
 
-  const events = input.events;
+  if (idea) {
+    if (idea.sessionId !== sessionId) {
+      throw new Error(
+        `idea "${idea.ideaId}" belongs to session "${idea.sessionId}", not requested session "${sessionId}"`,
+      );
+    }
+    if (!title) {
+      title = idea.label;
+    }
+    operatorIntent = idea.description || idea.label;
+  }
+
   if (referencedEventId) {
-    if (events === undefined) {
+    if (!input.events || input.events.length === 0) {
       throw new Error(
         `cannot draft packet with referenced event "${referencedEventId}" without supplying session events for session "${sessionId}"`,
       );
     }
     let match: WorkbenchSessionEvent | undefined;
-    let scanned = 0;
-    for (let i = events.length - 1; i >= 0; i--) {
-      scanned++;
-      if (scanned > 5000) break;
-      const ev = events[i];
-      if (ev.eventId === referencedEventId && ev.sessionId === sessionId) {
+    for (let i = input.events.length - 1; i >= 0; i--) {
+      const ev = input.events[i];
+      if (ev.sessionId === sessionId && ev.eventId === referencedEventId) {
         match = ev;
         break;
       }
@@ -777,10 +805,11 @@ export function draftWorkPacketFromContext(input: {
         ? match.content.slice(0, 4000)
         : match.content;
       const trimmed = preSlice.trim();
-      if (match.content.length > 4000) {
-        excerpt = closeDanglingFences(trimmed.slice(0, 3950) + "\n...[truncated]");
-      } else {
-        excerpt = closeDanglingFences(trimmed);
+      excerpt = match.content.length > 4000
+        ? closeDanglingFences(trimmed.slice(0, 3950) + "\n...[truncated]")
+        : closeDanglingFences(trimmed);
+      if (!operatorIntent) {
+        operatorIntent = match.content.slice(0, 4000).trim().slice(0, 2000);
       }
     } else if (match.toolName) {
       excerpt = `[Tool Call: ${match.toolName}]: ${
@@ -789,13 +818,13 @@ export function draftWorkPacketFromContext(input: {
     } else {
       excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
     }
-  } else if (events && events.length > 0) {
+  } else if (!excerpt && input.events && input.events.length > 0) {
     const sessionEvents: WorkbenchSessionEvent[] = [];
     let totalScanned = 0;
-    for (let i = events.length - 1; i >= 0; i--) {
+    for (let i = input.events.length - 1; i >= 0; i--) {
       totalScanned++;
       if (totalScanned > 200) break;
-      const ev = events[i];
+      const ev = input.events[i];
       if (ev.sessionId === sessionId) {
         sessionEvents.unshift(ev);
         if (sessionEvents.length >= 50) break;
@@ -822,24 +851,40 @@ export function draftWorkPacketFromContext(input: {
       .join("\n\n");
   }
 
-  if (excerpt.length === 0) {
-    excerpt = (idea?.description || operatorIntent).slice(0, 4000);
+  if (input.operatorIntent) {
+    operatorIntent = input.operatorIntent.slice(0, 4000).replace(/^[\r\n]+|[\r\n\s]+$/g, "").slice(0, 2000);
   }
 
-  if (events) {
-    let scanned = 0;
-    for (let i = events.length - 1; i >= 0; i--) {
-      scanned++;
-      if (scanned > 500) break;
-      const ev = events[i];
-      if (ev.sessionId === sessionId) {
-        if (ev.toolName === "read_file" && ev.toolArguments?.path) {
-          const raw = String(ev.toolArguments.path).slice(0, 1000).trim();
-          const p = raw.slice(0, 500);
-          if (!contextSources.includes(p)) {
-            contextSources.push(p);
-            if (contextSources.length >= 50) break;
-          }
+  if (!title) {
+    title = operatorIntent.length > 60
+      ? operatorIntent.slice(0, 60) + "..."
+      : operatorIntent || "Draft Work Packet";
+  }
+
+  if (!operatorIntent) {
+    operatorIntent = title;
+  }
+
+  const contextSources: string[] = [];
+  if (input.contextSources && input.contextSources.length > 0) {
+    contextSources.push(
+      ...input.contextSources.slice(0, 50).map((s) =>
+        s.length > 1000 ? s.slice(0, 1000) : s
+      ),
+    );
+  } else if (input.events && input.events.length > 0) {
+    const seen = new Set<string>();
+    let totalScanned = 0;
+    for (let i = input.events.length - 1; i >= 0; i--) {
+      totalScanned++;
+      if (totalScanned > 200) break;
+      const ev = input.events[i];
+      if (ev.sessionId === sessionId && ev.toolName === "read_file" && ev.toolArguments) {
+        const p = String((ev.toolArguments as any).path || (ev.toolArguments as any).filePath || "").trim();
+        if (p.length > 0 && !seen.has(p)) {
+          seen.add(p);
+          contextSources.push(p.slice(0, 500));
+          if (contextSources.length >= 20) break;
         }
       }
     }
@@ -895,11 +940,11 @@ function closeDanglingFences(text: string): string {
   let openPrefix = "";
   for (const line of lines) {
     if (!openChar) {
-      const openMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})(.*)$/);
-      if (openMatch) {
-        const prefix = openMatch[1];
-        const fence = openMatch[2];
-        const info = openMatch[3];
+      const fenceMatch = parseCodeFence(line);
+      if (fenceMatch) {
+        const prefix = fenceMatch.prefix;
+        const fence = fenceMatch.fence;
+        const info = fenceMatch.info;
         if (fence[0] !== "`" || !info.includes("`")) {
           openPrefix = prefix;
           openChar = fence[0];
@@ -907,12 +952,12 @@ function closeDanglingFences(text: string): string {
         }
       }
     } else {
-      const closeMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})[ \t]*$/);
+      const closeMatch = parseCloseCodeFence(line);
       if (
         closeMatch &&
-        matchesContainerPrefix(closeMatch[1], openPrefix)
+        matchesContainerPrefix(closeMatch.prefix, openPrefix)
       ) {
-        const fence = closeMatch[2];
+        const fence = closeMatch.fence;
         if (fence[0] === openChar && fence.length >= openCount) {
           openChar = null;
           openCount = 0;
@@ -922,7 +967,8 @@ function closeDanglingFences(text: string): string {
     }
   }
   if (openChar) {
-    return clean + "\n" + openPrefix + openChar.repeat(openCount);
+    const closePrefix = openPrefix.replace(/[*+-][ \t]+|\d+[.)][ \t]+/g, (m) => " ".repeat(m.length));
+    return clean + "\n" + closePrefix + openChar.repeat(openCount);
   }
   return clean;
 }
