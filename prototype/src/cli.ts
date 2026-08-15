@@ -1648,8 +1648,14 @@ export async function handleReplSessionCommand(
           } else {
             io.err("Recent sessions:");
             for (const s of sessions) {
+              const cleanId = (s.sessionId ?? "")
+                .replace(/[\x00-\x1F\x7F\x1B]/g, "")
+                .trim();
+              const cleanDesc = (s.taskDescription ?? "")
+                .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+                .trim();
               io.err(
-                `  ${s.sessionId}  ${s.createdAt?.split("T")[0] ?? ""}  ${s.taskDescription}`,
+                `  ${cleanId}  ${s.createdAt?.split("T")[0] ?? ""}  ${cleanDesc}`,
               );
             }
             io.err(
@@ -1889,12 +1895,18 @@ export async function handleReplIdeaCommand(
             io.err(`idea not found: ${ideaId}`);
           } else {
             const id = res.idea;
+            const cleanLabel = id.label
+              .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+              .trim();
+            const cleanDesc = id.description
+              ? id.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
+              : "";
             io.err(`Idea [${id.ideaId}]:`);
-            io.err(`  Label: ${id.label}`);
+            io.err(`  Label: ${cleanLabel}`);
             io.err(`  Session: ${id.sessionId}`);
             if (id.eventId) io.err(`  Event: ${id.eventId}`);
             io.err(`  Date: ${id.createdAt}`);
-            if (id.description) io.err(`  Description: ${id.description}`);
+            if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
           }
         } finally {
           client.close();
@@ -1907,12 +1919,18 @@ export async function handleReplIdeaCommand(
       if (!idea) {
         io.err(`idea not found: ${ideaId}`);
       } else {
+        const cleanLabel = idea.label
+          .replace(/[\x00-\x1F\x7F\x1B]/g, " ")
+          .trim();
+        const cleanDesc = idea.description
+          ? idea.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "")
+          : "";
         io.err(`Idea [${idea.ideaId}]:`);
-        io.err(`  Label: ${idea.label}`);
+        io.err(`  Label: ${cleanLabel}`);
         io.err(`  Session: ${idea.sessionId}`);
         if (idea.eventId) io.err(`  Event: ${idea.eventId}`);
         io.err(`  Date: ${idea.createdAt}`);
-        if (idea.description) io.err(`  Description: ${idea.description}`);
+        if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
       }
     }
     return true;

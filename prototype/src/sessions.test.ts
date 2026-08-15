@@ -254,7 +254,7 @@ describe("fetchWorkbenchSessionEvents", () => {
       },
     });
     expect(calls[0].sql).toContain("WHERE session_id = ?");
-    expect(calls[0].sql).toContain("ORDER BY created_at ASC");
+    expect(calls[0].sql).toContain("ORDER BY created_at ASC, event_id ASC;");
     expect(calls[0].sql).not.toContain("AS OF");
     expect(calls[0].params).toEqual(["01ABCDEF0123456789ABCDEF01"]);
   });

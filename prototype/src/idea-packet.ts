@@ -455,6 +455,7 @@ export function markWorkbenchIdea(input: {
   if (description.length === 0) {
     description = label;
   }
+  description = description.replace(/[\x00-\x1F\x7F\x1B]/g, " ").trim().slice(0, 2000);
 
   const idea: WorkbenchIdea = {
     ideaId: input.ideaId
@@ -629,7 +630,7 @@ export function draftWorkPacketFromContext(input: {
 }
 
 function escapeCodeSpan(str: string): string {
-  return sanitizeSingleLine(str).replace(/`/g, "\\`");
+  return sanitizeSingleLine(str).replace(/`/g, "'");
 }
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
