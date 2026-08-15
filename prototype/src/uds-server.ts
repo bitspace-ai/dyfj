@@ -498,15 +498,22 @@ export function buildWorkbenchHandlers(
       const events = eventId
         ? await fetchSessionEvents({ sessionId, eventId })
         : await fetchSessionEvents({ sessionId, limit: 20 });
-      const idea = markWorkbenchIdea({
-        sessionId,
-        label,
-        eventId,
-        description,
-        events,
-        registry: options.ideaPacketRegistry ?? defaultIdeaPacketRegistry,
-      });
-      return { idea };
+      try {
+        const idea = markWorkbenchIdea({
+          sessionId,
+          label,
+          eventId,
+          description,
+          events,
+          registry: options.ideaPacketRegistry ?? defaultIdeaPacketRegistry,
+        });
+        return { idea };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
     },
 
     "ideas/list": async (params) => {
@@ -576,20 +583,27 @@ export function buildWorkbenchHandlers(
         (options.fetchSessionWorkspaceRecord ??
           fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
       ]);
-      const packet = draftWorkPacketFromContext({
-        sessionId,
-        idea,
-        ideaId,
-        eventId,
-        issueId,
-        title,
-        operatorIntent,
-        events,
-        workspace: workspaceRec.workspace,
-        registry: reg,
-      });
-      const markdown = formatWorkPacketMarkdown(packet);
-      return { packet, markdown };
+      try {
+        const packet = draftWorkPacketFromContext({
+          sessionId,
+          idea,
+          ideaId,
+          eventId,
+          issueId,
+          title,
+          operatorIntent,
+          events,
+          workspace: workspaceRec.workspace,
+          registry: reg,
+        });
+        const markdown = formatWorkPacketMarkdown(packet);
+        return { packet, markdown };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
     },
 
     "packets/list": async (params) => {

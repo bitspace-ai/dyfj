@@ -506,7 +506,6 @@ export async function fetchWorkbenchSessionEvents(input: {
       throw new Error("limit must be a positive integer <= 5000");
     }
   }
-  const limit = input.limit ?? 5000;
   const explicitOrder = input.order;
   const order = explicitOrder ?? (input.limit ? "desc" : "asc");
   // AS OF cannot be parameterized; the timestamp is validated against a
@@ -539,7 +538,7 @@ export async function fetchWorkbenchSessionEvents(input: {
         historicalRunnerSchema,
         historicalRunnerAuthSchema,
         historicalTraceContextSchema,
-        limit,
+        input.limit,
         order,
         input.eventId,
       ), queryArgs);

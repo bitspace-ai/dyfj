@@ -267,6 +267,11 @@ describe("draftWorkPacketFromContext", () => {
     const secondRetrieval = reg.getPacket(packet.packetId);
     expect(secondRetrieval!.sourceContext.contextSources).toEqual([]);
     expect(secondRetrieval!.proposedAcceptanceCriteria).toHaveLength(2);
+
+    const listed = reg.listPackets("01SESSION_300");
+    expect(listed).toHaveLength(1);
+    listed[0].sourceContext.contextSources.push("mutated-list-source");
+    expect(reg.getPacket(packet.packetId)!.sourceContext.contextSources).toEqual([]);
   });
 
   test("registering duplicate idea ID cleans up previous session list and keeps lookup in sync", () => {
@@ -293,8 +298,30 @@ describe("draftWorkPacketFromContext", () => {
     expect(reg.getIdea("SAME_IDEA_ID")?.label).toBe("Updated Idea in New Session");
   });
 
-  test("session ID longer than 64 chars is canonically truncated and matches across mark, list, and draft", () => {
-    const longSessionId = "A".repeat(80);
+  test("referenced tool-call event with empty content extracts tool call details as excerpt", () => {
+    const events: WorkbenchSessionEvent[] = [
+      {
+        eventId: "evt-tc-1",
+        eventType: "tool_call",
+        toolName: "execute_command",
+        toolArguments: { command: "deno task test" },
+        createdAt: "2026-08-15T12:00:00Z",
+      } as any,
+    ];
+
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_TC",
+      eventId: "evt-tc-1",
+      events,
+    });
+
+    expect(packet.sourceContext.referencedEventId).toBe("evt-tc-1");
+    expect(packet.sourceContext.excerpt).toContain("[Tool Call: execute_command]");
+    expect(packet.sourceContext.excerpt).toContain("deno task test");
+  });
+
+  test("session ID longer than 256 chars is canonically truncated and matches across mark, list, and draft", () => {
+    const longSessionId = "A".repeat(300);
     const reg = new IdeaPacketRegistry();
     const idea = markWorkbenchIdea({
       sessionId: longSessionId,
@@ -302,7 +329,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    expect(idea.sessionId).toBe("A".repeat(64));
+    expect(idea.sessionId).toBe("A".repeat(256));
     expect(reg.listIdeas(longSessionId)).toHaveLength(1);
 
     const packet = draftWorkPacketFromContext({
@@ -311,7 +338,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    expect(packet.sessionId).toBe("A".repeat(64));
+    expect(packet.sessionId).toBe("A".repeat(256));
     expect(reg.listPackets(longSessionId)).toHaveLength(1);
   });
 });

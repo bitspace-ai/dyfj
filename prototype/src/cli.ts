@@ -1912,7 +1912,7 @@ export async function handleReplPacketCommand(
       const token = tokens[i];
       if (token === "--issue") {
         i++;
-        if (i >= tokens.length || knownOptions.has(tokens[i])) {
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
           io.err("error: --issue requires an issue identifier");
           return true;
         }

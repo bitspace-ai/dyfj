@@ -48,7 +48,7 @@ export class IdeaPacketRegistry {
   private readonly maxEntriesPerSession = 50;
 
   private sanitizeId(id: string): string {
-    return id.trim().slice(0, 64);
+    return id.trim().slice(0, 256);
   }
 
   private cloneIdea(idea: WorkbenchIdea): WorkbenchIdea {
@@ -250,7 +250,7 @@ export function markWorkbenchIdea(input: {
   createdAt?: string;
   registry?: IdeaPacketRegistry;
 }): WorkbenchIdea {
-  const sessionId = input.sessionId.trim().slice(0, 64);
+  const sessionId = input.sessionId.trim().slice(0, 256);
   const label = input.label.trim().slice(0, 256);
   if (label.length === 0) {
     throw new Error("idea label cannot be empty");
@@ -318,7 +318,7 @@ export function draftWorkPacketFromContext(input: {
   registry?: IdeaPacketRegistry;
 }): WorkbenchWorkPacket {
   const reg = input.registry ?? defaultIdeaPacketRegistry;
-  const sessionId = input.sessionId.trim().slice(0, 64);
+  const sessionId = input.sessionId.trim().slice(0, 256);
   let idea: WorkbenchIdea | null = null;
   if (input.idea) {
     idea = input.idea;
@@ -353,11 +353,16 @@ export function draftWorkPacketFromContext(input: {
           `referenced event "${referencedEventId}" not found in session events`,
         );
       }
-      if (match.content) {
+      if (match.content && match.content.trim().length > 0) {
         excerpt = match.content.trim().slice(0, 4000);
+      } else if (match.toolName) {
+        excerpt = `[Tool Call: ${match.toolName}]: ${
+          JSON.stringify(match.toolArguments ?? {})
+        }`;
+      } else {
+        excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
       }
-    }
-    if (excerpt.length === 0 && input.events.length > 0) {
+    } else if (input.events.length > 0) {
       const recent = input.events.slice(-50);
       const relevant = recent
         .filter((e) =>
@@ -435,6 +440,9 @@ export function draftWorkPacketFromContext(input: {
 }
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
+  const safeWorkspace = packet.targetWorkspace
+    ? packet.targetWorkspace.replace(/[`\r\n]/g, "")
+    : null;
   const lines: string[] = [
     `# Work Packet: ${packet.title}`,
     "",
@@ -443,7 +451,7 @@ export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
     `- **Session:** \`${packet.sessionId}\``,
     `- **Related Issue:** ${packet.issueId ? `\`${packet.issueId}\`` : "none"}`,
     `- **Target Workspace:** ${
-      packet.targetWorkspace ? `\`${packet.targetWorkspace}\`` : "(current workspace)"
+      safeWorkspace ? `\`${safeWorkspace}\`` : "(current workspace)"
     }`,
     "",
     "## 1. Source Context",
