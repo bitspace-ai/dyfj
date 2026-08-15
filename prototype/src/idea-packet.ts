@@ -249,7 +249,13 @@ function matchesContainerPrefix(linePrefix: string, openPrefix: string): boolean
     if (lineGt !== openGt) return false;
     const afterGt = linePrefix.slice(linePrefix.lastIndexOf(">") + 1);
     const openAfterGt = openPrefix.slice(openPrefix.lastIndexOf(">") + 1);
-    return afterGt.length >= openAfterGt.length && afterGt.length <= openAfterGt.length + 3;
+    const normAfterGt = afterGt.replace(/[ \t]+/g, " ").trim();
+    const normOpenAfterGt = openAfterGt.replace(/[ \t]+/g, " ").trim();
+    if (normAfterGt === normOpenAfterGt) return true;
+    if (/^[ ]+$/.test(afterGt)) {
+      return afterGt.length >= openAfterGt.length && afterGt.length <= openAfterGt.length + 3;
+    }
+    return false;
   }
   // List container without blockquotes: closing line inside list item uses spaces matching list marker width + 0-3 spaces
   if (/^[ ]+$/.test(linePrefix)) {
@@ -434,6 +440,9 @@ export class IdeaPacketRegistry {
     const rawDesc = idea.description.length > 4000 ? idea.description.slice(0, 4000) : idea.description;
     const rawCreated = idea.createdAt.length > 128 ? idea.createdAt.slice(0, 128) : idea.createdAt;
     const cleanLabel = sanitizeSingleLine(rawLabel).slice(0, 256);
+    if (cleanLabel.length === 0) {
+      throw new Error("idea label cannot be empty or whitespace-only");
+    }
     const cleanDesc = rawDesc.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, " ").trim().slice(0, 2000);
     const sanitized: WorkbenchIdea = {
       ideaId: validateIdentifier(idea.ideaId, "ideaId"),
@@ -549,10 +558,14 @@ export class IdeaPacketRegistry {
     if (sanitized.sourceContext.sessionId !== sanitized.sessionId) {
       throw new Error("packet sessionId and sourceContext sessionId must match");
     }
-
     if (sanitized.ideaId) {
       const referencedIdea = this.ideasById.get(sanitized.ideaId);
-      if (referencedIdea && referencedIdea.sessionId !== sanitized.sessionId) {
+      if (!referencedIdea) {
+        throw new Error(
+          `referenced idea "${sanitized.ideaId}" does not exist in registry for session "${sanitized.sessionId}"`,
+        );
+      }
+      if (referencedIdea.sessionId !== sanitized.sessionId) {
         throw new Error(
           `packet idea "${sanitized.ideaId}" belongs to session "${referencedIdea.sessionId}", not packet session "${sanitized.sessionId}"`,
         );
@@ -607,9 +620,7 @@ export class IdeaPacketRegistry {
         this.clonePacket(p)
       );
     }
-    return Array.from(this.packetsById.values()).map((p) =>
-      this.clonePacket(p)
-    );
+    return Array.from(this.packetsById.values()).map((p) => this.clonePacket(p));
   }
 
   clear(): void {
@@ -669,9 +680,9 @@ export function markWorkbenchIdea(input: {
     throw new Error("label must be a string");
   }
   const rawLabel = input.label.length > 512 ? input.label.slice(0, 512) : input.label;
-  const label = rawLabel.trim().slice(0, 256);
+  const label = sanitizeSingleLine(rawLabel).slice(0, 256);
   if (label.length === 0) {
-    throw new Error("idea label cannot be empty");
+    throw new Error("idea label cannot be empty or whitespace-only");
   }
 
   const rawDesc = typeof input.description === "string"

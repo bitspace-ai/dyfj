@@ -1925,7 +1925,8 @@ export async function handleReplIdeaCommand(
         eventId = val;
         i++;
       } else if (isOptionLike(token)) {
-        io.err(`error: unexpected argument "${token}"`);
+        const safeToken = token.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+        io.err(`error: unexpected argument "${safeToken}"`);
         return true;
       } else {
         labelParts.push(token);
@@ -2182,7 +2183,8 @@ export async function handleReplPacketCommand(
           if (!targetRef) {
             targetRef = tokens[i];
           } else {
-            io.err(`error: unexpected argument "${tokens[i]}"`);
+            const safeArg = tokens[i].replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+            io.err(`error: unexpected argument "${safeArg}"`);
             return true;
           }
           i++;
@@ -2252,7 +2254,8 @@ export async function handleReplPacketCommand(
           }
           if (isOptionLike(tokens[i])) {
             if (!knownOptionFlags.has(tokens[i])) {
-              io.err(`error: unexpected argument "${tokens[i]}"`);
+              const safeArg = tokens[i].replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+              io.err(`error: unexpected argument "${safeArg}"`);
               return true;
             }
             break;
@@ -2269,7 +2272,8 @@ export async function handleReplPacketCommand(
         targetRef = token;
         i++;
       } else {
-        io.err(`error: unexpected argument "${token}"`);
+        const safeToken = token.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+        io.err(`error: unexpected argument "${safeToken}"`);
         return true;
       }
     }
@@ -2301,6 +2305,8 @@ export async function handleReplPacketCommand(
               }
             } catch {
               // ignore
+            } finally {
+              client.close();
             }
           } catch {
             // ignore

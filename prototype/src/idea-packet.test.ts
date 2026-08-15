@@ -796,4 +796,28 @@ describe("draftWorkPacketFromContext", () => {
       });
     }).toThrow("packet idea \"01IDEA_OWNER_A\" belongs to session \"01SESSION_OWNER_A\"");
   });
+
+  test("idea label consisting solely of ANSI escapes or whitespace is rejected", () => {
+    const reg = new IdeaPacketRegistry();
+    expect(() => {
+      markWorkbenchIdea({
+        sessionId: "01SESSION_BLANK_ANSI",
+        label: "\x1b[2J\x1b[0m   ",
+        registry: reg,
+      });
+    }).toThrow("idea label cannot be empty or whitespace-only");
+  });
+
+  test("differing nested list markers inside blockquotes do not close container fences", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_BQ_DIFF_LIST",
+      operatorIntent: "> - ```sh\n>   echo test\n> 1. ```\n>   # code comment\n>   ```",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("# code comment");
+    expect(md).not.toContain("\\# code comment");
+  });
 });
