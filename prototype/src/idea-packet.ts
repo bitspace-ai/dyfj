@@ -227,7 +227,7 @@ function parseCloseCodeFence(line: string): { prefix: string; fence: string } | 
   if (containerMatch) {
     return { prefix: containerMatch[1], fence: containerMatch[2] };
   }
-  const rootMatch = line.match(/^([ \t]*)(`{3,}|~{3,})[ \t]*$/);
+  const rootMatch = line.match(/^([ ]{0,3})(`{3,}|~{3,})[ \t]*$/);
   if (rootMatch) {
     return { prefix: rootMatch[1], fence: rootMatch[2] };
   }
@@ -665,12 +665,11 @@ export function markWorkbenchIdea(input: {
       );
     }
     let match: WorkbenchSessionEvent | undefined;
-    let scanned = 0;
+    let totalScanned = 0;
     for (let i = input.events.length - 1; i >= 0; i--) {
-      scanned++;
-      if (scanned > 5000) break;
+      if (++totalScanned > 2000) break;
       const ev = input.events[i];
-      if (ev.eventId === eventId && ev.sessionId === sessionId) {
+      if ((!ev.sessionId || ev.sessionId === sessionId) && ev.eventId === eventId) {
         match = ev;
         break;
       }
@@ -690,7 +689,7 @@ export function markWorkbenchIdea(input: {
       totalScanned++;
       if (totalScanned > 200) break;
       const ev = input.events[i];
-      if (ev.sessionId === sessionId) {
+      if (!ev.sessionId || ev.sessionId === sessionId) {
         sessionEvents.unshift(ev);
         if (sessionEvents.length >= 50) break;
       }
@@ -782,41 +781,52 @@ export function draftWorkPacketFromContext(input: {
   }
 
   if (referencedEventId) {
-    if (!input.events || input.events.length === 0) {
+    if (input.eventId && (!input.events || input.events.length === 0)) {
       throw new Error(
         `cannot draft packet with referenced event "${referencedEventId}" without supplying session events for session "${sessionId}"`,
       );
     }
     let match: WorkbenchSessionEvent | undefined;
-    for (let i = input.events.length - 1; i >= 0; i--) {
-      const ev = input.events[i];
-      if (ev.sessionId === sessionId && ev.eventId === referencedEventId) {
-        match = ev;
-        break;
+    if (input.events && input.events.length > 0) {
+      let totalScanned = 0;
+      for (let i = input.events.length - 1; i >= 0; i--) {
+        if (++totalScanned > 2000) break;
+        const ev = input.events[i];
+        if ((!ev.sessionId || ev.sessionId === sessionId) && ev.eventId === referencedEventId) {
+          match = ev;
+          break;
+        }
       }
     }
     if (!match) {
-      throw new Error(
-        `referenced event "${referencedEventId}" not found in session events for session "${sessionId}"`,
-      );
-    }
-    if (match.content && match.content.length > 0) {
-      const preSlice = match.content.length > 4000
-        ? match.content.slice(0, 4000)
-        : match.content;
-      const trimmed = preSlice.trim();
-      excerpt = match.content.length > 4000
-        ? closeDanglingFences(trimmed.slice(0, 3950) + "\n...[truncated]")
-        : closeDanglingFences(trimmed);
-      if (!operatorIntent) {
-        operatorIntent = match.content.slice(0, 4000).trim().slice(0, 2000);
+      if (input.eventId) {
+        throw new Error(
+          `referenced event "${referencedEventId}" not found in session events for session "${sessionId}"`,
+        );
       }
-    } else if (match.toolName) {
-      excerpt = `[Tool Call: ${match.toolName}]: ${
-        safeBoundedJson(match.toolArguments ?? {})
-      }`;
+      referencedEventId = null;
+      if (!excerpt && idea) {
+        excerpt = (idea.description || idea.label).slice(0, 4000);
+      }
     } else {
-      excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
+      if (match.content && match.content.length > 0) {
+        const preSlice = match.content.length > 4000
+          ? match.content.slice(0, 4000)
+          : match.content;
+        const trimmed = preSlice.trim();
+        excerpt = match.content.length > 4000
+          ? closeDanglingFences(trimmed.slice(0, 3950) + "\n...[truncated]")
+          : closeDanglingFences(trimmed);
+        if (!operatorIntent) {
+          operatorIntent = match.content.slice(0, 4000).trim().slice(0, 2000);
+        }
+      } else if (match.toolName) {
+        excerpt = `[Tool Call: ${match.toolName}]: ${
+          safeBoundedJson(match.toolArguments ?? {})
+        }`;
+      } else {
+        excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
+      }
     }
   } else if (!excerpt && input.events && input.events.length > 0) {
     const sessionEvents: WorkbenchSessionEvent[] = [];

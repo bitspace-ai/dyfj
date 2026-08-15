@@ -1644,6 +1644,11 @@ export interface ReplSessionState {
   eventCounter?: number;
 }
 
+function formatShellArg(arg: string): string {
+  if (/^[a-zA-Z0-9_.-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
 export async function handleReplSessionCommand(
   line: string,
   config: CliConfig,
@@ -1698,7 +1703,7 @@ export async function handleReplSessionCommand(
           sessionState.sessionSpendUsd.toFixed(4)
         }`,
       );
-      io.err(`resume later with: dyfj --session ${cleanSessionId}`);
+      io.err(`resume later with: dyfj --session ${formatShellArg(cleanSessionId)}`);
     }
     return true;
   }
@@ -1797,21 +1802,19 @@ export async function handleReplSessionCommand(
       return true;
     }
     const rawTargetId = parts[2];
-    if (rawTargetId.length > 512) {
+    if (rawTargetId.length === 0 || rawTargetId.length > 256) {
       io.err(
         "error: session identifier must be non-empty and <= 256 characters",
       );
       return true;
     }
-    const targetId = rawTargetId
-      .replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, "")
-      .trim();
-    if (targetId.length === 0 || targetId.length > 256) {
+    if (/[\s\x00-\x1F\x7F-\x9F\x1B]/.test(rawTargetId)) {
       io.err(
-        "error: session identifier must be non-empty and <= 256 characters",
+        "error: session identifier cannot contain control characters or whitespace",
       );
       return true;
     }
+    const targetId = rawTargetId.trim();
     if (config.unix) {
       try {
         const client = await connect(config.socket);
@@ -1834,7 +1837,6 @@ export async function handleReplSessionCommand(
     sessionState.turnCount = 0;
     sessionState.sessionSpendUsd = 0;
     sessionState.events = [];
-    sessionState.eventCounter = 0;
     io.err(`switched to session: ${targetId}`);
     return true;
   }

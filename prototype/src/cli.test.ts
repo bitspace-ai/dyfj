@@ -4413,6 +4413,7 @@ describe("REPL /packet command", () => {
       turnCount: 3,
       sessionSpendUsd: 0.1,
       events: [{ eventId: "evt_u_1", sessionId: "01SESSION_A" }],
+      eventCounter: 3,
     };
     const { io } = fakeIo();
     const fakeConnect: ConnectFn = () =>
@@ -4432,7 +4433,20 @@ describe("REPL /packet command", () => {
     expect(state.sessionId).toBe("01SESSION_B");
     expect(state.turnCount).toBe(0);
     expect(state.events).toEqual([]);
-    expect(state.eventCounter).toBe(0);
+    expect(state.eventCounter).toBe(3);
+  });
+
+  test("/session switch rejects session identifiers with control characters or whitespace", async () => {
+    const state: any = { sessionId: "01SESSION_A", turnCount: 0, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplSessionCommand(
+      "/session switch session\x1Bid",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: session identifier cannot contain control characters or whitespace");
+    expect(state.sessionId).toBe("01SESSION_A");
   });
 
   test("/packet draft -- rejects extra positional arguments", async () => {
