@@ -457,17 +457,23 @@ export function buildWorkbenchHandlers(
 
     "ideas/mark": async (params) => {
       const record = asRecord(params);
-      const sessionId = record.sessionId;
-      const label = record.label;
-      if (typeof sessionId !== "string" || typeof label !== "string") {
+      const sessionId = typeof record.sessionId === "string"
+        ? record.sessionId.trim()
+        : "";
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      if (sessionId.length === 0 || label.length === 0) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
-          "ideas/mark requires string sessionId and label",
+          "ideas/mark requires non-empty string sessionId and label",
         );
       }
-      const eventId = typeof record.eventId === "string" ? record.eventId : undefined;
-      const description = typeof record.description === "string" ? record.description : undefined;
-      const events = await fetchSessionEvents({ sessionId });
+      const eventId = typeof record.eventId === "string"
+        ? record.eventId.trim()
+        : undefined;
+      const description = typeof record.description === "string"
+        ? record.description.trim()
+        : undefined;
+      const events = await fetchSessionEvents({ sessionId, limit: 20 });
       const idea = markWorkbenchIdea({
         sessionId,
         label,
@@ -512,28 +518,32 @@ export function buildWorkbenchHandlers(
 
     "packets/draft": async (params) => {
       const record = asRecord(params);
-      const sessionId = record.sessionId;
-      if (typeof sessionId !== "string") {
+      const sessionId = typeof record.sessionId === "string"
+        ? record.sessionId.trim()
+        : "";
+      if (sessionId.length === 0) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
-          "packets/draft requires a string sessionId",
+          "packets/draft requires non-empty string sessionId",
         );
       }
       const ideaId = typeof record.ideaId === "string"
-        ? record.ideaId
+        ? record.ideaId.trim()
         : undefined;
       const eventId = typeof record.eventId === "string"
-        ? record.eventId
+        ? record.eventId.trim()
         : undefined;
       const issueId = typeof record.issueId === "string"
-        ? record.issueId
+        ? record.issueId.trim()
         : undefined;
-      const title = typeof record.title === "string" ? record.title : undefined;
+      const title = typeof record.title === "string"
+        ? record.title.trim()
+        : undefined;
       const operatorIntent = typeof record.operatorIntent === "string"
-        ? record.operatorIntent
+        ? record.operatorIntent.trim()
         : undefined;
       const [events, workspaceRec] = await Promise.all([
-        fetchSessionEvents({ sessionId }),
+        fetchSessionEvents({ sessionId, limit: 50 }),
         (options.fetchSessionWorkspaceRecord ??
           fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
       ]);

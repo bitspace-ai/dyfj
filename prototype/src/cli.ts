@@ -1586,8 +1586,12 @@ export async function handleReplSessionCommand(
           // inspection optional
         }
       }
-      io.err(`turns: ${sessionState.turnCount}`);
-      io.err(`spend: $${sessionState.sessionSpendUsd.toFixed(4)}`);
+      io.err(`repl turns (this session): ${sessionState.turnCount}`);
+      io.err(
+        `repl spend (this session): $${
+          sessionState.sessionSpendUsd.toFixed(4)
+        }`,
+      );
       io.err(`resume later with: dyfj --session ${sessionState.sessionId}`);
     }
     return true;
@@ -1607,15 +1611,17 @@ export async function handleReplSessionCommand(
               }>;
             }>;
           };
-          const sessions = (res.projects?.flatMap((p) => p.sessions) ?? [])
+          const allSessions = res.projects?.flatMap((p) => p.sessions) ?? [];
+          const sessions = allSessions
             .sort((a, b) =>
               (b.createdAt || "").localeCompare(a.createdAt || "")
-            );
+            )
+            .slice(0, 15);
           if (sessions.length === 0) {
             io.err("no sessions found");
           } else {
             io.err("Recent sessions:");
-            for (const s of sessions.slice(0, 15)) {
+            for (const s of sessions) {
               io.err(
                 `  ${s.sessionId}  ${s.createdAt?.split("T")[0] ?? ""}  ${s.taskDescription}`,
               );
@@ -1641,6 +1647,23 @@ export async function handleReplSessionCommand(
     if (!targetId) {
       io.err("usage: /session switch <sessionId>");
       return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const inspect = await client.request("sessions/inspect", {
+            sessionId: targetId,
+          }) as { exists?: boolean };
+          if (inspect.exists === false) {
+            io.err(`warning: session "${targetId}" was not found on runtime`);
+          }
+        } finally {
+          client.close();
+        }
+      } catch {
+        // inspection optional
+      }
     }
     sessionState.sessionId = targetId;
     config.sessionId = targetId;

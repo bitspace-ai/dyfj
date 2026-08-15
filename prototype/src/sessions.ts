@@ -337,6 +337,7 @@ function eventQuery(
   historicalRunnerSchema = false,
   historicalRunnerAuthSchema = false,
   historicalTraceContextSchema = false,
+  limit?: number,
 ): string {
   const traceContextFields = historicalTraceContextSchema
     ? "NULL AS trace_flags, NULL AS trace_state, NULL AS span_kind, " +
@@ -370,6 +371,9 @@ function eventQuery(
         ? "NULL AS runner_route_source, NULL AS runner_auth_type, "
         : "runner_route_source, runner_auth_type, ") +
       "permission_verdict";
+  const limitClause = typeof limit === "number" && limit > 0
+    ? ` LIMIT ${Math.floor(limit)}`
+    : "";
   return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
     `${traceContextFields}, ` +
     `principal_id, model_id, provider, api, content, stop_reason, ` +
@@ -378,7 +382,7 @@ function eventQuery(
     `${runnerFields}, ` +
     `tool_name, tool_call_id, ` +
     `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
-    `WHERE session_id = ? ORDER BY created_at ASC;`;
+    `WHERE session_id = ? ORDER BY created_at ASC${limitClause};`;
 }
 
 function isMissingRunnerColumn(error: unknown): boolean {
@@ -480,6 +484,7 @@ function isMissingUnparsedToolCallColumn(error: unknown): boolean {
 export async function fetchWorkbenchSessionEvents(input: {
   sessionId: string;
   asOf?: string;
+  limit?: number;
   query?: SessionQuery;
 }): Promise<WorkbenchSessionEvent[]> {
   const query = input.query ?? doltQuery;
@@ -509,6 +514,7 @@ export async function fetchWorkbenchSessionEvents(input: {
         historicalRunnerSchema,
         historicalRunnerAuthSchema,
         historicalTraceContextSchema,
+        input.limit,
       ), [input.sessionId]);
       break;
     } catch (error) {
