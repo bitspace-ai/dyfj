@@ -251,25 +251,37 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     );
   });
 
-  test("connectUnixClient abort cleans up late-settling connection without leak", async () => {
+  test("connectUnixClient rejects immediately when given an already-aborted signal", async () => {
+    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    const socketPath = `${dir}/aborted.sock`;
+    const preAborted = AbortSignal.abort(
+      new DOMException("The operation was aborted", "AbortError"),
+    );
+    await expect(connectUnixClient(socketPath, {}, preAborted)).rejects.toThrow();
+    await Deno.remove(dir, { recursive: true });
+  });
+
+  test("connectUnixClient closes connection if abort occurs while connect is in flight", async () => {
     const dir = await Deno.makeTempDir({ dir: "/tmp" });
     const socketPath = `${dir}/late.sock`;
     const listener = Deno.listen({ transport: "unix", path: socketPath });
-    const accepted: Deno.Conn[] = [];
-    (async () => {
+    let serverConn: Deno.Conn | undefined;
+    const acceptedPromise = (async () => {
       try {
         for await (const conn of listener) {
-          accepted.push(conn);
+          serverConn = conn;
+          break;
         }
       } catch {}
     })();
+
     cleanups.push(async () => {
       try {
         listener.close();
       } catch {}
-      for (const c of accepted) {
+      if (serverConn) {
         try {
-          c.close();
+          serverConn.close();
         } catch {}
       }
       try {
@@ -278,12 +290,16 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     });
 
     const ac = new AbortController();
-    // Fire abort after 1ms so Deno.connect is already in flight
-    setTimeout(
-      () =>
-        ac.abort(new DOMException("The operation was aborted", "AbortError")),
-      1,
-    );
-    await expect(connectUnixClient(socketPath, {}, ac.signal)).rejects.toThrow();
+    const connectPromise = connectUnixClient(socketPath, {}, ac.signal);
+    // Abort immediately after connectUnixClient is called while Deno.connect is in flight
+    ac.abort(new DOMException("The operation was aborted", "AbortError"));
+    await expect(connectPromise).rejects.toThrow();
+
+    await acceptedPromise;
+    if (serverConn) {
+      const buf = new Uint8Array(10);
+      const readResult = await serverConn.read(buf);
+      expect(readResult).toBeNull();
+    }
   });
 });
