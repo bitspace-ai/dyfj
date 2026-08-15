@@ -360,7 +360,7 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("\\## 4. Injected Section");
     expect(md).toContain("> > \\# Injected Section");
     expect(md).toContain("1. > \\# List Quoted Heading");
-    expect(md).toContain("<div>\\<h1\\>Injected HTML\\</h1\\></div>");
+    expect(md).toContain("<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>");
     expect(md).toContain("Injected Setext\n\\=");
     expect(md).toContain("Injected H2 Setext\n\\-");
     expect(md).toContain("\\# Injected CR Heading");
@@ -368,7 +368,7 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("```ts\nconst x = 1;\n```");
     expect(md).toContain("- [ ] Criterion 1 with newline");
     expect(md).toContain("- [ ] `<h1>` Injected Heading in Code Span");
-    expect(md).toContain("- [ ] \\<h1\\>Injected Raw Heading\\</h1\\>");
+    expect(md).toContain("- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;");
     expect(md).toContain("- [ ] p95 latency < 200 ms and memory > 50 MB");
   });
 
@@ -575,8 +575,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    expect(md).toContain("\\<h1\nclass=\"injected\"\\>");
-    expect(md).toContain("\\</h1\\>");
+    expect(md).toContain("&lt;h1\nclass=\"injected\"&gt;");
+    expect(md).toContain("&lt;/h1&gt;");
   });
 
   test("preserves multiple internal spaces in metadata code spans and criteria", () => {
@@ -614,7 +614,19 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    expect(md).toContain("\\<h1\\>Injected\\</h1\\>");
+    expect(md).toContain("&lt;h1&gt;Injected&lt;/h1&gt;");
+  });
+
+  test("raw HTML blocks with attribute-bearing headings are neutralized", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_RAW_HTML",
+      operatorIntent: "<div><h1 class=x>Injected Heading</h1></div>",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>");
   });
 
   test("markWorkbenchIdea strips C1 controls from event-derived description", () => {

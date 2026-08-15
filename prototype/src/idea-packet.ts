@@ -192,9 +192,9 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
       }
     } else if (text[i] === "<") {
       const sub = text.slice(i);
-      const match = sub.match(/^<(\/?[hH][1-6](?:[\s/][^>]*)?)>/);
+      const match = sub.match(/^<(\/?[hH][1-6](?:[\s\r\n/][^>]*)?)>/);
       if (match) {
-        result += `\\<${match[1]}\\>`;
+        result += `&lt;${match[1]}&gt;`;
         i += match[0].length;
         continue;
       } else {
@@ -211,7 +211,7 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
 }
 
 function parseCodeFence(line: string): { prefix: string; fence: string; info: string } | null {
-  const containerMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+  const containerMatch = line.match(/^((?:[ ]{0,3}(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
   if (containerMatch) {
     return { prefix: containerMatch[1], fence: containerMatch[2], info: containerMatch[3] };
   }
@@ -223,7 +223,7 @@ function parseCodeFence(line: string): { prefix: string; fence: string; info: st
 }
 
 function parseCloseCodeFence(line: string): { prefix: string; fence: string } | null {
-  const containerMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+  const containerMatch = line.match(/^((?:[ ]{0,3}(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
   if (containerMatch) {
     return { prefix: containerMatch[1], fence: containerMatch[2] };
   }
@@ -376,9 +376,9 @@ function sanitizeCriterion(text: string): string {
       i += tickCount;
     } else if (noControls[i] === "<") {
       const sub = noControls.slice(i);
-      const match = sub.match(/^<(\/?[hH][1-6](?:[\s/][^>]*)?)>/);
+      const match = sub.match(/^<(\/?[hH][1-6](?:[\s\r\n/][^>]*)?)>/);
       if (match) {
-        result += `\\<${match[1]}\\>`;
+        result += `&lt;${match[1]}&gt;`;
         i += match[0].length;
       } else {
         result += "<";
@@ -669,7 +669,7 @@ export function markWorkbenchIdea(input: {
     for (let i = input.events.length - 1; i >= 0; i--) {
       if (++totalScanned > 2000) break;
       const ev = input.events[i];
-      if ((!ev.sessionId || ev.sessionId === sessionId) && ev.eventId === eventId) {
+      if (ev.sessionId === sessionId && ev.eventId === eventId) {
         match = ev;
         break;
       }
@@ -689,7 +689,7 @@ export function markWorkbenchIdea(input: {
       totalScanned++;
       if (totalScanned > 200) break;
       const ev = input.events[i];
-      if (!ev.sessionId || ev.sessionId === sessionId) {
+      if (ev.sessionId === sessionId) {
         sessionEvents.unshift(ev);
         if (sessionEvents.length >= 50) break;
       }
@@ -766,7 +766,7 @@ export function draftWorkPacketFromContext(input: {
     : (idea?.eventId ? validateIdentifier(idea.eventId, "eventId") : null);
   let excerpt = "";
   let operatorIntent = "";
-  let title = input.title?.trim() || "";
+  let title = (input.title?.slice(0, 1000).trim() || "").slice(0, 256);
 
   if (idea) {
     if (idea.sessionId !== sessionId) {
@@ -792,7 +792,7 @@ export function draftWorkPacketFromContext(input: {
       for (let i = input.events.length - 1; i >= 0; i--) {
         if (++totalScanned > 2000) break;
         const ev = input.events[i];
-        if ((!ev.sessionId || ev.sessionId === sessionId) && ev.eventId === referencedEventId) {
+        if (ev.sessionId === sessionId && ev.eventId === referencedEventId) {
           match = ev;
           break;
         }
@@ -998,7 +998,8 @@ function formatCodeSpan(str: string): string {
 }
 
 export function formatWorkPacketMarkdown(packet: WorkbenchWorkPacket): string {
-  const safeTitle = sanitizeMarkdownHeading(sanitizeSingleLine(packet.title));
+  const rawTitle = (packet.title ?? "").slice(0, 256);
+  const safeTitle = sanitizeMarkdownHeading(sanitizeSingleLine(rawTitle));
   const safeSession = formatCodeSpan(packet.sessionId);
   const safePacketId = formatCodeSpan(packet.packetId);
   const safeDate = formatCodeSpan(packet.createdAt.split("T")[0]);
