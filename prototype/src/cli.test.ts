@@ -4077,6 +4077,62 @@ describe("REPL /packet command", () => {
     expect(io2.stderr.join("\n")).toContain("usage: /idea show <idea-id>");
   });
 
+  test("/session list and /session switch validate trailing arguments", async () => {
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    const io1 = fakeIo();
+    await handleReplSessionCommand(
+      "/session list extra-arg",
+      cfg({ unix: true }),
+      io1.io,
+      state,
+    );
+    expect(io1.stderr.join("\n")).toContain("usage: /session list");
+
+    const io2 = fakeIo();
+    await handleReplSessionCommand(
+      "/session switch 01SESS extra-arg",
+      cfg({ unix: true }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("usage: /session switch <sessionId>");
+  });
+
+  test("/packet draft rejects duplicate --title flags", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --title First --title Second",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: --title specified multiple times");
+  });
+
+  test("/packet draft, list, and show work in local mode without unix socket", async () => {
+    const state = { sessionId: "01LOCAL_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const io1 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft --title Local Work Packet --issue BIT-100",
+      cfg({ unix: false }),
+      io1.io,
+      state,
+    );
+    expect(io1.stdout.join("\n")).toContain("# Work Packet: Local Work Packet");
+    expect(io1.stderr.join("\n")).toContain("draft work packet registered");
+
+    const io2 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet list",
+      cfg({ unix: false }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("Work packets for session 01LOCAL_SESS:");
+    expect(io2.stderr.join("\n")).toContain("Local Work Packet");
+  });
+
   test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {
     const { io, stderr } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];

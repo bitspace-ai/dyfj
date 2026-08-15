@@ -156,6 +156,9 @@ export class IdeaPacketRegistry {
       if (prevList) {
         const idx = prevList.findIndex((i) => i.ideaId === sanitized.ideaId);
         if (idx >= 0) prevList.splice(idx, 1);
+        if (prevList.length === 0 && existing.sessionId !== sanitized.sessionId) {
+          this.ideasBySession.delete(existing.sessionId);
+        }
       }
     }
 
@@ -236,6 +239,9 @@ export class IdeaPacketRegistry {
       if (prevList) {
         const idx = prevList.findIndex((p) => p.packetId === sanitized.packetId);
         if (idx >= 0) prevList.splice(idx, 1);
+        if (prevList.length === 0 && existing.sessionId !== sanitized.sessionId) {
+          this.packetsBySession.delete(existing.sessionId);
+        }
       }
     }
 
@@ -288,33 +294,35 @@ export class IdeaPacketRegistry {
 
 export const defaultIdeaPacketRegistry = new IdeaPacketRegistry();
 
-export function listWorkbenchIdeas(
-  options?: { sessionId?: string; registry?: IdeaPacketRegistry },
-): WorkbenchIdea[] {
+export function listWorkbenchIdeas(options?: {
+  sessionId?: string;
+  registry?: IdeaPacketRegistry;
+}): WorkbenchIdea[] {
   const reg = options?.registry ?? defaultIdeaPacketRegistry;
   return reg.listIdeas(options?.sessionId);
 }
 
 export function getWorkbenchIdea(
   ideaId: string,
-  registry?: IdeaPacketRegistry,
+  options?: { registry?: IdeaPacketRegistry },
 ): WorkbenchIdea | null {
-  const reg = registry ?? defaultIdeaPacketRegistry;
+  const reg = options?.registry ?? defaultIdeaPacketRegistry;
   return reg.getIdea(ideaId);
 }
 
-export function listWorkbenchPackets(
-  options?: { sessionId?: string; registry?: IdeaPacketRegistry },
-): WorkbenchWorkPacket[] {
+export function listWorkbenchPackets(options?: {
+  sessionId?: string;
+  registry?: IdeaPacketRegistry;
+}): WorkbenchWorkPacket[] {
   const reg = options?.registry ?? defaultIdeaPacketRegistry;
   return reg.listPackets(options?.sessionId);
 }
 
 export function getWorkbenchPacket(
   packetId: string,
-  registry?: IdeaPacketRegistry,
+  options?: { registry?: IdeaPacketRegistry },
 ): WorkbenchWorkPacket | null {
-  const reg = registry ?? defaultIdeaPacketRegistry;
+  const reg = options?.registry ?? defaultIdeaPacketRegistry;
   return reg.getPacket(packetId);
 }
 
@@ -329,12 +337,19 @@ export function markWorkbenchIdea(input: {
   registry?: IdeaPacketRegistry;
 }): WorkbenchIdea {
   const sessionId = validateIdentifier(input.sessionId, "sessionId");
-  const label = input.label.trim().slice(0, 256);
+  if (typeof input.label !== "string") {
+    throw new Error("label must be a string");
+  }
+  const rawLabel = input.label.length > 512 ? input.label.slice(0, 512) : input.label;
+  const label = rawLabel.trim().slice(0, 256);
   if (label.length === 0) {
     throw new Error("idea label cannot be empty");
   }
 
-  let description = input.description?.trim().slice(0, 2000) ?? "";
+  const rawDesc = typeof input.description === "string"
+    ? (input.description.length > 4000 ? input.description.slice(0, 4000) : input.description).trim().slice(0, 2000)
+    : "";
+  let description = rawDesc;
   if (input.eventId !== undefined && input.eventId !== null) {
     const eventId = validateIdentifier(input.eventId, "eventId");
     if (input.events !== undefined) {
@@ -368,7 +383,9 @@ export function markWorkbenchIdea(input: {
   }
 
   const idea: WorkbenchIdea = {
-    ideaId: input.ideaId ? validateIdentifier(input.ideaId, "ideaId") : generateULID(),
+    ideaId: input.ideaId
+      ? validateIdentifier(input.ideaId, "ideaId")
+      : generateULID(),
     sessionId,
     eventId: input.eventId ? validateIdentifier(input.eventId, "eventId") : null,
     label,
@@ -414,11 +431,15 @@ export function draftWorkPacketFromContext(input: {
     );
   }
 
-  const title = (input.title?.trim() || idea?.label || "Draft Work Packet")
-    .slice(0, 256);
+  const rawTitle = typeof input.title === "string"
+    ? (input.title.length > 512 ? input.title.slice(0, 512) : input.title).trim().slice(0, 256)
+    : (idea?.label || "Draft Work Packet");
+  const title = rawTitle.length > 0 ? rawTitle : "Draft Work Packet";
 
-  const operatorIntent = (input.operatorIntent?.trim() || idea?.label || title)
-    .slice(0, 2000);
+  const rawIntent = typeof input.operatorIntent === "string"
+    ? (input.operatorIntent.length > 8000 ? input.operatorIntent.slice(0, 8000) : input.operatorIntent).trim().slice(0, 2000)
+    : (idea?.description || idea?.label || title);
+  const operatorIntent = rawIntent.length > 0 ? rawIntent : title;
 
   let referencedEventId = input.eventId
     ? validateIdentifier(input.eventId, "eventId")
@@ -426,27 +447,29 @@ export function draftWorkPacketFromContext(input: {
   let excerpt = "";
   const contextSources: string[] = [];
 
-  const events = input.events ?? [];
+  const events = input.events;
   if (referencedEventId) {
-    const match = events.find((e) => e.eventId === referencedEventId);
-    if (!match && events.length > 0) {
-      throw new Error(
-        `referenced event "${referencedEventId}" not found in session events`,
-      );
+    if (events !== undefined) {
+      const match = events.find((e) => e.eventId === referencedEventId);
+      if (!match) {
+        throw new Error(
+          `referenced event "${referencedEventId}" not found in session events`,
+        );
+      }
+      if (match.content && match.content.trim().length > 0) {
+        const raw = match.content.trim();
+        excerpt = raw.length > 4000
+          ? raw.slice(0, 4000) + "...[truncated]"
+          : raw;
+      } else if (match.toolName) {
+        excerpt = `[Tool Call: ${match.toolName}]: ${
+          safeBoundedJson(match.toolArguments ?? {})
+        }`;
+      } else {
+        excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
+      }
     }
-    if (match?.content && match.content.trim().length > 0) {
-      const raw = match.content.trim();
-      excerpt = raw.length > 4000
-        ? raw.slice(0, 4000) + "...[truncated]"
-        : raw;
-    } else if (match?.toolName) {
-      excerpt = `[Tool Call: ${match.toolName}]: ${
-        safeBoundedJson(match.toolArguments ?? {})
-      }`;
-    } else if (match) {
-      excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
-    }
-  } else if (events.length > 0) {
+  } else if (events && events.length > 0) {
     const recent = events.slice(-50);
     const relevant = recent
       .filter((e) =>
@@ -472,7 +495,7 @@ export function draftWorkPacketFromContext(input: {
     excerpt = (idea?.description || operatorIntent).slice(0, 4000);
   }
 
-  const recentEvents = events.slice(-20);
+  const recentEvents = events ? events.slice(-20) : [];
   for (const ev of recentEvents) {
     if (ev.toolName === "read_file" && ev.toolArguments?.path) {
       const p = String(ev.toolArguments.path).trim().slice(0, 500);

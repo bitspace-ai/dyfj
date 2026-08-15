@@ -501,7 +501,7 @@ export function buildWorkbenchHandlers(
         list.push(item.session);
       }
       const boundedProjects: WorkbenchProjectSessions[] = [];
-      for (let i = 0; i < projects.length; i++) {
+      for (let i = 0; i < projects.length && boundedProjects.length < limit; i++) {
         const pSessions = projectMap.get(i);
         if (pSessions && pSessions.length > 0) {
           boundedProjects.push({
@@ -516,7 +516,7 @@ export function buildWorkbenchHandlers(
         }
       }
       if (boundedProjects.length === 0 && topSessions.length === 0 && projects.length > 0) {
-        return { projects };
+        return { projects: projects.slice(0, limit) };
       }
       return { projects: boundedProjects };
     },
@@ -593,7 +593,7 @@ export function buildWorkbenchHandlers(
       })!;
       const label = sanitizeRpcString(record.label, "label", {
         required: true,
-        maxLen: 500,
+        maxLen: 256,
       })!;
       const eventId = sanitizeRpcString(record.eventId, "eventId", {
         maxLen: 256,
@@ -601,7 +601,7 @@ export function buildWorkbenchHandlers(
       const description = sanitizeRpcString(
         record.description,
         "description",
-        { maxLen: 4000 },
+        { maxLen: 2000 },
       );
       const events = eventId
         ? await fetchSessionEvents({ sessionId, eventId })
@@ -679,11 +679,11 @@ export function buildWorkbenchHandlers(
       const issueId = sanitizeRpcString(record.issueId, "issueId", {
         maxLen: 256,
       });
-      const title = sanitizeRpcString(record.title, "title", { maxLen: 500 });
+      const title = sanitizeRpcString(record.title, "title", { maxLen: 256 });
       const operatorIntent = sanitizeRpcString(
         record.operatorIntent,
         "operatorIntent",
-        { maxLen: 8000 },
+        { maxLen: 2000 },
       );
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {

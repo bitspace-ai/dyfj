@@ -1598,6 +1598,10 @@ export async function handleReplSessionCommand(
   }
 
   if (sub === "list") {
+    if (parts.length > 2) {
+      io.err("usage: /session list");
+      return true;
+    }
     if (config.unix) {
       try {
         const client = await connect(config.socket);
@@ -1663,6 +1667,10 @@ export async function handleReplSessionCommand(
   }
 
   if (sub === "switch") {
+    if (parts.length !== 3) {
+      io.err("usage: /session switch <sessionId>");
+      return true;
+    }
     const rawTargetId = parts[2];
     if (!rawTargetId || rawTargetId.trim().length === 0) {
       io.err("usage: /session switch <sessionId>");
@@ -1905,10 +1913,6 @@ export async function handleReplPacketCommand(
   }
 
   const sub = parts[1];
-  if (!config.unix) {
-    io.err("packet drafting is only supported in Unix domain socket mode");
-    return true;
-  }
 
   if (!sessionState.sessionId) {
     io.err("no session yet — send a prompt first before drafting packets");
@@ -1968,7 +1972,12 @@ export async function handleReplPacketCommand(
           return true;
         }
         i++;
-        const knownOptionFlags = new Set(["--issue", "--event", "--idea"]);
+        const knownOptionFlags = new Set([
+          "--issue",
+          "--event",
+          "--idea",
+          "--title",
+        ]);
         const titleTokens: string[] = [];
         while (i < tokens.length && !knownOptionFlags.has(tokens[i])) {
           titleTokens.push(tokens[i]);
