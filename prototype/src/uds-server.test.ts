@@ -1428,5 +1428,38 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
     expect(res.idea.label).toBe("Clean Red Text");
     expect(res.idea.label).not.toContain("[31m");
   });
+
+  test("ideas/list and packets/list reject missing sessionId", async () => {
+    const server = await startServer(fakes);
+    const client = await connectClient(server);
+
+    await expect(client.request("ideas/list", {})).rejects.toMatchObject({
+      code: RpcErrorCode.invalidParams,
+      message: "sessionId is required",
+    });
+
+    await expect(client.request("packets/list", {})).rejects.toMatchObject({
+      code: RpcErrorCode.invalidParams,
+      message: "sessionId is required",
+    });
+  });
+
+  test("packets/draft rejects idea belonging to a different session before fetching context", async () => {
+    const server = await startServer(fakes);
+    const client = await connectClient(server);
+
+    const ideaRes = await client.request("ideas/mark", {
+      sessionId: "01SESSION_OWNER_A",
+      label: "Idea in A",
+    }) as { idea: { ideaId: string } };
+
+    await expect(client.request("packets/draft", {
+      sessionId: "01SESSION_OWNER_B",
+      ideaId: ideaRes.idea.ideaId,
+    })).rejects.toMatchObject({
+      code: RpcErrorCode.invalidParams,
+      message: expect.stringContaining("belongs to session \"01SESSION_OWNER_A\""),
+    });
+  });
 });
 

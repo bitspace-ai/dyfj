@@ -688,8 +688,9 @@ export function buildWorkbenchHandlers(
     "ideas/list": async (params) => {
       const record = asRecord(params);
       const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
         maxLen: 256,
-      });
+      })!;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {
         return { ideas: reg.listIdeas(sessionId) };
@@ -754,6 +755,12 @@ export function buildWorkbenchHandlers(
           `idea "${ideaId}" not found`,
         );
       }
+      if (idea && idea.sessionId !== sessionId) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          `idea "${ideaId}" belongs to session "${idea.sessionId}", not requested session "${sessionId}"`,
+        );
+      }
       const referencedEventId = eventId ?? idea?.eventId ?? undefined;
       const [events, workspaceRec] = await Promise.all([
         referencedEventId
@@ -788,8 +795,9 @@ export function buildWorkbenchHandlers(
     "packets/list": async (params) => {
       const record = asRecord(params);
       const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
         maxLen: 256,
-      });
+      })!;
       const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
       try {
         return { packets: reg.listPackets(sessionId) };

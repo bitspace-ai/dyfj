@@ -274,12 +274,15 @@ function matchesContainerPrefix(linePrefix: string, openPrefix: string): boolean
 function hasContainerPrefix(line: string, openPrefix: string): boolean {
   if (openPrefix === "") return true;
   if (line.trim().length === 0) return false;
-  const lineGt = line.replace(/[^>]/g, "").length;
-  const openGt = openPrefix.replace(/[^>]/g, "").length;
-  if (openGt > 0) {
+  const openLeadingMatch = openPrefix.match(/^([ ]{0,3}(?:>[ ]*)+)/);
+  if (openLeadingMatch) {
+    const lineLeadingMatch = line.match(/^([ ]{0,3}(?:>[ ]*)+)/);
+    if (!lineLeadingMatch) return false;
+    const lineGt = lineLeadingMatch[1].replace(/[^>]/g, "").length;
+    const openGt = openLeadingMatch[1].replace(/[^>]/g, "").length;
     if (lineGt < openGt) return false;
-    const afterGt = line.slice(line.lastIndexOf(">") + 1);
-    const openAfterGt = openPrefix.slice(openPrefix.lastIndexOf(">") + 1);
+    const afterGt = line.slice(lineLeadingMatch[1].length);
+    const openAfterGt = openPrefix.slice(openLeadingMatch[1].length);
     if (openAfterGt.trim().length === 0) return true;
     const normAfterGt = afterGt.replace(/[ \t]+/g, " ").trim();
     const normOpenAfterGt = openAfterGt.replace(/[ \t]+/g, " ").trim();
@@ -444,6 +447,7 @@ export class IdeaPacketRegistry {
   private readonly ideasBySession = new Map<string, WorkbenchIdea[]>();
   private readonly packetsById = new Map<string, WorkbenchWorkPacket>();
   private readonly packetsBySession = new Map<string, WorkbenchWorkPacket[]>();
+  private readonly knownIdeaOwners = new Map<string, string>();
   private readonly maxSessions = 100;
   private readonly maxEntriesPerSession = 50;
 
@@ -471,7 +475,7 @@ export class IdeaPacketRegistry {
     if (cleanLabel.length === 0) {
       throw new Error("idea label cannot be empty or whitespace-only");
     }
-    const cleanDesc = rawDesc.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, " ").trim().slice(0, 2000);
+    const cleanDesc = rawDesc.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, " ").trim().slice(0, 2000);
     const sanitized: WorkbenchIdea = {
       ideaId: validateIdentifier(idea.ideaId, "ideaId"),
       sessionId: validateIdentifier(idea.sessionId, "sessionId"),
@@ -480,6 +484,13 @@ export class IdeaPacketRegistry {
       description: cleanDesc,
       createdAt: rawCreated.trim().slice(0, 64),
     };
+
+    const knownOwner = this.knownIdeaOwners.get(sanitized.ideaId);
+    if (knownOwner && knownOwner !== sanitized.sessionId) {
+      throw new Error(
+        `cannot re-register idea "${sanitized.ideaId}" under session "${sanitized.sessionId}" because it is already registered under session "${knownOwner}"`,
+      );
+    }
 
     const existing = this.ideasById.get(sanitized.ideaId);
     if (existing) {
@@ -496,6 +507,7 @@ export class IdeaPacketRegistry {
     }
 
     this.ideasById.set(sanitized.ideaId, sanitized);
+    this.knownIdeaOwners.set(sanitized.ideaId, sanitized.sessionId);
     let list = this.ideasBySession.get(sanitized.sessionId);
     if (!list) {
       if (this.ideasBySession.size >= this.maxSessions) {

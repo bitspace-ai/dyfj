@@ -857,4 +857,49 @@ describe("draftWorkPacketFromContext", () => {
 
     expect(idea.label).toBe("Clean Label Escaped");
   });
+
+  test("implicit container exit escapes subsequent raw HTML headings", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_HTML_BQ_EXIT",
+      operatorIntent: "> ```sh\n> code\n<h1>Injected</h1>",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("&lt;h1&gt;Injected&lt;/h1&gt;");
+  });
+
+  test("evicted idea session prevents re-registering the same idea ID under a different session", () => {
+    const reg = new IdeaPacketRegistry();
+    // Register idea in session A
+    markWorkbenchIdea({
+      sessionId: "01SESSION_EVICT_A",
+      ideaId: "01IDEA_SHARED_ID",
+      label: "Initial Idea in A",
+      registry: reg,
+    });
+
+    // Fill registry with 105 other sessions to force eviction of session A from ideasBySession
+    for (let i = 0; i < 105; i++) {
+      markWorkbenchIdea({
+        sessionId: `01SESSION_FILLER_${i}`,
+        label: `Filler Idea ${i}`,
+        registry: reg,
+      });
+    }
+
+    // Verify session A is evicted from active session map
+    expect(reg.listIdeas("01SESSION_EVICT_A")).toHaveLength(0);
+
+    // Attempting to re-register the same ideaId in session B should fail
+    expect(() => {
+      markWorkbenchIdea({
+        sessionId: "01SESSION_EVICT_B",
+        ideaId: "01IDEA_SHARED_ID",
+        label: "Hijacked Idea in B",
+        registry: reg,
+      });
+    }).toThrow("cannot re-register idea \"01IDEA_SHARED_ID\" under session \"01SESSION_EVICT_B\"");
+  });
 });
