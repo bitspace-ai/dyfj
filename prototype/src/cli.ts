@@ -1714,6 +1714,7 @@ export async function handleReplSessionCommand(
                 sessionId: string;
                 taskDescription: string;
                 createdAt: string;
+                updatedAt?: string;
               }>;
             }>;
           };
@@ -1721,23 +1722,31 @@ export async function handleReplSessionCommand(
             sessionId: string;
             taskDescription: string;
             createdAt: string;
+            updatedAt?: string;
           }> = [];
           for (const p of res.projects ?? []) {
             if (Array.isArray(p.sessions)) {
               for (const s of p.sessions) {
+                const sActivity = s.updatedAt || s.createdAt || "";
                 if (sessions.length < 15) {
                   sessions.push(s);
                   sessions.sort((a, b) =>
-                    (b.createdAt || "").localeCompare(a.createdAt || "")
+                    (b.updatedAt || b.createdAt || "").localeCompare(
+                      a.updatedAt || a.createdAt || "",
+                    )
                   );
                 } else if (
-                  (s.createdAt || "").localeCompare(
-                    sessions[sessions.length - 1].createdAt || "",
+                  sActivity.localeCompare(
+                    sessions[sessions.length - 1].updatedAt ||
+                      sessions[sessions.length - 1].createdAt ||
+                      "",
                   ) > 0
                 ) {
                   sessions[sessions.length - 1] = s;
                   sessions.sort((a, b) =>
-                    (b.createdAt || "").localeCompare(a.createdAt || "")
+                    (b.updatedAt || b.createdAt || "").localeCompare(
+                      a.updatedAt || a.createdAt || "",
+                    )
                   );
                 }
               }
@@ -1937,10 +1946,15 @@ export async function handleReplIdeaCommand(
       }
     } else {
       if (eventId) {
-        io.err(
-          "error: --event requires connecting to a local runtime over Unix domain socket",
+        const found = sessionState.events?.some(
+          (e) => e.eventId === eventId && e.sessionId === sessionState.sessionId,
         );
-        return true;
+        if (!found) {
+          io.err(
+            `error: event "${eventId}" not found in current local session context`,
+          );
+          return true;
+        }
       }
       try {
         const idea = markWorkbenchIdea({
@@ -2232,7 +2246,7 @@ export async function handleReplPacketCommand(
     }
 
     if (targetRef && !ideaId && !eventId) {
-      if (targetRef.startsWith("evt-")) {
+      if (targetRef.startsWith("evt-") || targetRef.startsWith("evt_")) {
         eventId = targetRef;
       } else {
         ideaId = targetRef;
@@ -2267,10 +2281,15 @@ export async function handleReplPacketCommand(
       }
     } else {
       if (eventId) {
-        io.err(
-          "error: drafting packets from event references requires connecting to a local runtime over Unix domain socket",
+        const found = sessionState.events?.some(
+          (e) => e.eventId === eventId && e.sessionId === sessionState.sessionId,
         );
-        return true;
+        if (!found) {
+          io.err(
+            `error: event "${eventId}" not found in current local session context`,
+          );
+          return true;
+        }
       }
       try {
         const packet = draftWorkPacketFromContext({

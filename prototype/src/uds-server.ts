@@ -267,9 +267,9 @@ function sanitizeRpcString(
   }
   let s = val;
   if (options.singleLine !== false) {
-    s = s.replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ").replace(/\s+/g, " ");
+    s = s.replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, " ").replace(/\s+/g, " ");
   } else {
-    s = s.replace(/\r\n|\r/g, "\n").replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, " ");
+    s = s.replace(/\r\n|\r/g, "\n").replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, " ");
   }
   const trimmed = s.trim();
   if (trimmed.length === 0) {
@@ -523,20 +523,26 @@ export function buildWorkbenchHandlers(
           const sessionCount = Math.min(p.sessions.length, limit);
           for (let j = 0; j < sessionCount; j++) {
             const s = p.sessions[j];
-            const createdAt = s.createdAt || "";
+            const activityTime = s.updatedAt || s.createdAt || "";
             if (topSessions.length < limit) {
               topSessions.push({ projectIdx: i, session: s });
               topSessions.sort((a, b) =>
-                (b.session.createdAt || "").localeCompare(a.session.createdAt || "")
+                (b.session.updatedAt || b.session.createdAt || "").localeCompare(
+                  a.session.updatedAt || a.session.createdAt || "",
+                )
               );
             } else if (
-              createdAt.localeCompare(
-                topSessions[topSessions.length - 1].session.createdAt || "",
+              activityTime.localeCompare(
+                topSessions[topSessions.length - 1].session.updatedAt ||
+                  topSessions[topSessions.length - 1].session.createdAt ||
+                  "",
               ) > 0
             ) {
               topSessions[topSessions.length - 1] = { projectIdx: i, session: s };
               topSessions.sort((a, b) =>
-                (b.session.createdAt || "").localeCompare(a.session.createdAt || "")
+                (b.session.updatedAt || b.session.createdAt || "").localeCompare(
+                  a.session.updatedAt || a.session.createdAt || "",
+                )
               );
             }
           }

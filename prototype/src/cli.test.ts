@@ -4265,6 +4265,96 @@ describe("REPL /packet command", () => {
     ]);
     expect(stderr.join("\n")).toContain("marked idea [01IDEA_EVT_LABEL]: \"evt-driven architecture\"");
   });
+
+  test("/idea mark and /packet draft support local event references with sessionState.events", async () => {
+    const state = {
+      sessionId: "01LOCAL_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+      events: [
+        {
+          sessionId: "01LOCAL_SESS",
+          eventId: "evt_a_1",
+          eventType: "model_response",
+          content: "Let's capture this thought.",
+          createdAt: "2026-08-15T12:00:00Z",
+        } as any,
+      ],
+    };
+
+    const io1 = fakeIo();
+    const handledIdea = await handleReplIdeaCommand(
+      "/idea mark --event evt_a_1 Follow-up task",
+      cfg({ unix: false }),
+      io1.io,
+      state,
+    );
+    expect(handledIdea).toBe(true);
+    expect(io1.stderr.join("\n")).toContain("marked idea");
+
+    const io2 = fakeIo();
+    const handledPacket = await handleReplPacketCommand(
+      "/packet draft evt_a_1 --title Local Event Packet",
+      cfg({ unix: false }),
+      io2.io,
+      state,
+    );
+    expect(handledPacket).toBe(true);
+    expect(io2.stdout.join("\n")).toContain("# Work Packet: Local Event Packet");
+    expect(io2.stderr.join("\n")).toContain("draft work packet registered");
+
+    // Rejects non-existent event in local mode
+    const io3 = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark --event evt_missing Non-existent",
+      cfg({ unix: false }),
+      io3.io,
+      state,
+    );
+    expect(io3.stderr.join("\n")).toContain("error: event \"evt_missing\" not found in current local session context");
+  });
+
+  test("/session list orders sessions by latest activity timestamp (updatedAt)", async () => {
+    const { io, stderr } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: () =>
+          Promise.resolve({
+            projects: [
+              {
+                sessions: [
+                  {
+                    sessionId: "01OLD_SESS",
+                    taskDescription: "Old session created earlier but updated today",
+                    createdAt: "2026-01-01T00:00:00Z",
+                    updatedAt: "2026-08-15T12:00:00Z",
+                  },
+                  {
+                    sessionId: "01NEW_SESS",
+                    taskDescription: "New session created yesterday untouched",
+                    createdAt: "2026-08-14T00:00:00Z",
+                    updatedAt: "2026-08-14T00:00:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+        close: () => {},
+      });
+
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    await handleReplSessionCommand(
+      "/session list",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    const output = stderr.join("\n");
+    const oldIdx = output.indexOf("01OLD_SESS");
+    const newIdx = output.indexOf("01NEW_SESS");
+    expect(oldIdx).toBeLessThan(newIdx);
+  });
 });
 
 describe("session posture", () => {

@@ -532,4 +532,37 @@ describe("draftWorkPacketFromContext", () => {
     expect(packet.sourceContext.excerpt).toContain("[User]: What is the plan?");
     expect(packet.sourceContext.excerpt).toContain("[Assistant]: Here is the plan.");
   });
+
+  test("preserves headings inside list-nested and numbered list code fences", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_LIST_FENCE",
+      operatorIntent: "- ```sh\n  # shell comment\n  echo hello\n  ```\n\n1. ```python\n   # python comment\n   ```\n\n# Real Heading",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("- ```sh\n  # shell comment\n  echo hello\n  ```");
+    expect(md).toContain("1. ```python\n   # python comment\n   ```");
+    expect(md).toContain("\\# Real Heading");
+  });
+
+  test("strips C1 control characters from headings and criteria", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_C1",
+      title: "Title with \u009B2J C1 control",
+      operatorIntent: "Intent with \u0080\u009F controls",
+      acceptanceCriteria: ["Criterion with \u0090 control"],
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).not.toContain("\u009B");
+    expect(md).not.toContain("\u0080");
+    expect(md).not.toContain("\u009F");
+    expect(md).not.toContain("\u0090");
+    expect(packet.title).not.toContain("\u009B");
+    expect(packet.operatorIntent).not.toContain("\u0080");
+  });
 });

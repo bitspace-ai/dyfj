@@ -97,12 +97,11 @@ function boundedCloneForJson(
     state.totalBytes += 2;
     const out: Record<string, unknown> = {};
     const record = val as Record<string, unknown>;
-    const keys = Object.keys(record);
-    const keyCount = Math.min(keys.length, 50);
     let count = 0;
-    for (let i = 0; i < keyCount; i++) {
-      const k = keys[i];
+    let totalScanned = 0;
+    for (const k in record) {
       if (
+        ++totalScanned > 50 ||
         count >= 20 ||
         state.nodeCount > state.maxNodes ||
         state.totalBytes >= state.budget
@@ -111,18 +110,16 @@ function boundedCloneForJson(
         state.totalBytes += 18;
         break;
       }
-      const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
-      state.totalBytes += key.length + 4;
-      out[key] = boundedCloneForJson(
-        record[k],
-        depth + 1,
-        state,
-      );
-      count++;
-    }
-    if (keys.length > 50 && !out["_truncated"]) {
-      out["_truncated"] = true;
-      state.totalBytes += 18;
+      if (Object.prototype.hasOwnProperty.call(record, k)) {
+        const key = k.length > 100 ? k.slice(0, 97) + "..." : k;
+        state.totalBytes += key.length + 4;
+        out[key] = boundedCloneForJson(
+          record[k],
+          depth + 1,
+          state,
+        );
+        count++;
+      }
     }
     return out;
   }
@@ -205,11 +202,29 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
   return result;
 }
 
+function matchesContainerPrefix(linePrefix: string, openPrefix: string): boolean {
+  const normLine = linePrefix.replace(/[ \t]+/g, " ").trim();
+  const normOpen = openPrefix.replace(/[ \t]+/g, " ").trim();
+  if (normLine === normOpen) return true;
+  const lineGt = linePrefix.replace(/[^>]/g, "").length;
+  const openGt = openPrefix.replace(/[^>]/g, "").length;
+  if (openGt > 0) {
+    if (lineGt !== openGt) return false;
+    if (openPrefix.length > 0 && linePrefix.length >= openPrefix.length) {
+      return true;
+    }
+  }
+  if (openPrefix.length > 0 && linePrefix.length >= openPrefix.length && linePrefix.replace(/[^>]/g, "").length === openGt) {
+    return true;
+  }
+  return false;
+}
+
 function sanitizeMarkdownHeading(text: string): string {
   const clean = text
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
     .replace(/\r\n|\r/g, "\n")
-    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "");
   const lines = clean.split("\n");
   const result: string[] = [];
   let openChar: string | null = null;
@@ -218,7 +233,7 @@ function sanitizeMarkdownHeading(text: string): string {
 
   for (const line of lines) {
     if (!openChar) {
-      const fenceMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+      const fenceMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})(.*)$/);
       if (fenceMatch) {
         const prefix = fenceMatch[1];
         const fence = fenceMatch[2];
@@ -246,10 +261,10 @@ function sanitizeMarkdownHeading(text: string): string {
       sanitizedLine = sanitizeHtmlHeadingsOutsideCodeSpans(sanitizedLine);
       result.push(sanitizedLine);
     } else {
-      const closeMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+      const closeMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})[ \t]*$/);
       if (
         closeMatch &&
-        closeMatch[1].replace(/[^>]/g, "") === openPrefix.replace(/[^>]/g, "")
+        matchesContainerPrefix(closeMatch[1], openPrefix)
       ) {
         const fence = closeMatch[2];
         if (fence[0] === openChar && fence.length >= openCount) {
@@ -268,7 +283,7 @@ function sanitizeMarkdownHeading(text: string): string {
 function sanitizeSingleLine(text: string): string {
   return text
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/[\r\n\t\x00-\x1F\x7F\x1B]/g, " ")
+    .replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -799,14 +814,14 @@ function closeDanglingFences(text: string): string {
   const clean = text
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
     .replace(/\r\n|\r/g, "\n")
-    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]/g, "");
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "");
   const lines = clean.split("\n");
   let openChar: string | null = null;
   let openCount = 0;
   let openPrefix = "";
   for (const line of lines) {
     if (!openChar) {
-      const openMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+      const openMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})(.*)$/);
       if (openMatch) {
         const prefix = openMatch[1];
         const fence = openMatch[2];
@@ -818,10 +833,10 @@ function closeDanglingFences(text: string): string {
         }
       }
     } else {
-      const closeMatch = line.match(/^((?:[ \t]*>[ \t]*)*)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+      const closeMatch = line.match(/^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]*)(`{3,}|~{3,})[ \t]*$/);
       if (
         closeMatch &&
-        closeMatch[1].replace(/[^>]/g, "") === openPrefix.replace(/[^>]/g, "")
+        matchesContainerPrefix(closeMatch[1], openPrefix)
       ) {
         const fence = closeMatch[2];
         if (fence[0] === openChar && fence.length >= openCount) {
