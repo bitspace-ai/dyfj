@@ -229,7 +229,7 @@ function sanitizeRpcIdentifier(
       `${fieldName} cannot be empty or whitespace-only`,
     );
   }
-  if (/[\x00-\x20\x7F-\x9F\x1B]/.test(val)) {
+  if (/[\s\x00-\x1F\x7F-\x9F\x1B]/.test(val)) {
     throw new RpcError(
       RpcErrorCode.invalidParams,
       `${fieldName} cannot contain control characters or whitespace`,
@@ -508,9 +508,10 @@ export function buildWorkbenchHandlers(
       const limit = typeof record.limit === "number" && record.limit > 0
         ? Math.min(record.limit, 1000)
         : 100;
+      const fetchLimit = Math.min(Math.max(limit * 4, 100), 1000);
       const projects = await listSessions({
         project,
-        limit,
+        limit: fetchLimit,
       });
       const topSessions: Array<{
         projectIdx: number;

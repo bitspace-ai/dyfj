@@ -1965,9 +1965,10 @@ export async function handleReplIdeaCommand(
         const found = sessionState.events?.some(
           (e) => e.eventId === eventId && e.sessionId === sessionState.sessionId,
         );
+        const cleanEvId = eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
         if (!found) {
           io.err(
-            `error: event "${eventId}" not found in current local session context`,
+            `error: event "${cleanEvId}" not found in current local session context`,
           );
           return true;
         }
@@ -2006,10 +2007,13 @@ export async function handleReplIdeaCommand(
           const res = await client.request("ideas/list", {
             sessionId: sessionState.sessionId,
           }) as { ideas: WorkbenchIdea[] };
+          const cleanSessId = (sessionState.sessionId ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
           if (res.ideas.length === 0) {
-            io.err(`no ideas marked for session ${sessionState.sessionId}`);
+            io.err(`no ideas marked for session ${cleanSessId}`);
           } else {
-            io.err(`Ideas for session ${sessionState.sessionId}:`);
+            io.err(`Ideas for session ${cleanSessId}:`);
             for (const item of res.ideas) {
               const cleanId = (item.ideaId ?? "")
                 .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
@@ -2321,9 +2325,10 @@ export async function handleReplPacketCommand(
         const found = sessionState.events?.some(
           (e) => e.eventId === eventId && e.sessionId === sessionState.sessionId,
         );
+        const cleanEvId = eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
         if (!found) {
           io.err(
-            `error: event "${eventId}" not found in current local session context`,
+            `error: event "${cleanEvId}" not found in current local session context`,
           );
           return true;
         }
@@ -2366,12 +2371,15 @@ export async function handleReplPacketCommand(
           const res = await client.request("packets/list", {
             sessionId: sessionState.sessionId,
           }) as { packets: WorkbenchWorkPacket[] };
+          const cleanSessId = (sessionState.sessionId ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
           if (res.packets.length === 0) {
             io.err(
-              `no work packets drafted for session ${sessionState.sessionId}`,
+              `no work packets drafted for session ${cleanSessId}`,
             );
           } else {
-            io.err(`Work packets for session ${sessionState.sessionId}:`);
+            io.err(`Work packets for session ${cleanSessId}:`);
             for (const p of res.packets) {
               const cleanPacketId = (p.packetId ?? "")
                 .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")

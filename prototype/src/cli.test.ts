@@ -4353,6 +4353,8 @@ describe("REPL /packet command", () => {
     const output = stderr.join("\n");
     const oldIdx = output.indexOf("01OLD_SESS");
     const newIdx = output.indexOf("01NEW_SESS");
+    expect(oldIdx).toBeGreaterThanOrEqual(0);
+    expect(newIdx).toBeGreaterThanOrEqual(0);
     expect(oldIdx).toBeLessThan(newIdx);
   });
 
