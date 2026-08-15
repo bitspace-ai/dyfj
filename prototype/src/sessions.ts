@@ -137,6 +137,20 @@ export async function fetchWorkbenchSessionRecord(
   };
 }
 
+export async function countWorkbenchSessionEvents(input: {
+  sessionId: string;
+  query?: SessionQuery;
+}): Promise<number> {
+  const query = input.query ?? doltQuery;
+  const rows = await query(
+    "SELECT COUNT(*) as count FROM session_events WHERE session_id = ?;",
+    [input.sessionId],
+  );
+  if (rows.length === 0) return 0;
+  const count = Number(rows[0].count);
+  return Number.isNaN(count) ? 0 : count;
+}
+
 export * from "./idea-packet";
 
 export async function updateWorkbenchSession(

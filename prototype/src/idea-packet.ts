@@ -1,6 +1,5 @@
 // Idea marking and Work Packet drafting domain model for Workbench.
-// Implements Milestone 3 / Packet 0 (BIT-258): session capture,
-// idea marking from conversational turns, and draft work packet generation.
+// Derives candidate ideas and draft work packets from supplied session context.
 
 import { generateULID } from "./utils";
 import type { WorkbenchSessionEvent } from "./sessions";
@@ -45,17 +44,29 @@ export class IdeaPacketRegistry {
   private readonly ideasBySession = new Map<string, WorkbenchIdea[]>();
   private readonly packetsById = new Map<string, WorkbenchWorkPacket>();
   private readonly packetsBySession = new Map<string, WorkbenchWorkPacket[]>();
-  private readonly maxEntriesPerSession = 500;
+  private readonly maxSessions = 100;
+  private readonly maxEntriesPerSession = 50;
 
   registerIdea(idea: WorkbenchIdea): void {
     this.ideasById.set(idea.ideaId, idea);
-    const list = this.ideasBySession.get(idea.sessionId) ?? [];
+    let list = this.ideasBySession.get(idea.sessionId);
+    if (!list) {
+      if (this.ideasBySession.size >= this.maxSessions) {
+        const oldestSession = this.ideasBySession.keys().next().value;
+        if (oldestSession !== undefined) {
+          const evictedList = this.ideasBySession.get(oldestSession) ?? [];
+          for (const ev of evictedList) this.ideasById.delete(ev.ideaId);
+          this.ideasBySession.delete(oldestSession);
+        }
+      }
+      list = [];
+      this.ideasBySession.set(idea.sessionId, list);
+    }
     if (list.length >= this.maxEntriesPerSession) {
       const evicted = list.shift();
       if (evicted) this.ideasById.delete(evicted.ideaId);
     }
     list.push(idea);
-    this.ideasBySession.set(idea.sessionId, list);
   }
 
   getIdea(ideaId: string): WorkbenchIdea | null {
@@ -71,13 +82,24 @@ export class IdeaPacketRegistry {
 
   registerPacket(packet: WorkbenchWorkPacket): void {
     this.packetsById.set(packet.packetId, packet);
-    const list = this.packetsBySession.get(packet.sessionId) ?? [];
+    let list = this.packetsBySession.get(packet.sessionId);
+    if (!list) {
+      if (this.packetsBySession.size >= this.maxSessions) {
+        const oldestSession = this.packetsBySession.keys().next().value;
+        if (oldestSession !== undefined) {
+          const evictedList = this.packetsBySession.get(oldestSession) ?? [];
+          for (const ev of evictedList) this.packetsById.delete(ev.packetId);
+          this.packetsBySession.delete(oldestSession);
+        }
+      }
+      list = [];
+      this.packetsBySession.set(packet.sessionId, list);
+    }
     if (list.length >= this.maxEntriesPerSession) {
       const evicted = list.shift();
       if (evicted) this.packetsById.delete(evicted.packetId);
     }
     list.push(packet);
-    this.packetsBySession.set(packet.sessionId, list);
   }
 
   getPacket(packetId: string): WorkbenchWorkPacket | null {
@@ -147,29 +169,29 @@ export function markWorkbenchIdea(input: {
   }
 
   let description = input.description?.trim() ?? "";
-  if (description.length === 0 && input.events && input.events.length > 0) {
-    if (input.eventId) {
+  if (input.eventId !== undefined && input.eventId !== null) {
+    if (input.events !== undefined) {
       const match = input.events.find((e) => e.eventId === input.eventId);
       if (!match) {
         throw new Error(`event "${input.eventId}" not found in session events`);
       }
-      if (match.content) {
+      if (description.length === 0 && match.content) {
         description = match.content.trim().slice(0, 1000);
       }
-    } else {
-      // Find the latest response or start event
-      for (let i = input.events.length - 1; i >= 0; i--) {
-        const ev = input.events[i];
-        if (
-          (ev.eventType === "model_response" ||
-            ev.eventType === "agent_response" ||
-            ev.eventType === "session_start") &&
-          ev.content
-        ) {
-          description = ev.content.trim().slice(0, 1000);
-          break;
-        }
-      }
+    }
+  } else if (description.length === 0 && input.events && input.events.length > 0) {
+    const candidates = input.events
+      .filter((e) =>
+        (e.eventType === "model_response" ||
+          e.eventType === "agent_response" ||
+          e.eventType === "session_start") &&
+        e.content
+      )
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+    if (candidates.length > 0) {
+      description = (candidates[candidates.length - 1].content ?? "")
+        .trim()
+        .slice(0, 1000);
     }
   }
 
@@ -235,20 +257,27 @@ export function draftWorkPacketFromContext(input: {
   let excerpt = "";
   const contextSources: string[] = [];
 
-  if (input.events && input.events.length > 0) {
+  if (input.events !== undefined) {
     if (referencedEventId) {
       const match = input.events.find((e) => e.eventId === referencedEventId);
-      if (match && match.content) {
+      if (!match) {
+        throw new Error(
+          `referenced event "${referencedEventId}" not found in session events`,
+        );
+      }
+      if (match.content) {
         excerpt = match.content.trim().slice(0, 4000);
       }
     }
-    if (excerpt.length === 0) {
-      // Collect recent conversation summary
-      const relevant = input.events.filter((e) =>
-        e.eventType === "session_start" ||
-        e.eventType === "model_response" ||
-        e.eventType === "agent_response"
-      ).slice(-4);
+    if (excerpt.length === 0 && input.events.length > 0) {
+      const relevant = input.events
+        .filter((e) =>
+          e.eventType === "session_start" ||
+          e.eventType === "model_response" ||
+          e.eventType === "agent_response"
+        )
+        .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
+        .slice(-4);
       excerpt = relevant
         .map((e) =>
           `[${e.eventType === "session_start" ? "User" : "Assistant"}]: ${
@@ -261,8 +290,8 @@ export function draftWorkPacketFromContext(input: {
       }
     }
 
-    // Collect file paths referenced in read_file tool calls
-    for (const ev of input.events) {
+    const recentEvents = input.events.slice(-20);
+    for (const ev of recentEvents) {
       if (ev.toolName === "read_file" && ev.toolArguments?.path) {
         const p = String(ev.toolArguments.path);
         if (!contextSources.includes(p)) contextSources.push(p);

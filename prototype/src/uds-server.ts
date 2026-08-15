@@ -25,6 +25,7 @@ import {
   type WorkbenchWorkPacket,
 } from "./idea-packet";
 import {
+  countWorkbenchSessionEvents,
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspaceRecord,
@@ -136,6 +137,9 @@ export interface WorkbenchUnixServerOptions {
   fetchSessionEvents?: (
     input: { sessionId: string; asOf?: string },
   ) => Promise<WorkbenchSessionEvent[]>;
+  countSessionEvents?: (
+    input: { sessionId: string },
+  ) => Promise<number>;
   fetchSessionRecord?: (
     input: { sessionId: string },
   ) => Promise<WorkbenchSessionSummary | null>;
@@ -433,17 +437,21 @@ export function buildWorkbenchHandlers(
           "sessions/inspect requires a string sessionId",
         );
       }
-      const [session, workspaceRec, events] = await Promise.all([
-        (options.fetchSessionRecord ?? fetchWorkbenchSessionRecord)({ sessionId }),
-        (options.fetchSessionWorkspaceRecord ?? fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
-        fetchSessionEvents({ sessionId }),
+      const [session, workspaceRec, eventCount] = await Promise.all([
+        (options.fetchSessionRecord ?? fetchWorkbenchSessionRecord)({
+          sessionId,
+        }),
+        (options.fetchSessionWorkspaceRecord ??
+          fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
+        (options.countSessionEvents ?? countWorkbenchSessionEvents)({
+          sessionId,
+        }),
       ]);
       return {
         session,
         workspace: workspaceRec.workspace,
         exists: session !== null || workspaceRec.exists,
-        eventCount: events.length,
-        latestEvent: events.length > 0 ? events[events.length - 1] : null,
+        eventCount,
       };
     },
 

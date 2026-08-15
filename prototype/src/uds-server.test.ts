@@ -1253,15 +1253,7 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
         exists: true,
         workspace: "/Users/chris/projects/dyfj",
       }),
-      fetchSessionEvents: async () => [
-        {
-          eventId: "evt-1",
-          sessionId: "01TEST_SESSION",
-          eventType: "session_start",
-          createdAt: "2026-08-15T12:00:00Z",
-          content: "Starting session",
-        } as any,
-      ],
+      countSessionEvents: async () => 1,
     });
 
     const client = await connectClient(server);
@@ -1273,7 +1265,6 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
     expect(inspectRes.session.taskDescription).toBe("Explore neutral sessions");
     expect(inspectRes.workspace).toBe("/Users/chris/projects/dyfj");
     expect(inspectRes.eventCount).toBe(1);
-    expect(inspectRes.latestEvent.eventId).toBe("evt-1");
   });
 
   test("ideas/mark, ideas/list, ideas/get flow", async () => {

@@ -1687,12 +1687,16 @@ export async function handleReplIdeaCommand(
     }
     let eventId: string | undefined;
     let labelParts: string[];
-    if (parts[2].startsWith("evt-")) {
-      eventId = parts[2];
-      labelParts = parts.slice(3);
-    } else if (parts[2] === "--event" && parts[3]) {
+    if (parts[2] === "--event") {
+      if (parts.length < 5) {
+        io.err("usage: /idea mark --event <event-id> <label...>");
+        return true;
+      }
       eventId = parts[3];
       labelParts = parts.slice(4);
+    } else if (parts[2].startsWith("evt-") && parts.length >= 4) {
+      eventId = parts[2];
+      labelParts = parts.slice(3);
     } else {
       labelParts = parts.slice(2);
     }
@@ -1745,7 +1749,9 @@ export async function handleReplIdeaCommand(
             io.err(`Ideas for session ${sessionState.sessionId}:`);
             for (const item of res.ideas) {
               io.err(
-                `  [${item.ideaId}] ${item.label} (${item.createdAt.split("T")[0]})`,
+                `  [${item.ideaId}] ${item.label} (${
+                  item.createdAt.split("T")[0]
+                })`,
               );
             }
           }
@@ -1860,11 +1866,20 @@ export async function handleReplPacketCommand(
     let issueId: string | undefined;
     let title: string | undefined;
     for (let i = 3; i < parts.length; i++) {
-      if (parts[i] === "--issue" && i + 1 < parts.length) {
+      if (parts[i] === "--issue") {
+        if (i + 1 >= parts.length || parts[i + 1].startsWith("--")) {
+          io.err("error: --issue requires an issue identifier");
+          return true;
+        }
         issueId = parts[i + 1];
         i++;
-      } else if (parts[i] === "--title" && i + 1 < parts.length) {
-        title = parts.slice(i + 1).join(" ");
+      } else if (parts[i] === "--title") {
+        const titleTokens = parts.slice(i + 1);
+        if (titleTokens.length === 0 || titleTokens[0].startsWith("--")) {
+          io.err("error: --title requires a title argument");
+          return true;
+        }
+        title = titleTokens.join(" ").trim();
         break;
       }
     }
