@@ -420,10 +420,14 @@ export function buildWorkbenchHandlers(
           "events/query asOf must be a valid timestamp",
         );
       }
+      const limit = typeof record.limit === "number" && record.limit > 0
+        ? Math.min(record.limit, 1000)
+        : undefined;
       return {
         events: await fetchSessionEvents({
           sessionId,
           asOf: typeof asOf === "string" ? asOf : undefined,
+          limit,
         }),
       };
     },
@@ -473,7 +477,9 @@ export function buildWorkbenchHandlers(
       const description = typeof record.description === "string"
         ? record.description.trim()
         : undefined;
-      const events = await fetchSessionEvents({ sessionId, limit: 20 });
+      const events = eventId
+        ? await fetchSessionEvents({ sessionId, eventId })
+        : await fetchSessionEvents({ sessionId, limit: 20 });
       const idea = markWorkbenchIdea({
         sessionId,
         label,
@@ -543,7 +549,9 @@ export function buildWorkbenchHandlers(
         ? record.operatorIntent.trim()
         : undefined;
       const [events, workspaceRec] = await Promise.all([
-        fetchSessionEvents({ sessionId, limit: 50 }),
+        eventId
+          ? fetchSessionEvents({ sessionId, eventId })
+          : fetchSessionEvents({ sessionId, limit: 50 }),
         (options.fetchSessionWorkspaceRecord ??
           fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
       ]);

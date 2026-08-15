@@ -1,5 +1,5 @@
 // Idea marking and Work Packet drafting domain model for Workbench.
-// Derives candidate ideas and draft work packets from supplied session context.
+// Enriches candidate ideas and draft work packets with supplied session context.
 
 import { generateULID } from "./utils";
 import type { WorkbenchSessionEvent } from "./sessions";
@@ -48,8 +48,13 @@ export class IdeaPacketRegistry {
   private readonly maxEntriesPerSession = 50;
 
   registerIdea(idea: WorkbenchIdea): void {
-    this.ideasById.set(idea.ideaId, idea);
-    let list = this.ideasBySession.get(idea.sessionId);
+    const sanitized: WorkbenchIdea = {
+      ...idea,
+      label: idea.label.trim().slice(0, 256),
+      description: idea.description.trim().slice(0, 2000),
+    };
+    this.ideasById.set(sanitized.ideaId, sanitized);
+    let list = this.ideasBySession.get(sanitized.sessionId);
     if (!list) {
       if (this.ideasBySession.size >= this.maxSessions) {
         const oldestSession = this.ideasBySession.keys().next().value;
@@ -60,13 +65,13 @@ export class IdeaPacketRegistry {
         }
       }
       list = [];
-      this.ideasBySession.set(idea.sessionId, list);
+      this.ideasBySession.set(sanitized.sessionId, list);
     }
     if (list.length >= this.maxEntriesPerSession) {
       const evicted = list.shift();
       if (evicted) this.ideasById.delete(evicted.ideaId);
     }
-    list.push(idea);
+    list.push(sanitized);
   }
 
   getIdea(ideaId: string): WorkbenchIdea | null {
@@ -81,8 +86,21 @@ export class IdeaPacketRegistry {
   }
 
   registerPacket(packet: WorkbenchWorkPacket): void {
-    this.packetsById.set(packet.packetId, packet);
-    let list = this.packetsBySession.get(packet.sessionId);
+    const sanitized: WorkbenchWorkPacket = {
+      ...packet,
+      title: packet.title.trim().slice(0, 256),
+      operatorIntent: packet.operatorIntent.trim().slice(0, 2000),
+      issueId: packet.issueId?.trim().slice(0, 64) ?? null,
+      proposedAcceptanceCriteria: packet.proposedAcceptanceCriteria
+        .map((c) => c.trim().slice(0, 500))
+        .slice(0, 20),
+      sourceContext: {
+        ...packet.sourceContext,
+        excerpt: packet.sourceContext.excerpt.trim().slice(0, 4000),
+      },
+    };
+    this.packetsById.set(sanitized.packetId, sanitized);
+    let list = this.packetsBySession.get(sanitized.sessionId);
     if (!list) {
       if (this.packetsBySession.size >= this.maxSessions) {
         const oldestSession = this.packetsBySession.keys().next().value;
@@ -93,13 +111,13 @@ export class IdeaPacketRegistry {
         }
       }
       list = [];
-      this.packetsBySession.set(packet.sessionId, list);
+      this.packetsBySession.set(sanitized.sessionId, list);
     }
     if (list.length >= this.maxEntriesPerSession) {
       const evicted = list.shift();
       if (evicted) this.packetsById.delete(evicted.packetId);
     }
-    list.push(packet);
+    list.push(sanitized);
   }
 
   getPacket(packetId: string): WorkbenchWorkPacket | null {
@@ -163,12 +181,12 @@ export function markWorkbenchIdea(input: {
   createdAt?: string;
   registry?: IdeaPacketRegistry;
 }): WorkbenchIdea {
-  const label = input.label.trim();
+  const label = input.label.trim().slice(0, 256);
   if (label.length === 0) {
     throw new Error("idea label cannot be empty");
   }
 
-  let description = input.description?.trim() ?? "";
+  let description = input.description?.trim().slice(0, 2000) ?? "";
   if (input.eventId !== undefined && input.eventId !== null) {
     if (input.events !== undefined) {
       const match = input.events.find((e) => e.eventId === input.eventId);
@@ -176,7 +194,7 @@ export function markWorkbenchIdea(input: {
         throw new Error(`event "${input.eventId}" not found in session events`);
       }
       if (description.length === 0 && match.content) {
-        description = match.content.trim().slice(0, 1000);
+        description = match.content.trim().slice(0, 2000);
       }
     }
   } else if (description.length === 0 && input.events && input.events.length > 0) {
@@ -191,7 +209,7 @@ export function markWorkbenchIdea(input: {
     if (candidates.length > 0) {
       description = (candidates[candidates.length - 1].content ?? "")
         .trim()
-        .slice(0, 1000);
+        .slice(0, 2000);
     }
   }
 
@@ -245,13 +263,11 @@ export function draftWorkPacketFromContext(input: {
     );
   }
 
-  const title = input.title?.trim() ||
-    idea?.label ||
-    "Draft Work Packet";
+  const title = (input.title?.trim() || idea?.label || "Draft Work Packet")
+    .slice(0, 256);
 
-  const operatorIntent = input.operatorIntent?.trim() ||
-    idea?.label ||
-    title;
+  const operatorIntent = (input.operatorIntent?.trim() || idea?.label || title)
+    .slice(0, 2000);
 
   let referencedEventId = input.eventId ?? idea?.eventId ?? null;
   let excerpt = "";
@@ -300,29 +316,28 @@ export function draftWorkPacketFromContext(input: {
   }
 
   if (excerpt.length === 0) {
-    excerpt = idea?.description || operatorIntent;
+    excerpt = (idea?.description || operatorIntent).slice(0, 4000);
   }
   if (excerpt.length > 4000) {
     excerpt = excerpt.slice(0, 4000) + "\n...[truncated]";
   }
 
-  const proposedAcceptanceCriteria: string[] = [];
-  if (
+  const rawCriteria =
     input.acceptanceCriteria && input.acceptanceCriteria.length > 0
-  ) {
-    proposedAcceptanceCriteria.push(...input.acceptanceCriteria);
-  } else {
-    proposedAcceptanceCriteria.push(
-      `Fulfill the objective: "${title}"`,
-      `Verify outcomes against operator intent and documented constraints`,
-    );
-  }
+      ? input.acceptanceCriteria
+      : [
+        `Fulfill the objective: "${title}"`,
+        `Verify outcomes against operator intent and documented constraints`,
+      ];
+  const proposedAcceptanceCriteria = rawCriteria
+    .map((c) => c.trim().slice(0, 500))
+    .slice(0, 20);
 
   const packet: WorkbenchWorkPacket = {
     packetId: input.packetId ?? generateULID(),
     ideaId: idea?.ideaId ?? input.ideaId ?? null,
     sessionId: input.sessionId,
-    issueId: input.issueId?.trim() || null,
+    issueId: input.issueId?.trim().slice(0, 64) || null,
     title,
     targetWorkspace: input.workspace ?? null,
     sourceContext: {

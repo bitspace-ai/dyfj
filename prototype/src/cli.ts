@@ -1705,7 +1705,7 @@ export async function handleReplIdeaCommand(
 
   if (sub === "mark") {
     if (parts.length < 3) {
-      io.err("usage: /idea mark [event-id] <label...>");
+      io.err("usage: /idea mark [--event <event-id>] <label...>");
       return true;
     }
     let eventId: string | undefined;
@@ -1717,15 +1717,12 @@ export async function handleReplIdeaCommand(
       }
       eventId = parts[3];
       labelParts = parts.slice(4);
-    } else if (parts[2].startsWith("evt-") && parts.length >= 4) {
-      eventId = parts[2];
-      labelParts = parts.slice(3);
     } else {
       labelParts = parts.slice(2);
     }
     const label = labelParts.join(" ").trim();
     if (label.length === 0) {
-      io.err("usage: /idea mark [event-id] <label...>");
+      io.err("usage: /idea mark [--event <event-id>] <label...>");
       return true;
     }
 
@@ -1879,32 +1876,48 @@ export async function handleReplPacketCommand(
   }
 
   if (sub === "draft") {
-    if (parts.length < 3) {
-      io.err(
-        "usage: /packet draft <idea-id|event-id> [--issue <BIT-id>] [--title <title>]",
-      );
-      return true;
-    }
-    const targetRef = parts[2];
+    let targetRef: string | undefined;
     let issueId: string | undefined;
     let title: string | undefined;
-    for (let i = 3; i < parts.length; i++) {
-      if (parts[i] === "--issue") {
-        if (i + 1 >= parts.length || parts[i + 1].startsWith("--")) {
+
+    const tokens = parts.slice(2);
+    let i = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (token === "--issue") {
+        i++;
+        if (i >= tokens.length || tokens[i].startsWith("--")) {
           io.err("error: --issue requires an issue identifier");
           return true;
         }
-        issueId = parts[i + 1];
+        issueId = tokens[i];
         i++;
-      } else if (parts[i] === "--title") {
-        const titleTokens = parts.slice(i + 1);
-        if (titleTokens.length === 0 || titleTokens[0].startsWith("--")) {
+      } else if (token === "--title") {
+        i++;
+        const titleTokens: string[] = [];
+        while (i < tokens.length && !tokens[i].startsWith("--")) {
+          titleTokens.push(tokens[i]);
+          i++;
+        }
+        if (titleTokens.length === 0) {
           io.err("error: --title requires a title argument");
           return true;
         }
         title = titleTokens.join(" ").trim();
-        break;
+      } else if (!token.startsWith("--") && !targetRef) {
+        targetRef = token;
+        i++;
+      } else {
+        io.err(`error: unexpected argument "${token}"`);
+        return true;
       }
+    }
+
+    if (!targetRef) {
+      io.err(
+        "usage: /packet draft <idea-id|event-id> [--issue <BIT-id>] [--title <title>]",
+      );
+      return true;
     }
 
     const isEventRef = targetRef.startsWith("evt-");

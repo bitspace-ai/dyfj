@@ -143,7 +143,7 @@ export async function countWorkbenchSessionEvents(input: {
 }): Promise<number> {
   const query = input.query ?? doltQuery;
   const rows = await query(
-    "SELECT COUNT(*) as count FROM session_events WHERE session_id = ?;",
+    "SELECT COUNT(*) as count FROM events WHERE session_id = ?;",
     [input.sessionId],
   );
   if (rows.length === 0) return 0;
@@ -338,6 +338,8 @@ function eventQuery(
   historicalRunnerAuthSchema = false,
   historicalTraceContextSchema = false,
   limit?: number,
+  order: "asc" | "desc" = "asc",
+  eventId?: string,
 ): string {
   const traceContextFields = historicalTraceContextSchema
     ? "NULL AS trace_flags, NULL AS trace_state, NULL AS span_kind, " +
@@ -374,6 +376,10 @@ function eventQuery(
   const limitClause = typeof limit === "number" && limit > 0
     ? ` LIMIT ${Math.floor(limit)}`
     : "";
+  const orderClause = order === "desc" ? "DESC" : "ASC";
+  const eventClause = typeof eventId === "string" && eventId.length > 0
+    ? " AND event_id = ?"
+    : "";
   return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
     `${traceContextFields}, ` +
     `principal_id, model_id, provider, api, content, stop_reason, ` +
@@ -382,7 +388,7 @@ function eventQuery(
     `${runnerFields}, ` +
     `tool_name, tool_call_id, ` +
     `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
-    `WHERE session_id = ? ORDER BY created_at ASC${limitClause};`;
+    `WHERE session_id = ?${eventClause} ORDER BY created_at ${orderClause}${limitClause};`;
 }
 
 function isMissingRunnerColumn(error: unknown): boolean {
@@ -483,11 +489,14 @@ function isMissingUnparsedToolCallColumn(error: unknown): boolean {
 
 export async function fetchWorkbenchSessionEvents(input: {
   sessionId: string;
+  eventId?: string;
   asOf?: string;
   limit?: number;
+  order?: "asc" | "desc";
   query?: SessionQuery;
 }): Promise<WorkbenchSessionEvent[]> {
   const query = input.query ?? doltQuery;
+  const order = input.order ?? (input.limit ? "desc" : "asc");
   // AS OF cannot be parameterized; the timestamp is validated against a
   // strict shape before being inlined.
   let asOfClause = "";
@@ -498,6 +507,10 @@ export async function fetchWorkbenchSessionEvents(input: {
       );
     }
     asOfClause = ` AS OF TIMESTAMP('${input.asOf.replace("T", " ")}')`;
+  }
+  const queryArgs: string[] = [input.sessionId];
+  if (typeof input.eventId === "string" && input.eventId.length > 0) {
+    queryArgs.push(input.eventId);
   }
   let rows: Record<string, string>[] | undefined;
   let historicalProviderCallSchema = false;
@@ -515,7 +528,9 @@ export async function fetchWorkbenchSessionEvents(input: {
         historicalRunnerAuthSchema,
         historicalTraceContextSchema,
         input.limit,
-      ), [input.sessionId]);
+        order,
+        input.eventId,
+      ), queryArgs);
       break;
     } catch (error) {
       if (input.asOf === undefined) throw error;
@@ -544,6 +559,9 @@ export async function fetchWorkbenchSessionEvents(input: {
     }
   }
   if (rows === undefined) throw new Error("historical event schema did not converge");
+  if (order === "desc") {
+    rows.reverse();
+  }
   return rows.map((row) => ({
     eventId: row.event_id,
     eventType: row.event_type,
