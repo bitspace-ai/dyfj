@@ -3810,6 +3810,50 @@ describe("REPL /packet command", () => {
     expect(stdout.join("\n")).toContain("# Work Packet: Fix startup");
   });
 
+  test("/packet draft allows non-option tokens starting with -- in title", async () => {
+    const { io, stdout } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_4",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Document --session behavior",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft 01IDEA_1 --title Document --session behavior --issue BIT-258",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "01IDEA_1",
+          eventId: undefined,
+          issueId: "BIT-258",
+          title: "Document --session behavior",
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Document --session behavior");
+  });
+
   test("/packet draft diagnoses missing target reference", async () => {
     const { io, stderr } = fakeIo();
     const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };

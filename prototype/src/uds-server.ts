@@ -135,7 +135,13 @@ export interface WorkbenchUnixServerOptions {
     options: { project?: string },
   ) => Promise<WorkbenchProjectSessions[]>;
   fetchSessionEvents?: (
-    input: { sessionId: string; asOf?: string },
+    input: {
+      sessionId: string;
+      eventId?: string;
+      asOf?: string;
+      limit?: number;
+      order?: "asc" | "desc";
+    },
   ) => Promise<WorkbenchSessionEvent[]>;
   countSessionEvents?: (
     input: { sessionId: string },
@@ -434,12 +440,13 @@ export function buildWorkbenchHandlers(
       const limit = typeof record.limit === "number" && record.limit > 0
         ? Math.min(record.limit, 1000)
         : 500;
+      const fetched = await fetchSessionEvents({
+        sessionId,
+        asOf: typeof asOf === "string" ? asOf : undefined,
+        limit,
+      });
       return {
-        events: await fetchSessionEvents({
-          sessionId,
-          asOf: typeof asOf === "string" ? asOf : undefined,
-          limit,
-        }),
+        events: Array.isArray(fetched) ? fetched.slice(0, limit) : [],
       };
     },
 

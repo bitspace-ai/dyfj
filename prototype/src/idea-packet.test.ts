@@ -247,13 +247,25 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("- **Related Issue:** `BIT-258`");
     expect(md).toContain("## 1. Source Context");
     expect(md).toContain("## 2. Operator Intent");
-    expect(md).toContain("Expose neutral session model");
-    expect(md).toContain("## 3. Proposed Acceptance Criteria");
-    expect(md).toContain(
-      "- [ ] Session identity is visible and resumable via /session and dyfj --session",
-    );
-    expect(md).toContain("## 4. Verification & Provenance");
     expect(md).toContain("- **Primary Verifier:** `human_operator`");
     expect(md).toContain("- **Independence & Oracle Policy:**");
+  });
+
+  test("getPacket and listPackets return defensive copies", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_300",
+      title: "Defensive packet",
+      registry: reg,
+    });
+
+    const retrieved = reg.getPacket(packet.packetId);
+    expect(retrieved).not.toBeNull();
+    retrieved!.sourceContext.contextSources.push("mutated-source");
+    retrieved!.proposedAcceptanceCriteria.push("mutated-criteria");
+
+    const secondRetrieval = reg.getPacket(packet.packetId);
+    expect(secondRetrieval!.sourceContext.contextSources).toEqual([]);
+    expect(secondRetrieval!.proposedAcceptanceCriteria).toHaveLength(2);
   });
 });

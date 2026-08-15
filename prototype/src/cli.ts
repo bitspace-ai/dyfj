@@ -1894,14 +1894,14 @@ export async function handleReplPacketCommand(
     let targetRef: string | undefined;
     let issueId: string | undefined;
     let title: string | undefined;
-
+    const knownOptions = new Set(["--issue", "--title"]);
     const tokens = parts.slice(2);
     let i = 0;
     while (i < tokens.length) {
       const token = tokens[i];
       if (token === "--issue") {
         i++;
-        if (i >= tokens.length || tokens[i].startsWith("--")) {
+        if (i >= tokens.length || knownOptions.has(tokens[i])) {
           io.err("error: --issue requires an issue identifier");
           return true;
         }
@@ -1910,7 +1910,7 @@ export async function handleReplPacketCommand(
       } else if (token === "--title") {
         i++;
         const titleTokens: string[] = [];
-        while (i < tokens.length && !tokens[i].startsWith("--")) {
+        while (i < tokens.length && !knownOptions.has(tokens[i])) {
           titleTokens.push(tokens[i]);
           i++;
         }
@@ -1919,7 +1919,7 @@ export async function handleReplPacketCommand(
           return true;
         }
         title = titleTokens.join(" ").trim();
-      } else if (!token.startsWith("--") && !targetRef) {
+      } else if (!targetRef && !token.startsWith("--")) {
         targetRef = token;
         i++;
       } else {

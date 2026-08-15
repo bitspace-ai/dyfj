@@ -77,15 +77,34 @@ export class IdeaPacketRegistry {
     list.push(sanitized);
   }
 
+  private cloneIdea(idea: WorkbenchIdea): WorkbenchIdea {
+    return { ...idea };
+  }
+
+  private clonePacket(packet: WorkbenchWorkPacket): WorkbenchWorkPacket {
+    return {
+      ...packet,
+      sourceContext: {
+        ...packet.sourceContext,
+        contextSources: [...packet.sourceContext.contextSources],
+      },
+      proposedAcceptanceCriteria: [...packet.proposedAcceptanceCriteria],
+      verifierProvenance: { ...packet.verifierProvenance },
+    };
+  }
+
   getIdea(ideaId: string): WorkbenchIdea | null {
-    return this.ideasById.get(ideaId) ?? null;
+    const match = this.ideasById.get(ideaId);
+    return match ? this.cloneIdea(match) : null;
   }
 
   listIdeas(sessionId?: string): WorkbenchIdea[] {
     if (sessionId !== undefined) {
-      return [...(this.ideasBySession.get(sessionId) ?? [])];
+      return (this.ideasBySession.get(sessionId) ?? []).map((i) =>
+        this.cloneIdea(i)
+      );
     }
-    return Array.from(this.ideasById.values());
+    return Array.from(this.ideasById.values()).map((i) => this.cloneIdea(i));
   }
 
   registerPacket(packet: WorkbenchWorkPacket): void {
@@ -139,14 +158,19 @@ export class IdeaPacketRegistry {
   }
 
   getPacket(packetId: string): WorkbenchWorkPacket | null {
-    return this.packetsById.get(packetId) ?? null;
+    const match = this.packetsById.get(packetId);
+    return match ? this.clonePacket(match) : null;
   }
 
   listPackets(sessionId?: string): WorkbenchWorkPacket[] {
     if (sessionId !== undefined) {
-      return [...(this.packetsBySession.get(sessionId) ?? [])];
+      return (this.packetsBySession.get(sessionId) ?? []).map((p) =>
+        this.clonePacket(p)
+      );
     }
-    return Array.from(this.packetsById.values());
+    return Array.from(this.packetsById.values()).map((p) =>
+      this.clonePacket(p)
+    );
   }
 
   clear(): void {

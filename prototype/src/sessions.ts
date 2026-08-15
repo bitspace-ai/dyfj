@@ -500,9 +500,10 @@ export async function fetchWorkbenchSessionEvents(input: {
     if (
       typeof input.limit !== "number" ||
       !Number.isInteger(input.limit) ||
-      input.limit <= 0
+      input.limit <= 0 ||
+      input.limit > 5000
     ) {
-      throw new Error("limit must be a positive integer");
+      throw new Error("limit must be a positive integer <= 5000");
     }
   }
   const explicitOrder = input.order;
