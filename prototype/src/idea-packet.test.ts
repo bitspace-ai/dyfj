@@ -661,4 +661,17 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("- ```sh\n  echo hello\n  ```");
     expect(md).not.toContain("- ```sh\n  echo hello\n- ```");
   });
+
+  test("multi-digit ordered list code fences close properly with matching indentation", () => {
+    const reg = new IdeaPacketRegistry();
+    const packet = draftWorkPacketFromContext({
+      sessionId: "01SESSION_MULTIDIGIT_LIST",
+      operatorIntent: "10. ```sh\n    echo multi\n    ```\n# Injected Heading",
+      registry: reg,
+    });
+
+    const md = formatWorkPacketMarkdown(packet);
+    expect(md).toContain("10. ```sh\n    echo multi\n    ```");
+    expect(md).toContain("\\# Injected Heading");
+  });
 });

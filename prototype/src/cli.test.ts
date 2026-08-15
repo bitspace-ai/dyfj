@@ -4324,16 +4324,16 @@ describe("REPL /packet command", () => {
               {
                 sessions: [
                   {
-                    sessionId: "01OLD_SESS",
-                    taskDescription: "Old session created earlier but updated today",
-                    createdAt: "2026-01-01T00:00:00Z",
-                    updatedAt: "2026-08-15T12:00:00Z",
-                  },
-                  {
                     sessionId: "01NEW_SESS",
                     taskDescription: "New session created yesterday untouched",
                     createdAt: "2026-08-14T00:00:00Z",
                     updatedAt: "2026-08-14T00:00:00Z",
+                  },
+                  {
+                    sessionId: "01OLD_SESS",
+                    taskDescription: "Old session created earlier but updated today",
+                    createdAt: "2026-01-01T00:00:00Z",
+                    updatedAt: "2026-08-15T12:00:00Z",
                   },
                 ],
               },

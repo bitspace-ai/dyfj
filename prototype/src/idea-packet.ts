@@ -227,14 +227,18 @@ function parseCloseCodeFence(line: string): { prefix: string; fence: string } | 
   if (containerMatch) {
     return { prefix: containerMatch[1], fence: containerMatch[2] };
   }
-  const rootMatch = line.match(/^([ ]{0,3})(`{3,}|~{3,})[ \t]*$/);
-  if (rootMatch) {
-    return { prefix: rootMatch[1], fence: rootMatch[2] };
+  const spaceMatch = line.match(/^([ \t]*)(`{3,}|~{3,})[ \t]*$/);
+  if (spaceMatch) {
+    return { prefix: spaceMatch[1], fence: spaceMatch[2] };
   }
   return null;
 }
 
 function matchesContainerPrefix(linePrefix: string, openPrefix: string): boolean {
+  if (openPrefix === "") {
+    // Root-level closing code fences allow at most 3 spaces of indentation (CommonMark § 4.5)
+    return linePrefix.length <= 3 && !linePrefix.includes(">");
+  }
   const normLine = linePrefix.replace(/[ \t]+/g, " ").trim();
   const normOpen = openPrefix.replace(/[ \t]+/g, " ").trim();
   if (normLine === normOpen) return true;
@@ -242,11 +246,11 @@ function matchesContainerPrefix(linePrefix: string, openPrefix: string): boolean
   const openGt = openPrefix.replace(/[^>]/g, "").length;
   if (openGt > 0) {
     if (lineGt !== openGt) return false;
-    if (openPrefix.length > 0 && linePrefix.length >= openPrefix.length) {
+    if (linePrefix.length >= openPrefix.length) {
       return true;
     }
   }
-  if (openPrefix.length > 0 && linePrefix.length >= openPrefix.length && linePrefix.replace(/[^>]/g, "").length === openGt) {
+  if (linePrefix.length >= openPrefix.length && lineGt === openGt) {
     return true;
   }
   return false;
