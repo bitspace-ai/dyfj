@@ -49,12 +49,28 @@ installRuntimeSigintHandler(
   Deno.exit,
 );
 
+let serverInstance: { close(): Promise<void> } | undefined;
+
+const shutdown = async () => {
+  if (serverInstance) {
+    try {
+      await serverInstance.close();
+    } catch {
+      // already closed
+    }
+  }
+  Deno.exit(0);
+};
+
 try {
   const server = await serveWorkbenchUnix(socketPath, {
     onParseError: (detail) => console.error(`[uds] ${detail}`),
     engineConfig: config,
     externalMcpCommands: externalMcp.commands,
+    autostarted,
+    onShutdown: shutdown,
   });
+  serverInstance = server;
   resolveCloseServer(() => server.close());
   console.error(
     `dyfj runtime: JSON-RPC over UDS at ${socketPath}  ${

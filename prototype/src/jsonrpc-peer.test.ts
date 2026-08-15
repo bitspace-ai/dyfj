@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { JsonRpcPeer } from "./jsonrpc-peer";
+import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer";
 import {
   encodeFrame,
   FrameDecoder,
   type JsonRpcMessage,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
   notification,
   RpcError,
   RpcErrorCode,
@@ -19,6 +21,10 @@ afterEach(async () => {
 async function connectPair(
   serverHandlers: RpcHandlers = {},
   clientHandlers: RpcHandlers = {},
+  options?: {
+    server?: Partial<JsonRpcPeerOptions>;
+    client?: Partial<JsonRpcPeerOptions>;
+  },
 ): Promise<{ server: JsonRpcPeer; client: JsonRpcPeer }> {
   const dir = await Deno.makeTempDir({ dir: "/tmp" });
   const sock = `${dir}/peer.sock`;
@@ -27,8 +33,14 @@ async function connectPair(
   const clientConn = await Deno.connect({ transport: "unix", path: sock });
   const serverConn = await accepting;
   listener.close();
-  const server = new JsonRpcPeer(serverConn, { handlers: serverHandlers });
-  const client = new JsonRpcPeer(clientConn, { handlers: clientHandlers });
+  const server = new JsonRpcPeer(serverConn, {
+    handlers: serverHandlers,
+    ...options?.server,
+  });
+  const client = new JsonRpcPeer(clientConn, {
+    handlers: clientHandlers,
+    ...options?.client,
+  });
   void server.run();
   void client.run();
   cleanups.push(async () => {
@@ -357,5 +369,47 @@ describe("JsonRpcPeer", () => {
     const pending = client.request("slow");
     client.close();
     await expect(pending).rejects.toThrow();
+  });
+
+  test("onRequestSettled fires after response has been written to the connection", async () => {
+    const settled: Array<{ method: string; result: unknown }> = [];
+    const { client } = await connectPair(
+      { ping: () => ({ pong: true }) },
+      {},
+      {
+        server: {
+          onRequestSettled: (req: JsonRpcRequest, res: JsonRpcResponse) => {
+            if ("result" in res) {
+              settled.push({ method: req.method, result: res.result });
+            }
+          },
+        },
+      },
+    );
+
+    const res = await client.request("ping");
+    expect(res).toEqual({ pong: true });
+    expect(settled).toEqual([{ method: "ping", result: { pong: true } }]);
+  });
+
+  test("onRequestSettled error is caught and routed to onParseError without crashing peer", async () => {
+    const errors: string[] = [];
+    const { client } = await connectPair(
+      { ping: () => ({ ok: true }) },
+      {},
+      {
+        server: {
+          onParseError: (err: string) => errors.push(err),
+          onRequestSettled: () => {
+            throw new Error("hook boom");
+          },
+        },
+      },
+    );
+
+    const res = await client.request("ping");
+    expect(res).toEqual({ ok: true });
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toContain("onRequestSettled error");
   });
 });

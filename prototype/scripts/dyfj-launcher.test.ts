@@ -677,6 +677,10 @@ describe("dyfj launcher autostart classification", () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, ["status"]);
     expect(autostart).toBe("no");
   });
+  test("`stop` never triggers autostart", async () => {
+    const { autostart } = await dryRun({ HOME: "/home/c" }, ["stop"]);
+    expect(autostart).toBe("no");
+  });
   test("help never needs a runtime", async () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, ["--help"]);
     expect(autostart).toBe("no");

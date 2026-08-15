@@ -33,6 +33,11 @@ export interface JsonRpcPeerOptions {
   onParseError?: (detail: string) => void;
   /** Partial-frame buffer bound (DoS guard, important once remote). */
   maxFrameBytes?: number;
+  /** Optional callback invoked after a request response has been written to the wire. */
+  onRequestSettled?: (
+    req: JsonRpcRequest,
+    res: JsonRpcResponse,
+  ) => Promise<void> | void;
 }
 
 const DEFAULT_MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -47,6 +52,10 @@ export class JsonRpcPeer {
   readonly #handlers: RpcHandlers;
   readonly #decoder: FrameDecoder;
   readonly #onParseError?: (detail: string) => void;
+  readonly #onRequestSettled?: (
+    req: JsonRpcRequest,
+    res: JsonRpcResponse,
+  ) => Promise<void> | void;
   readonly #pending = new Map<JsonRpcId, Pending>();
   #nextId = 0;
   #closed = false;
@@ -57,6 +66,7 @@ export class JsonRpcPeer {
     this.#conn = conn;
     this.#handlers = options.handlers ?? {};
     this.#onParseError = options.onParseError;
+    this.#onRequestSettled = options.onRequestSettled;
     this.#decoder = new FrameDecoder(
       options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
     );
@@ -190,12 +200,22 @@ export class JsonRpcPeer {
   async #handle(message: JsonRpcMessage): Promise<void> {
     switch (classify(message)) {
       case "request": {
+        const req = message as JsonRpcRequest;
         const response = await dispatchRequest(
-          message as JsonRpcRequest,
+          req,
           this.#handlers,
           this.#context(),
         );
         await this.#write(response);
+        if (this.#onRequestSettled) {
+          try {
+            await this.#onRequestSettled(req, response);
+          } catch (err) {
+            this.#onParseError?.(
+              `onRequestSettled error: ${summarizeError(err)}`,
+            );
+          }
+        }
         return;
       }
       case "response": {

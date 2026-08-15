@@ -41,7 +41,7 @@ import {
   runawayAnomalyApprovalRequest,
 } from "./budget";
 import type { TurnStreamFrame } from "./turn-contract";
-import { isSupersedingRetryStarted } from "./turn-contract";
+import { isSupersedingRetryStarted, summarizeError } from "./turn-contract";
 import {
   engineConfigToTurnDeps,
   executeTurn,
@@ -104,6 +104,7 @@ export interface WorkbenchRuntimeStatus {
   defaultDailyBudgetUsd: number;
   maxToolSteps: number;
   models: { total: number; local: number; hosted: number };
+  autostarted?: boolean;
 }
 
 export interface WorkbenchSurfaceSnapshot {
@@ -124,6 +125,10 @@ export interface WorkbenchUnixServerOptions {
     input: { sessionId: string; asOf?: string },
   ) => Promise<WorkbenchSessionEvent[]>;
   onParseError?: (detail: string) => void;
+  /** Callback invoked when a client sends a runtime/stop RPC request. */
+  onShutdown?: () => Promise<void> | void;
+  /** Whether the runtime was started via background autostart. */
+  autostarted?: boolean;
   /** Boot-discovered external MCP commands available to this runtime. */
   externalMcpCommands?: readonly CommandDefinition[];
   /** Engine default companion model (config), applied to bare turns. */
@@ -165,6 +170,7 @@ function asRecord(params: unknown): Record<string, unknown> {
 const METHOD_CATALOG = [
   { id: "runtime/liveness", namespace: "runtime", kind: "read" },
   { id: "runtime/status", namespace: "runtime", kind: "read" },
+  { id: "runtime/stop", namespace: "runtime", kind: "interactive" },
   { id: "surface/snapshot", namespace: "surface", kind: "read" },
   { id: "models/list", namespace: "models", kind: "read" },
   { id: "sessions/list", namespace: "sessions", kind: "read" },
@@ -235,6 +241,9 @@ function runtimeStatus(
       local: models.filter(isLocalWorkbenchModel).length,
       hosted: models.filter((model) => !isLocalWorkbenchModel(model)).length,
     },
+    ...(options.autostarted !== undefined
+      ? { autostarted: options.autostarted }
+      : {}),
   };
 }
 
@@ -285,6 +294,18 @@ export function buildWorkbenchHandlers(
     "runtime/status": async () => {
       const models = await loadModels();
       return { runtime: runtimeStatus(options, models) };
+    },
+
+    "runtime/stop": async () => {
+      if (!options.onShutdown) {
+        throw new RpcError(
+          RpcErrorCode.internalError,
+          "runtime shutdown is not configured on this server",
+        );
+      }
+      return {
+        status: "stopping",
+      };
     },
 
     "surface/snapshot": async (params) => {
@@ -796,6 +817,20 @@ export async function serveWorkbenchUnix(
       const peer = new JsonRpcPeer(conn, {
         handlers,
         onParseError: options.onParseError,
+        onRequestSettled: async (req, res) => {
+          if (
+            req.method === "runtime/stop" && "result" in res &&
+            options.onShutdown
+          ) {
+            try {
+              await options.onShutdown();
+            } catch (err) {
+              options.onParseError?.(
+                `onShutdown error: ${summarizeError(err)}`,
+              );
+            }
+          }
+        },
       });
       peers.add(peer);
       peer.run().finally(() => peers.delete(peer));

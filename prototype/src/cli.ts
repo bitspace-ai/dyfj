@@ -910,6 +910,7 @@ interface RuntimeStatusPayload {
     maxToolSteps?: number;
     models?: { total?: number; local?: number; hosted?: number };
     methods?: string[];
+    autostarted?: boolean;
   };
 }
 
@@ -1383,7 +1384,7 @@ export function socketError(error: unknown, config: CliConfig): string {
   }
   const message = error instanceof Error ? error.message : String(error);
   if (
-    /no such file|file not found|socket not found|connection refused|econnrefused|enoent|os error 2|os error 61/i
+    /no such file|file not found|socket not found|connection refused|econnrefused|enoent|\bos error 2\b|\bos error 61\b/i
       .test(message)
   ) {
     return `dyfj: runtime not reachable at ${config.socket}. ` +
@@ -1708,6 +1709,13 @@ export function formatRuntimeStatus(
       (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
     } day · $${(runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)} per call`,
     `tool-step limit: ${runtime.maxToolSteps ?? "unknown"}`,
+    ...(runtime.autostarted !== undefined
+      ? [
+        `launch: ${
+          runtime.autostarted ? "autostarted (background)" : "manual"
+        }`,
+      ]
+      : []),
     `methods: ${methods.length}`,
   ].join("\n");
 }
@@ -1736,6 +1744,68 @@ export async function runStatus(
   } catch (error) {
     io.out(`runtime: unreachable\n`);
     io.out(`socket: ${config.socket}\n`);
+    io.err(socketError(error, config));
+    return 1;
+  }
+}
+
+export async function runStop(
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+  signal: AbortSignal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS),
+): Promise<number> {
+  try {
+    let client: UnixClient;
+    try {
+      client = await connect(config.socket, undefined, signal);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        /no such file|file not found|socket not found|connection refused|econnrefused|enoent|\bos error 2\b|\bos error 61\b/i
+          .test(message)
+      ) {
+        io.out(`dyfj: runtime is not running at ${config.socket}\n`);
+        return 0;
+      }
+      throw err;
+    }
+    try {
+      await client.request("runtime/stop", undefined, signal);
+    } finally {
+      client.close();
+    }
+
+    // Poll with bounded connection attempts until the socket is verified closed or missing
+    let closed = false;
+    const stopDeadline = Date.now() + 3000;
+    while (Date.now() < stopDeadline) {
+      try {
+        const pollSignal = AbortSignal.timeout(200);
+        const checkClient = await connect(config.socket, undefined, pollSignal);
+        checkClient.close();
+        await new Promise((r) => setTimeout(r, 50));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          /no such file|file not found|socket not found|connection refused|econnrefused|enoent|\bos error 2\b|\bos error 61\b/i
+            .test(message)
+        ) {
+          closed = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+
+    if (!closed) {
+      io.err(`dyfj: runtime at ${config.socket} did not stop within deadline`);
+      return 1;
+    }
+
+    io.out(`dyfj: runtime at ${config.socket} stopped\n`);
+    return 0;
+  } catch (error) {
     io.err(socketError(error, config));
     return 1;
   }
@@ -2239,7 +2309,8 @@ interface ParsedArgs {
     | "models"
     | "sessions"
     | "status"
-    | "start";
+    | "start"
+    | "stop";
   prompt?: string;
   json: boolean;
   overrides: Partial<CliConfig>;
@@ -2381,6 +2452,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       ...(launcherAutostarted ? { launcherAutostarted: true as const } : {}),
     };
   }
+  if (positional[0] === "stop" && positional.length === 1) {
+    return { command: "stop", json, overrides };
+  }
   if (positional[0] === "exec") {
     const prompt = positional.slice(1).join(" ").trim();
     if (prompt.length === 0) {
@@ -2480,14 +2554,16 @@ Usage:
   dyfj -p "<prompt>"        one-shot turn (alias)
   dyfj status               check the local runtime and socket
   dyfj start                foreground the local runtime (Ctrl-C to stop)
+  dyfj stop                 stop the running local runtime at the socket
   dyfj models               list available model slugs
   dyfj sessions             list sessions
 
 Launcher lifecycle (the dyfj wrapper script, local UDS seam only):
   a REPL or one-shot turn probes the socket first and, when no runtime
   answers, starts one detached (output to ~/.dyfj/log/) and waits for it.
-  'start', 'status', and help never trigger autostart. Opt out per call
-  with --no-autostart, or standing with DYFJ_AUTOSTART=0.
+  'start', 'status', 'stop', and help (when invoked without a prompt) never
+  trigger autostart. Opt out per call with --no-autostart, or standing with
+  DYFJ_AUTOSTART=0.
 
 REPL commands:
   /model [<slug>]           show or switch the active model (validated slugs);
@@ -2650,6 +2726,9 @@ export async function main(argv: string[], io: Io): Promise<number> {
   }
   if (parsed.command === "status") {
     return await runStatus(config, io);
+  }
+  if (parsed.command === "stop") {
+    return await runStop(config, io);
   }
   if (parsed.command === "start") {
     return await runStart(
