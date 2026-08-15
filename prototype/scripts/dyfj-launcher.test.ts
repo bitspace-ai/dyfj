@@ -914,3 +914,227 @@ describe("the probe invokes the client on the UDS seam explicitly", () => {
     }
   });
 });
+
+async function readUntilStderr(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  target: string,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    if (text.includes(target)) break;
+  }
+  return text;
+}
+
+async function safeRemove(dir: string) {
+  for (let i = 0; i < 10; i++) {
+    try {
+      await Deno.remove(dir, { recursive: true });
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+}
+
+describe("start lock rate-limits repeated background autostart attempts", () => {
+  test("an active in-flight start lock prevents spawning a second start process", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const home = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const sock = `${home}/test-runtime.sock`;
+    const base = "test-runtime";
+    const hashProc = new Deno.Command(BASH, {
+      args: ["-c", 'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1', "bash", sock],
+      stdout: "piped",
+    });
+    const hashOutput = await hashProc.output();
+    const hash = new TextDecoder().decode(hashOutput.stdout).trim();
+
+    const runDir = `${home}/.dyfj/run`;
+    await Deno.mkdir(runDir, { recursive: true });
+    const lockFile = `${runDir}/start-${base}-${hash}.lock`;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    await Deno.writeTextFile(lockFile, `${nowSec}\n`);
+
+    const proc = new Deno.Command(BASH, {
+      args: [LAUNCHER, "--socket", sock, "sessions"],
+      env: {
+        ...Deno.env.toObject(),
+        HOME: home,
+        DYFJ_SOCKET: sock,
+        DYFJ_START_LOCK_TTL_SEC: "30",
+        DYFJ_LAUNCHER_DRY_RUN: "",
+      },
+      stdout: "null",
+      stderr: "piped",
+    }).spawn();
+
+    try {
+      const reader = proc.stderr.getReader();
+      const errText = await readUntilStderr(reader, "already in flight");
+      expect(errText).toContain("already in flight");
+      expect(errText).not.toContain("runtime not running at");
+      try {
+        proc.kill("SIGTERM");
+        await proc.status;
+      } catch {
+        // ignore
+      }
+      // The existing lock timestamp is preserved
+      const lockContent = await Deno.readTextFile(lockFile);
+      expect(lockContent.trim()).toBe(`${nowSec}`);
+    } finally {
+      await safeRemove(home);
+    }
+  }, 10_000);
+
+  test("a stale in-flight start lock (> TTL) is overwritten and allows a fresh start", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const home = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const sock = `${home}/test-runtime.sock`;
+    const base = "test-runtime";
+    const hashProc = new Deno.Command(BASH, {
+      args: ["-c", 'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1', "bash", sock],
+      stdout: "piped",
+    });
+    const hashOutput = await hashProc.output();
+    const hash = new TextDecoder().decode(hashOutput.stdout).trim();
+
+    const runDir = `${home}/.dyfj/run`;
+    await Deno.mkdir(runDir, { recursive: true });
+    const lockFile = `${runDir}/start-${base}-${hash}.lock`;
+
+    // Stale timestamp (100 seconds ago) with no alive PID
+    const staleSec = Math.floor(Date.now() / 1000) - 100;
+    await Deno.writeTextFile(lockFile, `${staleSec}\n`);
+
+    const beforeSec = Math.floor(Date.now() / 1000) - 2;
+    let spawnedPid: number | undefined;
+    let updatedTs: number | undefined;
+
+    const proc = new Deno.Command(BASH, {
+      args: [LAUNCHER, "--socket", sock, "sessions"],
+      env: {
+        ...Deno.env.toObject(),
+        HOME: home,
+        DYFJ_SOCKET: sock,
+        DYFJ_START_LOCK_TTL_SEC: "30",
+        DYFJ_LAUNCHER_DRY_RUN: "",
+      },
+      stdout: "null",
+      stderr: "piped",
+    }).spawn();
+
+    try {
+      const reader = proc.stderr.getReader();
+      const errText = await readUntilStderr(reader, "runtime not running at");
+      expect(errText).toContain("runtime not running at");
+      expect(errText).not.toContain("already in flight");
+      try {
+        const lockContent = await Deno.readTextFile(lockFile);
+        const parts = lockContent.trim().split(/\s+/);
+        if (parts.length >= 1) {
+          updatedTs = parseInt(parts[0], 10);
+        }
+        if (parts.length >= 2) {
+          spawnedPid = parseInt(parts[1], 10);
+        }
+      } catch {
+        // ignore if lock file was unlinked
+      }
+      if (updatedTs !== undefined) {
+        expect(updatedTs).toBeGreaterThanOrEqual(beforeSec);
+      }
+      if (spawnedPid !== undefined) {
+        expect(spawnedPid).toBeGreaterThan(0);
+      }
+      try {
+        proc.kill("SIGTERM");
+        await proc.status;
+      } catch {
+        // ignore
+      }
+    } finally {
+      if (spawnedPid && spawnedPid > 0 && !Number.isNaN(spawnedPid)) {
+        try {
+          Deno.kill(spawnedPid, "SIGTERM");
+        } catch {
+          // already stopped
+        }
+      }
+      await safeRemove(home);
+    }
+  }, 10_000);
+
+  test("an in-flight start lock with an active living process suppresses duplicate spawn", async () => {
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const home = await Deno.realPath(
+      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+    );
+    const sock = `${home}/test-runtime.sock`;
+    const base = "test-runtime";
+    const hashProc = new Deno.Command(BASH, {
+      args: ["-c", 'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1', "bash", sock],
+      stdout: "piped",
+    });
+    const hashOutput = await hashProc.output();
+    const hash = new TextDecoder().decode(hashOutput.stdout).trim();
+
+    const runDir = `${home}/.dyfj/run`;
+    await Deno.mkdir(runDir, { recursive: true });
+    const lockFile = `${runDir}/start-${base}-${hash}.lock`;
+
+    // Spawn a dummy background process via BASH to represent a living in-flight start
+    const dummy = new Deno.Command(BASH, {
+      args: ["-c", "sleep 60"],
+    }).spawn();
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    await Deno.writeTextFile(lockFile, `${nowSec} ${dummy.pid}\n`);
+
+    const proc = new Deno.Command(BASH, {
+      args: [LAUNCHER, "--socket", sock, "sessions"],
+      env: {
+        ...Deno.env.toObject(),
+        HOME: home,
+        DYFJ_SOCKET: sock,
+        DYFJ_START_LOCK_TTL_SEC: "30",
+        DYFJ_LAUNCHER_DRY_RUN: "",
+      },
+      stdout: "null",
+      stderr: "piped",
+    }).spawn();
+
+    try {
+      const reader = proc.stderr.getReader();
+      const errText = await readUntilStderr(reader, "already in flight");
+      expect(errText).toContain("already in flight");
+      expect(errText).not.toContain("runtime not running at");
+      try {
+        proc.kill("SIGTERM");
+        await proc.status;
+      } catch {
+        // ignore
+      }
+    } finally {
+      try {
+        dummy.kill("SIGTERM");
+        await dummy.status;
+      } catch {
+        // ignore
+      }
+      await safeRemove(home);
+    }
+  }, 10_000);
+});
+
+

@@ -274,9 +274,8 @@ describe("loadAskRepoContext", () => {
         path.join(outsideRoot, "workbench-mvp-loop.md"),
         "outside instructions must not load\n",
       );
-      // The path-scoped Deno test profile cannot call Deno.symlink directly;
-      // the existing test profile permits bash for POSIX fixture setup.
-      const linked = await new Deno.Command("bash", {
+      // the existing test profile permits /bin/sh for POSIX fixture setup.
+      const linked = await new Deno.Command("/bin/sh", {
         args: [
           "-c",
           'ln -s -- "$1" "$2"',
