@@ -846,4 +846,15 @@ describe("draftWorkPacketFromContext", () => {
     expect(md).toContain("# Work Packet: Work intent");
     expect(md).not.toBe("# Work Packet: \n");
   });
+
+  test("OSC and Fe ANSI escape sequences are completely stripped from labels and headings", () => {
+    const reg = new IdeaPacketRegistry();
+    const idea = markWorkbenchIdea({
+      sessionId: "01SESSION_OSC",
+      label: "Clean \x1b]0;Title\x07Label \x1bNEscaped",
+      registry: reg,
+    });
+
+    expect(idea.label).toBe("Clean Label Escaped");
+  });
 });

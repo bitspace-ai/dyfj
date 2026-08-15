@@ -1415,5 +1415,18 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
       message: expect.stringContaining("cannot contain control characters"),
     });
   });
+
+  test("RPC string sanitization strips complete ANSI CSI escape sequences", async () => {
+    const server = await startServer(fakes);
+    const client = await connectClient(server);
+
+    const res = await client.request("ideas/mark", {
+      sessionId: "01TEST_ANSI_SESSION",
+      label: "Clean \x1b[31mRed\x1b[0m Text",
+    }) as { idea: { label: string } };
+
+    expect(res.idea.label).toBe("Clean Red Text");
+    expect(res.idea.label).not.toContain("[31m");
+  });
 });
 

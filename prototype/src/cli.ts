@@ -2312,9 +2312,13 @@ export async function handleReplPacketCommand(
             // ignore
           }
         } else {
-          const matchingIdea = defaultIdeaPacketRegistry.getIdea(targetRef);
-          if (matchingIdea && matchingIdea.sessionId === sessionState.sessionId) {
-            ideaExists = true;
+          try {
+            const matchingIdea = defaultIdeaPacketRegistry.getIdea(targetRef);
+            if (matchingIdea && matchingIdea.sessionId === sessionState.sessionId) {
+              ideaExists = true;
+            }
+          } catch {
+            // ignore validation error from non-idea target format
           }
         }
         if (ideaExists) {

@@ -210,8 +210,15 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
   return result;
 }
 
+function stripAnsiEscapes(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
+    .replace(/\x1b[@-Z\\-_]/g, "");
+}
+
 function parseCodeFence(line: string): { prefix: string; fence: string; info: string } | null {
-  const containerMatch = line.match(/^((?:[ ]{0,3}(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
+  const containerMatch = line.match(/^((?:[ ]{0,3}(?:>[ ]*|[*+-][ ]+|\d+[.)][ ]+))+)[ ]{0,3}(`{3,}|~{3,})(.*)$/);
   if (containerMatch) {
     return { prefix: containerMatch[1], fence: containerMatch[2], info: containerMatch[3] };
   }
@@ -223,11 +230,11 @@ function parseCodeFence(line: string): { prefix: string; fence: string; info: st
 }
 
 function parseCloseCodeFence(line: string): { prefix: string; fence: string } | null {
-  const containerMatch = line.match(/^((?:[ ]{0,3}(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))+)[ ]{0,3}(`{3,}|~{3,})[ \t]*$/);
+  const containerMatch = line.match(/^((?:[ ]{0,3}(?:>[ ]*|[*+-][ ]+|\d+[.)][ ]+))+)[ ]{0,3}(`{3,}|~{3,})[ ]*$/);
   if (containerMatch) {
     return { prefix: containerMatch[1], fence: containerMatch[2] };
   }
-  const spaceMatch = line.match(/^([ ]*)(`{3,}|~{3,})[ \t]*$/);
+  const spaceMatch = line.match(/^([ ]*)(`{3,}|~{3,})[ ]*$/);
   if (spaceMatch) {
     return { prefix: spaceMatch[1], fence: spaceMatch[2] };
   }
@@ -285,10 +292,9 @@ function hasContainerPrefix(line: string, openPrefix: string): boolean {
 }
 
 function sanitizeMarkdownHeading(text: string): string {
-  const clean = text
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+  const clean = stripAnsiEscapes(text)
     .replace(/\r\n|\r/g, "\n")
-    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "");
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, "");
   const lines = clean.split("\n");
   const result: string[] = [];
   let openChar: string | null = null;
@@ -360,24 +366,21 @@ function sanitizeMarkdownHeading(text: string): string {
 }
 
 function sanitizeSingleLine(text: string): string {
-  return text
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+  return stripAnsiEscapes(text)
+    .replace(/[\r\n\t\x00-\x1F\x7F-\x9F]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function sanitizeCodeSpanText(str: string): string {
-  return str
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/[\r\n\x00-\x1F\x7F-\x9F\x1B]/g, "")
+  return stripAnsiEscapes(str)
+    .replace(/[\r\n\x00-\x1F\x7F-\x9F]/g, "")
     .trim();
 }
 
 function sanitizeCriterion(text: string): string {
-  const noControls = text
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, " ");
+  const noControls = stripAnsiEscapes(text)
+    .replace(/[\r\n\t\x00-\x1F\x7F-\x9F]/g, " ");
   let result = "";
   let i = 0;
   while (i < noControls.length) {
@@ -722,8 +725,7 @@ export function markWorkbenchIdea(input: {
       );
     }
     let match: WorkbenchSessionEvent | undefined;
-    const maxScan = Math.min(input.events.length, 10000);
-    for (let count = 0, i = input.events.length - 1; i >= 0 && count < maxScan; i--, count++) {
+    for (let i = input.events.length - 1; i >= 0; i--) {
       const ev = input.events[i];
       if (ev.sessionId === sessionId && ev.eventId === eventId) {
         match = ev;
@@ -844,8 +846,7 @@ export function draftWorkPacketFromContext(input: {
     }
     let match: WorkbenchSessionEvent | undefined;
     if (input.events && input.events.length > 0) {
-      const maxScan = Math.min(input.events.length, 10000);
-      for (let count = 0, i = input.events.length - 1; i >= 0 && count < maxScan; i--, count++) {
+      for (let i = input.events.length - 1; i >= 0; i--) {
         const ev = input.events[i];
         if (ev.sessionId === sessionId && ev.eventId === referencedEventId) {
           match = ev;
@@ -882,14 +883,20 @@ export function draftWorkPacketFromContext(input: {
       } else {
         excerpt = `[Event ${match.eventId}]: ${match.eventType}`;
       }
+      if (!title) {
+        title = match.eventType ?? `Event ${referencedEventId}`;
+      }
     }
-  } else if (!excerpt && input.events && input.events.length > 0) {
+  }
+
+  if (!excerpt) {
     const sessionEvents: WorkbenchSessionEvent[] = [];
+    const events = input.events ?? [];
     let totalScanned = 0;
-    for (let i = input.events.length - 1; i >= 0; i--) {
+    for (let i = events.length - 1; i >= 0; i--) {
       totalScanned++;
       if (totalScanned > 200) break;
-      const ev = input.events[i];
+      const ev = events[i];
       if (ev.sessionId === sessionId) {
         sessionEvents.unshift(ev);
         if (sessionEvents.length >= 50) break;
@@ -992,10 +999,9 @@ export function draftWorkPacketFromContext(input: {
 }
 
 function closeDanglingFences(text: string): string {
-  const clean = text
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
+  const clean = stripAnsiEscapes(text)
     .replace(/\r\n|\r/g, "\n")
-    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "");
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, "");
   const lines = clean.split("\n");
   let openChar: string | null = null;
   let openCount = 0;

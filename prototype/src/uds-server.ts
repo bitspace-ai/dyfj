@@ -238,6 +238,13 @@ function sanitizeRpcIdentifier(
   return val;
 }
 
+function stripAnsiEscapes(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
+    .replace(/\x1b[@-Z\\-_]/g, "");
+}
+
 function sanitizeRpcString(
   val: unknown,
   fieldName: string,
@@ -265,11 +272,11 @@ function sanitizeRpcString(
       `${fieldName} exceeds maximum length of ${maxLen} characters`,
     );
   }
-  let s = val;
+  let s = stripAnsiEscapes(val);
   if (options.singleLine !== false) {
-    s = s.replace(/[\r\n\t\x00-\x1F\x7F-\x9F\x1B]/g, " ").replace(/\s+/g, " ");
+    s = s.replace(/[\r\n\t\x00-\x1F\x7F-\x9F]/g, " ").replace(/\s+/g, " ");
   } else {
-    s = s.replace(/\r\n|\r/g, "\n").replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, " ");
+    s = s.replace(/\r\n|\r/g, "\n").replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, " ");
   }
   const trimmed = s.trim();
   if (trimmed.length === 0) {
