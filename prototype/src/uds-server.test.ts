@@ -296,7 +296,7 @@ describe("serveWorkbenchUnix read methods", () => {
         methodCatalog: [
           { id: "runtime/liveness", namespace: "runtime", kind: "read" },
           { id: "runtime/status", namespace: "runtime", kind: "read" },
-          { id: "runtime/stop", namespace: "runtime", kind: "read" },
+          { id: "runtime/stop", namespace: "runtime", kind: "interactive" },
           { id: "surface/snapshot", namespace: "surface", kind: "read" },
           { id: "models/list", namespace: "models", kind: "read" },
           { id: "sessions/list", namespace: "sessions", kind: "read" },
@@ -328,6 +328,16 @@ describe("serveWorkbenchUnix read methods", () => {
     expect(res).toEqual({ status: "stopping" });
     await shutdownPromise;
     expect(shutdownCalled).toBe(true);
+  });
+
+  test("runtime/stop throws internalError when onShutdown is absent", async () => {
+    const serverOptions = { ...fakes };
+    delete serverOptions.onShutdown;
+    const client = await connectClient(await startServer(serverOptions));
+    await expect(client.request("runtime/stop")).rejects.toMatchObject({
+      code: RpcErrorCode.internalError,
+      message: expect.stringContaining("shutdown is not configured"),
+    });
   });
 
   test("tools/list exposes a catalog without executing tools", async () => {

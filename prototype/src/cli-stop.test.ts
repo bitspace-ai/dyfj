@@ -75,8 +75,8 @@ describe("parseArgs for stop subcommand", () => {
   });
 });
 
-describe("formatRuntimeStatus mode annotations", () => {
-  test("annotates background autostarted mode when autostarted is true", () => {
+describe("formatRuntimeStatus launch annotations", () => {
+  test("annotates background autostarted launch when autostarted is true", () => {
     const text = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
       runtime: {
         transport: "uds",
@@ -92,10 +92,10 @@ describe("formatRuntimeStatus mode annotations", () => {
         autostarted: true,
       },
     });
-    expect(text).toContain("mode: background (autostarted)");
+    expect(text).toContain("launch: autostarted (background)");
   });
 
-  test("annotates foreground mode when autostarted is false", () => {
+  test("annotates manual launch when autostarted is false", () => {
     const text = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
       runtime: {
         transport: "uds",
@@ -111,10 +111,10 @@ describe("formatRuntimeStatus mode annotations", () => {
         autostarted: false,
       },
     });
-    expect(text).toContain("mode: foreground");
+    expect(text).toContain("launch: manual");
   });
 
-  test("omits mode line when autostarted is omitted", () => {
+  test("omits launch line when autostarted is omitted", () => {
     const text = formatRuntimeStatus(cfg({ socket: "/run/wb.sock" }), {
       runtime: {
         transport: "uds",
@@ -129,7 +129,7 @@ describe("formatRuntimeStatus mode annotations", () => {
         methods: ["runtime/status", "models/list"],
       },
     });
-    expect(text).not.toContain("mode:");
+    expect(text).not.toContain("launch:");
   });
 });
 
@@ -258,4 +258,35 @@ describe("runStop behavior over real sockets", () => {
     expect(stdout).toEqual([]);
     expect(stderr.join("")).toContain("is unresponsive (timed out)");
   });
+
+  test("reports failure via io.err and returns 1 when runtime does not close within deadline", async () => {
+    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    const socketPath = `${dir}/stubborn.sock`;
+
+    let serverInstance: WorkbenchUnixServer | undefined;
+
+    serverInstance = await serveWorkbenchUnix(socketPath, {
+      onShutdown: () => {
+        // Stubborn server acknowledges stop but does not close
+      },
+    });
+
+    cleanups.push(async () => {
+      if (serverInstance) {
+        try {
+          await serverInstance.close();
+        } catch {}
+      }
+      try {
+        await Deno.remove(dir, { recursive: true });
+      } catch {}
+    });
+
+    const { io, stdout, stderr } = fakeIo();
+    const exitCode = await runStop(cfg({ socket: socketPath }), io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("")).toContain("did not stop within deadline");
+  }, 10_000);
 });

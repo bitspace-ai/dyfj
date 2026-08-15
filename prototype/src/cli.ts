@@ -1384,7 +1384,7 @@ export function socketError(error: unknown, config: CliConfig): string {
   }
   const message = error instanceof Error ? error.message : String(error);
   if (
-    /no such file|file not found|socket not found|connection refused|econnrefused|enoent|os error 2|os error 61/i
+    /no such file|file not found|socket not found|connection refused|econnrefused|enoent|\bos error 2\b|\bos error 61\b/i
       .test(message)
   ) {
     return `dyfj: runtime not reachable at ${config.socket}. ` +
@@ -1711,8 +1711,8 @@ export function formatRuntimeStatus(
     `tool-step limit: ${runtime.maxToolSteps ?? "unknown"}`,
     ...(runtime.autostarted !== undefined
       ? [
-        `mode: ${
-          runtime.autostarted ? "background (autostarted)" : "foreground"
+        `launch: ${
+          runtime.autostarted ? "autostarted (background)" : "manual"
         }`,
       ]
       : []),
@@ -1762,7 +1762,7 @@ export async function runStop(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (
-        /no such file|file not found|socket not found|connection refused|econnrefused|enoent|os error 2|os error 61/i
+        /no such file|file not found|socket not found|connection refused|econnrefused|enoent|\bos error 2\b|\bos error 61\b/i
           .test(message)
       ) {
         io.out(`dyfj: runtime is not running at ${config.socket}\n`);
@@ -1776,20 +1776,31 @@ export async function runStop(
       client.close();
     }
 
-    // Wait briefly (up to 3 seconds) for the runtime socket to be removed or closed
+    // Poll with bounded connection attempts until the socket is verified closed or missing
+    let closed = false;
     const stopDeadline = Date.now() + 3000;
     while (Date.now() < stopDeadline) {
       try {
-        const checkConn = await Deno.connect({
-          transport: "unix",
-          path: config.socket,
-        });
-        checkConn.close();
+        const pollSignal = AbortSignal.timeout(200);
+        const checkClient = await connect(config.socket, undefined, pollSignal);
+        checkClient.close();
         await new Promise((r) => setTimeout(r, 50));
-      } catch {
-        // Socket is closed or removed
-        break;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          /no such file|file not found|socket not found|connection refused|econnrefused|enoent|\bos error 2\b|\bos error 61\b/i
+            .test(message)
+        ) {
+          closed = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
       }
+    }
+
+    if (!closed) {
+      io.err(`dyfj: runtime at ${config.socket} did not stop within deadline`);
+      return 1;
     }
 
     io.out(`dyfj: runtime at ${config.socket} stopped\n`);
@@ -2550,8 +2561,9 @@ Usage:
 Launcher lifecycle (the dyfj wrapper script, local UDS seam only):
   a REPL or one-shot turn probes the socket first and, when no runtime
   answers, starts one detached (output to ~/.dyfj/log/) and waits for it.
-  'start', 'status', 'stop', and help never trigger autostart. Opt out per call
-  with --no-autostart, or standing with DYFJ_AUTOSTART=0.
+  'start', 'status', 'stop', and help (when invoked without a prompt) never
+  trigger autostart. Opt out per call with --no-autostart, or standing with
+  DYFJ_AUTOSTART=0.
 
 REPL commands:
   /model [<slug>]           show or switch the active model (validated slugs);

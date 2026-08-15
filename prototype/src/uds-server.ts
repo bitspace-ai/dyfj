@@ -170,7 +170,7 @@ function asRecord(params: unknown): Record<string, unknown> {
 const METHOD_CATALOG = [
   { id: "runtime/liveness", namespace: "runtime", kind: "read" },
   { id: "runtime/status", namespace: "runtime", kind: "read" },
-  { id: "runtime/stop", namespace: "runtime", kind: "read" },
+  { id: "runtime/stop", namespace: "runtime", kind: "interactive" },
   { id: "surface/snapshot", namespace: "surface", kind: "read" },
   { id: "models/list", namespace: "models", kind: "read" },
   { id: "sessions/list", namespace: "sessions", kind: "read" },
@@ -297,11 +297,15 @@ export function buildWorkbenchHandlers(
     },
 
     "runtime/stop": async () => {
-      if (options.onShutdown) {
-        setTimeout(() => {
-          void options.onShutdown?.();
-        }, 20);
+      if (!options.onShutdown) {
+        throw new RpcError(
+          RpcErrorCode.internalError,
+          "runtime shutdown is not configured on this server",
+        );
       }
+      setTimeout(() => {
+        Promise.resolve(options.onShutdown?.()).catch(() => {});
+      }, 20);
       return {
         status: "stopping",
       };
