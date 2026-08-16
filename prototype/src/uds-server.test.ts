@@ -156,6 +156,50 @@ describe("serveWorkbenchUnix read methods", () => {
     ]);
   });
 
+  test("models/list marks access modality server-side", async () => {
+    const client = await connectClient(
+      await startServer({
+      ...fakes,
+      loadModels: async () =>
+        anyVal([
+          {
+            slug: "local-x",
+            provider: "ollama",
+            baseUrl: "http://127.0.0.1:11434/v1",
+            tier: 0,
+            costInput: 0,
+            costOutput: 0,
+          },
+          {
+            slug: "router-x",
+            provider: "openrouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            tier: 1,
+            costInput: 0.1,
+            costOutput: 0.2,
+          },
+          {
+            slug: "frontier-x",
+            provider: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            tier: 2,
+            costInput: 15,
+            costOutput: 75,
+          },
+        ]),
+      }),
+    );
+    const { models } = anyVal(await client.request("models/list"));
+    expect(models.map((m: { slug: string; modality: string }) => [
+      m.slug,
+      m.modality,
+    ])).toEqual([
+      ["local-x", "local"],
+      ["router-x", "aggregator-hosted"],
+      ["frontier-x", "frontier-hosted"],
+    ]);
+  });
+
   test("runtime/status resolves the bare-turn route past a hosted configured default", async () => {
     const client = await connectClient(
       await startServer({

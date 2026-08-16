@@ -8,6 +8,7 @@
 
 import {
   defaultLocalWorkbenchModels,
+  getModelAccessModality,
   isLocalWorkbenchModel,
   loadWorkbenchModels,
   modelHasCatalogPricing,
@@ -462,14 +463,15 @@ export function buildWorkbenchHandlers(
       } satisfies WorkbenchSurfaceSnapshot;
     },
 
-    // `routable` and `local` are computed server-side (single sources:
-    // modelHasCatalogPricing, isLocalWorkbenchModel) so clients can annotate
-    // rows without duplicating the pricing or locality rules.
+    // `routable`, `local`, and `modality` are computed server-side (single sources:
+    // modelHasCatalogPricing, isLocalWorkbenchModel, getModelAccessModality) so clients
+    // can annotate rows without duplicating pricing, locality, or taxonomy rules.
     "models/list": async () => ({
       models: (await loadModels()).map((model) => ({
         ...model,
         routable: modelHasCatalogPricing(model),
         local: isLocalWorkbenchModel(model),
+        modality: getModelAccessModality(model),
       })),
     }),
 

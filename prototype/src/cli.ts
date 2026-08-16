@@ -2623,9 +2623,11 @@ export async function runModels(
     const unroutable = (m as { routable?: boolean }).routable === false
       ? "  [unpriced — not routable]"
       : "";
+    const modality = (m as { modality?: string }).modality;
+    const modalityStr = modality ? `${modality.padEnd(19)} ` : "";
     io.out(
       `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
-        `${(m.provider ?? "").padEnd(10)} ${
+        `${modalityStr}${(m.provider ?? "").padEnd(10)} ${
           m.displayName ?? ""
         }${unroutable}\n`,
     );
