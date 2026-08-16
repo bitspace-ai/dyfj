@@ -60,6 +60,20 @@ describe("markWorkbenchIdea", () => {
     ).toThrow("idea label cannot be empty");
   });
 
+  test("strips surrounding single or double quotes from label", () => {
+    const idea1 = markWorkbenchIdea({
+      sessionId: "01SESSION_001",
+      label: '"Implement SQLite caching layer for MCP tool calls"',
+    });
+    expect(idea1.label).toBe("Implement SQLite caching layer for MCP tool calls");
+
+    const idea2 = markWorkbenchIdea({
+      sessionId: "01SESSION_001",
+      label: "'Refactor error reporting'",
+    });
+    expect(idea2.label).toBe("Refactor error reporting");
+  });
+
   test("derives description from matching eventId if not explicitly provided", () => {
     const events: WorkbenchSessionEvent[] = [
       {

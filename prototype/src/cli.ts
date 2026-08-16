@@ -53,6 +53,7 @@ import {
   listWorkbenchIdeas,
   listWorkbenchPackets,
   markWorkbenchIdea,
+  stripOuterQuotes,
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
 } from "./idea-packet";
@@ -1947,7 +1948,7 @@ export async function handleReplIdeaCommand(
         i++;
       }
     }
-    const label = labelParts.join(" ").trim();
+    const label = stripOuterQuotes(labelParts.join(" "));
     if (label.length === 0) {
       io.err("usage: /idea mark [--event <event-id>] <label...>");
       return true;
@@ -2281,7 +2282,7 @@ export async function handleReplPacketCommand(
           io.err("error: --title requires a title argument");
           return true;
         }
-        title = titleTokens.join(" ").trim();
+        title = stripOuterQuotes(titleTokens.join(" "));
       } else if (!targetRef && !isOptionLike(token)) {
         targetRef = token;
         i++;

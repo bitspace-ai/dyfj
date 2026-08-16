@@ -39,6 +39,17 @@ export interface WorkbenchWorkPacket {
   createdAt: string;
 }
 
+export function stripOuterQuotes(s: string): string {
+  const trimmed = s.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2)
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 function validateIdentifier(id: string, fieldName = "identifier"): string {
   if (typeof id !== "string") {
     throw new Error(`${fieldName} must be a string`);
@@ -775,7 +786,7 @@ export function markWorkbenchIdea(input: {
     throw new Error("label must be a string");
   }
   const rawLabel = input.label.length > 512 ? input.label.slice(0, 512) : input.label;
-  const label = sanitizeSingleLine(rawLabel).slice(0, 256);
+  const label = sanitizeSingleLine(stripOuterQuotes(rawLabel)).slice(0, 256);
   if (label.length === 0) {
     throw new Error("idea label cannot be empty or whitespace-only");
   }
@@ -996,8 +1007,8 @@ export function draftWorkPacketFromContext(input: {
     operatorIntent = input.operatorIntent.slice(0, 4000).replace(/^[\r\n]+|[\r\n\s]+$/g, "").slice(0, 2000);
   }
 
-  const cleanTitle = sanitizeSingleLine(title);
-  title = cleanTitle || (operatorIntent ? sanitizeSingleLine(operatorIntent).slice(0, 60) : "") || "Draft Work Packet";
+  const cleanTitle = sanitizeSingleLine(stripOuterQuotes(title));
+  title = cleanTitle || (operatorIntent ? sanitizeSingleLine(stripOuterQuotes(operatorIntent)).slice(0, 60) : "") || "Draft Work Packet";
 
   if (!operatorIntent) {
     operatorIntent = title;
