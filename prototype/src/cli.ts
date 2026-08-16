@@ -1727,6 +1727,29 @@ export async function handleReplSessionCommand(
               }>;
             }>;
           };
+          const parseSessionSortKey = (s: {
+            updatedAt?: string;
+            createdAt?: string;
+            sessionId?: string;
+          }): string => {
+            const ts = s.updatedAt || s.createdAt || "";
+            if (ts) {
+              if (/^\d{4}-\d{2}-\d{2}T/.test(ts)) return ts;
+              const parsed = Date.parse(ts);
+              if (!isNaN(parsed)) return new Date(parsed).toISOString();
+              return ts;
+            }
+            return s.sessionId || "";
+          };
+
+          const formatSessionDate = (raw: string): string => {
+            if (!raw) return "";
+            if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+            const parsed = Date.parse(raw);
+            if (!isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+            return raw.slice(0, 10);
+          };
+
           const sessions: Array<{
             sessionId: string;
             taskDescription: string;
@@ -1736,26 +1759,20 @@ export async function handleReplSessionCommand(
           for (const p of res.projects ?? []) {
             if (Array.isArray(p.sessions)) {
               for (const s of p.sessions) {
-                const sActivity = s.updatedAt || s.createdAt || "";
+                const sKey = parseSessionSortKey(s);
                 if (sessions.length < 15) {
                   sessions.push(s);
                   sessions.sort((a, b) =>
-                    (b.updatedAt || b.createdAt || "").localeCompare(
-                      a.updatedAt || a.createdAt || "",
-                    )
+                    parseSessionSortKey(b).localeCompare(parseSessionSortKey(a))
                   );
                 } else if (
-                  sActivity.localeCompare(
-                    sessions[sessions.length - 1].updatedAt ||
-                      sessions[sessions.length - 1].createdAt ||
-                      "",
+                  sKey.localeCompare(
+                    parseSessionSortKey(sessions[sessions.length - 1]),
                   ) > 0
                 ) {
                   sessions[sessions.length - 1] = s;
                   sessions.sort((a, b) =>
-                    (b.updatedAt || b.createdAt || "").localeCompare(
-                      a.updatedAt || a.createdAt || "",
-                    )
+                    parseSessionSortKey(b).localeCompare(parseSessionSortKey(a))
                   );
                 }
               }
@@ -1769,10 +1786,7 @@ export async function handleReplSessionCommand(
               const cleanId = (s.sessionId ?? "")
                 .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
                 .trim();
-              const cleanCreated = (s.createdAt ?? "")
-                .split("T")[0]
-                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
-                .trim();
+              const cleanCreated = formatSessionDate(s.createdAt ?? "");
               const cleanDesc = (s.taskDescription ?? "")
                 .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
                 .trim();

@@ -192,6 +192,33 @@ export interface WorkbenchProjectSessions {
   sessions: WorkbenchSessionSummary[];
 }
 
+export function normalizeSessionTimestamp(val: unknown): string {
+  if (!val) return "";
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed;
+    const parsed = Date.parse(trimmed);
+    if (!isNaN(parsed)) return new Date(parsed).toISOString();
+    return trimmed;
+  }
+  if (typeof val === "number") {
+    return new Date(val).toISOString();
+  }
+  return String(val);
+}
+
+export function compareSessionActivity(
+  a: { updatedAt?: string | null; createdAt?: string | null; sessionId?: string },
+  b: { updatedAt?: string | null; createdAt?: string | null; sessionId?: string },
+): number {
+  const aTime = normalizeSessionTimestamp(a.updatedAt || a.createdAt);
+  const bTime = normalizeSessionTimestamp(b.updatedAt || b.createdAt);
+  const timeCmp = bTime.localeCompare(aTime);
+  if (timeCmp !== 0) return timeCmp;
+  return (b.sessionId || "").localeCompare(a.sessionId || "");
+}
+
 export async function listWorkbenchSessions(options: {
   project?: string;
   limit?: number;
@@ -228,17 +255,24 @@ export async function listWorkbenchSessions(options: {
       taskDescription: row.task_description,
       project,
       status: row.status || "active",
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      createdAt: normalizeSessionTimestamp(row.created_at),
+      updatedAt: normalizeSessionTimestamp(row.updated_at),
     });
+  }
+  // Sort sessions within each group by latest activity
+  for (const group of groups.values()) {
+    group.sessions.sort(compareSessionActivity);
   }
   // Named projects first (most recently active first), unfiled sessions last.
   return [...groups.values()].sort((a, b) => {
     if (a.project === null) return 1;
     if (b.project === null) return -1;
-    const bTime = b.sessions[0]?.updatedAt || b.sessions[0]?.createdAt || "";
-    const aTime = a.sessions[0]?.updatedAt || a.sessions[0]?.createdAt || "";
-    return bTime.localeCompare(aTime);
+    const aFirst = a.sessions[0];
+    const bFirst = b.sessions[0];
+    if (!aFirst && !bFirst) return 0;
+    if (!aFirst) return 1;
+    if (!bFirst) return -1;
+    return compareSessionActivity(aFirst, bFirst);
   });
 }
 

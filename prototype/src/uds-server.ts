@@ -25,6 +25,7 @@ import {
   type WorkbenchWorkPacket,
 } from "./idea-packet";
 import {
+  compareSessionActivity,
   countWorkbenchSessionEvents,
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionRecord,
@@ -530,27 +531,17 @@ export function buildWorkbenchHandlers(
         if (Array.isArray(p.sessions)) {
           for (let j = 0; j < p.sessions.length; j++) {
             const s = p.sessions[j];
-            const activityTime = s.updatedAt || s.createdAt || "";
             if (topSessions.length < limit) {
               topSessions.push({ projectIdx: i, session: s });
-              topSessions.sort((a, b) =>
-                (b.session.updatedAt || b.session.createdAt || "").localeCompare(
-                  a.session.updatedAt || a.session.createdAt || "",
-                )
-              );
+              topSessions.sort((a, b) => compareSessionActivity(a.session, b.session));
             } else if (
-              activityTime.localeCompare(
-                topSessions[topSessions.length - 1].session.updatedAt ||
-                  topSessions[topSessions.length - 1].session.createdAt ||
-                  "",
-              ) > 0
+              compareSessionActivity(
+                s,
+                topSessions[topSessions.length - 1].session,
+              ) < 0
             ) {
               topSessions[topSessions.length - 1] = { projectIdx: i, session: s };
-              topSessions.sort((a, b) =>
-                (b.session.updatedAt || b.session.createdAt || "").localeCompare(
-                  a.session.updatedAt || a.session.createdAt || "",
-                )
-              );
+              topSessions.sort((a, b) => compareSessionActivity(a.session, b.session));
             }
           }
         }

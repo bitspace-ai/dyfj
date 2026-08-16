@@ -4433,6 +4433,54 @@ describe("REPL /packet command", () => {
     expect(oldIdx).toBeLessThan(newIdx);
   });
 
+  test("/session list sorts non-ISO date strings chronologically rather than alphabetically", async () => {
+    const { io, stderr } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: () =>
+          Promise.resolve({
+            projects: [
+              {
+                sessions: [
+                  {
+                    sessionId: "01WED_SESS",
+                    taskDescription: "Wednesday session",
+                    createdAt: "Wed Aug 12 2026 20:58:52 GMT",
+                    updatedAt: "Wed Aug 12 2026 20:58:52 GMT",
+                  },
+                  {
+                    sessionId: "01SUN_SESS",
+                    taskDescription: "Sunday session created today",
+                    createdAt: "Sun Aug 16 2026 05:00:00 GMT",
+                    updatedAt: "Sun Aug 16 2026 05:00:00 GMT",
+                  },
+                ],
+              },
+            ],
+          }),
+        close: () => {},
+      });
+
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    await handleReplSessionCommand(
+      "/session list",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    const output = stderr.join("\n");
+    const sunIdx = output.indexOf("01SUN_SESS");
+    const wedIdx = output.indexOf("01WED_SESS");
+    expect(sunIdx).toBeGreaterThanOrEqual(0);
+    expect(wedIdx).toBeGreaterThanOrEqual(0);
+    // Sunday (Aug 16) must appear before Wednesday (Aug 12) despite 'W' > 'S' alphabetically
+    expect(sunIdx).toBeLessThan(wedIdx);
+    // Verify date is formatted as YYYY-MM-DD
+    expect(output).toContain("2026-08-16");
+    expect(output).toContain("2026-08-12");
+  });
+
   test("/idea mark and /packet draft support -- delimiter for option-looking tokens", async () => {
     const { io, stderr } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];
