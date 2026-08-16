@@ -8,6 +8,7 @@ import {
   estimateTextTokens,
   extractTextToolCalls,
   fetchWithHeaderTimeout,
+  getModelAccessModality,
   HostedProviderCredentialMissingError,
   MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
   parseAnthropicStreamLine,
@@ -167,6 +168,176 @@ describe("parseModelRegistryRows", () => {
       expect(model.contextWindow).toBeUndefined();
       expect(model.maxOutputTokens).toBeUndefined();
     }
+  });
+
+  test("derives access modality across local, frontier, aggregator, and subscription providers", () => {
+    const parsed = parseModelRegistryRows([
+      {
+        slug: "gemma4",
+        display_name: "Gemma 4 27B",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+      },
+      {
+        slug: "claude-sonnet-4-6",
+        display_name: "Claude Sonnet 4.6",
+        provider: "anthropic",
+        api: "anthropic-messages",
+        base_url: "https://api.anthropic.com",
+        tier: "1",
+        cost_input: "3",
+        cost_output: "15",
+        capabilities: '["text","code"]',
+      },
+      {
+        slug: "deepseek/deepseek-v4-flash",
+        display_name: "DeepSeek V4 Flash",
+        provider: "openrouter",
+        api: "openai-completions",
+        base_url: "https://openrouter.ai/api/v1",
+        tier: "1",
+        cost_input: "0.1",
+        cost_output: "0.2",
+        capabilities: '["text","code"]',
+      },
+      {
+        slug: "chatgpt-subscription",
+        display_name: "ChatGPT Plus",
+        provider: "codex-chatgpt",
+        api: "openai-completions",
+        base_url: "",
+        tier: "2",
+        cost_input: "1",
+        cost_output: "1",
+        capabilities: '["text"]',
+      },
+    ]);
+
+    expect(parsed[0].modality).toBe("local");
+    expect(parsed[1].modality).toBe("frontier-hosted");
+    expect(parsed[2].modality).toBe("aggregator-hosted");
+    expect(parsed[3].modality).toBe("subscription-oauth");
+  });
+});
+
+describe("getModelAccessModality", () => {
+  test("identifies loopback endpoints as local", () => {
+    expect(
+      getModelAccessModality({
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434/v1",
+      }),
+    ).toBe("local");
+    expect(
+      getModelAccessModality({
+        provider: "mlx-lm",
+        baseUrl: "http://localhost:18080/v1",
+      }),
+    ).toBe("local");
+  });
+
+  test("classifies non-loopback URLs for local providers as custom-hosted", () => {
+    expect(
+      getModelAccessModality({
+        provider: "ollama",
+        baseUrl: "https://remote-ollama.example.com/v1",
+      }),
+    ).toBe("custom-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "litellm",
+        baseUrl: "https://litellm.example.com/v1",
+      }),
+    ).toBe("custom-hosted");
+  });
+
+  test("identifies openrouter as aggregator-hosted", () => {
+    expect(
+      getModelAccessModality({
+        provider: "openrouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+      }),
+    ).toBe("aggregator-hosted");
+  });
+
+  test("identifies direct vendor APIs as frontier-hosted", () => {
+    expect(
+      getModelAccessModality({
+        provider: "anthropic",
+        baseUrl: "https://api.anthropic.com",
+      }),
+    ).toBe("frontier-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+      }),
+    ).toBe("frontier-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "google",
+        baseUrl: "https://generativelanguage.googleapis.com",
+      }),
+    ).toBe("frontier-hosted");
+  });
+
+  test("classifies non-canonical or proxy vendor endpoints as custom-hosted", () => {
+    expect(
+      getModelAccessModality({
+        provider: "openai",
+        baseUrl: "https://internal-proxy.example.com/v1",
+      }),
+    ).toBe("custom-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "openai",
+        baseUrl: "https://api.openai.com/badpath",
+      }),
+    ).toBe("custom-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "anthropic",
+        baseUrl: "http://localhost:8080",
+      }),
+    ).toBe("custom-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "openrouter",
+        baseUrl: "https://openrouter.ai/garbage",
+      }),
+    ).toBe("custom-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "openrouter",
+        baseUrl: "https://openrouter.proxy.corp/v1",
+      }),
+    ).toBe("custom-hosted");
+  });
+
+  test("identifies local ACP subscription runner adapters as subscription-oauth", () => {
+    expect(
+      getModelAccessModality({
+        provider: "codex-chatgpt",
+        baseUrl: "",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
+        provider: "claude-acp",
+        baseUrl: "http://127.0.0.1:18080/v1",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
+        provider: "codex-chatgpt",
+        baseUrl: "https://remote-proxy.example.com",
+      }),
+    ).toBe("custom-hosted");
   });
 });
 

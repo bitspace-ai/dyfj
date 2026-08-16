@@ -1,6 +1,13 @@
 import { doltQuery } from "./utils";
 import { DomainError, sanitizeBoundaryText } from "./turn-contract";
 
+export type ModelAccessModality =
+  | "local"
+  | "frontier-hosted"
+  | "aggregator-hosted"
+  | "subscription-oauth"
+  | "custom-hosted";
+
 export interface WorkbenchModel {
   slug: string;
   displayName: string;
@@ -19,6 +26,8 @@ export interface WorkbenchModel {
    */
   contextWindow?: number;
   maxOutputTokens?: number;
+  /** Inferred provider access category (local loopback, direct vendor, aggregator, subscription, or custom). */
+  modality?: ModelAccessModality;
 }
 
 export interface WorkbenchRoutingOptions {
@@ -363,18 +372,22 @@ export function parseModelRegistryRows(
       throw new Error(`Invalid model tier for ${row.slug}: ${row.tier}`);
     }
 
+    const provider = row.provider;
+    const baseUrl = row.base_url ?? "";
+
     return {
       slug: row.slug,
       displayName: row.display_name,
-      provider: row.provider,
+      provider,
       api: row.api,
-      baseUrl: row.base_url ?? "",
+      baseUrl,
       tier,
       costInput: toCatalogCost(row.cost_input),
       costOutput: toCatalogCost(row.cost_output),
       capabilities: parseCapabilities(row.capabilities),
       contextWindow: toCatalogLimit(row.context_window),
       maxOutputTokens: toCatalogLimit(row.max_output_tokens),
+      modality: getModelAccessModality({ provider, baseUrl }),
     };
   });
 }
@@ -460,6 +473,7 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       costInput: 0,
       costOutput: 0,
       capabilities: ["text", "code", "reasoning", "long-context"],
+      modality: "local",
     },
     {
       slug: "laguna-xs.2",
@@ -471,6 +485,7 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       costInput: 0,
       costOutput: 0,
       capabilities: ["text", "code", "reasoning", "long-context"],
+      modality: "local",
     },
   ];
 }
@@ -1278,14 +1293,16 @@ export function isLocalWorkbenchModel(model: WorkbenchModel): boolean {
 
 /**
  * Whether a hosted base URL is https — and, when the caller pins an expected
- * host, exactly that host on the default port. The pin is what keeps a bearer
- * key from traveling to a different (still-https) endpoint named by catalog
- * data; `URL` normalizes an explicit `:443` to an empty port, so the port
- * check rejects only genuinely non-default ports.
+ * host and optional path allowlist, exactly that host on the default port and
+ * an allowed path prefix. The pin is what keeps a bearer key from traveling
+ * to a different (still-https) endpoint named by catalog data; `URL`
+ * normalizes an explicit `:443` to an empty port, so the port check rejects
+ * only genuinely non-default ports.
  */
 function isAllowedHostedProviderBaseUrl(
   baseUrl: string,
   expectedHost?: string,
+  allowedPaths?: string[],
 ): boolean {
   let parsed: URL;
   try {
@@ -1294,8 +1311,83 @@ function isAllowedHostedProviderBaseUrl(
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  if (expectedHost === undefined) return true;
-  return parsed.hostname === expectedHost && parsed.port === "";
+  if (
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    return false;
+  }
+  if (
+    expectedHost !== undefined &&
+    (parsed.hostname !== expectedHost || parsed.port !== "")
+  ) {
+    return false;
+  }
+  if (allowedPaths !== undefined) {
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+    if (!allowedPaths.some((p) => normalizedPath === p.replace(/\/+$/, ""))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Classify a model's access modality from its provider identifier and base URL.
+ *
+ * Modality categories:
+ *  - "local": configured via Ollama or MLX-LM over an allowed loopback URL.
+ *  - "frontier-hosted": canonical HTTPS direct vendor endpoints for Anthropic, OpenAI, or Google.
+ *  - "aggregator-hosted": canonical HTTPS OpenRouter gateway endpoints.
+ *  - "subscription-oauth": configured ACP runner adapters (codex-chatgpt, claude-acp) with local or empty base URLs.
+ *  - "custom-hosted": other, proxy, or non-canonical provider endpoints.
+ */
+export function getModelAccessModality(model: {
+  provider: string;
+  baseUrl: string;
+}): ModelAccessModality {
+  if (
+    openAICompatibleLocalProviders.has(model.provider) &&
+    isAllowedLocalProviderBaseUrl(model.baseUrl)
+  ) {
+    return "local";
+  }
+  if (
+    model.provider === "openrouter" &&
+    isAllowedHostedProviderBaseUrl(model.baseUrl, "openrouter.ai", ["/api/v1"])
+  ) {
+    return "aggregator-hosted";
+  }
+  if (
+    (model.provider === "anthropic" &&
+      isAllowedHostedProviderBaseUrl(model.baseUrl, "api.anthropic.com", [
+        "",
+        "/",
+      ])) ||
+    (model.provider === "openai" &&
+      isAllowedHostedProviderBaseUrl(model.baseUrl, "api.openai.com", [
+        "/v1",
+      ])) ||
+    (model.provider === "google" &&
+      isAllowedHostedProviderBaseUrl(
+        model.baseUrl,
+        "generativelanguage.googleapis.com",
+        ["", "/", "/v1beta"],
+      ))
+  ) {
+    return "frontier-hosted";
+  }
+  if (
+    (model.provider === "codex-chatgpt" || model.provider === "claude-acp") &&
+    (model.baseUrl === "" ||
+      model.baseUrl === "acp" ||
+      isAllowedLocalProviderBaseUrl(model.baseUrl))
+  ) {
+    return "subscription-oauth";
+  }
+  return "custom-hosted";
 }
 
 export interface AnthropicStreamEvent {
