@@ -14,7 +14,10 @@ import {
   formatRuntimeEvent,
   formatRuntimeStatus,
   friendlyError,
+  handleReplIdeaCommand,
   handleReplModelCommand,
+  handleReplPacketCommand,
+  handleReplSessionCommand,
   handleTurnRuntimeEvent,
   installRootFromModuleUrl,
   type Io,
@@ -3498,6 +3501,1099 @@ describe("REPL /model", () => {
     );
     expect(config.model).toBe("claude-opus-4-8");
     expect(config.approvePaid).toBeUndefined();
+  });
+});
+
+describe("REPL /session command", () => {
+  test("/session with no active session shows prompt-first message", async () => {
+    const { io, stderr } = fakeIo();
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    const handled = await handleReplSessionCommand(
+      "/session",
+      cfg(),
+      io,
+      state,
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain("no session yet");
+  });
+
+  test("/session with active session displays identity, turns, spend, and resume instructions", async () => {
+    const { io, stderr } = fakeIo();
+    const state = {
+      sessionId: "01TEST_ACTIVE",
+      turnCount: 3,
+      sessionSpendUsd: 0.0425,
+    };
+    const handled = await handleReplSessionCommand(
+      "/session",
+      cfg(),
+      io,
+      state,
+    );
+    expect(handled).toBe(true);
+    const out = stderr.join("\n");
+    expect(out).toContain("session: 01TEST_ACTIVE");
+    expect(out).toContain("repl turns (this session): 3");
+    expect(out).toContain("repl spend (this session): $0.0425");
+    expect(out).toContain("resume later with: dyfj --session 01TEST_ACTIVE");
+  });
+
+  test("/session switch changes active sessionId and resets counts", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ sessionId: "01OLD000000000000000000000" });
+    const state = { sessionId: "01OLD000000000000000000000", turnCount: 5, sessionSpendUsd: 0.1 };
+    const handled = await handleReplSessionCommand(
+      "/session switch 01NEW000000000000000000000",
+      config,
+      io,
+      state,
+    );
+    expect(handled).toBe(true);
+    expect(state.sessionId).toBe("01NEW000000000000000000000");
+    expect(config.sessionId).toBe("01NEW000000000000000000000");
+    expect(state.turnCount).toBe(0);
+    expect(state.sessionSpendUsd).toBe(0);
+    expect(stderr.join("\n")).toContain("switched to session: 01NEW000000000000000000000");
+  });
+
+  test("/session switch rejects oversized session identifiers", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    const state = { sessionId: "01OLD", turnCount: 2, sessionSpendUsd: 0.1 };
+    const handled = await handleReplSessionCommand(
+      `/session switch ${"A".repeat(300)}`,
+      config,
+      io,
+      state,
+    );
+    expect(handled).toBe(true);
+    expect(state.sessionId).toBe("01OLD");
+    expect(stderr.join("\n")).toContain("session identifier must be non-empty and <= 256 characters");
+  });
+
+  test("/session list lists sessions from RPC seam", async () => {
+    const { io, stderr } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string) => {
+          if (method === "sessions/list") {
+            return Promise.resolve({
+              projects: [
+                {
+                  project: "dyfj",
+                  sessions: [
+                    {
+                      sessionId: "01S1",
+                      taskDescription: "First task",
+                      createdAt: "2026-08-15T10:00:00Z",
+                    },
+                  ],
+                },
+              ],
+            });
+          }
+          return Promise.resolve({});
+        },
+        close: () => {},
+      });
+
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    const handled = await handleReplSessionCommand(
+      "/session list",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain("01S1");
+    expect(stderr.join("\n")).toContain("First task");
+  });
+});
+
+describe("REPL /idea command", () => {
+  test("/idea mark captures an idea and emits next-step hint", async () => {
+    const { io, stderr } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (_method: string, params: any) =>
+          Promise.resolve({
+            idea: {
+              ideaId: "01IDEA_TEST",
+              sessionId: params.sessionId,
+              eventId: params.eventId ?? null,
+              label: params.label,
+              description: params.label,
+              createdAt: "2026-08-15T12:00:00Z",
+            },
+          }),
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplIdeaCommand(
+      "/idea mark Rate limit background autostarts",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    const out = stderr.join("\n");
+    expect(out).toContain("marked idea [01IDEA_TEST]: \"Rate limit background autostarts\"");
+    expect(out).toContain("/packet draft 01IDEA_TEST");
+  });
+
+  test("/idea list displays marked ideas", async () => {
+    const { io, stderr } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: () =>
+          Promise.resolve({
+            ideas: [
+              {
+                ideaId: "01IDEA_LIST_1",
+                sessionId: "01ACTIVE_SESS",
+                label: "Validate DOLT_PORT",
+                createdAt: "2026-08-15T12:00:00Z",
+              },
+            ],
+          }),
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplIdeaCommand(
+      "/idea list",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain("01IDEA_LIST_1");
+    expect(stderr.join("\n")).toContain("Validate DOLT_PORT");
+  });
+});
+
+describe("REPL /packet command", () => {
+  test("/packet draft generates work packet markdown and registers packet", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_1",
+              sessionId: params.sessionId,
+              title: params.title ?? "Draft work packet",
+              issueId: params.issueId ?? null,
+            },
+            markdown:
+              "# Work Packet: Draft work packet\n\n## 1. Source Context\n\nContext excerpt\n\n## 2. Operator Intent\n\nIntent\n\n## 3. Proposed Acceptance Criteria\n\n- [ ] Criteria\n\n## 4. Verification & Provenance\n\n- **Primary Verifier:** `human_operator`",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
+    const handled = await handleReplPacketCommand(
+      "/packet draft 01IDEA_1 --issue ISSUE-258 --title Neutral session capture",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "01IDEA_1",
+          eventId: undefined,
+          issueId: "ISSUE-258",
+          title: "Neutral session capture",
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Draft work packet");
+    expect(stderr.join("\n")).toContain(
+      "draft work packet registered: [01PACKET_1]",
+    );
+  });
+
+  test("/packet draft with event-id passes eventId parameter", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          if (method === "ideas/get") {
+            return Promise.resolve({ idea: null });
+          }
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_2",
+              sessionId: params.sessionId,
+              title: "Event packet",
+              issueId: null,
+            },
+            markdown: "# Work Packet: Event packet",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
+    const handled = await handleReplPacketCommand(
+      "/packet draft evt-0123456789",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "ideas/get",
+        params: {
+          ideaId: "evt-0123456789",
+        },
+      },
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: undefined,
+          eventId: "evt-0123456789",
+          issueId: undefined,
+          title: undefined,
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Event packet");
+    expect(stderr.join("\n")).toContain(
+      "draft work packet registered: [01PACKET_2]",
+    );
+  });
+
+  test("/packet draft with positional evt- target prioritizes existing idea ID", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          if (method === "ideas/get") {
+            return Promise.resolve({
+              idea: {
+                ideaId: "evt-custom-idea",
+                sessionId: "01ACTIVE_SESS",
+                label: "Custom Idea Named Evt",
+              },
+            });
+          }
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_3",
+              sessionId: params.sessionId,
+              title: "Idea packet",
+              issueId: null,
+            },
+            markdown: "# Work Packet: Idea packet",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
+    const handled = await handleReplPacketCommand(
+      "/packet draft evt-custom-idea",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "ideas/get",
+        params: {
+          ideaId: "evt-custom-idea",
+        },
+      },
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "evt-custom-idea",
+          eventId: undefined,
+          issueId: undefined,
+          title: undefined,
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Idea packet");
+    expect(stderr.join("\n")).toContain(
+      "draft work packet registered: [01PACKET_3]",
+    );
+  });
+
+  test("/packet draft correctly parses --title before --issue in any order", async () => {
+    const { io, stdout } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_3",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Fix startup",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft 01IDEA_1 --title Fix startup --issue ISSUE-258",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "01IDEA_1",
+          eventId: undefined,
+          issueId: "ISSUE-258",
+          title: "Fix startup",
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Fix startup");
+  });
+
+  test("/packet draft correctly parses multi-word title followed by --issue", async () => {
+    const { io, stdout } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_4",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Document session behavior",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft 01IDEA_1 --title Document session behavior --issue ISSUE-258",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "01IDEA_1",
+          eventId: undefined,
+          issueId: "ISSUE-258",
+          title: "Document session behavior",
+        },
+      },
+    ]);
+    expect(stdout.join("\n")).toContain("# Work Packet: Document session behavior");
+  });
+
+  test("/packet draft supports explicit --event and --idea flags", async () => {
+    const { io } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_5",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Event Flag Test",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft --event custom-event-id --title Event Flag Test",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: undefined,
+          eventId: "custom-event-id",
+          issueId: undefined,
+          title: "Event Flag Test",
+        },
+      },
+    ]);
+  });
+
+  test("/packet draft supports explicit --idea flag", async () => {
+    const { io } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_6",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Idea Flag Test",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft --idea 01IDEA_CUSTOM --title Idea Flag Test",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: "01IDEA_CUSTOM",
+          eventId: undefined,
+          issueId: undefined,
+          title: "Idea Flag Test",
+        },
+      },
+    ]);
+  });
+
+  test("/packet draft supports targetless drafting from session context", async () => {
+    const { io } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_GENERIC",
+              sessionId: params.sessionId,
+              title: params.title,
+              issueId: params.issueId,
+            },
+            markdown: "# Work Packet: Generic Session Task",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft --issue ISSUE-258 --title Investigate startup",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "packets/draft",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          ideaId: undefined,
+          eventId: undefined,
+          issueId: "ISSUE-258",
+          title: "Investigate startup",
+        },
+      },
+    ]);
+  });
+
+  test("/packet draft diagnoses duplicate or conflicting options and invalid option values", async () => {
+    const { io, stderr } = fakeIo();
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --event evt-1",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("cannot specify both positional target and explicit --idea/--event flag");
+
+    const io2 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft --idea 01IDEA --event evt-1",
+      cfg({ unix: true }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("cannot specify both --idea and --event");
+
+    const io3 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --issue ISSUE-1 --issue ISSUE-2",
+      cfg({ unix: true }),
+      io3.io,
+      state,
+    );
+    expect(io3.stderr.join("\n")).toContain("--issue specified multiple times");
+
+    const io4 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --issue --isseu",
+      cfg({ unix: true }),
+      io4.io,
+      state,
+    );
+    expect(io4.stderr.join("\n")).toContain("--issue requires an issue identifier");
+
+    const io5 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet list extra-arg",
+      cfg({ unix: true }),
+      io5.io,
+      state,
+    );
+    expect(io5.stderr.join("\n")).toContain("usage: /packet list");
+
+    const io6 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet show 01PACKET extra-arg",
+      cfg({ unix: true }),
+      io6.io,
+      state,
+    );
+    expect(io6.stderr.join("\n")).toContain("usage: /packet show <packet-id>");
+  });
+
+  test("/idea list and show validate trailing arguments", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const io1 = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea list extra-arg",
+      cfg({ unix: true }),
+      io1.io,
+      state,
+    );
+    expect(io1.stderr.join("\n")).toContain("usage: /idea list");
+
+    const io2 = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea show 01IDEA extra-arg",
+      cfg({ unix: true }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("usage: /idea show <idea-id>");
+  });
+
+  test("/session list and /session switch validate trailing arguments", async () => {
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    const io1 = fakeIo();
+    await handleReplSessionCommand(
+      "/session list extra-arg",
+      cfg({ unix: true }),
+      io1.io,
+      state,
+    );
+    expect(io1.stderr.join("\n")).toContain("usage: /session list");
+
+    const io2 = fakeIo();
+    await handleReplSessionCommand(
+      "/session switch 01SESS extra-arg",
+      cfg({ unix: true }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("usage: /session switch <sessionId>");
+
+    const io3 = fakeIo();
+    await handleReplSessionCommand(
+      "/session switch 01UAT_SESSION_BETA",
+      cfg({ unix: true }),
+      io3.io,
+      state,
+    );
+    expect(io3.stderr.join("\n")).toContain("error: session identifier must be a valid 26-character Crockford Base32 identifier");
+  });
+
+  test("/packet draft rejects duplicate --title flags", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft 01IDEA --title First --title Second",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: --title specified multiple times");
+  });
+
+  test("/packet draft, list, and show work in local mode without unix socket", async () => {
+    const state = { sessionId: "01LOCAL_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const io1 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft --title Local Work Packet --issue ISSUE-100",
+      cfg({ unix: false }),
+      io1.io,
+      state,
+    );
+    expect(io1.stdout.join("\n")).toContain("# Work Packet: Local Work Packet");
+    expect(io1.stderr.join("\n")).toContain("draft work packet registered");
+
+    const match = io1.stderr.join("\n").match(/draft work packet registered: \[([^\]]+)\]/);
+    const packetId = match ? match[1] : "01PACKET";
+
+    const io2 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet list",
+      cfg({ unix: false }),
+      io2.io,
+      state,
+    );
+    expect(io2.stderr.join("\n")).toContain("Work packets for session 01LOCAL_SESS:");
+    expect(io2.stderr.join("\n")).toContain("Local Work Packet");
+
+    const io3 = fakeIo();
+    await handleReplPacketCommand(
+      `/packet show ${packetId}`,
+      cfg({ unix: false }),
+      io3.io,
+      state,
+    );
+    expect(io3.stdout.join("\n")).toContain("# Work Packet: Local Work Packet");
+
+    const io4 = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft MISSING_IDEA",
+      cfg({ unix: false }),
+      io4.io,
+      state,
+    );
+    expect(io4.stderr.join("\n")).toContain("dyfj: failed to draft packet");
+  });
+
+  test("/idea mark --event rejects option-looking event ID", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark --event --evnt evt-1 Fix startup",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("usage: /idea mark --event <event-id> <label...>");
+  });
+
+  test("/idea mark rejects unrecognized options", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark --evnt evt-1 Fix startup",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: unexpected argument \"--evnt\"");
+  });
+
+  test("/idea mark rejects single-dash unexpected option flags and option-like event IDs", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io: io1, stderr: stderr1 } = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark -evnt evt-1 Fix startup",
+      cfg({ unix: true }),
+      io1,
+      state,
+    );
+    expect(stderr1.join("\n")).toContain("error: unexpected argument \"-evnt\"");
+
+    const { io: io2, stderr: stderr2 } = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark --event -evnt Fix startup",
+      cfg({ unix: true }),
+      io2,
+      state,
+    );
+    expect(stderr2.join("\n")).toContain("usage: /idea mark --event <event-id> <label...>");
+  });
+
+  test("/packet draft rejects unexpected option flags following --title", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft --title Fix --isseu ISSUE-1",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: unexpected argument \"--isseu\"");
+  });
+
+  test("/packet draft rejects single-dash unexpected option flags", async () => {
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplPacketCommand(
+      "/packet draft -isseu ISSUE-1",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: unexpected argument \"-isseu\"");
+  });
+
+  test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {
+    const { io, stderr } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          return Promise.resolve({
+            idea: {
+              ideaId: "01IDEA_EVT_LABEL",
+              sessionId: params.sessionId,
+              eventId: params.eventId ?? null,
+              label: params.label,
+              description: params.label,
+              createdAt: "2026-08-15T12:00:00Z",
+            },
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplIdeaCommand(
+      "/idea mark evt-driven architecture",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handled).toBe(true);
+    expect(recordedCalls).toEqual([
+      {
+        method: "ideas/mark",
+        params: {
+          sessionId: "01ACTIVE_SESS",
+          eventId: undefined,
+          label: "evt-driven architecture",
+        },
+      },
+    ]);
+    expect(stderr.join("\n")).toContain("marked idea [01IDEA_EVT_LABEL]: \"evt-driven architecture\"");
+  });
+
+  test("/idea mark and /packet draft support local event references with sessionState.events", async () => {
+    const state = {
+      sessionId: "01LOCAL_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+      events: [
+        {
+          sessionId: "01LOCAL_SESS",
+          eventId: "evt_a_1",
+          eventType: "model_response",
+          content: "Let's capture this thought.",
+          createdAt: "2026-08-15T12:00:00Z",
+        } as any,
+      ],
+    };
+
+    const io1 = fakeIo();
+    const handledIdea = await handleReplIdeaCommand(
+      "/idea mark --event evt_a_1 Follow-up task",
+      cfg({ unix: false }),
+      io1.io,
+      state,
+    );
+    expect(handledIdea).toBe(true);
+    expect(io1.stderr.join("\n")).toContain("marked idea");
+
+    const io2 = fakeIo();
+    const handledPacket = await handleReplPacketCommand(
+      "/packet draft evt_a_1 --title Local Event Packet",
+      cfg({ unix: false }),
+      io2.io,
+      state,
+    );
+    expect(handledPacket).toBe(true);
+    expect(io2.stdout.join("\n")).toContain("# Work Packet: Local Event Packet");
+    expect(io2.stderr.join("\n")).toContain("draft work packet registered");
+
+    // Rejects non-existent event in local mode
+    const io3 = fakeIo();
+    await handleReplIdeaCommand(
+      "/idea mark --event evt_missing Non-existent",
+      cfg({ unix: false }),
+      io3.io,
+      state,
+    );
+    expect(io3.stderr.join("\n")).toContain("error: event \"evt_missing\" not found in current local session context");
+  });
+
+  test("/session list orders sessions by latest activity timestamp (updatedAt)", async () => {
+    const { io, stderr } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: () =>
+          Promise.resolve({
+            projects: [
+              {
+                sessions: [
+                  {
+                    sessionId: "01NEW_SESS",
+                    taskDescription: "New session created yesterday untouched",
+                    createdAt: "2026-08-14T00:00:00Z",
+                    updatedAt: "2026-08-14T00:00:00Z",
+                  },
+                  {
+                    sessionId: "01OLD_SESS",
+                    taskDescription: "Old session created earlier but updated today",
+                    createdAt: "2026-01-01T00:00:00Z",
+                    updatedAt: "2026-08-15T12:00:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+        close: () => {},
+      });
+
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    await handleReplSessionCommand(
+      "/session list",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    const output = stderr.join("\n");
+    const oldIdx = output.indexOf("01OLD_SESS");
+    const newIdx = output.indexOf("01NEW_SESS");
+    expect(oldIdx).toBeGreaterThanOrEqual(0);
+    expect(newIdx).toBeGreaterThanOrEqual(0);
+    expect(oldIdx).toBeLessThan(newIdx);
+  });
+
+  test("/session list sorts non-ISO date strings chronologically rather than alphabetically", async () => {
+    const { io, stderr } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: () =>
+          Promise.resolve({
+            projects: [
+              {
+                sessions: [
+                  {
+                    sessionId: "01WED_SESS",
+                    taskDescription: "Wednesday session",
+                    createdAt: "Wed Aug 12 2026 20:58:52 GMT",
+                    updatedAt: "Wed Aug 12 2026 20:58:52 GMT",
+                  },
+                  {
+                    sessionId: "01SUN_SESS",
+                    taskDescription: "Sunday session created today",
+                    createdAt: "Sun Aug 16 2026 05:00:00 GMT",
+                    updatedAt: "Sun Aug 16 2026 05:00:00 GMT",
+                  },
+                ],
+              },
+            ],
+          }),
+        close: () => {},
+      });
+
+    const state = { turnCount: 0, sessionSpendUsd: 0 };
+    await handleReplSessionCommand(
+      "/session list",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    const output = stderr.join("\n");
+    const sunIdx = output.indexOf("01SUN_SESS");
+    const wedIdx = output.indexOf("01WED_SESS");
+    expect(sunIdx).toBeGreaterThanOrEqual(0);
+    expect(wedIdx).toBeGreaterThanOrEqual(0);
+    // Sunday (Aug 16) must appear before Wednesday (Aug 12) despite 'W' > 'S' alphabetically
+    expect(sunIdx).toBeLessThan(wedIdx);
+    // Verify date is formatted as YYYY-MM-DD
+    expect(output).toContain("2026-08-16");
+    expect(output).toContain("2026-08-12");
+  });
+
+  test("/idea mark and /packet draft support -- delimiter for option-looking tokens", async () => {
+    const { io } = fakeIo();
+    const recordedCalls: Array<{ method: string; params: any }> = [];
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string, params: any) => {
+          recordedCalls.push({ method, params });
+          if (method === "ideas/mark") {
+            return Promise.resolve({
+              idea: {
+                ideaId: "01IDEA_WERROR",
+                sessionId: params.sessionId,
+                label: params.label,
+                createdAt: "2026-08-15T12:00:00Z",
+              },
+            });
+          }
+          return Promise.resolve({
+            packet: {
+              packetId: "01PACKET_WERROR",
+              sessionId: params.sessionId,
+              title: params.title,
+            },
+            markdown: "# Work Packet: Document -Werror",
+          });
+        },
+        close: () => {},
+      });
+
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handledIdea = await handleReplIdeaCommand(
+      "/idea mark -- Support -Werror builds",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handledIdea).toBe(true);
+    expect(recordedCalls[0].params.label).toBe("Support -Werror builds");
+
+    const handledPacket = await handleReplPacketCommand(
+      "/packet draft --title -- Document -Werror",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+    expect(handledPacket).toBe(true);
+    expect(recordedCalls[1].params.title).toBe("Document -Werror");
+  });
+
+  test("/session switch resets local session events", async () => {
+    const state: any = {
+      sessionId: "01TESTA0000000000000000000",
+      turnCount: 3,
+      sessionSpendUsd: 0.1,
+      events: [{ eventId: "evt_u_1", sessionId: "01TESTA0000000000000000000" }],
+      eventCounter: 3,
+    };
+    const { io } = fakeIo();
+    const fakeConnect: ConnectFn = () =>
+      Promise.resolve({
+        request: () => Promise.resolve({ exists: true }),
+        close: () => {},
+      });
+
+    await handleReplSessionCommand(
+      "/session switch 01TESTB0000000000000000000",
+      cfg({ unix: true }),
+      io,
+      state,
+      fakeConnect,
+    );
+
+    expect(state.sessionId).toBe("01TESTB0000000000000000000");
+    expect(state.turnCount).toBe(0);
+    expect(state.events).toEqual([]);
+    expect(state.eventCounter).toBe(3);
+  });
+
+  test("/session switch rejects session identifiers with control characters or whitespace", async () => {
+    const state: any = { sessionId: "01SESSION_A", turnCount: 0, sessionSpendUsd: 0 };
+    const { io, stderr } = fakeIo();
+    await handleReplSessionCommand(
+      "/session switch session\x1Bid",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(stderr.join("\n")).toContain("error: session identifier cannot contain control characters or whitespace");
+    expect(state.sessionId).toBe("01SESSION_A");
+  });
+
+  test("/packet draft -- rejects extra positional arguments", async () => {
+    const { io, stderr } = fakeIo();
+    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const handled = await handleReplPacketCommand(
+      "/packet draft -- IDEA_A IDEA_B",
+      cfg({ unix: true }),
+      io,
+      state,
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain('error: unexpected argument "IDEA_B"');
   });
 });
 

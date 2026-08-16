@@ -254,7 +254,9 @@ describe("fetchWorkbenchSessionEvents", () => {
       },
     });
     expect(calls[0].sql).toContain("WHERE session_id = ?");
-    expect(calls[0].sql).toContain("ORDER BY created_at ASC");
+    expect(calls[0].sql).toContain(
+      "ORDER BY created_at DESC, event_id DESC LIMIT 5000;",
+    );
     expect(calls[0].sql).not.toContain("AS OF");
     expect(calls[0].params).toEqual(["01ABCDEF0123456789ABCDEF01"]);
   });
@@ -675,7 +677,10 @@ describe("fetchWorkbenchSessionEvents", () => {
     }));
     const events = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () => Promise.resolve(rows as unknown as Record<string, string>[]),
+      query: () =>
+        Promise.resolve(
+          rows.slice().reverse() as unknown as Record<string, string>[],
+        ),
     });
     expect(events.map((e) => e.toolIsError)).toEqual([
       true,
@@ -1087,5 +1092,52 @@ describe("buildConversationMessages", () => {
     expect(toolMsg && "toolCallId" in toolMsg && toolMsg.toolCallId).toBe(
       "call_1",
     );
+  });
+
+  test("fetchWorkbenchSessionEvents rejects invalid limits", async () => {
+    await expect(
+      fetchWorkbenchSessionEvents({
+        sessionId: "s1",
+        limit: 0,
+        query: async () => [],
+      }),
+    ).rejects.toThrow("limit must be a positive integer");
+
+    await expect(
+      fetchWorkbenchSessionEvents({
+        sessionId: "s1",
+        limit: -3,
+        query: async () => [],
+      }),
+    ).rejects.toThrow("limit must be a positive integer");
+  });
+
+  test("fetchWorkbenchSessionEvents preserves explicit descending order", async () => {
+    const executedSql: string[] = [];
+    const events = await fetchWorkbenchSessionEvents({
+      sessionId: "s1",
+      limit: 10,
+      order: "desc",
+      query: async (sql) => {
+        executedSql.push(sql);
+        return [
+          {
+            event_id: "evt-2",
+            event_type: "model_response",
+            created_at: "2026-08-15 12:01:00",
+          } as any,
+          {
+            event_id: "evt-1",
+            event_type: "session_start",
+            created_at: "2026-08-15 12:00:00",
+          } as any,
+        ];
+      },
+    });
+
+    expect(executedSql[0]).toContain(
+      "ORDER BY created_at DESC, event_id DESC LIMIT 10",
+    );
+    expect(events.map((e) => e.eventId)).toEqual(["evt-2", "evt-1"]);
   });
 });

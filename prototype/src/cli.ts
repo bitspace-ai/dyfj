@@ -20,6 +20,7 @@ import {
   isSupersedingRetryStarted,
   MAX_ERROR_SUMMARY_BYTES,
   sanitizeBoundaryText,
+  SESSION_ID_SHAPE,
   summarizeError,
   type TurnReceipt,
   type TurnStreamFrame,
@@ -44,6 +45,20 @@ import { secretsRunGrant } from "./secrets";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown";
 import { type BusySpinner, createBusySpinner } from "./busy-spinner";
 import { hasDotPathComponent } from "./lexical-path";
+import {
+  defaultIdeaPacketRegistry,
+  draftWorkPacketFromContext,
+  formatWorkPacketMarkdown,
+  getWorkbenchIdea,
+  getWorkbenchPacket,
+  listWorkbenchIdeas,
+  listWorkbenchPackets,
+  markWorkbenchIdea,
+  stripOuterQuotes,
+  type WorkbenchIdea,
+  type WorkbenchWorkPacket,
+} from "./idea-packet";
+import type { WorkbenchSessionEvent } from "./sessions";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and SSE frame shapes are defined once in turn-contract.ts and
@@ -727,30 +742,48 @@ export async function runRepl(
     const posture = await fetchSessionPosture(config, connect);
     if (!("error" in posture)) io.err(formatPostureLine(posture));
   }
-  let sessionId = config.sessionId;
-  // Running spend across this REPL session: the sum of per-turn receipt costs,
-  // accumulated client-side so the displayed total always matches the receipts
-  // the operator has seen.
-  let sessionSpendUsd = 0;
+  const sessionState: ReplSessionState = {
+    sessionId: config.sessionId,
+    turnCount: 0,
+    sessionSpendUsd: 0,
+    eventCounter: 0,
+  };
   let exitCode = 0;
   try {
     for (;;) {
       const line = await io.readLine(replPrompt(config.color));
       if (line === null) break;
+      if (line.length > 32768) {
+        io.err("command line exceeds maximum length of 32768 characters");
+        continue;
+      }
       const prompt = line.trim();
       if (prompt.length === 0) continue;
       if (prompt === "/exit" || prompt === "/quit") break;
-      if (prompt === "/session") {
-        if (sessionId === undefined) {
-          io.err("no session yet — send a prompt first");
-        } else {
-          io.err(`session: ${sessionId}`);
-          io.err(`resume later with: dyfj --session ${sessionId}`);
-        }
-        continue;
-      }
+      if (
+        await handleReplSessionCommand(
+          prompt,
+          config,
+          io,
+          sessionState,
+          connect,
+        )
+      ) continue;
+      if (
+        await handleReplIdeaCommand(prompt, config, io, sessionState, connect)
+      ) continue;
+      if (
+        await handleReplPacketCommand(
+          prompt,
+          config,
+          io,
+          sessionState,
+          connect,
+        )
+      ) continue;
       if (await handleReplModelCommand(prompt, config, io, connect)) continue;
       try {
+        const body = buildTurnBody(prompt, config, sessionState.sessionId);
         const output = createTurnOutputHandlers(config, io);
         const spinner = createTurnSpinner(config, io);
         const abortController = config.unix ? new AbortController() : undefined;
@@ -774,7 +807,6 @@ export async function runRepl(
             handlers.onEvent(event);
           },
         };
-        const body = buildTurnBody(prompt, config, sessionId);
         let interruptRequested = false;
         const interrupt = () => {
           if (interruptRequested) return;
@@ -813,7 +845,7 @@ export async function runRepl(
               connect,
             )
             : await streamTurn(config, body, terminalHandlers, fetchFn);
-          sessionId = result.sessionId;
+          sessionState.sessionId = result.sessionId;
         } catch (error) {
           turnFailed = true;
           throw error;
@@ -843,12 +875,36 @@ export async function runRepl(
         if (result.stopReason === "aborted") {
           handlers.onEvent({ type: "turnAborted" });
         }
-        if ("cost" in result) sessionSpendUsd += result.cost.totalUsd;
+        sessionState.sessionId = result.sessionId;
+        sessionState.turnCount++;
+        sessionState.eventCounter = (sessionState.eventCounter ?? 0) + 1;
+        const eventNum = sessionState.eventCounter;
+        if ("cost" in result) sessionState.sessionSpendUsd += result.cost.totalUsd;
+        if (!sessionState.events) sessionState.events = [];
+        sessionState.events.push(createCliSessionEvent({
+          eventId: `evt_u_${eventNum}`,
+          sessionId: result.sessionId,
+          eventType: "session_start",
+          content: prompt,
+          createdAt: new Date().toISOString(),
+        }));
+        if (result.text) {
+          sessionState.events.push(createCliSessionEvent({
+            eventId: `evt_a_${eventNum}`,
+            sessionId: result.sessionId,
+            eventType: "model_response",
+            content: result.text,
+            createdAt: new Date().toISOString(),
+          }));
+        }
+        if (sessionState.events.length > 50) {
+          sessionState.events = sessionState.events.slice(-50);
+        }
         io.err(
           formatReceipt(
             result,
             config.color,
-            "cost" in result ? sessionSpendUsd : undefined,
+            "cost" in result ? sessionState.sessionSpendUsd : undefined,
           ),
         );
       } catch (error) {
@@ -1517,13 +1573,988 @@ export async function fetchSessionPosture(
   }
 }
 
+function createCliSessionEvent(input: {
+  sessionId?: string;
+  eventId: string;
+  eventType: string;
+  content: string;
+  createdAt: string;
+}): WorkbenchSessionEvent {
+  const boundedContent = input.content.length > 4000
+    ? input.content.slice(0, 3950) + "\n...[truncated]"
+    : input.content;
+  return {
+    sessionId: input.sessionId,
+    eventId: input.eventId,
+    eventType: input.eventType,
+    traceId: "cli_trace",
+    spanId: "cli_span",
+    parentSpanId: null,
+    traceFlags: null,
+    traceState: null,
+    spanKind: null,
+    parentIsRemote: null,
+    principalId: "operator",
+    modelId: null,
+    provider: null,
+    api: null,
+    content: boundedContent,
+    stopReason: null,
+    tokensInput: null,
+    tokensOutput: null,
+    tokensCacheRead: null,
+    tokensCacheWrite: null,
+    costTotal: null,
+    durationMs: null,
+    providerCallOrder: null,
+    providerCallPurpose: null,
+    providerErrorClass: null,
+    unparsedToolCallCount: null,
+    unparsedToolCallCountIsLowerBound: null,
+    runnerKind: null,
+    runnerProfile: null,
+    runnerProtocol: null,
+    runnerProtocolVersion: null,
+    runnerStopReason: null,
+    runnerExternalSessionId: null,
+    runnerAgentName: null,
+    runnerAgentVersion: null,
+    runnerTransport: null,
+    runnerAccessRoute: null,
+    runnerCostBasis: null,
+    runnerWorkspace: null,
+    runnerCapabilities: null,
+    runnerEvidenceScope: null,
+    runnerRouteSource: null,
+    runnerAuthType: null,
+    permissionVerdict: null,
+    toolName: null,
+    toolCallId: null,
+    toolArguments: null,
+    toolResult: null,
+    toolIsError: null,
+    createdAt: input.createdAt,
+  };
+}
+
+export interface ReplSessionState {
+  sessionId?: string;
+  turnCount: number;
+  sessionSpendUsd: number;
+  workspace?: string;
+  events?: WorkbenchSessionEvent[];
+  eventCounter?: number;
+}
+
+function formatShellArg(arg: string): string {
+  if (/^[a-zA-Z0-9_.-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+export async function handleReplSessionCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  sessionState: ReplSessionState,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/session")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
+  if (parts[0] !== "/session") return false;
+
+  const sub = parts[1];
+  if (!sub) {
+    if (!sessionState.sessionId) {
+      io.err("no session yet — send a prompt first");
+    } else {
+      const cleanSessionId = (sessionState.sessionId ?? "")
+        .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+        .trim();
+      io.err(`session: ${cleanSessionId}`);
+      if (sessionState.turnCount === 0 && config.unix) {
+        try {
+          const client = await connect(config.socket);
+          try {
+            const inspect = await client.request("sessions/inspect", {
+              sessionId: cleanSessionId,
+            }) as { eventCount?: number; workspace?: string | null };
+            if (inspect.eventCount !== undefined && inspect.eventCount > 0) {
+              io.err(`events: ${inspect.eventCount}`);
+            }
+            if (inspect.workspace) {
+              const cleanWorkspace = inspect.workspace
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+                .trim();
+              io.err(`workspace: ${cleanWorkspace}`);
+            }
+          } finally {
+            client.close();
+          }
+        } catch {
+          // inspection optional
+        }
+      }
+      io.err(`repl turns (this session): ${sessionState.turnCount}`);
+      io.err(
+        `repl spend (this session): $${
+          sessionState.sessionSpendUsd.toFixed(4)
+        }`,
+      );
+      io.err(`resume later with: dyfj --session ${formatShellArg(cleanSessionId)}`);
+    }
+    return true;
+  }
+
+  if (sub === "list") {
+    if (parts.length > 2) {
+      io.err("usage: /session list");
+      return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("sessions/list", { limit: 15 }) as {
+            projects?: Array<{
+              sessions: Array<{
+                sessionId: string;
+                taskDescription: string;
+                createdAt: string;
+                updatedAt?: string;
+              }>;
+            }>;
+          };
+          const parseSessionSortKey = (s: {
+            updatedAt?: string;
+            createdAt?: string;
+            sessionId?: string;
+          }): string => {
+            const ts = s.updatedAt || s.createdAt || "";
+            if (ts) {
+              if (/^\d{4}-\d{2}-\d{2}T/.test(ts)) return ts;
+              const parsed = Date.parse(ts);
+              if (!isNaN(parsed)) return new Date(parsed).toISOString();
+              return ts;
+            }
+            return s.sessionId || "";
+          };
+
+          const formatSessionDate = (raw: string): string => {
+            if (!raw) return "";
+            if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+            const parsed = Date.parse(raw);
+            if (!isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+            return raw.slice(0, 10);
+          };
+
+          const sessions: Array<{
+            sessionId: string;
+            taskDescription: string;
+            createdAt: string;
+            updatedAt?: string;
+          }> = [];
+          for (const p of res.projects ?? []) {
+            if (Array.isArray(p.sessions)) {
+              for (const s of p.sessions) {
+                const sKey = parseSessionSortKey(s);
+                if (sessions.length < 15) {
+                  sessions.push(s);
+                  sessions.sort((a, b) =>
+                    parseSessionSortKey(b).localeCompare(parseSessionSortKey(a))
+                  );
+                } else if (
+                  sKey.localeCompare(
+                    parseSessionSortKey(sessions[sessions.length - 1]),
+                  ) > 0
+                ) {
+                  sessions[sessions.length - 1] = s;
+                  sessions.sort((a, b) =>
+                    parseSessionSortKey(b).localeCompare(parseSessionSortKey(a))
+                  );
+                }
+              }
+            }
+          }
+          if (sessions.length === 0) {
+            io.err("no sessions found");
+          } else {
+            io.err("Recent sessions:");
+            for (const s of sessions) {
+              const cleanId = (s.sessionId ?? "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+                .trim();
+              const cleanCreated = formatSessionDate(s.createdAt ?? "");
+              const cleanDesc = (s.taskDescription ?? "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+                .trim();
+              io.err(
+                `  ${cleanId}  ${cleanCreated}  ${cleanDesc}`,
+              );
+            }
+            io.err(
+              "resume with: /session switch <sessionId> or dyfj --session <sessionId>",
+            );
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to list sessions: ${summarizeError(e)}`);
+      }
+    } else {
+      io.err("session listing over HTTP is not supported in REPL");
+    }
+    return true;
+  }
+
+  if (sub === "switch") {
+    if (parts.length !== 3) {
+      io.err("usage: /session switch <sessionId>");
+      return true;
+    }
+    const rawTargetId = parts[2];
+    if (rawTargetId.length === 0 || rawTargetId.length > 256) {
+      io.err(
+        "error: session identifier must be non-empty and <= 256 characters",
+      );
+      return true;
+    }
+    if (/[\s\x00-\x1F\x7F-\x9F\x1B]/.test(rawTargetId)) {
+      io.err(
+        "error: session identifier cannot contain control characters or whitespace",
+      );
+      return true;
+    }
+    const targetId = rawTargetId.trim();
+    if (!SESSION_ID_SHAPE.test(targetId)) {
+      io.err(
+        "error: session identifier must be a valid 26-character Crockford Base32 identifier (e.g. from /session list)",
+      );
+      return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const inspect = await client.request("sessions/inspect", {
+            sessionId: targetId,
+          }) as { exists?: boolean };
+          if (inspect.exists === false) {
+            io.err(`warning: session "${targetId}" was not found on runtime`);
+          }
+        } finally {
+          client.close();
+        }
+      } catch {
+        // inspection optional
+      }
+    }
+    sessionState.sessionId = targetId;
+    config.sessionId = targetId;
+    sessionState.turnCount = 0;
+    sessionState.sessionSpendUsd = 0;
+    sessionState.events = [];
+    io.err(`switched to session: ${targetId}`);
+    return true;
+  }
+
+  io.err(
+    "unknown /session subcommand. Usage: /session, /session list, /session switch <sessionId>",
+  );
+  return true;
+}
+
+function isOptionLike(token: string): boolean {
+  return token.startsWith("-") && token.length > 1;
+}
+
+export async function handleReplIdeaCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  sessionState: ReplSessionState,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/idea")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
+  if (parts[0] !== "/idea") return false;
+
+  const sub = parts[1];
+  if (!sub || sub === "help") {
+    io.err("Idea capture commands:");
+    io.err("  /idea mark [--event <event-id>] [--] <label...>   mark an idea in this session");
+    io.err("  /idea list                                   list marked ideas for this session");
+    io.err("  /idea show <idea-id>                         show details of a marked idea");
+    return true;
+  }
+
+  if (!sessionState.sessionId) {
+    io.err("no session yet — send a prompt first before marking ideas");
+    return true;
+  }
+
+  if (sub === "mark") {
+    if (parts.length < 3) {
+      io.err("usage: /idea mark [--event <event-id>] <label...>");
+      return true;
+    }
+    const tokens = parts.slice(2);
+    let eventId: string | undefined;
+    const labelParts: string[] = [];
+    let i = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (token === "--") {
+        i++;
+        while (i < tokens.length) {
+          labelParts.push(tokens[i]);
+          i++;
+        }
+        break;
+      }
+      if (token === "--event" || token === "-e") {
+        if (eventId !== undefined) {
+          io.err("error: --event specified multiple times");
+          return true;
+        }
+        i++;
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
+          io.err("usage: /idea mark --event <event-id> <label...>");
+          return true;
+        }
+        eventId = tokens[i];
+        i++;
+      } else if (token.startsWith("--event=")) {
+        if (eventId !== undefined) {
+          io.err("error: --event specified multiple times");
+          return true;
+        }
+        const val = token.slice("--event=".length);
+        if (val.length === 0 || isOptionLike(val)) {
+          io.err("usage: /idea mark --event <event-id> <label...>");
+          return true;
+        }
+        eventId = val;
+        i++;
+      } else if (isOptionLike(token)) {
+        const safeToken = token.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+        io.err(`error: unexpected argument "${safeToken}"`);
+        return true;
+      } else {
+        labelParts.push(token);
+        i++;
+      }
+    }
+    const label = stripOuterQuotes(labelParts.join(" "));
+    if (label.length === 0) {
+      io.err("usage: /idea mark [--event <event-id>] <label...>");
+      return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("ideas/mark", {
+            sessionId: sessionState.sessionId,
+            label,
+            eventId,
+          }) as { idea: WorkbenchIdea };
+          const cleanId = (res.idea.ideaId ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
+          const cleanLabel = (res.idea.label ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+            .trim();
+          io.err(`marked idea [${cleanId}]: "${cleanLabel}"`);
+          io.err(`draft packet with: /packet draft ${cleanId}`);
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to mark idea: ${summarizeError(e)}`);
+      }
+    } else {
+      if (eventId) {
+        const found = sessionState.events?.some(
+          (e) => e.eventId === eventId && e.sessionId === sessionState.sessionId,
+        );
+        const cleanEvId = eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+        if (!found) {
+          io.err(
+            `error: event "${cleanEvId}" not found in current local session context`,
+          );
+          return true;
+        }
+      }
+      try {
+        const idea = markWorkbenchIdea({
+          sessionId: sessionState.sessionId,
+          eventId,
+          label,
+          events: sessionState.events,
+        });
+        const cleanId = (idea.ideaId ?? "")
+          .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+          .trim();
+        const cleanLabel = (idea.label ?? "")
+          .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+          .trim();
+        io.err(`marked idea [${cleanId}]: "${cleanLabel}"`);
+        io.err(`draft packet with: /packet draft ${cleanId}`);
+      } catch (e) {
+        io.err(`dyfj: failed to mark idea: ${summarizeError(e)}`);
+      }
+    }
+    return true;
+  }
+
+  if (sub === "list") {
+    if (parts.length > 2) {
+      io.err("usage: /idea list");
+      return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("ideas/list", {
+            sessionId: sessionState.sessionId,
+          }) as { ideas: WorkbenchIdea[] };
+          const cleanSessId = (sessionState.sessionId ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
+          if (res.ideas.length === 0) {
+            io.err(`no ideas marked for session ${cleanSessId}`);
+          } else {
+            io.err(`Ideas for session ${cleanSessId}:`);
+            for (const item of res.ideas) {
+              const cleanId = (item.ideaId ?? "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+                .trim();
+              const cleanLabel = (item.label ?? "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+                .trim();
+              const cleanDate = (item.createdAt ?? "")
+                .split("T")[0]
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+                .trim();
+              io.err(`  [${cleanId}] ${cleanLabel} (${cleanDate})`);
+            }
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to list ideas: ${summarizeError(e)}`);
+      }
+    } else {
+      const ideas = listWorkbenchIdeas({ sessionId: sessionState.sessionId });
+      if (ideas.length === 0) {
+        io.err(`no ideas marked for session ${sessionState.sessionId}`);
+      } else {
+        io.err(`Ideas for session ${sessionState.sessionId}:`);
+        for (const item of ideas) {
+          const cleanId = (item.ideaId ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
+          const cleanLabel = (item.label ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+            .trim();
+          const cleanDate = (item.createdAt ?? "")
+            .split("T")[0]
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
+          io.err(`  [${cleanId}] ${cleanLabel} (${cleanDate})`);
+        }
+      }
+    }
+    return true;
+  }
+
+  if (sub === "show") {
+    if (parts.length !== 3) {
+      io.err("usage: /idea show <idea-id>");
+      return true;
+    }
+    const ideaId = parts[2];
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("ideas/get", { ideaId }) as {
+            idea: WorkbenchIdea | null;
+          };
+          if (!res.idea) {
+            io.err(`idea not found: ${ideaId}`);
+          } else {
+            const id = res.idea;
+            const cleanId = id.ideaId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+            const cleanSession = id.sessionId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+            const cleanEvent = id.eventId ? id.eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim() : null;
+            const cleanDate = (id.createdAt ?? "").replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+            const cleanLabel = id.label
+              .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+              .trim();
+            const cleanDesc = id.description
+              ? id.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "")
+              : "";
+            io.err(`Idea [${cleanId}]:`);
+            io.err(`  Label: ${cleanLabel}`);
+            io.err(`  Session: ${cleanSession}`);
+            if (cleanEvent) io.err(`  Event: ${cleanEvent}`);
+            io.err(`  Date: ${cleanDate}`);
+            if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get idea: ${summarizeError(e)}`);
+      }
+    } else {
+      try {
+        const idea = getWorkbenchIdea(ideaId);
+        if (!idea) {
+          io.err(`idea not found: ${ideaId}`);
+        } else {
+          const cleanId = idea.ideaId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+          const cleanSession = idea.sessionId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+          const cleanEvent = idea.eventId ? idea.eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim() : null;
+          const cleanDate = (idea.createdAt ?? "").replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+          const cleanLabel = idea.label
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+            .trim();
+          const cleanDesc = idea.description
+            ? idea.description.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g, "")
+            : "";
+          io.err(`Idea [${cleanId}]:`);
+          io.err(`  Label: ${cleanLabel}`);
+          io.err(`  Session: ${cleanSession}`);
+          if (cleanEvent) io.err(`  Event: ${cleanEvent}`);
+          io.err(`  Date: ${cleanDate}`);
+          if (cleanDesc) io.err(`  Description: ${cleanDesc}`);
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get idea: ${summarizeError(e)}`);
+      }
+    }
+    return true;
+  }
+
+  io.err(
+    "unknown /idea subcommand. Usage: /idea mark [--event <id>] <label...>, /idea list, /idea show <ideaId>",
+  );
+  return true;
+}
+
+export async function handleReplPacketCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  sessionState: ReplSessionState,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/packet")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
+  if (parts[0] !== "/packet") return false;
+
+  if (parts.length === 1 || parts[1] === "help") {
+    io.out("Workbench Work Packet Commands:\n" +
+      "  /packet draft [<idea-id>] [--idea <id>] [--event <id>] [--issue <id>] [--title <title>] Draft a work packet\n" +
+      "  /packet list                          List generated work packets in this session\n" +
+      "  /packet show <packetId>               Show rendered markdown for a work packet\n");
+    return true;
+  }
+
+  const sub = parts[1];
+
+  if (!sessionState.sessionId) {
+    io.err("no session yet — send a prompt first before drafting packets");
+    return true;
+  }
+
+  if (sub === "draft") {
+    let ideaId: string | undefined;
+    let eventId: string | undefined;
+    let issueId: string | undefined;
+    let title: string | undefined;
+    let targetRef: string | undefined;
+
+    const tokens = parts.slice(2);
+    let i = 0;
+    while (i < tokens.length) {
+      const token = tokens[i];
+      if (token === "--") {
+        i++;
+        while (i < tokens.length) {
+          if (!targetRef) {
+            targetRef = tokens[i];
+          } else {
+            const safeArg = tokens[i].replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+            io.err(`error: unexpected argument "${safeArg}"`);
+            return true;
+          }
+          i++;
+        }
+        break;
+      }
+      if (token === "--issue") {
+        if (issueId !== undefined) {
+          io.err("error: --issue specified multiple times");
+          return true;
+        }
+        i++;
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
+          io.err("error: --issue requires an issue identifier");
+          return true;
+        }
+        issueId = tokens[i];
+        i++;
+      } else if (token === "--event" || token === "-e") {
+        if (eventId !== undefined) {
+          io.err("error: --event specified multiple times");
+          return true;
+        }
+        i++;
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
+          io.err("error: --event requires an event identifier");
+          return true;
+        }
+        eventId = tokens[i];
+        i++;
+      } else if (token === "--idea") {
+        if (ideaId !== undefined) {
+          io.err("error: --idea specified multiple times");
+          return true;
+        }
+        i++;
+        if (i >= tokens.length || isOptionLike(tokens[i])) {
+          io.err("error: --idea requires an idea identifier");
+          return true;
+        }
+        ideaId = tokens[i];
+        i++;
+      } else if (token === "--title" || token === "-t") {
+        if (title !== undefined) {
+          io.err("error: --title specified multiple times");
+          return true;
+        }
+        i++;
+        const knownOptionFlags = new Set([
+          "--issue",
+          "--event",
+          "--idea",
+          "--title",
+          "-i",
+          "-e",
+          "-t",
+        ]);
+        const titleTokens: string[] = [];
+        while (i < tokens.length) {
+          if (tokens[i] === "--") {
+            i++;
+            while (i < tokens.length) {
+              titleTokens.push(tokens[i]);
+              i++;
+            }
+            break;
+          }
+          if (isOptionLike(tokens[i])) {
+            if (!knownOptionFlags.has(tokens[i])) {
+              const safeArg = tokens[i].replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+              io.err(`error: unexpected argument "${safeArg}"`);
+              return true;
+            }
+            break;
+          }
+          titleTokens.push(tokens[i]);
+          i++;
+        }
+        if (titleTokens.length === 0) {
+          io.err("error: --title requires a title argument");
+          return true;
+        }
+        title = stripOuterQuotes(titleTokens.join(" "));
+      } else if (!targetRef && !isOptionLike(token)) {
+        targetRef = token;
+        i++;
+      } else {
+        const safeToken = token.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+        io.err(`error: unexpected argument "${safeToken}"`);
+        return true;
+      }
+    }
+
+    if (ideaId && eventId) {
+      io.err("error: cannot specify both --idea and --event");
+      return true;
+    }
+
+    if (targetRef && (ideaId || eventId)) {
+      io.err(
+        "error: cannot specify both positional target and explicit --idea/--event flag",
+      );
+      return true;
+    }
+
+    if (targetRef && !ideaId && !eventId) {
+      if (targetRef.startsWith("evt-") || targetRef.startsWith("evt_")) {
+        let ideaExists = false;
+        if (config.unix) {
+          try {
+            const client = await connect(config.socket);
+            try {
+              const res = await client.request("ideas/get", {
+                ideaId: targetRef,
+              }) as { idea: WorkbenchIdea };
+              if (res.idea && res.idea.sessionId === sessionState.sessionId) {
+                ideaExists = true;
+              }
+            } catch {
+              // ignore
+            } finally {
+              client.close();
+            }
+          } catch {
+            // ignore
+          }
+        } else {
+          try {
+            const matchingIdea = defaultIdeaPacketRegistry.getIdea(targetRef);
+            if (matchingIdea && matchingIdea.sessionId === sessionState.sessionId) {
+              ideaExists = true;
+            }
+          } catch {
+            // ignore validation error from non-idea target format
+          }
+        }
+        if (ideaExists) {
+          ideaId = targetRef;
+        } else {
+          eventId = targetRef;
+        }
+      } else {
+        ideaId = targetRef;
+      }
+    }
+
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("packets/draft", {
+            sessionId: sessionState.sessionId,
+            ideaId,
+            eventId,
+            issueId,
+            title,
+          }) as { packet: WorkbenchWorkPacket; markdown: string };
+          const cleanPacketId = (res.packet.packetId ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
+          const safeMarkdown = (res.markdown ?? "").replace(
+            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
+            "",
+          );
+          io.out(safeMarkdown);
+          io.err(`\ndraft work packet registered: [${cleanPacketId}]`);
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
+      }
+    } else {
+      if (eventId) {
+        const found = sessionState.events?.some(
+          (e) => e.eventId === eventId && e.sessionId === sessionState.sessionId,
+        );
+        const cleanEvId = eventId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim();
+        if (!found) {
+          io.err(
+            `error: event "${cleanEvId}" not found in current local session context`,
+          );
+          return true;
+        }
+      }
+      try {
+        const packet = draftWorkPacketFromContext({
+          sessionId: sessionState.sessionId,
+          ideaId,
+          eventId,
+          issueId,
+          title,
+          events: sessionState.events,
+        });
+        const cleanPacketId = (packet.packetId ?? "")
+          .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+          .trim();
+        const markdown = formatWorkPacketMarkdown(packet);
+        const safeMarkdown = markdown.replace(
+          /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
+          "",
+        );
+        io.out(safeMarkdown);
+        io.err(`\ndraft work packet registered: [${cleanPacketId}]`);
+      } catch (e) {
+        io.err(`dyfj: failed to draft packet: ${summarizeError(e)}`);
+      }
+    }
+    return true;
+  }
+
+  if (sub === "list") {
+    if (parts.length > 2) {
+      io.err("usage: /packet list");
+      return true;
+    }
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("packets/list", {
+            sessionId: sessionState.sessionId,
+          }) as { packets: WorkbenchWorkPacket[] };
+          const cleanSessId = (sessionState.sessionId ?? "")
+            .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+            .trim();
+          if (res.packets.length === 0) {
+            io.err(
+              `no work packets drafted for session ${cleanSessId}`,
+            );
+          } else {
+            io.err(`Work packets for session ${cleanSessId}:`);
+            for (const p of res.packets) {
+              const cleanPacketId = (p.packetId ?? "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+                .trim();
+              const cleanTitle = (p.title ?? "")
+                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+                .trim();
+              const cleanIssue = p.issueId
+                ? p.issueId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim()
+                : "none";
+              io.err(`  [${cleanPacketId}] ${cleanTitle} (Issue: ${cleanIssue})`);
+            }
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to list packets: ${summarizeError(e)}`);
+      }
+    } else {
+      try {
+        const packets = listWorkbenchPackets({
+          sessionId: sessionState.sessionId,
+        });
+        if (packets.length === 0) {
+          io.err(`no work packets drafted for session ${sessionState.sessionId}`);
+        } else {
+          io.err(`Work packets for session ${sessionState.sessionId}:`);
+          for (const p of packets) {
+            const cleanPacketId = (p.packetId ?? "")
+              .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
+              .trim();
+            const cleanTitle = (p.title ?? "")
+              .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, " ")
+              .trim();
+            const cleanIssue = p.issueId
+              ? p.issueId.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "").trim()
+              : "none";
+            io.err(`  [${cleanPacketId}] ${cleanTitle} (Issue: ${cleanIssue})`);
+          }
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to list packets: ${summarizeError(e)}`);
+      }
+    }
+    return true;
+  }
+
+  if (sub === "show") {
+    if (parts.length !== 3) {
+      io.err("usage: /packet show <packet-id>");
+      return true;
+    }
+    const packetId = parts[2];
+    if (config.unix) {
+      try {
+        const client = await connect(config.socket);
+        try {
+          const res = await client.request("packets/get", { packetId }) as {
+            packet: WorkbenchWorkPacket | null;
+            markdown: string | null;
+          };
+          if (!res.packet || !res.markdown) {
+            io.err(`work packet not found: ${packetId}`);
+          } else {
+            const safeMarkdown = (res.markdown ?? "").replace(
+              /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
+              "",
+            );
+            io.out(safeMarkdown);
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get packet: ${summarizeError(e)}`);
+      }
+    } else {
+      try {
+        const packet = getWorkbenchPacket(packetId);
+        if (!packet) {
+          io.err(`work packet not found: ${packetId}`);
+        } else {
+          const markdown = formatWorkPacketMarkdown(packet);
+          const safeMarkdown = markdown.replace(
+            /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\x1B]/g,
+            "",
+          );
+          io.out(safeMarkdown);
+        }
+      } catch (e) {
+        io.err(`dyfj: failed to get packet: ${summarizeError(e)}`);
+      }
+    }
+    return true;
+  }
+
+  io.err(
+    "unknown /packet subcommand. Usage: /packet draft, /packet list, /packet show <id>",
+  );
+  return true;
+}
+
 export async function handleReplModelCommand(
   line: string,
   config: CliConfig,
   io: Io,
   connect: ConnectFn = connectUnixClient,
 ): Promise<boolean> {
-  const parts = line.trim().split(/\s+/);
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/model")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
   if (parts[0] !== "/model") return false;
   // `--approve-paid` mirrors the launch flag: it arms the SESSION's existing
   // per-turn paid opt-in (buildTurnBody sends it each turn), so escalating to a

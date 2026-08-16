@@ -113,6 +113,46 @@ export async function fetchWorkbenchSessionWorkspaceRecord(
   };
 }
 
+export async function fetchWorkbenchSessionRecord(
+  input: { sessionId: string; query?: SessionQuery },
+): Promise<WorkbenchSessionSummary | null> {
+  const query = input.query ?? doltQuery;
+  const rows = await query(
+    "SELECT session_id, slug, session_name, task_description, project, " +
+      "status, created_at, updated_at FROM sessions WHERE session_id = ? LIMIT 1;",
+    [input.sessionId],
+  );
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  const project = row.project === "" ? null : row.project;
+  return {
+    sessionId: row.session_id,
+    slug: row.slug,
+    sessionName: row.session_name,
+    taskDescription: row.task_description,
+    project,
+    status: row.status || "active",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function countWorkbenchSessionEvents(input: {
+  sessionId: string;
+  query?: SessionQuery;
+}): Promise<number> {
+  const query = input.query ?? doltQuery;
+  const rows = await query(
+    "SELECT COUNT(*) as count FROM events WHERE session_id = ?;",
+    [input.sessionId],
+  );
+  if (rows.length === 0) return 0;
+  const count = Number(rows[0].count);
+  return Number.isNaN(count) ? 0 : count;
+}
+
+export * from "./idea-packet";
+
 export async function updateWorkbenchSession(
   input: UpdateWorkbenchSessionInput,
 ): Promise<void> {
@@ -139,7 +179,7 @@ function truncateTaskDescription(value: string): string {
 export interface WorkbenchSessionSummary {
   sessionId: string;
   slug: string;
-  sessionName: string;
+  sessionName: string | null;
   taskDescription: string;
   project: string | null;
   status: string;
@@ -152,13 +192,50 @@ export interface WorkbenchProjectSessions {
   sessions: WorkbenchSessionSummary[];
 }
 
+export function normalizeSessionTimestamp(val: unknown): string {
+  if (!val) return "";
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed;
+    const parsed = Date.parse(trimmed);
+    if (!isNaN(parsed)) return new Date(parsed).toISOString();
+    return trimmed;
+  }
+  if (typeof val === "number") {
+    return new Date(val).toISOString();
+  }
+  return String(val);
+}
+
+export function compareSessionActivity(
+  a: { updatedAt?: string | null; createdAt?: string | null; sessionId?: string },
+  b: { updatedAt?: string | null; createdAt?: string | null; sessionId?: string },
+): number {
+  const aTime = normalizeSessionTimestamp(a.updatedAt || a.createdAt);
+  const bTime = normalizeSessionTimestamp(b.updatedAt || b.createdAt);
+  const timeCmp = bTime.localeCompare(aTime);
+  if (timeCmp !== 0) return timeCmp;
+  return (b.sessionId || "").localeCompare(a.sessionId || "");
+}
+
 export async function listWorkbenchSessions(options: {
   project?: string;
   limit?: number;
   query?: SessionQuery;
 } = {}): Promise<WorkbenchProjectSessions[]> {
   const query = options.query ?? doltQuery;
-  const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+  const limit = Math.floor(
+    Math.min(
+      Math.max(
+        typeof options.limit === "number" && Number.isFinite(options.limit)
+          ? options.limit
+          : 200,
+        1,
+      ),
+      1000,
+    ),
+  );
   const params: SqlParam[] = [];
   let where = "";
   if (options.project !== undefined) {
@@ -169,7 +246,7 @@ export async function listWorkbenchSessions(options: {
     "SELECT session_id, slug, session_name, task_description, project, " +
       "status, created_at, updated_at FROM sessions " +
       where +
-      `ORDER BY updated_at DESC LIMIT ${limit};`,
+      `ORDER BY COALESCE(updated_at, created_at) DESC LIMIT ${limit};`,
     params,
   );
   const groups = new Map<string, WorkbenchProjectSessions>();
@@ -188,17 +265,24 @@ export async function listWorkbenchSessions(options: {
       taskDescription: row.task_description,
       project,
       status: row.status || "active",
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      createdAt: normalizeSessionTimestamp(row.created_at),
+      updatedAt: normalizeSessionTimestamp(row.updated_at),
     });
+  }
+  // Sort sessions within each group by latest activity
+  for (const group of groups.values()) {
+    group.sessions.sort(compareSessionActivity);
   }
   // Named projects first (most recently active first), unfiled sessions last.
   return [...groups.values()].sort((a, b) => {
     if (a.project === null) return 1;
     if (b.project === null) return -1;
-    return (b.sessions[0]?.updatedAt ?? "").localeCompare(
-      a.sessions[0]?.updatedAt ?? "",
-    );
+    const aFirst = a.sessions[0];
+    const bFirst = b.sessions[0];
+    if (!aFirst && !bFirst) return 0;
+    if (!aFirst) return 1;
+    if (!bFirst) return -1;
+    return compareSessionActivity(aFirst, bFirst);
   });
 }
 
@@ -232,6 +316,7 @@ export async function createProjectWorkbenchSession(input: {
 }
 
 export interface WorkbenchSessionEvent {
+  sessionId?: string;
   eventId: string;
   eventType: string;
   traceId: string;
@@ -297,6 +382,9 @@ function eventQuery(
   historicalRunnerSchema = false,
   historicalRunnerAuthSchema = false,
   historicalTraceContextSchema = false,
+  limit?: number,
+  order: "asc" | "desc" = "asc",
+  eventId?: string,
 ): string {
   const traceContextFields = historicalTraceContextSchema
     ? "NULL AS trace_flags, NULL AS trace_state, NULL AS span_kind, " +
@@ -330,6 +418,13 @@ function eventQuery(
         ? "NULL AS runner_route_source, NULL AS runner_auth_type, "
         : "runner_route_source, runner_auth_type, ") +
       "permission_verdict";
+  const limitClause = typeof limit === "number" && limit > 0
+    ? ` LIMIT ${Math.floor(limit)}`
+    : "";
+  const orderClause = order === "desc" ? "DESC" : "ASC";
+  const eventClause = typeof eventId === "string" && eventId.length > 0
+    ? " AND event_id = ?"
+    : "";
   return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
     `${traceContextFields}, ` +
     `principal_id, model_id, provider, api, content, stop_reason, ` +
@@ -338,7 +433,7 @@ function eventQuery(
     `${runnerFields}, ` +
     `tool_name, tool_call_id, ` +
     `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
-    `WHERE session_id = ? ORDER BY created_at ASC;`;
+    `WHERE session_id = ?${eventClause} ORDER BY created_at ${orderClause}, event_id ${orderClause}${limitClause};`;
 }
 
 function isMissingRunnerColumn(error: unknown): boolean {
@@ -439,10 +534,26 @@ function isMissingUnparsedToolCallColumn(error: unknown): boolean {
 
 export async function fetchWorkbenchSessionEvents(input: {
   sessionId: string;
+  eventId?: string;
   asOf?: string;
+  limit?: number;
+  order?: "asc" | "desc";
   query?: SessionQuery;
 }): Promise<WorkbenchSessionEvent[]> {
   const query = input.query ?? doltQuery;
+  if (input.limit !== undefined) {
+    if (
+      typeof input.limit !== "number" ||
+      !Number.isInteger(input.limit) ||
+      input.limit <= 0 ||
+      input.limit > 5000
+    ) {
+      throw new Error("limit must be a positive integer <= 5000");
+    }
+  }
+  const effectiveLimit = input.limit ?? (input.eventId ? 10 : 5000);
+  const explicitOrder = input.order;
+  const order = explicitOrder ?? "desc";
   // AS OF cannot be parameterized; the timestamp is validated against a
   // strict shape before being inlined.
   let asOfClause = "";
@@ -453,6 +564,10 @@ export async function fetchWorkbenchSessionEvents(input: {
       );
     }
     asOfClause = ` AS OF TIMESTAMP('${input.asOf.replace("T", " ")}')`;
+  }
+  const queryArgs: string[] = [input.sessionId];
+  if (typeof input.eventId === "string" && input.eventId.length > 0) {
+    queryArgs.push(input.eventId);
   }
   let rows: Record<string, string>[] | undefined;
   let historicalProviderCallSchema = false;
@@ -469,10 +584,12 @@ export async function fetchWorkbenchSessionEvents(input: {
         historicalRunnerSchema,
         historicalRunnerAuthSchema,
         historicalTraceContextSchema,
-      ), [input.sessionId]);
+        effectiveLimit,
+        order,
+        input.eventId,
+      ), queryArgs);
       break;
     } catch (error) {
-      if (input.asOf === undefined) throw error;
       const missingProviderCall = isMissingProviderCallColumn(error);
       const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
       const missingRunner = isMissingRunnerColumn(error);
@@ -498,7 +615,11 @@ export async function fetchWorkbenchSessionEvents(input: {
     }
   }
   if (rows === undefined) throw new Error("historical event schema did not converge");
+  if (!explicitOrder && order === "desc") {
+    rows.reverse();
+  }
   return rows.map((row) => ({
+    sessionId: input.sessionId,
     eventId: row.event_id,
     eventType: row.event_type,
     traceId: row.trace_id,

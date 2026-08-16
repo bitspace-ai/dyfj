@@ -46,7 +46,8 @@ export interface TurnRequestBody {
   budget?: unknown;
 }
 
-const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+import { SESSION_ID_SHAPE } from "./turn-contract";
+
 const TURN_ID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

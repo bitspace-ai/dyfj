@@ -16,11 +16,25 @@ import {
   type WorkbenchModel,
 } from "./provider";
 import {
+  defaultIdeaPacketRegistry,
+  draftWorkPacketFromContext,
+  formatWorkPacketMarkdown,
+  type IdeaPacketRegistry,
+  markWorkbenchIdea,
+  type WorkbenchIdea,
+  type WorkbenchWorkPacket,
+} from "./idea-packet";
+import {
+  compareSessionActivity,
+  countWorkbenchSessionEvents,
   fetchWorkbenchSessionEvents,
+  fetchWorkbenchSessionRecord,
+  fetchWorkbenchSessionWorkspaceRecord,
   isValidAsOfTimestamp,
   listWorkbenchSessions,
   type WorkbenchProjectSessions,
   type WorkbenchSessionEvent,
+  type WorkbenchSessionSummary,
 } from "./sessions";
 import {
   type RpcContext,
@@ -119,11 +133,27 @@ export interface WorkbenchUnixServerOptions {
   runRuntime?: WorkbenchHttpRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
   listSessions?: (
-    options: { project?: string },
+    options: { project?: string; limit?: number },
   ) => Promise<WorkbenchProjectSessions[]>;
   fetchSessionEvents?: (
-    input: { sessionId: string; asOf?: string },
+    input: {
+      sessionId: string;
+      eventId?: string;
+      asOf?: string;
+      limit?: number;
+      order?: "asc" | "desc";
+    },
   ) => Promise<WorkbenchSessionEvent[]>;
+  countSessionEvents?: (
+    input: { sessionId: string },
+  ) => Promise<number>;
+  fetchSessionRecord?: (
+    input: { sessionId: string },
+  ) => Promise<WorkbenchSessionSummary | null>;
+  fetchSessionWorkspaceRecord?: (
+    input: { sessionId: string },
+  ) => Promise<{ exists: boolean; workspace: string | null }>;
+  ideaPacketRegistry?: IdeaPacketRegistry;
   onParseError?: (detail: string) => void;
   /** Callback invoked when a client sends a runtime/stop RPC request. */
   onShutdown?: () => Promise<void> | void;
@@ -167,6 +197,105 @@ function asRecord(params: unknown): Record<string, unknown> {
     : {};
 }
 
+function sanitizeRpcIdentifier(
+  val: unknown,
+  fieldName: string,
+  options: { required?: boolean; maxLen?: number } = {},
+): string | undefined {
+  const maxLen = options.maxLen ?? 256;
+  if (val === undefined || val === null) {
+    if (options.required) {
+      throw new RpcError(
+        RpcErrorCode.invalidParams,
+        `${fieldName} is required`,
+      );
+    }
+    return undefined;
+  }
+  if (typeof val !== "string") {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} must be a string`,
+    );
+  }
+  if (val.length === 0 || val.length > maxLen) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} must be between 1 and ${maxLen} characters`,
+    );
+  }
+  if (val.trim().length === 0) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} cannot be empty or whitespace-only`,
+    );
+  }
+  if (/[\s\x00-\x1F\x7F-\x9F\x1B]/.test(val)) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} cannot contain control characters or whitespace`,
+    );
+  }
+  return val;
+}
+
+function stripAnsiEscapes(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
+    .replace(/\x1b[()*+-./][0-9A-Za-z]/g, "")
+    .replace(/\x1b[@-Z\\-_]/g, "");
+}
+
+function sanitizeRpcString(
+  val: unknown,
+  fieldName: string,
+  options: { required?: boolean; maxLen?: number; singleLine?: boolean } = {},
+): string | undefined {
+  const maxLen = options.maxLen ?? 256;
+  if (val === undefined || val === null) {
+    if (options.required) {
+      throw new RpcError(
+        RpcErrorCode.invalidParams,
+        `${fieldName} is required`,
+      );
+    }
+    return undefined;
+  }
+  if (typeof val !== "string") {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} must be a string`,
+    );
+  }
+  if (val.length > maxLen * 2) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} exceeds maximum length of ${maxLen} characters`,
+    );
+  }
+  let s = stripAnsiEscapes(val);
+  if (options.singleLine !== false) {
+    s = s.replace(/[\r\n\t\x00-\x1F\x7F-\x9F]/g, " ").replace(/\s+/g, " ");
+  } else {
+    s = s.replace(/\r\n|\r/g, "\n").replace(/[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, " ");
+  }
+  const trimmed = s.trim();
+  if (trimmed.length === 0) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} cannot be empty or whitespace-only`,
+    );
+  }
+  if (trimmed.length > maxLen) {
+    throw new RpcError(
+      RpcErrorCode.invalidParams,
+      `${fieldName} exceeds maximum length of ${maxLen} characters`,
+    );
+  }
+  return trimmed;
+}
+
 const METHOD_CATALOG = [
   { id: "runtime/liveness", namespace: "runtime", kind: "read" },
   { id: "runtime/status", namespace: "runtime", kind: "read" },
@@ -174,7 +303,14 @@ const METHOD_CATALOG = [
   { id: "surface/snapshot", namespace: "surface", kind: "read" },
   { id: "models/list", namespace: "models", kind: "read" },
   { id: "sessions/list", namespace: "sessions", kind: "read" },
+  { id: "sessions/inspect", namespace: "sessions", kind: "read" },
   { id: "events/query", namespace: "events", kind: "read" },
+  { id: "ideas/mark", namespace: "ideas", kind: "interactive" },
+  { id: "ideas/list", namespace: "ideas", kind: "read" },
+  { id: "ideas/get", namespace: "ideas", kind: "read" },
+  { id: "packets/draft", namespace: "packets", kind: "interactive" },
+  { id: "packets/list", namespace: "packets", kind: "read" },
+  { id: "packets/get", namespace: "packets", kind: "read" },
   { id: "tools/list", namespace: "tools", kind: "read" },
   { id: "tools/inspect", namespace: "tools", kind: "read" },
   { id: "turn", namespace: "turn", kind: "interactive" },
@@ -363,39 +499,351 @@ export function buildWorkbenchHandlers(
     },
 
     "sessions/list": async (params) => {
-      const project = asRecord(params).project;
-      return {
-        projects: await listSessions({
-          project: typeof project === "string" ? project : undefined,
-        }),
-      };
+      const record = asRecord(params);
+      const project = sanitizeRpcString(record.project, "project", {
+        maxLen: 256,
+      });
+      if (
+        record.limit !== undefined &&
+        (typeof record.limit !== "number" ||
+          !Number.isInteger(record.limit) ||
+          record.limit <= 0)
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "sessions/list limit must be a positive integer",
+        );
+      }
+      const limit = typeof record.limit === "number" && record.limit > 0
+        ? Math.min(record.limit, 1000)
+        : 100;
+      const fetchLimit = Math.min(Math.max(limit * 4, 100), 1000);
+      const projects = await listSessions({
+        project,
+        limit: fetchLimit,
+      });
+      const topSessions: Array<{
+        projectIdx: number;
+        session: WorkbenchSessionSummary;
+      }> = [];
+      for (let i = 0; i < projects.length; i++) {
+        const p = projects[i];
+        if (Array.isArray(p.sessions)) {
+          for (let j = 0; j < p.sessions.length; j++) {
+            const s = p.sessions[j];
+            if (topSessions.length < limit) {
+              topSessions.push({ projectIdx: i, session: s });
+              topSessions.sort((a, b) => compareSessionActivity(a.session, b.session));
+            } else if (
+              compareSessionActivity(
+                s,
+                topSessions[topSessions.length - 1].session,
+              ) < 0
+            ) {
+              topSessions[topSessions.length - 1] = { projectIdx: i, session: s };
+              topSessions.sort((a, b) => compareSessionActivity(a.session, b.session));
+            }
+          }
+        }
+      }
+      const projectMap = new Map<number, WorkbenchSessionSummary[]>();
+      for (const item of topSessions) {
+        let list = projectMap.get(item.projectIdx);
+        if (!list) {
+          list = [];
+          projectMap.set(item.projectIdx, list);
+        }
+        list.push(item.session);
+      }
+      const boundedProjects: WorkbenchProjectSessions[] = [];
+      for (let i = 0; i < projects.length && boundedProjects.length < limit; i++) {
+        const matching = projectMap.get(i);
+        if (matching && matching.length > 0) {
+          boundedProjects.push({
+            project: projects[i].project,
+            sessions: matching,
+          });
+        } else if (project !== undefined) {
+          boundedProjects.push({
+            project: projects[i].project,
+            sessions: [],
+          });
+        }
+      }
+      if (boundedProjects.length === 0 && topSessions.length === 0 && projects.length > 0) {
+        return { projects: projects.slice(0, limit) };
+      }
+      return { projects: boundedProjects };
     },
 
     "events/query": async (params) => {
       const record = asRecord(params);
-      const sessionId = record.sessionId;
-      if (typeof sessionId !== "string") {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "events/query requires a string sessionId",
-        );
-      }
-      const asOf = record.asOf;
-      if (
-        asOf !== undefined &&
-        (typeof asOf !== "string" || !isValidAsOfTimestamp(asOf))
-      ) {
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const asOf = sanitizeRpcString(record.asOf, "asOf", { maxLen: 64 });
+      if (asOf !== undefined && !isValidAsOfTimestamp(asOf)) {
         throw new RpcError(
           RpcErrorCode.invalidParams,
           "events/query asOf must be a valid timestamp",
         );
       }
+      if (
+        record.limit !== undefined &&
+        (typeof record.limit !== "number" ||
+          !Number.isInteger(record.limit) ||
+          record.limit <= 0 ||
+          record.limit > 1000)
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "events/query limit must be a positive integer between 1 and 1000",
+        );
+      }
+      const limit = typeof record.limit === "number" && record.limit > 0
+        ? record.limit
+        : 500;
+      const fetched = await fetchSessionEvents({
+        sessionId,
+        asOf: typeof asOf === "string" ? asOf : undefined,
+        limit,
+      });
       return {
-        events: await fetchSessionEvents({
-          sessionId,
-          asOf: typeof asOf === "string" ? asOf : undefined,
-        }),
+        events: Array.isArray(fetched) ? fetched.slice(0, limit) : [],
       };
+    },
+
+    "sessions/inspect": async (params) => {
+      const record = asRecord(params);
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const [session, workspaceRec, eventCount] = await Promise.all([
+        (options.fetchSessionRecord ?? fetchWorkbenchSessionRecord)({
+          sessionId,
+        }),
+        (options.fetchSessionWorkspaceRecord ??
+          fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
+        (options.countSessionEvents ?? countWorkbenchSessionEvents)({
+          sessionId,
+        }),
+      ]);
+      return {
+        session,
+        workspace: workspaceRec.workspace,
+        exists: session !== null || workspaceRec.exists,
+        eventCount,
+      };
+    },
+
+    "ideas/mark": async (params) => {
+      const record = asRecord(params);
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const label = sanitizeRpcString(record.label, "label", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const eventId = sanitizeRpcIdentifier(record.eventId, "eventId", {
+        maxLen: 256,
+      });
+      const description = sanitizeRpcString(
+        record.description,
+        "description",
+        { maxLen: 2000, singleLine: false },
+      );
+      let events: WorkbenchSessionEvent[] | undefined;
+      try {
+        events = eventId
+          ? await fetchSessionEvents({ sessionId, eventId })
+          : await fetchSessionEvents({ sessionId, limit: 20 });
+      } catch (e) {
+        if (eventId) {
+          throw new RpcError(
+            RpcErrorCode.invalidParams,
+            summarizeError(e),
+          );
+        }
+        events = undefined;
+      }
+      try {
+        const idea = markWorkbenchIdea({
+          sessionId,
+          label,
+          eventId,
+          description,
+          events,
+          registry: options.ideaPacketRegistry ?? defaultIdeaPacketRegistry,
+        });
+        return { idea };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
+    },
+
+    "ideas/list": async (params) => {
+      const record = asRecord(params);
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      try {
+        return { ideas: reg.listIdeas(sessionId) };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
+    },
+
+    "ideas/get": async (params) => {
+      const record = asRecord(params);
+      const ideaId = sanitizeRpcIdentifier(record.ideaId, "ideaId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      try {
+        const idea = reg.getIdea(ideaId);
+        return { idea };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
+    },
+
+    "packets/draft": async (params) => {
+      const record = asRecord(params);
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const ideaId = sanitizeRpcIdentifier(record.ideaId, "ideaId", {
+        maxLen: 256,
+      });
+      const eventId = sanitizeRpcIdentifier(record.eventId, "eventId", {
+        maxLen: 256,
+      });
+      if (ideaId && eventId) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "packets/draft cannot specify both ideaId and eventId",
+        );
+      }
+      const issueId = sanitizeRpcIdentifier(record.issueId, "issueId", {
+        maxLen: 256,
+      });
+      const title = sanitizeRpcString(record.title, "title", { maxLen: 256 });
+      const operatorIntent = sanitizeRpcString(
+        record.operatorIntent,
+        "operatorIntent",
+        { maxLen: 2000, singleLine: false },
+      );
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      const idea = ideaId ? reg.getIdea(ideaId) : null;
+      if (ideaId && !idea) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          `idea "${ideaId}" not found`,
+        );
+      }
+      if (idea && idea.sessionId !== sessionId) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          `idea "${ideaId}" belongs to session "${idea.sessionId}", not requested session "${sessionId}"`,
+        );
+      }
+      const referencedEventId = eventId ?? idea?.eventId ?? undefined;
+      let events: WorkbenchSessionEvent[] | undefined;
+      try {
+        events = referencedEventId
+          ? await fetchSessionEvents({ sessionId, eventId: referencedEventId })
+          : await fetchSessionEvents({ sessionId, limit: 50 });
+      } catch (e) {
+        if (referencedEventId) {
+          throw new RpcError(
+            RpcErrorCode.invalidParams,
+            summarizeError(e),
+          );
+        }
+        events = undefined;
+      }
+      let workspace: string | null = null;
+      try {
+        const workspaceRec = await (options.fetchSessionWorkspaceRecord ??
+          fetchWorkbenchSessionWorkspaceRecord)({ sessionId });
+        workspace = workspaceRec.workspace;
+      } catch {
+        workspace = null;
+      }
+      try {
+        const packet = draftWorkPacketFromContext({
+          sessionId,
+          idea,
+          ideaId,
+          eventId,
+          issueId,
+          title,
+          operatorIntent,
+          events,
+          workspace,
+          registry: reg,
+        });
+        const markdown = formatWorkPacketMarkdown(packet);
+        return { packet, markdown };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
+    },
+
+    "packets/list": async (params) => {
+      const record = asRecord(params);
+      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      try {
+        return { packets: reg.listPackets(sessionId) };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
+    },
+
+    "packets/get": async (params) => {
+      const record = asRecord(params);
+      const packetId = sanitizeRpcIdentifier(record.packetId, "packetId", {
+        required: true,
+        maxLen: 256,
+      })!;
+      const reg = options.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
+      try {
+        const packet = reg.getPacket(packetId);
+        const markdown = packet ? formatWorkPacketMarkdown(packet) : null;
+        return { packet, markdown };
+      } catch (e) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          summarizeError(e),
+        );
+      }
     },
   };
 }
