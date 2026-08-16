@@ -1294,7 +1294,7 @@ export function isLocalWorkbenchModel(model: WorkbenchModel): boolean {
 /**
  * Whether a hosted base URL is https — and, when the caller pins an expected
  * host and optional path allowlist, exactly that host on the default port and
- * an allowed path prefix. The pin is what keeps a bearer key from traveling
+ * an exact allowed path. The pin is what keeps a bearer key from traveling
  * to a different (still-https) endpoint named by catalog data; `URL`
  * normalizes an explicit `:443` to an empty port, so the port check rejects
  * only genuinely non-default ports.
@@ -1374,7 +1374,7 @@ export function getModelAccessModality(model: {
       isAllowedHostedProviderBaseUrl(
         model.baseUrl,
         "generativelanguage.googleapis.com",
-        ["", "/", "/v1beta"],
+        ["", "/"],
       ))
   ) {
     return "frontier-hosted";
