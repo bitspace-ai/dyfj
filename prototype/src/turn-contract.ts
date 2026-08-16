@@ -382,3 +382,10 @@ export function sanitizeBoundaryText(raw: string, maxBytes: number): string {
   while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
   return new TextDecoder("utf-8").decode(encoded.slice(0, end));
 }
+
+/**
+ * Canonical 26-character Crockford Base32 ULID session identifier regex.
+ * Shared across turn-runner, http, and cli to prevent validation drift.
+ */
+export const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
+

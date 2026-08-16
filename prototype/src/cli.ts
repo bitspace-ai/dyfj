@@ -20,6 +20,7 @@ import {
   isSupersedingRetryStarted,
   MAX_ERROR_SUMMARY_BYTES,
   sanitizeBoundaryText,
+  SESSION_ID_SHAPE,
   summarizeError,
   type TurnReceipt,
   type TurnStreamFrame,
@@ -1830,6 +1831,12 @@ export async function handleReplSessionCommand(
       return true;
     }
     const targetId = rawTargetId.trim();
+    if (!SESSION_ID_SHAPE.test(targetId)) {
+      io.err(
+        "error: session identifier must be a valid 26-character Crockford Base32 identifier (e.g. from /session list)",
+      );
+      return true;
+    }
     if (config.unix) {
       try {
         const client = await connect(config.socket);

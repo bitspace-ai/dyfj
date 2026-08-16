@@ -21,7 +21,7 @@ import {
   type WorkbenchSessionEvent,
 } from "./sessions";
 import type { TurnReceipt, TurnStreamFrame } from "./turn-contract";
-import { summarizeError } from "./turn-contract";
+import { SESSION_ID_SHAPE, summarizeError } from "./turn-contract";
 import type { WorkbenchConfig } from "./config";
 import { loadConfig, loadSecretsConfig } from "./config";
 import { resolveSecretsIntoEnv } from "./secrets";
@@ -82,8 +82,6 @@ export interface WorkbenchHttpHandlerOptions {
     | "maxToolSteps"
   >;
 }
-
-const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
 
 async function loadPickerModels(): Promise<WorkbenchModel[]> {
   try {

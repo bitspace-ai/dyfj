@@ -3541,20 +3541,20 @@ describe("REPL /session command", () => {
 
   test("/session switch changes active sessionId and resets counts", async () => {
     const { io, stderr } = fakeIo();
-    const config = cfg({ sessionId: "01OLD" });
-    const state = { sessionId: "01OLD", turnCount: 5, sessionSpendUsd: 0.1 };
+    const config = cfg({ sessionId: "01OLD000000000000000000000" });
+    const state = { sessionId: "01OLD000000000000000000000", turnCount: 5, sessionSpendUsd: 0.1 };
     const handled = await handleReplSessionCommand(
-      "/session switch 01NEW",
+      "/session switch 01NEW000000000000000000000",
       config,
       io,
       state,
     );
     expect(handled).toBe(true);
-    expect(state.sessionId).toBe("01NEW");
-    expect(config.sessionId).toBe("01NEW");
+    expect(state.sessionId).toBe("01NEW000000000000000000000");
+    expect(config.sessionId).toBe("01NEW000000000000000000000");
     expect(state.turnCount).toBe(0);
     expect(state.sessionSpendUsd).toBe(0);
-    expect(stderr.join("\n")).toContain("switched to session: 01NEW");
+    expect(stderr.join("\n")).toContain("switched to session: 01NEW000000000000000000000");
   });
 
   test("/session switch rejects oversized session identifiers", async () => {
@@ -4171,6 +4171,15 @@ describe("REPL /packet command", () => {
       state,
     );
     expect(io2.stderr.join("\n")).toContain("usage: /session switch <sessionId>");
+
+    const io3 = fakeIo();
+    await handleReplSessionCommand(
+      "/session switch 01UAT_SESSION_BETA",
+      cfg({ unix: true }),
+      io3.io,
+      state,
+    );
+    expect(io3.stderr.join("\n")).toContain("error: session identifier must be a valid 26-character Crockford Base32 identifier");
   });
 
   test("/packet draft rejects duplicate --title flags", async () => {
@@ -4534,10 +4543,10 @@ describe("REPL /packet command", () => {
 
   test("/session switch resets local session events", async () => {
     const state: any = {
-      sessionId: "01SESSION_A",
+      sessionId: "01TESTA0000000000000000000",
       turnCount: 3,
       sessionSpendUsd: 0.1,
-      events: [{ eventId: "evt_u_1", sessionId: "01SESSION_A" }],
+      events: [{ eventId: "evt_u_1", sessionId: "01TESTA0000000000000000000" }],
       eventCounter: 3,
     };
     const { io } = fakeIo();
@@ -4548,14 +4557,14 @@ describe("REPL /packet command", () => {
       });
 
     await handleReplSessionCommand(
-      "/session switch 01SESSION_B",
+      "/session switch 01TESTB0000000000000000000",
       cfg({ unix: true }),
       io,
       state,
       fakeConnect,
     );
 
-    expect(state.sessionId).toBe("01SESSION_B");
+    expect(state.sessionId).toBe("01TESTB0000000000000000000");
     expect(state.turnCount).toBe(0);
     expect(state.events).toEqual([]);
     expect(state.eventCounter).toBe(3);
