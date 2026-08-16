@@ -209,7 +209,7 @@ export async function listWorkbenchSessions(options: {
     "SELECT session_id, slug, session_name, task_description, project, " +
       "status, created_at, updated_at FROM sessions " +
       where +
-      `ORDER BY updated_at DESC LIMIT ${limit};`,
+      `ORDER BY COALESCE(updated_at, created_at) DESC LIMIT ${limit};`,
     params,
   );
   const groups = new Map<string, WorkbenchProjectSessions>();
@@ -236,9 +236,9 @@ export async function listWorkbenchSessions(options: {
   return [...groups.values()].sort((a, b) => {
     if (a.project === null) return 1;
     if (b.project === null) return -1;
-    return (b.sessions[0]?.updatedAt ?? "").localeCompare(
-      a.sessions[0]?.updatedAt ?? "",
-    );
+    const bTime = b.sessions[0]?.updatedAt || b.sessions[0]?.createdAt || "";
+    const aTime = a.sessions[0]?.updatedAt || a.sessions[0]?.createdAt || "";
+    return bTime.localeCompare(aTime);
   });
 }
 
