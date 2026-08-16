@@ -28,6 +28,14 @@ export interface WorkbenchModel {
   maxOutputTokens?: number;
   /** Inferred provider access category (local loopback, direct vendor, aggregator, subscription, or custom). */
   modality?: ModelAccessModality;
+
+  // Optional execution & architecture profile (primarily for local / open-weights):
+  architecture?: "dense" | "moe";
+  totalParamsB?: number;
+  activeParamsB?: number;
+  recommendedQuant?: string;
+  residentRamGiB?: number;
+  reasoningEffortControl?: boolean;
 }
 
 export interface WorkbenchRoutingOptions {
@@ -388,8 +396,50 @@ export function parseModelRegistryRows(
       contextWindow: toCatalogLimit(row.context_window),
       maxOutputTokens: toCatalogLimit(row.max_output_tokens),
       modality: getModelAccessModality({ provider, baseUrl }),
+      architecture: toCatalogArchitecture(row.architecture),
+      totalParamsB: toCatalogDecimal(row.total_params_b),
+      activeParamsB: toCatalogDecimal(row.active_params_b),
+      recommendedQuant: toCatalogString(row.recommended_quant),
+      residentRamGiB: toCatalogDecimal(row.resident_ram_gib),
+      reasoningEffortControl: toCatalogBoolean(row.reasoning_effort_control),
     };
   });
+}
+
+function toCatalogString(
+  value: string | undefined | null,
+): string | undefined {
+  if (!value) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function toCatalogBoolean(
+  value: string | boolean | number | undefined | null,
+): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  const trimmed = String(value).trim().toLowerCase();
+  if (trimmed === "true" || trimmed === "t") return true;
+  if (trimmed === "false" || trimmed === "f") return false;
+  const num = Number(trimmed);
+  return Number.isFinite(num) && num !== 0;
+}
+
+function toCatalogArchitecture(
+  value: string | undefined | null,
+): "dense" | "moe" | undefined {
+  if (!value) return undefined;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "dense" || normalized === "moe") return normalized;
+  return undefined;
+}
+
+function toCatalogDecimal(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : undefined;
 }
 
 /**
@@ -452,13 +502,29 @@ function parseCapabilities(value: string | undefined): string[] {
 }
 
 export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
-  const rows = await doltQuery(
-    "SELECT slug, display_name, provider, api, base_url, tier, " +
-      "cost_input, cost_output, capabilities, " +
-      "context_window, max_output_tokens " +
-      "FROM models WHERE active = TRUE ORDER BY tier, slug;",
-  );
-  return parseModelRegistryRows(rows);
+  try {
+    const rows = await doltQuery(
+      "SELECT slug, display_name, provider, api, base_url, tier, " +
+        "cost_input, cost_output, capabilities, " +
+        "context_window, max_output_tokens, " +
+        "architecture, total_params_b, active_params_b, recommended_quant, " +
+        "resident_ram_gib, reasoning_effort_control " +
+        "FROM models WHERE active = TRUE ORDER BY tier, slug;",
+    );
+    return parseModelRegistryRows(rows);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("architecture") || message.includes("Unknown column")) {
+      const legacyRows = await doltQuery(
+        "SELECT slug, display_name, provider, api, base_url, tier, " +
+          "cost_input, cost_output, capabilities, " +
+          "context_window, max_output_tokens " +
+          "FROM models WHERE active = TRUE ORDER BY tier, slug;",
+      );
+      return parseModelRegistryRows(legacyRows);
+    }
+    throw err;
+  }
 }
 
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
@@ -473,19 +539,169 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       costInput: 0,
       costOutput: 0,
       capabilities: ["text", "code", "reasoning", "long-context"],
+      contextWindow: 262144,
+      maxOutputTokens: 8192,
       modality: "local",
+      architecture: "moe",
+      totalParamsB: 30.5,
+      activeParamsB: 3.0,
+      recommendedQuant: "8bit",
+      residentRamGiB: 32.0,
+      reasoningEffortControl: false,
     },
     {
-      slug: "laguna-xs.2",
-      displayName: "Laguna XS.2",
+      slug: "qwen3.6:35b-a3b",
+      displayName: "Qwen3.6 35B (MoE)",
       provider: "ollama",
       api: "openai-completions",
       baseUrl: "http://localhost:11434/v1",
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      capabilities: ["text", "code", "reasoning", "long-context"],
+      capabilities: ["text", "code", "reasoning", "vision", "tools", "long-context"],
+      contextWindow: 262144,
+      maxOutputTokens: 8192,
       modality: "local",
+      architecture: "moe",
+      totalParamsB: 36.0,
+      activeParamsB: 3.0,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 24.0,
+      reasoningEffortControl: false,
+    },
+    {
+      slug: "muse-glimmer:30b",
+      displayName: "Muse Glimmer 30B",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning", "vision", "tools", "long-context"],
+      contextWindow: 131072,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "dense",
+      totalParamsB: 27.9,
+      activeParamsB: 27.9,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 23.0,
+      reasoningEffortControl: true,
+    },
+    {
+      slug: "deepseek-r1:32b",
+      displayName: "DeepSeek-R1 Distill 32B",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning", "thinking"],
+      contextWindow: 131072,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "dense",
+      totalParamsB: 32.8,
+      activeParamsB: 32.8,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 22.0,
+      reasoningEffortControl: false,
+    },
+    {
+      slug: "mistral-small:24b-instruct-2501-q4_K_M",
+      displayName: "Mistral Small 24B",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning", "tools"],
+      contextWindow: 32768,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "dense",
+      totalParamsB: 23.6,
+      activeParamsB: 23.6,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 15.0,
+      reasoningEffortControl: false,
+    },
+    {
+      slug: "laguna-xs-2.1",
+      displayName: "Laguna XS 2.1",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: [
+        "text",
+        "code",
+        "reasoning",
+        "tools",
+        "thinking",
+        "long-context",
+      ],
+      contextWindow: 262144,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "moe",
+      totalParamsB: 33.4,
+      activeParamsB: 3.0,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 20.0,
+      reasoningEffortControl: false,
+    },
+    {
+      slug: "gemma4:26b",
+      displayName: "Gemma 4 26B (MoE)",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: [
+        "text",
+        "reasoning",
+        "vision",
+        "tools",
+        "thinking",
+        "long-context",
+      ],
+      contextWindow: 262144,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "moe",
+      totalParamsB: 26.0,
+      activeParamsB: 3.8,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 17.0,
+      reasoningEffortControl: false,
+    },
+    {
+      slug: "gemma4:e2b",
+      displayName: "Gemma 4 2B (dev)",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "reasoning"],
+      contextWindow: 131072,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "dense",
+      totalParamsB: 5.1,
+      activeParamsB: 5.1,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 7.0,
+      reasoningEffortControl: false,
     },
   ];
 }
@@ -623,9 +839,9 @@ function preferredModelFrom(
   return candidates.find((model) =>
     model.slug === "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit"
   ) ??
-    candidates.find((model) => model.slug === "laguna-xs.2") ??
+    candidates.find((model) => model.slug === "laguna-xs-2.1") ??
+    candidates.find((model) => model.slug === "gemma4:26b") ??
     candidates.find((model) => model.slug === "gemma4:e2b") ??
-    candidates.find((model) => model.slug === "gemma4") ??
     candidates[0];
 }
 

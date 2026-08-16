@@ -2577,10 +2577,12 @@ export async function handleReplModelCommand(
   if (args.length === 0) {
     // Bare `/model --approve-paid` arms paid inference without switching.
     if (approvePaid) config.approvePaid = true;
-    const active = config.model ?? "(registry default)";
+    const posture = await fetchSessionPosture(config, connect);
+    const active = config.model ??
+      ("slug" in posture && posture.slug ? posture.slug : "(registry default)");
     io.err(`active model: ${active}`);
     io.err(`available: ${listed.slugs.join(", ") || "(none)"}`);
-    await emitPosture();
+    io.err("error" in posture ? posture.error : formatPostureLine(posture));
     return true;
   }
 

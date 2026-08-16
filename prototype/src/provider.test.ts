@@ -28,8 +28,8 @@ import {
 
 const models: WorkbenchModel[] = [
   {
-    slug: "laguna-xs.2",
-    displayName: "Laguna XS.2",
+    slug: "laguna-xs-2.1",
+    displayName: "Laguna XS 2.1",
     provider: "ollama",
     api: "openai-completions",
     baseUrl: "http://localhost:11434/v1",
@@ -223,6 +223,228 @@ describe("parseModelRegistryRows", () => {
     expect(parsed[2].modality).toBe("aggregator-hosted");
     expect(parsed[3].modality).toBe("subscription-oauth");
   });
+
+  test("parses execution and hardware profile fields when present and leaves undefined when absent", () => {
+    const parsed = parseModelRegistryRows([
+      {
+        slug: "muse-glimmer:30b",
+        display_name: "Muse Glimmer 30B",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text","code","reasoning","tools"]',
+        context_window: "131072",
+        max_output_tokens: "8192",
+        architecture: "dense",
+        total_params_b: "29.60",
+        active_params_b: "29.60",
+        recommended_quant: "Q4_K_XL",
+        resident_ram_gib: "23.00",
+        reasoning_effort_control: "1",
+      },
+      {
+        slug: "mistral-small-4-119b-a6b",
+        display_name: "Mistral Small 4 119B",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text","code","reasoning"]',
+        architecture: "moe",
+        total_params_b: "119.00",
+        active_params_b: "6.50",
+        recommended_quant: "Q4_K_M",
+        resident_ram_gib: "62.00",
+        reasoning_effort_control: "0",
+      },
+      {
+        slug: "claude-sonnet-4-6",
+        display_name: "Claude Sonnet 4.6",
+        provider: "anthropic",
+        api: "anthropic-messages",
+        base_url: "https://api.anthropic.com",
+        tier: "1",
+        cost_input: "3",
+        cost_output: "15",
+        capabilities: '["text","code"]',
+      },
+    ]);
+
+    expect(parsed[0].architecture).toBe("dense");
+    expect(parsed[0].totalParamsB).toBe(29.6);
+    expect(parsed[0].activeParamsB).toBe(29.6);
+    expect(parsed[0].recommendedQuant).toBe("Q4_K_XL");
+    expect(parsed[0].residentRamGiB).toBe(23.0);
+    expect(parsed[0].reasoningEffortControl).toBe(true);
+
+    expect(parsed[1].architecture).toBe("moe");
+    expect(parsed[1].totalParamsB).toBe(119.0);
+    expect(parsed[1].activeParamsB).toBe(6.5);
+    expect(parsed[1].recommendedQuant).toBe("Q4_K_M");
+    expect(parsed[1].residentRamGiB).toBe(62.0);
+    expect(parsed[1].reasoningEffortControl).toBe(false);
+
+    // Absent execution metadata leaves optional fields undefined, with default false reasoning control
+    expect(parsed[2].architecture).toBeUndefined();
+    expect(parsed[2].totalParamsB).toBeUndefined();
+    expect(parsed[2].activeParamsB).toBeUndefined();
+    expect(parsed[2].recommendedQuant).toBeUndefined();
+    expect(parsed[2].residentRamGiB).toBeUndefined();
+    expect(parsed[2].reasoningEffortControl).toBe(false);
+  });
+
+  test("parses various truthy and falsy boolean representations for reasoningEffortControl", () => {
+    const parsed = parseModelRegistryRows([
+      {
+        slug: "m1",
+        display_name: "M1",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        reasoning_effort_control: "True",
+      },
+      {
+        slug: "m2",
+        display_name: "M2",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        reasoning_effort_control: " true ",
+      },
+      {
+        slug: "m3",
+        display_name: "M3",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        reasoning_effort_control: "0",
+      },
+      {
+        slug: "m4",
+        display_name: "M4",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        reasoning_effort_control: "1",
+      },
+      {
+        slug: "m5",
+        display_name: "M5",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        reasoning_effort_control: "invalid",
+      },
+    ]);
+
+    expect(parsed[0].reasoningEffortControl).toBe(true);
+    expect(parsed[1].reasoningEffortControl).toBe(true);
+    expect(parsed[2].reasoningEffortControl).toBe(false);
+    expect(parsed[3].reasoningEffortControl).toBe(true);
+    expect(parsed[4].reasoningEffortControl).toBe(false);
+  });
+
+  test("normalizes architecture case and whitespace while rejecting unrecognized values", () => {
+    const parsed = parseModelRegistryRows([
+      {
+        slug: "a1",
+        display_name: "A1",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        architecture: " MoE ",
+      },
+      {
+        slug: "a2",
+        display_name: "A2",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        architecture: "DENSE",
+      },
+      {
+        slug: "a3",
+        display_name: "A3",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        architecture: "transformer",
+      },
+    ]);
+
+    expect(parsed[0].architecture).toBe("moe");
+    expect(parsed[1].architecture).toBe("dense");
+    expect(parsed[2].architecture).toBeUndefined();
+  });
+
+  test("trims recommendedQuant whitespace and maps whitespace-only to undefined", () => {
+    const parsed = parseModelRegistryRows([
+      {
+        slug: "q1",
+        display_name: "Q1",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        recommended_quant: " Q4_K_M ",
+      },
+      {
+        slug: "q2",
+        display_name: "Q2",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        capabilities: '["text"]',
+        recommended_quant: "   ",
+      },
+    ]);
+
+    expect(parsed[0].recommendedQuant).toBe("Q4_K_M");
+    expect(parsed[1].recommendedQuant).toBeUndefined();
+  });
 });
 
 describe("getModelAccessModality", () => {
@@ -355,7 +577,7 @@ describe("selectWorkbenchModel", () => {
   test("falls back to Ollama when MLX Qwen is not available", () => {
     const selection = selectWorkbenchModel(models, {});
 
-    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.selected.slug).toBe("laguna-xs-2.1");
     expect(selection.selected.provider).toBe("ollama");
     expect(selection.reason).toBe("default");
   });
@@ -391,7 +613,7 @@ describe("selectWorkbenchModel", () => {
     // Hosted inference is an explicit escalation (modelId/tier + paid consent);
     // a hosted slug in standing config must not become the ambient default.
     const selection = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
-    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.selected.slug).toBe("laguna-xs-2.1");
     expect(selection.selected.tier).toBe(0);
     expect(selection.reason).toBe("default_local");
   });
@@ -412,7 +634,7 @@ describe("selectWorkbenchModel", () => {
       capabilities: ["text", "code"],
     };
     const selection = selectWorkbenchModel([misTiered, ...models], {});
-    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.selected.slug).toBe("laguna-xs-2.1");
     expect(selection.considered).not.toContain("hosted-mistiered");
 
     // With no genuinely local row at all, the ambient default fails closed
@@ -439,7 +661,7 @@ describe("selectWorkbenchModel", () => {
       capabilities: ["text", "code"],
     };
     const selection = selectWorkbenchModel([misTiered, ...models], { tier: 0 });
-    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.selected.slug).toBe("laguna-xs-2.1");
     expect(selection.reason).toBe("explicit_tier");
     expect(selection.considered).not.toContain("hosted-mistiered");
 
@@ -491,10 +713,10 @@ describe("selectWorkbenchModel", () => {
   test("explicit modelId beats the configured default", () => {
     const selection = selectWorkbenchModel(
       models,
-      { modelId: "laguna-xs.2" },
+      { modelId: "laguna-xs-2.1" },
       "claude-haiku-4-5",
     );
-    expect(selection.selected.slug).toBe("laguna-xs.2");
+    expect(selection.selected.slug).toBe("laguna-xs-2.1");
     expect(selection.reason).toBe("explicit_model_id");
   });
 
@@ -532,14 +754,23 @@ describe("defaultLocalWorkbenchModels", () => {
       costInput: 0,
       costOutput: 0,
       capabilities: expect.arrayContaining(["text", "code"]),
+      architecture: "moe",
+      totalParamsB: 30.5,
+      activeParamsB: 3.0,
+      recommendedQuant: "8bit",
+      residentRamGiB: 32.0,
+      reasoningEffortControl: false,
     });
   });
 
-  test("keeps Ollama as a zero-cost Tier 0 fallback model", () => {
+  test("provides zero-cost Tier 0 local fallback models", () => {
     const defaults = defaultLocalWorkbenchModels();
+    const laguna = defaults.find((m) => m.slug === "laguna-xs-2.1");
+    const muse = defaults.find((m) => m.slug === "muse-glimmer:30b");
+    const qwen36 = defaults.find((m) => m.slug === "qwen3.6:35b-a3b");
 
-    expect(defaults[1]).toMatchObject({
-      slug: "laguna-xs.2",
+    expect(laguna).toMatchObject({
+      slug: "laguna-xs-2.1",
       provider: "ollama",
       tier: 0,
       costInput: 0,
@@ -548,8 +779,44 @@ describe("defaultLocalWorkbenchModels", () => {
         "text",
         "code",
         "reasoning",
+        "tools",
+        "thinking",
         "long-context",
       ]),
+      architecture: "moe",
+      totalParamsB: 33.4,
+      activeParamsB: 3.0,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 20.0,
+      reasoningEffortControl: false,
+    });
+
+    expect(muse).toMatchObject({
+      slug: "muse-glimmer:30b",
+      provider: "ollama",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      architecture: "dense",
+      totalParamsB: 27.9,
+      activeParamsB: 27.9,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 23.0,
+      reasoningEffortControl: true,
+    });
+
+    expect(qwen36).toMatchObject({
+      slug: "qwen3.6:35b-a3b",
+      provider: "ollama",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      architecture: "moe",
+      totalParamsB: 36.0,
+      activeParamsB: 3.0,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 24.0,
+      reasoningEffortControl: false,
     });
   });
 });
@@ -558,20 +825,27 @@ describe("withDefaultLocalWorkbenchModels", () => {
   test("overlays the measured local default when the registry lacks it", () => {
     const merged = withDefaultLocalWorkbenchModels([{
       ...models[0],
-      slug: "gemma4",
+      slug: "gemma4:26b",
       displayName: "Gemma 4 latest",
     }]);
 
-    expect(merged.map((model) => model.slug).slice(0, 2)).toEqual([
+    expect(merged.slice(0, 2).map((model) => model.slug)).toEqual([
       "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
-      "laguna-xs.2",
+      "qwen3.6:35b-a3b",
     ]);
+    const slugs = merged.map((model) => model.slug);
+    expect(slugs).toContain("laguna-xs-2.1");
+    expect(slugs).toContain("muse-glimmer:30b");
+    expect(slugs).toContain("deepseek-r1:32b");
+    expect(slugs).toContain("mistral-small:24b-instruct-2501-q4_K_M");
+    expect(merged.filter((model) => model.slug === "gemma4:26b")).toHaveLength(1);
+    expect(merged[merged.length - 1].displayName).toBe("Gemma 4 latest");
   });
 
   test("does not duplicate the default when the registry already has it", () => {
     const merged = withDefaultLocalWorkbenchModels(models);
 
-    expect(merged.filter((model) => model.slug === "laguna-xs.2")).toHaveLength(
+    expect(merged.filter((model) => model.slug === "laguna-xs-2.1")).toHaveLength(
       1,
     );
   });
@@ -1007,7 +1281,7 @@ describe("runWorkbenchTurn streaming", () => {
     await runWorkbenchTurn({
       systemPrompt: "system",
       prompt: "hello",
-      routing: { modelId: "laguna-xs.2" },
+      routing: { modelId: "laguna-xs-2.1" },
       models: defaultLocalWorkbenchModels(),
       fetchFn: (_input, init) => {
         capturedRedirect = init?.redirect;
@@ -5635,8 +5909,8 @@ describe("explicit tier preference", () => {
   test("tier 0 honors the MLX-first chain over list order", () => {
     const tierZero: WorkbenchModel[] = [
       {
-        slug: "laguna-xs.2",
-        displayName: "Laguna XS.2",
+        slug: "laguna-xs-2.1",
+        displayName: "Laguna XS 2.1",
         provider: "ollama",
         api: "openai-completions",
         baseUrl: "http://localhost:11434/v1",
@@ -5663,7 +5937,7 @@ describe("explicit tier preference", () => {
     );
     expect(selection.reason).toBe("explicit_tier");
     expect(selection.considered).toEqual([
-      "laguna-xs.2",
+      "laguna-xs-2.1",
       "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
     ]);
   });

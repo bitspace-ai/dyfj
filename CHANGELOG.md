@@ -22,10 +22,17 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 - A reusable MCP conformance boundary now validates and propagates W3C trace context from Workbench's canonical trace and span identifiers. The production recall-tool span records its current trace flags, `client` kind, and local-parent evidence; the event schema and extraction helper support normalized trace state and remote-parent evidence for a future inbound consumer without storing raw `traceparent` or baggage. Deterministic fixtures cover modern multi-round-trip input, completion, request-stream cancellation, fresh-ID retry classification, stable list ordering, authorization-partitioned TTL/scope handling, and bounded local JSON Schema 2020-12 `$ref` resolution.
 
+### Added
+
+- Added nullable architecture and execution profile columns (`architecture`, `total_params_b`, `active_params_b`, `recommended_quant`, `resident_ram_gib`) and a boolean `reasoning_effort_control` column to the Workbench model catalog. Optional architecture, parameter, quantization, and RAM fields remain undefined when unpopulated or whitespace-only, while reasoning control defaults to false.
+
+- Updated local model catalog entries in `schema/catalog/001_models.sql` with architecture and execution profiles, marking selected local entries (`deepseek-r1:32b`, `mistral-small:24b-instruct-2501-q4_K_M`, `muse-glimmer:30b`, `qwen3.6:35b-a3b`, `laguna-xs-2.1`, `gemma4:26b`, `gemma4:e2b`, `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit`) active while setting other candidate models (`gpt-oss-120b`, `mistral-small-4-119b-a6b`, `qwen3.5-122b-a10b`, `qwen3-coder-next-80b-a3b`, `qwen3:32b`, `qwen3:30b-a3b`, `laguna-xs.2`, `gemma4`) to inactive (`active = FALSE`).
+
 ### Changed
 
-- Updated local model catalog seed entries for Ollama Qwen models in `schema/catalog/001_models.sql` (262k context for `qwen3:30b-a3b` and 40k context for `qwen3:32b`).
+- Enriched `WorkbenchModel` TypeScript definitions and `parseModelRegistryRows` in `prototype/src/provider.ts` to parse architecture and execution profile columns, and updated `defaultLocalWorkbenchModels` with local model entries and declared execution profiles.
 
+- Bare `/model` in `prototype/src/cli.ts` now fetches session posture to display the server-reported active model slug when no client-side model override is configured, and `prototype/src/uds-server.ts` falls back to the resolved local default in status reporting when a configured default model is unresolvable.
 
 - Interactive ACP permission requests now preserve the agent's bounded option list end to end instead of collapsing it to binary approval. The terminal renders each accepted option with a sanitized, bounded numbered label and returns the exact selected ACP option identifier, including session-scoped or command-specific choices. Invalid input re-prompts within the same permission exchange up to three times before selecting the request's rejection option; empty input, terminal closure, a non-interactive client, or an unavailable approver uses the same fail-closed default. Without a rejection option, those paths cancel instead. Empty option lists, empty or duplicate option identifiers, and requests with more than 16 options fail at protocol ingress. The existing cancellation, deadline suspension, durable-verdict ordering, and child-cleanup bounds remain unchanged across ACP profiles.
 
