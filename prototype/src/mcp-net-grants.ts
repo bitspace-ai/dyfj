@@ -17,6 +17,9 @@ export function mcpServerNetGrants(
   return grants;
 }
 
+const INVALID_DOLT_PORT_DIAGNOSTIC =
+  "invalid DOLT_PORT: must be a decimal integer between 1 and 65535";
+
 /**
  * Validate DOLT_PORT before it enters any Deno network grant.
  *
@@ -39,17 +42,13 @@ export function validateDoltPort(rawPort?: unknown): number {
   let portNumber: number;
   if (typeof rawPort === "string") {
     if (rawPort.length === 0 || rawPort.length > 5 || !/^[0-9]+$/.test(rawPort)) {
-      throw new Error(
-        "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
-      );
+      throw new Error(INVALID_DOLT_PORT_DIAGNOSTIC);
     }
     portNumber = Number(rawPort);
   } else if (typeof rawPort === "number") {
     portNumber = rawPort;
   } else {
-    throw new Error(
-      "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
-    );
+    throw new Error(INVALID_DOLT_PORT_DIAGNOSTIC);
   }
 
   if (
@@ -57,9 +56,7 @@ export function validateDoltPort(rawPort?: unknown): number {
     portNumber < 1 ||
     portNumber > 65535
   ) {
-    throw new Error(
-      "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
-    );
+    throw new Error(INVALID_DOLT_PORT_DIAGNOSTIC);
   }
   return portNumber;
 }
@@ -71,4 +68,3 @@ export function buildDoltAllowNetGrant(rawPort?: unknown): string {
   const port = validateDoltPort(rawPort);
   return `--allow-net=127.0.0.1:${port}`;
 }
-

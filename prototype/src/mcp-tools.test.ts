@@ -697,4 +697,3 @@ describe("validateDoltPort & buildDoltAllowNetGrant", () => {
     }
   });
 });
-

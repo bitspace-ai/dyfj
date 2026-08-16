@@ -224,4 +224,3 @@ Deno.test("DyfjMcpClient.connect fails before spawning when DOLT_PORT is invalid
   assertNotIncludes(thrown.message, "3306");
   assertNotIncludes(thrown.message, "nonexistent");
 });
-
