@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { parseMcpServersConfig, type SecretsConfig } from "./config";
+import { parseMcpServersConfig, type SecretsConfig } from "./config.ts";
 import {
   boundedMcpFetch,
   buildDoltAllowNetGrant,
@@ -11,8 +11,8 @@ import {
   retainConfiguredMcpTools,
   sanitizeMcpInputSchema,
   validateDoltPort,
-} from "./mcp-tools";
-import { createCommandRegistry, invokeCommandWithEvent } from "./commands";
+} from "./mcp-tools.ts";
+import { createCommandRegistry, invokeCommandWithEvent } from "./commands.ts";
 
 const CONFIG_PATH = "/private/operator/.dyfj/config.toml";
 
@@ -220,7 +220,7 @@ describe("external MCP command projection", () => {
       revision: "2026-07-28",
       toolCount: 1,
     }]);
-    expect(result.commands.map((command) => command.id)).toEqual([
+    expect(result.commands.map((command: { id: string }) => command.id)).toEqual([
       "mcp.linear.get_issue",
     ]);
     expect(result.commands[0]?.permission).toMatchObject({
@@ -246,8 +246,8 @@ describe("external MCP command projection", () => {
       {
         sessionId: "session-1",
         traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
-        writeEvent: (event) => {
-          events.push(event);
+        writeEvent: (event: unknown) => {
+          events.push(event as Record<string, unknown>);
         },
       },
       undefined,
@@ -379,8 +379,8 @@ describe("external MCP command projection", () => {
       {
         sessionId: "session-1",
         traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
-        writeEvent: (event) => {
-          events.push(event);
+        writeEvent: (event: unknown) => {
+          events.push(event as Record<string, unknown>);
         },
       },
       undefined,
@@ -466,7 +466,7 @@ describe("MCP HTTP containment", () => {
           { name: "keep", inputSchema: { type: "object" } },
           { name: "keep", inputSchema: { type: "object" } },
         ],
-      ).map((tool) => tool.name),
+      ).map((tool: { name: string }) => tool.name),
     ).toEqual(["keep"]);
   });
 
@@ -545,13 +545,13 @@ describe("MCP HTTP containment", () => {
       externalMcpCommandsForTransport(
         [loopbackOnly, remoteEligible],
         "remote",
-      ).map((command) => command.id),
+      ).map((command: { id: string }) => command.id),
     ).toEqual(["mcp.public.search"]);
     expect(
       externalMcpCommandsForTransport(
         [loopbackOnly, remoteEligible],
         "loopback",
-      ).map((command) => command.id),
+      ).map((command: { id: string }) => command.id),
     ).toEqual(["mcp.linear.get_issue", "mcp.public.search"]);
   });
 

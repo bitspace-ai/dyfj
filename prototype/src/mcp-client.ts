@@ -28,7 +28,7 @@ import process from "node:process";
 import {
   buildDoltAllowNetGrant,
   validateDoltPort,
-} from "./mcp-net-grants";
+} from "./mcp-net-grants.ts";
 
 export { buildDoltAllowNetGrant, validateDoltPort };
 
