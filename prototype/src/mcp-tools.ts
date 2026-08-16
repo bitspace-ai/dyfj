@@ -7,7 +7,11 @@ import type {
 import { CommandExecutionError } from "./commands.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
 import { buildWebCommands, createWebToolsSessionState } from "./web-tools.ts";
-export { mcpServerNetGrants } from "./mcp-net-grants.ts";
+export {
+  buildDoltAllowNetGrant,
+  mcpServerNetGrants,
+  validateDoltPort,
+} from "./mcp-net-grants.ts";
 
 const MCP_REVISION = "2026-07-28";
 const DISCOVERY_TIMEOUT_MS = 5_000;

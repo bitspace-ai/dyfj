@@ -25,6 +25,12 @@ import {
 } from "npm:@modelcontextprotocol/client@2.0.0";
 import { StdioClientTransport } from "npm:@modelcontextprotocol/client@2.0.0/stdio";
 import process from "node:process";
+import {
+  buildDoltAllowNetGrant,
+  validateDoltPort,
+} from "./mcp-net-grants.ts";
+
+export { buildDoltAllowNetGrant, validateDoltPort };
 
 // ── Types (mirroring tool inputs/outputs) ─────────────────────────────────────
 
@@ -113,13 +119,13 @@ export class DyfjMcpClient {
       )
       : { ...this.options.childEnv };
     childEnv.HOME ??= process.env.HOME ?? "";
-    const port = childEnv.DOLT_PORT ?? "3306";
+    const netGrant = buildDoltAllowNetGrant(childEnv.DOLT_PORT);
     this.transport = new StdioClientTransport({
       command: this.options.serverExecutable ?? SERVER_BIN,
       args: [
         "run",
         "--sloppy-imports",
-        `--allow-net=127.0.0.1:${port}`,
+        netGrant,
         "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE",
         this.options.serverScript ?? SERVER_SCRIPT,
       ],

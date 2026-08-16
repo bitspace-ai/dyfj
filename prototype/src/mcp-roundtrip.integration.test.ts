@@ -199,3 +199,28 @@ Deno.test("MCP round trip fails closed without fixture connection settings", () 
     "missing required fixture environment variable: DOLT_HOST",
   );
 });
+
+Deno.test("DyfjMcpClient.connect fails before spawning when DOLT_PORT is invalid", async () => {
+  const client = new DyfjMcpClient({
+    serverExecutable: "/nonexistent/executable-that-must-not-be-spawned",
+    childEnv: {
+      DOLT_PORT: "3306,0.0.0.0",
+    },
+  });
+  let thrown: Error | null = null;
+  try {
+    await client.connect();
+  } catch (err: any) {
+    thrown = err;
+  }
+  if (!thrown) {
+    throw new Error("expected client.connect() to throw on invalid DOLT_PORT");
+  }
+  assertIncludes(
+    thrown.message,
+    "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+  );
+  assertNotIncludes(thrown.message, "0.0.0.0");
+  assertNotIncludes(thrown.message, "3306");
+  assertNotIncludes(thrown.message, "nonexistent");
+});

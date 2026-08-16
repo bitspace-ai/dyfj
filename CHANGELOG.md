@@ -28,6 +28,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- The standalone MCP client now strictly validates `DOLT_PORT` as a decimal TCP port integer between 1 and 65535 before constructing the Deno child network grant (`--allow-net=127.0.0.1:<port>`). Malformed, delimiter-bearing, signed, whitespace-padded, out-of-range, and non-decimal inputs are rejected with a fixed, credential-free diagnostic before spawning the child process.
+
 - The canonical test tasks now resolve the selected Deno executable once and use that same absolute path for nested commands and their narrow `--allow-run` grants. Package-manager symlinks and direct executable selections no longer fail before Vitest with a path-identity permission mismatch, while unrelated executables remain denied and unsafe selections fail with a fixed diagnostic.
 
 - Streamable HTTP memory-recall negotiation diagnostics now travel as a dedicated structured runtime event and render on streaming HTTP and Unix-socket clients. The transport servers remain silent by default, so surfacing the bounded era, revision, server identity, and extension identifiers does not enable general runtime narration. A loopback-only strict-modern fixture provides an operator UAT path without an external memory, credential, or private query/result logging.
