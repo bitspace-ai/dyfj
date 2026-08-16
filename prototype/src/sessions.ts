@@ -225,7 +225,17 @@ export async function listWorkbenchSessions(options: {
   query?: SessionQuery;
 } = {}): Promise<WorkbenchProjectSessions[]> {
   const query = options.query ?? doltQuery;
-  const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+  const limit = Math.floor(
+    Math.min(
+      Math.max(
+        typeof options.limit === "number" && Number.isFinite(options.limit)
+          ? options.limit
+          : 200,
+        1,
+      ),
+      1000,
+    ),
+  );
   const params: SqlParam[] = [];
   let where = "";
   if (options.project !== undefined) {

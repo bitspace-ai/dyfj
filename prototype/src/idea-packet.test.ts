@@ -2,11 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   draftWorkPacketFromContext,
   formatWorkPacketMarkdown,
-  getWorkbenchIdea,
-  getWorkbenchPacket,
   IdeaPacketRegistry,
-  listWorkbenchIdeas,
-  listWorkbenchPackets,
   markWorkbenchIdea,
 } from "./idea-packet";
 import type { WorkbenchSessionEvent } from "./sessions";
@@ -297,7 +293,7 @@ describe("draftWorkPacketFromContext", () => {
 
   test("registering duplicate idea ID cleans up previous session list and keeps lookup in sync", () => {
     const reg = new IdeaPacketRegistry();
-    const idea1 = markWorkbenchIdea({
+    markWorkbenchIdea({
       sessionId: "01SESSION_A",
       ideaId: "SAME_IDEA_ID",
       label: "Initial Idea",
@@ -306,7 +302,7 @@ describe("draftWorkPacketFromContext", () => {
 
     expect(reg.listIdeas("01SESSION_A")).toHaveLength(1);
 
-    const idea2 = markWorkbenchIdea({
+    markWorkbenchIdea({
       sessionId: "01SESSION_A",
       ideaId: "SAME_IDEA_ID",
       label: "Updated Idea in Same Session",
@@ -939,7 +935,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    const packet = draftWorkPacketFromContext({
+    draftWorkPacketFromContext({
       sessionId: "01SESSION_RETAIN_A",
       ideaId: idea.ideaId,
       registry: reg,

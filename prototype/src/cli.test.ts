@@ -3945,7 +3945,7 @@ describe("REPL /packet command", () => {
   });
 
   test("/packet draft supports explicit --event and --idea flags", async () => {
-    const { io, stdout } = fakeIo();
+    const { io } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];
     const fakeConnect: ConnectFn = () =>
       Promise.resolve({
@@ -3988,7 +3988,7 @@ describe("REPL /packet command", () => {
   });
 
   test("/packet draft supports explicit --idea flag", async () => {
-    const { io, stdout } = fakeIo();
+    const { io } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];
     const fakeConnect: ConnectFn = () =>
       Promise.resolve({
@@ -4031,7 +4031,7 @@ describe("REPL /packet command", () => {
   });
 
   test("/packet draft supports targetless drafting from session context", async () => {
-    const { io, stdout } = fakeIo();
+    const { io } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];
     const fakeConnect: ConnectFn = () =>
       Promise.resolve({
@@ -4491,7 +4491,7 @@ describe("REPL /packet command", () => {
   });
 
   test("/idea mark and /packet draft support -- delimiter for option-looking tokens", async () => {
-    const { io, stderr } = fakeIo();
+    const { io } = fakeIo();
     const recordedCalls: Array<{ method: string; params: any }> = [];
     const fakeConnect: ConnectFn = () =>
       Promise.resolve({

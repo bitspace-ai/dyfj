@@ -306,6 +306,83 @@ function hasContainerPrefix(line: string, openPrefix: string): boolean {
   return line.startsWith(listIndent);
 }
 
+function findHeadingPrefixEnd(line: string): number {
+  let i = 0;
+  const len = line.length;
+  while (i < len) {
+    let spaceCount = 0;
+    let j = i;
+    while (j < len && (line[j] === " " || line[j] === "\t") && spaceCount < 3) {
+      spaceCount++;
+      j++;
+    }
+    if (j < len && line[j] === ">") {
+      i = j + 1;
+      while (i < len && (line[i] === " " || line[i] === "\t")) {
+        i++;
+      }
+      continue;
+    }
+    if (
+      j < len &&
+      (line[j] === "*" || line[j] === "-" || line[j] === "+") &&
+      j + 1 < len &&
+      (line[j + 1] === " " || line[j + 1] === "\t")
+    ) {
+      i = j + 2;
+      while (i < len && (line[i] === " " || line[i] === "\t")) {
+        i++;
+      }
+      continue;
+    }
+    if (j < len && line[j] >= "0" && line[j] <= "9") {
+      let d = j;
+      while (d < len && line[d] >= "0" && line[d] <= "9" && d - j < 9) {
+        d++;
+      }
+      if (
+        d < len &&
+        (line[d] === "." || line[d] === ")") &&
+        d + 1 < len &&
+        (line[d + 1] === " " || line[d + 1] === "\t")
+      ) {
+        i = d + 2;
+        while (i < len && (line[i] === " " || line[i] === "\t")) {
+          i++;
+        }
+        continue;
+      }
+    }
+    break;
+  }
+
+  let postSpaces = 0;
+  while (i < len && (line[i] === " " || line[i] === "\t") && postSpaces < 3) {
+    postSpaces++;
+    i++;
+  }
+  return i;
+}
+
+function escapeMarkdownHeadingLine(line: string): string {
+  const prefixEnd = findHeadingPrefixEnd(line);
+  const rest = line.slice(prefixEnd);
+  if (rest.startsWith("#")) {
+    const hashesMatch = rest.match(/^(#+)/);
+    if (hashesMatch) {
+      const prefix = line.slice(0, prefixEnd);
+      const hashes = hashesMatch[1];
+      const remainder = rest.slice(hashes.length);
+      return `${prefix}\\${hashes}${remainder}`;
+    }
+  }
+  if (/^[=-]+[ \t]*$/.test(rest)) {
+    const prefix = line.slice(0, prefixEnd);
+    return `${prefix}\\${rest}`;
+  }
+  return line;
+}
+
 function sanitizeMarkdownHeading(text: string): string {
   const clean = stripAnsiEscapes(text)
     .replace(/\r\n|\r/g, "\n")
@@ -354,15 +431,7 @@ function sanitizeMarkdownHeading(text: string): string {
       }
 
       // Outside code fences: escape ATX and Setext headings
-      const sanitizedLine = line
-        .replace(
-          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]{0,3})(#+)/,
-          (_match, prefix, hashes) => `${prefix}\\${hashes}`,
-        )
-        .replace(
-          /^((?:[ \t]*(?:>[ \t]*|[*+-][ \t]+|\d+[.)][ \t]+))*[ \t]{0,3})([=-]+[ \t]*)$/,
-          (_match, prefix, underline) => `${prefix}\\${underline}`,
-        );
+      const sanitizedLine = escapeMarkdownHeadingLine(line);
 
       nonFenceBuffer.push(sanitizedLine);
     } else {
@@ -941,7 +1010,7 @@ export function draftWorkPacketFromContext(input: {
         );
       }
       referencedEventId = null;
-      if (!excerpt && idea) {
+      if (idea) {
         excerpt = (idea.description || idea.label).slice(0, 4000);
       }
     } else {
