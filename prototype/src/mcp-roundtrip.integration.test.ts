@@ -202,6 +202,7 @@ Deno.test("MCP round trip fails closed without fixture connection settings", () 
 
 Deno.test("DyfjMcpClient.connect fails before spawning when DOLT_PORT is invalid", async () => {
   const client = new DyfjMcpClient({
+    serverExecutable: "/nonexistent/executable-that-must-not-be-spawned",
     childEnv: {
       DOLT_PORT: "3306,0.0.0.0",
     },
@@ -221,5 +222,6 @@ Deno.test("DyfjMcpClient.connect fails before spawning when DOLT_PORT is invalid
   );
   assertNotIncludes(thrown.message, "0.0.0.0");
   assertNotIncludes(thrown.message, "3306");
+  assertNotIncludes(thrown.message, "nonexistent");
 });
 

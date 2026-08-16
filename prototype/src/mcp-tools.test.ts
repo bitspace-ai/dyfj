@@ -633,10 +633,12 @@ describe("validateDoltPort & buildDoltAllowNetGrant", () => {
       "-3306",
       "+1",
       "-1",
-      // Out of range
+      // Out of range & oversized
       "0",
       "65536",
       "100000",
+      "123456",
+      "9".repeat(10_000),
       0,
       65536,
       -1,

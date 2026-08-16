@@ -21,14 +21,14 @@ export function mcpServerNetGrants(
  * Validate DOLT_PORT before it enters any Deno network grant.
  *
  * Accepts:
- *  - undefined or omitted: defaults to 3306.
- *  - a non-empty string composed strictly of decimal digits (1-65535).
+ *  - undefined, null, or omitted: defaults to 3306.
+ *  - a non-empty string composed strictly of 1 to 5 decimal digits (1-65535).
  *  - a safe integer number in the range 1-65535.
  *
  * Rejects:
  *  - non-decimal characters, delimiters (commas, colons, slashes), signs (+, -),
  *    whitespace (leading/trailing/internal), floats, zero, >65535, empty strings,
- *    objects, booleans, and other non-port types.
+ *    non-null objects, booleans, and other non-port types.
  *
  * Rejection diagnostics are strictly fixed and credential-free (never echoing the input).
  */
@@ -38,7 +38,7 @@ export function validateDoltPort(rawPort?: unknown): number {
   }
   let portNumber: number;
   if (typeof rawPort === "string") {
-    if (!/^[0-9]+$/.test(rawPort)) {
+    if (rawPort.length === 0 || rawPort.length > 5 || !/^[0-9]+$/.test(rawPort)) {
       throw new Error(
         "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
       );
