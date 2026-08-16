@@ -580,7 +580,6 @@ export async function fetchWorkbenchSessionEvents(input: {
       ), queryArgs);
       break;
     } catch (error) {
-      if (input.asOf === undefined) throw error;
       const missingProviderCall = isMissingProviderCallColumn(error);
       const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
       const missingRunner = isMissingRunnerColumn(error);

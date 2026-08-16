@@ -656,9 +656,20 @@ export function buildWorkbenchHandlers(
         "description",
         { maxLen: 2000, singleLine: false },
       );
-      const events = eventId
-        ? await fetchSessionEvents({ sessionId, eventId })
-        : await fetchSessionEvents({ sessionId, limit: 20 });
+      let events: WorkbenchSessionEvent[] | undefined;
+      try {
+        events = eventId
+          ? await fetchSessionEvents({ sessionId, eventId })
+          : await fetchSessionEvents({ sessionId, limit: 20 });
+      } catch (e) {
+        if (eventId) {
+          throw new RpcError(
+            RpcErrorCode.invalidParams,
+            summarizeError(e),
+          );
+        }
+        events = undefined;
+      }
       try {
         const idea = markWorkbenchIdea({
           sessionId,
@@ -754,13 +765,28 @@ export function buildWorkbenchHandlers(
         );
       }
       const referencedEventId = eventId ?? idea?.eventId ?? undefined;
-      const [events, workspaceRec] = await Promise.all([
-        referencedEventId
-          ? fetchSessionEvents({ sessionId, eventId: referencedEventId })
-          : fetchSessionEvents({ sessionId, limit: 50 }),
-        (options.fetchSessionWorkspaceRecord ??
-          fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
-      ]);
+      let events: WorkbenchSessionEvent[] | undefined;
+      try {
+        events = referencedEventId
+          ? await fetchSessionEvents({ sessionId, eventId: referencedEventId })
+          : await fetchSessionEvents({ sessionId, limit: 50 });
+      } catch (e) {
+        if (referencedEventId) {
+          throw new RpcError(
+            RpcErrorCode.invalidParams,
+            summarizeError(e),
+          );
+        }
+        events = undefined;
+      }
+      let workspace: string | null = null;
+      try {
+        const workspaceRec = await (options.fetchSessionWorkspaceRecord ??
+          fetchWorkbenchSessionWorkspaceRecord)({ sessionId });
+        workspace = workspaceRec.workspace;
+      } catch {
+        workspace = null;
+      }
       try {
         const packet = draftWorkPacketFromContext({
           sessionId,
@@ -771,7 +797,7 @@ export function buildWorkbenchHandlers(
           title,
           operatorIntent,
           events,
-          workspace: workspaceRec.workspace,
+          workspace,
           registry: reg,
         });
         const markdown = formatWorkPacketMarkdown(packet);
