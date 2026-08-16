@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { parseMcpServersConfig, type SecretsConfig } from "./config";
 import {
   boundedMcpFetch,
+  buildDoltAllowNetGrant,
   buildExternalMcpCommands,
   externalMcpCommandsForTransport,
   formatUntrustedMcpResult,
@@ -9,6 +10,7 @@ import {
   requireNegotiatedMcpRevision,
   retainConfiguredMcpTools,
   sanitizeMcpInputSchema,
+  validateDoltPort,
 } from "./mcp-tools";
 import { createCommandRegistry, invokeCommandWithEvent } from "./commands";
 
@@ -590,3 +592,107 @@ describe("MCP HTTP containment", () => {
     expect(framed.match(/<\/untrusted-mcp-result>/g)).toHaveLength(1);
   });
 });
+
+describe("validateDoltPort & buildDoltAllowNetGrant", () => {
+  test("accepts valid boundary and ordinary port numbers and strings", () => {
+    expect(validateDoltPort()).toBe(3306);
+    expect(validateDoltPort(undefined)).toBe(3306);
+    expect(validateDoltPort(null)).toBe(3306);
+    expect(validateDoltPort("3306")).toBe(3306);
+    expect(validateDoltPort("3316")).toBe(3316);
+    expect(validateDoltPort("1")).toBe(1);
+    expect(validateDoltPort("65535")).toBe(65535);
+    expect(validateDoltPort(3306)).toBe(3306);
+    expect(validateDoltPort(1)).toBe(1);
+    expect(validateDoltPort(65535)).toBe(65535);
+
+    expect(buildDoltAllowNetGrant()).toBe("--allow-net=127.0.0.1:3306");
+    expect(buildDoltAllowNetGrant("3306")).toBe("--allow-net=127.0.0.1:3306");
+    expect(buildDoltAllowNetGrant("1")).toBe("--allow-net=127.0.0.1:1");
+    expect(buildDoltAllowNetGrant("65535")).toBe("--allow-net=127.0.0.1:65535");
+    expect(buildDoltAllowNetGrant(3316)).toBe("--allow-net=127.0.0.1:3316");
+  });
+
+  test("rejects malformed, delimiter-bearing, signed, whitespace, and out-of-range ports", () => {
+    const invalidInputs = [
+      // Delimiters / network injection attempts
+      "3306,0.0.0.0",
+      "3306,localhost",
+      "3306,127.0.0.1:8080",
+      "127.0.0.1:3306",
+      "3306;80",
+      "3306/tcp",
+      "3306 80",
+      // Whitespace
+      " 3306",
+      "3306 ",
+      "\t3306",
+      "33 06",
+      // Signs
+      "+3306",
+      "-3306",
+      "+1",
+      "-1",
+      // Out of range
+      "0",
+      "65536",
+      "100000",
+      0,
+      65536,
+      -1,
+      // Non-decimal / formatting
+      "",
+      "   ",
+      "abc",
+      "3306a",
+      "0x3306",
+      "33e2",
+      "3306.0",
+      "3306.5",
+      "NaN",
+      "Infinity",
+      // Non-port types
+      true,
+      false,
+      {},
+      [],
+    ];
+
+    for (const input of invalidInputs) {
+      expect(
+        () => validateDoltPort(input),
+        `expected validateDoltPort(${JSON.stringify(input)}) to throw`,
+      ).toThrow("invalid DOLT_PORT: must be a decimal integer between 1 and 65535");
+
+      expect(
+        () => buildDoltAllowNetGrant(input),
+        `expected buildDoltAllowNetGrant(${JSON.stringify(input)}) to throw`,
+      ).toThrow("invalid DOLT_PORT: must be a decimal integer between 1 and 65535");
+    }
+  });
+
+  test("rejection diagnostic is path-free and credential-free", () => {
+    const sensitiveInputs = [
+      "3306,SECRET_KEY_VALUE",
+      "/private/keys/dolt:3306",
+      "op://vault/dolt/port",
+      "password123,0.0.0.0",
+    ];
+
+    for (const input of sensitiveInputs) {
+      try {
+        buildDoltAllowNetGrant(input);
+        expect.unreachable("should have thrown");
+      } catch (err: any) {
+        expect(err.message).toBe(
+          "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+        );
+        expect(err.message).not.toContain("SECRET_KEY_VALUE");
+        expect(err.message).not.toContain("/private/keys");
+        expect(err.message).not.toContain("op://");
+        expect(err.message).not.toContain("password123");
+      }
+    }
+  });
+});
+
