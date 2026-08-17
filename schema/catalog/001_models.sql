@@ -855,7 +855,7 @@ INSERT INTO models (
         '8bit',
         32.00,
         FALSE,
-        TRUE
+        FALSE
     ),
     (
         'mlx-community/Qwen3.5-4B-8bit',

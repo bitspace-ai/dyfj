@@ -10,6 +10,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 - Added `xai` (Grok) direct provider contract to the hosted inference runtime (`https://api.x.ai/v1`) using `XAI_API_KEY` (`xaiApiKey` secret pointer), supporting session-affinity header forwarding (`x-grok-conv-id`) and classifying canonical xAI endpoints under `frontier-hosted` modality.
 
+- Promoted `qwen3.6:35b-a3b` (Ollama, 35B MoE / 3B active) to the primary default local companion in the Workbench model catalog and local routing preference chain, replacing `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit` to provide reliable OpenAI-standard tool calling and lower resident memory overhead.
+
 - Refreshed hosted frontier model lineups in `schema/catalog/001_models.sql` and `schema/migrations/009_frontier_hosted_models.sql`, adding current consensus frontier models for Anthropic (`claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`), OpenAI (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`), Google Gemini (`gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-pro-preview`), and xAI (`grok-4.6`, `grok-4.3`, `grok-build-0.1`), while deactivating superseded legacy rows.
 
 - Supported optional `maxOutputTokens` parameter on `WorkbenchTurnParams`, allowing callers to request output token limits up to the catalog limit while retaining conservative per-request safety clamps when unspecified.
