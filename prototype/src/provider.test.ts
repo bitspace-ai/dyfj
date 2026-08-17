@@ -4319,6 +4319,48 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     expect(result.usage.cost.total).toBeCloseTo(1.6, 5);
   });
 
+  test("honors custom maxOutputTokens requested by caller up to catalog limit for hosted providers", async () => {
+    const grokModel: WorkbenchModel = {
+      slug: "grok-4.6",
+      displayName: "Grok 4.6",
+      provider: "xai",
+      api: "openai-completions",
+      baseUrl: "https://api.x.ai/v1",
+      tier: 2,
+      costInput: 2.0,
+      costOutput: 6.0,
+      capabilities: ["text", "code", "reasoning"],
+      contextWindow: 500000,
+      maxOutputTokens: 65536,
+    };
+
+    let requestBody: Record<string, unknown> = {};
+
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      maxOutputTokens: 32768,
+      routing: { modelId: "grok-4.6" },
+      models: [grokModel],
+      getEnv: (name) => name === "XAI_API_KEY" ? "sk-xai-test-key" : undefined,
+      fetchFn: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "ok" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 10, completion_tokens: 10 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestBody.max_completion_tokens).toBe(32768);
+  });
+
   test("meters buffered structured tool calls when usage is absent", async () => {
     const name = "write_file";
     const argumentsJson = `{"content":"${"x".repeat(8_192)}"}`;

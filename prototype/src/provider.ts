@@ -1025,6 +1025,7 @@ export interface WorkbenchTurnParams {
   fetchFn?: FetchLike;
   getEnv?: (name: string) => string | undefined;
   sessionId?: string;
+  maxOutputTokens?: number;
 }
 
 /**
@@ -1054,16 +1055,21 @@ export function modelSupportsTranscriptRetry(model: WorkbenchModel): boolean {
 }
 
 /**
- * The output-token limit used to classify stopReason "length". Hosted
- * OpenAI-compatible adapters return the cap their request carries. Anthropic
- * and Google use the smaller of their transmitted fixed ceiling and the catalog
- * limit as a classification proxy. Local OpenAI-compatible requests omit a cap,
- * so their catalog value is the available proxy for the server's default.
+ * The output-token limit used to classify stopReason "length" and size wire requests.
+ * When a turn specifies `requestedOutputTokens`, the cap is bounded by the model's
+ * catalog `maxOutputTokens`. When unspecified, hosted providers apply a safe default
+ * request ceiling (8k/16k tokens) to prevent runaway generation while allowing explicit
+ * overrides up to the catalog limit. Local OpenAI-compatible requests omit a cap unless
+ * requested.
  */
 export function modelRequestedOutputCap(
   model: WorkbenchModel,
+  requestedOutputTokens?: number,
 ): number | undefined {
   const catalog = model.maxOutputTokens;
+  if (requestedOutputTokens !== undefined) {
+    return Math.min(catalog ?? Infinity, requestedOutputTokens);
+  }
   if (anthropicProviders.has(model.provider)) {
     return Math.min(catalog ?? Infinity, ANTHROPIC_DEFAULT_MAX_TOKENS);
   }
@@ -1242,8 +1248,8 @@ async function executeOpenAICompatibleTurn(
             historyTools: params.historyTools,
             messages: params.messages,
             maxCompletionTokens: openAIHostedProviders.has(model.provider)
-              ? modelRequestedOutputCap(model)
-              : undefined,
+              ? modelRequestedOutputCap(model, params.maxOutputTokens)
+              : params.maxOutputTokens,
           },
         ),
       ),
@@ -1736,6 +1742,7 @@ export function buildAnthropicMessagesRequest(
     jsonObject?: boolean;
     tools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
+    maxTokens?: number;
   } = {},
 ) {
   // The stable system prompt is the cache prefix: cache_control on the first
@@ -1772,7 +1779,7 @@ export function buildAnthropicMessagesRequest(
     }>;
   } = {
     model,
-    max_tokens: ANTHROPIC_DEFAULT_MAX_TOKENS,
+    max_tokens: options.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
     stream,
     system,
     messages: toAnthropicWireMessages(prompt, options.messages, options.tools),
@@ -1788,6 +1795,7 @@ export function buildAnthropicMessagesRequest(
   }
   return body;
 }
+
 
 export function parseAnthropicStreamLine(
   line: string,
@@ -1891,6 +1899,7 @@ async function runAnthropicMessagesTurn(
             jsonObject: params.jsonObject,
             tools: params.tools,
             messages: params.messages,
+            maxTokens: modelRequestedOutputCap(model, params.maxOutputTokens),
           },
         ),
       ),
@@ -2182,7 +2191,7 @@ export interface GeminiStreamEvent {
 export function buildGeminiRequest(
   systemPrompt: string,
   prompt: string,
-  options: { jsonObject?: boolean } = {},
+  options: { jsonObject?: boolean; maxOutputTokens?: number } = {},
 ) {
   const body: {
     systemInstruction: { parts: Array<{ text: string }> };
@@ -2196,7 +2205,7 @@ export function buildGeminiRequest(
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
-      maxOutputTokens: GEMINI_DEFAULT_MAX_TOKENS,
+      maxOutputTokens: options.maxOutputTokens ?? GEMINI_DEFAULT_MAX_TOKENS,
       thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL },
     },
   };
@@ -2295,6 +2304,7 @@ async function runGoogleGenerativeAITurn(
     body: JSON.stringify(
       buildGeminiRequest(params.systemPrompt, params.prompt, {
         jsonObject: params.jsonObject,
+        maxOutputTokens: modelRequestedOutputCap(model, params.maxOutputTokens),
       }),
     ),
   }, `gemini/${model.slug}`).catch((error) =>

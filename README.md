@@ -148,7 +148,7 @@ are receipted with cost and prompt-cache telemetry; crossing a ceiling requires
 explicit confirmation, and the runaway-anomaly hard stops remain separate.
 Non-loopback callers cannot inherit or assert paid approval and fail closed.
 
-Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), OpenRouter (`OPENROUTER_API_KEY`), and Google Gemini (`GEMINI_API_KEY`). The **pointer** mechanism keeps secret values off the config file: for a declared secret env var you write a `[secrets.pointers]` *pointer* (an `op://` ref, etc.), never the value, and it is resolved at process start. (The separate `[secrets.env]` map, below, is a plaintext surface for *non-secret* resolver env — do not put a credential there.)
+Each hosted provider reads its key from the process environment and fails closed when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`), OpenRouter (`OPENROUTER_API_KEY`), Google Gemini (`GEMINI_API_KEY`), and xAI (`XAI_API_KEY`). The **pointer** mechanism keeps secret values off the config file: for a declared secret env var you write a `[secrets.pointers]` *pointer* (an `op://` ref, etc.), never the value, and it is resolved at process start. (The separate `[secrets.env]` map, below, is a plaintext surface for *non-secret* resolver env — do not put a credential there.)
 
 **Recommended: declare secret pointers in `~/.dyfj/config.toml`.** With a `[secrets]` section, `dyfj start` alone yields a fully capable runtime — the engine resolves each declared pointer at boot by invoking a vendor-neutral resolver command, so hosted turns work without a separate wrapper:
 
@@ -173,6 +173,7 @@ ANTHROPIC_API_KEY  = "op://<vault>/<item>/credential"
 OPENAI_API_KEY     = "op://<vault>/<item>/credential"
 OPENROUTER_API_KEY = "op://<vault>/<item>/credential"
 GEMINI_API_KEY     = "op://<vault>/<item>/credential"
+XAI_API_KEY        = "op://<vault>/<item>/credential"
 # Also resolvable this way: DYFJ_MEMORY_MCP_TOKEN, DOLT_PASSWORD, DYFJ_WORKBENCH_API_KEY.
 ```
 
