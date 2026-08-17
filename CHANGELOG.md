@@ -38,6 +38,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Changed
 
+- Configured default companion models in `config.toml` (`[companion] default_model = "<slug>"` / `defaultCompanionModel`) are now selected on bare turns whenever the model exists in the catalog and carries valid pricing (including local, `subscription-oauth`, and hosted routes), rather than being restricted to on-machine local models. When `default_model` is unconfigured, null, or empty, bare turns continue to default safely to the registry's default local tier-0 companion (`qwen3.6:35b-a3b`).
+
 - Promoted `qwen3.6:35b-a3b` (Ollama, 35B MoE / 3B active) to the primary default local companion in the Workbench model catalog and local routing preference chain, replacing `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit` to provide reliable OpenAI-standard tool calling and lower resident memory overhead.
 
 - Enriched `WorkbenchModel` TypeScript definitions and `parseModelRegistryRows` in `prototype/src/provider.ts` to parse architecture and execution profile columns, and updated `defaultLocalWorkbenchModels` with local model entries and declared execution profiles.

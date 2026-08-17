@@ -753,13 +753,9 @@ export function selectWorkbenchModel(
 
   // No explicit modelId or tier. If the request also gave no hint and the engine
   // has a configured default companion model (config ~/.dyfj/config.toml /
-  // DYFJ_WORKBENCH_MODEL), use it — but only when it resolves to an on-machine
-  // local model. The ambient default is local by design: hosted inference is a
-  // deliberate per-task escalation (explicit modelId/tier plus the paid-consent
-  // gate), never something a bare turn inherits from standing config. A hosted
-  // configured default therefore falls through to the registry's local default,
-  // with a distinct reason so receipts show the bypass.
-  let hostedDefaultBypassed = false;
+  // DYFJ_WORKBENCH_MODEL), use it when it exists in the catalog and carries
+  // valid pricing. When defaultModelId is absent, null, or empty, bare turns
+  // fall through to the registry's default local tier-0 companion.
   if (
     options.hint === undefined &&
     defaultModelId !== undefined &&
@@ -768,13 +764,10 @@ export function selectWorkbenchModel(
   ) {
     const configured = models.find((model) => model.slug === defaultModelId);
     if (!configured) throw new WorkbenchModelNotFoundError(defaultModelId);
-    if (isLocalWorkbenchModel(configured)) {
-      if (!modelHasCatalogPricing(configured)) {
-        throw new WorkbenchModelNotRoutableError(configured.slug);
-      }
-      return { selected: configured, considered: [], reason: "default_config" };
+    if (!modelHasCatalogPricing(configured)) {
+      throw new WorkbenchModelNotRoutableError(configured.slug);
     }
-    hostedDefaultBypassed = true;
+    return { selected: configured, considered: [], reason: "default_config" };
   }
 
   // Ambient candidates — the bare default AND the hint paths below — must be
@@ -814,7 +807,7 @@ export function selectWorkbenchModel(
   return {
     selected,
     considered,
-    reason: hostedDefaultBypassed ? "default_local" : "default",
+    reason: "default",
   };
 }
 
