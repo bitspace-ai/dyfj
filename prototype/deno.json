@@ -103,7 +103,8 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "openrouter.ai:443",
-        "generativelanguage.googleapis.com:443"
+        "generativelanguage.googleapis.com:443",
+        "api.x.ai:443"
       ],
       "run": [
         "bash",
@@ -177,7 +178,8 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "openrouter.ai:443",
-        "generativelanguage.googleapis.com:443"
+        "generativelanguage.googleapis.com:443",
+        "api.x.ai:443"
       ],
       "run": [
         "bash",
@@ -274,7 +276,8 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "openrouter.ai:443",
-        "generativelanguage.googleapis.com:443"
+        "generativelanguage.googleapis.com:443",
+        "api.x.ai:443"
       ],
       "read": true,
       "write": true,
