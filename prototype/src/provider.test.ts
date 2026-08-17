@@ -6271,6 +6271,13 @@ describe("unpriced models are unroutable", () => {
       modelHasCatalogPricing({ ...unpriced, costInput: 15, costOutput: 75 }),
     )
       .toBe(true);
+    expect(
+      modelHasCatalogPricing({
+        ...unpriced,
+        modality: "subscription-oauth",
+        provider: "codex-chatgpt",
+      }),
+    ).toBe(true); // subscription-oauth tier 2 with $0 token cost is priced
   });
 
   test("explicit modelId selection of an unpriced paid model throws the named error", async () => {
