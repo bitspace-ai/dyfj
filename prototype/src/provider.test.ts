@@ -4272,6 +4272,117 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     expect(result.usage.cost.total).toBeCloseTo(1.1136, 5);
   });
 
+  test("meters DeepSeek V3 on OpenRouter with exact rates", async () => {
+    const deepseekModel: WorkbenchModel = {
+      slug: "deepseek/deepseek-chat",
+      displayName: "DeepSeek V3",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      tier: 1,
+      costInput: 0.2574,
+      costOutput: 1.0287,
+      capabilities: ["text", "code", "reasoning", "tools", "long-context"],
+    };
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "deepseek/deepseek-chat" },
+      models: [deepseekModel],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from deepseek v3" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 100_000, completion_tokens: 50_000 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.model.slug).toBe("deepseek/deepseek-chat");
+    // 0.1M in * 0.2574 + 0.05M out * 1.0287 = 0.02574 + 0.051435 = 0.077175
+    expect(result.usage.cost.total).toBeCloseTo(0.077175, 5);
+  });
+
+  test("meters Meta Muse Spark 1.2 on OpenRouter with exact rates", async () => {
+    const museModel: WorkbenchModel = {
+      slug: "meta/muse-spark-1.2",
+      displayName: "Meta Muse Spark 1.2",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      tier: 2,
+      costInput: 1.25,
+      costOutput: 4.25,
+      capabilities: ["text", "code", "reasoning", "tools", "thinking", "long-context"],
+    };
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "meta/muse-spark-1.2" },
+      models: [museModel],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from muse spark" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 200_000, completion_tokens: 10_000 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.model.slug).toBe("meta/muse-spark-1.2");
+    // 0.2M in * 1.25 + 0.01M out * 4.25 = 0.25 + 0.0425 = 0.2925
+    expect(result.usage.cost.total).toBeCloseTo(0.2925, 5);
+  });
+
+  test("meters Grok 4.6 on OpenRouter with pass-through rates", async () => {
+    const grokOrModel: WorkbenchModel = {
+      slug: "x-ai/grok-4.6",
+      displayName: "Grok 4.6 (OpenRouter)",
+      provider: "openrouter",
+      api: "openai-completions",
+      baseUrl: "https://openrouter.ai/api/v1",
+      tier: 2,
+      costInput: 2.0,
+      costOutput: 6.0,
+      capabilities: ["text", "code", "reasoning", "vision", "tools", "thinking", "long-context"],
+    };
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "x-ai/grok-4.6" },
+      models: [grokOrModel],
+      getEnv: (name) => name === "OPENROUTER_API_KEY" ? "sk-or-key" : undefined,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from grok on openrouter" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 50_000, completion_tokens: 10_000 },
+          }),
+          { status: 200 },
+        ),
+    });
+
+    expect(result.model.slug).toBe("x-ai/grok-4.6");
+    // 0.05M in * 2.0 + 0.01M out * 6.0 = 0.10 + 0.06 = 0.16
+    expect(result.usage.cost.total).toBeCloseTo(0.16, 5);
+  });
+
   test("calls xAI with its own bearer key, x-grok-conv-id header, and meters cost from the row", async () => {
     const grokModel: WorkbenchModel = {
       slug: "grok-4.6",
