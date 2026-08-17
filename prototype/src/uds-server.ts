@@ -338,9 +338,19 @@ function resolveDefaultTurnModel(
       reason,
     };
   } catch {
-    // No routable bare-turn model (empty registry, misconfigured default) —
-    // status must still answer; the turn path reports the real error.
-    return null;
+    try {
+      const { selected, reason } = selectWorkbenchModel(models, {}, null);
+      return {
+        slug: selected.slug,
+        displayName: selected.displayName,
+        tier: selected.tier,
+        local: isLocalWorkbenchModel(selected),
+        reason,
+      };
+    } catch {
+      // No routable bare-turn model (empty registry) — status must still answer.
+      return null;
+    }
   }
 }
 

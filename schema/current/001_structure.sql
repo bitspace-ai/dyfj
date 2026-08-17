@@ -154,24 +154,30 @@ CREATE TABLE sessions (
 );
 
 CREATE TABLE models (
-    slug               VARCHAR(128)   NOT NULL PRIMARY KEY,
-    display_name       VARCHAR(256)   NOT NULL,
-    provider           VARCHAR(64)    NOT NULL,
-    api                VARCHAR(64)    NOT NULL,
-    base_url           VARCHAR(512),
-    tier               TINYINT UNSIGNED NOT NULL,
-    context_window     INT UNSIGNED   NOT NULL,
-    max_output_tokens  INT UNSIGNED   NOT NULL,
-    cost_input         DECIMAL(12, 6) NOT NULL DEFAULT 0,
-    cost_output        DECIMAL(12, 6) NOT NULL DEFAULT 0,
-    cost_cache_read    DECIMAL(12, 6) NOT NULL DEFAULT 0,
-    cost_cache_write   DECIMAL(12, 6) NOT NULL DEFAULT 0,
-    reasoning          BOOLEAN        NOT NULL DEFAULT FALSE,
-    capabilities       JSON           NOT NULL,
-    active             BOOLEAN        NOT NULL DEFAULT TRUE,
-    created_at         TIMESTAMP(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    updated_at         TIMESTAMP(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-                                      ON UPDATE CURRENT_TIMESTAMP(6),
+    slug                      VARCHAR(128)   NOT NULL PRIMARY KEY,
+    display_name              VARCHAR(256)   NOT NULL,
+    provider                  VARCHAR(64)    NOT NULL,
+    api                       VARCHAR(64)    NOT NULL,
+    base_url                  VARCHAR(512),
+    tier                      TINYINT UNSIGNED NOT NULL,
+    context_window            INT UNSIGNED   NOT NULL,
+    max_output_tokens         INT UNSIGNED   NOT NULL,
+    cost_input                DECIMAL(12, 6) NOT NULL DEFAULT 0,
+    cost_output               DECIMAL(12, 6) NOT NULL DEFAULT 0,
+    cost_cache_read           DECIMAL(12, 6) NOT NULL DEFAULT 0,
+    cost_cache_write          DECIMAL(12, 6) NOT NULL DEFAULT 0,
+    reasoning                 BOOLEAN        NOT NULL DEFAULT FALSE,
+    capabilities              JSON           NOT NULL,
+    architecture              VARCHAR(16)    NULL,
+    total_params_b            DECIMAL(6, 2)  NULL,
+    active_params_b           DECIMAL(6, 2)  NULL,
+    recommended_quant         VARCHAR(64)    NULL,
+    resident_ram_gib          DECIMAL(5, 2)  NULL,
+    reasoning_effort_control  BOOLEAN        NOT NULL DEFAULT FALSE,
+    active                    BOOLEAN        NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at                TIMESTAMP(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                                             ON UPDATE CURRENT_TIMESTAMP(6),
 
     INDEX idx_tier (tier, active)
 );
