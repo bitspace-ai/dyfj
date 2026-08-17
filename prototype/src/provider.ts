@@ -322,6 +322,7 @@ const openAIHostedProviderContracts: ReadonlyMap<
 > = new Map([
   ["openai", { keyEnvVar: "OPENAI_API_KEY", host: "api.openai.com" }],
   ["openrouter", { keyEnvVar: "OPENROUTER_API_KEY", host: "openrouter.ai" }],
+  ["xai", { keyEnvVar: "XAI_API_KEY", host: "api.x.ai" }],
 ]);
 const openAIHostedProviders = new Set(openAIHostedProviderContracts.keys());
 const anthropicProviders = new Set(["anthropic"]);
@@ -953,6 +954,7 @@ export function buildOpenAIChatRequest(
     historyTools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
     maxCompletionTokens?: number;
+    reasoningEffort?: string;
   } = {},
 ) {
   const body: {
@@ -961,6 +963,7 @@ export function buildOpenAIChatRequest(
     messages: OpenAIWireMessage[];
     response_format?: { type: "json_object" };
     max_completion_tokens?: number;
+    reasoning_effort?: string;
     tools?: Array<{
       type: "function";
       function: WorkbenchToolDefinition;
@@ -981,6 +984,9 @@ export function buildOpenAIChatRequest(
   }
   if (options.maxCompletionTokens !== undefined) {
     body.max_completion_tokens = options.maxCompletionTokens;
+  }
+  if (options.reasoningEffort !== undefined) {
+    body.reasoning_effort = options.reasoningEffort;
   }
   if (options.tools && options.tools.length > 0) {
     // Sanitize names to ^[a-zA-Z0-9_-]+$ — OpenAI rejects dotted command ids
@@ -1023,6 +1029,8 @@ export interface WorkbenchTurnParams {
   now?: () => number;
   fetchFn?: FetchLike;
   getEnv?: (name: string) => string | undefined;
+  sessionId?: string;
+  maxOutputTokens?: number;
 }
 
 /**
@@ -1052,16 +1060,21 @@ export function modelSupportsTranscriptRetry(model: WorkbenchModel): boolean {
 }
 
 /**
- * The output-token limit used to classify stopReason "length". Hosted
- * OpenAI-compatible adapters return the cap their request carries. Anthropic
- * and Google use the smaller of their transmitted fixed ceiling and the catalog
- * limit as a classification proxy. Local OpenAI-compatible requests omit a cap,
- * so their catalog value is the available proxy for the server's default.
+ * The output-token limit used to classify stopReason "length" and size wire requests.
+ * When a turn specifies `requestedOutputTokens`, the cap is bounded by the model's
+ * catalog `maxOutputTokens`. When unspecified, hosted providers apply a safe default
+ * request ceiling (8k/16k tokens) to prevent runaway generation while allowing explicit
+ * overrides up to the catalog limit. Local OpenAI-compatible requests omit a cap unless
+ * requested.
  */
 export function modelRequestedOutputCap(
   model: WorkbenchModel,
+  requestedOutputTokens?: number,
 ): number | undefined {
   const catalog = model.maxOutputTokens;
+  if (requestedOutputTokens !== undefined) {
+    return Math.min(catalog ?? Infinity, requestedOutputTokens);
+  }
   if (anthropicProviders.has(model.provider)) {
     return Math.min(catalog ?? Infinity, ANTHROPIC_DEFAULT_MAX_TOKENS);
   }
@@ -1115,8 +1128,13 @@ export async function runWorkbenchTurn(
         hostedContract.keyEnvVar,
       );
     }
+    const extraHeaders: Record<string, string> = {};
+    if (model.provider === "xai" && params.sessionId) {
+      extraHeaders["x-grok-conv-id"] = params.sessionId;
+    }
     return await executeOpenAICompatibleTurn(params, model, selection, {
       authHeader: `Bearer ${apiKey}`,
+      extraHeaders,
     }).catch((error) =>
       recoverWorkbenchAbort(
         error,
@@ -1197,7 +1215,7 @@ async function executeOpenAICompatibleTurn(
   params: WorkbenchTurnParams,
   model: WorkbenchModel,
   selection: WorkbenchSelection,
-  opts: { authHeader?: string },
+  opts: { authHeader?: string; extraHeaders?: Record<string, string> },
 ): Promise<WorkbenchTurnResult> {
   if (params.abortSignal?.aborted) {
     return abortedWorkbenchTurnResult(params, model, selection, 0, false);
@@ -1221,6 +1239,7 @@ async function executeOpenAICompatibleTurn(
       headers: {
         "content-type": "application/json",
         ...(opts.authHeader ? { authorization: opts.authHeader } : {}),
+        ...(opts.extraHeaders ?? {}),
       },
       body: JSON.stringify(
         buildOpenAIChatRequest(
@@ -1234,7 +1253,13 @@ async function executeOpenAICompatibleTurn(
             historyTools: params.historyTools,
             messages: params.messages,
             maxCompletionTokens: openAIHostedProviders.has(model.provider)
-              ? modelRequestedOutputCap(model)
+              ? modelRequestedOutputCap(model, params.maxOutputTokens)
+              : params.maxOutputTokens,
+            reasoningEffort: (model.provider === "openai" &&
+                model.reasoningEffortControl &&
+                params.tools &&
+                params.tools.length > 0)
+              ? "none"
               : undefined,
           },
         ),
@@ -1586,6 +1611,12 @@ export function getModelAccessModality(model: {
       isAllowedHostedProviderBaseUrl(model.baseUrl, "api.openai.com", [
         "/v1",
       ])) ||
+    (model.provider === "xai" &&
+      isAllowedHostedProviderBaseUrl(model.baseUrl, "api.x.ai", [
+        "",
+        "/",
+        "/v1",
+      ])) ||
     (model.provider === "google" &&
       isAllowedHostedProviderBaseUrl(
         model.baseUrl,
@@ -1722,6 +1753,7 @@ export function buildAnthropicMessagesRequest(
     jsonObject?: boolean;
     tools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
+    maxTokens?: number;
   } = {},
 ) {
   // The stable system prompt is the cache prefix: cache_control on the first
@@ -1758,7 +1790,7 @@ export function buildAnthropicMessagesRequest(
     }>;
   } = {
     model,
-    max_tokens: ANTHROPIC_DEFAULT_MAX_TOKENS,
+    max_tokens: options.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
     stream,
     system,
     messages: toAnthropicWireMessages(prompt, options.messages, options.tools),
@@ -1774,6 +1806,7 @@ export function buildAnthropicMessagesRequest(
   }
   return body;
 }
+
 
 export function parseAnthropicStreamLine(
   line: string,
@@ -1877,6 +1910,7 @@ async function runAnthropicMessagesTurn(
             jsonObject: params.jsonObject,
             tools: params.tools,
             messages: params.messages,
+            maxTokens: modelRequestedOutputCap(model, params.maxOutputTokens),
           },
         ),
       ),
@@ -2168,7 +2202,7 @@ export interface GeminiStreamEvent {
 export function buildGeminiRequest(
   systemPrompt: string,
   prompt: string,
-  options: { jsonObject?: boolean } = {},
+  options: { jsonObject?: boolean; maxOutputTokens?: number } = {},
 ) {
   const body: {
     systemInstruction: { parts: Array<{ text: string }> };
@@ -2182,7 +2216,7 @@ export function buildGeminiRequest(
     systemInstruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
-      maxOutputTokens: GEMINI_DEFAULT_MAX_TOKENS,
+      maxOutputTokens: options.maxOutputTokens ?? GEMINI_DEFAULT_MAX_TOKENS,
       thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL },
     },
   };
@@ -2281,6 +2315,7 @@ async function runGoogleGenerativeAITurn(
     body: JSON.stringify(
       buildGeminiRequest(params.systemPrompt, params.prompt, {
         jsonObject: params.jsonObject,
+        maxOutputTokens: modelRequestedOutputCap(model, params.maxOutputTokens),
       }),
     ),
   }, `gemini/${model.slug}`).catch((error) =>

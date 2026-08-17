@@ -2250,6 +2250,7 @@ async function runNativeWorkbenchRuntime(
             routing: { modelId: compressionModel.slug },
             models,
             abortSignal: runtimeInput.abortSignal,
+            sessionId,
           });
         } catch (err) {
           await writeMaybe(
@@ -2508,7 +2509,10 @@ async function runNativeWorkbenchRuntime(
       const startedAt = Date.now();
       let turn: Awaited<ReturnType<typeof runWorkbenchTurn>>;
       try {
-        turn = await runWorkbenchTurn(params);
+        turn = await runWorkbenchTurn({
+          ...params,
+          sessionId: params.sessionId ?? sessionId,
+        });
       } catch (err) {
         const safeError = onProviderError?.(err) ?? err;
         await writeMaybe(

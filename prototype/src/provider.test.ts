@@ -506,6 +506,12 @@ describe("getModelAccessModality", () => {
         baseUrl: "https://generativelanguage.googleapis.com",
       }),
     ).toBe("frontier-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "xai",
+        baseUrl: "https://api.x.ai/v1",
+      }),
+    ).toBe("frontier-hosted");
   });
 
   test("classifies non-canonical or proxy vendor endpoints as custom-hosted", () => {
@@ -4254,6 +4260,105 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     expect(result.text).toBe("hello from openrouter");
     // 1M input * $0.2688 + 1M output * $0.8448, per-MTok rates.
     expect(result.usage.cost.total).toBeCloseTo(1.1136, 5);
+  });
+
+  test("calls xAI with its own bearer key, x-grok-conv-id header, and meters cost from the row", async () => {
+    const grokModel: WorkbenchModel = {
+      slug: "grok-4.6",
+      displayName: "Grok 4.6",
+      provider: "xai",
+      api: "openai-completions",
+      baseUrl: "https://api.x.ai/v1",
+      tier: 2,
+      costInput: 2.0,
+      costOutput: 6.0,
+      capabilities: ["text", "code", "reasoning", "vision", "tools", "thinking", "long-context"],
+      contextWindow: 500000,
+      maxOutputTokens: 65536,
+      reasoningEffortControl: true,
+    };
+
+    let requestUrl = "";
+    let authHeader: string | null = null;
+    let grokConvIdHeader: string | null = null;
+    let requestBody: Record<string, unknown> = {};
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      sessionId: "session-12345",
+      routing: { modelId: "grok-4.6" },
+      models: [grokModel],
+      getEnv: (name) => name === "XAI_API_KEY" ? "sk-xai-test-key" : undefined,
+      fetchFn: async (input, init) => {
+        requestUrl = String(input);
+        const headers = new Headers(init?.headers);
+        authHeader = headers.get("authorization");
+        grokConvIdHeader = headers.get("x-grok-conv-id");
+        requestBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "hello from grok 4.6" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 500_000, completion_tokens: 100_000 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestUrl).toBe("https://api.x.ai/v1/chat/completions");
+    expect(authHeader).toBe("Bearer sk-xai-test-key");
+    expect(grokConvIdHeader).toBe("session-12345");
+    expect(requestBody.max_completion_tokens).toBe(8192);
+    expect(result.model.provider).toBe("xai");
+    expect(result.text).toBe("hello from grok 4.6");
+    // 0.5M input * $2.0 + 0.1M output * $6.0 = $1.0 + $0.6 = $1.6
+    expect(result.usage.cost.total).toBeCloseTo(1.6, 5);
+  });
+
+  test("honors custom maxOutputTokens requested by caller up to catalog limit for hosted providers", async () => {
+    const grokModel: WorkbenchModel = {
+      slug: "grok-4.6",
+      displayName: "Grok 4.6",
+      provider: "xai",
+      api: "openai-completions",
+      baseUrl: "https://api.x.ai/v1",
+      tier: 2,
+      costInput: 2.0,
+      costOutput: 6.0,
+      capabilities: ["text", "code", "reasoning"],
+      contextWindow: 500000,
+      maxOutputTokens: 65536,
+    };
+
+    let requestBody: Record<string, unknown> = {};
+
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      maxOutputTokens: 32768,
+      routing: { modelId: "grok-4.6" },
+      models: [grokModel],
+      getEnv: (name) => name === "XAI_API_KEY" ? "sk-xai-test-key" : undefined,
+      fetchFn: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            choices: [{
+              message: { content: "ok" },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 10, completion_tokens: 10 },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    expect(requestBody.max_completion_tokens).toBe(32768);
   });
 
   test("meters buffered structured tool calls when usage is absent", async () => {

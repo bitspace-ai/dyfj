@@ -74,6 +74,7 @@
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "XAI_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -102,7 +103,8 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "openrouter.ai:443",
-        "generativelanguage.googleapis.com:443"
+        "generativelanguage.googleapis.com:443",
+        "api.x.ai:443"
       ],
       "run": [
         "bash",
@@ -146,6 +148,7 @@
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "XAI_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -175,7 +178,8 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "openrouter.ai:443",
-        "generativelanguage.googleapis.com:443"
+        "generativelanguage.googleapis.com:443",
+        "api.x.ai:443"
       ],
       "run": [
         "bash",
@@ -246,6 +250,7 @@
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "XAI_API_KEY",
         "DOLT_HOST",
         "DOLT_PORT",
         "DOLT_USER",
@@ -271,7 +276,8 @@
         "api.anthropic.com:443",
         "api.openai.com:443",
         "openrouter.ai:443",
-        "generativelanguage.googleapis.com:443"
+        "generativelanguage.googleapis.com:443",
+        "api.x.ai:443"
       ],
       "read": true,
       "write": true,
