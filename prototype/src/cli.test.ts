@@ -2397,8 +2397,8 @@ describe("parseArgs", () => {
         .toContain(`--runner cannot be combined with '${command}'`);
     }
     expect(
-      parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]),
-    ).toMatchObject({ command: "exec", prompt: "hi" });
+      parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error,
+    ).toContain("--runner cannot be combined with 'status'");
   });
 
   test("rejects explicit model routing alongside a runner", () => {
