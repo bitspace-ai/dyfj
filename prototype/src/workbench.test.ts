@@ -409,6 +409,9 @@ vi.mock("./sessions", () => ({
     `workbench-${sessionId.toLowerCase()}`,
   createWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessions.push(input);
+    if (typeof input.workspace === "string") {
+      runtimeMocks.sessionWorkspace = input.workspace;
+    }
   },
   fetchWorkbenchSessionWorkspace: async () => {
     if (runtimeMocks.sessionWorkspaceThrows) {
@@ -1266,6 +1269,47 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
     });
     expect(result).toBeDefined();
     expect(result.sessionId).toBeDefined();
+    expect("runner" in result && result.runner).toMatchObject({
+      kind: "external_agent",
+      profile: "fixture",
+    });
+    expect("receipt" in result && result.receipt).toContain("fixture");
+  });
+
+  test("allows resumed session turns on the external agent runner", async () => {
+    runtimeMocks.registry = [
+      {
+        slug: "fixture",
+        displayName: "ACP Fixture",
+        provider: "fixture",
+        api: "acp",
+        baseUrl: "local_stdio",
+        tier: 0 as const,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text"],
+        contextWindow: undefined,
+        maxOutputTokens: undefined,
+      },
+    ];
+    const first = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "first turn",
+      routingOptions: { modelId: "fixture" },
+      trustWorkspaceInstructions: true,
+    });
+    const second = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "second turn",
+      routingOptions: { modelId: "fixture" },
+      trustWorkspaceInstructions: true,
+      sessionId: first.sessionId,
+    });
+    expect(second.sessionId).toBe(first.sessionId);
+    expect("runner" in second && second.runner).toMatchObject({
+      kind: "external_agent",
+      profile: "fixture",
+    });
   });
 });
 

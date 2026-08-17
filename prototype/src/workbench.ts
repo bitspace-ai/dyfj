@@ -1497,6 +1497,8 @@ export async function runWorkbenchRuntime(
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
   } = await import("./provider");
+
+  let acpProfile: "codex-chatgpt" | "fixture" | null = null;
   try {
     const models = await loadWorkbenchModels().then(
       withDefaultLocalWorkbenchModels,
@@ -1508,36 +1510,38 @@ export async function runWorkbenchRuntime(
       runtimeInput.defaultCompanionModel,
     );
     if (selection.selected.api === "acp") {
-      const profile = selection.selected.provider === "codex-chatgpt"
-        ? "codex-chatgpt"
-        : selection.selected.slug === "fixture"
-        ? "fixture"
-        : null;
-      if (profile !== null) {
-        if (
-          profile === "codex-chatgpt" &&
-          runtimeInput.trustWorkspaceInstructions !== true
-        ) {
-          throw new DomainError(
-            "codex-chatgpt requires explicit workspace trust",
-          );
-        }
-        const { runExternalAgentWorkbenchRuntime } = await import(
-          "./external-agent-runtime"
+      if (selection.selected.provider === "codex-chatgpt") {
+        acpProfile = "codex-chatgpt";
+      } else if (selection.selected.slug === "fixture") {
+        acpProfile = "fixture";
+      } else {
+        throw new DomainError(
+          `Unsupported ACP runner: ${selection.selected.provider}`,
         );
-        return await runExternalAgentWorkbenchRuntime({
-          ...runtimeInput,
-          runner: { kind: "acp", profile },
-        });
       }
-      throw new DomainError(
-        `Unsupported ACP runner: ${selection.selected.provider}`,
-      );
     }
   } catch (error) {
     if (error instanceof DomainError) {
       throw error;
     }
+  }
+
+  if (acpProfile !== null) {
+    if (
+      acpProfile === "codex-chatgpt" &&
+      runtimeInput.trustWorkspaceInstructions !== true
+    ) {
+      throw new DomainError(
+        "codex-chatgpt requires explicit workspace trust",
+      );
+    }
+    const { runExternalAgentWorkbenchRuntime } = await import(
+      "./external-agent-runtime"
+    );
+    return await runExternalAgentWorkbenchRuntime({
+      ...runtimeInput,
+      runner: { kind: "acp", profile: acpProfile },
+    });
   }
 
   return await runNativeWorkbenchRuntime(runtimeInput);

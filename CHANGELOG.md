@@ -8,9 +8,9 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
-- Wired automatic ACP subscription model dispatch into `runWorkbenchRuntime`. Selecting an ACP-backed model (such as `codex-chatgpt/gpt-5.6-sol`) or configuring it as `default_model` now automatically dispatches turns to the ACP external agent runner with the matching execution profile, streaming responses and handling permission options natively in the REPL and one-shot turns without requiring explicit `--runner` invocation.
+- Wired automatic ACP model dispatch in `runWorkbenchRuntime` for supported ACP routes (`codex-chatgpt/gpt-5.6-sol` and `fixture`). Selecting a supported ACP-backed model or configuring it as `default_model` automatically routes turns to `runExternalAgentWorkbenchRuntime` with the matching execution profile without requiring explicit `--runner` invocation.
 
-- Enabled multi-turn interactive REPL sessions and session resume for `codex-chatgpt`, lifting one-shot constraints while preserving workspace trust validation and process-group containment.
+- Allowed `codex-chatgpt` in REPL argument parsing and permitted session resume identifiers on the external agent runtime, forwarding supplied session IDs without one-shot rejection while preserving workspace trust validation and process-group containment.
 
 - Added migration `010_acp_models_active_alignment.sql` and updated `schema/catalog/001_models.sql` to keep implemented ACP routes (`codex-chatgpt/gpt-5.6-sol`) active while setting unimplemented ACP runner routes (`claude-acp/claude-fable-5`, `cursor-agent/composer-2.0`, `gemini-antigravity/gemini-3.7-flash`, `grok-build/grok-4.6`) to `active = FALSE` until their child subprocess adapters land.
 
