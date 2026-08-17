@@ -1465,6 +1465,9 @@ export function runWorkbenchRuntime(
   },
 ): Promise<ExternalAgentWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
+  runtimeInput: WorkbenchRuntimeInput & { runner?: undefined },
+): Promise<NativeWorkbenchRuntimeResult>;
+export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
 ): Promise<WorkbenchRuntimeResult>;
 export async function runWorkbenchRuntime(
