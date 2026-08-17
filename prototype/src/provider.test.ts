@@ -570,17 +570,15 @@ describe("getModelAccessModality", () => {
 });
 
 describe("selectWorkbenchModel", () => {
-  test("defaults to the local MLX Qwen model when available", () => {
+  test("defaults to the local Qwen 3.6 MoE model when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
 
-    expect(selection.selected.slug).toBe(
-      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
-    );
-    expect(selection.selected.provider).toBe("mlx-lm");
+    expect(selection.selected.slug).toBe("qwen3.6:35b-a3b");
+    expect(selection.selected.provider).toBe("ollama");
     expect(selection.reason).toBe("default");
   });
 
-  test("falls back to Ollama when MLX Qwen is not available", () => {
+  test("falls back to next preferred local model when primary default is not available", () => {
     const selection = selectWorkbenchModel(models, {});
 
     expect(selection.selected.slug).toBe("laguna-xs-2.1");
@@ -588,12 +586,12 @@ describe("selectWorkbenchModel", () => {
     expect(selection.reason).toBe("default");
   });
 
-  test("explicit model selection can select the MLX Qwen model", () => {
+  test("explicit model selection can select a local model by slug", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {
-      modelId: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+      modelId: "gemma4:e2b",
     });
 
-    expect(selection.selected.provider).toBe("mlx-lm");
+    expect(selection.selected.provider).toBe("ollama");
     expect(selection.reason).toBe("explicit_model_id");
   });
 
@@ -748,23 +746,23 @@ describe("selectWorkbenchModel", () => {
 });
 
 describe("defaultLocalWorkbenchModels", () => {
-  test("provides a zero-cost Tier 0 MLX local default", () => {
+  test("provides a zero-cost Tier 0 local default", () => {
     const defaults = defaultLocalWorkbenchModels();
 
     expect(defaults[0]).toMatchObject({
-      slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
-      provider: "mlx-lm",
+      slug: "qwen3.6:35b-a3b",
+      provider: "ollama",
       api: "openai-completions",
-      baseUrl: "http://127.0.0.1:18080/v1",
+      baseUrl: "http://localhost:11434/v1",
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      capabilities: expect.arrayContaining(["text", "code"]),
+      capabilities: expect.arrayContaining(["text", "code", "tools"]),
       architecture: "moe",
-      totalParamsB: 30.5,
+      totalParamsB: 36.0,
       activeParamsB: 3.0,
-      recommendedQuant: "8bit",
-      residentRamGiB: 32.0,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 24.0,
       reasoningEffortControl: false,
     });
   });
@@ -836,8 +834,8 @@ describe("withDefaultLocalWorkbenchModels", () => {
     }]);
 
     expect(merged.slice(0, 2).map((model) => model.slug)).toEqual([
-      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
       "qwen3.6:35b-a3b",
+      "muse-glimmer:30b",
     ]);
     const slugs = merged.map((model) => model.slug);
     expect(slugs).toContain("laguna-xs-2.1");
@@ -1257,7 +1255,19 @@ describe("runWorkbenchTurn streaming", () => {
       systemPrompt: "system",
       prompt: "hello",
       routing: { modelId: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit" },
-      models: defaultLocalWorkbenchModels(),
+      models: [
+        {
+          slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+          displayName: "Qwen3-Coder 30B MLX",
+          provider: "mlx-lm",
+          api: "openai-completions",
+          baseUrl: "http://127.0.0.1:18080/v1",
+          tier: 0,
+          costInput: 0,
+          costOutput: 0,
+          capabilities: ["text", "code"],
+        },
+      ],
       fetchFn: async (input, init) => {
         requestUrl = String(input);
         requestModel = JSON.parse(String(init?.body)).model;
@@ -6011,7 +6021,7 @@ describe("tool wire names", () => {
 });
 
 describe("explicit tier preference", () => {
-  test("tier 0 honors the MLX-first chain over list order", () => {
+  test("tier 0 honors the local preference chain over list order", () => {
     const tierZero: WorkbenchModel[] = [
       {
         slug: "laguna-xs-2.1",
@@ -6025,11 +6035,11 @@ describe("explicit tier preference", () => {
         capabilities: ["text"],
       },
       {
-        slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
-        displayName: "Qwen3-Coder 30B MLX",
-        provider: "mlx-lm",
+        slug: "qwen3.6:35b-a3b",
+        displayName: "Qwen3.6 35B (MoE)",
+        provider: "ollama",
         api: "openai-completions",
-        baseUrl: "http://127.0.0.1:18080/v1",
+        baseUrl: "http://localhost:11434/v1",
         tier: 0,
         costInput: 0,
         costOutput: 0,
@@ -6037,13 +6047,11 @@ describe("explicit tier preference", () => {
       },
     ];
     const selection = selectWorkbenchModel(tierZero, { tier: 0 });
-    expect(selection.selected.slug).toBe(
-      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
-    );
+    expect(selection.selected.slug).toBe("qwen3.6:35b-a3b");
     expect(selection.reason).toBe("explicit_tier");
     expect(selection.considered).toEqual([
       "laguna-xs-2.1",
-      "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
+      "qwen3.6:35b-a3b",
     ]);
   });
 });

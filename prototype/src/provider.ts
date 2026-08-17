@@ -531,26 +531,6 @@ export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   return [
     {
-      slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
-      displayName: "Qwen3-Coder 30B MLX",
-      provider: "mlx-lm",
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:18080/v1",
-      tier: 0,
-      costInput: 0,
-      costOutput: 0,
-      capabilities: ["text", "code", "reasoning", "long-context"],
-      contextWindow: 262144,
-      maxOutputTokens: 8192,
-      modality: "local",
-      architecture: "moe",
-      totalParamsB: 30.5,
-      activeParamsB: 3.0,
-      recommendedQuant: "8bit",
-      residentRamGiB: 32.0,
-      reasoningEffortControl: false,
-    },
-    {
       slug: "qwen3.6:35b-a3b",
       displayName: "Qwen3.6 35B (MoE)",
       provider: "ollama",
@@ -591,26 +571,6 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       reasoningEffortControl: true,
     },
     {
-      slug: "deepseek-r1:32b",
-      displayName: "DeepSeek-R1 Distill 32B",
-      provider: "ollama",
-      api: "openai-completions",
-      baseUrl: "http://localhost:11434/v1",
-      tier: 0,
-      costInput: 0,
-      costOutput: 0,
-      capabilities: ["text", "code", "reasoning", "thinking"],
-      contextWindow: 131072,
-      maxOutputTokens: 8192,
-      modality: "local",
-      architecture: "dense",
-      totalParamsB: 32.8,
-      activeParamsB: 32.8,
-      recommendedQuant: "Q4_K_M",
-      residentRamGiB: 22.0,
-      reasoningEffortControl: false,
-    },
-    {
       slug: "mistral-small:24b-instruct-2501-q4_K_M",
       displayName: "Mistral Small 24B",
       provider: "ollama",
@@ -628,6 +588,26 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       activeParamsB: 23.6,
       recommendedQuant: "Q4_K_M",
       residentRamGiB: 15.0,
+      reasoningEffortControl: false,
+    },
+    {
+      slug: "deepseek-r1:32b",
+      displayName: "DeepSeek-R1 Distill 32B",
+      provider: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning", "thinking"],
+      contextWindow: 131072,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "dense",
+      totalParamsB: 32.8,
+      activeParamsB: 32.8,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 22.0,
       reasoningEffortControl: false,
     },
     {
@@ -832,14 +812,17 @@ export function selectWorkbenchModel(
 }
 
 // One preference chain for any "pick from this set" selection, so explicit
-// tier requests honor the same local ordering (MLX first) as the default
+// tier requests honor the same local ordering (Qwen 3.6 MoE first) as the default
 // route instead of falling back to list order.
 function preferredModelFrom(
   candidates: WorkbenchModel[],
 ): WorkbenchModel | undefined {
-  return candidates.find((model) =>
-    model.slug === "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit"
-  ) ??
+  return candidates.find((model) => model.slug === "qwen3.6:35b-a3b") ??
+    candidates.find((model) => model.slug === "muse-glimmer:30b") ??
+    candidates.find((model) =>
+      model.slug === "mistral-small:24b-instruct-2501-q4_K_M"
+    ) ??
+    candidates.find((model) => model.slug === "deepseek-r1:32b") ??
     candidates.find((model) => model.slug === "laguna-xs-2.1") ??
     candidates.find((model) => model.slug === "gemma4:26b") ??
     candidates.find((model) => model.slug === "gemma4:e2b") ??
