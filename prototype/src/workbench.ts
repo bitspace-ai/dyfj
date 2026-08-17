@@ -161,7 +161,7 @@ export interface WorkbenchRuntimeInput {
   mode: Exclude<WorkbenchInvocation["mode"], "shell">;
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
-  /** Explicit external-loop selection. Absent preserves the native model/tool loop. */
+  /** Explicit external-loop selection. When absent, the runtime selects native execution or ACP based on model routing. */
   runner?: {
     kind: "acp";
     profile: "fixture" | "codex-chatgpt";
@@ -1482,12 +1482,6 @@ export async function runWorkbenchRuntime(
         "codex-chatgpt requires explicit workspace trust",
       );
     }
-    if (
-      runtimeInput.runner.profile === "codex-chatgpt" &&
-      runtimeInput.sessionId !== undefined
-    ) {
-      throw new DomainError("codex-chatgpt does not support session resume");
-    }
     const { runExternalAgentWorkbenchRuntime } = await import(
       "./external-agent-runtime"
     );
@@ -1496,6 +1490,66 @@ export async function runWorkbenchRuntime(
       runner: runtimeInput.runner,
     });
   }
+
+  const {
+    defaultLocalWorkbenchModels,
+    loadWorkbenchModels,
+    selectWorkbenchModel,
+    withDefaultLocalWorkbenchModels,
+    WorkbenchModelNotFoundError,
+    WorkbenchModelNotRoutableError,
+  } = await import("./provider");
+
+  let acpProfile: "codex-chatgpt" | "fixture" | null = null;
+  try {
+    const models = await loadWorkbenchModels().then(
+      withDefaultLocalWorkbenchModels,
+      () => defaultLocalWorkbenchModels(),
+    );
+    const selection = selectWorkbenchModel(
+      models,
+      runtimeInput.routingOptions ?? {},
+      runtimeInput.defaultCompanionModel,
+    );
+    if (selection.selected.api === "acp") {
+      if (selection.selected.provider === "codex-chatgpt") {
+        acpProfile = "codex-chatgpt";
+      } else if (selection.selected.slug === "fixture") {
+        acpProfile = "fixture";
+      } else {
+        throw new DomainError(
+          `Unsupported ACP runner: ${selection.selected.provider}`,
+        );
+      }
+    }
+  } catch (error) {
+    if (
+      error instanceof DomainError ||
+      error instanceof WorkbenchModelNotFoundError ||
+      error instanceof WorkbenchModelNotRoutableError
+    ) {
+      throw error;
+    }
+  }
+
+  if (acpProfile !== null) {
+    if (
+      acpProfile === "codex-chatgpt" &&
+      runtimeInput.trustWorkspaceInstructions !== true
+    ) {
+      throw new DomainError(
+        "codex-chatgpt requires explicit workspace trust",
+      );
+    }
+    const { runExternalAgentWorkbenchRuntime } = await import(
+      "./external-agent-runtime"
+    );
+    return await runExternalAgentWorkbenchRuntime({
+      ...runtimeInput,
+      runner: { kind: "acp", profile: acpProfile },
+    });
+  }
+
   return await runNativeWorkbenchRuntime(runtimeInput);
 }
 

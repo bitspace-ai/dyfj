@@ -218,19 +218,51 @@ vi.mock("./provider", async (importOriginal) => {
     // previous stub: the session model.
     selectWorkbenchModel: (
       models: typeof runtimeMocks.model[],
-      options?: { tier?: number },
+      options?: { tier?: number; modelId?: string },
+      _defaultCompanionModel?: string | null,
     ) => {
+      const candidates = models ?? (runtimeMocks.registry ?? [runtimeMocks.model]);
+      if (options?.modelId !== undefined) {
+        const found = candidates.find(
+          (candidate) => candidate.slug === options.modelId,
+        );
+        if (found) {
+          return {
+            selected: found,
+            considered: [found.slug],
+            reason: "explicit_model",
+          };
+        }
+        if (options.modelId === "codex-chatgpt/gpt-5.6-sol") {
+          const codexModel = {
+            slug: "codex-chatgpt/gpt-5.6-sol",
+            displayName: "GPT-5.6 Sol (Codex)",
+            provider: "codex-chatgpt",
+            api: "acp",
+            tier: 2 as const,
+            costInput: 0,
+            costOutput: 0,
+            capabilities: ["text", "code", "reasoning"],
+          };
+          return {
+            selected: codexModel as unknown as typeof runtimeMocks.model,
+            considered: [options.modelId],
+            reason: "explicit_model",
+          };
+        }
+        throw new WorkbenchModelNotFoundError(options.modelId);
+      }
       if (options?.tier !== undefined) {
-        const candidates = (models ?? []).filter(
+        const tierCandidates = candidates.filter(
           (candidate) => candidate.tier === options.tier,
         );
-        const selected = candidates[0];
+        const selected = tierCandidates[0];
         if (!selected) {
           throw new Error(`no model found for tier:${options.tier}`);
         }
         return {
           selected,
-          considered: candidates.map((candidate) => candidate.slug),
+          considered: tierCandidates.map((candidate) => candidate.slug),
           reason: "explicit_tier",
         };
       }
@@ -377,12 +409,24 @@ vi.mock("./sessions", () => ({
     `workbench-${sessionId.toLowerCase()}`,
   createWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessions.push(input);
+    if (typeof input.workspace === "string") {
+      runtimeMocks.sessionWorkspace = input.workspace;
+    }
   },
   fetchWorkbenchSessionWorkspace: async () => {
     if (runtimeMocks.sessionWorkspaceThrows) {
       throw new Error("session row unreadable");
     }
     return runtimeMocks.sessionWorkspace;
+  },
+  fetchWorkbenchSessionWorkspaceRecord: async () => {
+    if (runtimeMocks.sessionWorkspaceThrows) {
+      throw new Error("session row unreadable");
+    }
+    return {
+      exists: true,
+      workspace: runtimeMocks.sessionWorkspace,
+    };
   },
   updateWorkbenchSession: async (input: Record<string, unknown>) => {
     runtimeMocks.sessionUpdates.push(input);
@@ -1192,15 +1236,88 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
     })).rejects.toThrow("codex-chatgpt requires explicit workspace trust");
   });
 
-  test("rejects Codex ChatGPT session resume at the runtime boundary", async () => {
+  test("rejects the Codex ChatGPT route via model selection without explicit workspace trust", async () => {
     await expect(runWorkbenchRuntime({
       mode: "turn",
       prompt: "inspect",
-      routingOptions: {},
-      runner: { kind: "acp", profile: "codex-chatgpt" },
+      routingOptions: { modelId: "codex-chatgpt/gpt-5.6-sol" },
+      trustWorkspaceInstructions: false,
+    })).rejects.toThrow("codex-chatgpt requires explicit workspace trust");
+  });
+
+  test("routes an ACP model selection to the external agent runner", async () => {
+    runtimeMocks.registry = [
+      {
+        slug: "fixture",
+        displayName: "ACP Fixture",
+        provider: "fixture",
+        api: "acp",
+        baseUrl: "local_stdio",
+        tier: 0 as const,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text"],
+        contextWindow: undefined,
+        maxOutputTokens: undefined,
+      },
+    ];
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "test acp dispatch",
+      routingOptions: { modelId: "fixture" },
       trustWorkspaceInstructions: true,
-      sessionId: "01TEST00000000000000000001",
-    })).rejects.toThrow("codex-chatgpt does not support session resume");
+    });
+    expect(result).toBeDefined();
+    expect(result.sessionId).toBeDefined();
+    expect("runner" in result && result.runner).toMatchObject({
+      kind: "external_agent",
+      profile: "fixture",
+    });
+    expect("receipt" in result && result.receipt).toContain("fixture");
+  });
+
+  test("allows resumed session turns on the external agent runner", async () => {
+    runtimeMocks.registry = [
+      {
+        slug: "fixture",
+        displayName: "ACP Fixture",
+        provider: "fixture",
+        api: "acp",
+        baseUrl: "local_stdio",
+        tier: 0 as const,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text"],
+        contextWindow: undefined,
+        maxOutputTokens: undefined,
+      },
+    ];
+    const first = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "first turn",
+      routingOptions: { modelId: "fixture" },
+      trustWorkspaceInstructions: true,
+    });
+    const second = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "second turn",
+      routingOptions: { modelId: "fixture" },
+      trustWorkspaceInstructions: true,
+      sessionId: first.sessionId,
+    });
+    expect(second.sessionId).toBe(first.sessionId);
+    expect("runner" in second && second.runner).toMatchObject({
+      kind: "external_agent",
+      profile: "fixture",
+    });
+    const sessionEvents = runtimeMocks.writtenEvents.filter(
+      (e) => e.session_id === first.sessionId,
+    );
+    expect(sessionEvents.length).toBeGreaterThanOrEqual(4);
+    const prompts = sessionEvents
+      .filter((e) => e.event_type === "session_start")
+      .map((e) => e.content);
+    expect(prompts).toEqual(["first turn", "second turn"]);
   });
 });
 
