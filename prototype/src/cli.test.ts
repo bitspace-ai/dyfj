@@ -2392,6 +2392,10 @@ describe("parseArgs", () => {
         sessionId: "01ABCDEF0123456789ABCDEF01",
       },
     });
+    for (const command of ["status", "models", "sessions", "start", "stop"]) {
+      expect(parseArgs(["--runner", "codex-chatgpt", command]).error)
+        .toContain(`--runner cannot be combined with '${command}'`);
+    }
     expect(
       parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]),
     ).toMatchObject({ command: "exec", prompt: "hi" });

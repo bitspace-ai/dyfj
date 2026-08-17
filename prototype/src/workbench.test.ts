@@ -1310,6 +1310,14 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
       kind: "external_agent",
       profile: "fixture",
     });
+    const sessionEvents = runtimeMocks.writtenEvents.filter(
+      (e) => e.session_id === first.sessionId,
+    );
+    expect(sessionEvents.length).toBeGreaterThanOrEqual(4);
+    const prompts = sessionEvents
+      .filter((e) => e.event_type === "session_start")
+      .map((e) => e.content);
+    expect(prompts).toEqual(["first turn", "second turn"]);
   });
 });
 

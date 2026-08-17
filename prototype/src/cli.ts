@@ -3457,6 +3457,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (printPrompt !== undefined) {
     return { command: "exec", prompt: printPrompt, json, overrides };
   }
+  if (
+    overrides.runner !== undefined &&
+    ["models", "sessions", "status", "start", "stop"].includes(positional[0])
+  ) {
+    return error(`--runner cannot be combined with '${positional[0]}'`);
+  }
+
   if (positional[0] === "models" && positional.length === 1) {
     return { command: "models", json, overrides };
   }

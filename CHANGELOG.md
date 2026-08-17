@@ -10,11 +10,11 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 - Wired automatic ACP model dispatch in `runWorkbenchRuntime` for supported ACP routes (`codex-chatgpt/gpt-5.6-sol` and `fixture`). Selecting a supported ACP-backed model or configuring it as `default_model` automatically routes turns to `runExternalAgentWorkbenchRuntime` with the matching execution profile without requiring explicit `--runner` invocation.
 
-- Allowed `codex-chatgpt` in REPL argument parsing and permitted session resume identifiers on the external agent runtime, forwarding supplied session IDs without one-shot rejection while preserving workspace trust validation and process-group containment.
+- Allowed `codex-chatgpt` in REPL argument parsing and permitted forwarding supplied Workbench session identifiers to the external agent runtime without one-shot rejection, while preserving workspace trust validation and process-group containment.
 
-- Added migration `010_acp_models_active_alignment.sql` and updated `schema/catalog/001_models.sql` to keep implemented ACP routes (`codex-chatgpt/gpt-5.6-sol`) active while setting unimplemented ACP runner routes (`claude-acp/claude-fable-5`, `cursor-agent/composer-2.0`, `gemini-antigravity/gemini-3.7-flash`, `grok-build/grok-4.6`) to `active = FALSE` until their child subprocess adapters land.
+- Added migration `010_acp_models_active_alignment.sql` and updated `schema/catalog/001_models.sql` to deactivate four unimplemented ACP runner routes (`claude-acp/claude-fable-5`, `cursor-agent/composer-2.0`, `gemini-antigravity/gemini-3.7-flash`, `grok-build/grok-4.6`) while leaving implemented `codex-chatgpt/gpt-5.6-sol` active.
 
-- Verified subscription-backed ACP model routing across the 5 canonical ACP runner avenues (`codex-chatgpt`, `claude-acp`, `grok-build`, `cursor-agent`, `gemini-antigravity`), registered zero-marginal-cost catalog seed entries in `schema/catalog/001_models.sql` with declared execution profiles, and expanded provider modality classification to recognize all five ACP runner providers under `subscription-oauth` modality.
+- Cataloged subscription-backed ACP model routes across the 5 canonical ACP runner avenues (`codex-chatgpt`, `claude-acp`, `grok-build`, `cursor-agent`, `gemini-antigravity`), registered zero-marginal-cost catalog seed entries in `schema/catalog/001_models.sql` with declared execution profiles, and expanded provider modality classification to recognize all five ACP runner providers under `subscription-oauth` modality.
 
 - Added `xai` (Grok) direct provider contract to the hosted inference runtime (`https://api.x.ai/v1`) using `XAI_API_KEY` (`xaiApiKey` secret pointer), supporting session-affinity header forwarding (`x-grok-conv-id`) and classifying canonical xAI endpoints under `frontier-hosted` modality.
 
