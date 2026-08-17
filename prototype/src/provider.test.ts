@@ -562,8 +562,32 @@ describe("getModelAccessModality", () => {
     ).toBe("subscription-oauth");
     expect(
       getModelAccessModality({
+        provider: "grok-build",
+        baseUrl: "acp",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
+        provider: "cursor-agent",
+        baseUrl: "",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
+        provider: "gemini-antigravity",
+        baseUrl: "http://localhost:11434/v1",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
         provider: "codex-chatgpt",
         baseUrl: "https://remote-proxy.example.com",
+      }),
+    ).toBe("custom-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "grok-build",
+        baseUrl: "https://api.x.ai/v1",
       }),
     ).toBe("custom-hosted");
   });
