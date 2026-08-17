@@ -233,15 +233,14 @@ describe("serveWorkbenchUnix read methods", () => {
       }),
     );
     const { runtime } = anyVal(await client.request("runtime/status"));
-    // The configured default stays visible, but the resolved bare-turn route
-    // shows what a turn actually gets: the local default (hosted is an
-    // explicit escalation).
+    // The configured default is reported and resolved as defaultTurnModel
+    // when present in the catalog with pricing.
     expect(runtime.defaultCompanionModel).toBe("hosted-x");
     expect(runtime.defaultTurnModel).toMatchObject({
-      slug: "local-x",
-      tier: 0,
-      local: true,
-      reason: "default_local",
+      slug: "hosted-x",
+      tier: 2,
+      local: false,
+      reason: "default_config",
     });
     // Locality counts use the same provider+loopback classification as the
     // per-row `local` flag, not the tier label.

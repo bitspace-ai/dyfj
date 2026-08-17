@@ -637,13 +637,35 @@ describe("selectWorkbenchModel", () => {
     expect(selection.reason).toBe("default_config");
   });
 
-  test("a hosted configured default never rides a bare turn — local by default", () => {
-    // Hosted inference is an explicit escalation (modelId/tier + paid consent);
-    // a hosted slug in standing config must not become the ambient default.
-    const selection = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
-    expect(selection.selected.slug).toBe("laguna-xs-2.1");
-    expect(selection.selected.tier).toBe(0);
-    expect(selection.reason).toBe("default_local");
+  test("uses a configured default model across local, subscription, and hosted routes on a bare turn", () => {
+    const subscriptionModel: WorkbenchModel = {
+      slug: "codex-chatgpt/gpt-5.6-sol",
+      displayName: "GPT-5.6 Sol (Codex ChatGPT)",
+      provider: "codex-chatgpt",
+      api: "acp",
+      baseUrl: "http://127.0.0.1:0",
+      tier: 2,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning"],
+      modality: "subscription-oauth",
+    };
+
+    const local = selectWorkbenchModel(models, {}, "gemma4:e2b");
+    expect(local.selected.slug).toBe("gemma4:e2b");
+    expect(local.reason).toBe("default_config");
+
+    const subscription = selectWorkbenchModel(
+      [...models, subscriptionModel],
+      {},
+      "codex-chatgpt/gpt-5.6-sol",
+    );
+    expect(subscription.selected.slug).toBe("codex-chatgpt/gpt-5.6-sol");
+    expect(subscription.reason).toBe("default_config");
+
+    const hosted = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
+    expect(hosted.selected.slug).toBe("claude-haiku-4-5");
+    expect(hosted.reason).toBe("default_config");
   });
 
   test("a mis-tiered hosted row is never the ambient default", () => {
@@ -6290,17 +6312,10 @@ describe("unpriced models are unroutable", () => {
     ).toThrow(/no catalog pricing/);
   });
 
-  test("an unpriced hosted configured default is bypassed, not routed", () => {
-    // Hosted configured defaults never ride a bare turn (local-by-default), so
-    // the pricing rule for this row binds only on explicit selection — which
-    // still throws, per the explicit-modelId test above.
-    const selection = selectWorkbenchModel(
-      [...models, unpriced],
-      {},
-      "gpt-6-preview",
-    );
-    expect(selection.selected.tier).toBe(0);
-    expect(selection.reason).toBe("default_local");
+  test("an unpriced configured default throws WorkbenchModelNotRoutableError", () => {
+    expect(() =>
+      selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview")
+    ).toThrow("Model not routable [gpt-6-preview]: no catalog pricing row");
   });
 
   test("tier routing skips unpriced candidates and picks a priced one", () => {
