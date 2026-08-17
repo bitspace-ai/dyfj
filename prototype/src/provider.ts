@@ -322,6 +322,7 @@ const openAIHostedProviderContracts: ReadonlyMap<
 > = new Map([
   ["openai", { keyEnvVar: "OPENAI_API_KEY", host: "api.openai.com" }],
   ["openrouter", { keyEnvVar: "OPENROUTER_API_KEY", host: "openrouter.ai" }],
+  ["xai", { keyEnvVar: "XAI_API_KEY", host: "api.x.ai" }],
 ]);
 const openAIHostedProviders = new Set(openAIHostedProviderContracts.keys());
 const anthropicProviders = new Set(["anthropic"]);
@@ -1023,6 +1024,7 @@ export interface WorkbenchTurnParams {
   now?: () => number;
   fetchFn?: FetchLike;
   getEnv?: (name: string) => string | undefined;
+  sessionId?: string;
 }
 
 /**
@@ -1115,8 +1117,13 @@ export async function runWorkbenchTurn(
         hostedContract.keyEnvVar,
       );
     }
+    const extraHeaders: Record<string, string> = {};
+    if (model.provider === "xai" && params.sessionId) {
+      extraHeaders["x-grok-conv-id"] = params.sessionId;
+    }
     return await executeOpenAICompatibleTurn(params, model, selection, {
       authHeader: `Bearer ${apiKey}`,
+      extraHeaders,
     }).catch((error) =>
       recoverWorkbenchAbort(
         error,
@@ -1197,7 +1204,7 @@ async function executeOpenAICompatibleTurn(
   params: WorkbenchTurnParams,
   model: WorkbenchModel,
   selection: WorkbenchSelection,
-  opts: { authHeader?: string },
+  opts: { authHeader?: string; extraHeaders?: Record<string, string> },
 ): Promise<WorkbenchTurnResult> {
   if (params.abortSignal?.aborted) {
     return abortedWorkbenchTurnResult(params, model, selection, 0, false);
@@ -1221,6 +1228,7 @@ async function executeOpenAICompatibleTurn(
       headers: {
         "content-type": "application/json",
         ...(opts.authHeader ? { authorization: opts.authHeader } : {}),
+        ...(opts.extraHeaders ?? {}),
       },
       body: JSON.stringify(
         buildOpenAIChatRequest(
@@ -1584,6 +1592,12 @@ export function getModelAccessModality(model: {
       ])) ||
     (model.provider === "openai" &&
       isAllowedHostedProviderBaseUrl(model.baseUrl, "api.openai.com", [
+        "/v1",
+      ])) ||
+    (model.provider === "xai" &&
+      isAllowedHostedProviderBaseUrl(model.baseUrl, "api.x.ai", [
+        "",
+        "/",
         "/v1",
       ])) ||
     (model.provider === "google" &&
