@@ -221,7 +221,7 @@ INSERT INTO models (
         NULL,
         NULL,
         TRUE,
-        TRUE
+        FALSE
     ),
     (
         'gemini-3.7-flash',

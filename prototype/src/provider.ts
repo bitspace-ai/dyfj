@@ -954,6 +954,7 @@ export function buildOpenAIChatRequest(
     historyTools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
     maxCompletionTokens?: number;
+    reasoningEffort?: string;
   } = {},
 ) {
   const body: {
@@ -962,6 +963,7 @@ export function buildOpenAIChatRequest(
     messages: OpenAIWireMessage[];
     response_format?: { type: "json_object" };
     max_completion_tokens?: number;
+    reasoning_effort?: string;
     tools?: Array<{
       type: "function";
       function: WorkbenchToolDefinition;
@@ -982,6 +984,9 @@ export function buildOpenAIChatRequest(
   }
   if (options.maxCompletionTokens !== undefined) {
     body.max_completion_tokens = options.maxCompletionTokens;
+  }
+  if (options.reasoningEffort !== undefined) {
+    body.reasoning_effort = options.reasoningEffort;
   }
   if (options.tools && options.tools.length > 0) {
     // Sanitize names to ^[a-zA-Z0-9_-]+$ — OpenAI rejects dotted command ids
@@ -1250,6 +1255,12 @@ async function executeOpenAICompatibleTurn(
             maxCompletionTokens: openAIHostedProviders.has(model.provider)
               ? modelRequestedOutputCap(model, params.maxOutputTokens)
               : params.maxOutputTokens,
+            reasoningEffort: (model.provider === "openai" &&
+                model.reasoningEffortControl &&
+                params.tools &&
+                params.tools.length > 0)
+              ? "none"
+              : undefined,
           },
         ),
       ),

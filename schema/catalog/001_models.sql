@@ -487,7 +487,7 @@ INSERT INTO models (
         NULL,
         NULL,
         TRUE,
-        TRUE
+        FALSE
     ),
     (
         'gpt-5.4',
