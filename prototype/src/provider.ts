@@ -684,26 +684,6 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       residentRamGiB: 7.0,
       reasoningEffortControl: false,
     },
-    {
-      slug: "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
-      displayName: "Qwen3-Coder 30B MLX",
-      provider: "mlx-lm",
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:18080/v1",
-      tier: 0,
-      costInput: 0,
-      costOutput: 0,
-      capabilities: ["text", "code", "reasoning", "long-context"],
-      contextWindow: 262144,
-      maxOutputTokens: 8192,
-      modality: "local",
-      architecture: "moe",
-      totalParamsB: 30.5,
-      activeParamsB: 3.0,
-      recommendedQuant: "8bit",
-      residentRamGiB: 32.0,
-      reasoningEffortControl: false,
-    },
   ];
 }
 
@@ -846,9 +826,6 @@ function preferredModelFrom(
     candidates.find((model) => model.slug === "laguna-xs-2.1") ??
     candidates.find((model) => model.slug === "gemma4:26b") ??
     candidates.find((model) => model.slug === "gemma4:e2b") ??
-    candidates.find((model) =>
-      model.slug === "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit"
-    ) ??
     candidates[0];
 }
 
