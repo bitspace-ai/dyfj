@@ -1482,12 +1482,6 @@ export async function runWorkbenchRuntime(
         "codex-chatgpt requires explicit workspace trust",
       );
     }
-    if (
-      runtimeInput.runner.profile === "codex-chatgpt" &&
-      runtimeInput.sessionId !== undefined
-    ) {
-      throw new DomainError("codex-chatgpt does not support session resume");
-    }
     const { runExternalAgentWorkbenchRuntime } = await import(
       "./external-agent-runtime"
     );
@@ -1496,6 +1490,56 @@ export async function runWorkbenchRuntime(
       runner: runtimeInput.runner,
     });
   }
+
+  const {
+    defaultLocalWorkbenchModels,
+    loadWorkbenchModels,
+    selectWorkbenchModel,
+    withDefaultLocalWorkbenchModels,
+  } = await import("./provider");
+  try {
+    const models = await loadWorkbenchModels().then(
+      withDefaultLocalWorkbenchModels,
+      () => defaultLocalWorkbenchModels(),
+    );
+    const selection = selectWorkbenchModel(
+      models,
+      runtimeInput.routingOptions ?? {},
+      runtimeInput.defaultCompanionModel,
+    );
+    if (selection.selected.api === "acp") {
+      const profile = selection.selected.provider === "codex-chatgpt"
+        ? "codex-chatgpt"
+        : selection.selected.slug === "fixture"
+        ? "fixture"
+        : null;
+      if (profile !== null) {
+        if (
+          profile === "codex-chatgpt" &&
+          runtimeInput.trustWorkspaceInstructions !== true
+        ) {
+          throw new DomainError(
+            "codex-chatgpt requires explicit workspace trust",
+          );
+        }
+        const { runExternalAgentWorkbenchRuntime } = await import(
+          "./external-agent-runtime"
+        );
+        return await runExternalAgentWorkbenchRuntime({
+          ...runtimeInput,
+          runner: { kind: "acp", profile },
+        });
+      }
+      throw new DomainError(
+        `Unsupported ACP runner: ${selection.selected.provider}`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof DomainError) {
+      throw error;
+    }
+  }
+
   return await runNativeWorkbenchRuntime(runtimeInput);
 }
 

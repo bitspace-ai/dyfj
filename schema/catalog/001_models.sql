@@ -48,7 +48,7 @@ INSERT INTO models (
         NULL,
         NULL,
         FALSE,
-        TRUE
+        FALSE
     ),
     (
         'claude-fable-5',
@@ -255,7 +255,7 @@ INSERT INTO models (
         NULL,
         NULL,
         FALSE,
-        TRUE
+        FALSE
     ),
     (
         'deepseek-r1:32b',
@@ -554,7 +554,7 @@ INSERT INTO models (
         NULL,
         NULL,
         TRUE,
-        TRUE
+        FALSE
     ),
     (
         'gemma4',
@@ -922,7 +922,7 @@ INSERT INTO models (
         NULL,
         NULL,
         TRUE,
-        TRUE
+        FALSE
     ),
     (
         'laguna-xs-2.1',

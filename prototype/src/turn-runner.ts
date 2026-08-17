@@ -270,18 +270,12 @@ export function resolveTurnFromBody(
       status: 403,
     };
   }
-  if (runtimeInput.runner?.profile === "codex-chatgpt") {
+  if (options.trustWorkspaceInstructions === true) {
     runtimeInput.trustWorkspaceInstructions = true;
   }
 
   let sessionId: string | undefined;
   if (body.sessionId !== undefined) {
-    if (runtimeInput.runner?.profile === "codex-chatgpt") {
-      return {
-        error: "codex-chatgpt does not support session resume",
-        status: 400,
-      };
-    }
     if (
       typeof body.sessionId !== "string" ||
       !SESSION_ID_SHAPE.test(body.sessionId)

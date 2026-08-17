@@ -2370,10 +2370,11 @@ describe("parseArgs", () => {
       .toContain("runner must be fixture or codex-chatgpt");
   });
 
-  test("keeps the Codex ChatGPT runner one-shot", () => {
-    expect(parseArgs(["--runner", "codex-chatgpt"]).error).toContain(
-      "one-shot",
-    );
+  test("allows the Codex ChatGPT runner in REPL and with session resume", () => {
+    expect(parseArgs(["--runner", "codex-chatgpt"])).toMatchObject({
+      command: "repl",
+      overrides: { runner: "codex-chatgpt" },
+    });
     expect(
       parseArgs([
         "--runner",
@@ -2382,12 +2383,15 @@ describe("parseArgs", () => {
         "01ABCDEF0123456789ABCDEF01",
         "exec",
         "hi",
-      ]).error,
-    ).toContain("does not support --session");
-    for (const command of ["status", "models", "sessions", "start"]) {
-      expect(parseArgs(["--runner", "codex-chatgpt", command]).error)
-        .toContain("one-shot");
-    }
+      ]),
+    ).toMatchObject({
+      command: "exec",
+      prompt: "hi",
+      overrides: {
+        runner: "codex-chatgpt",
+        sessionId: "01ABCDEF0123456789ABCDEF01",
+      },
+    });
     expect(
       parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]),
     ).toMatchObject({ command: "exec", prompt: "hi" });

@@ -54,7 +54,7 @@ describe("resolveTurnFromBody paid posture", () => {
     });
   });
 
-  test("keeps the Codex ChatGPT route single-turn", () => {
+  test("allows the Codex ChatGPT route with session resume", () => {
     expect(resolveTurnFromBody(
       {
         prompt: "hi",
@@ -64,8 +64,11 @@ describe("resolveTurnFromBody paid posture", () => {
       true,
       { trustWorkspaceInstructions: true },
     )).toMatchObject({
-      status: 400,
-      error: "codex-chatgpt does not support session resume",
+      runtimeInput: {
+        runner: { kind: "acp", profile: "codex-chatgpt" },
+        trustWorkspaceInstructions: true,
+      },
+      sessionId: "01ABCDEF0123456789ABCDEF01",
     });
   });
 
