@@ -161,7 +161,7 @@ export interface WorkbenchRuntimeInput {
   mode: Exclude<WorkbenchInvocation["mode"], "shell">;
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
-  /** Explicit external-loop selection. Absent preserves the native model/tool loop. */
+  /** Explicit external-loop selection. When absent, the runtime selects native execution or ACP based on model routing. */
   runner?: {
     kind: "acp";
     profile: "fixture" | "codex-chatgpt";
@@ -1465,9 +1465,6 @@ export function runWorkbenchRuntime(
   },
 ): Promise<ExternalAgentWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
-  runtimeInput: WorkbenchRuntimeInput & { runner?: undefined },
-): Promise<NativeWorkbenchRuntimeResult>;
-export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
 ): Promise<WorkbenchRuntimeResult>;
 export async function runWorkbenchRuntime(
@@ -1496,6 +1493,8 @@ export async function runWorkbenchRuntime(
     loadWorkbenchModels,
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
+    WorkbenchModelNotFoundError,
+    WorkbenchModelNotRoutableError,
   } = await import("./provider");
 
   let acpProfile: "codex-chatgpt" | "fixture" | null = null;
@@ -1521,7 +1520,11 @@ export async function runWorkbenchRuntime(
       }
     }
   } catch (error) {
-    if (error instanceof DomainError) {
+    if (
+      error instanceof DomainError ||
+      error instanceof WorkbenchModelNotFoundError ||
+      error instanceof WorkbenchModelNotRoutableError
+    ) {
       throw error;
     }
   }

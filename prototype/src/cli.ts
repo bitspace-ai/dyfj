@@ -3454,14 +3454,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
   ) {
     return error("--runner cannot be combined with --model, --tier, or --hint");
   }
-  if (printPrompt !== undefined) {
-    return { command: "exec", prompt: printPrompt, json, overrides };
-  }
   if (
     overrides.runner !== undefined &&
     ["models", "sessions", "status", "start", "stop"].includes(positional[0])
   ) {
     return error(`--runner cannot be combined with '${positional[0]}'`);
+  }
+  if (printPrompt !== undefined) {
+    return { command: "exec", prompt: printPrompt, json, overrides };
   }
 
   if (positional[0] === "models" && positional.length === 1) {
@@ -3609,7 +3609,7 @@ Options:
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --runner <name>  local ACP runner: fixture | codex-chatgpt (experimental;
-                   requires trusted workspace config)
+                   codex-chatgpt requires trusted workspace config)
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
