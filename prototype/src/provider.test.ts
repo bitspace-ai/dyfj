@@ -562,8 +562,32 @@ describe("getModelAccessModality", () => {
     ).toBe("subscription-oauth");
     expect(
       getModelAccessModality({
+        provider: "grok-build",
+        baseUrl: "acp",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
+        provider: "cursor-agent",
+        baseUrl: "",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
+        provider: "gemini-antigravity",
+        baseUrl: "http://localhost:11434/v1",
+      }),
+    ).toBe("subscription-oauth");
+    expect(
+      getModelAccessModality({
         provider: "codex-chatgpt",
         baseUrl: "https://remote-proxy.example.com",
+      }),
+    ).toBe("custom-hosted");
+    expect(
+      getModelAccessModality({
+        provider: "grok-build",
+        baseUrl: "https://api.x.ai/v1",
       }),
     ).toBe("custom-hosted");
   });
@@ -6247,6 +6271,13 @@ describe("unpriced models are unroutable", () => {
       modelHasCatalogPricing({ ...unpriced, costInput: 15, costOutput: 75 }),
     )
       .toBe(true);
+    expect(
+      modelHasCatalogPricing({
+        ...unpriced,
+        modality: "subscription-oauth",
+        provider: "codex-chatgpt",
+      }),
+    ).toBe(true); // subscription-oauth tier 2 with $0 token cost is priced
   });
 
   test("explicit modelId selection of an unpriced paid model throws the named error", async () => {

@@ -209,6 +209,13 @@ export class WorkbenchLocalProviderBaseUrlError extends DomainError {
 export type FetchLike = typeof fetch;
 
 const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
+export const acpSubscriptionProviders: ReadonlySet<string> = new Set([
+  "codex-chatgpt",
+  "claude-acp",
+  "grok-build",
+  "cursor-agent",
+  "gemini-antigravity",
+]);
 
 /**
  * Provider requests previously carried no timeout at all, so a blackholed
@@ -473,7 +480,7 @@ function toCatalogCost(value: string | undefined): number {
  * these numbers.
  */
 export function modelHasCatalogPricing(model: WorkbenchModel): boolean {
-  if (model.tier === 0) return true;
+  if (model.tier === 0 || model.modality === "subscription-oauth") return true;
   return model.costInput > 0 && model.costOutput > 0;
 }
 
@@ -1565,7 +1572,7 @@ function isAllowedHostedProviderBaseUrl(
  *  - "local": configured via Ollama or MLX-LM over an allowed loopback URL.
  *  - "frontier-hosted": canonical HTTPS direct vendor endpoints for Anthropic, OpenAI, or Google.
  *  - "aggregator-hosted": canonical HTTPS OpenRouter gateway endpoints.
- *  - "subscription-oauth": configured ACP runner adapters (codex-chatgpt, claude-acp) with local or empty base URLs.
+ *  - "subscription-oauth": configured ACP runner adapters (codex-chatgpt, claude-acp, grok-build, cursor-agent, gemini-antigravity) with local, "acp", or empty base URLs.
  *  - "custom-hosted": other, proxy, or non-canonical provider endpoints.
  */
 export function getModelAccessModality(model: {
@@ -1610,7 +1617,7 @@ export function getModelAccessModality(model: {
     return "frontier-hosted";
   }
   if (
-    (model.provider === "codex-chatgpt" || model.provider === "claude-acp") &&
+    acpSubscriptionProviders.has(model.provider) &&
     (model.baseUrl === "" ||
       model.baseUrl === "acp" ||
       isAllowedLocalProviderBaseUrl(model.baseUrl))
