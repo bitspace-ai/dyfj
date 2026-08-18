@@ -75,15 +75,17 @@ The operator commands are:
 ```sh
 dyfj                      # streaming multi-turn REPL; autostarts the runtime
 dyfj exec "Summarize this repository"
+dyfj --model codex-chatgpt/gpt-5.6-terra --approve-paid --fast exec "Fast one-shot turn"
 dyfj --runner fixture exec "Exercise the local ACP fixture"
-dyfj --runner codex-chatgpt exec "Inspect this repository"
+dyfj --runner codex-chatgpt --approve-paid exec "Inspect this repository"
 dyfj status
 dyfj models
 dyfj sessions
 ```
 
 Inside the REPL, `/session` prints the current session id, `/model` shows or
-switches the active model, and `/quit` or `/exit` quits cleanly.
+switches the active model (with optional `--fast` or `--no-fast`), `/fast [on|off]`
+toggles the fast speed tier for supported models, and `/quit` or `/exit` quits cleanly.
 
 The HTTP implementation remains available as an explicit standalone server; it
 is not the default terminal-client path:

@@ -14,6 +14,7 @@ import {
   formatRuntimeEvent,
   formatRuntimeStatus,
   friendlyError,
+  handleReplFastCommand,
   handleReplIdeaCommand,
   handleReplModelCommand,
   handleReplPacketCommand,
@@ -2370,6 +2371,11 @@ describe("parseArgs", () => {
       .toContain("runner must be fixture or codex-chatgpt");
   });
 
+  test("parses --fast and --no-fast flags", () => {
+    expect(parseArgs(["--fast"]).overrides.fast).toBe(true);
+    expect(parseArgs(["--no-fast"]).overrides.fast).toBe(false);
+  });
+
   test("allows the Codex ChatGPT runner in REPL and with session resume", () => {
     expect(parseArgs(["--runner", "codex-chatgpt"])).toMatchObject({
       command: "repl",
@@ -2403,10 +2409,13 @@ describe("parseArgs", () => {
 
   test("rejects explicit model routing alongside a runner", () => {
     for (
-      const routing of [["--model", "model"], ["--tier", "1"], [
-        "--hint",
-        "code",
-      ]]
+      const routing of [
+        ["--model", "model"],
+        ["--tier", "1"],
+        ["--hint", "code"],
+        ["--fast"],
+        ["--no-fast"],
+      ]
     ) {
       expect(
         parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error,
@@ -2519,6 +2528,14 @@ describe("parseArgs", () => {
   test("'ask' requires a prompt", () => {
     expect(parseArgs(["ask"]).error).toContain("ask requires a prompt");
   });
+  test("rejects conflicting --fast and --no-fast flags", () => {
+    expect(parseArgs(["--fast", "--no-fast", "exec", "x"]).error).toContain(
+      "cannot specify both --fast and --no-fast",
+    );
+    expect(parseArgs(["--no-fast", "--fast", "exec", "x"]).error).toContain(
+      "cannot specify both --fast and --no-fast",
+    );
+  });
 });
 
 describe("resolveConfig", () => {
@@ -2569,6 +2586,15 @@ describe("resolveConfig", () => {
     expect(resolveConfig({ mode: "ask" }, { get: () => undefined }).mode).toBe(
       "ask",
     );
+  });
+  test("fast option carries through resolveConfig", () => {
+    expect(resolveConfig({ fast: true }, { get: () => undefined }).fast).toBe(
+      true,
+    );
+    expect(resolveConfig({ fast: false }, { get: () => undefined }).fast).toBe(
+      false,
+    );
+    expect(resolveConfig({}, { get: () => undefined }).fast).toBeUndefined();
   });
   test("workspace defaults to cwd; flag and env override it", () => {
     expect(
@@ -3396,7 +3422,12 @@ printf '%s\\n' "$*" > "$HOME/login-args"
 
 describe("REPL /model", () => {
   function fakeConnect(
-    models: { slug: string; tier?: number; local?: boolean }[],
+    models: {
+      slug: string;
+      tier?: number;
+      local?: boolean;
+      capabilities?: string[];
+    }[],
     runtime: Record<string, unknown> = {},
   ): ConnectFn {
     return () =>
@@ -3509,6 +3540,145 @@ describe("REPL /model", () => {
     );
     expect(config.model).toBe("claude-opus-4-8");
     expect(config.approvePaid).toBeUndefined();
+  });
+
+  test("/model <slug> --fast enables fast speed tier on supported model", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    await handleReplModelCommand(
+      "/model codex-chatgpt/gpt-5.6-terra --fast",
+      config,
+      io,
+      fakeConnect([{
+        slug: "codex-chatgpt/gpt-5.6-terra",
+        tier: 2,
+        local: false,
+        capabilities: ["fast-speed"],
+      }]),
+    );
+    expect(config.model).toBe("codex-chatgpt/gpt-5.6-terra");
+    expect(config.fast).toBe(true);
+    expect(stderr.join("\n")).toContain("⚡ fast");
+  });
+
+  test("/model <slug> --fast rejects fast speed tier on unsupported model", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    await handleReplModelCommand(
+      "/model claude-opus-4-8 --fast",
+      config,
+      io,
+      fakeConnect([{ slug: "claude-opus-4-8", tier: 2, local: false }]),
+    );
+    expect(config.fast).toBeUndefined();
+    expect(stderr.join("\n")).toContain("fast speed tier is not supported");
+  });
+
+  test("/model switches to unsupported model and auto-disables fast speed tier", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "codex-chatgpt/gpt-5.6-terra", fast: true });
+    await handleReplModelCommand(
+      "/model claude-opus-4-8",
+      config,
+      io,
+      fakeConnect([
+        { slug: "codex-chatgpt/gpt-5.6-terra", tier: 2, local: false, capabilities: ["fast-speed"] },
+        { slug: "claude-opus-4-8", tier: 2, local: false },
+      ]),
+    );
+    expect(config.model).toBe("claude-opus-4-8");
+    expect(config.fast).toBe(false);
+    expect(stderr.join("\n")).toContain("fast speed tier disabled for \"claude-opus-4-8\"");
+  });
+
+  test("/model rejects specifying both --fast and --no-fast", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "codex-chatgpt/gpt-5.6-terra" });
+    const handled = await handleReplModelCommand(
+      "/model codex-chatgpt/gpt-5.6-terra --fast --no-fast",
+      config,
+      io,
+      fakeConnect([
+        {
+          slug: "codex-chatgpt/gpt-5.6-terra",
+          tier: 2,
+          local: false,
+          capabilities: ["fast-speed"],
+        },
+      ]),
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain("cannot specify both --fast and --no-fast");
+  });
+});
+
+describe("REPL /fast command", () => {
+  function fakeConnect(
+    models: {
+      slug: string;
+      tier?: number;
+      local?: boolean;
+      capabilities?: string[];
+    }[],
+    runtime: Record<string, unknown> = {},
+  ): ConnectFn {
+    return () =>
+      Promise.resolve({
+        request: (method: string) =>
+          method === "models/list"
+            ? Promise.resolve({ models })
+            : method === "runtime/status"
+            ? Promise.resolve({ runtime })
+            : Promise.resolve({}),
+        close: () => {},
+      });
+  }
+
+  test("/fast toggles fast speed tier on a supported model", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "codex-chatgpt/gpt-5.6-terra" });
+    const handled = await handleReplFastCommand(
+      "/fast",
+      config,
+      io,
+      fakeConnect([{
+        slug: "codex-chatgpt/gpt-5.6-terra",
+        tier: 2,
+        local: false,
+        capabilities: ["fast-speed"],
+      }]),
+    );
+    expect(handled).toBe(true);
+    expect(config.fast).toBe(true);
+    expect(stderr.join("\n")).toContain("⚡ fast");
+  });
+
+  test("/fast rejects on unsupported model", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "claude-opus-4-8" });
+    const handled = await handleReplFastCommand(
+      "/fast",
+      config,
+      io,
+      fakeConnect([{ slug: "claude-opus-4-8", tier: 2, local: false }]),
+    );
+    expect(handled).toBe(true);
+    expect(config.fast).toBeUndefined();
+    expect(stderr.join("\n")).toContain("fast speed tier is not supported");
+  });
+
+  test("/fast rejects when an explicit runner is active", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ runner: "codex-chatgpt" });
+    const handled = await handleReplFastCommand(
+      "/fast",
+      config,
+      io,
+      fakeConnect([]),
+    );
+    expect(handled).toBe(true);
+    expect(config.fast).toBeUndefined();
+    expect(stderr.join("\n")).toContain("explicit runner is active");
   });
 });
 
@@ -4632,12 +4802,27 @@ describe("session posture", () => {
     );
     expect(
       formatPostureLine({
-        slug: "x",
+        slug: "claude-opus-4-8",
+        tier: 2,
+        local: false,
         approvePaidSession: false,
         approvePaidDefault: true,
+        permissionLevel: "strict",
       }),
     ).toBe(
-      "posture: x · tier ? · locality unknown · paid approved (standing config) · permission unknown · workspace instructions: unknown",
+      "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (standing config) · permission strict · workspace instructions: unknown",
+    );
+    expect(
+      formatPostureLine({
+        slug: "codex-chatgpt/gpt-5.6-terra",
+        tier: 2,
+        local: false,
+        approvePaidSession: true,
+        fast: true,
+        permissionLevel: "strict",
+      }),
+    ).toBe(
+      "posture: codex-chatgpt/gpt-5.6-terra · tier 2 · hosted · ⚡ fast · paid approved (session) · permission strict · workspace instructions: unknown",
     );
   });
 
@@ -4729,6 +4914,20 @@ describe("session posture", () => {
       local: false,
       approvePaidSession: true,
       permissionLevel: "strict",
+    });
+  });
+
+  test("fetchSessionPosture carries the fast option when set", async () => {
+    const posture = await fetchSessionPosture(
+      cfg({ model: "codex-chatgpt/gpt-5.6-terra", fast: true }),
+      postureConnect(
+        { permissionLevel: "operator" },
+        [{ slug: "codex-chatgpt/gpt-5.6-terra", tier: 2, local: false, capabilities: ["fast-speed"] }],
+      ),
+    );
+    expect(posture).toMatchObject({
+      slug: "codex-chatgpt/gpt-5.6-terra",
+      fast: true,
     });
   });
 

@@ -135,6 +135,12 @@ function parseRoutingOptions(
     }
     output.hint = input.hint;
   }
+  if ("fast" in input) {
+    if (typeof input.fast !== "boolean") {
+      return { error: "routingOptions.fast must be a boolean" };
+    }
+    output.fast = input.fast;
+  }
   return output;
 }
 

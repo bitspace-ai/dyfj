@@ -467,6 +467,12 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       expect(
         (await Deno.stat(profile.environment.CARGO_HOME)).mode! & 0o777,
       ).toBe(0o700);
+      expect(profile.environment.CODEX_CONFIG).toBe(
+        JSON.stringify({
+          model: "gpt-5.6-terra",
+          model_reasoning_effort: "medium",
+        }),
+      );
       expect(profile.toolchainDirectoryCount).toBe(2);
       if (Deno.build.os === "darwin") {
         for (const shell of ["/bin/zsh", "/bin/bash"]) {
@@ -509,8 +515,95 @@ Deno.exit(output.code);`,
         rustupHome: toolchain,
       });
       expect(sharedDirectoryProfile.toolchainDirectoryCount).toBe(1);
+
+      const fastSolProfile = await codexChatGptProfile(Deno.cwd(), {
+        home,
+        prototypeRoot: Deno.cwd(),
+        nodePath,
+        modelName: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+        fast: true,
+      });
+      expect(JSON.parse(fastSolProfile.environment.CODEX_CONFIG!)).toEqual({
+        model: "gpt-5.6-sol",
+        model_reasoning_effort: "medium",
+        service_tier: "fast",
+      });
     } finally {
       await Deno.remove(home, { recursive: true });
+    }
+  });
+
+  test("runExternalAgentWorkbenchRuntime propagates routingOptions model and fast settings to production profile", async () => {
+    const home = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const toolchain = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const rustupHome = await Deno.makeTempDir({ dir: Deno.cwd() });
+    const nodePath = `${home}/node`;
+    await Deno.writeTextFile(
+      nodePath,
+      `#!/bin/sh\nif [ "$1" = "-p" ]; then printf '{"execPath":"${nodePath}","release":"node"}\\n'; exit 0; fi\nprintf '{"type":"stop"}\\n'\n`,
+    );
+    await Deno.chmod(nodePath, 0o700);
+    const ambient = Deno.env.get("PATH");
+    const prevHome = Deno.env.get("HOME");
+    const prevNode = Deno.env.get("DYFJ_NODE_PATH");
+    const prevToolchain = Deno.env.get("DYFJ_CODEX_TOOLCHAIN_PATH");
+    const prevRustup = Deno.env.get("DYFJ_CODEX_RUSTUP_HOME");
+    Deno.env.set("HOME", home);
+    Deno.env.set("DYFJ_NODE_PATH", nodePath);
+    Deno.env.set("DYFJ_CODEX_TOOLCHAIN_PATH", toolchain);
+    Deno.env.set("DYFJ_CODEX_RUSTUP_HOME", rustupHome);
+    try {
+      let capturedEnv: Record<string, string> | undefined;
+      const result = await runExternalAgentWorkbenchRuntime(
+        {
+          mode: "turn",
+          prompt: "test",
+          routingOptions: {
+            modelId: "codex-chatgpt/gpt-5.6-sol",
+            fast: true,
+          },
+          runner: { kind: "acp", profile: "codex-chatgpt" },
+          workspaceRoot: Deno.cwd(),
+          trustWorkspaceInstructions: true,
+        },
+        {
+          runAgent: (agentInput) => {
+            capturedEnv = agentInput.profile.environment;
+            return Promise.resolve({
+              text: "ok",
+              stopReason: "stop",
+              capabilities: [],
+              routeEvidence: {
+                source: "profile_declared",
+                authenticationType: "chat-gpt",
+              },
+              elapsedMs: 1,
+            });
+          },
+        },
+      );
+      expect(result.stopReason).toBe("stop");
+      expect(capturedEnv).toBeDefined();
+      expect(JSON.parse(capturedEnv!.CODEX_CONFIG!)).toEqual({
+        model: "gpt-5.6-sol",
+        model_reasoning_effort: "medium",
+        service_tier: "fast",
+      });
+    } finally {
+      if (ambient === undefined) Deno.env.delete("PATH");
+      else Deno.env.set("PATH", ambient);
+      if (prevHome === undefined) Deno.env.delete("HOME");
+      else Deno.env.set("HOME", prevHome);
+      if (prevNode === undefined) Deno.env.delete("DYFJ_NODE_PATH");
+      else Deno.env.set("DYFJ_NODE_PATH", prevNode);
+      if (prevToolchain === undefined) Deno.env.delete("DYFJ_CODEX_TOOLCHAIN_PATH");
+      else Deno.env.set("DYFJ_CODEX_TOOLCHAIN_PATH", prevToolchain);
+      if (prevRustup === undefined) Deno.env.delete("DYFJ_CODEX_RUSTUP_HOME");
+      else Deno.env.set("DYFJ_CODEX_RUSTUP_HOME", prevRustup);
+      await Deno.remove(home, { recursive: true });
+      await Deno.remove(toolchain, { recursive: true });
+      await Deno.remove(rustupHome, { recursive: true });
     }
   });
 

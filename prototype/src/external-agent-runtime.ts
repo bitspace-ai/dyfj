@@ -316,6 +316,9 @@ export interface CodexChatGptProfileOptions {
   nodePath?: string;
   toolchainPath?: string;
   rustupHome?: string;
+  modelName?: string;
+  reasoningEffort?: string;
+  fast?: boolean;
 }
 
 export async function bundledCodexExecutable(
@@ -433,6 +436,13 @@ export async function codexChatGptProfile(
   ].join(":");
   await writePrivateShellProfile(isolatedHome, ".zprofile", childPath);
   await writePrivateShellProfile(isolatedHome, ".bash_profile", childPath);
+  const codexConfig: Record<string, unknown> = {
+    model: options.modelName ?? "gpt-5.6-terra",
+    model_reasoning_effort: options.reasoningEffort ?? "medium",
+  };
+  if (options.fast === true) {
+    codexConfig.service_tier = "fast";
+  }
   const environment: Record<string, string> = {
     HOME: isolatedHome,
     CODEX_HOME: codexHome,
@@ -441,6 +451,7 @@ export async function codexChatGptProfile(
     NO_BROWSER: "1",
     INITIAL_AGENT_MODE: "read-only",
     PATH: childPath,
+    CODEX_CONFIG: JSON.stringify(codexConfig),
   };
   if (rustupHome !== undefined) environment.RUSTUP_HOME = rustupHome;
   const user = Deno.env.get("USER");
@@ -613,7 +624,12 @@ export async function runExternalAgentWorkbenchRuntime(
     profile = dependencies.resolveProfile === undefined
       ? input.runner.profile === "fixture"
         ? fixtureProfile(workspace)
-        : await codexChatGptProfile(workspace)
+        : await codexChatGptProfile(workspace, {
+          modelName: input.routingOptions?.modelId?.startsWith("codex-chatgpt/")
+            ? input.routingOptions.modelId.slice("codex-chatgpt/".length)
+            : undefined,
+          fast: input.routingOptions?.fast,
+        })
       : await dependencies.resolveProfile(input.runner.profile, workspace);
   } catch (error) {
     closeCancellation();
