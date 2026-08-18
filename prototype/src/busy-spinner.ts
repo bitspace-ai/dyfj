@@ -25,6 +25,8 @@ export interface BusySpinnerOptions {
   /** Timer injection for tests; defaults to the global interval timers. */
   setIntervalFn?: (callback: () => void, ms: number) => unknown;
   clearIntervalFn?: (id: unknown) => void;
+  /** Clock injection for the elapsed-seconds suffix; defaults to Date.now. */
+  nowMs?: () => number;
 }
 
 export interface BusySpinner {
@@ -37,6 +39,11 @@ export interface BusySpinner {
    * Idempotent, and safe (and disabling) before start().
    */
   stop(): void;
+  /**
+   * Change the in-flight label without stopping the spinner or restarting
+   * the elapsed-time counter. Repaints immediately when already spinning.
+   */
+  updateLabel(newLabel: string): void;
 }
 
 export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
@@ -45,13 +52,18 @@ export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
     ((callback: () => void, ms: number) => setInterval(callback, ms));
   const clearIntervalFn = options.clearIntervalFn ??
     ((id: unknown) => clearInterval(id as number));
-  const label = options.label ?? "working…";
+  const nowMs = options.nowMs ?? (() => Date.now());
+  let label = options.label ?? "working…";
   let timer: unknown = null;
   let frame = 0;
   let stopped = false;
+  let startedAtMs: number | null = null;
 
   function paint(): void {
-    const text = `${FRAMES[frame % FRAMES.length]} ${label}`;
+    const elapsedSec = startedAtMs === null
+      ? 0
+      : Math.floor((nowMs() - startedAtMs) / 1000);
+    const text = `${FRAMES[frame % FRAMES.length]} ${label} ${elapsedSec}s`;
     frame++;
     options.write(
       `${ERASE_LINE}${options.color ? `${DIM}${text}${RESET}` : text}`,
@@ -61,6 +73,7 @@ export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
   return {
     start(): void {
       if (!options.enabled || stopped || timer !== null) return;
+      startedAtMs = nowMs();
       paint();
       timer = setIntervalFn(paint, intervalMs);
     },
@@ -71,6 +84,13 @@ export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
         clearIntervalFn(timer);
         timer = null;
         options.write(ERASE_LINE);
+      }
+    },
+    updateLabel(newLabel: string): void {
+      if (stopped || !options.enabled) return;
+      label = newLabel;
+      if (timer !== null) {
+        paint();
       }
     },
   };

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import {
   type AcpExecutionProfile,
+  type AcpProgressUpdate,
   type AcpRunInput,
   ActivePromptDeadline,
   assertProcessGroupSignaler,
@@ -1302,5 +1303,31 @@ describe("runAcpAgent", () => {
         else Deno.env.set(name, value);
       }
     }
+  });
+
+  test("emits thought and tool progress without exposing thought text", async () => {
+    const progressUpdates: AcpProgressUpdate[] = [];
+    const deltas: string[] = [];
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_THOUGHT_AND_PROGRESS",
+      onTextDelta: (delta) => deltas.push(delta),
+      onProgress: (update) => {
+        progressUpdates.push(update);
+      },
+    });
+    expect(progressUpdates).toEqual([
+      { kind: "thought" },
+      {
+        kind: "tool_call",
+        title: "Inspecting codebase",
+        name: "grep_search",
+        status: "in_progress",
+      },
+    ]);
+    expect(JSON.stringify(progressUpdates)).not.toContain("pondering problem");
+    expect(deltas).toEqual(["solution found"]);
+    expect(result.text).toBe("solution found");
+    expect(result.text).not.toContain("pondering problem");
   });
 });

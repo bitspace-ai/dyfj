@@ -8,6 +8,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
+- **Live ACP Progress Indication**: Interactive TTY turns now show an ephemeral spinner status during ACP reasoning (`thinking…` or a bounded tool title) with a live elapsed timer. Raw thought text is not rendered, persisted, or replayed, and progress events do not enter durable session history. The spinner stops at the first visible response without restarting the elapsed timer.
 - **Codex ACP GPT-5.6 Terra Model & Fast Speed Tier**: Added `codex-chatgpt/gpt-5.6-terra` model and `fast-speed` capability to GPT-5.6 Sol and Terra in the model catalog and Dolt migration `011`. Exposed `--fast` / `--no-fast` CLI flags, `/fast [on|off]` REPL command, and `/model <slug> [--fast|--no-fast]` options with posture indicators, propagating `service_tier = "fast"` into `CODEX_CONFIG` for supported Codex ACP runners.
 - **Automatic ACP Model Dispatch**: Selecting an ACP-backed model (such as `codex-chatgpt/gpt-5.6-sol` or `fixture`) via `--model`, `/model`, or `default_model` in `config.toml` automatically dispatches turns to the ACP runner without requiring explicit `--runner` flags.
 - **ACP REPL & Multi-Turn Session Resume**: Allowed `codex-chatgpt` in interactive REPL turns and multi-turn session resume, forwarding session identifiers without one-shot rejection.

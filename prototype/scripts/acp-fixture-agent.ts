@@ -467,6 +467,27 @@ const app = agent({ name: "dyfj-acp-fixture" })
         }
         return { stopReason: "end_turn" };
       }
+      if (prompt.includes("FIXTURE_THOUGHT_AND_PROGRESS")) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "pondering problem" },
+          },
+        });
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call-1",
+            title: "Inspecting codebase",
+            name: "grep_search",
+            status: "in_progress",
+          },
+        });
+        await chunk(context, params.sessionId, "solution found");
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_MAX_TOKENS")) {
         return { stopReason: "max_tokens" };
       }

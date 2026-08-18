@@ -463,6 +463,19 @@ export type WorkbenchRuntimeEvent =
     traceId: string;
     errorName?: string;
     errorMessage: string;
+  }
+  | {
+    /**
+     * Ephemeral ACP reasoning/tool status for the interactive spinner.
+     * Thought activity never carries raw model text. Not written to
+     * durable session history.
+     */
+    type: "agentProgress";
+    sessionId: string;
+    kind: "thought" | "tool_call";
+    title?: string;
+    name?: string;
+    status?: string;
   };
 
 export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {

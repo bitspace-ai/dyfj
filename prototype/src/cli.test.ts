@@ -47,6 +47,7 @@ import {
   runStatus,
   runtimeEventIsVisible,
   rustupHomeReadGrant,
+  sanitizeSpinnerLabel,
   selectTurnInterruptSource,
   socketError,
   socketTurn,
@@ -5789,7 +5790,7 @@ describe("createTurnSpinner", () => {
     const spinner = createTurnSpinner(cfg(), io);
     spinner.start();
     spinner.stop();
-    expect(raw).toEqual([`${ERASE_LINE}⠋ working…`, ERASE_LINE]);
+    expect(raw).toEqual([`${ERASE_LINE}⠋ working… 0s`, ERASE_LINE]);
   });
 
   test("is a no-op when stderr is not a terminal", () => {
@@ -5820,6 +5821,7 @@ describe("spinnerGuardedTurnHandlers", () => {
     return {
       start: () => calls.push("start"),
       stop: () => calls.push("stop"),
+      updateLabel: (label: string) => calls.push(`label:${label}`),
     };
   }
 
@@ -5866,6 +5868,49 @@ describe("spinnerGuardedTurnHandlers", () => {
     expect(stderr).toEqual(["tool: read_file started"]);
   });
 
+  test("thought activity updates the spinner before text output", () => {
+    const calls: string[] = [];
+    const { io, stdout, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), {
+      ...io,
+      out: (text) => {
+        calls.push("out");
+        stdout.push(text);
+      },
+    });
+    const handlers = spinnerGuardedTurnHandlers(
+      stubSpinner(calls),
+      output,
+      io,
+      () => ({ decision: "deny" as const, reason: "n/a" }),
+    );
+    handlers.onEvent({ type: "agentProgress", kind: "thought" });
+    expect(calls).toEqual(["label:thinking…"]);
+    expect(stderr).toEqual([]);
+    handlers.onDelta("solution found\n");
+    expect(calls).toEqual(["label:thinking…", "stop", "out"]);
+    expect(stdout.join("")).toBe("solution found\n");
+  });
+
+  test("progress does not stop the spinner or print a status line", () => {
+    const calls: string[] = [];
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    const handlers = spinnerGuardedTurnHandlers(
+      stubSpinner(calls),
+      output,
+      io,
+      () => ({ decision: "deny" as const, reason: "n/a" }),
+    );
+    handlers.onEvent({
+      type: "agentProgress",
+      kind: "tool_call",
+      title: "Inspecting codebase",
+    });
+    expect(calls).toEqual(["label:Inspecting codebase"]);
+    expect(stderr).toEqual([]);
+  });
+
   test("keeps spinning through an invisible event (modelSelected)", () => {
     const calls: string[] = [];
     const { io, stderr } = fakeIo();
@@ -5906,11 +5951,56 @@ describe("spinnerGuardedTurnHandlers", () => {
   });
 });
 
+describe("sanitizeSpinnerLabel", () => {
+  test("complete ANSI, OSC, C0, and C1 inputs cannot alter terminal control flow", () => {
+    expect(sanitizeSpinnerLabel("Malicious\x1b[31m title\nwith controls\r\n"))
+      .toBe("Malicious title with controls");
+    expect(sanitizeSpinnerLabel("C1\u009b31m style\u0085 test")).toBe(
+      "C1 style test",
+    );
+    expect(sanitizeSpinnerLabel("\x1b]8;;https://evil.example\x07link\x1b]8;;\x07"))
+      .toBe("link");
+    const sanitized = sanitizeSpinnerLabel(
+      "keep\x1b]8;;https://evil.example\x07text\x1b\\done",
+    );
+    expect(sanitized).toBe("keeptextdone");
+    expect(sanitized).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+  });
+
+  test("incomplete ANSI, OSC, C0, and C1 inputs cannot alter terminal control flow", () => {
+    expect(sanitizeSpinnerLabel("\x1b]8;;https://evil.example/no-terminator"))
+      .toBeNull();
+    expect(sanitizeSpinnerLabel("\x1b[31")).toBeNull();
+    expect(sanitizeSpinnerLabel("\x1b")).toBeNull();
+    expect(sanitizeSpinnerLabel("\u009d8;;unterminated-osc")).toBeNull();
+    const prefix = sanitizeSpinnerLabel("ok\x1b]8;;truncated");
+    expect(prefix).toBe("ok");
+    expect(prefix).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+    expect(prefix).not.toContain("truncated");
+  });
+
+  test("tool status is bounded before expensive normalization", () => {
+    const leak = "LEAK-AFTER-SCAN-BUDGET";
+    const hugeOsc = `\x1b]8;;${"A".repeat(1_000_000)}\x07${leak}`;
+    const started = performance.now();
+    const result = sanitizeSpinnerLabel(hugeOsc);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(50);
+    expect(result).toBeNull();
+    const longVisible = `${"x".repeat(300)}${leak}`;
+    const truncated = sanitizeSpinnerLabel(longVisible);
+    expect(truncated).toBe(`${"x".repeat(39)}…`);
+    expect(truncated).not.toContain(leak);
+  });
+});
+
 describe("runtimeEventIsVisible", () => {
   test("invisible bookkeeping events render nothing", () => {
     expect(runtimeEventIsVisible({ type: "modelSelected", modelSlug: "x" }))
       .toBe(false);
     expect(runtimeEventIsVisible({ type: "unknownFutureEvent" })).toBe(false);
+    expect(runtimeEventIsVisible({ type: "agentProgress", kind: "thought" }))
+      .toBe(false);
     expect(runtimeEventIsVisible(null)).toBe(false);
     expect(runtimeEventIsVisible("nope")).toBe(false);
   });
@@ -5935,7 +6025,7 @@ describe("runExec spinner integration", () => {
     const { io, raw, stdout } = fakeIo([], { errIsTerminal: true });
     const code = await runExec("x", cfg(), io, false, fn);
     expect(code).toBe(0);
-    expect(raw[0]).toBe(`${ERASE_LINE}⠋ working…`);
+    expect(raw[0]).toBe(`${ERASE_LINE}⠋ working… 0s`);
     expect(raw[raw.length - 1]).toBe(ERASE_LINE);
     expect(stdout.join("")).toContain("hi");
   });
@@ -6009,10 +6099,10 @@ describe("runRepl spinner integration", () => {
     // stay loose: the real interval timer may add repaints on a slow run.
     const erases = raw.filter((write) => write === ERASE_LINE);
     expect(erases).toHaveLength(2);
-    expect(raw[0]).toBe(`${ERASE_LINE}⠋ working…`);
+    expect(raw[0]).toBe(`${ERASE_LINE}⠋ working… 0s`);
     expect(raw[raw.length - 1]).toBe(ERASE_LINE);
     const secondTurnPaint = raw[raw.indexOf(ERASE_LINE) + 1];
-    expect(secondTurnPaint).toBe(`${ERASE_LINE}⠋ working…`);
+    expect(secondTurnPaint).toBe(`${ERASE_LINE}⠋ working… 0s`);
     expect(stdout.join("")).toContain("first");
     expect(stdout.join("")).toContain("second");
   });
