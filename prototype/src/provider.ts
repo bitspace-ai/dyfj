@@ -42,6 +42,7 @@ export interface WorkbenchRoutingOptions {
   modelId?: string;
   tier?: 0 | 1 | 2;
   hint?: "code" | "chat" | "reasoning";
+  fast?: boolean;
 }
 
 export interface WorkbenchSelection {
@@ -166,6 +167,13 @@ export class WorkbenchModelNotFoundError extends DomainError {
   constructor(public readonly slug: string) {
     super(`Model not found: ${errorField(slug)}`);
     this.name = "WorkbenchModelNotFoundError";
+  }
+}
+
+export class WorkbenchModelFastSpeedUnsupportedError extends DomainError {
+  constructor(public readonly slug: string) {
+    super(`Model "${errorField(slug)}" does not support fast speed tier`);
+    this.name = "WorkbenchModelFastSpeedUnsupportedError";
   }
 }
 
@@ -704,18 +712,28 @@ export function withDefaultLocalWorkbenchModels(
   return [...defaultModels, ...models];
 }
 
+export function modelSupportsFastSpeed(model: WorkbenchModel): boolean {
+  return model.capabilities?.includes("fast-speed") ?? false;
+}
+
 export function selectWorkbenchModel(
   models: WorkbenchModel[],
   options: WorkbenchRoutingOptions,
   defaultModelId?: string | null,
 ): WorkbenchSelection {
+  const finalize = (selected: WorkbenchModel, considered: string[], reason: string): WorkbenchSelection => {
+    if (options.fast === true && !modelSupportsFastSpeed(selected)) {
+      throw new WorkbenchModelFastSpeedUnsupportedError(selected.slug);
+    }
+    return { selected, considered, reason };
+  };
   if (options.modelId !== undefined) {
     const selected = models.find((model) => model.slug === options.modelId);
     if (!selected) throw new WorkbenchModelNotFoundError(options.modelId);
     if (!modelHasCatalogPricing(selected)) {
       throw new WorkbenchModelNotRoutableError(selected.slug);
     }
-    return { selected, considered: [], reason: "explicit_model_id" };
+    return finalize(selected, [], "explicit_model_id");
   }
 
   if (options.tier !== undefined) {
@@ -744,11 +762,7 @@ export function selectWorkbenchModel(
       }
       throw new WorkbenchModelNotFoundError(`tier:${options.tier}`);
     }
-    return {
-      selected,
-      considered: routable.map((model) => model.slug),
-      reason: "explicit_tier",
-    };
+    return finalize(selected, routable.map((model) => model.slug), "explicit_tier");
   }
 
   // No explicit modelId or tier. If the request also gave no hint and the engine
@@ -767,7 +781,7 @@ export function selectWorkbenchModel(
     if (!modelHasCatalogPricing(configured)) {
       throw new WorkbenchModelNotRoutableError(configured.slug);
     }
-    return { selected: configured, considered: [], reason: "default_config" };
+    return finalize(configured, [], "default_config");
   }
 
   // Ambient candidates — the bare default AND the hint paths below — must be
@@ -793,22 +807,18 @@ export function selectWorkbenchModel(
       localModels.find((model) => model.slug === "gemma4") ??
       localModels[0];
     if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
-    return {
+    return finalize(
       selected,
       considered,
-      reason: selected.capabilities.includes("code")
+      selected.capabilities.includes("code")
         ? "hint_code"
         : "hint_code_fallback_local",
-    };
+    );
   }
 
   const selected = preferredModelFrom(localModels);
   if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
-  return {
-    selected,
-    considered,
-    reason: "default",
-  };
+  return finalize(selected, considered, "default");
 }
 
 // One preference chain for any "pick from this set" selection, so explicit

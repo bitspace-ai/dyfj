@@ -24,6 +24,8 @@ import {
   WorkbenchLocalProviderBaseUrlError,
   type WorkbenchModel,
   WorkbenchModelNotFoundError,
+  modelSupportsFastSpeed,
+  WorkbenchModelFastSpeedUnsupportedError,
 } from "./provider";
 
 const models: WorkbenchModel[] = [
@@ -666,6 +668,53 @@ describe("selectWorkbenchModel", () => {
     const hosted = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
     expect(hosted.selected.slug).toBe("claude-haiku-4-5");
     expect(hosted.reason).toBe("default_config");
+  });
+
+  test("validates fast speed tier option against model capabilities", () => {
+    const fastCapableModel: WorkbenchModel = {
+      slug: "codex-chatgpt/gpt-5.6-terra",
+      displayName: "GPT-5.6 Terra (Codex ChatGPT)",
+      provider: "codex-chatgpt",
+      api: "acp",
+      baseUrl: "http://127.0.0.1:0",
+      tier: 2,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning", "fast-speed"],
+      modality: "subscription-oauth",
+    };
+
+    expect(modelSupportsFastSpeed(fastCapableModel)).toBe(true);
+    expect(modelSupportsFastSpeed(models[0])).toBe(false);
+
+    // Fast option succeeds on fast-capable model
+    const selection = selectWorkbenchModel(
+      [...models, fastCapableModel],
+      { modelId: "codex-chatgpt/gpt-5.6-terra", fast: true },
+    );
+    expect(selection.selected.slug).toBe("codex-chatgpt/gpt-5.6-terra");
+
+    // Fast option throws on unsupported model
+    expect(() =>
+      selectWorkbenchModel(
+        [...models, fastCapableModel],
+        { modelId: "gemma4:e2b", fast: true },
+      )
+    ).toThrow(WorkbenchModelFastSpeedUnsupportedError);
+  });
+
+  test("WorkbenchModelFastSpeedUnsupportedError sanitizes control characters and bounds oversized slugs", () => {
+    const errWithControl = new WorkbenchModelFastSpeedUnsupportedError(
+      "bad\nslug\x00with\tctrl",
+    );
+    expect(errWithControl.message).toBe(
+      'Model "bad slug with ctrl" does not support fast speed tier',
+    );
+
+    const oversized = "a".repeat(200);
+    const errOversized = new WorkbenchModelFastSpeedUnsupportedError(oversized);
+    expect(errOversized.message.length).toBeLessThan(200);
+    expect(errOversized.message).toContain("...");
   });
 
   test("a mis-tiered hosted row is never the ambient default", () => {

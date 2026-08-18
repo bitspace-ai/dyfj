@@ -12,7 +12,10 @@ import {
   CONVERSATION_SUMMARY_MARKER,
   SUMMARY_TRUST_POLICY,
 } from "./context-compression";
-import type { WorkbenchMessage } from "./provider";
+import {
+  type WorkbenchMessage,
+  WorkbenchModelFastSpeedUnsupportedError,
+} from "./provider";
 import {
   type BudgetTallyInput,
   buildBudgetTallyLine,
@@ -50,7 +53,7 @@ const runtimeMocks = vi.hoisted(() => {
     provider: "ollama",
     api: "openai-completions",
     baseUrl: "http://localhost:11434/v1",
-    tier: 0 as const,
+    tier: 0 as 0 | 1 | 2,
     costInput: 0,
     costOutput: 0,
     capabilities: ["text", "reasoning"],
@@ -1243,6 +1246,82 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
       routingOptions: { modelId: "codex-chatgpt/gpt-5.6-sol" },
       trustWorkspaceInstructions: false,
     })).rejects.toThrow("codex-chatgpt requires explicit workspace trust");
+  });
+
+  test("rejects an unapproved explicit Codex ChatGPT runner request with PaidEscalationDeclinedError", async () => {
+    await expect(runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "codex-chatgpt" },
+      trustWorkspaceInstructions: true,
+    })).rejects.toThrow(PaidEscalationDeclinedError);
+  });
+
+  test("allows an explicit Codex ChatGPT runner request when paid escalation is confirmed", async () => {
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "codex-chatgpt" },
+      trustWorkspaceInstructions: true,
+      confirmPaidEscalation: () =>
+        Promise.resolve({ decision: "approve" as const }),
+    });
+    expect(result).toBeDefined();
+    expect(result.sessionId).toBeDefined();
+  });
+
+  test("rejects an unapproved tier-2 ACP request with PaidEscalationDeclinedError", async () => {
+    runtimeMocks.registry = [
+      {
+        slug: "codex-chatgpt/gpt-5.6-terra",
+        displayName: "GPT-5.6 Terra",
+        provider: "codex-chatgpt",
+        api: "acp",
+        baseUrl: "local_stdio",
+        tier: 2 as const,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text", "fast-speed"],
+        contextWindow: 1050000,
+        maxOutputTokens: 128000,
+      },
+    ];
+    await expect(runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "test unapproved paid",
+      routingOptions: { modelId: "codex-chatgpt/gpt-5.6-terra" },
+      trustWorkspaceInstructions: true,
+    })).rejects.toThrow(PaidEscalationDeclinedError);
+  });
+
+  test("allows a tier-2 ACP request when paid escalation is confirmed", async () => {
+    runtimeMocks.registry = [
+      {
+        slug: "codex-chatgpt/gpt-5.6-terra",
+        displayName: "GPT-5.6 Terra",
+        provider: "codex-chatgpt",
+        api: "acp",
+        baseUrl: "local_stdio",
+        tier: 2 as const,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text", "fast-speed"],
+        contextWindow: 1050000,
+        maxOutputTokens: 128000,
+      },
+    ];
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "test approved paid",
+      routingOptions: { modelId: "codex-chatgpt/gpt-5.6-terra" },
+      trustWorkspaceInstructions: true,
+      confirmPaidEscalation: () =>
+        Promise.resolve({ decision: "approve" as const }),
+    });
+    expect(result).toBeDefined();
+    expect(result.sessionId).toBeDefined();
   });
 
   test("routes an ACP model selection to the external agent runner", async () => {
@@ -5382,6 +5461,11 @@ describe("classifyErrorKind", () => {
     expect(
       classifyErrorKind(new PaidEscalationDeclinedError({ decision: "deny" })),
     ).toBe("PaidEscalationDeclinedError");
+    expect(
+      classifyErrorKind(
+        new WorkbenchModelFastSpeedUnsupportedError("test-model"),
+      ),
+    ).toBe("WorkbenchModelFastSpeedUnsupportedError");
   });
 
   test("a real DomainError subclass with a shadowed .constructor still classifies to its real class, not the shadowed payload", () => {

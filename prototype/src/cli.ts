@@ -78,6 +78,7 @@ export interface TurnRequest {
     modelId?: string;
     tier?: 0 | 1 | 2;
     hint?: "code" | "chat" | "reasoning";
+    fast?: boolean;
   };
   sessionId?: string;
   /** Working directory to scope the server's read-only file tools to. */
@@ -118,6 +119,11 @@ export interface CliConfig {
    * Persists across a REPL session; the engine gates it loopback-only.
    */
   approvePaid?: boolean;
+  /**
+   * Fast speed tier for supported models (e.g. gpt-5.6 series in Codex).
+   * Requests the fast service tier for prioritized generation throughput.
+   */
+  fast?: boolean;
   color: boolean;
 }
 
@@ -175,6 +181,7 @@ export function buildTurnBody(
     if (config.model !== undefined) routingOptions.modelId = config.model;
     if (config.tier !== undefined) routingOptions.tier = config.tier;
     if (config.hint !== undefined) routingOptions.hint = config.hint;
+    if (config.fast !== undefined) routingOptions.fast = config.fast;
   }
 
   const body: TurnRequest = { prompt, mode: config.mode };
@@ -519,6 +526,7 @@ export interface SessionPosture {
   permissionLevel?: string;
   /** Standing workspace-instruction trust from engine config (trust_workspace_instructions). */
   trustWorkspaceInstructions?: boolean;
+  fast?: boolean;
 }
 
 /**
@@ -534,6 +542,7 @@ export function formatPostureLine(posture: SessionPosture): string {
     : posture.local
     ? "local"
     : "hosted";
+  const speed = posture.fast === true ? " · ⚡ fast" : "";
   const paid = posture.approvePaidSession
     ? "paid approved (session)"
     : posture.approvePaidDefault === true
@@ -550,7 +559,7 @@ export function formatPostureLine(posture: SessionPosture): string {
     : posture.trustWorkspaceInstructions === false
     ? "off"
     : "unknown";
-  return `posture: ${posture.slug} · ${tier} · ${locality} · ${paid} · ` +
+  return `posture: ${posture.slug} · ${tier} · ${locality}${speed} · ${paid} · ` +
     `permission ${posture.permissionLevel ?? "unknown"} · ` +
     `workspace instructions: ${workspace}`;
 }
@@ -782,6 +791,7 @@ export async function runRepl(
         )
       ) continue;
       if (await handleReplModelCommand(prompt, config, io, connect)) continue;
+      if (await handleReplFastCommand(prompt, config, io, connect)) continue;
       try {
         const body = buildTurnBody(prompt, config, sessionState.sessionId);
         const output = createTurnOutputHandlers(config, io);
@@ -934,6 +944,7 @@ interface ModelRow {
   tier?: number;
   /** Server-computed locality (on-machine loopback provider); absent on older servers. */
   local?: boolean;
+  capabilities?: string[];
 }
 interface SessionRow {
   slug?: string;
@@ -1564,6 +1575,7 @@ export async function fetchSessionPosture(
         approvePaidDefault: runtime?.approvePaidDefault,
         permissionLevel: runtime?.permissionLevel,
         trustWorkspaceInstructions: runtime?.trustWorkspaceInstructions,
+        ...(config.fast !== undefined ? { fast: config.fast } : {}),
       };
     } finally {
       client.close();
@@ -2542,6 +2554,76 @@ export async function handleReplPacketCommand(
   return true;
 }
 
+function isModelRowFastCapable(model?: ModelRow): boolean {
+  if (!model) return false;
+  return Array.isArray(model.capabilities) && model.capabilities.includes("fast-speed");
+}
+
+export async function handleReplFastCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/fast")) return false;
+  const parts = trimmed.trimEnd().split(/\s+/);
+  if (parts[0] !== "/fast") return false;
+
+  if (config.runner !== undefined) {
+    io.err(
+      "dyfj: fast speed tier cannot be toggled when an explicit runner is active",
+    );
+    return true;
+  }
+
+  const listed = await fetchModelSlugs(config, connect);
+  if ("error" in listed) {
+    io.err(listed.error);
+    return true;
+  }
+
+  const posture = await fetchSessionPosture(config, connect);
+  const activeSlug = config.model ??
+    ("slug" in posture && posture.slug ? posture.slug : "(registry default)");
+  const activeModel = listed.models.find((m) => m.slug === activeSlug);
+
+  const sub = parts[1]?.toLowerCase();
+  let targetFastState: boolean;
+  if (sub === "on") {
+    targetFastState = true;
+  } else if (sub === "off") {
+    targetFastState = false;
+  } else if (!sub) {
+    targetFastState = !config.fast;
+  } else {
+    io.err("usage: /fast [on|off]");
+    return true;
+  }
+
+  if (targetFastState) {
+    if (!isModelRowFastCapable(activeModel)) {
+      io.err(
+        `dyfj: fast speed tier is not supported by "${activeSlug}" (supported on models advertising the fast-speed capability)`,
+      );
+      return true;
+    }
+  }
+
+  config.fast = targetFastState;
+  const updatedPosture = await fetchSessionPosture(config, connect);
+  io.err(
+    "error" in updatedPosture
+      ? updatedPosture.error
+      : formatPostureLine(updatedPosture),
+  );
+  return true;
+}
+
 export async function handleReplModelCommand(
   line: string,
   config: CliConfig,
@@ -2561,7 +2643,23 @@ export async function handleReplModelCommand(
   // hosted model mid-session doesn't require relaunching. Consent stays with
   // the engine: without it, hosted turns keep failing closed exactly as today.
   const approvePaid = parts.includes("--approve-paid");
-  const args = parts.slice(1).filter((part) => part !== "--approve-paid");
+  const hasFastFlag = parts.includes("--fast");
+  const hasNoFastFlag = parts.includes("--no-fast");
+  const args = parts.slice(1).filter((part) =>
+    part !== "--approve-paid" && part !== "--fast" && part !== "--no-fast"
+  );
+
+  if (hasFastFlag && hasNoFastFlag) {
+    io.err("dyfj: cannot specify both --fast and --no-fast");
+    return true;
+  }
+
+  if (config.runner !== undefined && (hasFastFlag || hasNoFastFlag)) {
+    io.err(
+      "dyfj: fast speed tier cannot be configured when an explicit runner is active",
+    );
+    return true;
+  }
 
   const listed = await fetchModelSlugs(config, connect);
   if ("error" in listed) {
@@ -2575,11 +2673,29 @@ export async function handleReplModelCommand(
   };
 
   if (args.length === 0) {
-    // Bare `/model --approve-paid` arms paid inference without switching.
-    if (approvePaid) config.approvePaid = true;
-    const posture = await fetchSessionPosture(config, connect);
+    const initialPosture = await fetchSessionPosture(config, connect);
     const active = config.model ??
-      ("slug" in posture && posture.slug ? posture.slug : "(registry default)");
+      ("slug" in initialPosture && initialPosture.slug ? initialPosture.slug : "(registry default)");
+    const activeModel = listed.models.find((m) => m.slug === active);
+
+    if (hasFastFlag) {
+      if (!isModelRowFastCapable(activeModel)) {
+        io.err(
+          `dyfj: fast speed tier is not supported by "${active}" (supported on models advertising the fast-speed capability)`,
+        );
+        return true;
+      }
+      config.fast = true;
+    } else if (hasNoFastFlag) {
+      config.fast = false;
+    }
+
+    if (approvePaid) config.approvePaid = true;
+
+    const posture = (hasFastFlag || hasNoFastFlag || approvePaid)
+      ? await fetchSessionPosture(config, connect)
+      : initialPosture;
+
     io.err(`active model: ${active}`);
     io.err(`available: ${listed.slugs.join(", ") || "(none)"}`);
     io.err("error" in posture ? posture.error : formatPostureLine(posture));
@@ -2588,13 +2704,28 @@ export async function handleReplModelCommand(
 
   const slug = args[0];
   if (!listed.slugs.includes(slug)) {
-    // A failed switch must not arm paid inference as a side effect.
     io.err(
-      `dyfj: unknown model "${slug}". Available: ${
+      `unknown model "${slug}". available: ${
         listed.slugs.join(", ") || "(none)"
       }`,
     );
     return true;
+  }
+
+  const targetModel = listed.models.find((m) => m.slug === slug);
+  if (hasFastFlag) {
+    if (!isModelRowFastCapable(targetModel)) {
+      io.err(
+        `dyfj: fast speed tier is not supported by "${slug}" (supported on models advertising the fast-speed capability)`,
+      );
+      return true;
+    }
+    config.fast = true;
+  } else if (hasNoFastFlag) {
+    config.fast = false;
+  } else if (config.fast === true && !isModelRowFastCapable(targetModel)) {
+    config.fast = false;
+    io.err(`dyfj: fast speed tier disabled for "${slug}" (unsupported)`);
   }
 
   config.model = slug;
@@ -3375,6 +3506,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let printPrompt: string | undefined;
   let help = false;
   let launcherAutostarted = false;
+  let seenFast: boolean | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -3386,6 +3518,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
       overrides.unix = true;
     } else if (arg === "--approve-paid") {
       overrides.approvePaid = true;
+    } else if (arg === "--fast") {
+      if (seenFast === false) {
+        return error("cannot specify both --fast and --no-fast");
+      }
+      seenFast = true;
+      overrides.fast = true;
+    } else if (arg === "--no-fast") {
+      if (seenFast === true) {
+        return error("cannot specify both --fast and --no-fast");
+      }
+      seenFast = false;
+      overrides.fast = false;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     } else if (VALUE_FLAGS.has(arg)) {
@@ -3450,9 +3594,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (
     overrides.runner !== undefined &&
     (overrides.model !== undefined || overrides.tier !== undefined ||
-      overrides.hint !== undefined)
+      overrides.hint !== undefined || overrides.fast !== undefined)
   ) {
-    return error("--runner cannot be combined with --model, --tier, or --hint");
+    return error(
+      "--runner cannot be combined with --model, --tier, --hint, or --fast/--no-fast",
+    );
   }
   if (
     overrides.runner !== undefined &&
@@ -3564,6 +3710,7 @@ export function resolveConfig(
     unix: overrides.unix ??
       (env.get("DYFJ_UNIX") === "1" || explicitServer === undefined),
     approvePaid: overrides.approvePaid ?? false,
+    fast: overrides.fast,
     color: !env.get("NO_COLOR") && isTty,
   };
 }
@@ -3597,7 +3744,9 @@ Launcher lifecycle (the dyfj wrapper script, local UDS seam only):
 REPL commands:
   /model [<slug>]           show or switch the active model (validated slugs);
                             add --approve-paid to opt this session into paid
-                            (hosted) inference when escalating
+                            (hosted) inference when escalating; add --fast or
+                            --no-fast to toggle fast speed tier
+  /fast [on|off]            toggle or set fast speed tier (for supported models)
   /session                  show the current session id (for --session resume)
   /exit, /quit              exit the REPL
 
@@ -3608,6 +3757,8 @@ Options:
   --unix           force the UDS seam (the local default; needed only to override --server)
   --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
+  --fast           enable fast speed tier for supported models (faster generation)
+  --no-fast        disable fast speed tier (standard speed)
   --runner <name>  local ACP runner: fixture | codex-chatgpt (experimental;
                    codex-chatgpt requires trusted workspace config)
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')

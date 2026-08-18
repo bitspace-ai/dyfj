@@ -21,6 +21,7 @@ import {
   HostedProviderCredentialMissingError,
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
+  WorkbenchModelFastSpeedUnsupportedError,
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
 } from "./provider";
@@ -658,6 +659,10 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
   ],
   [WorkbenchHostedProviderBaseUrlError, "WorkbenchHostedProviderBaseUrlError"],
   [WorkbenchLocalProviderBaseUrlError, "WorkbenchLocalProviderBaseUrlError"],
+  [
+    WorkbenchModelFastSpeedUnsupportedError,
+    "WorkbenchModelFastSpeedUnsupportedError",
+  ],
   [WorkbenchModelNotRoutableError, "WorkbenchModelNotRoutableError"],
 ];
 
@@ -1482,6 +1487,27 @@ export async function runWorkbenchRuntime(
         "codex-chatgpt requires explicit workspace trust",
       );
     }
+    if (runtimeInput.runner.profile === "codex-chatgpt") {
+      const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
+        modelName: "GPT-5.6 Terra (Codex)",
+        modelSlug: "codex-chatgpt/gpt-5.6-terra",
+        tier: 2,
+        routingReason: "explicit_runner",
+        estimatedCostUsd: 0,
+        sessionCostSoFarUsd: 0,
+        sessionLimitUsd: runtimeInput.defaultSessionBudgetUsd ?? 0,
+        perCallLimitUsd: runtimeInput.defaultPerCallBudgetUsd ?? 0,
+      });
+      if (preflightBanner !== null) {
+        const verdict =
+          await (runtimeInput.confirmPaidEscalation ?? denyPaidEscalation)(
+            preflightBanner,
+          );
+        if (verdict.decision !== "approve") {
+          throw new PaidEscalationDeclinedError(verdict);
+        }
+      }
+    }
     const { runExternalAgentWorkbenchRuntime } = await import(
       "./external-agent-runtime"
     );
@@ -1501,6 +1527,13 @@ export async function runWorkbenchRuntime(
   } = await import("./provider");
 
   let acpProfile: "codex-chatgpt" | "fixture" | null = null;
+  let acpSelectedModelSlug: string | null = null;
+  let acpSelectedModel: {
+    displayName: string;
+    slug: string;
+    tier: 0 | 1 | 2;
+  } | null = null;
+  let acpSelectionReason: string | null = null;
   try {
     const models = await loadWorkbenchModels().then(
       withDefaultLocalWorkbenchModels,
@@ -1512,6 +1545,9 @@ export async function runWorkbenchRuntime(
       runtimeInput.defaultCompanionModel,
     );
     if (selection.selected.api === "acp") {
+      acpSelectedModelSlug = selection.selected.slug;
+      acpSelectedModel = selection.selected;
+      acpSelectionReason = selection.reason;
       if (selection.selected.provider === "codex-chatgpt") {
         acpProfile = "codex-chatgpt";
       } else if (selection.selected.slug === "fixture") {
@@ -1541,11 +1577,38 @@ export async function runWorkbenchRuntime(
         "codex-chatgpt requires explicit workspace trust",
       );
     }
+    if (acpSelectedModel !== null && acpSelectedModel.tier > 0) {
+      const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
+        modelName: acpSelectedModel.displayName,
+        modelSlug: acpSelectedModel.slug,
+        tier: acpSelectedModel.tier,
+        routingReason: acpSelectionReason ?? "explicit_model_id",
+        estimatedCostUsd: 0,
+        sessionCostSoFarUsd: 0,
+        sessionLimitUsd: runtimeInput.defaultSessionBudgetUsd ?? 0,
+        perCallLimitUsd: runtimeInput.defaultPerCallBudgetUsd ?? 0,
+      });
+      if (preflightBanner !== null) {
+        const verdict =
+          await (runtimeInput.confirmPaidEscalation ?? denyPaidEscalation)(
+            preflightBanner,
+          );
+        if (verdict.decision !== "approve") {
+          throw new PaidEscalationDeclinedError(verdict);
+        }
+      }
+    }
     const { runExternalAgentWorkbenchRuntime } = await import(
       "./external-agent-runtime"
     );
     return await runExternalAgentWorkbenchRuntime({
       ...runtimeInput,
+      routingOptions: {
+        ...runtimeInput.routingOptions,
+        ...(acpSelectedModelSlug !== null
+          ? { modelId: acpSelectedModelSlug }
+          : {}),
+      },
       runner: { kind: "acp", profile: acpProfile },
     });
   }

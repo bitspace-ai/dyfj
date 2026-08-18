@@ -1,0 +1,72 @@
+-- Add codex-chatgpt/gpt-5.6-terra and update codex-chatgpt/gpt-5.6-sol with fast-speed capability.
+
+UPDATE models SET
+    capabilities = '["text","code","reasoning","vision","tools","thinking","long-context","fast-speed"]'
+WHERE slug = 'codex-chatgpt/gpt-5.6-sol';
+
+INSERT INTO models (
+    slug,
+    display_name,
+    provider,
+    api,
+    base_url,
+    tier,
+    context_window,
+    max_output_tokens,
+    cost_input,
+    cost_output,
+    cost_cache_read,
+    cost_cache_write,
+    reasoning,
+    capabilities,
+    architecture,
+    total_params_b,
+    active_params_b,
+    recommended_quant,
+    resident_ram_gib,
+    reasoning_effort_control,
+    active
+) VALUES (
+    'codex-chatgpt/gpt-5.6-terra',
+    'GPT-5.6 Terra (Codex)',
+    'codex-chatgpt',
+    'acp',
+    'acp',
+    2,
+    1050000,
+    128000,
+    0.000000,
+    0.000000,
+    0.000000,
+    0.000000,
+    TRUE,
+    '["text","code","reasoning","vision","tools","thinking","long-context","fast-speed"]',
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    TRUE,
+    TRUE
+)
+ON DUPLICATE KEY UPDATE
+    `display_name` = VALUES(`display_name`),
+    `provider` = VALUES(`provider`),
+    `api` = VALUES(`api`),
+    `base_url` = VALUES(`base_url`),
+    `tier` = VALUES(`tier`),
+    `context_window` = VALUES(`context_window`),
+    `max_output_tokens` = VALUES(`max_output_tokens`),
+    `cost_input` = VALUES(`cost_input`),
+    `cost_output` = VALUES(`cost_output`),
+    `cost_cache_read` = VALUES(`cost_cache_read`),
+    `cost_cache_write` = VALUES(`cost_cache_write`),
+    `reasoning` = VALUES(`reasoning`),
+    `capabilities` = VALUES(`capabilities`),
+    `architecture` = VALUES(`architecture`),
+    `total_params_b` = VALUES(`total_params_b`),
+    `active_params_b` = VALUES(`active_params_b`),
+    `recommended_quant` = VALUES(`recommended_quant`),
+    `resident_ram_gib` = VALUES(`resident_ram_gib`),
+    `reasoning_effort_control` = VALUES(`reasoning_effort_control`),
+    `active` = VALUES(`active`);
