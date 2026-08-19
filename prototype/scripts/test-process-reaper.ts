@@ -13,7 +13,7 @@ function parseArgs(args: string[]): {
   tmpDir: string;
   commandNeedles: string[];
   lockFile?: string;
-  expectedGeneration?: string;
+  expectedGeneration: string;
 } {
   let supervisorPid: number | undefined;
   let deadlineEpochSec: number | undefined;
@@ -70,6 +70,9 @@ function parseArgs(args: string[]): {
   }
   if (tmpDir === undefined) {
     throw new Error("--tmp-dir is required");
+  }
+  if (expectedGeneration === undefined) {
+    throw new Error("--generation is required");
   }
   return {
     supervisorPid,

@@ -8,11 +8,14 @@
  * - SIGKILL of this supervisor: the sibling reaper sweeps
  * - SIGKILL of supervisor and reaper together: not covered in-process; the next
  *   `run` reclaims the operator-scoped lock and TERM-then-KILL the saved Vitest
- *   process group only when the recorded recovery directory, run generation,
- *   leader start time, and command still match. If the saved leader is gone,
- *   the numeric group is left alive; run-scoped discovery still reaps
- *   descendants whose command names this run's tmp dir. Supervised runs fail
- *   closed without an absolute HOME.
+ *   process group only when a recovering run generation is supplied and the
+ *   recorded recovery directory, run generation, leader start time, and command
+ *   still match. If the saved leader is gone, or the lock is malformed so no
+ *   generation can be recovered, the numeric group is left alive. A spawn
+ *   manifest PID is not kill authority unless that record carries matching
+ *   start time, command, recovery directory, and run generation. Run-scoped
+ *   discovery still reaps descendants whose command names this run's tmp dir.
+ *   Supervised runs fail closed without an absolute HOME.
  *
  * `--version` / other non-`run` args stay an unsupervised passthrough so
  * existing launcher probes keep working.
@@ -282,10 +285,14 @@ async function supervised(args: string[]): Promise<number> {
       }
       await recordSpawn(tmpDir, {
         pid: vitestPgid,
-        pgid: vitestPgid,
+        pgid: captured?.pgid ?? vitestPgid,
         kind: "vitest",
         sockets: [],
         locks: [],
+        command: captured?.command,
+        lstart: captured?.lstart,
+        generation: runLock.generation,
+        tmpDir,
         startedAt: new Date().toISOString(),
       });
     }

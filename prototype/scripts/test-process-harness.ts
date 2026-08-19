@@ -22,6 +22,9 @@ export interface SpawnRecord {
   sockets: string[];
   locks: string[];
   command?: string;
+  lstart?: string;
+  generation?: string;
+  tmpDir?: string;
   startedAt: string;
 }
 
@@ -327,6 +330,38 @@ async function walkFiles(root: string, names: string[]): Promise<void> {
   }
 }
 
+function spawnRecordCanAuthorizeProcess(
+  record: SpawnRecord,
+): record is SpawnRecord & {
+  lstart: string;
+  command: string;
+  tmpDir: string;
+  generation: string;
+} {
+  return typeof record.lstart === "string" && record.lstart !== "" &&
+    typeof record.command === "string" && record.command !== "" &&
+    typeof record.tmpDir === "string" && record.tmpDir !== "" &&
+    typeof record.generation === "string" && record.generation !== "";
+}
+
+async function manifestAuthorizesProcess(
+  proc: ProcessInfo,
+  manifest: SpawnRecord[],
+  tmpDir: string,
+  expectedGeneration: string | undefined,
+): Promise<boolean> {
+  if (expectedGeneration === undefined || expectedGeneration === "") return false;
+  for (const record of manifest) {
+    if (record.pid !== proc.pid) continue;
+    if (!spawnRecordCanAuthorizeProcess(record)) continue;
+    if (record.tmpDir !== tmpDir) continue;
+    if (record.generation !== expectedGeneration) continue;
+    const lstart = await readProcessLstart(proc.pid);
+    if (lstart === record.lstart && proc.command === record.command) return true;
+  }
+  return false;
+}
+
 function commandLooksLikeTestRuntime(
   command: string,
   tmpDir: string,
@@ -361,6 +396,7 @@ export async function discoverSurvivors(opts: {
   ignorePgids?: Set<number>;
   commandNeedles?: string[];
   lockFile?: string;
+  expectedGeneration?: string;
 }): Promise<SurvivorReport> {
   const tmpDir = opts.tmpDir;
   const ignorePids = opts.ignorePids ?? new Set();
@@ -393,9 +429,11 @@ export async function discoverSurvivors(opts: {
   for (const proc of await listProcesses()) {
     if (ignorePids.has(proc.pid) || ignorePgids.has(proc.pgid)) continue;
     if (proc.pid === Deno.pid || proc.pid === Deno.ppid) continue;
-    const recorded = manifest.some((record) =>
-      record.pid === proc.pid ||
-      (record.pgid !== undefined && record.pgid === proc.pgid)
+    const recorded = await manifestAuthorizesProcess(
+      proc,
+      manifest,
+      tmpDir,
+      opts.expectedGeneration,
     );
     if (
       recorded ||
@@ -525,10 +563,14 @@ export async function reapSavedVitestGroup(
     );
     return;
   }
-  if (
-    expectedGeneration !== undefined &&
-    saved.generation !== expectedGeneration
-  ) {
+  if (expectedGeneration === undefined || expectedGeneration === "") {
+    refuseVitestGroup(
+      saved.pgid,
+      "no recovering run generation was supplied",
+    );
+    return;
+  }
+  if (saved.generation !== expectedGeneration) {
     refuseVitestGroup(
       saved.pgid,
       "saved generation does not match the recovering run",
@@ -577,6 +619,7 @@ export async function sweepTestRuntime(opts: {
   graceMs?: number;
   commandNeedles?: string[];
   lockFile?: string;
+  expectedGeneration?: string;
 }): Promise<SurvivorReport> {
   const first = await discoverSurvivors(opts);
   await reapSurvivors(first, {
@@ -792,6 +835,7 @@ async function sweepLockedTmpDir(opts: {
     ignorePids: opts.ignorePids,
     commandNeedles: opts.commandNeedles,
     lockFile: opts.lockFile,
+    expectedGeneration: opts.expectedGeneration,
     graceMs: 200,
   });
   await clearRunArtifacts(opts.tmpDir);
@@ -948,6 +992,7 @@ export async function runReaper(opts: {
         ignorePgids,
         commandNeedles: opts.commandNeedles,
         lockFile: opts.lockFile,
+        expectedGeneration: opts.expectedGeneration,
       });
       return timedOut ? 124 : 0;
     }

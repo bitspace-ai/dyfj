@@ -234,6 +234,8 @@ describe("test process harness", () => {
       String(Math.floor(Date.now() / 1000) + 30),
       "--tmp-dir",
       tmpDir,
+      "--generation",
+      "drill",
     ], { detached: true, stdio: "ignore", cwd: prototypeRoot });
     if (reaper.pid === undefined) throw new Error("reaper spawn produced no pid");
     reaper.unref();
@@ -260,12 +262,19 @@ describe("test process harness", () => {
     if (child.pid === undefined) throw new Error("hung child spawn produced no pid");
     child.unref();
     trackPid(child.pid);
+    const captured = await captureProcessIdentity(child.pid);
+    expect(captured).not.toBeNull();
+    const generation = "hung-child-gen";
     await recordSpawn(tmpDir, {
       pid: child.pid,
-      pgid: child.pid,
+      pgid: captured!.pgid,
       kind: "serve-unix",
       sockets: [],
       locks: [],
+      command: captured!.command,
+      lstart: captured!.lstart,
+      generation,
+      tmpDir,
       startedAt: new Date().toISOString(),
     });
     const supervisor = spawn("/bin/bash", ["-c", "sleep 60"], {
@@ -281,6 +290,7 @@ describe("test process harness", () => {
       supervisorPid: supervisor.pid,
       deadlineEpochSec: Math.floor(Date.now() / 1000) + 1,
       tmpDir,
+      expectedGeneration: generation,
     });
     expect(code).toBe(124);
     await waitUntil(
@@ -343,7 +353,7 @@ describe("test process harness", () => {
       generation: "other-run",
       tmpDir,
     });
-    await reapSavedVitestGroup(tmpDir);
+    await reapSavedVitestGroup(tmpDir, "other-run");
     expect(await processIsAlive(foreign.pid)).toBe(true);
     const holder = spawnDetachedSleep("sleep 60");
     await acquireTestRunLock({ tmpDir, boundSec: 30, pid: holder.pid });
@@ -398,6 +408,136 @@ describe("test process harness", () => {
     expect(await processIsAlive(memberPid)).toBe(true);
   }, 10_000);
 
+  test("a mismatched saved identity plus a numeric manifest match does not kill a foreign group", async () => {
+    const tmpDir = await scopedTmp();
+    const foreign = spawnDetachedSleep("sleep 60");
+    const holder = spawnDetachedSleep("sleep 60");
+    const held = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: holder.pid,
+    });
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: foreign.pid,
+      leaderPid: foreign.pid,
+      lstart: "Thu Jan  1 00:00:00 1970",
+      command: "/bin/bash -c sleep 60",
+      generation: held.generation,
+      tmpDir,
+    });
+    await recordSpawn(tmpDir, {
+      pid: foreign.pid,
+      pgid: foreign.pid,
+      kind: "vitest",
+      sockets: [],
+      locks: [],
+      startedAt: new Date().toISOString(),
+    });
+    await killPid(holder.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(holder.pid),
+      2_000,
+      "stale lock holder did not exit",
+    );
+    const next = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: Deno.pid,
+    });
+    expect(await processIsAlive(foreign.pid)).toBe(true);
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
+  }, 15_000);
+
+  test("a matching spawn-manifest identity is reaped after saved-group refusal", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawnDetachedSleep("sleep 60");
+    const captured = await captureProcessIdentity(child.pid);
+    expect(captured).not.toBeNull();
+    const holder = spawnDetachedSleep("sleep 60");
+    const held = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: holder.pid,
+    });
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: child.pid,
+      leaderPid: child.pid,
+      lstart: "Thu Jan  1 00:00:00 1970",
+      command: "/bin/bash -c sleep 60",
+      generation: held.generation,
+      tmpDir,
+    });
+    await recordSpawn(tmpDir, {
+      pid: child.pid,
+      pgid: captured!.pgid,
+      kind: "vitest",
+      sockets: [],
+      locks: [],
+      command: captured!.command,
+      lstart: captured!.lstart,
+      generation: held.generation,
+      tmpDir,
+      startedAt: new Date().toISOString(),
+    });
+    await killPid(holder.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(holder.pid),
+      2_000,
+      "stale lock holder did not exit",
+    );
+    const next = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: Deno.pid,
+    });
+    await waitUntil(
+      async () => !await processIsAlive(child.pid),
+      4_000,
+      "matching spawn-manifest identity was not reaped",
+    );
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
+  }, 15_000);
+
+  test("same-directory live-leader generation mismatch does not kill the group", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawnDetachedSleep("sleep 60");
+    const captured = await captureProcessIdentity(child.pid);
+    expect(captured).not.toBeNull();
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: captured!.pgid,
+      leaderPid: child.pid,
+      lstart: captured!.lstart,
+      command: captured!.command,
+      generation: "stale-generation",
+      tmpDir,
+    });
+    await reapSavedVitestGroup(tmpDir, "expected-generation");
+    expect(await processIsAlive(child.pid)).toBe(true);
+  }, 10_000);
+
+  test("malformed-lock recovery does not signal a saved group", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawnDetachedSleep("sleep 60");
+    const captured = await captureProcessIdentity(child.pid);
+    expect(captured).not.toBeNull();
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: captured!.pgid,
+      leaderPid: child.pid,
+      lstart: captured!.lstart,
+      command: captured!.command,
+      generation: "orphan-generation",
+      tmpDir,
+    });
+    await Deno.writeTextFile(lockPath(tmpDir), "");
+    const next = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: Deno.pid,
+    });
+    expect(await processIsAlive(child.pid)).toBe(true);
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
+  }, 15_000);
+
   test("force-killing a supervisor reaps a detached ACP signaler-shaped descendant", async () => {
     const tmpDir = await scopedTmp();
     const probe = spawn(selectedDenoExecutable(), [
@@ -436,6 +576,8 @@ describe("test process harness", () => {
       String(Math.floor(Date.now() / 1000) + 30),
       "--tmp-dir",
       tmpDir,
+      "--generation",
+      "drill",
     ], { detached: true, stdio: "ignore", cwd: prototypeRoot });
     if (reaper.pid === undefined) throw new Error("reaper spawn produced no pid");
     reaper.unref();
