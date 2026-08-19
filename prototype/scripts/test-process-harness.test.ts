@@ -295,16 +295,20 @@ describe("test process harness", () => {
     const vitestShaped = spawnDetachedSleep("sleep 60");
     const captured = await captureProcessIdentity(vitestShaped.pid);
     expect(captured).not.toBeNull();
+    const holder = spawnDetachedSleep("sleep 60");
+    const held = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: holder.pid,
+    });
     await writeVitestGroupIdentity(tmpDir, {
       pgid: captured!.pgid,
       leaderPid: vitestShaped.pid,
       lstart: captured!.lstart,
       command: captured!.command,
-      generation: "run-a",
+      generation: held.generation,
       tmpDir,
     });
-    const holder = spawnDetachedSleep("sleep 60");
-    await acquireTestRunLock({ tmpDir, boundSec: 30, pid: holder.pid });
     await killPid(holder.pid, "SIGKILL");
     await waitUntil(
       async () => !await processIsAlive(holder.pid),
@@ -357,6 +361,42 @@ describe("test process harness", () => {
     expect(await processIsAlive(foreign.pid)).toBe(true);
     await releaseTestRunLock({ tmpDir, generation: next.generation });
   }, 15_000);
+
+  test("leader-gone identity with a mismatched tmp dir does not kill a foreign member", async () => {
+    const tmpDir = await scopedTmp();
+    const memberPidFile = `${tmpDir}/member.pid`;
+    const leader = spawn("/bin/bash", [
+      "-c",
+      'sleep 60 & echo $! > "$1"; exit 0',
+      "leader",
+      memberPidFile,
+    ], { detached: true, stdio: "ignore" });
+    if (leader.pid === undefined) throw new Error("leader spawn produced no pid");
+    leader.unref();
+    trackPid(leader.pid);
+    await waitUntil(async () => {
+      try {
+        const pid = Number(await Deno.readTextFile(memberPidFile));
+        return Number.isSafeInteger(pid) && pid > 0 &&
+          !await processIsAlive(leader.pid!) &&
+          await processIsAlive(pid);
+      } catch {
+        return false;
+      }
+    }, 2_000, "leader-gone member did not remain after the leader exited");
+    const memberPid = Number(await Deno.readTextFile(memberPidFile));
+    trackPid(memberPid);
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: leader.pid,
+      leaderPid: leader.pid,
+      lstart: "Thu Jan  1 00:00:00 1970",
+      command: "/bin/bash -c sleep 60",
+      generation: "stale-generation",
+      tmpDir: "/",
+    });
+    await reapSavedVitestGroup(tmpDir, "expected-generation");
+    expect(await processIsAlive(memberPid)).toBe(true);
+  }, 10_000);
 
   test("force-killing a supervisor reaps a detached ACP signaler-shaped descendant", async () => {
     const tmpDir = await scopedTmp();

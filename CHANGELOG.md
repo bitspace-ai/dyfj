@@ -51,7 +51,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
-- **Test-runtime lock and process-group identity**: Acquire/reclaim/release serialize on an exclusive claim directory; release removes a lock only when the generation matches. Saved Vitest groups are signaled only when start time and command still match. Supervised runs fail closed without an absolute `HOME`. Stale `*.writing` lock staging files are swept.
+- **Test-runtime lock and process-group identity**: Acquire/reclaim/release serialize on an exclusive claim directory; release removes a lock only when the generation matches. Saved Vitest groups are signaled only when the recovery directory, run generation, leader start time, and command still match. If the saved leader is gone, the numeric group is left alive. Supervised runs fail closed without an absolute `HOME`. Stale `*.writing` lock staging files are swept.
 - Made ACP progress delivery best-effort so a hanging or rejecting observer cannot stall or fail the turn. Progress fields and spinner labels now consume at most 256 code points.
 - Bounded client-side UDS status and liveness probing with a 5-second `AbortSignal` deadline to prevent indefinite hangs on stalled sockets.
 - Capped and bounded tool results to prevent large `read_file` outputs from overflowing the Dolt events table column or terminating turns.

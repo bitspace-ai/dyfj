@@ -506,33 +506,52 @@ export async function writeVitestGroupIdentity(
   );
 }
 
-function vitestGroupIdentityMatches(
-  saved: VitestGroupIdentity,
-  leader: ProcessInfo | undefined,
-  lstart: string | null,
-  members: ProcessInfo[],
-): boolean {
-  if (members.length === 0) return false;
-  if (leader !== undefined) {
-    return lstart === saved.lstart && leader.command === saved.command;
-  }
-  return members.every((member) =>
-    saved.tmpDir !== "" && member.command.includes(saved.tmpDir)
+function refuseVitestGroup(pgid: number, reason: string): void {
+  console.error(
+    `dyfj: refusing to signal process group ${pgid}: ${reason}`,
   );
 }
 
-export async function reapSavedVitestGroup(tmpDir: string): Promise<void> {
+export async function reapSavedVitestGroup(
+  tmpDir: string,
+  expectedGeneration?: string,
+): Promise<void> {
   const saved = await readVitestGroupIdentity(tmpDir);
   if (saved === null) return;
+  if (saved.tmpDir !== tmpDir) {
+    refuseVitestGroup(
+      saved.pgid,
+      "saved tmp dir does not match the recovery directory",
+    );
+    return;
+  }
+  if (
+    expectedGeneration !== undefined &&
+    saved.generation !== expectedGeneration
+  ) {
+    refuseVitestGroup(
+      saved.pgid,
+      "saved generation does not match the recovering run",
+    );
+    return;
+  }
   const members = (await listProcesses()).filter((proc) =>
     proc.pgid === saved.pgid
   );
   if (members.length === 0) return;
   const leader = members.find((proc) => proc.pid === saved.leaderPid);
-  const lstart = leader === undefined ? null : await readProcessLstart(leader.pid);
-  if (!vitestGroupIdentityMatches(saved, leader, lstart, members)) {
-    console.error(
-      `dyfj: refusing to signal process group ${saved.pgid}: saved Vitest identity does not match live processes`,
+  if (leader === undefined) {
+    refuseVitestGroup(
+      saved.pgid,
+      "saved leader is gone and descendant identity is not established",
+    );
+    return;
+  }
+  const lstart = await readProcessLstart(leader.pid);
+  if (lstart !== saved.lstart || leader.command !== saved.command) {
+    refuseVitestGroup(
+      saved.pgid,
+      "saved Vitest identity does not match live processes",
     );
     return;
   }
@@ -765,8 +784,9 @@ async function sweepLockedTmpDir(opts: {
   ignorePids?: Set<number>;
   commandNeedles?: string[];
   lockFile?: string;
+  expectedGeneration?: string;
 }): Promise<void> {
-  await reapSavedVitestGroup(opts.tmpDir);
+  await reapSavedVitestGroup(opts.tmpDir, opts.expectedGeneration);
   await sweepTestRuntime({
     tmpDir: opts.tmpDir,
     ignorePids: opts.ignorePids,
@@ -806,6 +826,7 @@ async function reclaimDeadLock(opts: {
     ignorePids,
     commandNeedles: opts.commandNeedles,
     lockFile: opts.lockFile,
+    expectedGeneration: generation,
   });
   if (state.lock.tmpDir !== opts.tmpDir) {
     await sweepLockedTmpDir({
@@ -813,6 +834,7 @@ async function reclaimDeadLock(opts: {
       ignorePids,
       commandNeedles: opts.commandNeedles,
       lockFile: opts.lockFile,
+      expectedGeneration: generation,
     });
   }
   const current = await readLockState(opts.lockFile);
@@ -904,6 +926,7 @@ export async function runReaper(opts: {
   tmpDir: string;
   commandNeedles?: string[];
   lockFile?: string;
+  expectedGeneration?: string;
 }): Promise<number> {
   const ignorePids = new Set([Deno.pid, opts.supervisorPid]);
   const ignorePgids = new Set<number>();
@@ -918,7 +941,7 @@ export async function runReaper(opts: {
     const supervisorAlive = await processIsAlive(opts.supervisorPid);
     const timedOut = nowSec >= opts.deadlineEpochSec;
     if (!supervisorAlive || timedOut) {
-      await reapSavedVitestGroup(opts.tmpDir);
+      await reapSavedVitestGroup(opts.tmpDir, opts.expectedGeneration);
       await sweepTestRuntime({
         tmpDir: opts.tmpDir,
         ignorePids,

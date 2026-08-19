@@ -401,7 +401,10 @@ explicit command needles — not a machine-wide process-name match.
 SIGTERM/SIGINT to the supervisor, SIGKILL of Vitest, and SIGKILL of the
 supervisor (sibling reaper) are covered; SIGKILL of the supervisor and reaper
 together is recovered by the next run, which reaps the saved Vitest process
-group only when the recorded start time and command still match. Supervised
+group only when the recorded recovery directory, run generation, leader start
+time, and command still match. If the saved leader is gone, that numeric group
+is left alive; descendants whose command names this run's tmp dir are still
+reaped by run-scoped discovery. Supervised
 runs fail closed without an absolute `HOME` rather than falling back to a
 checkout-local lock. The integration
 lane owns a temporary Dolt repository and SQL server, with
@@ -597,6 +600,6 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-08-12 - Validation guidance now documents the aggregate gate's selected-Deno executable authority.
 - 2026-08-12 - The external-agent section now documents exact operator selection from bounded ACP permission options and its fail-closed terminal defaults.
 - 2026-08-18 - The CLI/UDS turn path now documents ephemeral ACP progress indication on an interactive TTY spinner. Raw thought text is not a display or history surface.
-- 2026-08-19 - Validation guidance now documents fail-closed operator-lock HOME requirements and identity-checked Vitest group recovery.
+- 2026-08-19 - Validation guidance now documents fail-closed Vitest group recovery when the saved leader is gone or identity metadata does not match the recovering run.
 - 2026-08-19 - Validation guidance now documents operator-scoped exclusive Vitest locking, run-scoped survivor cleanup, and next-run recovery of a saved Vitest process group.
 - 2026-08-18 - Validation guidance now documents exclusive, wall-clock-bounded prototype Vitest runs and zero-survivor reaping of test runtimes.

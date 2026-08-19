@@ -7,10 +7,12 @@
  * - SIGKILL of Vitest only: this process sees exit and sweeps
  * - SIGKILL of this supervisor: the sibling reaper sweeps
  * - SIGKILL of supervisor and reaper together: not covered in-process; the next
- *   `run` reclaims the operator-scoped lock, TERM-then-KILL the saved Vitest
- *   process group only when its recorded start/command identity still matches,
- *   and sweeps that lock's tmp dir before starting. Supervised runs fail closed
- *   without an absolute HOME.
+ *   `run` reclaims the operator-scoped lock and TERM-then-KILL the saved Vitest
+ *   process group only when the recorded recovery directory, run generation,
+ *   leader start time, and command still match. If the saved leader is gone,
+ *   the numeric group is left alive; run-scoped discovery still reaps
+ *   descendants whose command names this run's tmp dir. Supervised runs fail
+ *   closed without an absolute HOME.
  *
  * `--version` / other non-`run` args stay an unsupervised passthrough so
  * existing launcher probes keep working.
@@ -219,6 +221,8 @@ async function supervised(args: string[]): Promise<number> {
     ...commandNeedles.flatMap((needle) => ["--command-needle", needle]),
     "--lock-file",
     lockFile,
+    "--generation",
+    runLock.generation,
   ], {
     cwd: prototypeRoot,
     env: Deno.env.toObject(),
