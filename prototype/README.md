@@ -182,8 +182,10 @@ a prior run is alive (including across checkouts), a hang fails
 `DYFJ_TEST_BOUND_SEC` (default 600s; 180s for a named file or `-t` pattern),
 and leftover fixture/runtime processes, test sockets, and run-scoped
 `start-test-runtime-*.lock` files are reaped after exit or runner death. The
-next run recovers a saved Vitest process group from a stale lock. Sweeping is
-scoped to this run's tmp dir, spawn manifest, and explicit command needles. It
+next run recovers a saved Vitest process group only when its recorded start
+time and command still match. Supervised runs fail closed without an absolute
+`HOME`. Sweeping is scoped to this run's tmp dir, spawn manifest, and explicit
+command needles. It
 owns a temporary Dolt
 repository and SQL server, with cleanup on normal completion and handled
 failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane

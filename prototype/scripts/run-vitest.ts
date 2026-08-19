@@ -8,7 +8,9 @@
  * - SIGKILL of this supervisor: the sibling reaper sweeps
  * - SIGKILL of supervisor and reaper together: not covered in-process; the next
  *   `run` reclaims the operator-scoped lock, TERM-then-KILL the saved Vitest
- *   process group, and sweeps that lock's tmp dir before starting
+ *   process group only when its recorded start/command identity still matches,
+ *   and sweeps that lock's tmp dir before starting. Supervised runs fail closed
+ *   without an absolute HOME.
  *
  * `--version` / other non-`run` args stay an unsupervised passthrough so
  * existing launcher probes keep working.
@@ -19,6 +21,7 @@ import { resolveEsbuildBinary } from "./esbuild-binary.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import {
   acquireTestRunLock,
+  captureProcessIdentity,
   donePath,
   formatSurvivorReport,
   harnessDir,
@@ -27,15 +30,15 @@ import {
   killPid,
   killProcessGroup,
   markRunDone,
-  operatorVitestLockPath,
   REAP_TERM_GRACE_MS,
   recordSpawn,
   releaseTestRunLock,
+  requireOperatorLockFile,
   resolveBoundSec,
   sweepTestRuntime,
   TEST_RUN_DIR_ENV,
   TestRunConflictError,
-  vitestPgidPath,
+  writeVitestGroupIdentity,
 } from "./test-process-harness.ts";
 
 const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
@@ -170,13 +173,18 @@ async function supervised(args: string[]): Promise<number> {
   const tmpDir = harnessDir(prototypeRoot);
   await Deno.mkdir(tmpDir, { recursive: true });
   const boundSec = resolveBoundSec(args);
-  const home = operatorHome();
-  const lockFile = home === undefined
-    ? undefined
-    : operatorVitestLockPath(home);
-  const commandNeedles = [fixtureAgentNeedle()];
+  let lockFile: string;
   try {
-    await acquireTestRunLock({
+    lockFile = requireOperatorLockFile(operatorHome());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`dyfj: ${message}`);
+    return 1;
+  }
+  const commandNeedles = [fixtureAgentNeedle()];
+  let runLock;
+  try {
+    runLock = await acquireTestRunLock({
       tmpDir,
       boundSec,
       pid: Deno.pid,
@@ -192,12 +200,9 @@ async function supervised(args: string[]): Promise<number> {
   }
 
   const deadlineEpochSec = Math.floor(Date.now() / 1000) + boundSec;
-  const reaperRead = [".", tmpDir];
-  const reaperWrite = [tmpDir];
-  if (lockFile !== undefined) {
-    reaperRead.push(lockFile);
-    reaperWrite.push(lockFile);
-  }
+  const lockDir = lockFile.slice(0, lockFile.lastIndexOf("/"));
+  const reaperRead = [".", tmpDir, lockDir];
+  const reaperWrite = [tmpDir, lockDir];
   const reaper = spawnDetached(denoExecutable, [
     "run",
     "--allow-env",
@@ -212,7 +217,8 @@ async function supervised(args: string[]): Promise<number> {
     "--tmp-dir",
     tmpDir,
     ...commandNeedles.flatMap((needle) => ["--command-needle", needle]),
-    ...(lockFile === undefined ? [] : ["--lock-file", lockFile]),
+    "--lock-file",
+    lockFile,
   ], {
     cwd: prototypeRoot,
     env: Deno.env.toObject(),
@@ -259,7 +265,17 @@ async function supervised(args: string[]): Promise<number> {
     });
     vitestPgid = vitest.pid;
     if (vitestPgid !== undefined) {
-      await Deno.writeTextFile(vitestPgidPath(tmpDir), `${vitestPgid}\n`);
+      const captured = await captureProcessIdentity(vitestPgid);
+      if (captured !== null) {
+        await writeVitestGroupIdentity(tmpDir, {
+          pgid: captured.pgid,
+          leaderPid: vitestPgid,
+          lstart: captured.lstart,
+          command: captured.command,
+          generation: runLock.generation,
+          tmpDir,
+        });
+      }
       await recordSpawn(tmpDir, {
         pid: vitestPgid,
         pgid: vitestPgid,
@@ -292,7 +308,11 @@ async function supervised(args: string[]): Promise<number> {
     });
     await markRunDone(tmpDir);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    await releaseTestRunLock(tmpDir, lockFile);
+    await releaseTestRunLock({
+      tmpDir,
+      lockFile,
+      generation: runLock.generation,
+    });
     if (reaperPid !== undefined) {
       await killPid(reaperPid, "SIGTERM");
     }

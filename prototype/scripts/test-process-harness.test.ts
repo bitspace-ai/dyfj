@@ -5,20 +5,25 @@ import { processGroupSignalerEvalSource } from "../src/acp-client.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import {
   acquireTestRunLock,
+  captureProcessIdentity,
   discoverSurvivors,
   isEmptyReport,
   killPid,
-  LOCK_WRITE_GRACE_MS,
   lockPath,
   operatorVitestLockPath,
   processIsAlive,
+  readLockFile,
+  reapSavedVitestGroup,
   recordSpawn,
   releaseTestRunLock,
+  requireOperatorLockFile,
   resolveBoundSec,
   runReaper,
+  sweepStagingFiles,
   sweepTestRuntime,
   TestRunConflictError,
   vitestPgidPath,
+  writeVitestGroupIdentity,
 } from "./test-process-harness.ts";
 
 const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
@@ -27,6 +32,9 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
 );
 const reaperScript = fileURLToPath(
   new URL("./test-process-reaper.ts", import.meta.url),
+);
+const harnessScript = fileURLToPath(
+  new URL("./test-process-harness.ts", import.meta.url),
 );
 const cleanups: Array<() => Promise<void>> = [];
 const spawnedPids: number[] = [];
@@ -88,6 +96,50 @@ function spawnDetachedSleep(script: string): { pid: number } {
   return { pid: trackPid(child.pid) };
 }
 
+function spawnLockContender(
+  tmpDir: string,
+  lockFile: string,
+): { pid: number; resultPath: string } {
+  const resultPath = `${tmpDir}/contender-${crypto.randomUUID()}.result`;
+  const lockDir = lockFile.slice(0, lockFile.lastIndexOf("/"));
+  const child = spawn(selectedDenoExecutable(), [
+    "run",
+    "--allow-env",
+    `--allow-read=${prototypeRoot},${tmpDir},${lockDir}`,
+    `--allow-write=${tmpDir},${lockDir}`,
+    "--allow-run=/bin/kill,/bin/ps,/bin/bash",
+    harnessScript,
+    "acquire-hold",
+  ], {
+    detached: true,
+    stdio: "ignore",
+    cwd: prototypeRoot,
+    env: {
+      ...Deno.env.toObject(),
+      DYFJ_LOCK_TMP: tmpDir,
+      DYFJ_LOCK_FILE: lockFile,
+      DYFJ_LOCK_RESULT: resultPath,
+    },
+  });
+  if (child.pid === undefined) throw new Error("contender spawn produced no pid");
+  child.unref();
+  return { pid: trackPid(child.pid), resultPath };
+}
+
+async function waitForContenderResults(
+  paths: string[],
+): Promise<string[]> {
+  await waitUntil(async () => {
+    const texts = await Promise.all(
+      paths.map((path) => Deno.readTextFile(path).catch(() => "")),
+    );
+    return texts.every((text) =>
+      text.startsWith("acquired ") || text.startsWith("conflict ")
+    );
+  }, 8_000, "lock contenders did not report acquire or conflict");
+  return await Promise.all(paths.map((path) => Deno.readTextFile(path)));
+}
+
 describe("test process harness", () => {
   test("an exclusive lock refuses a second run while the first pid is alive", async () => {
     const tmpDir = await scopedTmp();
@@ -116,7 +168,7 @@ describe("test process harness", () => {
       pid: Deno.pid,
     });
     expect(next.pid).toBe(Deno.pid);
-    await releaseTestRunLock(tmpDir);
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
   });
 
   test("force-killing a supervisor-shaped process reaps a detached launcher-shaped descendant", async () => {
@@ -238,10 +290,19 @@ describe("test process harness", () => {
     );
   }, 15_000);
 
-  test("next run reaps a saved Vitest group after supervisor and reaper are both gone", async () => {
+  test("matching Vitest group identity is reaped on stale-lock recovery", async () => {
     const tmpDir = await scopedTmp();
     const vitestShaped = spawnDetachedSleep("sleep 60");
-    await Deno.writeTextFile(vitestPgidPath(tmpDir), `${vitestShaped.pid}\n`);
+    const captured = await captureProcessIdentity(vitestShaped.pid);
+    expect(captured).not.toBeNull();
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: captured!.pgid,
+      leaderPid: vitestShaped.pid,
+      lstart: captured!.lstart,
+      command: captured!.command,
+      generation: "run-a",
+      tmpDir,
+    });
     const holder = spawnDetachedSleep("sleep 60");
     await acquireTestRunLock({ tmpDir, boundSec: 30, pid: holder.pid });
     await killPid(holder.pid, "SIGKILL");
@@ -259,12 +320,42 @@ describe("test process harness", () => {
     await waitUntil(
       async () => !await processIsAlive(vitestShaped.pid),
       4_000,
-      "stale-lock recovery left the saved Vitest group alive",
+      "stale-lock recovery left the matching Vitest group alive",
     );
     await expect(Deno.lstat(vitestPgidPath(tmpDir))).rejects.toBeInstanceOf(
       Deno.errors.NotFound,
     );
-    await releaseTestRunLock(tmpDir);
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
+  }, 15_000);
+
+  test("a recycled process-group number is not killed", async () => {
+    const tmpDir = await scopedTmp();
+    const foreign = spawnDetachedSleep("sleep 60");
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: foreign.pid,
+      leaderPid: foreign.pid,
+      lstart: "Thu Jan  1 00:00:00 1970",
+      command: "/bin/bash -c sleep 60",
+      generation: "other-run",
+      tmpDir,
+    });
+    await reapSavedVitestGroup(tmpDir);
+    expect(await processIsAlive(foreign.pid)).toBe(true);
+    const holder = spawnDetachedSleep("sleep 60");
+    await acquireTestRunLock({ tmpDir, boundSec: 30, pid: holder.pid });
+    await killPid(holder.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(holder.pid),
+      2_000,
+      "stale lock holder did not exit",
+    );
+    const next = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: Deno.pid,
+    });
+    expect(await processIsAlive(foreign.pid)).toBe(true);
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
   }, 15_000);
 
   test("force-killing a supervisor reaps a detached ACP signaler-shaped descendant", async () => {
@@ -324,7 +415,7 @@ describe("test process harness", () => {
     const rootB = await scopedTmp();
     const lockFile = operatorVitestLockPath(operatorHome);
     const holder = spawnDetachedSleep("sleep 60");
-    await acquireTestRunLock({
+    const held = await acquireTestRunLock({
       tmpDir: rootA,
       lockFile,
       boundSec: 30,
@@ -352,26 +443,26 @@ describe("test process harness", () => {
     expect(await processIsAlive(foreign.pid)).toBe(true);
     expect(await Deno.readTextFile(`${rootB}/start-test-runtime-other.lock`))
       .toBe("stale\n");
-    await releaseTestRunLock(rootA, lockFile);
+    await releaseTestRunLock({
+      tmpDir: rootA,
+      lockFile,
+      generation: held.generation,
+    });
   }, 15_000);
 
-  test("an empty lock is reclaimed after the write grace", async () => {
+  test("an empty lock is reclaimed", async () => {
     const tmpDir = await scopedTmp();
     await Deno.writeTextFile(lockPath(tmpDir), "");
-    const started = performance.now();
     const next = await acquireTestRunLock({
       tmpDir,
       boundSec: 30,
       pid: Deno.pid,
     });
-    expect(performance.now() - started).toBeGreaterThanOrEqual(
-      LOCK_WRITE_GRACE_MS - 50,
-    );
     expect(next.pid).toBe(Deno.pid);
-    await releaseTestRunLock(tmpDir);
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
   }, 10_000);
 
-  test("partial JSON in the lock is reclaimed after the write grace", async () => {
+  test("partial JSON in the lock is reclaimed", async () => {
     const tmpDir = await scopedTmp();
     await Deno.writeTextFile(lockPath(tmpDir), '{"pid":');
     const next = await acquireTestRunLock({
@@ -380,7 +471,7 @@ describe("test process harness", () => {
       pid: Deno.pid,
     });
     expect(next.pid).toBe(Deno.pid);
-    await releaseTestRunLock(tmpDir);
+    await releaseTestRunLock({ tmpDir, generation: next.generation });
   }, 10_000);
 
   test("concurrent lock creation leaves one holder and one conflict", async () => {
@@ -399,8 +490,132 @@ describe("test process harness", () => {
       status: "rejected",
       reason: expect.any(TestRunConflictError),
     });
-    await releaseTestRunLock(tmpDir);
+    const winner = fulfilled[0] as PromiseFulfilledResult<{ generation: string }>;
+    await releaseTestRunLock({ tmpDir, generation: winner.value.generation });
   }, 10_000);
+
+  test("two processes reclaiming a valid stale lock yield one owner", async () => {
+    const tmpDir = await scopedTmp();
+    const lockFile = lockPath(tmpDir);
+    const holder = spawnDetachedSleep("sleep 60");
+    await acquireTestRunLock({ tmpDir, boundSec: 30, pid: holder.pid });
+    await killPid(holder.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(holder.pid),
+      2_000,
+      "stale lock holder did not exit",
+    );
+    const first = spawnLockContender(tmpDir, lockFile);
+    const second = spawnLockContender(tmpDir, lockFile);
+    const texts = await waitForContenderResults([
+      first.resultPath,
+      second.resultPath,
+    ]);
+    const acquired = texts.filter((text) => text.startsWith("acquired "));
+    const conflicts = texts.filter((text) => text.startsWith("conflict "));
+    expect(acquired).toHaveLength(1);
+    expect(conflicts).toHaveLength(1);
+    const generation = acquired[0]!.trim().slice("acquired ".length);
+    const held = await readLockFile(tmpDir, lockFile);
+    expect(held?.generation).toBe(generation);
+    const winnerPid = acquired[0] === texts[0] ? first.pid : second.pid;
+    expect(held?.pid).toBe(winnerPid);
+  }, 15_000);
+
+  test("two processes reclaiming a malformed stale lock yield one owner", async () => {
+    const tmpDir = await scopedTmp();
+    const lockFile = lockPath(tmpDir);
+    await Deno.writeTextFile(lockFile, '{"pid":');
+    const first = spawnLockContender(tmpDir, lockFile);
+    const second = spawnLockContender(tmpDir, lockFile);
+    const texts = await waitForContenderResults([
+      first.resultPath,
+      second.resultPath,
+    ]);
+    const acquired = texts.filter((text) => text.startsWith("acquired "));
+    const conflicts = texts.filter((text) => text.startsWith("conflict "));
+    expect(acquired).toHaveLength(1);
+    expect(conflicts).toHaveLength(1);
+    const generation = acquired[0]!.trim().slice("acquired ".length);
+    const held = await readLockFile(tmpDir, lockFile);
+    expect(held?.generation).toBe(generation);
+  }, 15_000);
+
+  test("two prototype roots reclaiming a stale operator lock yield one owner", async () => {
+    const operatorHome = await scopedTmp();
+    const rootA = await scopedTmp();
+    const rootB = await scopedTmp();
+    const lockFile = operatorVitestLockPath(operatorHome);
+    const holder = spawnDetachedSleep("sleep 60");
+    await acquireTestRunLock({
+      tmpDir: rootA,
+      lockFile,
+      boundSec: 30,
+      pid: holder.pid,
+    });
+    await killPid(holder.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(holder.pid),
+      2_000,
+      "stale lock holder did not exit",
+    );
+    const first = spawnLockContender(rootA, lockFile);
+    const second = spawnLockContender(rootB, lockFile);
+    const texts = await waitForContenderResults([
+      first.resultPath,
+      second.resultPath,
+    ]);
+    const acquired = texts.filter((text) => text.startsWith("acquired "));
+    const conflicts = texts.filter((text) => text.startsWith("conflict "));
+    expect(acquired).toHaveLength(1);
+    expect(conflicts).toHaveLength(1);
+    const generation = acquired[0]!.trim().slice("acquired ".length);
+    const held = await readLockFile(rootA, lockFile);
+    expect(held?.generation).toBe(generation);
+    const winnerTmp = acquired[0] === texts[0] ? rootA : rootB;
+    expect(held?.tmpDir).toBe(winnerTmp);
+  }, 15_000);
+
+  test("stale lock staging files are reaped before and after the hard-link", async () => {
+    const tmpDir = await scopedTmp();
+    const lockFile = lockPath(tmpDir);
+    const before = spawnDetachedSleep("sleep 60");
+    await killPid(before.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(before.pid),
+      2_000,
+      "staging pid did not exit",
+    );
+    const stagingBefore =
+      `${lockFile}.${before.pid}.${crypto.randomUUID()}.writing`;
+    await Deno.writeTextFile(stagingBefore, "{}\n");
+    const first = await acquireTestRunLock({
+      tmpDir,
+      boundSec: 30,
+      pid: Deno.pid,
+    });
+    await expect(Deno.lstat(stagingBefore)).rejects.toBeInstanceOf(
+      Deno.errors.NotFound,
+    );
+    const stagingAfter =
+      `${lockFile}.${before.pid}.${crypto.randomUUID()}.writing`;
+    await Deno.writeTextFile(stagingAfter, `${JSON.stringify(first)}\n`);
+    await sweepStagingFiles(lockFile);
+    await expect(Deno.lstat(stagingAfter)).rejects.toBeInstanceOf(
+      Deno.errors.NotFound,
+    );
+    await releaseTestRunLock({ tmpDir, generation: first.generation });
+  }, 10_000);
+
+  test("supervised runs require an absolute HOME for the operator lock", () => {
+    expect(() => requireOperatorLockFile(undefined)).toThrow(
+      "absolute HOME",
+    );
+    expect(() => requireOperatorLockFile("home")).toThrow("absolute HOME");
+    expect(requireOperatorLockFile("/tmp/dyfj-operator")).toBe(
+      "/tmp/dyfj-operator/.dyfj/run/dyfj-vitest-run.lock",
+    );
+  });
 
   test("focused args select the short bound unless DYFJ_TEST_BOUND_SEC is set", () => {
     expect(resolveBoundSec(["run", "--root", "."], { get: () => undefined }))

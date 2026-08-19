@@ -43,6 +43,21 @@ export interface TestRunLock {
   startedAt: string;
   boundSec: number;
   tmpDir: string;
+  generation: string;
+}
+
+export interface VitestGroupIdentity {
+  pgid: number;
+  leaderPid: number;
+  lstart: string;
+  command: string;
+  generation: string;
+  tmpDir: string;
+}
+
+export interface ClaimOwner {
+  pid: number;
+  generation: string;
 }
 
 export type LockState =
@@ -70,6 +85,31 @@ export function lockPath(tmpDir: string): string {
 
 export function operatorVitestLockPath(home: string): string {
   return `${home}/.dyfj/run/${OPERATOR_VITEST_LOCK_NAME}`;
+}
+
+export function requireOperatorLockFile(
+  home: string | undefined,
+): string {
+  if (home === undefined || !home.startsWith("/")) {
+    throw new Error(
+      "supervised Vitest requires an absolute HOME for the operator-scoped run lock",
+    );
+  }
+  return operatorVitestLockPath(home);
+}
+
+export function claimDir(lockFile: string): string {
+  return `${lockFile}.claim`;
+}
+
+function parentDir(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index <= 0 ? "." : path.slice(0, index);
+}
+
+function baseName(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index < 0 ? path : path.slice(index + 1);
 }
 
 export function donePath(tmpDir: string): string {
@@ -130,6 +170,32 @@ export async function processIsAlive(pid: number): Promise<boolean> {
     stderr: "null",
   }).output();
   return status.success;
+}
+
+export async function readProcessLstart(pid: number): Promise<string | null> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  const output = await new Deno.Command("/bin/ps", {
+    args: ["-p", String(pid), "-o", "lstart="],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  if (!output.success) return null;
+  const text = new TextDecoder().decode(output.stdout).trim();
+  return text === "" ? null : text;
+}
+
+export async function captureProcessIdentity(
+  pid: number,
+): Promise<{ pgid: number; lstart: string; command: string } | null> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const lstart = await readProcessLstart(pid);
+    const proc = (await listProcesses()).find((entry) => entry.pid === pid);
+    if (lstart !== null && proc !== undefined) {
+      return { pgid: proc.pgid, lstart, command: proc.command };
+    }
+    await delay(25);
+  }
+  return null;
 }
 
 export async function listProcesses(): Promise<ProcessInfo[]> {
@@ -407,22 +473,72 @@ export async function removeSurvivorFiles(report: SurvivorReport): Promise<void>
   }
 }
 
-export async function readSavedVitestPgid(tmpDir: string): Promise<number | undefined> {
+export async function readVitestGroupIdentity(
+  tmpDir: string,
+): Promise<VitestGroupIdentity | null> {
   try {
-    const raw = Number((await Deno.readTextFile(vitestPgidPath(tmpDir))).trim());
-    if (Number.isSafeInteger(raw) && raw > 1) return raw;
+    const parsed = JSON.parse(await Deno.readTextFile(vitestPgidPath(tmpDir)));
+    if (
+      typeof parsed !== "object" || parsed === null ||
+      !Number.isSafeInteger(parsed.pgid) || parsed.pgid <= 1 ||
+      !Number.isSafeInteger(parsed.leaderPid) || parsed.leaderPid <= 1 ||
+      typeof parsed.lstart !== "string" || parsed.lstart === "" ||
+      typeof parsed.command !== "string" || parsed.command === "" ||
+      typeof parsed.generation !== "string" || parsed.generation === "" ||
+      typeof parsed.tmpDir !== "string" || parsed.tmpDir === ""
+    ) {
+      return null;
+    }
+    return parsed as VitestGroupIdentity;
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    if (error instanceof Deno.errors.NotFound) return null;
+    return null;
   }
-  return undefined;
+}
+
+export async function writeVitestGroupIdentity(
+  tmpDir: string,
+  identity: VitestGroupIdentity,
+): Promise<void> {
+  await Deno.writeTextFile(
+    vitestPgidPath(tmpDir),
+    `${JSON.stringify(identity)}\n`,
+  );
+}
+
+function vitestGroupIdentityMatches(
+  saved: VitestGroupIdentity,
+  leader: ProcessInfo | undefined,
+  lstart: string | null,
+  members: ProcessInfo[],
+): boolean {
+  if (members.length === 0) return false;
+  if (leader !== undefined) {
+    return lstart === saved.lstart && leader.command === saved.command;
+  }
+  return members.every((member) =>
+    saved.tmpDir !== "" && member.command.includes(saved.tmpDir)
+  );
 }
 
 export async function reapSavedVitestGroup(tmpDir: string): Promise<void> {
-  const pgid = await readSavedVitestPgid(tmpDir);
-  if (pgid === undefined) return;
-  await killProcessGroup(pgid, "SIGTERM");
+  const saved = await readVitestGroupIdentity(tmpDir);
+  if (saved === null) return;
+  const members = (await listProcesses()).filter((proc) =>
+    proc.pgid === saved.pgid
+  );
+  if (members.length === 0) return;
+  const leader = members.find((proc) => proc.pid === saved.leaderPid);
+  const lstart = leader === undefined ? null : await readProcessLstart(leader.pid);
+  if (!vitestGroupIdentityMatches(saved, leader, lstart, members)) {
+    console.error(
+      `dyfj: refusing to signal process group ${saved.pgid}: saved Vitest identity does not match live processes`,
+    );
+    return;
+  }
+  await killProcessGroup(saved.pgid, "SIGTERM");
   await delay(REAP_TERM_GRACE_MS);
-  await killProcessGroup(pgid, "SIGKILL");
+  await killProcessGroup(saved.pgid, "SIGKILL");
 }
 
 async function clearRunArtifacts(tmpDir: string): Promise<void> {
@@ -461,7 +577,8 @@ function parseLockBody(raw: string): TestRunLock | null {
       !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0 ||
       typeof parsed.tmpDir !== "string" || parsed.tmpDir === "" ||
       typeof parsed.startedAt !== "string" ||
-      !Number.isSafeInteger(parsed.boundSec) || parsed.boundSec <= 0
+      !Number.isSafeInteger(parsed.boundSec) || parsed.boundSec <= 0 ||
+      typeof parsed.generation !== "string" || parsed.generation === ""
     ) {
       return null;
     }
@@ -470,6 +587,7 @@ function parseLockBody(raw: string): TestRunLock | null {
       startedAt: parsed.startedAt,
       boundSec: parsed.boundSec,
       tmpDir: parsed.tmpDir,
+      generation: parsed.generation,
     };
   } catch {
     return null;
@@ -500,12 +618,121 @@ export async function readLockFile(
   return state.kind === "valid" ? state.lock : null;
 }
 
-async function fileMtimeMs(path: string): Promise<number | null> {
+function claimOwnerPath(lockFile: string): string {
+  return `${claimDir(lockFile)}/owner`;
+}
+
+async function readClaimOwner(lockFile: string): Promise<ClaimOwner | null> {
   try {
-    return (await Deno.stat(path)).mtime?.getTime() ?? 0;
+    const parsed = JSON.parse(await Deno.readTextFile(claimOwnerPath(lockFile)));
+    if (
+      typeof parsed !== "object" || parsed === null ||
+      !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0 ||
+      typeof parsed.generation !== "string" || parsed.generation === ""
+    ) {
+      return null;
+    }
+    return { pid: parsed.pid, generation: parsed.generation };
+  } catch {
+    return null;
+  }
+}
+
+async function conflictFromExisting(lockFile: string, owner: ClaimOwner | null): Promise<never> {
+  const state = await readLockState(lockFile);
+  if (state.kind === "valid") throw new TestRunConflictError(state.lock);
+  throw new TestRunConflictError({
+    pid: owner?.pid ?? 0,
+    startedAt: new Date(0).toISOString(),
+    boundSec: 1,
+    tmpDir: "",
+    generation: owner?.generation ?? "unknown",
+  });
+}
+
+async function tryStealStaleClaim(lockFile: string): Promise<boolean> {
+  const dir = claimDir(lockFile);
+  const owner = await readClaimOwner(lockFile);
+  if (owner !== null && await processIsAlive(owner.pid)) return false;
+  if (owner === null) {
+    try {
+      const mtime = (await Deno.stat(dir)).mtime?.getTime() ?? 0;
+      if (mtime > 0 && Date.now() - mtime < LOCK_WRITE_GRACE_MS) return false;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return true;
+      throw error;
+    }
+  }
+  const tombstone = `${dir}.dead.${crypto.randomUUID()}`;
+  try {
+    await Deno.rename(dir, tombstone);
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return null;
+    if (error instanceof Deno.errors.NotFound) return true;
+    return false;
+  }
+  await Deno.remove(tombstone, { recursive: true }).catch(() => undefined);
+  return true;
+}
+
+async function takeClaim(
+  lockFile: string,
+  pid: number,
+  generation: string,
+): Promise<void> {
+  const dir = claimDir(lockFile);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      await Deno.mkdir(dir);
+      await Deno.writeTextFile(
+        claimOwnerPath(lockFile),
+        `${JSON.stringify({ pid, generation })}\n`,
+      );
+      return;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+    }
+    if (await tryStealStaleClaim(lockFile)) continue;
+    const owner = await readClaimOwner(lockFile);
+    await conflictFromExisting(lockFile, owner);
+  }
+  throw new Error("could not acquire the test-run claim directory");
+}
+
+async function dropClaim(lockFile: string, generation: string): Promise<void> {
+  const owner = await readClaimOwner(lockFile);
+  if (owner !== null && owner.generation !== generation) return;
+  const dir = claimDir(lockFile);
+  const tombstone = `${dir}.dead.${crypto.randomUUID()}`;
+  try {
+    await Deno.rename(dir, tombstone);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return;
     throw error;
+  }
+  await Deno.remove(tombstone, { recursive: true }).catch(() => undefined);
+}
+
+export function isLockStagingName(lockFile: string, name: string): boolean {
+  const base = baseName(lockFile);
+  return name.startsWith(`${base}.`) && name.endsWith(".writing");
+}
+
+export async function sweepStagingFiles(lockFile: string): Promise<void> {
+  const dir = parentDir(lockFile);
+  try {
+    for await (const entry of Deno.readDir(dir)) {
+      if (!entry.isFile || !isLockStagingName(lockFile, entry.name)) continue;
+      const path = `${dir}/${entry.name}`;
+      const pidMatch = entry.name.slice(baseName(lockFile).length + 1).match(
+        /^(\d+)\./,
+      );
+      const stagingPid = pidMatch === null ? 0 : Number(pidMatch[1]);
+      const dead = stagingPid <= 1 || !await processIsAlive(stagingPid);
+      if (!dead) continue;
+      await Deno.remove(path).catch(() => undefined);
+    }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
 }
 
@@ -514,8 +741,9 @@ export async function writeLockExclusive(
   lock: TestRunLock,
 ): Promise<void> {
   const body = `${JSON.stringify(lock)}\n`;
-  const staging = `${lockFile}.${lock.pid}.${crypto.randomUUID()}.writing`;
-  await Deno.mkdir(lockFile.slice(0, lockFile.lastIndexOf("/")), { recursive: true });
+  const staging =
+    `${lockFile}.${lock.pid}.${crypto.randomUUID()}.writing`;
+  await Deno.mkdir(parentDir(lockFile), { recursive: true });
   await Deno.writeTextFile(staging, body);
   try {
     await Deno.link(staging, lockFile);
@@ -556,44 +784,40 @@ async function reclaimDeadLock(opts: {
   commandNeedles?: string[];
 }): Promise<void> {
   const ignorePids = new Set([opts.pid, Deno.pid]);
-  while (true) {
-    const state = await readLockState(opts.lockFile);
-    if (state.kind === "absent") return;
-    if (state.kind === "malformed") {
-      const age = Date.now() - state.mtimeMs;
-      if (state.mtimeMs > 0 && age < LOCK_WRITE_GRACE_MS) {
-        await delay(LOCK_WRITE_GRACE_MS - age + 10);
-        continue;
-      }
-      await sweepLockedTmpDir({
-        tmpDir: opts.tmpDir,
-        ignorePids,
-        commandNeedles: opts.commandNeedles,
-        lockFile: opts.lockFile,
-      });
-      await removeLockFile(opts.lockFile);
-      return;
-    }
-    if (await processIsAlive(state.lock.pid)) {
-      throw new TestRunConflictError(state.lock);
-    }
+  await sweepStagingFiles(opts.lockFile);
+  const state = await readLockState(opts.lockFile);
+  if (state.kind === "absent") return;
+  if (state.kind === "malformed") {
     await sweepLockedTmpDir({
-      tmpDir: state.lock.tmpDir,
+      tmpDir: opts.tmpDir,
       ignorePids,
       commandNeedles: opts.commandNeedles,
       lockFile: opts.lockFile,
     });
-    if (state.lock.tmpDir !== opts.tmpDir) {
-      await sweepLockedTmpDir({
-        tmpDir: opts.tmpDir,
-        ignorePids,
-        commandNeedles: opts.commandNeedles,
-        lockFile: opts.lockFile,
-      });
-    }
     await removeLockFile(opts.lockFile);
     return;
   }
+  if (await processIsAlive(state.lock.pid)) {
+    throw new TestRunConflictError(state.lock);
+  }
+  const generation = state.lock.generation;
+  await sweepLockedTmpDir({
+    tmpDir: state.lock.tmpDir,
+    ignorePids,
+    commandNeedles: opts.commandNeedles,
+    lockFile: opts.lockFile,
+  });
+  if (state.lock.tmpDir !== opts.tmpDir) {
+    await sweepLockedTmpDir({
+      tmpDir: opts.tmpDir,
+      ignorePids,
+      commandNeedles: opts.commandNeedles,
+      lockFile: opts.lockFile,
+    });
+  }
+  const current = await readLockState(opts.lockFile);
+  if (current.kind === "valid" && current.lock.generation !== generation) return;
+  await removeLockFile(opts.lockFile);
 }
 
 export async function acquireTestRunLock(opts: {
@@ -605,47 +829,69 @@ export async function acquireTestRunLock(opts: {
 }): Promise<TestRunLock> {
   await ensureHarnessDirs(opts.tmpDir);
   const lockFile = resolveLockFile(opts.tmpDir, opts.lockFile);
-  await Deno.mkdir(lockFile.slice(0, lockFile.lastIndexOf("/")), { recursive: true });
+  await Deno.mkdir(parentDir(lockFile), { recursive: true });
+  const generation = crypto.randomUUID();
   const lock: TestRunLock = {
     pid: opts.pid,
     startedAt: new Date().toISOString(),
     boundSec: opts.boundSec,
     tmpDir: opts.tmpDir,
+    generation,
   };
-  for (let attempt = 0; attempt < 4; attempt++) {
+  await takeClaim(lockFile, opts.pid, generation);
+  try {
     await reclaimDeadLock({
       tmpDir: opts.tmpDir,
       lockFile,
       pid: opts.pid,
       commandNeedles: opts.commandNeedles,
     });
-    try {
-      await writeLockExclusive(lockFile, lock);
-      return lock;
-    } catch (error) {
-      if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
-      const mtime = await fileMtimeMs(lockFile);
-      if (mtime !== null && Date.now() - mtime < LOCK_WRITE_GRACE_MS) {
-        await delay(LOCK_WRITE_GRACE_MS);
-      }
+    await writeLockExclusive(lockFile, lock);
+    return lock;
+  } catch (error) {
+    if (error instanceof Deno.errors.AlreadyExists) {
+      const state = await readLockState(lockFile);
+      if (state.kind === "valid") throw new TestRunConflictError(state.lock);
     }
+    throw error;
+  } finally {
+    await dropClaim(lockFile, generation);
   }
-  await reclaimDeadLock({
-    tmpDir: opts.tmpDir,
-    lockFile,
-    pid: opts.pid,
-    commandNeedles: opts.commandNeedles,
-  });
-  await writeLockExclusive(lockFile, lock);
-  return lock;
 }
 
-export async function releaseTestRunLock(
-  tmpDir: string,
-  lockFile?: string,
-): Promise<void> {
-  await removeLockFile(resolveLockFile(tmpDir, lockFile));
-  await clearRunArtifacts(tmpDir);
+export async function releaseTestRunLock(opts: {
+  tmpDir: string;
+  lockFile?: string;
+  generation: string;
+}): Promise<void> {
+  const lockFile = resolveLockFile(opts.tmpDir, opts.lockFile);
+  const generation = opts.generation;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      await takeClaim(lockFile, Deno.pid, generation);
+    } catch (error) {
+      if (!(error instanceof TestRunConflictError)) throw error;
+      const state = await readLockState(lockFile);
+      if (state.kind !== "valid" || state.lock.generation !== generation) {
+        await clearRunArtifacts(opts.tmpDir);
+        return;
+      }
+      await delay(50);
+      continue;
+    }
+    try {
+      const state = await readLockState(lockFile);
+      if (state.kind === "valid" && state.lock.generation === generation) {
+        await removeLockFile(lockFile);
+      }
+      await sweepStagingFiles(lockFile);
+      await clearRunArtifacts(opts.tmpDir);
+      return;
+    } finally {
+      await dropClaim(lockFile, generation);
+    }
+  }
+  await clearRunArtifacts(opts.tmpDir);
 }
 
 export async function markRunDone(tmpDir: string): Promise<void> {
@@ -683,5 +929,37 @@ export async function runReaper(opts: {
       return timedOut ? 124 : 0;
     }
     await delay(REAPER_POLL_MS);
+  }
+}
+
+if (import.meta.main) {
+  const command = Deno.args[0];
+  if (command !== "acquire-hold") {
+    throw new Error("usage: test-process-harness.ts acquire-hold");
+  }
+  const tmpDir = Deno.env.get("DYFJ_LOCK_TMP");
+  const lockFile = Deno.env.get("DYFJ_LOCK_FILE");
+  const resultPath = Deno.env.get("DYFJ_LOCK_RESULT");
+  if (tmpDir === undefined || lockFile === undefined || resultPath === undefined) {
+    throw new Error("acquire-hold requires DYFJ_LOCK_TMP, DYFJ_LOCK_FILE, and DYFJ_LOCK_RESULT");
+  }
+  try {
+    const lock = await acquireTestRunLock({
+      tmpDir,
+      lockFile,
+      boundSec: 30,
+      pid: Deno.pid,
+    });
+    await Deno.writeTextFile(resultPath, `acquired ${lock.generation}\n`);
+    while (true) await delay(1_000);
+  } catch (error) {
+    if (error instanceof TestRunConflictError) {
+      await Deno.writeTextFile(
+        resultPath,
+        `conflict ${error.existing.generation}\n`,
+      );
+      Deno.exit(2);
+    }
+    throw error;
   }
 }
