@@ -728,6 +728,15 @@ export async function runExternalAgentWorkbenchRuntime(
       prompt: input.prompt,
       abortSignal: input.abortSignal,
       onTextDelta: input.onTextDelta,
+      onProgress: (progress) =>
+        emitRuntimeEvent(input.onRuntimeEvent, {
+          type: "agentProgress",
+          sessionId,
+          kind: progress.kind,
+          title: progress.title,
+          name: progress.name,
+          status: progress.status,
+        }),
       confirmPermission: input.confirmExternalAgentPermission,
       onPermissionVerdict: writePermissionVerdict,
       onRouteVerified: async (evidence, signal) => {

@@ -72,6 +72,57 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     expect(fixtureProfile(Deno.cwd()).promptTimeoutMs).toBeUndefined();
   });
 
+  test("progress events do not enter durable session history", async () => {
+    const runtimeEvents: string[] = [];
+    const result = await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "operator prompt only",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      workspaceRoot: Deno.cwd(),
+      onRuntimeEvent: (event) => {
+        runtimeEvents.push(event.type);
+      },
+    }, {
+      runAgent: async (agentInput) => {
+        await agentInput.onProgress?.({ kind: "thought" });
+        await agentInput.onProgress?.({
+          kind: "tool_call",
+          title: "Inspecting codebase",
+          name: "grep_search",
+          status: "in_progress",
+        });
+        agentInput.onTextDelta?.("solution found");
+        return {
+          text: "solution found",
+          stopReason: "stop",
+          capabilities: [],
+          routeEvidence: { source: "profile_declared" },
+          elapsedMs: 1,
+        };
+      },
+    });
+    expect(result.text).toBe("solution found");
+    expect(runtimeEvents.filter((type) => type === "agentProgress")).toEqual([
+      "agentProgress",
+      "agentProgress",
+    ]);
+    const durable = JSON.stringify({
+      events: state.events,
+      created: state.createdSessions,
+      updated: state.updatedSessions,
+    });
+    expect(durable).not.toContain("agentProgress");
+    expect(durable).not.toContain("Inspecting codebase");
+    expect(durable).not.toContain("grep_search");
+    expect(durable).not.toContain("pondering");
+    expect(state.events.map((event) => event.event_type)).toEqual([
+      "session_start",
+      "agent_response",
+      "session_end",
+    ]);
+  });
+
   test("exposes the contained session-update ceiling diagnostic at the runtime boundary", async () => {
     let thrown: unknown;
     try {

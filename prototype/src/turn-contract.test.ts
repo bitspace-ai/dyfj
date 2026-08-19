@@ -5,6 +5,7 @@ import {
   MAX_REASON_FIELD_BYTES,
   sanitizeBoundaryText,
   summarizeError,
+  takeCodePointPrefix,
 } from "./turn-contract";
 
 // Policy: boundary sanitization is by error PROVENANCE, not
@@ -161,6 +162,20 @@ describe("summarizeError — adversarial candidates (no string is ever read off 
     expect(s).toContain("truncated; DomainError");
     expect(s).not.toContain("FORGED_CLASS_NAME");
     expect(s.length).toBeLessThan(1000);
+  });
+});
+
+describe("takeCodePointPrefix", () => {
+  test("stops the iterator at the configured code-point budget", () => {
+    let yielded = 0;
+    function* gated(): Generator<string> {
+      while (true) {
+        yielded += 1;
+        yield "A";
+      }
+    }
+    expect(takeCodePointPrefix(gated(), 256).join("")).toBe("A".repeat(256));
+    expect(yielded).toBe(256);
   });
 });
 

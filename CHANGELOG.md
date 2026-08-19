@@ -8,6 +8,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
+- **Live ACP Progress Indication**: Interactive TTY turns now show an ephemeral spinner status during ACP reasoning (`thinking…` or a bounded tool title) with a live elapsed timer. Raw thought text is not rendered, persisted, or replayed, and progress events do not enter durable session history. The spinner stops at the first visible response without restarting the elapsed timer.
 - **Codex ACP GPT-5.6 Terra Model & Fast Speed Tier**: Added `codex-chatgpt/gpt-5.6-terra` model and `fast-speed` capability to GPT-5.6 Sol and Terra in the model catalog and Dolt migration `011`. Exposed `--fast` / `--no-fast` CLI flags, `/fast [on|off]` REPL command, and `/model <slug> [--fast|--no-fast]` options with posture indicators, propagating `service_tier = "fast"` into `CODEX_CONFIG` for supported Codex ACP runners.
 - **Automatic ACP Model Dispatch**: Selecting an ACP-backed model (such as `codex-chatgpt/gpt-5.6-sol` or `fixture`) via `--model`, `/model`, or `default_model` in `config.toml` automatically dispatches turns to the ACP runner without requiring explicit `--runner` flags.
 - **ACP REPL & Multi-Turn Session Resume**: Allowed `codex-chatgpt` in interactive REPL turns and multi-turn session resume, forwarding session identifiers without one-shot rejection.
@@ -49,6 +50,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- Made ACP progress delivery best-effort so a hanging or rejecting observer cannot stall or fail the turn. Progress fields and spinner labels now consume at most 256 code points.
 - Bounded client-side UDS status and liveness probing with a 5-second `AbortSignal` deadline to prevent indefinite hangs on stalled sockets.
 - Capped and bounded tool results to prevent large `read_file` outputs from overflowing the Dolt events table column or terminating turns.
 - Corrected temporal `TIMESTAMP(6)` decoding in Rust event writes for leading-zero fractional seconds.

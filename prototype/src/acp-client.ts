@@ -11,6 +11,7 @@ import {
   type ExternalAgentAccessRoute,
   type ExternalAgentCostBasis,
   sanitizeBoundaryText,
+  takeCodePointPrefix,
 } from "./turn-contract";
 import { isAbsolute, win32 } from "node:path";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
@@ -77,11 +78,25 @@ export interface AcpPermissionVerdict {
   source: "operator" | "policy";
 }
 
+export interface AcpProgressUpdate {
+  kind: "thought" | "tool_call";
+  title?: string;
+  name?: string;
+  status?: string;
+}
+
 export interface AcpRunInput {
   profile: AcpExecutionProfile;
   prompt: string;
   abortSignal?: AbortSignal;
   onTextDelta?: (text: string) => void;
+  /**
+   * Ephemeral reasoning/tool status. Thought activity carries no raw text;
+   * tool fields are length-bounded before any later display sanitization.
+   * Delivery is best-effort: a hanging or rejecting observer cannot stall
+   * or fail the turn.
+   */
+  onProgress?: (progress: AcpProgressUpdate) => void | Promise<void>;
   /** Must settle after `signal` aborts; the callback owns any resources it starts. */
   confirmPermission?: (
     prompt: AcpPermissionPrompt,
@@ -899,6 +914,48 @@ function textFromUpdate(update: Record<string, unknown>): string | null {
     : null;
 }
 
+const MAX_PROGRESS_FIELD_CHARS = 256;
+
+function boundProgressField(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return takeCodePointPrefix(value, MAX_PROGRESS_FIELD_CHARS).join("") ||
+    undefined;
+}
+
+function deliverProgress(
+  onProgress: AcpRunInput["onProgress"],
+  progress: AcpProgressUpdate,
+): void {
+  if (onProgress === undefined) return;
+  try {
+    void Promise.resolve(onProgress(progress)).catch(() => {});
+  } catch {
+    // A progress observer must not fail the turn.
+  }
+}
+
+function isThoughtUpdate(update: Record<string, unknown>): boolean {
+  return update.sessionUpdate === "agent_thought_chunk" ||
+    update.sessionUpdate === "thought_chunk";
+}
+
+function toolCallProgressFromUpdate(
+  update: Record<string, unknown>,
+): AcpProgressUpdate | null {
+  if (
+    update.sessionUpdate !== "tool_call" &&
+    update.sessionUpdate !== "tool_call_update"
+  ) {
+    return null;
+  }
+  return {
+    kind: "tool_call",
+    title: boundProgressField(update.title),
+    name: boundProgressField(update.name),
+    status: boundProgressField(update.status),
+  };
+}
+
 function permissionInputSummary(value: unknown): string {
   if (value === undefined) return "(not supplied)";
   try {
@@ -1615,12 +1672,21 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
                     "protocol",
                   );
                 }
-                const delta = textFromUpdate(
-                  message.update as unknown as Record<string, unknown>,
-                );
+                const updateRecord = message.update as unknown as Record<
+                  string,
+                  unknown
+                >;
+                const delta = textFromUpdate(updateRecord);
                 if (delta !== null) {
                   text += delta;
                   input.onTextDelta?.(delta);
+                }
+                if (isThoughtUpdate(updateRecord)) {
+                  deliverProgress(input.onProgress, { kind: "thought" });
+                }
+                const toolProgress = toolCallProgressFromUpdate(updateRecord);
+                if (toolProgress !== null) {
+                  deliverProgress(input.onProgress, toolProgress);
                 }
                 pendingUpdate = session.nextUpdate();
                 continue;

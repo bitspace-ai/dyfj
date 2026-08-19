@@ -22,6 +22,7 @@ import {
   sanitizeBoundaryText,
   SESSION_ID_SHAPE,
   summarizeError,
+  takeCodePointPrefix,
   type TurnReceipt,
   type TurnStreamFrame,
 } from "./turn-contract";
@@ -364,6 +365,155 @@ export function createTurnOutputHandlers(
   };
 }
 
+/** Cheap scan budget before any label normalization. */
+export const SPINNER_LABEL_SCAN_LIMIT = 256;
+/** Visible code-point budget after control sequences are dropped. */
+export const SPINNER_LABEL_DISPLAY_LIMIT = 40;
+
+/**
+ * Bound and neutralize a spinner label candidate.
+ *
+ * The first 256 code points are inspected; nothing past that budget is
+ * normalized. Complete and incomplete ANSI / OSC / C0 / C1 sequences are
+ * treated as control and dropped — the scan never slices a terminator off
+ * a sequence and then keeps the payload.
+ */
+export function sanitizeSpinnerLabel(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const chars = takeCodePointPrefix(value, SPINNER_LABEL_SCAN_LIMIT);
+  const limit = chars.length;
+  const visible: string[] = [];
+  let pendingSpace = false;
+  let overflow = false;
+  let index = 0;
+
+  const emitVisible = (ch: string): void => {
+    if (visible.length >= SPINNER_LABEL_DISPLAY_LIMIT) {
+      overflow = true;
+      return;
+    }
+    if (pendingSpace && visible.length > 0) {
+      if (visible.length + 1 >= SPINNER_LABEL_DISPLAY_LIMIT) {
+        overflow = true;
+        return;
+      }
+      visible.push(" ");
+    }
+    pendingSpace = false;
+    visible.push(ch);
+  };
+
+  while (index < limit && !overflow) {
+    const code = chars[index].codePointAt(0) ?? 0;
+    if (code === 0x1b) {
+      index = skipEscSequence(chars, index, limit);
+      continue;
+    }
+    if (code === 0x9b) {
+      index = skipCsiBody(chars, index + 1, limit);
+      continue;
+    }
+    if (code === 0x9d) {
+      index = skipOscBody(chars, index + 1, limit);
+      continue;
+    }
+    if (
+      code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f
+    ) {
+      index = skipStringTerminator(chars, index + 1, limit);
+      continue;
+    }
+    if (
+      code === 0x20 ||
+      code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)
+    ) {
+      if (visible.length > 0) pendingSpace = true;
+      index += 1;
+      continue;
+    }
+    emitVisible(chars[index]);
+    index += 1;
+  }
+
+  if (visible.length === 0) return null;
+  if (overflow) {
+    return `${visible.slice(0, SPINNER_LABEL_DISPLAY_LIMIT - 1).join("")}…`;
+  }
+  return visible.join("");
+}
+
+function skipEscSequence(
+  chars: string[],
+  start: number,
+  limit: number,
+): number {
+  const next = start + 1;
+  if (next >= limit) return limit;
+  const introducer = chars[next];
+  if (introducer === "[") return skipCsiBody(chars, next + 1, limit);
+  if (introducer === "]") return skipOscBody(chars, next + 1, limit);
+  if (
+    introducer === "P" || introducer === "X" || introducer === "^" ||
+    introducer === "_"
+  ) {
+    return skipStringTerminator(chars, next + 1, limit);
+  }
+  return next + 1;
+}
+
+function skipCsiBody(chars: string[], start: number, limit: number): number {
+  let index = start;
+  while (index < limit) {
+    const code = chars[index].codePointAt(0) ?? 0;
+    if (code >= 0x40 && code <= 0x7e) return index + 1;
+    if (code < 0x20 || code > 0x3f) return index + 1;
+    index += 1;
+  }
+  return limit;
+}
+
+function skipOscBody(chars: string[], start: number, limit: number): number {
+  let index = start;
+  while (index < limit) {
+    const code = chars[index].codePointAt(0) ?? 0;
+    if (code === 0x07 || code === 0x9c) return index + 1;
+    if (code === 0x1b && index + 1 < limit && chars[index + 1] === "\\") {
+      return index + 2;
+    }
+    index += 1;
+  }
+  return limit;
+}
+
+function skipStringTerminator(
+  chars: string[],
+  start: number,
+  limit: number,
+): number {
+  let index = start;
+  while (index < limit) {
+    const code = chars[index].codePointAt(0) ?? 0;
+    if (code === 0x9c) return index + 1;
+    if (code === 0x1b && index + 1 < limit && chars[index + 1] === "\\") {
+      return index + 2;
+    }
+    index += 1;
+  }
+  return limit;
+}
+
+function progressSpinnerLabel(event: Record<string, unknown>): string | null {
+  if (event.type !== "agentProgress") return null;
+  const nested = typeof event.progress === "object" && event.progress !== null
+    ? event.progress as Record<string, unknown>
+    : null;
+  const kind = nested?.kind ?? event.kind;
+  if (kind === "thought") return "thinking…";
+  return sanitizeSpinnerLabel(nested?.title ?? event.title) ??
+    sanitizeSpinnerLabel(nested?.name ?? event.name) ??
+    sanitizeSpinnerLabel(nested?.status ?? event.status);
+}
+
 /**
  * The turn-in-flight indicator: animates on stderr from submit until the
  * turn's first output. Enabled only when the Io exposes a raw stderr writer
@@ -417,6 +567,11 @@ export function spinnerGuardedTurnHandlers(
       output.onDelta(text);
     },
     onEvent: (event) => {
+      const progressLabel = progressSpinnerLabel(event);
+      if (progressLabel !== null) {
+        spinner.updateLabel(progressLabel);
+        return;
+      }
       // Keep spinning through invisible events; the wait isn't over yet.
       if (runtimeEventIsVisible(event)) spinner.stop();
       handleTurnRuntimeEvent(event, output, io);
