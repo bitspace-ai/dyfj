@@ -324,6 +324,23 @@ export function summarizeError(error: unknown): string {
 export const MAX_REASON_FIELD_BYTES = 200;
 
 /**
+ * Take at most `limit` code points from `source` and stop. A string is a
+ * valid source; the iterator is not drained past the budget.
+ */
+export function takeCodePointPrefix(
+  source: Iterable<string>,
+  limit: number,
+): string[] {
+  const out: string[] = [];
+  if (limit <= 0) return out;
+  for (const ch of source) {
+    out.push(ch);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
  * Cap `raw` to `maxBytes` UTF-8 bytes (byte-safe — never splits a multi-byte
  * character) and strip C0/C1 control characters and DEL, including the ESC
  * byte that starts a terminal escape sequence. Tab/newline/carriage-return
@@ -351,23 +368,6 @@ export const MAX_REASON_FIELD_BYTES = 200;
  *     socket, not this process), so honest content passes through unaffected
  *     while a hostile or buggy peer's content is bounded and inert.
  */
-/**
- * Take at most `limit` code points from `source` and stop. A string is a
- * valid source; the iterator is not drained past the budget.
- */
-export function takeCodePointPrefix(
-  source: Iterable<string>,
-  limit: number,
-): string[] {
-  const out: string[] = [];
-  if (limit <= 0) return out;
-  for (const ch of source) {
-    out.push(ch);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
 export function sanitizeBoundaryText(raw: string, maxBytes: number): string {
   // Iterate by code point (not UTF-16 code unit) so a surrogate pair stays
   // intact, and filter by numeric range rather than a regex/string literal
