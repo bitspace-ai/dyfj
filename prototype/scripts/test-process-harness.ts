@@ -11,6 +11,9 @@ export const DEFAULT_TEST_BOUND_SEC = 600;
 export const FOCUSED_TEST_BOUND_SEC = 180;
 export const REAP_TERM_GRACE_MS = 1_000;
 export const REAPER_POLL_MS = 200;
+export const LOCK_WRITE_GRACE_MS = 500;
+export const TEST_RUN_DIR_ENV = "DYFJ_TEST_RUN_DIR";
+export const OPERATOR_VITEST_LOCK_NAME = "dyfj-vitest-run.lock";
 
 export interface SpawnRecord {
   pid: number;
@@ -42,6 +45,11 @@ export interface TestRunLock {
   tmpDir: string;
 }
 
+export type LockState =
+  | { kind: "absent" }
+  | { kind: "malformed"; mtimeMs: number }
+  | { kind: "valid"; lock: TestRunLock; mtimeMs: number };
+
 export class TestRunConflictError extends Error {
   override readonly name = "TestRunConflictError";
   constructor(readonly existing: TestRunLock) {
@@ -60,6 +68,10 @@ export function lockPath(tmpDir: string): string {
   return `${tmpDir}/test-run.lock`;
 }
 
+export function operatorVitestLockPath(home: string): string {
+  return `${home}/.dyfj/run/${OPERATOR_VITEST_LOCK_NAME}`;
+}
+
 export function donePath(tmpDir: string): string {
   return `${tmpDir}/test-run.done`;
 }
@@ -70,6 +82,10 @@ export function manifestDir(tmpDir: string): string {
 
 export function vitestPgidPath(tmpDir: string): string {
   return `${tmpDir}/vitest.pgid`;
+}
+
+export function resolveLockFile(tmpDir: string, lockFile?: string): string {
+  return lockFile ?? lockPath(tmpDir);
 }
 
 export function resolveBoundSec(
@@ -245,63 +261,64 @@ async function walkFiles(root: string, names: string[]): Promise<void> {
   }
 }
 
-function isTestLockName(name: string): boolean {
-  return name.startsWith("start-test-runtime-") && name.endsWith(".lock");
-}
-
 function commandLooksLikeTestRuntime(
   command: string,
   tmpDir: string,
   sockets: string[],
-  includeDetachedFixtures: boolean,
+  commandNeedles: string[],
 ): boolean {
-  if (command.includes(tmpDir)) return true;
+  if (tmpDir !== "" && command.includes(tmpDir)) return true;
   for (const socket of sockets) {
     if (socket !== "" && command.includes(socket)) return true;
   }
-  if (includeDetachedFixtures && command.includes("acp-fixture-agent")) {
-    return true;
+  for (const needle of commandNeedles) {
+    if (needle !== "" && command.includes(needle)) return true;
   }
   return false;
 }
 
+function isRunScopedLock(
+  path: string,
+  tmpDir: string,
+  recordedLocks: string[],
+): boolean {
+  if (path === lockPath(tmpDir) || path.endsWith(`/${OPERATOR_VITEST_LOCK_NAME}`)) {
+    return false;
+  }
+  if (path.startsWith(`${tmpDir}/`)) return true;
+  return recordedLocks.includes(path);
+}
+
 export async function discoverSurvivors(opts: {
   tmpDir: string;
-  extraHomes?: string[];
   ignorePids?: Set<number>;
   ignorePgids?: Set<number>;
-  includeDetachedFixtures?: boolean;
+  commandNeedles?: string[];
+  lockFile?: string;
 }): Promise<SurvivorReport> {
   const tmpDir = opts.tmpDir;
   const ignorePids = opts.ignorePids ?? new Set();
   const ignorePgids = opts.ignorePgids ?? new Set();
+  const commandNeedles = opts.commandNeedles ?? [];
+  const exclusiveLock = resolveLockFile(tmpDir, opts.lockFile);
   const files: string[] = [];
   await walkFiles(tmpDir, files);
   const sockets = files.filter((path) => path.endsWith(".sock"));
+  const manifest = await loadManifest(tmpDir);
+  const recordedLocks = manifest.flatMap((record) => record.locks);
   const locks = files.filter((path) =>
     path.endsWith(".lock") &&
-    (path.includes("/start-") || path.endsWith("/test-run.lock"))
+    (path.includes("/start-") || path.endsWith("/test-run.lock")) &&
+    isRunScopedLock(path, tmpDir, recordedLocks)
   );
-  for (const home of opts.extraHomes ?? []) {
-    const runDir = `${home}/.dyfj/run`;
-    try {
-      for await (const entry of Deno.readDir(runDir)) {
-        if (entry.isFile && isTestLockName(entry.name)) {
-          locks.push(`${runDir}/${entry.name}`);
-        }
-      }
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
-    }
-  }
-
-  const manifest = await loadManifest(tmpDir);
   for (const record of manifest) {
     for (const socket of record.sockets) {
       if (!sockets.includes(socket)) sockets.push(socket);
     }
     for (const lock of record.locks) {
-      if (!locks.includes(lock)) locks.push(lock);
+      if (!locks.includes(lock) && isRunScopedLock(lock, tmpDir, recordedLocks)) {
+        locks.push(lock);
+      }
     }
   }
 
@@ -316,12 +333,7 @@ export async function discoverSurvivors(opts: {
     );
     if (
       recorded ||
-      commandLooksLikeTestRuntime(
-        proc.command,
-        tmpDir,
-        sockets,
-        opts.includeDetachedFixtures === true,
-      )
+      commandLooksLikeTestRuntime(proc.command, tmpDir, sockets, commandNeedles)
     ) {
       if (!seen.has(proc.pid)) {
         seen.add(proc.pid);
@@ -341,7 +353,7 @@ export async function discoverSurvivors(opts: {
   }
   const existingLocks: string[] = [];
   for (const lock of locks) {
-    if (lock === lockPath(tmpDir)) continue;
+    if (lock === exclusiveLock) continue;
     try {
       await Deno.lstat(lock);
       existingLocks.push(lock);
@@ -395,13 +407,41 @@ export async function removeSurvivorFiles(report: SurvivorReport): Promise<void>
   }
 }
 
+export async function readSavedVitestPgid(tmpDir: string): Promise<number | undefined> {
+  try {
+    const raw = Number((await Deno.readTextFile(vitestPgidPath(tmpDir))).trim());
+    if (Number.isSafeInteger(raw) && raw > 1) return raw;
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  return undefined;
+}
+
+export async function reapSavedVitestGroup(tmpDir: string): Promise<void> {
+  const pgid = await readSavedVitestPgid(tmpDir);
+  if (pgid === undefined) return;
+  await killProcessGroup(pgid, "SIGTERM");
+  await delay(REAP_TERM_GRACE_MS);
+  await killProcessGroup(pgid, "SIGKILL");
+}
+
+async function clearRunArtifacts(tmpDir: string): Promise<void> {
+  for (const path of [donePath(tmpDir), vitestPgidPath(tmpDir)]) {
+    try {
+      await Deno.remove(path);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+  }
+}
+
 export async function sweepTestRuntime(opts: {
   tmpDir: string;
-  extraHomes?: string[];
   ignorePids?: Set<number>;
   ignorePgids?: Set<number>;
   graceMs?: number;
-  includeDetachedFixtures?: boolean;
+  commandNeedles?: string[];
+  lockFile?: string;
 }): Promise<SurvivorReport> {
   const first = await discoverSurvivors(opts);
   await reapSurvivors(first, {
@@ -413,55 +453,146 @@ export async function sweepTestRuntime(opts: {
   return await discoverSurvivors(opts);
 }
 
-export async function readLockFile(tmpDir: string): Promise<TestRunLock | null> {
+function parseLockBody(raw: string): TestRunLock | null {
   try {
-    const parsed = JSON.parse(await Deno.readTextFile(lockPath(tmpDir)));
+    const parsed = JSON.parse(raw);
     if (
       typeof parsed !== "object" || parsed === null ||
-      !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0
+      !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0 ||
+      typeof parsed.tmpDir !== "string" || parsed.tmpDir === "" ||
+      typeof parsed.startedAt !== "string" ||
+      !Number.isSafeInteger(parsed.boundSec) || parsed.boundSec <= 0
     ) {
       return null;
     }
-    return parsed as TestRunLock;
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return null;
+    return {
+      pid: parsed.pid,
+      startedAt: parsed.startedAt,
+      boundSec: parsed.boundSec,
+      tmpDir: parsed.tmpDir,
+    };
+  } catch {
     return null;
   }
 }
 
-async function reclaimDeadLock(opts: {
-  tmpDir: string;
-  extraHomes?: string[];
-  pid: number;
-  includeDetachedFixtures?: boolean;
-}): Promise<void> {
-  const existing = await readLockFile(opts.tmpDir);
-  if (existing === null) return;
-  if (await processIsAlive(existing.pid)) {
-    throw new TestRunConflictError(existing);
-  }
-  await sweepTestRuntime({
-    tmpDir: opts.tmpDir,
-    extraHomes: opts.extraHomes,
-    ignorePids: new Set([opts.pid, Deno.pid]),
-    includeDetachedFixtures: opts.includeDetachedFixtures,
-  });
+export async function readLockState(lockFile: string): Promise<LockState> {
   try {
-    await Deno.remove(lockPath(opts.tmpDir));
+    const [raw, stat] = await Promise.all([
+      Deno.readTextFile(lockFile),
+      Deno.stat(lockFile),
+    ]);
+    const mtimeMs = stat.mtime?.getTime() ?? 0;
+    const lock = parseLockBody(raw);
+    if (lock === null) return { kind: "malformed", mtimeMs };
+    return { kind: "valid", lock, mtimeMs };
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return { kind: "absent" };
+    return { kind: "malformed", mtimeMs: 0 };
+  }
+}
+
+export async function readLockFile(
+  tmpDir: string,
+  lockFile?: string,
+): Promise<TestRunLock | null> {
+  const state = await readLockState(resolveLockFile(tmpDir, lockFile));
+  return state.kind === "valid" ? state.lock : null;
+}
+
+async function fileMtimeMs(path: string): Promise<number | null> {
+  try {
+    return (await Deno.stat(path)).mtime?.getTime() ?? 0;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return null;
+    throw error;
+  }
+}
+
+export async function writeLockExclusive(
+  lockFile: string,
+  lock: TestRunLock,
+): Promise<void> {
+  const body = `${JSON.stringify(lock)}\n`;
+  const staging = `${lockFile}.${lock.pid}.${crypto.randomUUID()}.writing`;
+  await Deno.mkdir(lockFile.slice(0, lockFile.lastIndexOf("/")), { recursive: true });
+  await Deno.writeTextFile(staging, body);
+  try {
+    await Deno.link(staging, lockFile);
+  } finally {
+    await Deno.remove(staging).catch(() => undefined);
+  }
+}
+
+async function removeLockFile(lockFile: string): Promise<void> {
+  try {
+    await Deno.remove(lockFile);
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
 }
 
-async function writeLockExclusive(lock: TestRunLock): Promise<void> {
-  const file = await Deno.open(lockPath(lock.tmpDir), {
-    write: true,
-    createNew: true,
+async function sweepLockedTmpDir(opts: {
+  tmpDir: string;
+  ignorePids?: Set<number>;
+  commandNeedles?: string[];
+  lockFile?: string;
+}): Promise<void> {
+  await reapSavedVitestGroup(opts.tmpDir);
+  await sweepTestRuntime({
+    tmpDir: opts.tmpDir,
+    ignorePids: opts.ignorePids,
+    commandNeedles: opts.commandNeedles,
+    lockFile: opts.lockFile,
+    graceMs: 200,
   });
-  try {
-    await file.write(new TextEncoder().encode(`${JSON.stringify(lock)}\n`));
-  } finally {
-    file.close();
+  await clearRunArtifacts(opts.tmpDir);
+}
+
+async function reclaimDeadLock(opts: {
+  tmpDir: string;
+  lockFile: string;
+  pid: number;
+  commandNeedles?: string[];
+}): Promise<void> {
+  const ignorePids = new Set([opts.pid, Deno.pid]);
+  while (true) {
+    const state = await readLockState(opts.lockFile);
+    if (state.kind === "absent") return;
+    if (state.kind === "malformed") {
+      const age = Date.now() - state.mtimeMs;
+      if (state.mtimeMs > 0 && age < LOCK_WRITE_GRACE_MS) {
+        await delay(LOCK_WRITE_GRACE_MS - age + 10);
+        continue;
+      }
+      await sweepLockedTmpDir({
+        tmpDir: opts.tmpDir,
+        ignorePids,
+        commandNeedles: opts.commandNeedles,
+        lockFile: opts.lockFile,
+      });
+      await removeLockFile(opts.lockFile);
+      return;
+    }
+    if (await processIsAlive(state.lock.pid)) {
+      throw new TestRunConflictError(state.lock);
+    }
+    await sweepLockedTmpDir({
+      tmpDir: state.lock.tmpDir,
+      ignorePids,
+      commandNeedles: opts.commandNeedles,
+      lockFile: opts.lockFile,
+    });
+    if (state.lock.tmpDir !== opts.tmpDir) {
+      await sweepLockedTmpDir({
+        tmpDir: opts.tmpDir,
+        ignorePids,
+        commandNeedles: opts.commandNeedles,
+        lockFile: opts.lockFile,
+      });
+    }
+    await removeLockFile(opts.lockFile);
+    return;
   }
 }
 
@@ -469,43 +600,52 @@ export async function acquireTestRunLock(opts: {
   tmpDir: string;
   boundSec: number;
   pid: number;
-  extraHomes?: string[];
-  includeDetachedFixtures?: boolean;
+  lockFile?: string;
+  commandNeedles?: string[];
 }): Promise<TestRunLock> {
   await ensureHarnessDirs(opts.tmpDir);
-  await reclaimDeadLock(opts);
+  const lockFile = resolveLockFile(opts.tmpDir, opts.lockFile);
+  await Deno.mkdir(lockFile.slice(0, lockFile.lastIndexOf("/")), { recursive: true });
   const lock: TestRunLock = {
     pid: opts.pid,
     startedAt: new Date().toISOString(),
     boundSec: opts.boundSec,
     tmpDir: opts.tmpDir,
   };
-  try {
-    await writeLockExclusive(lock);
-  } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
-    await reclaimDeadLock(opts);
-    await writeLockExclusive(lock);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await reclaimDeadLock({
+      tmpDir: opts.tmpDir,
+      lockFile,
+      pid: opts.pid,
+      commandNeedles: opts.commandNeedles,
+    });
+    try {
+      await writeLockExclusive(lockFile, lock);
+      return lock;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+      const mtime = await fileMtimeMs(lockFile);
+      if (mtime !== null && Date.now() - mtime < LOCK_WRITE_GRACE_MS) {
+        await delay(LOCK_WRITE_GRACE_MS);
+      }
+    }
   }
+  await reclaimDeadLock({
+    tmpDir: opts.tmpDir,
+    lockFile,
+    pid: opts.pid,
+    commandNeedles: opts.commandNeedles,
+  });
+  await writeLockExclusive(lockFile, lock);
   return lock;
 }
 
-export async function releaseTestRunLock(tmpDir: string): Promise<void> {
-  try {
-    await Deno.remove(lockPath(tmpDir));
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
-  try {
-    await Deno.remove(donePath(tmpDir));
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
-  try {
-    await Deno.remove(vitestPgidPath(tmpDir));
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
+export async function releaseTestRunLock(
+  tmpDir: string,
+  lockFile?: string,
+): Promise<void> {
+  await removeLockFile(resolveLockFile(tmpDir, lockFile));
+  await clearRunArtifacts(tmpDir);
 }
 
 export async function markRunDone(tmpDir: string): Promise<void> {
@@ -516,8 +656,8 @@ export async function runReaper(opts: {
   supervisorPid: number;
   deadlineEpochSec: number;
   tmpDir: string;
-  extraHomes?: string[];
-  includeDetachedFixtures?: boolean;
+  commandNeedles?: string[];
+  lockFile?: string;
 }): Promise<number> {
   const ignorePids = new Set([Deno.pid, opts.supervisorPid]);
   const ignorePgids = new Set<number>();
@@ -532,24 +672,13 @@ export async function runReaper(opts: {
     const supervisorAlive = await processIsAlive(opts.supervisorPid);
     const timedOut = nowSec >= opts.deadlineEpochSec;
     if (!supervisorAlive || timedOut) {
-      let vitestPgid: number | undefined;
-      try {
-        const raw = Number((await Deno.readTextFile(vitestPgidPath(opts.tmpDir))).trim());
-        if (Number.isSafeInteger(raw) && raw > 1) vitestPgid = raw;
-      } catch {
-        // Vitest may not have recorded a group yet.
-      }
-      if (vitestPgid !== undefined) {
-        await killProcessGroup(vitestPgid, "SIGTERM");
-        await delay(REAP_TERM_GRACE_MS);
-        await killProcessGroup(vitestPgid, "SIGKILL");
-      }
+      await reapSavedVitestGroup(opts.tmpDir);
       await sweepTestRuntime({
         tmpDir: opts.tmpDir,
-        extraHomes: opts.extraHomes,
         ignorePids,
         ignorePgids,
-        includeDetachedFixtures: opts.includeDetachedFixtures,
+        commandNeedles: opts.commandNeedles,
+        lockFile: opts.lockFile,
       });
       return timedOut ? 124 : 0;
     }

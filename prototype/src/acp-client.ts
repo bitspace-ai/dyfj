@@ -450,13 +450,24 @@ async function spawnAcpChild(
   };
 }
 
+export const TEST_RUN_DIR_ENV = "DYFJ_TEST_RUN_DIR";
+
+export function processGroupSignalerEvalSource(
+  runDir = Deno.env.get(TEST_RUN_DIR_ENV),
+): string {
+  const marker = runDir !== undefined && runDir !== ""
+    ? `;void ${JSON.stringify(runDir)}`
+    : "";
+  return `const p=Deno.ppid;setInterval(()=>{if(Deno.ppid===1||Deno.ppid!==p)Deno.exit(1)},200);setInterval(()=>{},6e4)${marker}`;
+}
+
 export async function assertProcessGroupSignaler(
   command = "/bin/kill",
   timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS,
 ): Promise<void> {
   const probe = spawn(Deno.execPath(), [
     "eval",
-    "setInterval(() => {}, 60_000)",
+    processGroupSignalerEvalSource(),
   ], {
     detached: true,
     env: {},

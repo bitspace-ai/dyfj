@@ -7,7 +7,8 @@
  * - SIGKILL of Vitest only: this process sees exit and sweeps
  * - SIGKILL of this supervisor: the sibling reaper sweeps
  * - SIGKILL of supervisor and reaper together: not covered in-process; the next
- *   `run` finds a dead lock PID and sweeps before starting
+ *   `run` reclaims the operator-scoped lock, TERM-then-KILL the saved Vitest
+ *   process group, and sweeps that lock's tmp dir before starting
  *
  * `--version` / other non-`run` args stay an unsupervised passthrough so
  * existing launcher probes keep working.
@@ -23,12 +24,16 @@ import {
   harnessDir,
   isEmptyReport,
   isSupervisedVitestInvocation,
+  killPid,
   killProcessGroup,
   markRunDone,
+  operatorVitestLockPath,
   REAP_TERM_GRACE_MS,
+  recordSpawn,
   releaseTestRunLock,
   resolveBoundSec,
   sweepTestRuntime,
+  TEST_RUN_DIR_ENV,
   TestRunConflictError,
   vitestPgidPath,
 } from "./test-process-harness.ts";
@@ -114,10 +119,14 @@ async function stopProcessGroup(pgid: number | undefined): Promise<void> {
   await killProcessGroup(pgid, "SIGKILL");
 }
 
-function extraHomes(): string[] {
+function operatorHome(): string | undefined {
   const home = Deno.env.get("HOME");
-  if (home === undefined || !home.startsWith("/")) return [];
-  return [home];
+  if (home === undefined || !home.startsWith("/")) return undefined;
+  return home;
+}
+
+function fixtureAgentNeedle(): string {
+  return fileURLToPath(new URL("./acp-fixture-agent.ts", import.meta.url));
 }
 
 async function passthrough(args: string[]): Promise<number> {
@@ -161,14 +170,18 @@ async function supervised(args: string[]): Promise<number> {
   const tmpDir = harnessDir(prototypeRoot);
   await Deno.mkdir(tmpDir, { recursive: true });
   const boundSec = resolveBoundSec(args);
-  const homes = extraHomes();
+  const home = operatorHome();
+  const lockFile = home === undefined
+    ? undefined
+    : operatorVitestLockPath(home);
+  const commandNeedles = [fixtureAgentNeedle()];
   try {
     await acquireTestRunLock({
       tmpDir,
       boundSec,
       pid: Deno.pid,
-      extraHomes: homes,
-      includeDetachedFixtures: true,
+      lockFile,
+      commandNeedles,
     });
   } catch (error) {
     if (error instanceof TestRunConflictError) {
@@ -179,8 +192,12 @@ async function supervised(args: string[]): Promise<number> {
   }
 
   const deadlineEpochSec = Math.floor(Date.now() / 1000) + boundSec;
-  const reaperRead = [".", tmpDir, ...homes.map((home) => `${home}/.dyfj/run`)];
-  const reaperWrite = [tmpDir, ...homes.map((home) => `${home}/.dyfj/run`)];
+  const reaperRead = [".", tmpDir];
+  const reaperWrite = [tmpDir];
+  if (lockFile !== undefined) {
+    reaperRead.push(lockFile);
+    reaperWrite.push(lockFile);
+  }
   const reaper = spawnDetached(denoExecutable, [
     "run",
     "--allow-env",
@@ -194,8 +211,8 @@ async function supervised(args: string[]): Promise<number> {
     String(deadlineEpochSec),
     "--tmp-dir",
     tmpDir,
-    "--include-detached-fixtures",
-    ...homes.flatMap((home) => ["--home", home]),
+    ...commandNeedles.flatMap((needle) => ["--command-needle", needle]),
+    ...(lockFile === undefined ? [] : ["--lock-file", lockFile]),
   ], {
     cwd: prototypeRoot,
     env: Deno.env.toObject(),
@@ -236,12 +253,21 @@ async function supervised(args: string[]): Promise<number> {
       env: {
         ...Deno.env.toObject(),
         ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}`,
+        [TEST_RUN_DIR_ENV]: tmpDir,
       },
       stdio: "inherit",
     });
     vitestPgid = vitest.pid;
     if (vitestPgid !== undefined) {
       await Deno.writeTextFile(vitestPgidPath(tmpDir), `${vitestPgid}\n`);
+      await recordSpawn(tmpDir, {
+        pid: vitestPgid,
+        pgid: vitestPgid,
+        kind: "vitest",
+        sockets: [],
+        locks: [],
+        startedAt: new Date().toISOString(),
+      });
     }
     exitCode = await waitForExit(vitest);
     if (timedOut) {
@@ -259,20 +285,16 @@ async function supervised(args: string[]): Promise<number> {
     await stopProcessGroup(vitestPgid);
     const leftovers = await sweepTestRuntime({
       tmpDir,
-      extraHomes: homes,
       ignorePids,
       ignorePgids,
-      includeDetachedFixtures: true,
+      commandNeedles,
+      lockFile,
     });
     await markRunDone(tmpDir);
     await new Promise((resolve) => setTimeout(resolve, 300));
-    await releaseTestRunLock(tmpDir);
+    await releaseTestRunLock(tmpDir, lockFile);
     if (reaperPid !== undefined) {
-      try {
-        Deno.kill(reaperPid, "SIGTERM");
-      } catch {
-        // Reaper already exited after the done file.
-      }
+      await killPid(reaperPid, "SIGTERM");
     }
     if (!isEmptyReport(leftovers)) {
       console.error("dyfj: surviving test-runtime children after sweep:");

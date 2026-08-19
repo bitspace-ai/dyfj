@@ -11,14 +11,14 @@ function parseArgs(args: string[]): {
   supervisorPid: number;
   deadlineEpochSec: number;
   tmpDir: string;
-  extraHomes: string[];
-  includeDetachedFixtures: boolean;
+  commandNeedles: string[];
+  lockFile?: string;
 } {
   let supervisorPid: number | undefined;
   let deadlineEpochSec: number | undefined;
   let tmpDir: string | undefined;
-  const extraHomes: string[] = [];
-  let includeDetachedFixtures = false;
+  let lockFile: string | undefined;
+  const commandNeedles: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const next = args[i + 1];
@@ -34,14 +34,22 @@ function parseArgs(args: string[]): {
       }
       tmpDir = next;
       i++;
-    } else if (arg === "--home") {
+    } else if (arg === "--lock-file") {
       if (next === undefined || next === "") {
-        throw new Error("--home requires a path");
+        throw new Error("--lock-file requires a path");
       }
-      extraHomes.push(next);
+      lockFile = next;
       i++;
-    } else if (arg === "--include-detached-fixtures") {
-      includeDetachedFixtures = true;
+    } else if (arg === "--command-needle") {
+      if (next === undefined || next === "") {
+        throw new Error("--command-needle requires a value");
+      }
+      commandNeedles.push(next);
+      i++;
+    } else if (arg === "--home" || arg === "--include-detached-fixtures") {
+      throw new Error(
+        `${arg} is no longer accepted; cleanup is run-scoped via --tmp-dir and --command-needle`,
+      );
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
@@ -55,7 +63,7 @@ function parseArgs(args: string[]): {
   if (tmpDir === undefined) {
     throw new Error("--tmp-dir is required");
   }
-  return { supervisorPid, deadlineEpochSec, tmpDir, extraHomes, includeDetachedFixtures };
+  return { supervisorPid, deadlineEpochSec, tmpDir, commandNeedles, lockFile };
 }
 
 if (import.meta.main) {
