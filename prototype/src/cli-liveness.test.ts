@@ -173,7 +173,8 @@ describe("probeRuntimeLiveness fallback logic", () => {
 
 describe("runStatus and liveness over real Unix domain sockets", () => {
   test("runStatus succeeds against a live UDS server", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/wb.sock`;
     const server: WorkbenchUnixServer = await serveWorkbenchUnix(socketPath, {
       loadModels: async () => [anyVal({ slug: "local-qwen", tier: 0, costInput: 0, costOutput: 0 })],
@@ -196,7 +197,8 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
   });
 
   test("probe times out with a bounded deadline and cleans up when connected to a mute socket", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/mute.sock`;
     // Create a raw UDS listener that accepts connections but writes nothing back
     const listener = Deno.listen({ transport: "unix", path: socketPath });
@@ -252,7 +254,8 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
   });
 
   test("connectUnixClient rejects immediately when given an already-aborted signal", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/aborted.sock`;
     const preAborted = AbortSignal.abort(
       new DOMException("The operation was aborted", "AbortError"),
@@ -262,7 +265,8 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
   });
 
   test("connectUnixClient closes connection if abort occurs while connect is in flight", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/late.sock`;
     const listener = Deno.listen({ transport: "unix", path: socketPath });
     let serverConn: Deno.Conn | undefined;

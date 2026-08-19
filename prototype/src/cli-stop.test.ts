@@ -135,7 +135,8 @@ describe("formatRuntimeStatus launch annotations", () => {
 
 describe("runStop behavior over real sockets", () => {
   test("stops a running runtime, unlinks the socket, and returns exit code 0", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/workbench.sock`;
 
     let serverInstance: WorkbenchUnixServer | undefined;
@@ -175,7 +176,8 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("is idempotent when socket does not exist", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/nonexistent.sock`;
 
     cleanups.push(async () => {
@@ -195,7 +197,8 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("reports not running when connection is refused by a dead listener", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/dead.sock`;
 
     // Create a listener and immediately close it without unlinking
@@ -219,7 +222,8 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("reports failure via io.err and returns 1 when connected to a mute socket exceeding deadline", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/mute.sock`;
     const listener = Deno.listen({ transport: "unix", path: socketPath });
     let serverConn: Deno.Conn | undefined;
@@ -260,7 +264,8 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("reports failure via io.err and returns 1 when runtime does not close within deadline", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const socketPath = `${dir}/stubborn.sock`;
 
     let serverInstance: WorkbenchUnixServer | undefined;

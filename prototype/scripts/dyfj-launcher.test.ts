@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { reapPidsAndCommandsContaining } from "./test-process-harness.ts";
 
 const LAUNCHER = new URL("./dyfj-launcher.sh", import.meta.url).pathname;
 const COMPILED_BIN = new URL("../dist/dyfj-bin", import.meta.url).pathname;
@@ -981,16 +982,16 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
       const errText = await readUntilStderr(reader, "already in flight");
       expect(errText).toContain("already in flight");
       expect(errText).not.toContain("runtime not running at");
+      const lockContent = await Deno.readTextFile(lockFile);
+      expect(lockContent.trim()).toBe(`${nowSec}`);
+    } finally {
       try {
         proc.kill("SIGTERM");
         await proc.status;
       } catch {
         // ignore
       }
-      // The existing lock timestamp is preserved
-      const lockContent = await Deno.readTextFile(lockFile);
-      expect(lockContent.trim()).toBe(`${nowSec}`);
-    } finally {
+      await reapPidsAndCommandsContaining([proc.pid], sock);
       await safeRemove(home);
     }
   }, 10_000);
@@ -1057,20 +1058,17 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
       if (spawnedPid !== undefined) {
         expect(spawnedPid).toBeGreaterThan(0);
       }
+    } finally {
       try {
         proc.kill("SIGTERM");
         await proc.status;
       } catch {
         // ignore
       }
-    } finally {
-      if (spawnedPid && spawnedPid > 0 && !Number.isNaN(spawnedPid)) {
-        try {
-          Deno.kill(spawnedPid, "SIGTERM");
-        } catch {
-          // already stopped
-        }
-      }
+      await reapPidsAndCommandsContaining(
+        [proc.pid, spawnedPid ?? 0],
+        sock,
+      );
       await safeRemove(home);
     }
   }, 10_000);
@@ -1119,19 +1117,20 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
       const errText = await readUntilStderr(reader, "already in flight");
       expect(errText).toContain("already in flight");
       expect(errText).not.toContain("runtime not running at");
+    } finally {
       try {
         proc.kill("SIGTERM");
         await proc.status;
       } catch {
         // ignore
       }
-    } finally {
       try {
         dummy.kill("SIGTERM");
         await dummy.status;
       } catch {
         // ignore
       }
+      await reapPidsAndCommandsContaining([proc.pid, dummy.pid], sock);
       await safeRemove(home);
     }
   }, 10_000);

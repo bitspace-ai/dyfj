@@ -102,6 +102,10 @@ export function productionLanes(
 ): GateLane[] {
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
+  const home = Deno.env.get("HOME");
+  const homeRun = home !== undefined && home.startsWith("/")
+    ? `,${home}/.dyfj/run`
+    : "";
   return [
     {
       label: "Aggregate gate orchestration tests",
@@ -139,6 +143,8 @@ export function productionLanes(
         "scripts/deno-executable.ts",
         "scripts/integration-child-environment.ts",
         "scripts/run-vitest.ts",
+        "scripts/test-process-harness.ts",
+        "scripts/test-process-reaper.ts",
         "scripts/isolated-dolt-fixture.ts",
         "scripts/isolated-dolt-integration.ts",
       ],
@@ -159,8 +165,9 @@ export function productionLanes(
       args: [
         "run",
         "--allow-env",
-        "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        `--allow-run=${denoExecutable}`,
+        `--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders${homeRun}`,
+        `--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders${homeRun}`,
+        `--allow-run=${denoExecutable},/bin/kill,/bin/ps,/bin/bash`,
         "scripts/run-vitest.ts",
         "run",
         "--root",

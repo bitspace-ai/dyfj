@@ -176,7 +176,12 @@ deno task verify-workbench-events
 ```
 
 The root aggregate gate runs the schema, Rust, and isolated-Dolt integration
-lanes in addition to this prototype unit suite. It owns a temporary Dolt
+lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
+and bounded: a second run refuses to start while a prior run is alive, a hang
+fails `DYFJ_TEST_BOUND_SEC` (default 600s; 180s for a named file or `-t`
+pattern), and leftover fixture/runtime processes, test sockets, and
+`start-test-runtime-*.lock` files are reaped after exit or runner death. It
+owns a temporary Dolt
 repository and SQL server, with cleanup on normal completion and handled
 failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane
 process receives SIGTERM followed by a bounded wait and possible SIGKILL. The

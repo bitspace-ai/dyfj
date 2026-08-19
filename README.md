@@ -389,7 +389,16 @@ tests using offline SQLx metadata and no inherited `DATABASE_URL`, and an
 isolated-Dolt integration lane (including UDS and MCP round trips). The
 task resolves the Deno executable selected for the invocation and uses that
 same absolute command identity for each nested Deno lane and permission grant.
-The integration lane owns a temporary Dolt repository and SQL server, with
+The prototype Vitest lane is exclusive and bounded: it refuses to start while
+a prior `run-vitest` PID is still alive, converts a hang into a failed bound
+(`DYFJ_TEST_BOUND_SEC`; default 600s, or 180s when the args name a test file
+or `-t` pattern), and reaps leftover fixture children, launcher supervisors,
+`serve-unix` processes bound to test sockets, `.vitest-tmp` sockets, and
+`start-test-runtime-*.lock` files after the suite exits or the runner dies.
+SIGTERM/SIGINT to the supervisor, SIGKILL of Vitest, and SIGKILL of the
+supervisor (sibling reaper) are covered; SIGKILL of the supervisor and reaper
+together is recovered by the next run's stale-lock sweep. The integration
+lane owns a temporary Dolt repository and SQL server, with
 cleanup on normal completion and handled failure. SIGINT and SIGTERM request
 cooperative cancellation; the direct lane process receives SIGTERM followed by
 a bounded wait and possible SIGKILL. The Rust tracer test retains its
@@ -582,3 +591,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-08-12 - Validation guidance now documents the aggregate gate's selected-Deno executable authority.
 - 2026-08-12 - The external-agent section now documents exact operator selection from bounded ACP permission options and its fail-closed terminal defaults.
 - 2026-08-18 - The CLI/UDS turn path now documents ephemeral ACP progress indication on an interactive TTY spinner. Raw thought text is not a display or history surface.
+- 2026-08-18 - Validation guidance now documents exclusive, wall-clock-bounded prototype Vitest runs and zero-survivor reaping of test runtimes.

@@ -29,7 +29,9 @@ function fixtureProfile(
       "run",
       "--cached-only",
       "--allow-env=ACP_FIXTURE_ALLOWED,ACP_FIXTURE_MODE,ACP_FIXTURE_AUTH_STATUS,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DOLT_PASSWORD,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK",
-      ...(grandchildPidFile === undefined ? [] : ["--allow-run=bash"]),
+      ...(grandchildPidFile === undefined
+        ? ["--allow-run=/bin/kill"]
+        : ["--allow-run=bash,/bin/kill"]),
       ...(pidFile === undefined ? [] : [`--allow-write=${pidFile}`]),
       ...(grandchildPidFile === undefined ? [] : [
         `--allow-read=${grandchildPidFile}`,
