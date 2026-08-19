@@ -11,6 +11,7 @@ import {
   type ExternalAgentAccessRoute,
   type ExternalAgentCostBasis,
   sanitizeBoundaryText,
+  takeCodePointPrefix,
 } from "./turn-contract";
 import { isAbsolute, win32 } from "node:path";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
@@ -92,6 +93,8 @@ export interface AcpRunInput {
   /**
    * Ephemeral reasoning/tool status. Thought activity carries no raw text;
    * tool fields are length-bounded before any later display sanitization.
+   * Delivery is best-effort: a hanging or rejecting observer cannot stall
+   * or fail the turn.
    */
   onProgress?: (progress: AcpProgressUpdate) => void | Promise<void>;
   /** Must settle after `signal` aborts; the callback owns any resources it starts. */
@@ -915,9 +918,20 @@ const MAX_PROGRESS_FIELD_CHARS = 256;
 
 function boundProgressField(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length === 0) return undefined;
-  const chars = Array.from(value);
-  if (chars.length <= MAX_PROGRESS_FIELD_CHARS) return value;
-  return chars.slice(0, MAX_PROGRESS_FIELD_CHARS).join("");
+  return takeCodePointPrefix(value, MAX_PROGRESS_FIELD_CHARS).join("") ||
+    undefined;
+}
+
+function deliverProgress(
+  onProgress: AcpRunInput["onProgress"],
+  progress: AcpProgressUpdate,
+): void {
+  if (onProgress === undefined) return;
+  try {
+    void Promise.resolve(onProgress(progress)).catch(() => {});
+  } catch {
+    // A progress observer must not fail the turn.
+  }
 }
 
 function isThoughtUpdate(update: Record<string, unknown>): boolean {
@@ -1668,11 +1682,11 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
                   input.onTextDelta?.(delta);
                 }
                 if (isThoughtUpdate(updateRecord)) {
-                  await input.onProgress?.({ kind: "thought" });
+                  deliverProgress(input.onProgress, { kind: "thought" });
                 }
                 const toolProgress = toolCallProgressFromUpdate(updateRecord);
                 if (toolProgress !== null) {
-                  await input.onProgress?.(toolProgress);
+                  deliverProgress(input.onProgress, toolProgress);
                 }
                 pendingUpdate = session.nextUpdate();
                 continue;

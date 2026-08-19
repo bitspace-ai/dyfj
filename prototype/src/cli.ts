@@ -22,6 +22,7 @@ import {
   sanitizeBoundaryText,
   SESSION_ID_SHAPE,
   summarizeError,
+  takeCodePointPrefix,
   type TurnReceipt,
   type TurnStreamFrame,
 } from "./turn-contract";
@@ -379,8 +380,8 @@ export const SPINNER_LABEL_DISPLAY_LIMIT = 40;
  */
 export function sanitizeSpinnerLabel(value: unknown): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
-  const chars = Array.from(value);
-  const limit = Math.min(chars.length, SPINNER_LABEL_SCAN_LIMIT);
+  const chars = takeCodePointPrefix(value, SPINNER_LABEL_SCAN_LIMIT);
+  const limit = chars.length;
   const visible: string[] = [];
   let pendingSpace = false;
   let overflow = false;

@@ -1330,4 +1330,53 @@ describe("runAcpAgent", () => {
     expect(result.text).toBe("solution found");
     expect(result.text).not.toContain("pondering problem");
   });
+
+  test("a never-settling progress observer cannot stall the turn", async () => {
+    const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
+    await Deno.remove(pidFile);
+    let verified = false;
+    try {
+      const result = await runAcpAgent({
+        profile: fixtureProfile({}, pidFile),
+        prompt: "FIXTURE_THOUGHT_AND_PROGRESS",
+        onProgress: () => new Promise(() => {}),
+      });
+      expect(result.text).toBe("solution found");
+      const pid = Number(await Deno.readTextFile(pidFile));
+      expect(Number.isInteger(pid)).toBe(true);
+      expect(await processIsAlive(pid)).toBe(false);
+      verified = true;
+    } finally {
+      if (!verified) {
+        try {
+          const pid = Number(await Deno.readTextFile(pidFile));
+          if (Number.isInteger(pid)) {
+            await new Deno.Command("/bin/kill", {
+              args: ["-KILL", String(pid)],
+              stdout: "null",
+              stderr: "null",
+            }).output();
+          }
+        } catch {
+          // Best-effort cleanup if the assertion failed before reap.
+        }
+      }
+      await Deno.remove(pidFile).catch(() => {});
+    }
+  });
+
+  test("a rejecting progress observer cannot fail the turn", async () => {
+    let calls = 0;
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_THOUGHT_AND_PROGRESS",
+      onProgress: () => {
+        calls += 1;
+        if (calls === 1) throw new Error("progress observer failed");
+        return Promise.reject(new Error("async progress observer failed"));
+      },
+    });
+    expect(calls).toBe(2);
+    expect(result.text).toBe("solution found");
+  });
 });
