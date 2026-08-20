@@ -20,7 +20,8 @@ afterEach(async () => {
 async function startServer(
   options: WorkbenchUnixServerOptions,
 ): Promise<WorkbenchUnixServer> {
-  const dir = await Deno.makeTempDir({ dir: "/tmp" });
+  await Deno.mkdir(".vitest-tmp", { recursive: true });
+  const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
   const server = await serveWorkbenchUnix(`${dir}/wb.sock`, options);
   cleanups.push(async () => {
     await server.close();
@@ -1277,7 +1278,8 @@ describe("socket bind safety", () => {
   });
 
   test("clears a genuinely stale socket and binds", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const sock = `${dir}/wb.sock`;
     // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its
     // socket file behind with nothing accepting. (A cleanly closed Deno
@@ -1296,7 +1298,8 @@ describe("socket bind safety", () => {
   });
 
   test("refuses to bind over a non-socket path", async () => {
-    const dir = await Deno.makeTempDir({ dir: "/tmp" });
+    await Deno.mkdir(".vitest-tmp", { recursive: true });
+    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
     const path = `${dir}/wb.sock`;
     await Deno.writeTextFile(path, "not a socket");
     await expect(assertSocketBindable(path)).rejects.toThrow(

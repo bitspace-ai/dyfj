@@ -14,6 +14,25 @@ const grandchildPidFile = Deno.args.find((arg) =>
   arg.startsWith("--grandchild-pid-file=")
 )?.slice("--grandchild-pid-file=".length);
 
+const originParent = Deno.ppid;
+void (async () => {
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (Deno.ppid === 1 || Deno.ppid !== originParent) {
+      try {
+        await new Deno.Command("/bin/kill", {
+          args: ["-KILL", `-${Deno.pid}`],
+          stdout: "null",
+          stderr: "null",
+        }).output();
+      } catch {
+        // Best-effort group reap; still exit so the fixture itself does not leak.
+      }
+      Deno.exit(1);
+    }
+  }
+})();
+
 const sessions = new Map<
   string,
   { cwd: string; cancel: PromiseWithResolvers<void>; cancelled: boolean }

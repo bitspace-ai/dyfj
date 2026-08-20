@@ -176,7 +176,22 @@ deno task verify-workbench-events
 ```
 
 The root aggregate gate runs the schema, Rust, and isolated-Dolt integration
-lanes in addition to this prototype unit suite. It owns a temporary Dolt
+lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
+and bounded: `$HOME/.dyfj/run/dyfj-vitest-run.lock` refuses a second run while
+a prior run is alive (including across checkouts), a hang fails
+`DYFJ_TEST_BOUND_SEC` (default 600s; 180s for a named file or `-t` pattern),
+and leftover fixture/runtime processes, test sockets, and run-scoped
+`start-test-runtime-*.lock` files are reaped after exit or runner death. The
+next run recovers a saved Vitest process group only when a recovering run
+generation is supplied and the recorded recovery directory, run generation,
+leader start time, and command still match. Malformed-lock recovery does not
+signal a saved process group. A spawn-manifest PID is not kill authority
+unless that record carries matching start time, command, recovery directory,
+and run generation. If the
+saved leader is gone, that numeric group is left alive. Supervised runs fail
+closed without an absolute `HOME`. Sweeping is scoped to this run's tmp dir,
+spawn manifest, and explicit command needles. It
+owns a temporary Dolt
 repository and SQL server, with cleanup on normal completion and handled
 failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane
 process receives SIGTERM followed by a bounded wait and possible SIGKILL. The
