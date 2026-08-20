@@ -32,6 +32,7 @@ import { loadAgentsInstructions } from "./repo-context";
 import type { WorkspaceRootIdentity } from "./repo-context";
 import type { CommandDefinition, ConfirmToolApproval } from "./commands";
 import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
+import type { AcpSessionHandleMap } from "./acp-session-map";
 import type { PermissionLevel } from "./config";
 import type {
   ExternalAgentTurnReceipt,
@@ -1481,15 +1482,19 @@ export function runWorkbenchRuntime(
       profile: "fixture" | "codex-chatgpt";
     };
   },
+  services?: { acpSessions?: AcpSessionHandleMap },
 ): Promise<ExternalAgentWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput & { runner?: undefined },
+  services?: { acpSessions?: AcpSessionHandleMap },
 ): Promise<NativeWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
+  services?: { acpSessions?: AcpSessionHandleMap },
 ): Promise<WorkbenchRuntimeResult>;
 export async function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
+  services?: { acpSessions?: AcpSessionHandleMap },
 ): Promise<WorkbenchRuntimeResult> {
   if (runtimeInput.runner?.kind === "acp") {
     if (
@@ -1527,7 +1532,7 @@ export async function runWorkbenchRuntime(
     return await runExternalAgentWorkbenchRuntime({
       ...runtimeInput,
       runner: runtimeInput.runner,
-    });
+    }, { sessionMap: services?.acpSessions });
   }
 
   const {
@@ -1623,7 +1628,7 @@ export async function runWorkbenchRuntime(
           : {}),
       },
       runner: { kind: "acp", profile: acpProfile },
-    });
+    }, { sessionMap: services?.acpSessions });
   }
 
   return await runNativeWorkbenchRuntime(runtimeInput);

@@ -135,9 +135,7 @@ describe("formatRuntimeStatus launch annotations", () => {
 
 describe("runStop behavior over real sockets", () => {
   test("stops a running runtime, unlinks the socket, and returns exit code 0", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/workbench.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
 
     let serverInstance: WorkbenchUnixServer | undefined;
     let shutdownInvoked = false;
@@ -158,7 +156,7 @@ describe("runStop behavior over real sockets", () => {
         } catch {}
       }
       try {
-        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(socketPath);
       } catch {}
     });
 
@@ -176,15 +174,7 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("is idempotent when socket does not exist", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/nonexistent.sock`;
-
-    cleanups.push(async () => {
-      try {
-        await Deno.remove(dir, { recursive: true });
-      } catch {}
-    });
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
 
     const { io, stdout, stderr } = fakeIo();
     const exitCode = await runStop(cfg({ socket: socketPath }), io);
@@ -197,9 +187,7 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("reports not running when connection is refused by a dead listener", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/dead.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
 
     // Create a listener and immediately close it without unlinking
     const listener = Deno.listen({ transport: "unix", path: socketPath });
@@ -207,7 +195,7 @@ describe("runStop behavior over real sockets", () => {
 
     cleanups.push(async () => {
       try {
-        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(socketPath);
       } catch {}
     });
 
@@ -222,9 +210,7 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("reports failure via io.err and returns 1 when connected to a mute socket exceeding deadline", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/mute.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     const listener = Deno.listen({ transport: "unix", path: socketPath });
     let serverConn: Deno.Conn | undefined;
     (async () => {
@@ -246,7 +232,7 @@ describe("runStop behavior over real sockets", () => {
         } catch {}
       }
       try {
-        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(socketPath);
       } catch {}
     });
 
@@ -264,9 +250,7 @@ describe("runStop behavior over real sockets", () => {
   });
 
   test("reports failure via io.err and returns 1 when runtime does not close within deadline", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/stubborn.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
 
     let serverInstance: WorkbenchUnixServer | undefined;
 
@@ -283,7 +267,7 @@ describe("runStop behavior over real sockets", () => {
         } catch {}
       }
       try {
-        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(socketPath);
       } catch {}
     });
 

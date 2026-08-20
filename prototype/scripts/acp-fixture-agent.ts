@@ -13,6 +13,14 @@ if (pidFile !== undefined) await Deno.writeTextFile(pidFile, String(Deno.pid));
 const grandchildPidFile = Deno.args.find((arg) =>
   arg.startsWith("--grandchild-pid-file=")
 )?.slice("--grandchild-pid-file=".length);
+const methodLogFile = Deno.args.find((arg) =>
+  arg.startsWith("--method-log=")
+)?.slice("--method-log=".length);
+
+async function logMethod(method: string): Promise<void> {
+  if (methodLogFile === undefined) return;
+  await Deno.writeTextFile(methodLogFile, `${method}\n`, { append: true });
+}
 
 const originParent = Deno.ppid;
 void (async () => {
@@ -80,6 +88,7 @@ async function waitForRecordedPid(path: string): Promise<void> {
 
 const app = agent({ name: "dyfj-acp-fixture" })
   .onRequest(methods.agent.initialize, async () => {
+    await logMethod("initialize");
     if (Deno.env.get("ACP_FIXTURE_MODE") === "initialize_mute") {
       await new Promise(() => {});
     }
@@ -93,6 +102,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
     };
   })
   .onRequest("authentication/status", emptyParams, () => {
+    void logMethod("authentication/status");
     authenticationStatusRead = true;
     switch (Deno.env.get("ACP_FIXTURE_AUTH_STATUS")) {
       case "mute":
@@ -112,6 +122,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
     }
   })
   .onRequest(methods.agent.session.new, async ({ params, client: context }) => {
+    await logMethod("session/new");
     if (
       Deno.env.get("ACP_FIXTURE_AUTH_STATUS") === "chat-gpt" &&
       !authenticationStatusRead
@@ -139,6 +150,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
     return { sessionId };
   })
   .onRequest(methods.agent.session.close, async ({ params }) => {
+    await logMethod("session/close");
     if (Deno.env.get("ACP_FIXTURE_MODE") === "session_close_mute") {
       await new Promise(() => {});
     }
@@ -157,6 +169,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
   .onRequest(
     methods.agent.session.prompt,
     async ({ params, client: context }) => {
+      await logMethod("session/prompt");
       const fixture = sessions.get(params.sessionId);
       if (fixture === undefined) throw new Error("unknown fixture session");
       const prompt = params.prompt

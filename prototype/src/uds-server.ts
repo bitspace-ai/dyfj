@@ -72,6 +72,7 @@ import {
   type ToolApprovalVerdict,
 } from "./commands";
 import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
+import { AcpSessionHandleMap } from "./acp-session-map";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -180,6 +181,8 @@ export interface WorkbenchUnixServerOptions {
     | "anomalyScopeMultiple"
     | "maxToolSteps"
   >;
+  /** Process-owned ACP warm-session map. Created by the server when omitted. */
+  acpSessions?: AcpSessionHandleMap;
 }
 
 // Mirrors http.ts loadPickerModels: degrade to the local defaults if the registry
@@ -1259,9 +1262,15 @@ export async function serveWorkbenchUnix(
 ): Promise<WorkbenchUnixServer> {
   await assertSocketBindable(socketPath);
 
+  const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
+  const serverOptions: WorkbenchUnixServerOptions = {
+    ...options,
+    runRuntime: options.runRuntime ??
+      ((input) => runWorkbenchRuntime(input, { acpSessions })),
+  };
   const handlers: RpcHandlers = {
-    ...buildWorkbenchHandlers(options),
-    ...buildTurnHandlers(options),
+    ...buildWorkbenchHandlers(serverOptions),
+    ...buildTurnHandlers(serverOptions),
   };
   const listener = Deno.listen({ transport: "unix", path: socketPath });
   const peers = new Set<JsonRpcPeer>();
@@ -1300,6 +1309,12 @@ export async function serveWorkbenchUnix(
   return {
     socketPath,
     async close() {
+      let shutdownError: unknown;
+      try {
+        await acpSessions.shutdown();
+      } catch (error) {
+        shutdownError = error;
+      }
       try {
         listener.close();
       } catch {
@@ -1312,6 +1327,7 @@ export async function serveWorkbenchUnix(
       } catch {
         // already gone
       }
+      if (shutdownError !== undefined) throw shutdownError;
     },
   };
 }

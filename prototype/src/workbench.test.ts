@@ -135,6 +135,7 @@ const runtimeMocks = vi.hoisted(() => {
       workspaceRootIdentity?: { dev: number | null; ino: number | null };
     }>,
     askContextError: null as Error | null,
+    stubExternalAgent: false,
   };
 });
 
@@ -186,7 +187,7 @@ vi.mock("./utils", () => ({
 
 vi.mock("./provider", async (importOriginal) => {
   const estimateExport = "estimateText" + "To" + "kens";
-  // Only the six pure, side-effect-free error classes stay real — workbench.ts
+  // Only the pure, side-effect-free error classes stay real — workbench.ts
   // imports them statically to build classifyErrorKind's known-class table.
   // Deliberately no `...actual` spread: the full namespace would silently carry
   // network-capable exports (fetchWithHeaderTimeout) into the mock.
@@ -195,6 +196,7 @@ vi.mock("./provider", async (importOriginal) => {
     HostedProviderCredentialMissingError,
     WorkbenchHostedProviderBaseUrlError,
     WorkbenchLocalProviderBaseUrlError,
+    WorkbenchModelFastSpeedUnsupportedError,
     WorkbenchModelNotFoundError,
     WorkbenchModelNotRoutableError,
   } = await importOriginal<typeof import("./provider")>();
@@ -203,6 +205,7 @@ vi.mock("./provider", async (importOriginal) => {
     HostedProviderCredentialMissingError,
     WorkbenchHostedProviderBaseUrlError,
     WorkbenchLocalProviderBaseUrlError,
+    WorkbenchModelFastSpeedUnsupportedError,
     WorkbenchModelNotFoundError,
     WorkbenchModelNotRoutableError,
     defaultLocalWorkbenchModels: () => [runtimeMocks.model],
@@ -436,6 +439,45 @@ vi.mock("./sessions", () => ({
   },
 }));
 
+vi.mock("./external-agent-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./external-agent-runtime")>();
+  return {
+    ...actual,
+    runExternalAgentWorkbenchRuntime: (
+      input: Parameters<typeof actual.runExternalAgentWorkbenchRuntime>[0],
+      dependencies?: Parameters<typeof actual.runExternalAgentWorkbenchRuntime>[1],
+    ) => {
+      if (!runtimeMocks.stubExternalAgent) {
+        return actual.runExternalAgentWorkbenchRuntime(input, dependencies);
+      }
+      return Promise.resolve({
+        sessionId: input.sessionId ?? "01ACPSTUB00000000000000001",
+        traceId: "0123456789abcdef0123456789abcdef",
+        stopReason: "stop" as const,
+        text: "stubbed",
+        receipt: "stubbed receipt",
+        runner: {
+          kind: "external_agent" as const,
+          profile: input.runner.profile,
+          protocol: "acp" as const,
+          capabilities: [],
+          workspace: input.workspaceRoot ?? Deno.cwd(),
+          transport: "local_stdio" as const,
+          costBasis: "unknown" as const,
+          evidence: {
+            source: "acp" as const,
+            innerState: "opaque" as const,
+            toolchainDirectoryCount: 0 as const,
+          },
+          elapsedMs: 1,
+        },
+        route: { reason: "explicit_external_agent" },
+        context: { sources: [] },
+      });
+    },
+  };
+});
+
 beforeEach(() => {
   // Ceiling confirmations persist per scope by design; tests need isolation.
   resetCeilingConfirmations();
@@ -449,6 +491,7 @@ beforeEach(() => {
   runtimeMocks.agentsInstructions = null;
   runtimeMocks.askContextOptions.length = 0;
   runtimeMocks.askContextError = null;
+  runtimeMocks.stubExternalAgent = false;
   runtimeMocks.sessionWorkspace = null;
   runtimeMocks.sessionWorkspaceThrows = false;
   runtimeMocks.failEventMessage = null;
@@ -1259,6 +1302,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
   });
 
   test("allows an explicit Codex ChatGPT runner request when paid escalation is confirmed", async () => {
+    runtimeMocks.stubExternalAgent = true;
     const result = await runWorkbenchRuntime({
       mode: "turn",
       prompt: "inspect",
@@ -1297,6 +1341,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
   });
 
   test("allows a tier-2 ACP request when paid escalation is confirmed", async () => {
+    runtimeMocks.stubExternalAgent = true;
     runtimeMocks.registry = [
       {
         slug: "codex-chatgpt/gpt-5.6-terra",

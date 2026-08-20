@@ -125,6 +125,43 @@ export interface AcpRunResult {
   elapsedMs: number;
 }
 
+export interface AcpPromptInput {
+  prompt: string;
+  abortSignal?: AbortSignal;
+  onTextDelta?: (text: string) => void;
+  onProgress?: AcpRunInput["onProgress"];
+  confirmPermission?: AcpRunInput["confirmPermission"];
+  onPermissionVerdict?: AcpRunInput["onPermissionVerdict"];
+}
+
+export interface AcpSessionStartInput {
+  profile: AcpExecutionProfile;
+  abortSignal?: AbortSignal;
+  onRouteVerified?: AcpRunInput["onRouteVerified"];
+  onBroken?: () => void;
+}
+
+export interface AcpSessionHandle {
+  readonly isAlive: boolean;
+  readonly routeEvidence?: AcpRouteEvidence;
+  prompt(input: AcpPromptInput): Promise<AcpRunResult>;
+  close(): Promise<void>;
+}
+
+type LiveSdkSession = {
+  sessionId: string;
+  prompt: (text: string) => Promise<unknown>;
+  nextUpdate: () => Promise<
+    | {
+      kind: "session_update";
+      notification: { sessionId: string };
+      update: unknown;
+    }
+    | { kind: "prompt"; stopReason: AcpStopReason }
+  >;
+  dispose: () => void;
+};
+
 export class AcpRunnerError extends Error {
   constructor(
     message: string,
@@ -242,7 +279,9 @@ export class ActivePromptDeadline {
   }
 }
 
-class AcpAbortRequested extends Error {}
+export class AcpAbortRequested extends Error {
+  override readonly name = "AcpAbortRequested";
+}
 
 interface ManagedAcpChild {
   pid: number;
@@ -366,10 +405,7 @@ async function spawnAcpChild(
     );
   }
   if (useProcessGroup) {
-    await assertProcessGroupSignaler(
-      "/bin/kill",
-      profile.terminationTimeoutMs ?? DEFAULT_TERMINATION_TIMEOUT_MS,
-    );
+    await assertProcessGroupSignaler("/bin/kill");
   }
   let child: ChildProcessWithoutNullStreams;
   try {
@@ -1038,13 +1074,17 @@ async function terminateChild(
   await withTimeout(child.status, timeoutMs, "terminate");
 }
 
+export async function startAcpSession(
+  input: AcpSessionStartInput,
+): Promise<AcpSessionHandle> {
+  assertProfile(input.profile);
+  return await LiveAcpSession.open(input);
+}
+
 export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
   assertProfile(input.profile);
   assertAcpPromptWithinLimit(input.prompt);
   const startedAt = Date.now();
-  const profile = input.profile;
-  const sessionUpdateLimit = resolveSessionUpdateLimit(profile);
-  const protocolMessageLimit = resolveProtocolMessageLimit(profile);
   const abortedResult = (evidence: {
     protocolVersion?: number;
     externalSessionId?: string;
@@ -1057,6 +1097,10 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
     return {
       text: "",
       stopReason: "aborted",
+      protocolVersion: undefined,
+      externalSessionId: undefined,
+      agentName: undefined,
+      agentVersion: undefined,
       ...verifiedEvidence,
       capabilities: evidence.capabilities ?? [],
       ...(routeEvidence === undefined ? {} : { routeEvidence }),
@@ -1064,72 +1108,667 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
     };
   };
   if (input.abortSignal?.aborted) return abortedResult();
-  const child = await spawnAcpChild(profile);
-  const stderr = drainStream(child.stderr, MAX_CHILD_STDERR_BYTES);
-  let activeSessionId: string | undefined;
-  let cancelRequested = false;
-  let cancelDeadline: number | undefined;
-  let cancelPromise: Promise<void> | undefined;
-  let protocolError: AcpRunnerError | undefined;
-  let routeVerificationError: unknown;
-  let primaryFailure: unknown;
-  let permissionCount = 0;
-  const protocolErrorRaised = Promise.withResolvers<void>();
-  const permissionWindowClosed = Promise.withResolvers<void>();
-  const permissionWindowController = new AbortController();
-  let permissionsClosed = false;
-  const pendingPermissionVerdicts = new Set<Promise<void>>();
-  let activePermissionRequests = 0;
-  let permissionRequestsSettled = Promise.withResolvers<void>();
-  permissionRequestsSettled.resolve();
-  let pendingPermissionConfirmations = 0;
-  let permissionConfirmationsSettled = Promise.withResolvers<void>();
-  permissionConfirmationsSettled.resolve();
-  let promptDeadline: ActivePromptDeadline | undefined;
-  let promptDeadlineChanged = Promise.withResolvers<void>();
-  const notifyPromptDeadlineChanged = () => {
-    promptDeadlineChanged.resolve();
-    promptDeadlineChanged = Promise.withResolvers<void>();
-  };
-  const beginPermissionConfirmation = () => {
-    if (pendingPermissionConfirmations === 0) {
-      permissionConfirmationsSettled = Promise.withResolvers<void>();
-      promptDeadline?.pause();
-      notifyPromptDeadlineChanged();
+  let session: AcpSessionHandle | undefined;
+  try {
+    session = await startAcpSession(input);
+    return await session.prompt(input);
+  } catch (error) {
+    if (error instanceof AcpAbortRequested) {
+      return abortedResult();
     }
-    pendingPermissionConfirmations += 1;
-  };
-  const endPermissionConfirmation = () => {
-    pendingPermissionConfirmations -= 1;
-    if (pendingPermissionConfirmations === 0) {
-      promptDeadline?.resume();
-      permissionConfirmationsSettled.resolve();
-      notifyPromptDeadlineChanged();
+    throw error;
+  } finally {
+    if (session !== undefined) await session.close();
+  }
+}
+
+class LiveAcpSession implements AcpSessionHandle {
+  readonly #profile: AcpExecutionProfile;
+  readonly #startAbort?: AbortSignal;
+  readonly #onRouteVerified?: AcpRunInput["onRouteVerified"];
+  readonly #onBroken?: () => void;
+  readonly #sessionUpdateLimit: number;
+  readonly #protocolMessageLimit: number;
+  readonly #ready = Promise.withResolvers<void>();
+  readonly #finished = Promise.withResolvers<void>();
+  readonly #protocolErrorRaised = Promise.withResolvers<void>();
+  #child: ManagedAcpChild | undefined;
+  #stderr: ReturnType<typeof drainStream> | undefined;
+  #sdkSession: LiveSdkSession | undefined;
+  #context: {
+    request: (method: unknown, params: unknown) => Promise<unknown>;
+    notify: (method: unknown, params: unknown) => Promise<void>;
+  } | undefined;
+  #connection: Promise<unknown> | undefined;
+  #logicallyClosed = false;
+  #connectionFailed = false;
+  #closePromise: Promise<void> | undefined;
+  #prompting = false;
+  #protocolError: AcpRunnerError | undefined;
+  #routeVerificationError: unknown;
+  #primaryFailure: unknown;
+  #currentPrompt: AcpPromptInput | undefined;
+  #permissionsClosed = true;
+  #permissionWindowController = new AbortController();
+  #permissionWindowClosed = Promise.withResolvers<void>();
+  #pendingPermissionVerdicts = new Set<Promise<void>>();
+  #activePermissionRequests = 0;
+  #permissionRequestsSettled = Promise.withResolvers<void>();
+  #pendingPermissionConfirmations = 0;
+  #permissionConfirmationsSettled = Promise.withResolvers<void>();
+  #promptDeadline: ActivePromptDeadline | undefined;
+  #promptDeadlineChanged = Promise.withResolvers<void>();
+  #permissionCount = 0;
+  #cancelRequested = false;
+  #cancelDeadline: number | undefined;
+  #cancelPromise: Promise<void> | undefined;
+  #activeSessionId: string | undefined;
+  #protocolVersion: number | undefined;
+  #externalSessionId: string | undefined;
+  #agentName: string | undefined;
+  #agentVersion: string | undefined;
+  #capabilities: string[] = [];
+  #routeEvidence: AcpRouteEvidence | undefined;
+  #closeCapability = false;
+  #lifecycleAbort = Promise.withResolvers<void>();
+
+  constructor(input: AcpSessionStartInput) {
+    this.#profile = input.profile;
+    this.#startAbort = input.abortSignal;
+    this.#onRouteVerified = input.onRouteVerified;
+    this.#onBroken = input.onBroken;
+    this.#sessionUpdateLimit = resolveSessionUpdateLimit(input.profile);
+    this.#protocolMessageLimit = resolveProtocolMessageLimit(input.profile);
+    this.#permissionRequestsSettled.resolve();
+    this.#permissionConfirmationsSettled.resolve();
+  }
+
+  static async open(input: AcpSessionStartInput): Promise<LiveAcpSession> {
+    const session = new LiveAcpSession(input);
+    try {
+      await session.#start();
+      return session;
+    } catch (error) {
+      await session.#reapPartial();
+      throw error;
     }
-  };
-  const closePermissionWindow = () => {
-    if (permissionsClosed) return;
-    permissionsClosed = true;
-    permissionWindowController.abort();
-    permissionWindowClosed.resolve();
-  };
-  const waitForPendingPermissionWork = async (): Promise<void> => {
-    while (activePermissionRequests > 0) {
-      await permissionRequestsSettled.promise;
+  }
+
+  get isAlive(): boolean {
+    if (this.#logicallyClosed || this.#connectionFailed) return false;
+    if (this.#protocolError !== undefined) return false;
+    if (this.#child?.hasExited()) return false;
+    return this.#sdkSession !== undefined;
+  }
+
+  get routeEvidence(): AcpRouteEvidence | undefined {
+    return this.#routeEvidence;
+  }
+
+  async prompt(input: AcpPromptInput): Promise<AcpRunResult> {
+    assertAcpPromptWithinLimit(input.prompt);
+    const startedAt = Date.now();
+    if (!this.isAlive || this.#sdkSession === undefined || this.#context === undefined) {
+      throw new AcpRunnerError("ACP session is not alive", "prompt");
     }
-    while (pendingPermissionConfirmations > 0) {
-      await permissionConfirmationsSettled.promise;
+    if (this.#prompting) {
+      throw new AcpRunnerError("ACP session is not alive", "prompt");
     }
-    await Promise.all([...pendingPermissionVerdicts]);
-    if (protocolError !== undefined) throw protocolError;
-  };
-  const trackPermissionRequest = async <T>(
-    operation: () => Promise<T>,
-  ): Promise<T> => {
-    if (activePermissionRequests === 0) {
-      permissionRequestsSettled = Promise.withResolvers<void>();
+    this.#prompting = true;
+    this.#currentPrompt = input;
+    this.#permissionCount = 0;
+    this.#cancelRequested = false;
+    this.#cancelDeadline = undefined;
+    this.#cancelPromise = undefined;
+    this.#permissionsClosed = false;
+    this.#permissionWindowController = new AbortController();
+    this.#permissionWindowClosed = Promise.withResolvers<void>();
+    const session = this.#sdkSession;
+    const resultEvidence = {
+      protocolVersion: this.#protocolVersion,
+      externalSessionId: this.#externalSessionId,
+      agentName: this.#agentName,
+      agentVersion: this.#agentVersion,
+      capabilities: this.#capabilities,
+      routeEvidence: this.#routeEvidence,
+    };
+    const abortRequested = Promise.withResolvers<void>();
+    const requestCancel = () => {
+      if (this.#cancelRequested) return;
+      this.#cancelRequested = true;
+      this.#cancelDeadline = Date.now() +
+        (this.#profile.cancellationTimeoutMs ?? DEFAULT_CANCELLATION_TIMEOUT_MS);
+      this.#cancelPromise = this.#context!.notify(methods.agent.session.cancel, {
+        sessionId: session.sessionId,
+      });
+    };
+    const requestCancelAndWake = () => {
+      this.#closePermissionWindow();
+      requestCancel();
+      abortRequested.resolve();
+    };
+    input.abortSignal?.addEventListener("abort", requestCancelAndWake, { once: true });
+    try {
+      if (input.abortSignal?.aborted) {
+        return {
+          text: "",
+          stopReason: "aborted" as const,
+          ...resultEvidence,
+          elapsedMs: Date.now() - startedAt,
+        };
+      }
+      this.#promptDeadline = new ActivePromptDeadline(
+        this.#profile.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS,
+      );
+      if (this.#pendingPermissionConfirmations > 0) this.#promptDeadline.pause();
+      const promptFailed = Promise.withResolvers<void>();
+      void session.prompt(input.prompt).catch(() => {
+        promptFailed.resolve();
+      });
+      if (input.abortSignal?.aborted) requestCancelAndWake();
+      let text = "";
+      let updateCount = 0;
+      let pendingUpdate = session.nextUpdate();
+      while (true) {
+        const next = Promise.race([
+          pendingUpdate.then(
+            (message) => ({
+              kind: "message" as const,
+              message,
+            }),
+            () => ({
+              kind: "prompt_failure" as const,
+            }),
+          ),
+          this.#protocolErrorRaised.promise.then(() => ({
+            kind: "protocol" as const,
+          })),
+          promptFailed.promise.then(() => ({
+            kind: "prompt_failure" as const,
+          })),
+          ...(!this.#cancelRequested
+            ? [this.#promptDeadlineChanged.promise.then(() => ({
+              kind: "prompt_deadline_changed" as const,
+            }))]
+            : []),
+          ...(this.#cancelRequested ? [] : [abortRequested.promise.then(() => ({
+            kind: "cancel" as const,
+          }))]),
+        ]);
+        const timeoutMs = this.#cancelRequested
+          ? Math.max(1, (this.#cancelDeadline ?? Date.now()) - Date.now())
+          : this.#promptDeadline.isPaused
+          ? undefined
+          : this.#promptDeadline.remainingMs;
+        if (timeoutMs !== undefined && timeoutMs <= 0) {
+          throw new AcpRunnerError(
+            `ACP ${this.#cancelRequested ? "cancel" : "prompt"} timed out`,
+            this.#cancelRequested ? "cancel" : "prompt",
+          );
+        }
+        const outcome = timeoutMs === undefined
+          ? await next
+          : await withTimeout(
+            next,
+            timeoutMs,
+            this.#cancelRequested ? "cancel" : "prompt",
+          );
+        if (outcome.kind === "cancel") continue;
+        if (outcome.kind === "prompt_deadline_changed") continue;
+        if (outcome.kind === "protocol") {
+          throw this.#protocolError ?? new AcpRunnerError(
+            "ACP protocol exchange failed",
+            "protocol",
+          );
+        }
+        if (outcome.kind === "prompt_failure") {
+          throw new AcpRunnerError(
+            "ACP prompt request failed before the turn completed",
+            "prompt",
+          );
+        }
+        if (this.#protocolError !== undefined) throw this.#protocolError;
+        const message = outcome.message;
+        if (message.kind === "session_update") {
+          updateCount += 1;
+          if (updateCount > this.#sessionUpdateLimit) {
+            throw new AcpSessionUpdateLimitError();
+          }
+          if (message.notification.sessionId !== session.sessionId) {
+            throw new AcpRunnerError(
+              "ACP agent sent a cross-session update",
+              "protocol",
+            );
+          }
+          const updateRecord = message.update as unknown as Record<string, unknown>;
+          const delta = textFromUpdate(updateRecord);
+          if (delta !== null) {
+            text += delta;
+            input.onTextDelta?.(delta);
+          }
+          if (isThoughtUpdate(updateRecord)) {
+            deliverProgress(input.onProgress, { kind: "thought" });
+          }
+          const toolProgress = toolCallProgressFromUpdate(updateRecord);
+          if (toolProgress !== null) {
+            deliverProgress(input.onProgress, toolProgress);
+          }
+          pendingUpdate = session.nextUpdate();
+          continue;
+        }
+        const cancellationPrecededTerminal = this.#cancelRequested;
+        this.#closePermissionWindow();
+        await this.#waitForPendingPermissionWork();
+        if (cancellationPrecededTerminal && this.#cancelPromise !== undefined) {
+          await withTimeout(
+            this.#cancelPromise,
+            Math.max(1, (this.#cancelDeadline ?? Date.now()) - Date.now()),
+            "cancel",
+          );
+        }
+        const stopReason = normalizeStopReason(message.stopReason);
+        if (cancellationPrecededTerminal && stopReason !== "aborted") {
+          throw new AcpRunnerError(
+            "ACP cancellation was not acknowledged",
+            "cancel",
+          );
+        }
+        return {
+          text,
+          stopReason,
+          acpStopReason: message.stopReason,
+          ...resultEvidence,
+          elapsedMs: Date.now() - startedAt,
+        };
+      }
+    } catch (error) {
+      if (this.#protocolError !== undefined) {
+        this.#primaryFailure = this.#protocolError;
+        this.#onBroken?.();
+        throw this.#protocolError;
+      }
+      if (error instanceof AcpAbortRequested) {
+        return {
+          text: "",
+          stopReason: "aborted",
+          ...resultEvidence,
+          elapsedMs: Date.now() - startedAt,
+        };
+      }
+      if (error instanceof AcpRunnerError || error instanceof DomainError) {
+        this.#primaryFailure = error;
+        this.#onBroken?.();
+        throw error;
+      }
+      this.#primaryFailure = new AcpRunnerError(
+        "ACP prompt exchange ended before a terminal response",
+        "prompt",
+      );
+      this.#onBroken?.();
+      throw this.#primaryFailure;
+    } finally {
+      this.#closePermissionWindow();
+      input.abortSignal?.removeEventListener("abort", requestCancelAndWake);
+      this.#prompting = false;
+      this.#currentPrompt = undefined;
     }
-    activePermissionRequests += 1;
+  }
+
+  close(): Promise<void> {
+    this.#logicallyClosed = true;
+    this.#closePromise ??= this.#closeOnce();
+    return this.#closePromise;
+  }
+
+  async #start(): Promise<void> {
+    if (this.#startAbort?.aborted) throw new AcpAbortRequested();
+    const profile = this.#profile;
+    const child = await spawnAcpChild(profile);
+    this.#child = child;
+    this.#stderr = drainStream(child.stderr, MAX_CHILD_STDERR_BYTES);
+    void child.status.then(() => {
+      if (!this.#logicallyClosed) {
+        this.#connectionFailed = true;
+        this.#onBroken?.();
+        this.#finished.resolve();
+      }
+    });
+    const noteLifecycleAbort = () => {
+      this.#closePermissionWindow();
+      this.#lifecycleAbort.resolve();
+    };
+    this.#startAbort?.addEventListener("abort", noteLifecycleAbort, { once: true });
+    if (this.#startAbort?.aborted) noteLifecycleAbort();
+    const abortableLifecycle = <T>(promise: Promise<T>): Promise<T> =>
+      Promise.race([
+        promise,
+        this.#lifecycleAbort.promise.then(() => {
+          throw new AcpAbortRequested();
+        }),
+      ]);
+    const app = client({ name: "dyfj-workbench" })
+      .onNotification(methods.client.session.update, ({ params }) => {
+        if (
+          this.#activeSessionId !== undefined &&
+          params.sessionId !== this.#activeSessionId
+        ) {
+          this.#noteProtocolError(
+            new AcpRunnerError(
+              "ACP agent sent a cross-session update",
+              "protocol",
+            ),
+          );
+        }
+      })
+      .onRequest(
+        methods.client.session.requestPermission,
+        ({ params }) => this.#handlePermissionRequest(params),
+      );
+    this.#connection = app.connectWith(
+      ndJsonStream(
+        child.stdin,
+        guardedProtocolInput(
+          child.stdout,
+          () => this.#activeSessionId,
+          (error) => this.#noteProtocolError(error),
+          this.#sessionUpdateLimit,
+          this.#protocolMessageLimit,
+        ),
+      ),
+      async (context) => {
+        try {
+          const initialized = await withTimeout(
+            abortableLifecycle(context.request(methods.agent.initialize, {
+              protocolVersion: PROTOCOL_VERSION,
+              clientCapabilities: {},
+              clientInfo: { name: "dyfj-workbench", version: "0.1.0" },
+            })),
+            profile.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS,
+            "initialize",
+          );
+          if (initialized.protocolVersion !== PROTOCOL_VERSION) {
+            throw new AcpRunnerError(
+              "ACP agent negotiated an unsupported protocol version",
+              "initialize",
+            );
+          }
+          this.#protocolVersion = initialized.protocolVersion;
+          this.#capabilities = capabilityNames(initialized.agentCapabilities);
+          this.#agentName = initialized.agentInfo?.name === undefined
+            ? undefined
+            : sanitizeBoundaryText(
+              initialized.agentInfo.name,
+              MAX_AGENT_NAME_BYTES,
+            );
+          this.#agentVersion = initialized.agentInfo?.version === undefined
+            ? undefined
+            : sanitizeBoundaryText(
+              initialized.agentInfo.version,
+              MAX_AGENT_VERSION_BYTES,
+            );
+          this.#closeCapability =
+            !!initialized.agentCapabilities?.sessionCapabilities?.close;
+          let pendingRouteEvidence: AcpRouteEvidence;
+          if (profile.requiredAuthentication === "chat-gpt") {
+            let authenticationStatus: unknown;
+            try {
+              authenticationStatus = await withTimeout(
+                abortableLifecycle(
+                  (context as unknown as {
+                    request: (
+                      method: string,
+                      params: Record<string, never>,
+                    ) => Promise<unknown>;
+                  }).request("authentication/status", {}),
+                ),
+                profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+                "authenticate",
+              );
+            } catch (error) {
+              if (error instanceof AcpAbortRequested) throw error;
+              throw new AcpAuthenticationEvidenceError();
+            }
+            if (
+              typeof authenticationStatus !== "object" ||
+              authenticationStatus === null ||
+              Array.isArray(authenticationStatus) ||
+              typeof (authenticationStatus as { type?: unknown }).type !==
+                "string"
+            ) {
+              throw new AcpAuthenticationEvidenceError();
+            }
+            const authenticationType = (authenticationStatus as {
+              type: string;
+            }).type;
+            if (authenticationType === "unauthenticated") {
+              throw new AcpAuthenticationRequiredError();
+            }
+            if (
+              authenticationType === "api-key" ||
+              authenticationType === "gateway"
+            ) {
+              throw new AcpAccessRouteMismatchError();
+            }
+            if (authenticationType !== "chat-gpt") {
+              throw new AcpAuthenticationEvidenceError();
+            }
+            pendingRouteEvidence = {
+              source: "profile_declared",
+              authenticationType: "chat-gpt",
+            };
+          } else {
+            pendingRouteEvidence = { source: "profile_declared" };
+          }
+          const routeVerificationController = new AbortController();
+          const forwardRouteAbort = () => routeVerificationController.abort();
+          this.#startAbort?.addEventListener("abort", forwardRouteAbort, {
+            once: true,
+          });
+          if (this.#startAbort?.aborted) routeVerificationController.abort();
+          try {
+            await withTimeout(
+              Promise.resolve(
+                this.#onRouteVerified?.(
+                  pendingRouteEvidence,
+                  routeVerificationController.signal,
+                ),
+              ),
+              profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+              "authenticate",
+            );
+            this.#routeEvidence = pendingRouteEvidence;
+          } catch (error) {
+            if (this.#startAbort?.aborted) throw new AcpAbortRequested();
+            this.#routeVerificationError = error;
+            throw error;
+          } finally {
+            routeVerificationController.abort();
+            this.#startAbort?.removeEventListener("abort", forwardRouteAbort);
+          }
+          const session = await withTimeout(
+            abortableLifecycle(context.buildSession(profile.workspace).start()),
+            profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+            "session",
+          );
+          this.#sdkSession = session as LiveSdkSession;
+          this.#context = {
+            request: context.request.bind(context),
+            notify: context.notify.bind(context),
+          };
+          this.#activeSessionId = session.sessionId;
+          this.#externalSessionId = sanitizeBoundaryText(
+            session.sessionId,
+            MAX_EXTERNAL_SESSION_ID_BYTES,
+          );
+          this.#startAbort?.removeEventListener("abort", noteLifecycleAbort);
+          this.#ready.resolve();
+          await this.#finished.promise;
+        } catch (error) {
+          this.#ready.reject(error);
+          throw error;
+        } finally {
+          this.#sdkSession?.dispose();
+        }
+      },
+    );
+    void this.#connection.catch(() => {
+      this.#connectionFailed = true;
+      this.#onBroken?.();
+    });
+    try {
+      await this.#ready.promise;
+    } catch (error) {
+      if (this.#routeVerificationError !== undefined) {
+        throw this.#routeVerificationError instanceof Error
+          ? this.#routeVerificationError
+          : new AcpRunnerError(
+            "ACP route verification could not be completed",
+            "authenticate",
+          );
+      }
+      if (this.#protocolError !== undefined) throw this.#protocolError;
+      if (error instanceof AcpAbortRequested) throw error;
+      if (error instanceof AcpRunnerError || error instanceof DomainError) {
+        throw error;
+      }
+      throw new AcpRunnerError(
+        "ACP prompt exchange ended before a terminal response",
+        "prompt",
+      );
+    }
+  }
+
+  async #closeOnce(): Promise<void> {
+    this.#closePermissionWindow();
+    const terminationTimeoutMs = this.#profile.terminationTimeoutMs ??
+      DEFAULT_TERMINATION_TIMEOUT_MS;
+    try {
+      if (this.#closeCapability && this.#context !== undefined &&
+        this.#activeSessionId !== undefined) {
+        await withTimeout(
+          this.#context.request(methods.agent.session.close, {
+            sessionId: this.#activeSessionId,
+          }),
+          terminationTimeoutMs,
+          "terminate",
+        );
+      }
+    } catch (error) {
+      this.#primaryFailure ??= error;
+    }
+    this.#finished.resolve();
+    if (this.#connection !== undefined) {
+      try {
+        await withTimeout(this.#connection, terminationTimeoutMs, "terminate");
+      } catch {
+        // Connection teardown is best-effort once close has been requested.
+      }
+    }
+    if (this.#child !== undefined) {
+      try {
+        await withTimeout(
+          this.#child.stdin.close(),
+          terminationTimeoutMs,
+          "terminate",
+        );
+      } catch {
+        // The SDK may already have closed the protocol stream.
+      }
+    }
+    let terminationFailure: unknown;
+    try {
+      if (this.#child !== undefined) {
+        await terminateChild(this.#child, terminationTimeoutMs);
+      }
+    } catch (error) {
+      terminationFailure = error;
+    } finally {
+      if (this.#stderr !== undefined) {
+        await settleDrain(this.#stderr, terminationTimeoutMs);
+      }
+    }
+    if (terminationFailure !== undefined) {
+      if (this.#primaryFailure === undefined) throw terminationFailure;
+      if (this.#primaryFailure instanceof Error) {
+        Object.defineProperty(this.#primaryFailure, "cause", {
+          configurable: true,
+          value: terminationFailure,
+        });
+      }
+      throw this.#primaryFailure;
+    }
+    if (
+      this.#primaryFailure instanceof AcpRunnerError &&
+      this.#primaryFailure.phase === "terminate"
+    ) {
+      throw this.#primaryFailure;
+    }
+  }
+
+  async #reapPartial(): Promise<void> {
+    this.#logicallyClosed = true;
+    this.#finished.resolve();
+    void this.#ready.promise.catch(() => {});
+    this.#ready.reject(new AcpRunnerError("ACP session start failed", "spawn"));
+    try {
+      await this.#closeOnce();
+    } catch {
+      // Partial creation cleanup is best-effort; the original error is thrown.
+    }
+  }
+
+  #noteProtocolError(error: AcpRunnerError): void {
+    this.#protocolError ??= error;
+    this.#protocolErrorRaised.resolve();
+    this.#onBroken?.();
+  }
+
+  #notifyPromptDeadlineChanged(): void {
+    this.#promptDeadlineChanged.resolve();
+    this.#promptDeadlineChanged = Promise.withResolvers<void>();
+  }
+
+  #beginPermissionConfirmation(): void {
+    if (this.#pendingPermissionConfirmations === 0) {
+      this.#permissionConfirmationsSettled = Promise.withResolvers<void>();
+      this.#promptDeadline?.pause();
+      this.#notifyPromptDeadlineChanged();
+    }
+    this.#pendingPermissionConfirmations += 1;
+  }
+
+  #endPermissionConfirmation(): void {
+    this.#pendingPermissionConfirmations -= 1;
+    if (this.#pendingPermissionConfirmations === 0) {
+      this.#promptDeadline?.resume();
+      this.#permissionConfirmationsSettled.resolve();
+      this.#notifyPromptDeadlineChanged();
+    }
+  }
+
+  #closePermissionWindow(): void {
+    if (this.#permissionsClosed) return;
+    this.#permissionsClosed = true;
+    this.#permissionWindowController.abort();
+    this.#permissionWindowClosed.resolve();
+  }
+
+  async #waitForPendingPermissionWork(): Promise<void> {
+    while (this.#activePermissionRequests > 0) {
+      await this.#permissionRequestsSettled.promise;
+    }
+    while (this.#pendingPermissionConfirmations > 0) {
+      await this.#permissionConfirmationsSettled.promise;
+    }
+    await Promise.all([...this.#pendingPermissionVerdicts]);
+    if (this.#protocolError !== undefined) throw this.#protocolError;
+  }
+
+  async #trackPermissionRequest<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#activePermissionRequests === 0) {
+      this.#permissionRequestsSettled = Promise.withResolvers<void>();
+    }
+    this.#activePermissionRequests += 1;
     try {
       return await operation();
     } catch (error) {
@@ -1139,672 +1778,247 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
           "ACP permission exchange could not be completed",
           "permission",
         );
-      noteProtocolError(contained);
+      this.#noteProtocolError(contained);
       throw contained;
     } finally {
-      activePermissionRequests -= 1;
-      if (activePermissionRequests === 0) permissionRequestsSettled.resolve();
+      this.#activePermissionRequests -= 1;
+      if (this.#activePermissionRequests === 0) {
+        this.#permissionRequestsSettled.resolve();
+      }
     }
-  };
-  const noteProtocolError = (error: AcpRunnerError): void => {
-    protocolError ??= error;
-    protocolErrorRaised.resolve();
-  };
-  const recordPermissionVerdict = (
-    verdict: AcpPermissionVerdict,
-  ): Promise<void> => {
-    if (input.onPermissionVerdict === undefined) return Promise.resolve();
+  }
+
+  #recordPermissionVerdict(verdict: AcpPermissionVerdict): Promise<void> {
+    const prompt = this.#currentPrompt;
+    if (prompt?.onPermissionVerdict === undefined) return Promise.resolve();
     const operation = (async () => {
       const controller = new AbortController();
       const forwardAbort = () => controller.abort();
       if (verdict.decision !== "cancel") {
-        input.abortSignal?.addEventListener("abort", forwardAbort, {
+        prompt.abortSignal?.addEventListener("abort", forwardAbort, {
           once: true,
         });
-        permissionWindowController.signal.addEventListener(
+        this.#permissionWindowController.signal.addEventListener(
           "abort",
           forwardAbort,
           { once: true },
         );
-        if (input.abortSignal?.aborted) controller.abort();
-        if (permissionWindowController.signal.aborted) controller.abort();
+        if (prompt.abortSignal?.aborted) controller.abort();
+        if (this.#permissionWindowController.signal.aborted) controller.abort();
       }
       try {
         await withTimeout(
           Promise.resolve(
-            input.onPermissionVerdict!(verdict, controller.signal),
+            prompt.onPermissionVerdict!(verdict, controller.signal),
           ),
-          profile.permissionVerdictTimeoutMs ??
+          this.#profile.permissionVerdictTimeoutMs ??
             DEFAULT_PERMISSION_VERDICT_TIMEOUT_MS,
           "permission",
         );
       } finally {
         controller.abort();
-        input.abortSignal?.removeEventListener("abort", forwardAbort);
-        permissionWindowController.signal.removeEventListener(
+        prompt.abortSignal?.removeEventListener("abort", forwardAbort);
+        this.#permissionWindowController.signal.removeEventListener(
           "abort",
           forwardAbort,
         );
       }
     })();
-    const settled = operation.then(
-      () => undefined,
-      () => undefined,
-    );
-    pendingPermissionVerdicts.add(settled);
-    void settled.finally(() => pendingPermissionVerdicts.delete(settled));
+    const settled = operation.then(() => undefined, () => undefined);
+    this.#pendingPermissionVerdicts.add(settled);
+    void settled.finally(() => this.#pendingPermissionVerdicts.delete(settled));
     return operation;
-  };
-  let protocolVersion: number | undefined;
-  let externalSessionId: string | undefined;
-  let agentName: string | undefined;
-  let agentVersion: string | undefined;
-  let capabilities: string[] = [];
-  let routeEvidence: AcpRouteEvidence | undefined;
-  const lifecycleAbort = Promise.withResolvers<void>();
-  const noteLifecycleAbort = () => {
-    closePermissionWindow();
-    lifecycleAbort.resolve();
-  };
-  const abortableLifecycle = <T>(promise: Promise<T>): Promise<T> =>
-    Promise.race([
-      promise,
-      lifecycleAbort.promise.then(() => {
-        throw new AcpAbortRequested();
-      }),
-    ]);
-  input.abortSignal?.addEventListener("abort", noteLifecycleAbort, {
-    once: true,
-  });
-  if (input.abortSignal?.aborted) noteLifecycleAbort();
+  }
 
-  const app = client({ name: "dyfj-workbench" })
-    .onNotification(methods.client.session.update, ({ params }) => {
-      if (
-        activeSessionId !== undefined && params.sessionId !== activeSessionId
-      ) {
-        noteProtocolError(
+  #handlePermissionRequest(
+    params: RequestPermissionRequest,
+  ): Promise<{ outcome: { outcome: "cancelled" } | { outcome: "selected"; optionId: string } }> {
+    return this.#trackPermissionRequest(async () => {
+      if (this.#permissionsClosed || this.#currentPrompt === undefined) {
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      if (params.sessionId !== this.#activeSessionId) {
+        this.#noteProtocolError(
           new AcpRunnerError(
-            "ACP agent sent a cross-session update",
+            "ACP agent sent a cross-session permission request",
             "protocol",
           ),
         );
+        return { outcome: { outcome: "cancelled" as const } };
       }
-    })
-    .onRequest(
-      methods.client.session.requestPermission,
-      ({ params }) =>
-        trackPermissionRequest(async () => {
-          if (permissionsClosed) {
-            return { outcome: { outcome: "cancelled" } };
-          }
-          if (params.sessionId !== activeSessionId) {
-            noteProtocolError(
-              new AcpRunnerError(
-                "ACP agent sent a cross-session permission request",
-                "protocol",
-              ),
-            );
-            return { outcome: { outcome: "cancelled" } };
-          }
-          permissionCount += 1;
-          if (permissionCount > MAX_PERMISSION_REQUESTS) {
-            noteProtocolError(
-              new AcpRunnerError(
-                "ACP agent exceeded the permission-request limit",
-                "protocol",
-              ),
-            );
-            return { outcome: { outcome: "cancelled" } };
-          }
-          if (
-            params.options.length === 0 ||
-            params.options.length > MAX_PERMISSION_OPTIONS
-          ) {
-            noteProtocolError(
-              new AcpRunnerError(
-                params.options.length === 0
-                  ? "ACP agent sent an empty permission option list"
-                  : "ACP agent exceeded the permission-option limit",
-                "protocol",
-              ),
-            );
-            return { outcome: { outcome: "cancelled" } };
-          }
-          const optionIds = new Set<string>();
-          for (const option of params.options) {
-            if (option.optionId.length === 0) {
-              noteProtocolError(
-                new AcpRunnerError(
-                  "ACP agent sent an empty permission option identifier",
-                  "protocol",
-                ),
-              );
-              return { outcome: { outcome: "cancelled" } };
-            }
-            if (optionIds.has(option.optionId)) {
-              noteProtocolError(
-                new AcpRunnerError(
-                  "ACP agent sent duplicate permission option identifiers",
-                  "protocol",
-                ),
-              );
-              return { outcome: { outcome: "cancelled" } };
-            }
-            optionIds.add(option.optionId);
-          }
-          const permissionRef = `acp-permission-${permissionCount}`;
-          const offeredOptions = params.options;
-          if (cancelRequested) {
-            await recordPermissionVerdict({
-              toolCallId: permissionRef,
-              decision: "cancel",
-              source: "policy",
-            });
-            return { outcome: { outcome: "cancelled" } };
-          }
-          const source = input.confirmPermission === undefined
-            ? "policy" as const
-            : "operator" as const;
-          const prompt = {
-            sessionId: params.sessionId,
-            toolCallId: permissionRef,
-            toolCall: {
-              title: sanitizeBoundaryText(
-                params.toolCall.title ?? "External agent action",
-                MAX_PERMISSION_TITLE_BYTES,
-              ),
-              name: params.toolCall.name === null ||
-                  params.toolCall.name === undefined
-                ? undefined
-                : sanitizeBoundaryText(
-                  params.toolCall.name,
-                  MAX_PERMISSION_LABEL_BYTES,
-                ),
-              kind: params.toolCall.kind ?? undefined,
-              inputSummary: permissionInputSummary(params.toolCall.rawInput),
-            },
-            options: offeredOptions.map(({ optionId, name, kind }) => ({
-              optionId,
-              name: sanitizeBoundaryText(name, MAX_PERMISSION_LABEL_BYTES),
-              kind,
-            })),
-          };
-          let selectionOutcome:
-            | { kind: "selection"; selection: AcpPermissionSelection }
-            | { kind: "closed" };
-          if (input.confirmPermission === undefined) {
-            selectionOutcome = {
-              kind: "selection",
-              selection: {
-                optionId: selectRejectPermissionOption(params.options),
-              },
-            };
-          } else {
-            const confirmationController = new AbortController();
-            beginPermissionConfirmation();
-            try {
-              selectionOutcome = await Promise.race([
-                Promise.resolve(
-                  input.confirmPermission(
-                    prompt,
-                    confirmationController.signal,
-                  ),
-                ).then(
-                  (selection) => ({
-                    kind: "selection" as const,
-                    selection,
-                  }),
-                ),
-                permissionWindowClosed.promise.then(() => ({
-                  kind: "closed" as const,
-                })),
-              ]);
-            } finally {
-              confirmationController.abort();
-              endPermissionConfirmation();
-            }
-          }
-          if (selectionOutcome.kind === "closed") {
-            await recordPermissionVerdict({
-              toolCallId: permissionRef,
-              decision: "cancel",
-              source: "policy",
-            });
-            return { outcome: { outcome: "cancelled" } };
-          }
-          if (cancelRequested) {
-            await recordPermissionVerdict({
-              toolCallId: permissionRef,
-              decision: "cancel",
-              source: "policy",
-            });
-            return { outcome: { outcome: "cancelled" } };
-          }
-          const selectedOption = selectionOutcome.selection.optionId === null
-            ? undefined
-            : offeredOptions.find((option) =>
-              option.optionId === selectionOutcome.selection.optionId
-            );
-          const fallbackOptionId = selectRejectPermissionOption(params.options);
-          const optionId = selectedOption?.optionId ?? fallbackOptionId;
-          const recordedDecision = selectedOption === undefined
-            ? optionId === null ? "cancel" : "deny"
-            : permissionDecisionForKind(selectedOption.kind);
-          try {
-            await recordPermissionVerdict({
-              toolCallId: permissionRef,
-              decision: recordedDecision,
-              source: optionId === null || selectedOption === undefined
-                ? "policy"
-                : selectionOutcome.selection.source ?? source,
-            });
-          } catch (error) {
-            if (!cancelRequested && !permissionsClosed) throw error;
-            await recordPermissionVerdict({
-              toolCallId: permissionRef,
-              decision: "cancel",
-              source: "policy",
-            });
-            return { outcome: { outcome: "cancelled" } };
-          }
-          if (cancelRequested || permissionsClosed) {
-            await recordPermissionVerdict({
-              toolCallId: permissionRef,
-              decision: "cancel",
-              source: "policy",
-            });
-            return { outcome: { outcome: "cancelled" } };
-          }
-          return optionId === null
-            ? { outcome: { outcome: "cancelled" } }
-            : { outcome: { outcome: "selected", optionId } };
-        }),
-    );
-
-  try {
-    return await app.connectWith(
-      ndJsonStream(
-        child.stdin,
-        guardedProtocolInput(
-          child.stdout,
-          () => activeSessionId,
-          noteProtocolError,
-          sessionUpdateLimit,
-          protocolMessageLimit,
-        ),
-      ),
-      async (context) => {
-        const initialized = await withTimeout(
-          abortableLifecycle(context.request(methods.agent.initialize, {
-            protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: {},
-            clientInfo: { name: "dyfj-workbench", version: "0.1.0" },
-          })),
-          profile.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS,
-          "initialize",
+      this.#permissionCount += 1;
+      if (this.#permissionCount > MAX_PERMISSION_REQUESTS) {
+        this.#noteProtocolError(
+          new AcpRunnerError(
+            "ACP agent exceeded the permission-request limit",
+            "protocol",
+          ),
         );
-        if (initialized.protocolVersion !== PROTOCOL_VERSION) {
-          throw new AcpRunnerError(
-            "ACP agent negotiated an unsupported protocol version",
-            "initialize",
-          );
-        }
-        protocolVersion = initialized.protocolVersion;
-        capabilities = capabilityNames(initialized.agentCapabilities);
-        agentName = initialized.agentInfo?.name === undefined
-          ? undefined
-          : sanitizeBoundaryText(
-            initialized.agentInfo.name,
-            MAX_AGENT_NAME_BYTES,
-          );
-        agentVersion = initialized.agentInfo?.version === undefined
-          ? undefined
-          : sanitizeBoundaryText(
-            initialized.agentInfo.version,
-            MAX_AGENT_VERSION_BYTES,
-          );
-        let pendingRouteEvidence: AcpRouteEvidence;
-        if (profile.requiredAuthentication === "chat-gpt") {
-          let authenticationStatus: unknown;
-          try {
-            authenticationStatus = await withTimeout(
-              abortableLifecycle(
-                (context as unknown as {
-                  request: (
-                    method: string,
-                    params: Record<string, never>,
-                  ) => Promise<unknown>;
-                }).request("authentication/status", {}),
-              ),
-              profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
-              "authenticate",
-            );
-          } catch (error) {
-            if (error instanceof AcpAbortRequested) throw error;
-            throw new AcpAuthenticationEvidenceError();
-          }
-          if (
-            typeof authenticationStatus !== "object" ||
-            authenticationStatus === null ||
-            Array.isArray(authenticationStatus) ||
-            typeof (authenticationStatus as { type?: unknown }).type !==
-              "string"
-          ) {
-            throw new AcpAuthenticationEvidenceError();
-          }
-          const authenticationType = (authenticationStatus as {
-            type: string;
-          }).type;
-          if (authenticationType === "unauthenticated") {
-            throw new AcpAuthenticationRequiredError();
-          }
-          if (
-            authenticationType === "api-key" ||
-            authenticationType === "gateway"
-          ) {
-            throw new AcpAccessRouteMismatchError();
-          }
-          if (authenticationType !== "chat-gpt") {
-            throw new AcpAuthenticationEvidenceError();
-          }
-          pendingRouteEvidence = {
-            source: "profile_declared",
-            authenticationType: "chat-gpt",
-          };
-        } else {
-          pendingRouteEvidence = { source: "profile_declared" };
-        }
-        const routeVerificationController = new AbortController();
-        const forwardRouteAbort = () => routeVerificationController.abort();
-        input.abortSignal?.addEventListener("abort", forwardRouteAbort, {
-          once: true,
-        });
-        if (input.abortSignal?.aborted) routeVerificationController.abort();
-        try {
-          await withTimeout(
-            Promise.resolve(
-              input.onRouteVerified?.(
-                pendingRouteEvidence,
-                routeVerificationController.signal,
-              ),
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      if (
+        params.options.length === 0 ||
+        params.options.length > MAX_PERMISSION_OPTIONS
+      ) {
+        this.#noteProtocolError(
+          new AcpRunnerError(
+            params.options.length === 0
+              ? "ACP agent sent an empty permission option list"
+              : "ACP agent exceeded the permission-option limit",
+            "protocol",
+          ),
+        );
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      const optionIds = new Set<string>();
+      for (const option of params.options) {
+        if (option.optionId.length === 0) {
+          this.#noteProtocolError(
+            new AcpRunnerError(
+              "ACP agent sent an empty permission option identifier",
+              "protocol",
             ),
-            profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
-            "authenticate",
           );
-          routeEvidence = pendingRouteEvidence;
-        } catch (error) {
-          if (input.abortSignal?.aborted) throw new AcpAbortRequested();
-          routeVerificationError = error;
-          throw error;
-        } finally {
-          routeVerificationController.abort();
-          input.abortSignal?.removeEventListener(
-            "abort",
-            forwardRouteAbort,
-          );
+          return { outcome: { outcome: "cancelled" as const } };
         }
-        const session = await withTimeout(
-          abortableLifecycle(context.buildSession(profile.workspace).start()),
-          profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
-          "session",
-        );
-        try {
-          activeSessionId = session.sessionId;
-          externalSessionId = sanitizeBoundaryText(
-            session.sessionId,
-            MAX_EXTERNAL_SESSION_ID_BYTES,
+        if (optionIds.has(option.optionId)) {
+          this.#noteProtocolError(
+            new AcpRunnerError(
+              "ACP agent sent duplicate permission option identifiers",
+              "protocol",
+            ),
           );
-          const closeSession = async () => {
-            if (!initialized.agentCapabilities?.sessionCapabilities?.close) {
-              return;
-            }
-            await withTimeout(
-              context.request(methods.agent.session.close, {
-                sessionId: session.sessionId,
-              }),
-              profile.terminationTimeoutMs ??
-                DEFAULT_TERMINATION_TIMEOUT_MS,
-              "terminate",
-            );
-          };
-          const resultEvidence = {
-            protocolVersion,
-            externalSessionId,
-            agentName,
-            agentVersion,
-            capabilities,
-            routeEvidence,
-          };
-          if (input.abortSignal?.aborted) {
-            await closeSession();
-            return {
-              text: "",
-              stopReason: "aborted" as const,
-              ...resultEvidence,
-              elapsedMs: Date.now() - startedAt,
-            };
-          }
-          const requestCancel = () => {
-            if (cancelRequested) return;
-            cancelRequested = true;
-            cancelDeadline = Date.now() +
-              (profile.cancellationTimeoutMs ??
-                DEFAULT_CANCELLATION_TIMEOUT_MS);
-            cancelPromise = context.notify(methods.agent.session.cancel, {
-              sessionId: session.sessionId,
-            });
-          };
-          const abortRequested = Promise.withResolvers<void>();
-          const requestCancelAndWake = () => {
-            closePermissionWindow();
-            requestCancel();
-            abortRequested.resolve();
-          };
-          input.abortSignal?.addEventListener("abort", requestCancelAndWake, {
-            once: true,
-          });
-          try {
-            promptDeadline = new ActivePromptDeadline(
-              profile.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS,
-            );
-            if (pendingPermissionConfirmations > 0) promptDeadline.pause();
-            const promptFailed = Promise.withResolvers<void>();
-            void session.prompt(input.prompt).catch(() => {
-              promptFailed.resolve();
-            });
-            if (input.abortSignal?.aborted) requestCancelAndWake();
-            let text = "";
-            let updateCount = 0;
-            let pendingUpdate = session.nextUpdate();
-            while (true) {
-              const next = Promise.race([
-                pendingUpdate.then((message) => ({
-                  kind: "message" as const,
-                  message,
-                })),
-                protocolErrorRaised.promise.then(() => ({
-                  kind: "protocol" as const,
-                })),
-                promptFailed.promise.then(() => ({
-                  kind: "prompt_failure" as const,
-                })),
-                ...(!cancelRequested
-                  ? [promptDeadlineChanged.promise.then(() => ({
-                    kind: "prompt_deadline_changed" as const,
-                  }))]
-                  : []),
-                ...(cancelRequested ? [] : [abortRequested.promise.then(() => ({
-                  kind: "cancel" as const,
-                }))]),
-              ]);
-              const timeoutMs = cancelRequested
-                ? Math.max(1, (cancelDeadline ?? Date.now()) - Date.now())
-                : promptDeadline.isPaused
-                ? undefined
-                : promptDeadline.remainingMs;
-              if (timeoutMs !== undefined && timeoutMs <= 0) {
-                throw new AcpRunnerError(
-                  `ACP ${cancelRequested ? "cancel" : "prompt"} timed out`,
-                  cancelRequested ? "cancel" : "prompt",
-                );
-              }
-              const outcome = timeoutMs === undefined
-                ? await next
-                : await withTimeout(
-                  next,
-                  timeoutMs,
-                  cancelRequested ? "cancel" : "prompt",
-                );
-              if (outcome.kind === "cancel") continue;
-              if (outcome.kind === "prompt_deadline_changed") continue;
-              if (outcome.kind === "protocol") {
-                throw protocolError ?? new AcpRunnerError(
-                  "ACP protocol exchange failed",
-                  "protocol",
-                );
-              }
-              if (outcome.kind === "prompt_failure") {
-                throw new AcpRunnerError(
-                  "ACP prompt request failed before the turn completed",
-                  "prompt",
-                );
-              }
-              if (protocolError !== undefined) throw protocolError;
-              const message = outcome.message;
-              if (message.kind === "session_update") {
-                updateCount += 1;
-                if (updateCount > sessionUpdateLimit) {
-                  throw new AcpSessionUpdateLimitError();
-                }
-                if (message.notification.sessionId !== session.sessionId) {
-                  throw new AcpRunnerError(
-                    "ACP agent sent a cross-session update",
-                    "protocol",
-                  );
-                }
-                const updateRecord = message.update as unknown as Record<
-                  string,
-                  unknown
-                >;
-                const delta = textFromUpdate(updateRecord);
-                if (delta !== null) {
-                  text += delta;
-                  input.onTextDelta?.(delta);
-                }
-                if (isThoughtUpdate(updateRecord)) {
-                  deliverProgress(input.onProgress, { kind: "thought" });
-                }
-                const toolProgress = toolCallProgressFromUpdate(updateRecord);
-                if (toolProgress !== null) {
-                  deliverProgress(input.onProgress, toolProgress);
-                }
-                pendingUpdate = session.nextUpdate();
-                continue;
-              }
-              const cancellationPrecededTerminal = cancelRequested;
-              closePermissionWindow();
-              await waitForPendingPermissionWork();
-              if (cancellationPrecededTerminal && cancelPromise !== undefined) {
-                await withTimeout(
-                  cancelPromise,
-                  Math.max(1, (cancelDeadline ?? Date.now()) - Date.now()),
-                  "cancel",
-                );
-              }
-              const stopReason = normalizeStopReason(message.stopReason);
-              if (cancellationPrecededTerminal && stopReason !== "aborted") {
-                throw new AcpRunnerError(
-                  "ACP cancellation was not acknowledged",
-                  "cancel",
-                );
-              }
-              await closeSession();
-              return {
-                text,
-                stopReason,
-                acpStopReason: message.stopReason,
-                ...resultEvidence,
-                elapsedMs: Date.now() - startedAt,
-              };
-            }
-          } finally {
-            closePermissionWindow();
-            input.abortSignal?.removeEventListener(
-              "abort",
-              requestCancelAndWake,
-            );
-          }
-        } finally {
-          session.dispose();
+          return { outcome: { outcome: "cancelled" as const } };
         }
-      },
-    );
-  } catch (error) {
-    if (routeVerificationError !== undefined) {
-      primaryFailure = routeVerificationError instanceof Error
-        ? routeVerificationError
-        : new AcpRunnerError(
-          "ACP route verification could not be completed",
-          "authenticate",
-        );
-      throw primaryFailure;
-    }
-    if (protocolError !== undefined) {
-      primaryFailure = protocolError;
-      throw protocolError;
-    }
-    if (error instanceof AcpAbortRequested) {
-      return abortedResult({
-        protocolVersion,
-        externalSessionId,
-        agentName,
-        agentVersion,
-        capabilities,
-        routeEvidence,
-      });
-    }
-    if (error instanceof AcpRunnerError || error instanceof DomainError) {
-      primaryFailure = error;
-      throw error;
-    }
-    primaryFailure = new AcpRunnerError(
-      "ACP prompt exchange ended before a terminal response",
-      "prompt",
-    );
-    throw primaryFailure;
-  } finally {
-    const terminationTimeoutMs = profile.terminationTimeoutMs ??
-      DEFAULT_TERMINATION_TIMEOUT_MS;
-    input.abortSignal?.removeEventListener("abort", noteLifecycleAbort);
-    try {
-      await withTimeout(
-        child.stdin.close(),
-        terminationTimeoutMs,
-        "terminate",
-      );
-    } catch {
-      // The SDK may already have closed the protocol stream.
-    }
-    let terminationFailure: unknown;
-    try {
-      await terminateChild(
-        child,
-        terminationTimeoutMs,
-      );
-    } catch (error) {
-      terminationFailure = error;
-    } finally {
-      await settleDrain(stderr, terminationTimeoutMs);
-    }
-    if (terminationFailure !== undefined) {
-      if (primaryFailure === undefined) throw terminationFailure;
-      if (primaryFailure instanceof Error) {
-        Object.defineProperty(primaryFailure, "cause", {
-          configurable: true,
-          value: terminationFailure,
-        });
+        optionIds.add(option.optionId);
       }
-    }
+      const permissionRef = `acp-permission-${this.#permissionCount}`;
+      const offeredOptions = params.options;
+      const input = this.#currentPrompt;
+      if (this.#cancelRequested) {
+        await this.#recordPermissionVerdict({
+          toolCallId: permissionRef,
+          decision: "cancel",
+          source: "policy",
+        });
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      const source = input.confirmPermission === undefined
+        ? "policy" as const
+        : "operator" as const;
+      const prompt = {
+        sessionId: params.sessionId,
+        toolCallId: permissionRef,
+        toolCall: {
+          title: sanitizeBoundaryText(
+            params.toolCall.title ?? "External agent action",
+            MAX_PERMISSION_TITLE_BYTES,
+          ),
+          name: params.toolCall.name === null ||
+              params.toolCall.name === undefined
+            ? undefined
+            : sanitizeBoundaryText(
+              params.toolCall.name,
+              MAX_PERMISSION_LABEL_BYTES,
+            ),
+          kind: params.toolCall.kind ?? undefined,
+          inputSummary: permissionInputSummary(params.toolCall.rawInput),
+        },
+        options: offeredOptions.map(({ optionId, name, kind }) => ({
+          optionId,
+          name: sanitizeBoundaryText(name, MAX_PERMISSION_LABEL_BYTES),
+          kind,
+        })),
+      };
+      let selectionOutcome:
+        | { kind: "selection"; selection: AcpPermissionSelection }
+        | { kind: "closed" };
+      if (input.confirmPermission === undefined) {
+        selectionOutcome = {
+          kind: "selection",
+          selection: {
+            optionId: selectRejectPermissionOption(params.options),
+          },
+        };
+      } else {
+        const confirmationController = new AbortController();
+        this.#beginPermissionConfirmation();
+        try {
+          selectionOutcome = await Promise.race([
+            Promise.resolve(
+              input.confirmPermission(
+                prompt,
+                confirmationController.signal,
+              ),
+            ).then(
+              (selection) => ({
+                kind: "selection" as const,
+                selection,
+              }),
+            ),
+            this.#permissionWindowClosed.promise.then(() => ({
+              kind: "closed" as const,
+            })),
+          ]);
+        } finally {
+          confirmationController.abort();
+          this.#endPermissionConfirmation();
+        }
+      }
+      if (selectionOutcome.kind === "closed") {
+        await this.#recordPermissionVerdict({
+          toolCallId: permissionRef,
+          decision: "cancel",
+          source: "policy",
+        });
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      if (this.#cancelRequested) {
+        await this.#recordPermissionVerdict({
+          toolCallId: permissionRef,
+          decision: "cancel",
+          source: "policy",
+        });
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      const selectedOption = selectionOutcome.selection.optionId === null
+        ? undefined
+        : offeredOptions.find((option) =>
+          option.optionId === selectionOutcome.selection.optionId
+        );
+      const fallbackOptionId = selectRejectPermissionOption(params.options);
+      const optionId = selectedOption?.optionId ?? fallbackOptionId;
+      const recordedDecision = selectedOption === undefined
+        ? optionId === null ? "cancel" : "deny"
+        : permissionDecisionForKind(selectedOption.kind);
+      try {
+        await this.#recordPermissionVerdict({
+          toolCallId: permissionRef,
+          decision: recordedDecision,
+          source: optionId === null || selectedOption === undefined
+            ? "policy"
+            : selectionOutcome.selection.source ?? source,
+        });
+      } catch (error) {
+        if (!this.#cancelRequested && !this.#permissionsClosed) throw error;
+        await this.#recordPermissionVerdict({
+          toolCallId: permissionRef,
+          decision: "cancel",
+          source: "policy",
+        });
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      if (this.#cancelRequested || this.#permissionsClosed) {
+        await this.#recordPermissionVerdict({
+          toolCallId: permissionRef,
+          decision: "cancel",
+          source: "policy",
+        });
+        return { outcome: { outcome: "cancelled" as const } };
+      }
+      return optionId === null
+        ? { outcome: { outcome: "cancelled" as const } }
+        : { outcome: { outcome: "selected" as const, optionId } };
+    });
   }
 }

@@ -11,6 +11,7 @@ import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
 import type { WorkbenchHttpRuntime } from "./turn-runner";
 import type { TurnStreamFrame } from "./turn-contract";
 import type { CommandDefinition } from "./commands";
+import { installRuntimeSigintHandler } from "./runtime-sigint";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -20,13 +21,12 @@ afterEach(async () => {
 async function startServer(
   options: WorkbenchUnixServerOptions,
 ): Promise<WorkbenchUnixServer> {
-  await Deno.mkdir(".vitest-tmp", { recursive: true });
-  const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-  const server = await serveWorkbenchUnix(`${dir}/wb.sock`, options);
+  const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
+  const server = await serveWorkbenchUnix(socketPath, options);
   cleanups.push(async () => {
     await server.close();
     try {
-      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(socketPath);
     } catch {
       // already gone
     }
@@ -370,6 +370,103 @@ describe("serveWorkbenchUnix read methods", () => {
         ],
       },
     });
+  });
+
+  test("runtime close shuts down warm ACP sessions", async () => {
+    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let closed = false;
+    await map.acquire({
+      sessionId: "s1",
+      workspace: Deno.cwd(),
+      profile: {
+        slug: "fixture",
+        command: Deno.execPath(),
+        args: ["eval", "1"],
+        environment: {},
+        workspace: Deno.cwd(),
+        transport: "local_stdio",
+        accessRoute: "local_sidecar",
+        costBasis: "local_free",
+      },
+      create: () =>
+        Promise.resolve({
+          get isAlive() {
+            return !closed;
+          },
+          prompt: async () => ({
+            text: "",
+            stopReason: "stop" as const,
+            capabilities: [],
+            elapsedMs: 0,
+          }),
+          close: async () => {
+            closed = true;
+          },
+        }),
+    });
+    const server = await startServer({
+      ...fakes,
+      acpSessions: map,
+      runRuntime: async () => anyVal({}),
+    });
+    expect(closed).toBe(false);
+    await server.close();
+    expect(closed).toBe(true);
+    expect(map.size).toBe(0);
+  });
+
+  test("foreground SIGINT closes the server and reaps warm ACP sessions", async () => {
+    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let closed = false;
+    await map.acquire({
+      sessionId: "s1",
+      workspace: Deno.cwd(),
+      profile: {
+        slug: "fixture",
+        command: Deno.execPath(),
+        args: ["eval", "1"],
+        environment: {},
+        workspace: Deno.cwd(),
+        transport: "local_stdio",
+        accessRoute: "local_sidecar",
+        costBasis: "local_free",
+      },
+      create: () =>
+        Promise.resolve({
+          get isAlive() {
+            return !closed;
+          },
+          prompt: async () => ({
+            text: "",
+            stopReason: "stop" as const,
+            capabilities: [],
+            elapsedMs: 0,
+          }),
+          close: async () => {
+            closed = true;
+          },
+        }),
+    });
+    const server = await startServer({
+      ...fakes,
+      acpSessions: map,
+      runRuntime: async () => anyVal({}),
+    });
+    let handler: () => void | Promise<void> = () => {};
+    const exit = (code: number) => {
+      expect(code).toBe(0);
+    };
+    installRuntimeSigintHandler(
+      false,
+      () => server.close(),
+      { add: (next) => handler = next },
+      exit,
+    );
+    await handler();
+    expect(closed).toBe(true);
+    expect(map.size).toBe(0);
   });
 
   test("runtime/stop triggers onShutdown callback and returns stopping status", async () => {
@@ -1278,9 +1375,7 @@ describe("socket bind safety", () => {
   });
 
   test("clears a genuinely stale socket and binds", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const sock = `${dir}/wb.sock`;
+    const sock = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its
     // socket file behind with nothing accepting. (A cleanly closed Deno
     // listener removes its file, so this needs a hard-killed process.)
@@ -1294,18 +1389,18 @@ describe("socket bind safety", () => {
     expect(Deno.lstatSync(sock).isSocket).toBe(true);
     await assertSocketBindable(sock);
     expect(() => Deno.lstatSync(sock)).toThrow();
-    await Deno.remove(dir, { recursive: true });
   });
 
   test("refuses to bind over a non-socket path", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const path = `${dir}/wb.sock`;
+    const path = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     await Deno.writeTextFile(path, "not a socket");
-    await expect(assertSocketBindable(path)).rejects.toThrow(
-      /exists and is not a socket/,
-    );
-    await Deno.remove(dir, { recursive: true });
+    try {
+      await expect(assertSocketBindable(path)).rejects.toThrow(
+        /exists and is not a socket/,
+      );
+    } finally {
+      await Deno.remove(path);
+    }
   });
 });
 

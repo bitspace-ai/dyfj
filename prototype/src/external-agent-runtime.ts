@@ -3,12 +3,14 @@ import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
   type AcpPermissionVerdict,
+  type AcpProgressUpdate,
   type AcpRouteEvidence,
   AcpProtocolMessageLimitError,
   AcpSessionUpdateLimitError,
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client";
+import type { AcpSessionHandleMap } from "./acp-session-map";
 import {
   type ExternalAgentWorkbenchRuntimeResult,
   type WorkbenchAuthContext,
@@ -584,6 +586,7 @@ export async function runExternalAgentWorkbenchRuntime(
       workspace: string,
     ) => AcpExecutionProfile | Promise<AcpExecutionProfile>;
     runAgent?: typeof runAcpAgent;
+    sessionMap?: AcpSessionHandleMap;
   } = {},
 ): Promise<ExternalAgentWorkbenchRuntimeResult> {
   let cancellationClosed = false;
@@ -723,50 +726,68 @@ export async function runExternalAgentWorkbenchRuntime(
       sessionCreated = true;
     }
 
-    const result = await (dependencies.runAgent ?? runAcpAgent)({
-      profile,
-      prompt: input.prompt,
-      abortSignal: input.abortSignal,
-      onTextDelta: input.onTextDelta,
-      onProgress: (progress) =>
-        emitRuntimeEvent(input.onRuntimeEvent, {
-          type: "agentProgress",
-          sessionId,
-          kind: progress.kind,
-          title: progress.title,
-          name: progress.name,
-          status: progress.status,
-        }),
-      confirmPermission: input.confirmExternalAgentPermission,
-      onPermissionVerdict: writePermissionVerdict,
-      onRouteVerified: async (evidence, signal) => {
-        await writeEvent({
-          event_id: generateULID(),
-          session_id: sessionId,
-          event_type: "runner_selected",
-          trace_id: traceId,
-          span_id: generateSpanId(),
-          parent_span_id: rootSpanId,
-          principal_id: principalId,
-          principal_type: "agent",
-          action: "select",
-          resource: profile.slug,
-          authz_basis: authContext.authzBasis,
-          ...authnFields,
-          runner_kind: "external_agent",
-          runner_profile: profile.slug,
-          runner_protocol: "acp",
-          runner_transport: profile.transport,
-          runner_access_route: profile.accessRoute,
-          runner_cost_basis: profile.costBasis,
-          runner_workspace: workspaceEvidence,
-          runner_evidence_scope: "outer_only",
-          runner_auth_type: evidence.authenticationType ?? null,
-          runner_route_source: evidence.source,
-        }, { signal });
-        verifiedRouteEvidence = evidence;
-      },
-    });
+    const onProgress = (progress: AcpProgressUpdate) =>
+      emitRuntimeEvent(input.onRuntimeEvent, {
+        type: "agentProgress",
+        sessionId,
+        kind: progress.kind,
+        title: progress.title,
+        name: progress.name,
+        status: progress.status,
+      });
+    const onRouteVerified = async (
+      evidence: AcpRouteEvidence,
+      signal: AbortSignal,
+    ) => {
+      await writeEvent({
+        event_id: generateULID(),
+        session_id: sessionId,
+        event_type: "runner_selected",
+        trace_id: traceId,
+        span_id: generateSpanId(),
+        parent_span_id: rootSpanId,
+        principal_id: principalId,
+        principal_type: "agent",
+        action: "select",
+        resource: profile.slug,
+        authz_basis: authContext.authzBasis,
+        ...authnFields,
+        runner_kind: "external_agent",
+        runner_profile: profile.slug,
+        runner_protocol: "acp",
+        runner_transport: profile.transport,
+        runner_access_route: profile.accessRoute,
+        runner_cost_basis: profile.costBasis,
+        runner_workspace: workspaceEvidence,
+        runner_evidence_scope: "outer_only",
+        runner_auth_type: evidence.authenticationType ?? null,
+        runner_route_source: evidence.source,
+      }, { signal });
+      verifiedRouteEvidence = evidence;
+    };
+    const result = dependencies.sessionMap !== undefined
+      ? await dependencies.sessionMap.runTurn({
+        sessionId,
+        workspace,
+        profile,
+        prompt: input.prompt,
+        abortSignal: input.abortSignal,
+        onTextDelta: input.onTextDelta,
+        onProgress,
+        confirmPermission: input.confirmExternalAgentPermission,
+        onPermissionVerdict: writePermissionVerdict,
+        onRouteVerified,
+      })
+      : await (dependencies.runAgent ?? runAcpAgent)({
+        profile,
+        prompt: input.prompt,
+        abortSignal: input.abortSignal,
+        onTextDelta: input.onTextDelta,
+        onProgress,
+        confirmPermission: input.confirmExternalAgentPermission,
+        onPermissionVerdict: writePermissionVerdict,
+        onRouteVerified,
+      });
     closeCancellation();
     const route = verifiedRouteFacts(profile, verifiedRouteEvidence);
     let receipt = receiptText({
