@@ -850,6 +850,45 @@ describe("AcpSessionHandleMap lifecycle", () => {
     }
   });
 
+  test("a reused route callback that outlives the timeout is aborted and performs no late write", async () => {
+    const profile = fixtureProfile({ sessionTimeoutMs: 20 });
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const handle = fakeHandle({
+      routeEvidence: { source: "profile_declared" },
+      prompt: () => Promise.reject(new Error("prompt should not run")),
+    });
+    let replaySignal: AbortSignal | undefined;
+    let lateWrite = false;
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const startedAt = Date.now();
+      await expect(map.runTurn({
+        ...acquireKey(profile),
+        prompt: "second",
+        onRouteVerified: async (_evidence, signal) => {
+          replaySignal = signal;
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 60));
+          if (signal.aborted) return;
+          lateWrite = true;
+        },
+      })).rejects.toMatchObject({
+        name: "AcpRunnerError",
+        phase: "authenticate",
+      });
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 80));
+      expect(replaySignal?.aborted).toBe(true);
+      expect(lateWrite).toBe(false);
+      expect(map.size).toBe(0);
+    } finally {
+      await map.shutdown().catch(() => {});
+    }
+  });
+
   test("cancellation during stalled creation finalizes as aborted and reaps the child", async () => {
     const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
     await Deno.remove(pidFile);

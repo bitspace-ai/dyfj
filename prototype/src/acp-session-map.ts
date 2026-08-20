@@ -251,14 +251,28 @@ export class AcpSessionHandleMap {
         handle.routeEvidence !== undefined
       ) {
         if (input.abortSignal?.aborted) return abortedResult();
-        await withTimeout(
-          Promise.resolve(input.onRouteVerified(
+        const replayController = new AbortController();
+        const forwardAbort = () => replayController.abort();
+        input.abortSignal?.addEventListener("abort", forwardAbort, {
+          once: true,
+        });
+        if (input.abortSignal?.aborted) replayController.abort();
+        try {
+          if (replayController.signal.aborted) return abortedResult();
+          const replay = Promise.resolve(input.onRouteVerified(
             handle.routeEvidence,
-            input.abortSignal ?? new AbortController().signal,
-          )),
-          input.profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
-          "authenticate",
-        );
+            replayController.signal,
+          ));
+          void replay.catch(() => {});
+          await withTimeout(
+            replay,
+            input.profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+            "authenticate",
+          );
+        } finally {
+          replayController.abort();
+          input.abortSignal?.removeEventListener("abort", forwardAbort);
+        }
       }
       return await handle.prompt(input);
     } catch (error) {

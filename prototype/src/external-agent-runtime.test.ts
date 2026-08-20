@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   failEventType: undefined as string | undefined,
   abortNextRunnerSelected: false,
   abortController: undefined as AbortController | undefined,
+  delayNextRunnerSelectedMs: 0,
   sessionExists: true,
   sessionWorkspace: undefined as string | null | undefined,
 }));
@@ -26,6 +27,23 @@ vi.mock("./utils", () => ({
     if (event.event_type === "runner_selected" && state.abortNextRunnerSelected) {
       state.abortNextRunnerSelected = false;
       state.abortController?.abort();
+    }
+    if (
+      event.event_type === "runner_selected" &&
+      state.delayNextRunnerSelectedMs > 0
+    ) {
+      const delayMs = state.delayNextRunnerSelectedMs;
+      state.delayNextRunnerSelectedMs = 0;
+      return new Promise<void>((resolve, reject) => {
+        globalThis.setTimeout(() => {
+          if (options.signal?.aborted) {
+            reject(new DOMException("Event write aborted", "AbortError"));
+            return;
+          }
+          state.events.push(event);
+          resolve();
+        }, delayMs);
+      });
     }
     if (options.signal?.aborted) {
       return Promise.reject(
@@ -77,6 +95,7 @@ import {
 } from "./external-agent-runtime";
 import {
   type AcpExecutionProfile,
+  type AcpSessionHandle,
   AcpProtocolMessageLimitError,
   AcpSessionUpdateLimitError,
 } from "./acp-client";
@@ -255,6 +274,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     state.failEventType = undefined;
     state.abortNextRunnerSelected = false;
     state.abortController = undefined;
+    state.delayNextRunnerSelectedMs = 0;
     state.sessionExists = true;
     state.sessionWorkspace = undefined;
   });
@@ -1751,6 +1771,66 @@ Deno.exit(output.code);`,
       expect(map.size).toBe(1);
     } finally {
       await map.shutdown();
+    }
+  });
+
+  test("a timed-out reused route replay does not emit a late runner_selected event", async () => {
+    const workspace = Deno.cwd();
+    const profile = {
+      ...fixtureProfile(workspace),
+      sessionTimeoutMs: 20,
+    };
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let closed = false;
+    const handle: AcpSessionHandle = {
+      get isAlive() {
+        return !closed;
+      },
+      get routeEvidence() {
+        return { source: "profile_declared" as const };
+      },
+      prompt: () => Promise.reject(new Error("prompt should not run")),
+      close: async () => {
+        closed = true;
+      },
+    };
+    const sessionId = "01ACPSESSION000000000000013";
+    try {
+      await map.acquire({
+        sessionId,
+        workspace,
+        profile,
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      state.events.length = 0;
+      state.delayNextRunnerSelectedMs = 60;
+      const runtimeEvents: string[] = [];
+      await expect(runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "second turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: workspace,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, {
+        sessionMap: map,
+        resolveProfile: () => profile,
+      })).rejects.toMatchObject({
+        name: "AcpRunnerError",
+        phase: "authenticate",
+      });
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 80));
+      expect(runtimeEvents).toContain("turnFailed");
+      expect(state.events.map((event) => event.event_type)).not.toContain(
+        "runner_selected",
+      );
+      expect(map.size).toBe(0);
+    } finally {
+      await map.shutdown().catch(() => {});
     }
   });
 
