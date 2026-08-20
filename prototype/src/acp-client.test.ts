@@ -9,6 +9,8 @@ import {
   assertProcessGroupSignaler,
   drainStream,
   guardedProtocolInput,
+  processGroupSignalerEvalArgs,
+  processGroupSignalerEvalSource,
   resolveProtocolMessageLimit,
   resolveSessionUpdateLimit,
   runAcpAgent,
@@ -196,6 +198,16 @@ describe("runAcpAgent", () => {
         "/private/tmp/dyfj-process-group-signaler-does-not-exist",
       ),
     ).rejects.toThrow("ACP process-group signaling is unavailable");
+  });
+
+  test("process-group signaler eval carries the run dir as argv", () => {
+    const source = processGroupSignalerEvalSource();
+    expect(source.includes(";void ")).toBe(false);
+    expect(processGroupSignalerEvalArgs("/tmp/dyfj-run")).toEqual([
+      "eval",
+      source,
+      "/tmp/dyfj-run",
+    ]);
   });
 
   test("rejects a signaler that cannot address a negative process group", async () => {

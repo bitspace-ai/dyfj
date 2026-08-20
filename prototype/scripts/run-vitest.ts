@@ -316,6 +316,7 @@ async function supervised(args: string[]): Promise<number> {
       ignorePgids,
       commandNeedles,
       lockFile,
+      expectedGeneration: runLock.generation,
     });
     await markRunDone(tmpDir);
     await new Promise((resolve) => setTimeout(resolve, 300));

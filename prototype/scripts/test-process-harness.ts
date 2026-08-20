@@ -495,10 +495,16 @@ export async function reapSurvivors(
     if (proc.pgid > 1 && !protectedPgids.has(proc.pgid)) pgids.add(proc.pgid);
   }
   for (const pgid of pgids) await killProcessGroup(pgid, "SIGTERM");
-  for (const proc of report.processes) await killPid(proc.pid, "SIGTERM");
+  for (const proc of report.processes) {
+    if (protectedPgids.has(proc.pgid)) continue;
+    await killPid(proc.pid, "SIGTERM");
+  }
   await delay(graceMs);
   for (const pgid of pgids) await killProcessGroup(pgid, "SIGKILL");
-  for (const proc of report.processes) await killPid(proc.pid, "SIGKILL");
+  for (const proc of report.processes) {
+    if (protectedPgids.has(proc.pgid)) continue;
+    await killPid(proc.pid, "SIGKILL");
+  }
 }
 
 export async function removeSurvivorFiles(report: SurvivorReport): Promise<void> {
@@ -616,19 +622,25 @@ export async function sweepTestRuntime(opts: {
   tmpDir: string;
   ignorePids?: Set<number>;
   ignorePgids?: Set<number>;
+  protectedPgids?: Set<number>;
   graceMs?: number;
   commandNeedles?: string[];
   lockFile?: string;
   expectedGeneration?: string;
 }): Promise<SurvivorReport> {
   const first = await discoverSurvivors(opts);
+  const protectedPgids = new Set(opts.ignorePgids ?? []);
+  if (opts.protectedPgids !== undefined) {
+    for (const pgid of opts.protectedPgids) protectedPgids.add(pgid);
+  }
   await reapSurvivors(first, {
     graceMs: opts.graceMs,
-    protectedPgids: opts.ignorePgids,
+    protectedPgids,
   });
   await removeSurvivorFiles(first);
+  const leftover = await discoverSurvivors(opts);
   await clearManifest(opts.tmpDir);
-  return await discoverSurvivors(opts);
+  return leftover;
 }
 
 function parseLockBody(raw: string): TestRunLock | null {

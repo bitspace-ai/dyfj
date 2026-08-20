@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
-import { processGroupSignalerEvalSource } from "../src/acp-client.ts";
+import { processGroupSignalerEvalArgs } from "../src/acp-client.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import {
   acquireTestRunLock,
@@ -408,6 +408,67 @@ describe("test process harness", () => {
     expect(await processIsAlive(memberPid)).toBe(true);
   }, 10_000);
 
+  test("a surviving needle-free recorded child remains in the sweep report", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawn("/bin/bash", [
+      "-c",
+      "trap '' TERM; while :; do sleep 1; done",
+    ], { detached: true, stdio: "ignore" });
+    if (child.pid === undefined) throw new Error("resistant child spawn produced no pid");
+    child.unref();
+    trackPid(child.pid);
+    const captured = await captureProcessIdentity(child.pid);
+    expect(captured).not.toBeNull();
+    const generation = "verify-gen";
+    await recordSpawn(tmpDir, {
+      pid: child.pid,
+      pgid: captured!.pgid,
+      kind: "serve-unix",
+      sockets: [],
+      locks: [],
+      command: captured!.command,
+      lstart: captured!.lstart,
+      generation,
+      tmpDir,
+      startedAt: new Date().toISOString(),
+    });
+    const report = await sweepTestRuntime({
+      tmpDir,
+      expectedGeneration: generation,
+      protectedPgids: new Set([captured!.pgid]),
+      graceMs: 200,
+    });
+    expect(report.processes.some((proc) => proc.pid === child.pid)).toBe(true);
+    expect(await processIsAlive(child.pid)).toBe(true);
+  }, 15_000);
+
+  test("sweepTestRuntime reaps a needle-free recorded child when generation matches", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawnDetachedSleep("sleep 60");
+    const captured = await captureProcessIdentity(child.pid);
+    expect(captured).not.toBeNull();
+    const generation = "cleanup-gen";
+    await recordSpawn(tmpDir, {
+      pid: child.pid,
+      pgid: captured!.pgid,
+      kind: "serve-unix",
+      sockets: [],
+      locks: [],
+      command: captured!.command,
+      lstart: captured!.lstart,
+      generation,
+      tmpDir,
+      startedAt: new Date().toISOString(),
+    });
+    const leftover = await sweepTestRuntime({
+      tmpDir,
+      expectedGeneration: generation,
+      graceMs: 200,
+    });
+    expect(isEmptyReport(leftover)).toBe(true);
+    expect(await processIsAlive(child.pid)).toBe(false);
+  }, 15_000);
+
   test("a mismatched saved identity plus a numeric manifest match does not kill a foreign group", async () => {
     const tmpDir = await scopedTmp();
     const foreign = spawnDetachedSleep("sleep 60");
@@ -541,8 +602,7 @@ describe("test process harness", () => {
   test("force-killing a supervisor reaps a detached ACP signaler-shaped descendant", async () => {
     const tmpDir = await scopedTmp();
     const probe = spawn(selectedDenoExecutable(), [
-      "eval",
-      processGroupSignalerEvalSource(tmpDir),
+      ...processGroupSignalerEvalArgs(tmpDir),
     ], { detached: true, stdio: "ignore" });
     if (probe.pid === undefined) throw new Error("signaler spawn produced no pid");
     probe.unref();
