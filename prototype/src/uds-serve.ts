@@ -49,17 +49,25 @@ installRuntimeSigintHandler(
   Deno.exit,
 );
 
-let serverInstance: { close(): Promise<void> } | undefined;
+let serverInstance:
+  | { close(options?: { disconnectPeers?: boolean }): Promise<void> }
+  | undefined;
 
-const shutdown = async () => {
-  if (serverInstance) {
-    try {
-      await serverInstance.close();
-    } catch {
-      // already closed
-    }
+const closeRuntime = async (
+  options?: { disconnectPeers?: boolean },
+) => {
+  if (serverInstance) await serverInstance.close(options);
+};
+
+const shutdown = async (
+  options?: { disconnectPeers?: boolean },
+) => {
+  try {
+    await closeRuntime(options);
+  } catch (error) {
+    if (error instanceof Deno.errors.BadResource) return;
+    throw error;
   }
-  Deno.exit(0);
 };
 
 try {
@@ -68,10 +76,13 @@ try {
     engineConfig: config,
     externalMcpCommands: externalMcp.commands,
     autostarted,
-    onShutdown: shutdown,
+    onShutdown: () => shutdown({ disconnectPeers: false }),
+    onStopComplete: (code) => {
+      Deno.exit(code);
+    },
   });
   serverInstance = server;
-  resolveCloseServer(() => server.close());
+  resolveCloseServer(() => shutdown());
   console.error(
     `dyfj runtime: JSON-RPC over UDS at ${socketPath}  ${
       autostarted ? "(autostarted)" : "(ctrl-c to stop)"

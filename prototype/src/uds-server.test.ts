@@ -495,6 +495,67 @@ describe("serveWorkbenchUnix read methods", () => {
     });
   });
 
+  test("runtime/stop surfaces an onShutdown failure as internalError", async () => {
+    const client = await connectClient(await startServer({
+      ...fakes,
+      onShutdown: () => Promise.reject(new Error("ACP close failed")),
+    }));
+    await expect(client.request("runtime/stop")).rejects.toMatchObject({
+      code: RpcErrorCode.internalError,
+      message: expect.stringContaining("runtime shutdown failed"),
+    });
+  });
+
+  test("runtime/stop reaps warm ACP sessions then returns stopping", async () => {
+    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let closed = false;
+    await map.acquire({
+      sessionId: "s1",
+      workspace: Deno.cwd(),
+      profile: {
+        slug: "fixture",
+        command: Deno.execPath(),
+        args: ["eval", "1"],
+        environment: {},
+        workspace: Deno.cwd(),
+        transport: "local_stdio",
+        accessRoute: "local_sidecar",
+        costBasis: "local_free",
+      },
+      create: () =>
+        Promise.resolve({
+          get isAlive() {
+            return !closed;
+          },
+          prompt: async () => ({
+            text: "",
+            stopReason: "stop" as const,
+            capabilities: [],
+            elapsedMs: 0,
+          }),
+          close: async () => {
+            closed = true;
+          },
+        }),
+    });
+    let server: WorkbenchUnixServer | undefined;
+    server = await startServer({
+      ...fakes,
+      acpSessions: map,
+      runRuntime: async () => anyVal({}),
+      onShutdown: async () => {
+        await server!.close({ disconnectPeers: false });
+      },
+    });
+    const client = await connectClient(server);
+    expect(closed).toBe(false);
+    const res = await client.request("runtime/stop");
+    expect(res).toEqual({ status: "stopping" });
+    expect(closed).toBe(true);
+    expect(map.size).toBe(0);
+  });
+
   test("tools/list exposes a catalog without executing tools", async () => {
     const client = await connectClient(
       await startServer({

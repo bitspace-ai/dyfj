@@ -159,6 +159,12 @@ export interface WorkbenchUnixServerOptions {
   onParseError?: (detail: string) => void;
   /** Callback invoked when a client sends a runtime/stop RPC request. */
   onShutdown?: () => Promise<void> | void;
+  /**
+   * Invoked after the runtime/stop RPC has been answered. `0` means the
+   * shutdown callback succeeded; `1` means it failed. The serve-unix process
+   * uses this to exit with a matching status after the client has the result.
+   */
+  onStopComplete?: (code: 0 | 1) => Promise<void> | void;
   /** Whether the runtime was started via background autostart. */
   autostarted?: boolean;
   /** Boot-discovered external MCP commands available to this runtime. */
@@ -451,6 +457,14 @@ export function buildWorkbenchHandlers(
         throw new RpcError(
           RpcErrorCode.internalError,
           "runtime shutdown is not configured on this server",
+        );
+      }
+      try {
+        await options.onShutdown();
+      } catch (error) {
+        throw new RpcError(
+          RpcErrorCode.internalError,
+          `runtime shutdown failed: ${summarizeError(error)}`,
         );
       }
       return {
@@ -1217,7 +1231,7 @@ export function buildTurnHandlers(
 
 export interface WorkbenchUnixServer {
   readonly socketPath: string;
-  close(): Promise<void>;
+  close(options?: { disconnectPeers?: boolean }): Promise<void>;
 }
 
 /**
@@ -1287,17 +1301,14 @@ export async function serveWorkbenchUnix(
         handlers,
         onParseError: options.onParseError,
         onRequestSettled: async (req, res) => {
-          if (
-            req.method === "runtime/stop" && "result" in res &&
-            options.onShutdown
-          ) {
-            try {
-              await options.onShutdown();
-            } catch (err) {
-              options.onParseError?.(
-                `onShutdown error: ${summarizeError(err)}`,
-              );
-            }
+          if (req.method !== "runtime/stop") return;
+          const code = "result" in res ? 0 : 1;
+          try {
+            await options.onStopComplete?.(code);
+          } catch (err) {
+            options.onParseError?.(
+              `onStopComplete error: ${summarizeError(err)}`,
+            );
           }
         },
       });
@@ -1308,7 +1319,7 @@ export async function serveWorkbenchUnix(
 
   return {
     socketPath,
-    async close() {
+    async close(options: { disconnectPeers?: boolean } = {}) {
       let shutdownError: unknown;
       try {
         await acpSessions.shutdown();
@@ -1320,8 +1331,10 @@ export async function serveWorkbenchUnix(
       } catch {
         // already closed
       }
-      for (const peer of peers) peer.close();
-      peers.clear();
+      if (options.disconnectPeers !== false) {
+        for (const peer of peers) peer.close();
+        peers.clear();
+      }
       try {
         await Deno.remove(socketPath);
       } catch {

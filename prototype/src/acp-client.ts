@@ -218,7 +218,7 @@ export class AcpAuthenticationEvidenceError extends DomainError {
 }
 
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 5_000;
-const DEFAULT_SESSION_TIMEOUT_MS = 5_000;
+export const DEFAULT_SESSION_TIMEOUT_MS = 5_000;
 const DEFAULT_PROMPT_TIMEOUT_MS = 30_000;
 const DEFAULT_CANCELLATION_TIMEOUT_MS = 2_000;
 const DEFAULT_PERMISSION_VERDICT_TIMEOUT_MS = 2_000;
@@ -668,7 +668,7 @@ export function assertAcpPromptWithinLimit(prompt: string): void {
   }
 }
 
-async function withTimeout<T>(
+export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   phase: AcpRunnerError["phase"],

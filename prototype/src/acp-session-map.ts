@@ -6,7 +6,9 @@ import {
   type AcpRunInput,
   type AcpRunResult,
   type AcpSessionHandle,
+  DEFAULT_SESSION_TIMEOUT_MS,
   startAcpSession,
+  withTimeout,
 } from "./acp-client";
 import { DomainError } from "./turn-contract";
 
@@ -198,7 +200,7 @@ export class AcpSessionHandleMap {
     if (entry === undefined) return;
     if (entry.state !== "active") return;
     if (!handle.isAlive) {
-      void this.#removeAndClose(entry);
+      void this.#removeAndClose(entry).catch(() => {});
       return;
     }
     entry.state = "idle";
@@ -239,7 +241,7 @@ export class AcpSessionHandleMap {
     try {
       handle = await this.acquire(input);
     } catch (error) {
-      if (error instanceof AcpAbortRequested) return abortedResult();
+      if (isTurnAborted(error)) return abortedResult();
       throw error;
     }
     try {
@@ -248,14 +250,19 @@ export class AcpSessionHandleMap {
         input.onRouteVerified !== undefined &&
         handle.routeEvidence !== undefined
       ) {
-        await input.onRouteVerified(
-          handle.routeEvidence,
-          input.abortSignal ?? new AbortController().signal,
+        if (input.abortSignal?.aborted) return abortedResult();
+        await withTimeout(
+          Promise.resolve(input.onRouteVerified(
+            handle.routeEvidence,
+            input.abortSignal ?? new AbortController().signal,
+          )),
+          input.profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
+          "authenticate",
         );
       }
       return await handle.prompt(input);
     } catch (error) {
-      if (error instanceof AcpAbortRequested) return abortedResult();
+      if (isTurnAborted(error)) return abortedResult();
       await this.drop(handle);
       throw error;
     } finally {
@@ -269,14 +276,18 @@ export class AcpSessionHandleMap {
     const closes = entries.map((entry) => this.#closeForShutdown(entry));
     let timer: unknown;
     try {
-      await Promise.race([
-        Promise.all(closes),
-        new Promise<void>((_, reject) => {
+      const settled = await Promise.race([
+        Promise.allSettled(closes),
+        new Promise<never>((_, reject) => {
           timer = this.#setTimeout(() => {
             reject(new Error("ACP session map shutdown timed out"));
           }, this.#shutdownTimeoutMs);
         }),
       ]);
+      const failure = settled.find((result) => result.status === "rejected");
+      if (failure !== undefined && failure.status === "rejected") {
+        throw failure.reason;
+      }
     } finally {
       if (timer !== undefined) this.#clearTimeout(timer);
     }
@@ -293,7 +304,7 @@ export class AcpSessionHandleMap {
     this.#disarmIdleTimer(entry);
     const generation = ++entry.idleGeneration;
     entry.idleTimer = this.#setTimeout(() => {
-      void this.#onIdleTimeout(entry, generation);
+      void this.#onIdleTimeout(entry, generation).catch(() => {});
     }, this.#idleTtlMs);
   }
 
@@ -328,8 +339,24 @@ export class AcpSessionHandleMap {
     if (this.#entries.get(entry.key) === entry && entry.state !== "closing") {
       entry.state = "closing";
     }
-    if (entry.handle !== undefined) await entry.handle.close();
+    try {
+      if (entry.handle !== undefined) await entry.handle.close();
+    } catch (error) {
+      if (entry.handle?.isAlive === true) throw error;
+      entry.state = "closed";
+      if (this.#entries.get(entry.key) === entry) {
+        this.#entries.delete(entry.key);
+      }
+      throw error;
+    }
     entry.state = "closed";
-    if (this.#entries.get(entry.key) === entry) this.#entries.delete(entry.key);
+    if (this.#entries.get(entry.key) === entry) {
+      this.#entries.delete(entry.key);
+    }
   }
+}
+
+function isTurnAborted(error: unknown): boolean {
+  if (error instanceof AcpAbortRequested) return true;
+  return error instanceof Error && error.name === "AbortError";
 }

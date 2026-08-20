@@ -144,7 +144,7 @@ describe("runStop behavior over real sockets", () => {
       onShutdown: async () => {
         shutdownInvoked = true;
         if (serverInstance) {
-          await serverInstance.close();
+          await serverInstance.close({ disconnectPeers: false });
         }
       },
     });
@@ -171,6 +171,34 @@ describe("runStop behavior over real sockets", () => {
     await expect(Deno.stat(socketPath)).rejects.toBeInstanceOf(
       Deno.errors.NotFound,
     );
+  });
+
+  test("reports failure via io.err and returns 1 when runtime shutdown fails", async () => {
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
+
+    let serverInstance: WorkbenchUnixServer | undefined;
+
+    serverInstance = await serveWorkbenchUnix(socketPath, {
+      onShutdown: () => Promise.reject(new Error("ACP close failed")),
+    });
+
+    cleanups.push(async () => {
+      if (serverInstance) {
+        try {
+          await serverInstance.close();
+        } catch {}
+      }
+      try {
+        await Deno.remove(socketPath);
+      } catch {}
+    });
+
+    const { io, stdout, stderr } = fakeIo();
+    const exitCode = await runStop(cfg({ socket: socketPath }), io);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toEqual([]);
+    expect(stderr.join("")).toContain("runtime shutdown failed");
   });
 
   test("is idempotent when socket does not exist", async () => {

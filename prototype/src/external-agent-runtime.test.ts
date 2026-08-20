@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
   failCreateSession: false,
   failUpdateSession: false,
   failEventType: undefined as string | undefined,
+  abortNextRunnerSelected: false,
+  abortController: undefined as AbortController | undefined,
   sessionExists: true,
   sessionWorkspace: undefined as string | null | undefined,
 }));
@@ -17,7 +19,19 @@ vi.mock("./utils", () => ({
   generateULID: () => `01ACP${String(++state.nextId).padStart(21, "0")}`,
   generateTraceId: () => "trace-acp",
   generateSpanId: () => `span-${++state.nextId}`,
-  writeEvent: (event: Record<string, unknown>) => {
+  writeEvent: (
+    event: Record<string, unknown>,
+    options: { signal?: AbortSignal } = {},
+  ) => {
+    if (event.event_type === "runner_selected" && state.abortNextRunnerSelected) {
+      state.abortNextRunnerSelected = false;
+      state.abortController?.abort();
+    }
+    if (options.signal?.aborted) {
+      return Promise.reject(
+        new DOMException("Event write aborted", "AbortError"),
+      );
+    }
     if (event.event_type === state.failEventType) {
       return Promise.reject(new Error(`failed ${state.failEventType}`));
     }
@@ -239,6 +253,8 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     state.failCreateSession = false;
     state.failUpdateSession = false;
     state.failEventType = undefined;
+    state.abortNextRunnerSelected = false;
+    state.abortController = undefined;
     state.sessionExists = true;
     state.sessionWorkspace = undefined;
   });
@@ -1648,6 +1664,93 @@ Deno.exit(output.code);`,
     } finally {
       await map.shutdown();
       expect(map.size).toBe(0);
+    }
+  });
+
+  test("a pre-aborted reused runtime turn stays aborted and retains the handle", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const sessionId = "01ACPSESSION000000000000011";
+    try {
+      const first = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "first turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(first.stopReason).toBe("stop");
+      expect(map.size).toBe(1);
+
+      state.events.length = 0;
+      const controller = new AbortController();
+      controller.abort();
+      const runtimeEvents: string[] = [];
+      const second = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "second turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, { sessionMap: map });
+      expect(second.stopReason).toBe("aborted");
+      expect(runtimeEvents).toContain("turnAborted");
+      expect(runtimeEvents).not.toContain("turnFailed");
+      expect(state.events.map((event) => event.event_type)).not.toContain(
+        "runner_selected",
+      );
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("abort during reused route-evidence write stays aborted and retains the handle", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const sessionId = "01ACPSESSION000000000000012";
+    try {
+      const first = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "first turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(first.stopReason).toBe("stop");
+      expect(map.size).toBe(1);
+
+      state.events.length = 0;
+      const controller = new AbortController();
+      state.abortController = controller;
+      state.abortNextRunnerSelected = true;
+      const runtimeEvents: string[] = [];
+      const second = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "second turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, { sessionMap: map });
+      expect(second.stopReason).toBe("aborted");
+      expect(runtimeEvents).toContain("turnAborted");
+      expect(runtimeEvents).not.toContain("turnFailed");
+      expect(state.events.map((event) => event.event_type)).not.toContain(
+        "runner_selected",
+      );
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
     }
   });
 

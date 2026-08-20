@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { join } from "node:path";
+import process from "node:process";
 import {
   type AcpExecutionProfile,
   type AcpRunResult,
@@ -89,12 +90,19 @@ async function readMethods(path: string): Promise<string[]> {
 function fakeHandle(options: {
   prompt?: () => Promise<AcpRunResult>;
   closeDelayMs?: number;
+  closeWait?: Promise<void>;
   closeError?: Error;
   stayAliveOnCloseError?: boolean;
+  keepAliveDuringClose?: boolean;
   routeEvidence?: AcpSessionHandle["routeEvidence"];
 } = {}): AcpSessionHandle {
   let closed = false;
   let closePromise: Promise<void> | undefined;
+  const markClosedUnlessHeld = () => {
+    if (!options.stayAliveOnCloseError || options.closeError === undefined) {
+      closed = true;
+    }
+  };
   return {
     get isAlive() {
       return !closed;
@@ -110,18 +118,64 @@ function fakeHandle(options: {
         elapsedMs: 1,
       })),
     close() {
-      if (!options.stayAliveOnCloseError || options.closeError === undefined) {
-        closed = true;
-      }
+      if (!options.keepAliveDuringClose) markClosedUnlessHeld();
       closePromise ??= (async () => {
-        if (options.closeDelayMs !== undefined) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, options.closeDelayMs)
-          );
+        try {
+          if (options.closeWait !== undefined) await options.closeWait;
+          if (options.closeDelayMs !== undefined) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, options.closeDelayMs)
+            );
+          }
+          if (options.closeError !== undefined) throw options.closeError;
+        } finally {
+          if (options.keepAliveDuringClose) markClosedUnlessHeld();
         }
-        if (options.closeError !== undefined) throw options.closeError;
       })();
       return closePromise;
+    },
+  };
+}
+
+function fakeIdleTimers(): {
+  timers: Map<unknown, () => void>;
+  setTimeout: (callback: () => void, ms: number) => unknown;
+  clearTimeout: (id: unknown) => void;
+} {
+  const timers = new Map<unknown, () => void>();
+  let nextId = 1;
+  return {
+    timers,
+    setTimeout: (callback) => {
+      const id = nextId++;
+      timers.set(id, callback);
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(id);
+    },
+  };
+}
+
+function captureUnhandledRejections(): {
+  failures: unknown[];
+  stop: () => void;
+} {
+  const failures: unknown[] = [];
+  const onEvent = (event: PromiseRejectionEvent) => {
+    failures.push(event.reason);
+    event.preventDefault();
+  };
+  const onProcess = (reason: unknown) => {
+    failures.push(reason);
+  };
+  globalThis.addEventListener("unhandledrejection", onEvent);
+  process.on("unhandledRejection", onProcess);
+  return {
+    failures,
+    stop: () => {
+      globalThis.removeEventListener("unhandledrejection", onEvent);
+      process.off("unhandledRejection", onProcess);
     },
   };
 }
@@ -384,19 +438,12 @@ describe("AcpSessionHandleMap lifecycle", () => {
 
   test("idle TTL closes only an unchanged idle entry", async () => {
     const profile = fixtureProfile();
-    const timers = new Map<unknown, () => void>();
-    let nextId = 1;
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
     const map = new AcpSessionHandleMap({
       capacity: 2,
       idleTtlMs: 1_000,
-      setTimeout: (callback) => {
-        const id = nextId++;
-        timers.set(id, callback);
-        return id;
-      },
-      clearTimeout: (id) => {
-        timers.delete(id);
-      },
+      setTimeout,
+      clearTimeout,
     });
     const handle = fakeHandle();
     try {
@@ -413,17 +460,84 @@ describe("AcpSessionHandleMap lifecycle", () => {
       });
       expect(handle.isAlive).toBe(true);
       stale?.();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
       expect(handle.isAlive).toBe(true);
       expect(map.stateFor(acquireKey(profile))).toBe("active");
       map.release(handle);
       const current = [...timers.values()][0];
       current?.();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
       expect(handle.isAlive).toBe(false);
       expect(map.stateFor(acquireKey(profile))).toBeUndefined();
     } finally {
       await map.shutdown();
+    }
+  });
+
+  test("idle TTL close failure on a dead handle frees capacity without an unhandled rejection", async () => {
+    const profile = fixtureProfile();
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 1,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    const handle = fakeHandle({ closeError: new Error("idle close failed") });
+    const captured = captureUnhandledRejections();
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const idle = [...timers.values()][0];
+      idle?.();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      expect(captured.failures).toEqual([]);
+      expect(handle.isAlive).toBe(false);
+      expect(map.size).toBe(0);
+      await map.shutdown();
+      expect(map.size).toBe(0);
+    } finally {
+      captured.stop();
+    }
+  });
+
+  test("idle TTL close failure on a live handle keeps the entry for later shutdown", async () => {
+    const profile = fixtureProfile();
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 1,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    const handle = fakeHandle({
+      closeError: new Error("idle close failed while alive"),
+      stayAliveOnCloseError: true,
+    });
+    const captured = captureUnhandledRejections();
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const idle = [...timers.values()][0];
+      idle?.();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      expect(captured.failures).toEqual([]);
+      expect(handle.isAlive).toBe(true);
+      expect(map.size).toBe(1);
+      expect(map.stateFor(acquireKey(profile))).toBe("closing");
+      await expect(map.shutdown()).rejects.toThrow(
+        "idle close failed while alive",
+      );
+      expect(handle.isAlive).toBe(true);
+      expect(map.size).toBe(1);
+    } finally {
+      captured.stop();
     }
   });
 
@@ -555,6 +669,43 @@ describe("AcpSessionHandleMap lifecycle", () => {
     expect(map.size).toBe(1);
   });
 
+  test("shutdown waits for a delayed close before surfacing an earlier failure", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 4, idleTtlMs: 60_000 });
+    const delay = Promise.withResolvers<void>();
+    let delayedFinished = false;
+    const failing = fakeHandle({ closeError: new Error("fast close failed") });
+    const delayed = fakeHandle({
+      keepAliveDuringClose: true,
+      closeWait: delay.promise.then(() => {
+        delayedFinished = true;
+      }),
+    });
+    await map.acquire({
+      ...acquireKey(profile, "fast"),
+      create: () => Promise.resolve(failing),
+    });
+    await map.acquire({
+      ...acquireKey(profile, "slow"),
+      create: () => Promise.resolve(delayed),
+    });
+    let shutdownSettled = false;
+    const shuttingDown = map.shutdown().finally(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+    expect(delayedFinished).toBe(false);
+    expect(delayed.isAlive).toBe(true);
+    delay.resolve();
+    await expect(shuttingDown).rejects.toThrow("fast close failed");
+    expect(delayedFinished).toBe(true);
+    expect(shutdownSettled).toBe(true);
+    expect(delayed.isAlive).toBe(false);
+    expect(map.size).toBe(0);
+  });
+
   test("shutdown rejects new acquisition and reaps every handle", async () => {
     const profile = fixtureProfile();
     const map = new AcpSessionHandleMap({ capacity: 4, idleTtlMs: 60_000 });
@@ -598,6 +749,104 @@ describe("AcpSessionHandleMap lifecycle", () => {
     } finally {
       await map.shutdown();
       await Deno.remove(pidFile).catch(() => {});
+    }
+  });
+
+  test("a pre-aborted reused turn stays aborted and retains the healthy handle", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let routeCalls = 0;
+    const handle = fakeHandle({
+      routeEvidence: { source: "profile_declared" },
+      prompt: () => Promise.reject(new Error("prompt should not run")),
+    });
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const result = await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "second",
+        abortSignal: controller.signal,
+        onRouteVerified: () => {
+          routeCalls += 1;
+        },
+      });
+      expect(result.stopReason).toBe("aborted");
+      expect(routeCalls).toBe(0);
+      expect(handle.isAlive).toBe(true);
+      expect(map.size).toBe(1);
+      expect(map.stateFor(acquireKey(profile))).toBe("idle");
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("abort during reused route-evidence replay stays aborted and retains the handle", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const handle = fakeHandle({
+      routeEvidence: { source: "profile_declared" },
+      prompt: () => Promise.reject(new Error("prompt should not run")),
+    });
+    const controller = new AbortController();
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const result = await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "second",
+        abortSignal: controller.signal,
+        onRouteVerified: () => {
+          controller.abort();
+          return Promise.reject(
+            new DOMException("Event write aborted", "AbortError"),
+          );
+        },
+      });
+      expect(result.stopReason).toBe("aborted");
+      expect(handle.isAlive).toBe(true);
+      expect(map.size).toBe(1);
+      expect(map.stateFor(acquireKey(profile))).toBe("idle");
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("a never-settling reused route callback is bounded by the session timeout", async () => {
+    const profile = fixtureProfile({ sessionTimeoutMs: 50 });
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const handle = fakeHandle({
+      routeEvidence: { source: "profile_declared" },
+      prompt: () => Promise.reject(new Error("prompt should not run")),
+    });
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const startedAt = Date.now();
+      await expect(map.runTurn({
+        ...acquireKey(profile),
+        prompt: "second",
+        onRouteVerified: () => new Promise(() => {}),
+      })).rejects.toMatchObject({
+        name: "AcpRunnerError",
+        phase: "authenticate",
+      });
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(map.size).toBe(0);
+      expect(map.stateFor(acquireKey(profile))).toBeUndefined();
+    } finally {
+      await map.shutdown().catch(() => {});
     }
   });
 
