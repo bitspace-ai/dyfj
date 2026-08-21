@@ -52,6 +52,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Fixed
 
+- **ACP warm-session ingress caps**: Protocol-input, session-update, and 60,000-byte agent-response caps now reset at each prompt on a reused ACP session, so sequential turns do not inherit the previous exchange's budget. A single oversized exchange still fails closed.
 - **ACP route evidence after dead-session replacement**: Replacing a dead idle ACP session no longer replays route evidence a second time, so a replacement turn records one `runner_selected` event.
 - **ACP spawn under the Unix runtime**: The process-group signaler probe treats an ungranted `DYFJ_TEST_RUN_DIR` read as unset, so `dyfj start` can launch fixture and Codex ACP children. The serve-unix env allowlist does not include that test-only name, and Deno throws on an ungranted read even when the variable is absent.
 - **Test-runtime sweep verification and ACP probe argv**: The post-sweep survivor report is taken before the spawn manifest is cleared, so a manifest-only leftover cannot vanish from verification. Normal supervised cleanup passes the run generation so manifest identity can authorize a kill. The ACP process-group probe receives the run directory as a `deno eval` argument rather than interpolated source.

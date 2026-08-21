@@ -764,7 +764,10 @@ export function guardedProtocolInput(
   onProtocolError: (error: AcpRunnerError) => void,
   sessionUpdateLimit = STANDARD_SESSION_UPDATE_LIMIT,
   protocolMessageLimit = STANDARD_PROTOCOL_MESSAGE_LIMIT,
-): ReadableStream<Uint8Array> {
+): {
+  stream: ReadableStream<Uint8Array>;
+  resetExchange: () => void;
+} {
   let pending = new Uint8Array();
   let pendingLength = 0;
   let protocolInputBytes = 0;
@@ -852,7 +855,13 @@ export function guardedProtocolInput(
     }
   };
 
-  return input.pipeThrough(
+  const resetExchange = (): void => {
+    protocolInputBytes = 0;
+    sessionUpdateCount = 0;
+    agentResponseBytes = 0;
+  };
+
+  const stream = input.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
         protocolInputBytes += chunk.byteLength;
@@ -899,6 +908,7 @@ export function guardedProtocolInput(
       },
     }),
   );
+  return { stream, resetExchange };
 }
 
 function capabilityNames(
@@ -1173,6 +1183,7 @@ class LiveAcpSession implements AcpSessionHandle {
   #cancelRequested = false;
   #cancelDeadline: number | undefined;
   #cancelPromise: Promise<void> | undefined;
+  #resetExchange: () => void = () => {};
   #activeSessionId: string | undefined;
   #protocolVersion: number | undefined;
   #externalSessionId: string | undefined;
@@ -1228,6 +1239,7 @@ class LiveAcpSession implements AcpSessionHandle {
     this.#prompting = true;
     this.#currentPrompt = input;
     this.#permissionCount = 0;
+    this.#resetExchange();
     this.#cancelRequested = false;
     this.#cancelDeadline = undefined;
     this.#cancelPromise = undefined;
@@ -1475,16 +1487,18 @@ class LiveAcpSession implements AcpSessionHandle {
         methods.client.session.requestPermission,
         ({ params }) => this.#handlePermissionRequest(params),
       );
+    const protocolInput = guardedProtocolInput(
+      child.stdout,
+      () => this.#activeSessionId,
+      (error) => this.#noteProtocolError(error),
+      this.#sessionUpdateLimit,
+      this.#protocolMessageLimit,
+    );
+    this.#resetExchange = protocolInput.resetExchange;
     this.#connection = app.connectWith(
       ndJsonStream(
         child.stdin,
-        guardedProtocolInput(
-          child.stdout,
-          () => this.#activeSessionId,
-          (error) => this.#noteProtocolError(error),
-          this.#sessionUpdateLimit,
-          this.#protocolMessageLimit,
-        ),
+        protocolInput.stream,
       ),
       async (context) => {
         try {

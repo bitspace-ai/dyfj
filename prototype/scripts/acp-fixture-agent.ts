@@ -443,6 +443,10 @@ const app = agent({ name: "dyfj-acp-fixture" })
         }, 10);
         return { stopReason: "end_turn" };
       }
+      if (prompt.includes("FIXTURE_NEAR_LIMIT_RESPONSE")) {
+        await chunk(context, params.sessionId, "x".repeat(50_000));
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_OVERSIZED_RESPONSE")) {
         await chunk(context, params.sessionId, "x".repeat(60_001));
         return { stopReason: "end_turn" };
