@@ -72,6 +72,7 @@ import {
   type ToolApprovalVerdict,
 } from "./commands";
 import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
+import { AcpSessionHandleMap } from "./acp-session-map";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -158,6 +159,12 @@ export interface WorkbenchUnixServerOptions {
   onParseError?: (detail: string) => void;
   /** Callback invoked when a client sends a runtime/stop RPC request. */
   onShutdown?: () => Promise<void> | void;
+  /**
+   * Invoked after the runtime/stop RPC has been answered. `0` means the
+   * shutdown callback succeeded; `1` means it failed. The serve-unix process
+   * uses this to exit with a matching status after the client has the result.
+   */
+  onStopComplete?: (code: 0 | 1) => Promise<void> | void;
   /** Whether the runtime was started via background autostart. */
   autostarted?: boolean;
   /** Boot-discovered external MCP commands available to this runtime. */
@@ -180,6 +187,8 @@ export interface WorkbenchUnixServerOptions {
     | "anomalyScopeMultiple"
     | "maxToolSteps"
   >;
+  /** Process-owned ACP warm-session map. Created by the server when omitted. */
+  acpSessions?: AcpSessionHandleMap;
 }
 
 // Mirrors http.ts loadPickerModels: degrade to the local defaults if the registry
@@ -448,6 +457,14 @@ export function buildWorkbenchHandlers(
         throw new RpcError(
           RpcErrorCode.internalError,
           "runtime shutdown is not configured on this server",
+        );
+      }
+      try {
+        await options.onShutdown();
+      } catch (error) {
+        throw new RpcError(
+          RpcErrorCode.internalError,
+          `runtime shutdown failed: ${summarizeError(error)}`,
         );
       }
       return {
@@ -1214,7 +1231,7 @@ export function buildTurnHandlers(
 
 export interface WorkbenchUnixServer {
   readonly socketPath: string;
-  close(): Promise<void>;
+  close(options?: { disconnectPeers?: boolean }): Promise<void>;
 }
 
 /**
@@ -1259,9 +1276,15 @@ export async function serveWorkbenchUnix(
 ): Promise<WorkbenchUnixServer> {
   await assertSocketBindable(socketPath);
 
+  const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
+  const serverOptions: WorkbenchUnixServerOptions = {
+    ...options,
+    runRuntime: options.runRuntime ??
+      ((input) => runWorkbenchRuntime(input, { acpSessions })),
+  };
   const handlers: RpcHandlers = {
-    ...buildWorkbenchHandlers(options),
-    ...buildTurnHandlers(options),
+    ...buildWorkbenchHandlers(serverOptions),
+    ...buildTurnHandlers(serverOptions),
   };
   const listener = Deno.listen({ transport: "unix", path: socketPath });
   const peers = new Set<JsonRpcPeer>();
@@ -1278,17 +1301,14 @@ export async function serveWorkbenchUnix(
         handlers,
         onParseError: options.onParseError,
         onRequestSettled: async (req, res) => {
-          if (
-            req.method === "runtime/stop" && "result" in res &&
-            options.onShutdown
-          ) {
-            try {
-              await options.onShutdown();
-            } catch (err) {
-              options.onParseError?.(
-                `onShutdown error: ${summarizeError(err)}`,
-              );
-            }
+          if (req.method !== "runtime/stop") return;
+          const code = "result" in res ? 0 : 1;
+          try {
+            await options.onStopComplete?.(code);
+          } catch (err) {
+            options.onParseError?.(
+              `onStopComplete error: ${summarizeError(err)}`,
+            );
           }
         },
       });
@@ -1299,19 +1319,28 @@ export async function serveWorkbenchUnix(
 
   return {
     socketPath,
-    async close() {
+    async close(options: { disconnectPeers?: boolean } = {}) {
+      let shutdownError: unknown;
+      try {
+        await acpSessions.shutdown();
+      } catch (error) {
+        shutdownError = error;
+      }
       try {
         listener.close();
       } catch {
         // already closed
       }
-      for (const peer of peers) peer.close();
-      peers.clear();
+      if (options.disconnectPeers !== false) {
+        for (const peer of peers) peer.close();
+        peers.clear();
+      }
       try {
         await Deno.remove(socketPath);
       } catch {
         // already gone
       }
+      if (shutdownError !== undefined) throw shutdownError;
     },
   };
 }

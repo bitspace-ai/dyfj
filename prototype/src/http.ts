@@ -5,6 +5,7 @@ import {
   type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
 } from "./workbench";
+import { AcpSessionHandleMap } from "./acp-session-map";
 import {
   defaultLocalWorkbenchModels,
   loadWorkbenchModels,
@@ -96,7 +97,9 @@ async function loadPickerModels(): Promise<WorkbenchModel[]> {
 export function createWorkbenchHttpHandler(
   options: WorkbenchHttpHandlerOptions = {},
 ): (request: Request, info?: Deno.ServeHandlerInfo) => Promise<Response> {
-  const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
+  const acpSessions = new AcpSessionHandleMap();
+  const runRuntime = options.runRuntime ??
+    ((input) => runWorkbenchRuntime(input, { acpSessions }));
   const loadModels = options.loadModels ?? loadPickerModels;
   const listSessions = options.listSessions ?? listWorkbenchSessions;
   const createSession = options.createSession ??

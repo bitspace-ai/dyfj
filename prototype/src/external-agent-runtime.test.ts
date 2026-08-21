@@ -9,6 +9,9 @@ const state = vi.hoisted(() => ({
   failCreateSession: false,
   failUpdateSession: false,
   failEventType: undefined as string | undefined,
+  abortNextRunnerSelected: false,
+  abortController: undefined as AbortController | undefined,
+  delayNextRunnerSelectedMs: 0,
   sessionExists: true,
   sessionWorkspace: undefined as string | null | undefined,
 }));
@@ -17,7 +20,36 @@ vi.mock("./utils", () => ({
   generateULID: () => `01ACP${String(++state.nextId).padStart(21, "0")}`,
   generateTraceId: () => "trace-acp",
   generateSpanId: () => `span-${++state.nextId}`,
-  writeEvent: (event: Record<string, unknown>) => {
+  writeEvent: (
+    event: Record<string, unknown>,
+    options: { signal?: AbortSignal } = {},
+  ) => {
+    if (event.event_type === "runner_selected" && state.abortNextRunnerSelected) {
+      state.abortNextRunnerSelected = false;
+      state.abortController?.abort();
+    }
+    if (
+      event.event_type === "runner_selected" &&
+      state.delayNextRunnerSelectedMs > 0
+    ) {
+      const delayMs = state.delayNextRunnerSelectedMs;
+      state.delayNextRunnerSelectedMs = 0;
+      return new Promise<void>((resolve, reject) => {
+        globalThis.setTimeout(() => {
+          if (options.signal?.aborted) {
+            reject(new DOMException("Event write aborted", "AbortError"));
+            return;
+          }
+          state.events.push(event);
+          resolve();
+        }, delayMs);
+      });
+    }
+    if (options.signal?.aborted) {
+      return Promise.reject(
+        new DOMException("Event write aborted", "AbortError"),
+      );
+    }
     if (event.event_type === state.failEventType) {
       return Promise.reject(new Error(`failed ${state.failEventType}`));
     }
@@ -62,10 +94,59 @@ import {
   verifiedRouteFacts,
 } from "./external-agent-runtime";
 import {
+  type AcpExecutionProfile,
+  type AcpSessionHandle,
   AcpProtocolMessageLimitError,
   AcpSessionUpdateLimitError,
 } from "./acp-client";
+import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map";
 import { summarizeError } from "./turn-contract";
+
+async function processIsAlive(pid: number): Promise<boolean> {
+  const status = await new Deno.Command("bash", {
+    args: [
+      "-c",
+      'state=$(ps -o stat= -p "$1" 2>/dev/null) || exit 1; set -- $state; case "${1:-}" in ""|Z*) exit 1;; esac',
+      "bash",
+      String(pid),
+    ],
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  return status.success;
+}
+
+function stalledInitializeProfile(
+  workspace: string,
+  pidFile: string,
+): AcpExecutionProfile {
+  const base = fixtureProfile(workspace);
+  const script = base.args.at(-1);
+  if (script === undefined) throw new Error("fixture profile is missing a script");
+  const home = Deno.env.get("HOME") ?? "/tmp";
+  return {
+    ...base,
+    initializeTimeoutMs: 2_000,
+    sessionTimeoutMs: 2_000,
+    promptTimeoutMs: 2_000,
+    cancellationTimeoutMs: 500,
+    terminationTimeoutMs: 500,
+    args: [
+      ...base.args.slice(0, -1),
+      "--allow-run=/bin/kill",
+      `--allow-write=${pidFile}`,
+      script,
+      `--pid-file=${pidFile}`,
+    ],
+    environment: {
+      ...base.environment,
+      DENO_DIR: Deno.env.get("DENO_DIR") ?? join(home, ".cache/deno"),
+      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+      ACP_FIXTURE_ALLOWED: "yes",
+      ACP_FIXTURE_MODE: "initialize_mute",
+    },
+  };
+}
 
 describe("runExternalAgentWorkbenchRuntime", () => {
   test("leaves the fixture prompt timeout at the generic ACP default", () => {
@@ -191,6 +272,9 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     state.failCreateSession = false;
     state.failUpdateSession = false;
     state.failEventType = undefined;
+    state.abortNextRunnerSelected = false;
+    state.abortController = undefined;
+    state.delayNextRunnerSelectedMs = 0;
     state.sessionExists = true;
     state.sessionWorkspace = undefined;
   });
@@ -1511,5 +1595,440 @@ Deno.exit(output.code);`,
     expect(second.sessionId).toBe(first.sessionId);
     expect(second.stopReason).toBe("stop");
     expect(second.text).toContain("first|");
+  });
+
+  test("reuses one warm ACP session across sequential runtime turns", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    try {
+      const first = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "first turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000001",
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(first.stopReason).toBe("stop");
+      expect(first.runner).toMatchObject({
+        accessRoute: "local_sidecar",
+        costBasis: "local_free",
+        evidence: {
+          source: "acp",
+          routeSource: "profile_declared",
+        },
+      });
+      expect(first.receipt).toContain("Access route: local_sidecar");
+      expect(first.receipt).toContain("Cost basis: local_free");
+      expect(first.receipt).toContain("Route evidence: profile_declared");
+      expect(state.events.map((event) => event.event_type)).toEqual([
+        "session_start",
+        "runner_selected",
+        "agent_response",
+        "session_end",
+      ]);
+      expect(state.events[1]).toMatchObject({
+        event_type: "runner_selected",
+        runner_access_route: "local_sidecar",
+        runner_cost_basis: "local_free",
+        runner_route_source: "profile_declared",
+      });
+      expect(state.events[2]).toMatchObject({
+        event_type: "agent_response",
+        runner_access_route: "local_sidecar",
+        runner_cost_basis: "local_free",
+        runner_route_source: "profile_declared",
+      });
+      expect(map.size).toBe(1);
+
+      state.events.length = 0;
+      const second = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "second turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000001",
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(second.stopReason).toBe("stop");
+      expect(second.runner).toMatchObject({
+        accessRoute: "local_sidecar",
+        costBasis: "local_free",
+        evidence: {
+          source: "acp",
+          routeSource: "profile_declared",
+        },
+      });
+      expect(second.receipt).toContain("Access route: local_sidecar");
+      expect(second.receipt).toContain("Cost basis: local_free");
+      expect(second.receipt).toContain("Route evidence: profile_declared");
+      expect(state.events.map((event) => event.event_type)).toEqual([
+        "session_start",
+        "runner_selected",
+        "agent_response",
+        "session_end",
+      ]);
+      expect(state.events[1]).toMatchObject({
+        event_type: "runner_selected",
+        runner_access_route: "local_sidecar",
+        runner_cost_basis: "local_free",
+        runner_route_source: "profile_declared",
+      });
+      expect(state.events[2]).toMatchObject({
+        event_type: "agent_response",
+        runner_access_route: "local_sidecar",
+        runner_cost_basis: "local_free",
+        runner_route_source: "profile_declared",
+        content: second.text,
+      });
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
+      expect(map.size).toBe(0);
+    }
+  });
+
+  test("a pre-aborted reused runtime turn stays aborted and retains the handle", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const sessionId = "01ACPSESSION000000000000011";
+    try {
+      const first = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "first turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(first.stopReason).toBe("stop");
+      expect(map.size).toBe(1);
+
+      state.events.length = 0;
+      const controller = new AbortController();
+      controller.abort();
+      const runtimeEvents: string[] = [];
+      const second = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "second turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, { sessionMap: map });
+      expect(second.stopReason).toBe("aborted");
+      expect(runtimeEvents).toContain("turnAborted");
+      expect(runtimeEvents).not.toContain("turnFailed");
+      expect(state.events.map((event) => event.event_type)).not.toContain(
+        "runner_selected",
+      );
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("abort during reused route-evidence write stays aborted and retains the handle", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const sessionId = "01ACPSESSION000000000000012";
+    try {
+      const first = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "first turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(first.stopReason).toBe("stop");
+      expect(map.size).toBe(1);
+
+      state.events.length = 0;
+      const controller = new AbortController();
+      state.abortController = controller;
+      state.abortNextRunnerSelected = true;
+      const runtimeEvents: string[] = [];
+      const second = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "second turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, { sessionMap: map });
+      expect(second.stopReason).toBe("aborted");
+      expect(runtimeEvents).toContain("turnAborted");
+      expect(runtimeEvents).not.toContain("turnFailed");
+      expect(state.events.map((event) => event.event_type)).not.toContain(
+        "runner_selected",
+      );
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("a timed-out reused route replay does not emit a late runner_selected event", async () => {
+    const workspace = Deno.cwd();
+    const profile = {
+      ...fixtureProfile(workspace),
+      sessionTimeoutMs: 20,
+    };
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let closed = false;
+    const handle: AcpSessionHandle = {
+      get isAlive() {
+        return !closed;
+      },
+      get routeEvidence() {
+        return { source: "profile_declared" as const };
+      },
+      prompt: () => Promise.reject(new Error("prompt should not run")),
+      close: async () => {
+        closed = true;
+      },
+    };
+    const sessionId = "01ACPSESSION000000000000013";
+    try {
+      await map.acquire({
+        sessionId,
+        workspace,
+        profile,
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      state.events.length = 0;
+      state.delayNextRunnerSelectedMs = 60;
+      const runtimeEvents: string[] = [];
+      await expect(runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "second turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: workspace,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, {
+        sessionMap: map,
+        resolveProfile: () => profile,
+      })).rejects.toMatchObject({
+        name: "AcpRunnerError",
+        phase: "authenticate",
+      });
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 80));
+      expect(runtimeEvents).toContain("turnFailed");
+      expect(state.events.map((event) => event.event_type)).not.toContain(
+        "runner_selected",
+      );
+      expect(map.size).toBe(0);
+    } finally {
+      await map.shutdown().catch(() => {});
+    }
+  });
+
+  test("runtime cancellation retains a warm ACP session", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const controller = new AbortController();
+    try {
+      const first = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "FIXTURE_CANCEL",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000005",
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onTextDelta: () => controller.abort(),
+      }, { sessionMap: map });
+      expect(first.stopReason).toBe("aborted");
+      expect(map.size).toBe(1);
+      const second = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "after cancel",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000005",
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(second.stopReason).toBe("stop");
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("rejects a concurrent same-session ACP turn as busy", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const controller = new AbortController();
+    try {
+      let sawPrompt = false;
+      const first = runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "FIXTURE_CANCEL",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000002",
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onTextDelta: () => {
+          sawPrompt = true;
+        },
+      }, { sessionMap: map });
+      const occupied = Date.now() + 2_000;
+      while (!sawPrompt && Date.now() < occupied) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(sawPrompt).toBe(true);
+      expect(map.size).toBe(1);
+      await expect(runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "should not start",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000002",
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map })).rejects.toBeInstanceOf(AcpSessionBusyError);
+      controller.abort();
+      await first;
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("replaces a failed ACP handle on the next sequential turn", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    try {
+      await expect(runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "FIXTURE_EARLY_EXIT",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000003",
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map })).rejects.toMatchObject({ phase: "prompt" });
+      expect(map.size).toBe(0);
+      const replaced = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "replacement turn",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000003",
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(replaced.stopReason).toBe("stop");
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("idle retirement closes an unused warm ACP session", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 30 });
+    try {
+      await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "idle then retire",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000004",
+        workspaceRoot: Deno.cwd(),
+      }, { sessionMap: map });
+      expect(map.size).toBe(1);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(map.size).toBe(0);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("a pre-aborted warm-path turn finalizes as aborted", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const controller = new AbortController();
+    controller.abort();
+    const runtimeEvents: string[] = [];
+    try {
+      const result = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "unused",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000006",
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, { sessionMap: map });
+      expect(result.stopReason).toBe("aborted");
+      expect(runtimeEvents).toEqual([
+        "sessionStart",
+        "inputReceived",
+        "turnAborted",
+      ]);
+      expect(map.size).toBe(0);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("cancellation during stalled warm-path creation finalizes as aborted", async () => {
+    const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
+    await Deno.remove(pidFile);
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const controller = new AbortController();
+    const runtimeEvents: string[] = [];
+    try {
+      const startedAt = Date.now();
+      const pending = runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "unused",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000007",
+        workspaceRoot: Deno.cwd(),
+        abortSignal: controller.signal,
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
+      }, {
+        sessionMap: map,
+        resolveProfile: (_profile, workspace) =>
+          stalledInitializeProfile(workspace, pidFile),
+      });
+      const deadline = Date.now() + 1_000;
+      while (true) {
+        try {
+          await Deno.stat(pidFile);
+          break;
+        } catch (error) {
+          if (!(error instanceof Deno.errors.NotFound)) throw error;
+          if (Date.now() >= deadline) throw new Error("fixture did not start");
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      controller.abort();
+      const result = await pending;
+      expect(result.stopReason).toBe("aborted");
+      expect(runtimeEvents).toEqual([
+        "sessionStart",
+        "inputReceived",
+        "turnAborted",
+      ]);
+      expect(Date.now() - startedAt).toBeLessThan(1_500);
+      expect(map.size).toBe(0);
+      const pid = Number(await Deno.readTextFile(pidFile));
+      expect(await processIsAlive(pid)).toBe(false);
+    } finally {
+      await map.shutdown();
+      await Deno.remove(pidFile).catch(() => {});
+    }
   });
 });

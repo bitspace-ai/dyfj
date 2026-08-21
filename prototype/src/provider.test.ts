@@ -708,13 +708,14 @@ describe("selectWorkbenchModel", () => {
       "bad\nslug\x00with\tctrl",
     );
     expect(errWithControl.message).toBe(
-      'Model "bad slug with ctrl" does not support fast speed tier',
+      'Model "bad slugwith ctrl" does not support fast speed tier',
     );
 
     const oversized = "a".repeat(200);
     const errOversized = new WorkbenchModelFastSpeedUnsupportedError(oversized);
     expect(errOversized.message.length).toBeLessThan(200);
-    expect(errOversized.message).toContain("...");
+    expect(errOversized.message.startsWith('Model "')).toBe(true);
+    expect(errOversized.message).not.toContain(oversized);
   });
 
   test("a mis-tiered hosted row is never the ambient default", () => {

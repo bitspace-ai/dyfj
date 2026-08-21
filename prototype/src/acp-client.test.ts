@@ -16,6 +16,7 @@ import {
   runAcpAgent,
   runSignalCommand,
   settleDrain,
+  startAcpSession,
 } from "./acp-client";
 
 function fixtureProfile(
@@ -181,6 +182,120 @@ describe("ActivePromptDeadline", () => {
   });
 });
 
+describe("guardedProtocolInput", () => {
+  function agentMessageChunkLine(text: string): Uint8Array {
+    return new TextEncoder().encode(`${
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "fixture-1",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text },
+          },
+        },
+      })
+    }\n`);
+  }
+
+  function thoughtChunkLine(): Uint8Array {
+    return new TextEncoder().encode(`${
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "fixture-1",
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "" },
+          },
+        },
+      })
+    }\n`);
+  }
+
+  function concatBytes(parts: Uint8Array[]): Uint8Array {
+    const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      out.set(part, offset);
+      offset += part.byteLength;
+    }
+    return out;
+  }
+
+  async function runGuardedExchanges(
+    exchanges: Uint8Array[],
+    resetBetween = true,
+  ): Promise<Uint8Array> {
+    const source = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = source.writable.getWriter();
+    const { stream, resetExchange } = guardedProtocolInput(
+      source.readable,
+      () => "fixture-1",
+      () => {},
+    );
+    const chunks: Uint8Array[] = [];
+    const reading = stream.pipeTo(
+      new WritableStream({
+        write(chunk) {
+          chunks.push(chunk);
+        },
+      }),
+    );
+    try {
+      for (let index = 0; index < exchanges.length; index++) {
+        if (index > 0 && resetBetween) resetExchange();
+        const chunk = exchanges[index];
+        if (chunk === undefined) continue;
+        await writer.write(chunk);
+      }
+      await writer.close();
+      await reading;
+    } catch (error) {
+      await writer.abort().catch(() => {});
+      try {
+        await reading;
+      } catch (readError) {
+        throw readError;
+      }
+      throw error;
+    }
+    return concatBytes(chunks);
+  }
+
+  test("resets the agent-response budget at each exchange", async () => {
+    const first = agentMessageChunkLine("x".repeat(50_000));
+    const second = agentMessageChunkLine("x".repeat(50_000));
+    const output = await runGuardedExchanges([first, second]);
+    expect(output).toEqual(concatBytes([first, second]));
+  });
+
+  test("keeps a lifetime budget without an exchange reset", async () => {
+    const first = agentMessageChunkLine("x".repeat(50_000));
+    const second = agentMessageChunkLine("x".repeat(50_000));
+    await expect(runGuardedExchanges([first, second], false)).rejects.toThrow(
+      "ACP agent response exceeded the text limit",
+    );
+  });
+
+  test("still fails closed when a single exchange exceeds 60KB", async () => {
+    await expect(
+      runGuardedExchanges([agentMessageChunkLine("x".repeat(60_001))]),
+    ).rejects.toThrow("ACP agent response exceeded the text limit");
+  });
+
+  test("resets the session-update budget at each exchange", async () => {
+    const line = thoughtChunkLine();
+    const first = concatBytes(Array.from({ length: 1_024 }, () => line));
+    const second = concatBytes(Array.from({ length: 1_024 }, () => line));
+    const output = await runGuardedExchanges([first, second]);
+    expect(output).toEqual(concatBytes([first, second]));
+  });
+});
+
 describe("runAcpAgent", () => {
   test("contains an asynchronous spawn failure without an unhandled error", async () => {
     await expect(runAcpAgent({
@@ -207,6 +322,25 @@ describe("runAcpAgent", () => {
       "eval",
       source,
       "/tmp/dyfj-run",
+    ]);
+  });
+
+  test("process-group signaler eval ignores an ungranted test-run-dir read", () => {
+    const source = processGroupSignalerEvalSource();
+    expect(processGroupSignalerEvalArgs(undefined, {
+      get() {
+        throw new Error(
+          'Requires env access to "DYFJ_TEST_RUN_DIR", run again with the --allow-env flag',
+        );
+      },
+    })).toEqual(["eval", source]);
+  });
+
+  test("process-group signaler eval omits an empty test-run-dir", () => {
+    const source = processGroupSignalerEvalSource();
+    expect(processGroupSignalerEvalArgs(undefined, { get: () => "" })).toEqual([
+      "eval",
+      source,
     ]);
   });
 
@@ -1159,7 +1293,7 @@ describe("runAcpAgent", () => {
       })
     }\n`);
     let sent = 0;
-    const guarded = guardedProtocolInput(
+    const { stream: guarded } = guardedProtocolInput(
       new ReadableStream<Uint8Array>({
         pull(controller) {
           if (sent < 1_025) {
@@ -1195,7 +1329,7 @@ describe("runAcpAgent", () => {
     const profile = fixtureProfile({ sessionUpdatePolicy: "long_running" });
     const limit = resolveSessionUpdateLimit(profile);
     let sent = 0;
-    const guarded = guardedProtocolInput(
+    const { stream: guarded } = guardedProtocolInput(
       new ReadableStream<Uint8Array>({
         pull(controller) {
           if (sent <= limit) {
@@ -1238,7 +1372,7 @@ describe("runAcpAgent", () => {
         },
       })
     }\n`);
-    const guarded = guardedProtocolInput(
+    const { stream: guarded } = guardedProtocolInput(
       new ReadableStream<Uint8Array>({
         start(controller) {
           for (const byte of payload) controller.enqueue(Uint8Array.of(byte));
@@ -1392,5 +1526,32 @@ describe("runAcpAgent", () => {
     });
     expect(calls).toBe(2);
     expect(result.text).toBe("solution found");
+  });
+});
+
+describe("startAcpSession", () => {
+  test("resets ingress caps at each prompt on a warm session", async () => {
+    const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
+    const session = await startAcpSession({
+      profile: fixtureProfile({}, pidFile),
+    });
+    try {
+      const first = await session.prompt({
+        prompt: "FIXTURE_NEAR_LIMIT_RESPONSE",
+      });
+      expect(first.text).toBe("x".repeat(50_000));
+      expect(first.stopReason).toBe("stop");
+      const second = await session.prompt({
+        prompt: "FIXTURE_NEAR_LIMIT_RESPONSE",
+      });
+      expect(second.text).toBe("x".repeat(50_000));
+      expect(second.stopReason).toBe("stop");
+      expect(session.isAlive).toBe(true);
+    } finally {
+      await session.close();
+      const pid = Number(await Deno.readTextFile(pidFile));
+      expect(await processIsAlive(pid)).toBe(false);
+      await Deno.remove(pidFile).catch(() => {});
+    }
   });
 });

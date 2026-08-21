@@ -866,9 +866,7 @@ describe("socketTurn", () => {
 
 describe("socketTurn over a real Unix socket (integration)", () => {
   test("streams deltas and returns the receipt across the wire", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const sock = `${dir}/wb.sock`;
+    const sock = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     const server = await serveWorkbenchUnix(sock, {
       // Stub runtime: stream two deltas, then return a receipt. Cast loosely so
       // the test need not import the engine's runtime result type.
@@ -892,7 +890,7 @@ describe("socketTurn over a real Unix socket (integration)", () => {
       expect(r.text).toBe("Hello socket");
     } finally {
       await server.close();
-      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(sock).catch(() => {});
     }
   });
 });

@@ -173,9 +173,7 @@ describe("probeRuntimeLiveness fallback logic", () => {
 
 describe("runStatus and liveness over real Unix domain sockets", () => {
   test("runStatus succeeds against a live UDS server", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/wb.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     const server: WorkbenchUnixServer = await serveWorkbenchUnix(socketPath, {
       loadModels: async () => [anyVal({ slug: "local-qwen", tier: 0, costInput: 0, costOutput: 0 })],
       listSessions: async () => [],
@@ -184,7 +182,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     cleanups.push(async () => {
       await server.close();
       try {
-        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(socketPath);
       } catch {}
     });
 
@@ -197,9 +195,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
   });
 
   test("probe times out with a bounded deadline and cleans up when connected to a mute socket", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/mute.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     // Create a raw UDS listener that accepts connections but writes nothing back
     const listener = Deno.listen({ transport: "unix", path: socketPath });
     const acceptedConns: Deno.Conn[] = [];
@@ -224,7 +220,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
         } catch {}
       }
       try {
-        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(socketPath);
       } catch {}
     });
 
@@ -254,20 +250,15 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
   });
 
   test("connectUnixClient rejects immediately when given an already-aborted signal", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/aborted.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     const preAborted = AbortSignal.abort(
       new DOMException("The operation was aborted", "AbortError"),
     );
     await expect(connectUnixClient(socketPath, {}, preAborted)).rejects.toThrow();
-    await Deno.remove(dir, { recursive: true });
   });
 
   test("connectUnixClient closes connection if abort occurs while connect is in flight", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const dir = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const socketPath = `${dir}/late.sock`;
+    const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     const listener = Deno.listen({ transport: "unix", path: socketPath });
     let serverConn: Deno.Conn | undefined;
     const acceptedPromise = (async () => {
@@ -289,7 +280,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
         } catch {}
       }
       try {
-        await Deno.remove(dir, { recursive: true });
+        await Deno.remove(socketPath);
       } catch {}
     });
 
