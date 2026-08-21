@@ -210,6 +210,25 @@ describe("runAcpAgent", () => {
     ]);
   });
 
+  test("process-group signaler eval ignores an ungranted test-run-dir read", () => {
+    const source = processGroupSignalerEvalSource();
+    expect(processGroupSignalerEvalArgs(undefined, {
+      get() {
+        throw new Error(
+          'Requires env access to "DYFJ_TEST_RUN_DIR", run again with the --allow-env flag',
+        );
+      },
+    })).toEqual(["eval", source]);
+  });
+
+  test("process-group signaler eval omits an empty test-run-dir", () => {
+    const source = processGroupSignalerEvalSource();
+    expect(processGroupSignalerEvalArgs(undefined, { get: () => "" })).toEqual([
+      "eval",
+      source,
+    ]);
+  });
+
   test("rejects a signaler that cannot address a negative process group", async () => {
     const signaler = await Deno.makeTempFile({ dir: Deno.cwd() });
     try {

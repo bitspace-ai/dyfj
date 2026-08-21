@@ -493,10 +493,21 @@ export function processGroupSignalerEvalSource(): string {
 }
 
 export function processGroupSignalerEvalArgs(
-  runDir = Deno.env.get(TEST_RUN_DIR_ENV),
+  runDir?: string,
+  env: { get(name: string): string | undefined } = Deno.env,
 ): string[] {
+  let resolved = runDir;
+  if (resolved === undefined) {
+    try {
+      resolved = env.get(TEST_RUN_DIR_ENV);
+    } catch {
+      // serve-unix does not grant this test-only name. An ungranted read
+      // throws even when the variable is unset; treat that as absent.
+      resolved = undefined;
+    }
+  }
   const args = ["eval", processGroupSignalerEvalSource()];
-  if (runDir !== undefined && runDir !== "") args.push(runDir);
+  if (resolved !== undefined && resolved !== "") args.push(resolved);
   return args;
 }
 
