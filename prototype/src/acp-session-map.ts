@@ -235,8 +235,9 @@ export class AcpSessionHandleMap {
       capabilities: [],
       elapsedMs: Date.now() - startedAt,
     });
-    const reused =
-      this.#entries.get(encodeAcpSessionHandleKey(input))?.state === "idle";
+    const key = encodeAcpSessionHandleKey(input);
+    const prior = this.#entries.get(key);
+    const idleHandle = prior?.state === "idle" ? prior.handle : undefined;
     let handle: AcpSessionHandle;
     try {
       handle = await this.acquire(input);
@@ -244,6 +245,7 @@ export class AcpSessionHandleMap {
       if (isTurnAborted(error)) return abortedResult();
       throw error;
     }
+    const reused = idleHandle !== undefined && handle === idleHandle;
     try {
       if (
         reused &&

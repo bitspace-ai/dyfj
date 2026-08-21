@@ -752,6 +752,46 @@ describe("AcpSessionHandleMap lifecycle", () => {
     }
   });
 
+  test("replacing a dead idle handle verifies the route once, not twice", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const dead = fakeHandle({
+      routeEvidence: { source: "profile_declared" },
+    });
+    const live = fakeHandle({
+      routeEvidence: { source: "profile_declared" },
+    });
+    let routeCalls = 0;
+    const onRouteVerified = () => {
+      routeCalls += 1;
+    };
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(dead),
+      });
+      map.release(dead);
+      await dead.close();
+      expect(dead.isAlive).toBe(false);
+      expect(map.stateFor(acquireKey(profile))).toBe("idle");
+      const result = await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "replace",
+        onRouteVerified,
+        create: async () => {
+          onRouteVerified();
+          return live;
+        },
+      });
+      expect(result.stopReason).toBe("stop");
+      expect(routeCalls).toBe(1);
+      expect(live.isAlive).toBe(true);
+      expect(map.stateFor(acquireKey(profile))).toBe("idle");
+    } finally {
+      await map.shutdown();
+    }
+  });
+
   test("a pre-aborted reused turn stays aborted and retains the healthy handle", async () => {
     const profile = fixtureProfile();
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
