@@ -176,6 +176,28 @@ const app = agent({ name: "dyfj-acp-fixture" })
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("");
+      if (prompt.includes("FIXTURE_USAGE")) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1_250,
+            size: 8_192,
+            cost: { amount: 0.42, currency: "USD" },
+          },
+        });
+        await chunk(context, params.sessionId, "usage reported");
+        return {
+          stopReason: "end_turn",
+          usage: {
+            totalTokens: 1_250,
+            inputTokens: 1_000,
+            outputTokens: 200,
+            thoughtTokens: 50,
+            cachedReadTokens: 400,
+          },
+        };
+      }
       if (
         prompt.includes("FIXTURE_STUBBORN_DESCENDANT") &&
         grandchildPidFile !== undefined

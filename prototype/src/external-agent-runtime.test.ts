@@ -204,6 +204,47 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     ]);
   });
 
+  test("labels optional ACP usage without converting it to native accounting", async () => {
+    const result = await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "usage evidence",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      workspaceRoot: Deno.cwd(),
+    }, {
+      runAgent: () =>
+        Promise.resolve({
+          text: "done",
+          stopReason: "stop",
+          capabilities: [],
+          routeEvidence: { source: "profile_declared" },
+          usage: { total: 12, input: 8, output: 3, reasoning: 1 },
+          usageSnapshot: {
+            used: 12,
+            size: 1_024,
+            cost: { amount: 0.25, currency: "USD" },
+          },
+          elapsedMs: 5,
+        }),
+    });
+    expect(result.runner).toMatchObject({
+      usage: {
+        source: "acp",
+        stability: "unstable",
+        total: 12,
+        input: 8,
+        output: 3,
+        reasoning: 1,
+      },
+      contextWindow: { source: "acp", used: 12, size: 1_024 },
+      sessionCost: { source: "acp", amount: 0.25, currency: "USD" },
+    });
+    expect(result).not.toHaveProperty("tokens");
+    expect(result).not.toHaveProperty("cost");
+    expect(result.receipt).toContain("ACP token usage (unstable)");
+    expect(result.receipt).toContain("ACP cumulative session cost: 0.25 USD");
+  });
+
   test("exposes the contained session-update ceiling diagnostic at the runtime boundary", async () => {
     let thrown: unknown;
     try {

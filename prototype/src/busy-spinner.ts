@@ -1,6 +1,6 @@
 /**
  * Turn-in-flight indicator for the dyfj CLI: a braille-frame spinner rewritten
- * in place on stderr between submitting a turn and its first output.
+ * in place on stderr while a turn remains in flight.
  *
  * Deliberately the lightest mechanism that delivers the affordance: `\r` plus
  * erase-line on an interactive terminal — no alternate screen, no raw mode, no
@@ -30,13 +30,15 @@ export interface BusySpinnerOptions {
 }
 
 export interface BusySpinner {
-  /** Paint the first frame and begin animating. No-op when disabled, already
-   * spinning, or already stopped. */
+  /** Paint the next frame and begin animating. Resumes after pause without
+   * resetting the turn's elapsed-time clock. */
   start(): void;
+  /** Erase the current line and pause animation while terminal output is
+   * written. A later start() resumes the same in-flight indicator. */
+  pause(): void;
   /**
-   * Erase the spinner line and retire the spinner — a later start() stays a
-   * no-op, so the first real output permanently ends the "in flight" phase.
-   * Idempotent, and safe (and disabling) before start().
+   * Erase the spinner line and retire it at the terminal turn result. A later
+   * start() stays a no-op. Idempotent and safe before start().
    */
   stop(): void;
   /**
@@ -73,9 +75,15 @@ export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
   return {
     start(): void {
       if (!options.enabled || stopped || timer !== null) return;
-      startedAtMs = nowMs();
+      startedAtMs ??= nowMs();
       paint();
       timer = setIntervalFn(paint, intervalMs);
+    },
+    pause(): void {
+      if (stopped || timer === null) return;
+      clearIntervalFn(timer);
+      timer = null;
+      options.write(ERASE_LINE);
     },
     stop(): void {
       if (stopped) return;

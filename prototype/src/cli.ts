@@ -316,7 +316,7 @@ export async function bufferedTurn(
 
 function terminalColumns(): number {
   try {
-    return Deno.consoleSize()?.columns ?? 80;
+    return Math.min(Deno.consoleSize()?.columns ?? 80, 100);
   } catch {
     return 80;
   }
@@ -326,6 +326,10 @@ function terminalColumns(): number {
 export function createTurnOutputHandlers(
   config: CliConfig,
   io: Io,
+  writeLifecycle: {
+    beforeWrite?: () => void;
+    afterWrite?: () => void;
+  } = {},
 ): {
   onDelta: (text: string) => void;
   emitBufferedText: (text: string) => void;
@@ -338,6 +342,7 @@ export function createTurnOutputHandlers(
     out: (text) => io.out(text),
     color: config.color,
     columns: terminalColumns(),
+    ...writeLifecycle,
   });
   return {
     onDelta: (text: string) => {
@@ -515,9 +520,10 @@ function progressSpinnerLabel(event: Record<string, unknown>): string | null {
 }
 
 /**
- * The turn-in-flight indicator: animates on stderr from submit until the
- * turn's first output. Enabled only when the Io exposes a raw stderr writer
- * AND stderr is an interactive terminal — piped stderr gets no control bytes.
+ * The turn-in-flight indicator: animates on stderr for the full turn, pausing
+ * while output or an approval prompt owns the terminal. Enabled only when the
+ * Io exposes a raw stderr writer AND stderr is an interactive terminal — piped
+ * stderr gets no control bytes.
  */
 export function createTurnSpinner(config: CliConfig, io: Io): BusySpinner {
   return createBusySpinner({
@@ -542,10 +548,10 @@ export function runtimeEventIsVisible(event: unknown): boolean {
 }
 
 /**
- * Wrap the streaming-turn handlers so the spinner is erased immediately before
- * the first output that reaches the terminal — a delta, a runtime-event status
- * line (but not an invisible event), or a mid-turn approval prompt. stop()
- * retires the spinner, so calls after the first are no-ops.
+ * Wrap streaming-turn handlers so the spinner yields the terminal around each
+ * visible output, then resumes until the terminal turn result. Progress can
+ * replace the generic label at any point. Invisible bookkeeping events leave
+ * the current indicator alone.
  */
 export function spinnerGuardedTurnHandlers(
   spinner: BusySpinner,
@@ -563,22 +569,32 @@ export function spinnerGuardedTurnHandlers(
 } {
   return {
     onDelta: (text) => {
-      spinner.stop();
       output.onDelta(text);
     },
     onEvent: (event) => {
       const progressLabel = progressSpinnerLabel(event);
       if (progressLabel !== null) {
         spinner.updateLabel(progressLabel);
+        spinner.start();
         return;
       }
       // Keep spinning through invisible events; the wait isn't over yet.
-      if (runtimeEventIsVisible(event)) spinner.stop();
+      const visible = runtimeEventIsVisible(event);
+      if (visible) spinner.pause();
       handleTurnRuntimeEvent(event, output, io);
+      if (visible) {
+        spinner.updateLabel("working…");
+        spinner.start();
+      }
     },
-    onApproval: (request) => {
-      spinner.stop();
-      return onApproval(request);
+    onApproval: async (request) => {
+      spinner.pause();
+      try {
+        return await onApproval(request);
+      } finally {
+        spinner.updateLabel("working…");
+        spinner.start();
+      }
     },
   };
 }
@@ -627,6 +643,10 @@ function formatUsdShort(usd: number): string {
   return usd > 0 ? `$${usd.toFixed(4)}` : "$0";
 }
 
+function formatTokenCount(count: number): string {
+  return new Intl.NumberFormat("en-US").format(count);
+}
+
 /**
  * The per-turn receipt line. `sessionTotalUsd` (the REPL's running sum of
  * per-turn costs) adds a `session $…` figure so spend is visible as it
@@ -640,6 +660,33 @@ export function formatReceipt(
 ): string {
   const dim = (s: string) => (color ? `\x1b[2m${s}\x1b[0m` : s);
   if ("runner" in result) {
+    const usage = result.runner.usage === undefined
+      ? ""
+      : ` · ${formatTokenCount(result.runner.usage.input)}→${
+        formatTokenCount(result.runner.usage.output)
+      } tok` +
+        ((result.runner.usage.reasoning ?? 0) > 0
+          ? ` (+${formatTokenCount(result.runner.usage.reasoning!)} reasoning)`
+          : "");
+    const context = result.runner.contextWindow === undefined
+      ? ""
+      : ` · ctx ${formatTokenCount(result.runner.contextWindow.used)}/${
+        formatTokenCount(result.runner.contextWindow.size)
+      }`;
+    const reportedCost = result.runner.sessionCost;
+    const cost = reportedCost !== undefined
+      ? `session cost ${
+        reportedCost.currency === "USD"
+          ? formatUsdShort(reportedCost.amount)
+          : `${reportedCost.amount} ${reportedCost.currency}`
+      }`
+      : result.runner.costBasis === "local_free"
+      ? "$0"
+      : result.runner.costBasis === "subscription_quota"
+      ? "subscription quota (USD not reported)"
+      : result.runner.costBasis === "metered_usd"
+      ? "USD not reported"
+      : "cost unknown";
     return dim(
       `— ${result.runner.profile} · ${result.runner.protocol}${
         result.runner.protocolVersion === undefined
@@ -647,7 +694,7 @@ export function formatReceipt(
           : ` v${result.runner.protocolVersion}`
       } · ${result.runner.transport} · ${
         result.runner.accessRoute ?? "unverified"
-      } · ${result.runner.costBasis} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
+      } · ${cost}${usage}${context} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
     );
   }
   const cost = formatUsdShort(result.cost.totalUsd);
@@ -657,8 +704,9 @@ export function formatReceipt(
   const reasoning = (result.tokens.reasoning ?? 0) > 0
     ? ` (+${result.tokens.reasoning} reasoning)`
     : "";
-  const tokens =
-    `${result.tokens.input}→${result.tokens.output} tok${reasoning}`;
+  const tokens = `${formatTokenCount(result.tokens.input)}→${
+    formatTokenCount(result.tokens.output)
+  } tok${reasoning}`;
   const toolSteps =
     `tools ${result.agent.toolStepsUsed}/${result.agent.maxToolSteps}` +
     (result.agent.limitReached ? " (limit reached)" : "");
@@ -805,8 +853,14 @@ export async function runExec(
         : await bufferedTurn(config, body, fetchFn);
       io.out(`${JSON.stringify(result, null, 2)}\n`);
     } else {
-      const output = createTurnOutputHandlers(config, io);
       const spinner = createTurnSpinner(config, io);
+      const output = createTurnOutputHandlers(config, io, {
+        beforeWrite: () => spinner.pause(),
+        afterWrite: () => {
+          spinner.updateLabel("working…");
+          spinner.start();
+        },
+      });
       stopTurnIndicator = () => spinner.stop();
       const handlers = spinnerGuardedTurnHandlers(
         spinner,
@@ -949,8 +1003,14 @@ export async function runRepl(
       if (await handleReplFastCommand(prompt, config, io, connect)) continue;
       try {
         const body = buildTurnBody(prompt, config, sessionState.sessionId);
-        const output = createTurnOutputHandlers(config, io);
         const spinner = createTurnSpinner(config, io);
+        const output = createTurnOutputHandlers(config, io, {
+          beforeWrite: () => spinner.pause(),
+          afterWrite: () => {
+            spinner.updateLabel("working…");
+            spinner.start();
+          },
+        });
         const abortController = config.unix ? new AbortController() : undefined;
         const onApproval = (request: unknown) =>
           promptMidTurnApproval(
