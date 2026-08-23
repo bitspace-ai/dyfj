@@ -89,9 +89,9 @@ export type ExternalAgentStopReason =
 
 /**
  * Outer receipt for a turn whose inner loop is owned by an external agent.
- * Native model, token, tool-step, and USD fields are intentionally absent:
- * this foundation does not ingest ACP's optional usage signals or treat them as
- * equivalent to Workbench-native accounting.
+ * Native model, tool-step, and USD-accounting fields remain intentionally
+ * absent. Optional ACP usage is carried below with explicit source/stability
+ * labels rather than treated as Workbench-native accounting.
  */
 export interface ExternalAgentTurnReceipt {
   sessionId: string;
@@ -123,6 +123,29 @@ export interface ExternalAgentTurnReceipt {
         | "api-key"
         | "gateway"
         | "unauthenticated";
+    };
+    /** ACP-reported prompt-response usage. ACP marks this surface unstable. */
+    usage?: {
+      source: "acp";
+      stability: "unstable";
+      total: number;
+      input: number;
+      output: number;
+      reasoning?: number;
+      cacheRead?: number;
+      cacheWrite?: number;
+    };
+    /** Latest context-window snapshot reported during this ACP turn. */
+    contextWindow?: {
+      source: "acp";
+      used: number;
+      size: number;
+    };
+    /** Optional cumulative session cost from ACP usage_update, not turn cost. */
+    sessionCost?: {
+      source: "acp";
+      amount: number;
+      currency: string;
     };
     elapsedMs: number;
   };
@@ -405,4 +428,3 @@ export function sanitizeBoundaryText(raw: string, maxBytes: number): string {
  * Shared across turn-runner, http, and cli to prevent validation drift.
  */
 export const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
-

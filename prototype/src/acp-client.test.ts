@@ -17,6 +17,8 @@ import {
   runSignalCommand,
   settleDrain,
   startAcpSession,
+  tokenUsageFromPromptResponse,
+  usageSnapshotFromUpdate,
 } from "./acp-client";
 
 function fixtureProfile(
@@ -447,6 +449,45 @@ describe("runAcpAgent", () => {
     expect(result.stopReason).toBe("stop");
     expect(result.acpStopReason).toBe("end_turn");
     expect(result.routeEvidence).toEqual({ source: "profile_declared" });
+  });
+
+  test("retains optional ACP prompt usage and the latest context/cost snapshot", async () => {
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_USAGE",
+    });
+    expect(result.usage).toEqual({
+      total: 1_250,
+      input: 1_000,
+      output: 200,
+      reasoning: 50,
+      cacheRead: 400,
+    });
+    expect(result.usageSnapshot).toEqual({
+      used: 1_250,
+      size: 8_192,
+      cost: { amount: 0.42, currency: "USD" },
+    });
+  });
+
+  test("drops malformed optional ACP usage without inventing accounting", () => {
+    expect(tokenUsageFromPromptResponse({
+      totalTokens: 3,
+      inputTokens: -1,
+      outputTokens: 2,
+    })).toBeUndefined();
+    expect(usageSnapshotFromUpdate({
+      sessionUpdate: "usage_update",
+      used: 9,
+      size: 8,
+      cost: { amount: 1, currency: "USD" },
+    })).toBeUndefined();
+    expect(usageSnapshotFromUpdate({
+      sessionUpdate: "usage_update",
+      used: 4,
+      size: 8,
+      cost: { amount: 1, currency: "usd" },
+    })).toEqual({ used: 4, size: 8 });
   });
 
   test("verifies ChatGPT authentication before creating the external session", async () => {

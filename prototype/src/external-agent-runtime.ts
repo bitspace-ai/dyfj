@@ -534,6 +534,15 @@ function receiptText(input: {
       `Agent authentication: ${input.routeEvidence.authenticationType}`,
     ]),
     `Cost basis: ${route.costBasis}`,
+    ...(input.result.usage === undefined ? [] : [
+      `ACP token usage (unstable): ${input.result.usage.input} input, ${input.result.usage.output} output, ${input.result.usage.total} total`,
+    ]),
+    ...(input.result.usageSnapshot === undefined ? [] : [
+      `ACP context: ${input.result.usageSnapshot.used}/${input.result.usageSnapshot.size} tokens`,
+    ]),
+    ...(input.result.usageSnapshot?.cost === undefined ? [] : [
+      `ACP cumulative session cost: ${input.result.usageSnapshot.cost.amount} ${input.result.usageSnapshot.cost.currency}`,
+    ]),
     `Toolchain directories: ${input.profile.toolchainDirectoryCount ?? 0}`,
     `Outcome: ${input.result.stopReason}`,
     `Elapsed: ${input.result.elapsedMs} ms`,
@@ -926,6 +935,26 @@ export async function runExternalAgentWorkbenchRuntime(
             }),
           }),
         },
+        ...(result.usage === undefined ? {} : {
+          usage: {
+            source: "acp" as const,
+            stability: "unstable" as const,
+            ...result.usage,
+          },
+        }),
+        ...(result.usageSnapshot === undefined ? {} : {
+          contextWindow: {
+            source: "acp" as const,
+            used: result.usageSnapshot.used,
+            size: result.usageSnapshot.size,
+          },
+          ...(result.usageSnapshot.cost === undefined ? {} : {
+            sessionCost: {
+              source: "acp" as const,
+              ...result.usageSnapshot.cost,
+            },
+          }),
+        }),
         elapsedMs: result.elapsedMs,
       },
       route: { reason: "explicit_external_agent" },

@@ -5050,7 +5050,7 @@ describe("buildTurnBody", () => {
 });
 
 describe("presentation", () => {
-  test("formatReceipt reports ACP provenance without fake token or USD facts", () => {
+  test("formatReceipt reports ACP provenance and declared local-free cost", () => {
     const external: TurnResult = {
       sessionId: "01CLISESSION0000000000000000",
       traceId: "0123456789abcdef0123456789abcdef",
@@ -5082,10 +5082,51 @@ describe("presentation", () => {
     };
     const formatted = formatReceipt(external, false);
     expect(formatted).toContain(
-      "fixture · acp v1 · local_stdio · local_sidecar · local_free · 12ms",
+      "fixture · acp v1 · local_stdio · local_sidecar · $0 · 12ms",
     );
     expect(formatted).not.toContain("tok");
-    expect(formatted).not.toContain("$0");
+  });
+
+  test("formatReceipt shows ACP usage while preserving its cost semantics", () => {
+    const external = {
+      sessionId: "01CLISESSION0000000000000000",
+      traceId: "0123456789abcdef0123456789abcdef",
+      stopReason: "stop" as const,
+      text: "fixture output",
+      receipt: "External-agent turn receipt",
+      runner: {
+        kind: "external_agent" as const,
+        profile: "codex-chatgpt",
+        protocol: "acp" as const,
+        protocolVersion: 1,
+        capabilities: [],
+        workspace: "/tmp/workspace",
+        transport: "local_stdio" as const,
+        accessRoute: "subscription_oauth" as const,
+        costBasis: "subscription_quota" as const,
+        evidence: {
+          source: "acp" as const,
+          innerState: "opaque" as const,
+          toolchainDirectoryCount: 0 as const,
+        },
+        usage: {
+          source: "acp" as const,
+          stability: "unstable" as const,
+          total: 1_250,
+          input: 1_000,
+          output: 200,
+          reasoning: 50,
+        },
+        contextWindow: { source: "acp" as const, used: 1_250, size: 8_192 },
+        elapsedMs: 12,
+      },
+      route: { reason: "explicit_external_agent" },
+      context: { sources: [] },
+    } satisfies TurnResult;
+    const formatted = formatReceipt(external, false);
+    expect(formatted).toContain("subscription quota (USD not reported)");
+    expect(formatted).toContain("1,000→200 tok (+50 reasoning)");
+    expect(formatted).toContain("ctx 1,250/8,192");
   });
 
   test("formatReceipt names the model and token counts", () => {
@@ -5819,34 +5860,45 @@ describe("spinnerGuardedTurnHandlers", () => {
   function stubSpinner(calls: string[]) {
     return {
       start: () => calls.push("start"),
+      pause: () => calls.push("pause"),
       stop: () => calls.push("stop"),
       updateLabel: (label: string) => calls.push(`label:${label}`),
     };
   }
 
-  test("stops the spinner before rendering the first delta", () => {
+  test("pauses only when a delta emits a line, then resumes", () => {
     const calls: string[] = [];
     const { io, stdout } = fakeIo();
+    const spinner = stubSpinner(calls);
     const output = createTurnOutputHandlers(cfg(), {
       ...io,
       out: (text) => {
         calls.push("out");
         stdout.push(text);
       },
+    }, {
+      beforeWrite: spinner.pause,
+      afterWrite: () => {
+        spinner.updateLabel("working…");
+        spinner.start();
+      },
     });
     const handlers = spinnerGuardedTurnHandlers(
-      stubSpinner(calls),
+      spinner,
       output,
       io,
       () => ({ decision: "deny" as const, reason: "n/a" }),
     );
-    handlers.onDelta("hello\n");
-    expect(calls[0]).toBe("stop");
+    handlers.onDelta("hello");
+    expect(calls).toEqual([]);
+    handlers.onDelta("\n");
+    expect(calls[0]).toBe("pause");
     expect(calls).toContain("out");
+    expect(calls.slice(-2)).toEqual(["label:working…", "start"]);
     expect(stdout.join("")).toBe("hello\n");
   });
 
-  test("stops the spinner before a visible runtime-event status line", () => {
+  test("pauses around a visible runtime-event status line and resumes", () => {
     const calls: string[] = [];
     const { io, stderr } = fakeIo();
     const output = createTurnOutputHandlers(cfg(), io);
@@ -5863,40 +5915,62 @@ describe("spinnerGuardedTurnHandlers", () => {
       () => ({ decision: "deny" as const, reason: "n/a" }),
     );
     handlers.onEvent({ type: "toolCallStarted", commandId: "read_file" });
-    expect(calls[0]).toBe("stop");
+    expect(calls[0]).toBe("pause");
+    expect(calls.slice(-2)).toEqual(["label:working…", "start"]);
     expect(stderr).toEqual(["tool: read_file started"]);
   });
 
   test("thought activity updates the spinner before text output", () => {
     const calls: string[] = [];
     const { io, stdout, stderr } = fakeIo();
+    const spinner = stubSpinner(calls);
     const output = createTurnOutputHandlers(cfg(), {
       ...io,
       out: (text) => {
         calls.push("out");
         stdout.push(text);
       },
+    }, {
+      beforeWrite: spinner.pause,
+      afterWrite: () => {
+        spinner.updateLabel("working…");
+        spinner.start();
+      },
     });
     const handlers = spinnerGuardedTurnHandlers(
-      stubSpinner(calls),
+      spinner,
       output,
       io,
       () => ({ decision: "deny" as const, reason: "n/a" }),
     );
     handlers.onEvent({ type: "agentProgress", kind: "thought" });
-    expect(calls).toEqual(["label:thinking…"]);
+    expect(calls).toEqual(["label:thinking…", "start"]);
     expect(stderr).toEqual([]);
     handlers.onDelta("solution found\n");
-    expect(calls).toEqual(["label:thinking…", "stop", "out"]);
+    expect(calls).toEqual([
+      "label:thinking…",
+      "start",
+      "pause",
+      "out",
+      "label:working…",
+      "start",
+    ]);
     expect(stdout.join("")).toBe("solution found\n");
   });
 
   test("progress does not stop the spinner or print a status line", () => {
     const calls: string[] = [];
     const { io, stderr } = fakeIo();
-    const output = createTurnOutputHandlers(cfg(), io);
+    const spinner = stubSpinner(calls);
+    const output = createTurnOutputHandlers(cfg(), io, {
+      beforeWrite: spinner.pause,
+      afterWrite: () => {
+        spinner.updateLabel("working…");
+        spinner.start();
+      },
+    });
     const handlers = spinnerGuardedTurnHandlers(
-      stubSpinner(calls),
+      spinner,
       output,
       io,
       () => ({ decision: "deny" as const, reason: "n/a" }),
@@ -5906,16 +5980,23 @@ describe("spinnerGuardedTurnHandlers", () => {
       kind: "tool_call",
       title: "Inspecting codebase",
     });
-    expect(calls).toEqual(["label:Inspecting codebase"]);
+    expect(calls).toEqual(["label:Inspecting codebase", "start"]);
     expect(stderr).toEqual([]);
   });
 
   test("keeps spinning through an invisible event (modelSelected)", () => {
     const calls: string[] = [];
     const { io, stderr } = fakeIo();
-    const output = createTurnOutputHandlers(cfg(), io);
+    const spinner = stubSpinner(calls);
+    const output = createTurnOutputHandlers(cfg(), io, {
+      beforeWrite: spinner.pause,
+      afterWrite: () => {
+        spinner.updateLabel("working…");
+        spinner.start();
+      },
+    });
     const handlers = spinnerGuardedTurnHandlers(
-      stubSpinner(calls),
+      spinner,
       output,
       io,
       () => ({ decision: "deny" as const, reason: "n/a" }),
@@ -5926,9 +6007,9 @@ describe("spinnerGuardedTurnHandlers", () => {
     handlers.onEvent({ type: "modelSelected", modelSlug: "x", tier: 0 });
     expect(calls).toEqual([]);
     expect(stderr).toEqual([]);
-    // …and still stops on the first delta that follows.
+    // …and yields/restarts around the first delta that follows.
     handlers.onDelta("hi\n");
-    expect(calls).toEqual(["stop"]);
+    expect(calls).toEqual(["pause", "label:working…", "start"]);
   });
 
   test("stops the spinner before delegating a mid-turn approval", async () => {
@@ -5945,7 +6026,12 @@ describe("spinnerGuardedTurnHandlers", () => {
       },
     );
     const verdict = await handlers.onApproval({ kind: "tool" });
-    expect(calls).toEqual(["stop", "approval"]);
+    expect(calls).toEqual([
+      "pause",
+      "approval",
+      "label:working…",
+      "start",
+    ]);
     expect(verdict).toEqual({ decision: "approve" });
   });
 });
@@ -6013,7 +6099,7 @@ describe("runExec spinner integration", () => {
   test("paints at submit and erases before streamed output on a TTY", async () => {
     const { fn } = recordingFetch([
       sseResponse([
-        { t: "delta", text: "hi" },
+        { t: "delta", text: "hi\n" },
         { t: "done", result: result() },
       ]),
     ]);
@@ -6027,20 +6113,20 @@ describe("runExec spinner integration", () => {
 
   test("an invisible modelSelected event does not erase the spinner early", async () => {
     // The real ordering: modelSelected arrives before the provider wait, then
-    // the first delta. The spinner must survive the event and be erased only
-    // once by the delta — never flicker off during the wait.
+    // the first delta. The spinner must survive the event, yield around the
+    // delta, resume, and retire only at the terminal result.
     const { fn } = recordingFetch([
       sseResponse([
         { t: "event", event: { type: "modelSelected", modelSlug: "x" } },
-        { t: "delta", text: "hi" },
+        { t: "delta", text: "hi\n" },
         { t: "done", result: result() },
       ]),
     ]);
     const { io, raw } = fakeIo([], { errIsTerminal: true });
     const code = await runExec("x", cfg(), io, false, fn);
     expect(code).toBe(0);
-    // Exactly one erase (from the delta), and it is the last spinner write.
-    expect(raw.filter((w) => w === ERASE_LINE)).toHaveLength(1);
+    expect(raw.filter((w) => w === ERASE_LINE)).toHaveLength(2);
+    expect(raw).toContain(`${ERASE_LINE}⠙ working… 0s`);
     expect(raw[raw.length - 1]).toBe(ERASE_LINE);
   });
 
@@ -6077,27 +6163,27 @@ describe("runExec spinner integration", () => {
 });
 
 describe("runRepl spinner integration", () => {
-  test("each turn paints at submit and erases before output", async () => {
+  test("each turn pauses around output, resumes, and retires at completion", async () => {
     const { fn } = recordingFetch([
       sseResponse([
-        { t: "delta", text: "first" },
+        { t: "delta", text: "first\n" },
         { t: "done", result: result() },
       ]),
       sseResponse([
-        { t: "delta", text: "second" },
+        { t: "delta", text: "second\n" },
         { t: "done", result: result() },
       ]),
     ]);
     const { io, raw, stdout } = fakeIo(["one", "two"], { errIsTerminal: true });
     await runRepl(cfg(), io, fn);
-    // Two turns → two paint…erase runs, freshly armed per turn. Frame counts
-    // stay loose: the real interval timer may add repaints on a slow run.
+    // Two turns → a pause erase and a terminal erase for each, with a fresh
+    // spinner instance (and therefore a fresh first frame) per turn.
     const erases = raw.filter((write) => write === ERASE_LINE);
-    expect(erases).toHaveLength(2);
+    expect(erases).toHaveLength(4);
     expect(raw[0]).toBe(`${ERASE_LINE}⠋ working… 0s`);
     expect(raw[raw.length - 1]).toBe(ERASE_LINE);
-    const secondTurnPaint = raw[raw.indexOf(ERASE_LINE) + 1];
-    expect(secondTurnPaint).toBe(`${ERASE_LINE}⠋ working… 0s`);
+    expect(raw.filter((write) => write === `${ERASE_LINE}⠋ working… 0s`))
+      .toHaveLength(2);
     expect(stdout.join("")).toContain("first");
     expect(stdout.join("")).toContain("second");
   });

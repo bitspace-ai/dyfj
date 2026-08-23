@@ -85,6 +85,26 @@ export interface AcpProgressUpdate {
   status?: string;
 }
 
+/** Optional, currently unstable ACP prompt usage. Values are agent-reported. */
+export interface AcpTokenUsage {
+  total: number;
+  input: number;
+  output: number;
+  reasoning?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+/** Optional ACP session context/cost snapshot from the latest usage_update. */
+export interface AcpUsageSnapshot {
+  used: number;
+  size: number;
+  cost?: {
+    amount: number;
+    currency: string;
+  };
+}
+
 export interface AcpRunInput {
   profile: AcpExecutionProfile;
   prompt: string;
@@ -122,6 +142,8 @@ export interface AcpRunResult {
   agentVersion?: string;
   capabilities: string[];
   routeEvidence?: AcpRouteEvidence;
+  usage?: AcpTokenUsage;
+  usageSnapshot?: AcpUsageSnapshot;
   elapsedMs: number;
 }
 
@@ -157,7 +179,11 @@ type LiveSdkSession = {
       notification: { sessionId: string };
       update: unknown;
     }
-    | { kind: "prompt"; stopReason: AcpStopReason }
+    | {
+      kind: "stop";
+      stopReason: AcpStopReason;
+      response?: { usage?: unknown };
+    }
   >;
   dispose: () => void;
 };
@@ -1024,6 +1050,68 @@ function toolCallProgressFromUpdate(
   };
 }
 
+function nonnegativeSafeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+/** Reject the whole required core when an agent supplies malformed usage. */
+export function tokenUsageFromPromptResponse(
+  value: unknown,
+): AcpTokenUsage | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const usage = value as Record<string, unknown>;
+  const total = nonnegativeSafeInteger(usage.totalTokens);
+  const input = nonnegativeSafeInteger(usage.inputTokens);
+  const output = nonnegativeSafeInteger(usage.outputTokens);
+  if (total === undefined || input === undefined || output === undefined) {
+    return undefined;
+  }
+  const optional = (wireName: string, name: string) => {
+    if (usage[wireName] === undefined || usage[wireName] === null) return {};
+    const parsed = nonnegativeSafeInteger(usage[wireName]);
+    return parsed === undefined ? {} : { [name]: parsed };
+  };
+  return {
+    total,
+    input,
+    output,
+    ...optional("thoughtTokens", "reasoning"),
+    ...optional("cachedReadTokens", "cacheRead"),
+    ...optional("cachedWriteTokens", "cacheWrite"),
+  };
+}
+
+export function usageSnapshotFromUpdate(
+  update: Record<string, unknown>,
+): AcpUsageSnapshot | undefined {
+  if (update.sessionUpdate !== "usage_update") return undefined;
+  const used = nonnegativeSafeInteger(update.used);
+  const size = nonnegativeSafeInteger(update.size);
+  if (used === undefined || size === undefined || size === 0 || used > size) {
+    return undefined;
+  }
+  let cost: AcpUsageSnapshot["cost"];
+  if (
+    typeof update.cost === "object" && update.cost !== null &&
+    !Array.isArray(update.cost)
+  ) {
+    const candidate = update.cost as Record<string, unknown>;
+    if (
+      typeof candidate.amount === "number" &&
+      Number.isFinite(candidate.amount) && candidate.amount >= 0 &&
+      typeof candidate.currency === "string" &&
+      /^[A-Z]{3}$/.test(candidate.currency)
+    ) {
+      cost = { amount: candidate.amount, currency: candidate.currency };
+    }
+  }
+  return { used, size, ...(cost === undefined ? {} : { cost }) };
+}
+
 function permissionInputSummary(value: unknown): string {
   if (value === undefined) return "(not supplied)";
   try {
@@ -1290,6 +1378,7 @@ class LiveAcpSession implements AcpSessionHandle {
       });
       if (input.abortSignal?.aborted) requestCancelAndWake();
       let text = "";
+      let usageSnapshot: AcpUsageSnapshot | undefined;
       let updateCount = 0;
       let pendingUpdate = session.nextUpdate();
       while (true) {
@@ -1363,7 +1452,12 @@ class LiveAcpSession implements AcpSessionHandle {
               "protocol",
             );
           }
-          const updateRecord = message.update as unknown as Record<string, unknown>;
+          const updateRecord = message.update as unknown as Record<
+            string,
+            unknown
+          >;
+          usageSnapshot = usageSnapshotFromUpdate(updateRecord) ??
+            usageSnapshot;
           const delta = textFromUpdate(updateRecord);
           if (delta !== null) {
             text += delta;
@@ -1390,6 +1484,7 @@ class LiveAcpSession implements AcpSessionHandle {
           );
         }
         const stopReason = normalizeStopReason(message.stopReason);
+        const usage = tokenUsageFromPromptResponse(message.response?.usage);
         if (cancellationPrecededTerminal && stopReason !== "aborted") {
           throw new AcpRunnerError(
             "ACP cancellation was not acknowledged",
@@ -1401,6 +1496,8 @@ class LiveAcpSession implements AcpSessionHandle {
           stopReason,
           acpStopReason: message.stopReason,
           ...resultEvidence,
+          ...(usage === undefined ? {} : { usage }),
+          ...(usageSnapshot === undefined ? {} : { usageSnapshot }),
           elapsedMs: Date.now() - startedAt,
         };
       }

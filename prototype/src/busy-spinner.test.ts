@@ -59,7 +59,23 @@ describe("createBusySpinner", () => {
     expect(ticks).toEqual([]);
   });
 
-  test("start after stop stays a no-op (output has begun; never restart)", () => {
+  test("pause erases the line and start resumes without resetting elapsed time", () => {
+    let now = 0;
+    const { spinner, writes, ticks, cleared } = harness({ nowMs: () => now });
+    spinner.start();
+    now = 2_500;
+    spinner.pause();
+    spinner.start();
+    expect(cleared).toEqual([1]);
+    expect(ticks).toHaveLength(2);
+    expect(writes).toEqual([
+      `${ERASE}⠋ working… 0s`,
+      ERASE,
+      `${ERASE}⠙ working… 2s`,
+    ]);
+  });
+
+  test("start after terminal stop stays a no-op", () => {
     const { spinner, writes } = harness();
     spinner.start();
     spinner.stop();
@@ -127,5 +143,14 @@ describe("createBusySpinner", () => {
     const countBefore = writes.length;
     spinner.updateLabel("thinking…");
     expect(writes.length).toBe(countBefore);
+  });
+
+  test("updateLabel while paused is applied when animation resumes", () => {
+    const { spinner, writes } = harness();
+    spinner.start();
+    spinner.pause();
+    spinner.updateLabel("inspecting…");
+    spinner.start();
+    expect(writes.at(-1)).toBe(`${ERASE}⠙ inspecting… 0s`);
   });
 });
