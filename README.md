@@ -2,6 +2,18 @@
 
 An operator-owned AI workbench and automation framework built for optionality — you choose where each task runs, local or hosted, with cost visible while work runs. Modular, vendor-loose, and explicit about model cost.
 
+## Human-written preface
+
+This is my free-form workspace for learning about this new world we work in. I love the possibilities, and I've done and experienced a lot of "WOW" magical moments starting with Claude Code over a year ago, then Gemini CLI, and Codex CLI, and then the GUI oriented versions of these.  
+
+I've always pushed against proprietary lock-in, and always tried to optimize for optionality; Claude, Codex/ChatGPT are effectively hard proprietary lock-in on the largest technological advance since something like the wheel or fire.  
+
+Before I started this project I experimented with some open source harnesses. That's when I accidentally blew through $600 in an afternoon of API tokens using pi (operator error, _not_ anything wrong with pi; I was holding it wrong) and became super gun-shy and started building with extreme cost awareness front-and-center.
+
+**Virtually none of this project** has been coded by hand. This is all coming out of my interactions with the various harnesses, to a point of dogfooding. I am doing this in my personal time - evenings, weekends, vacations.
+
+## Almost Everything Hereafter is AI Generated
+
 This README is the _operating context_ for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
 ## Repo layout
