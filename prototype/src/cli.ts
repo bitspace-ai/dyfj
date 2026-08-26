@@ -785,8 +785,7 @@ export function friendlyError(error: unknown, config: CliConfig): string {
     /connection refused|error sending request|tcp connect|econnrefused|failed to fetch|client error/i
       .test(message)
   ) {
-    return `dyfj: runtime not reachable at ${config.serverUrl}. ` +
-      `Start it with: deno task workbench-http`;
+    return `dyfj: runtime not reachable at ${config.serverUrl}.`;
   }
   return `dyfj: ${summarizeError(error)}`;
 }

@@ -312,38 +312,11 @@ path prefix. Common commands are:
 ./prototype/dist/dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
 ```
 
-The HTTP implementation remains available as an explicit standalone server; it
-is not the default terminal-client path:
-
-```sh
-deno task workbench-http
-```
-
-The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests (pass a `sessionId` to resume a conversation), `GET /api/models` for the model registry (active registry rows plus the local defaults), and a session surface: `GET /api/sessions` (grouped by project), `POST /api/sessions`, and `GET /api/sessions/{id}/events` with an optional `asOf` Dolt time-travel parameter.
-
-#### Remote access (optional, authenticated)
-
-Loopback is the default and needs no credentials. To reach the veneer from another machine - say, over a private overlay network such as WireGuard, Tailscale, or NetBird - bind additional interfaces and require a bearer key:
-
-```sh
-DYFJ_WORKBENCH_HTTP_HOST=127.0.0.1,<remote-interface-ip> \
-DYFJ_WORKBENCH_API_KEY="op://<vault>/<item>/credential" \
-  op run -- deno task workbench-http
-```
-
-- `DYFJ_WORKBENCH_HTTP_HOST` takes a comma-separated host list; each bound interface that is not loopback requires every request to present `Authorization: Bearer <key>`.
-- `DYFJ_WORKBENCH_ALLOWED_HOSTS` optionally allows extra non-loopback hostnames (an overlay-network FQDN, for example) beyond the bind list.
-- The server fails closed: non-loopback binds are refused when no API key is configured, unknown hostnames are rejected regardless of credentials, and a wrong bearer is rejected even on loopback.
-- Requests arriving with a valid bearer are recorded on the event log with `authn_mechanism = api_key`; keyless loopback requests record the local-policy basis. Identity is audit data, not an afterthought - see `schema/current/001_structure.sql` and the historical authn migration in `schema/history/011_events_authn.sql`.
-- The HTML surface prompts for the key on first remote use and keeps it in browser `localStorage`.
-
-Project the bearer key from your secret manager into the standalone HTTP process
-at launch. Do not put it in `.env`, and do not expose these ports publicly -
-this is an authenticated private-network posture, not an internet-facing one.
+The HTTP peer server is retired. UDS JSON-RPC is the only seam (`deno task serve-unix` / `dyfj`); a remote or browser surface returns later as a thin gateway client of that seam.
 
 #### JSON-RPC seam over a Unix domain socket
 
-Alongside the HTTP veneer, the workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket — the canonical `loopback` transport (no TCP port; gated by filesystem permissions; full local clearance). It is the seam the terminal clients use instead of HTTP, and both transports run the same shared turn core, so a turn behaves identically over HTTP/SSE and the socket. The bare `dyfj` launcher starts this runtime automatically when needed; the direct engine task remains available for development:
+The workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket — the canonical `loopback` transport (no TCP port; gated by filesystem permissions; full local clearance). It is the seam the terminal clients use. The bare `dyfj` launcher starts this runtime automatically when needed; the direct engine task remains available for development:
 
 ```sh
 deno task serve-unix      # serve the JSON-RPC seam on the Unix socket

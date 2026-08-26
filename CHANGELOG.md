@@ -48,6 +48,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Removed
 
+- **HTTP peer server retired**: `http.ts` is gone. UDS JSON-RPC is the only seam; `events/query` already carries `asOf`. A remote or browser surface returns later as a thin gateway client of that seam.
 - Dropped vestigial `reflections`, `skills`, and capability scaffolding tables from Dolt schema (`schema/018_drop_vestigial.sql`).
 - Removed `settings.example.json` in favor of `config.toml` and `.env`.
 

@@ -128,7 +128,6 @@ export function productionLanes(
       args: [
         "check",
         "--sloppy-imports",
-        "src/http.ts",
         "src/workbench.ts",
         "src/jsonrpc.ts",
         "src/jsonrpc-peer.ts",

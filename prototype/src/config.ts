@@ -198,10 +198,6 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   { key: "memoryMcpTool", envVar: "DYFJ_MEMORY_MCP_TOOL", domain: "engine", type: "string", kind: "value" },
   // Header NAME only (the token itself stays a secret pointer below).
   { key: "memoryMcpTokenHeader", envVar: "DYFJ_MEMORY_MCP_TOKEN_HEADER", domain: "engine", type: "string", kind: "value" },
-  // ── engine: HTTP-transport-specific (only the workbench-http profile) ──
-  { key: "httpHost", envVar: "DYFJ_WORKBENCH_HTTP_HOST", domain: "engine", type: "string", kind: "value" },
-  { key: "httpPort", envVar: "DYFJ_WORKBENCH_HTTP_PORT", domain: "engine", type: "string", kind: "value" },
-  { key: "httpAllowedHosts", envVar: "DYFJ_WORKBENCH_ALLOWED_HOSTS", domain: "engine", type: "string", kind: "value" },
   // ── engine: secret POINTERS (resolved at point of use; never stored here) ──
   { key: "anthropicApiKey", envVar: "ANTHROPIC_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "openaiApiKey", envVar: "OPENAI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
@@ -210,7 +206,6 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   { key: "xaiApiKey", envVar: "XAI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "doltPassword", envVar: "DOLT_PASSWORD", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "memoryMcpToken", envVar: "DYFJ_MEMORY_MCP_TOKEN", domain: "engine", type: "string", kind: "secret-pointer" },
-  { key: "httpApiKey", envVar: "DYFJ_WORKBENCH_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   // ── engine: session/identity — declared, but NOT config (rides the connection) ──
   { key: "principalId", envVar: "DYFJ_PRINCIPAL_ID", domain: "engine", type: "string", kind: "value", sessionState: true },
   // ── client: the engine-free CLI's own slice ──

@@ -3290,12 +3290,12 @@ describe("runtime lifecycle commands", () => {
       '--allow-run="bash,$node_path"',
     );
     expect(tasks["codex-chatgpt-login"]).toContain("--allow-sys=uid");
-    for (const task of ["serve-unix", "workbench", "workbench-http", "start"]) {
+    for (const task of ["serve-unix", "workbench", "start"]) {
       expect(tasks[task]).toMatch(/^deno run --no-prompt /);
       expect(tasks[task]).not.toContain("/bin/sh");
       expect(tasks[task]).not.toContain("DYFJ_NODE_PATH");
     }
-    for (const profile of ["serve-unix", "workbench", "workbench-http"]) {
+    for (const profile of ["serve-unix", "workbench"]) {
       expect(parsed.permissions[profile].run).toContain("/bin/kill");
       expect(parsed.permissions[profile].sys).toContain("uid");
     }
@@ -3309,7 +3309,7 @@ describe("runtime lifecycle commands", () => {
     );
     expect(parsed.permissions["serve-unix"].env).toContain("NODE_V8_COVERAGE");
     expect(parsed.permissions["serve-unix"].read).toBe(true);
-    for (const profile of ["workbench", "workbench-http"]) {
+    for (const profile of ["workbench"]) {
       expect(parsed.permissions[profile].env).toContain("NODE_V8_COVERAGE");
       expect(parsed.permissions[profile].read).toEqual([".."]);
     }
@@ -5176,7 +5176,6 @@ describe("presentation", () => {
   test("friendlyError maps connection failures to a start hint", () => {
     const s = friendlyError(new TypeError("tcp connect error"), cfg());
     expect(s).toContain("not reachable");
-    expect(s).toContain("workbench-http");
   });
 
   // dispatchRequest (jsonrpc.ts) forwards a server error's message to

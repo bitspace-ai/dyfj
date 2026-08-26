@@ -1173,7 +1173,7 @@ describe("serveWorkbenchUnix turn method", () => {
 // The serve-unix Deno permission-profile parity test moved to config.test.ts,
 // where it became structural: the deno.json env allowlist is asserted against the
 // declared CONFIG_SCHEMA surface (forward + reverse) rather than band-aided pair
-// by pair, with the serve-unix ⊇ workbench-http net backstop retained there.
+// by pair.
 
 describe("serveWorkbenchUnix turn approval round-trip", () => {
   // A runtime that asks to approve one mutating tool and reports the verdict.

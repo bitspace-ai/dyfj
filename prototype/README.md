@@ -2,7 +2,7 @@
 
 This is the TypeScript prototype layer of DYFJ.
 
-This layer contains working prototype code for Workbench CLI/shell, local HTTP, the JSON-RPC/UDS transport seam, shared runtime execution, a local ACP-client foundation, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
+This layer contains working prototype code for Workbench CLI/shell, the JSON-RPC/UDS transport seam, shared runtime execution, a local ACP-client foundation, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
 
 If you want to understand DYFJ's stance on why prototype-and-substrate coexist in the same repo, read the project README at the repo root, especially the Layer 0 stance on Rust as a moving boundary.
 
@@ -87,16 +87,7 @@ Inside the REPL, `/session` prints the current session id, `/model` shows or
 switches the active model (with optional `--fast` or `--no-fast`), `/fast [on|off]`
 toggles the fast speed tier for supported models, and `/quit` or `/exit` quits cleanly.
 
-The HTTP implementation remains available as an explicit standalone server; it
-is not the default terminal-client path:
-
-```sh
-deno task workbench-http
-```
-
-The HTTP task listens on `http://127.0.0.1:8787/` by default. `GET /` returns a minimal HTML surface; `POST /api/turn` accepts JSON and calls the same single-turn runtime used by the CLI veneer; `GET /api/models` returns the model registry for pickers; and the session surface provides `GET /api/sessions`, `POST /api/sessions`, and `GET /api/sessions/{id}/events`.
-
-Loopback needs no credentials. To serve additional interfaces (a private overlay network, for example), set `DYFJ_WORKBENCH_HTTP_HOST` to a comma-separated host list and provide a bearer key in `DYFJ_WORKBENCH_API_KEY` - non-loopback requests must present it as `Authorization: Bearer <key>`, and the server refuses non-loopback binds without it. `DYFJ_WORKBENCH_ALLOWED_HOSTS` allows extra non-loopback hostnames beyond the bind list. Authenticated requests are recorded on the event log with `authn_mechanism = api_key`. Project the key at process start (for example `op run`), as with provider keys; see the root README's "Remote access" section for the full posture.
+The HTTP peer server is retired. UDS JSON-RPC is the only seam (`deno task serve-unix` / `dyfj`); a remote or browser surface returns later as a thin gateway client of that seam.
 
 The launcher's background runtime and `dyfj start` both serve the JSON-RPC seam
 over a Unix domain socket, the canonical `loopback` transport. For direct
@@ -221,7 +212,7 @@ The response must include generated text. Health/list endpoints such as Ollama `
 
 ## Layout
 
-- `src/` — Workbench entrypoint, shell, local HTTP veneer, the JSON-RPC/UDS transport seam, shared runtime boundary, native provider path, ACP client runner, command registry, memory, budget, session persistence, event verification, utilities, tests
+- `src/` — Workbench entrypoint, shell, the JSON-RPC/UDS transport seam, shared runtime boundary, native provider path, ACP client runner, command registry, memory, budget, session persistence, event verification, utilities, tests
 - `mcp/` — MCP server (`server.ts`)
 - `examples/` — diagnostic programs, verification helpers, and historical transport spikes; these are not operator launch paths
 

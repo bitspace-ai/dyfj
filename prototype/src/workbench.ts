@@ -1396,8 +1396,7 @@ export async function runWorkbench(
   const runtimeInput = buildWorkbenchRuntimeInput(invocation);
   // This in-process one-shot path owns the Dolt pool lifecycle: the
   // runtime no longer closes it, so close here after the single turn so the
-  // process exits cleanly. (The HTTP server bypasses runWorkbench and keeps
-  // the pool for the process lifetime.)
+  // process exits cleanly.
   const { closeDoltPool } = await import("./utils");
   try {
     return await runWorkbenchRuntime({
