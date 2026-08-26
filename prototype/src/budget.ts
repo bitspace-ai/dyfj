@@ -337,9 +337,6 @@ export interface BudgetCeilingConfirmations {
   daily_limit?: number;
 }
 
-/** @deprecated alias for the pre-daily-envelope name; kept for tests. */
-export type TurnBudgetCeilingConfirmations = BudgetCeilingConfirmations;
-
 const MAX_TRACKED_SCOPES = 512;
 
 function boundedGet(

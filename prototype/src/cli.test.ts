@@ -28,7 +28,7 @@ import {
   nodeRunGrant,
   normalizeSessionRef,
   parseArgs,
-  promptToolApproval,
+  promptMidTurnApproval,
   readLauncherMcpServersConfig,
   readLauncherSecretsConfig,
   readLineOrNull,
@@ -916,7 +916,7 @@ function fakeApprovalConnect(
     });
 }
 
-describe("promptToolApproval", () => {
+describe("promptMidTurnApproval", () => {
   const acpPermissionRequest = {
     kind: "external_agent_permission",
     title: "Run shell command?",
@@ -958,7 +958,7 @@ describe("promptToolApproval", () => {
     async (answer, optionId) => {
       const { io } = fakeIo([answer]);
       expect(
-        await promptToolApproval(io, acpPermissionRequest, true),
+        await promptMidTurnApproval(io, acpPermissionRequest, true),
       ).toEqual({ decision: "select", optionId });
     },
   );
@@ -976,7 +976,7 @@ describe("promptToolApproval", () => {
       ],
     };
     const { io, stderr } = fakeIo(["4"]);
-    expect(await promptToolApproval(io, dynamic, true)).toEqual({
+    expect(await promptMidTurnApproval(io, dynamic, true)).toEqual({
       decision: "select",
       optionId: "remember-command-id",
     });
@@ -993,7 +993,7 @@ describe("promptToolApproval", () => {
 
   test("an explicit empty ACP input selects the advertised default rejection", async () => {
     const { io } = fakeIo([""]);
-    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
       decision: "select",
       optionId: "reject-id",
     });
@@ -1001,7 +1001,7 @@ describe("promptToolApproval", () => {
 
   test("closed ACP input defaults to policy rejection", async () => {
     const { io } = fakeIo([]);
-    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
       decision: "deny",
       reason: "ACP permission selection unavailable",
     });
@@ -1009,7 +1009,7 @@ describe("promptToolApproval", () => {
 
   test("invalid ACP input corrects and re-prompts without duplicating the request", async () => {
     const { io, stderr, prompts } = fakeIo(["later", "2"]);
-    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
       decision: "select",
       optionId: "allow-session-id",
     });
@@ -1024,7 +1024,7 @@ describe("promptToolApproval", () => {
 
   test("an oversized ACP selection is rejected before parsing", async () => {
     const { io, prompts } = fakeIo([` 2${" ".repeat(63)}`, "1"]);
-    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
       decision: "select",
       optionId: "allow-once-id",
     });
@@ -1033,7 +1033,7 @@ describe("promptToolApproval", () => {
 
   test("three invalid ACP selections exhaust the bounded prompt and reject", async () => {
     const { io, stderr, prompts } = fakeIo(["later", "0", "4", "1"]);
-    expect(await promptToolApproval(io, acpPermissionRequest, true)).toEqual({
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
       decision: "deny",
       reason: "ACP permission selection unavailable",
     });
@@ -1049,7 +1049,7 @@ describe("promptToolApproval", () => {
     "an empty allow id with no rejection fails closed on %s",
     async (_label, interactive, lines) => {
       const { io, stderr } = fakeIo(lines);
-      expect(await promptToolApproval(io, emptyAllowOnlyRequest, interactive))
+      expect(await promptMidTurnApproval(io, emptyAllowOnlyRequest, interactive))
         .toEqual({
           decision: "deny",
           reason: "ACP rejection option unavailable",
@@ -1073,7 +1073,7 @@ describe("promptToolApproval", () => {
         optionId: "duplicate",
       })),
     };
-    expect(await promptToolApproval(io, duplicate, true)).toEqual({
+    expect(await promptMidTurnApproval(io, duplicate, true)).toEqual({
       decision: "deny",
       reason: "ACP rejection option unavailable",
     });
@@ -1100,13 +1100,13 @@ describe("promptToolApproval", () => {
       close: () => {},
     };
     await expect(
-      promptToolApproval(io, acpPermissionRequest, true, controller.signal),
+      promptMidTurnApproval(io, acpPermissionRequest, true, controller.signal),
     ).resolves.toEqual({ decision: "abort" });
   });
 
   test("a non-interactive ACP request defaults to policy rejection without prompting", async () => {
     const { io, prompts } = fakeIo(["1"]);
-    await expect(promptToolApproval(io, acpPermissionRequest, false)).resolves
+    await expect(promptMidTurnApproval(io, acpPermissionRequest, false)).resolves
       .toEqual({
         decision: "deny",
         reason: "ACP permission selection unavailable",
@@ -1117,7 +1117,7 @@ describe("promptToolApproval", () => {
   test("approves on y", async () => {
     const { io } = fakeIo(["y"]);
     expect(
-      await promptToolApproval(io, {
+      await promptMidTurnApproval(io, {
         title: "Write File",
         arguments: { path: "a" },
       }, true),
@@ -1125,7 +1125,7 @@ describe("promptToolApproval", () => {
   });
   test("denies on anything else", async () => {
     const { io } = fakeIo(["n"]);
-    expect((await promptToolApproval(io, {}, true)).decision).toBe("deny");
+    expect((await promptMidTurnApproval(io, {}, true)).decision).toBe("deny");
   });
   test("reports an interrupted approval separately from a denial", async () => {
     const abortController = new AbortController();
@@ -1140,7 +1140,7 @@ describe("promptToolApproval", () => {
       close: () => {},
     };
     expect(
-      await promptToolApproval(
+      await promptMidTurnApproval(
         io,
         {},
         true,
@@ -1159,14 +1159,14 @@ describe("promptToolApproval", () => {
       },
       close: () => {},
     };
-    const verdict = await promptToolApproval(io, {}, false);
+    const verdict = await promptMidTurnApproval(io, {}, false);
     expect(verdict.decision).toBe("deny");
     expect(asked).toBe(false);
   });
 
   test("runaway_anomaly gets its own hard-stop prompt and approves on y", async () => {
     const { io, stderr } = fakeIo(["y"]);
-    const verdict = await promptToolApproval(io, {
+    const verdict = await promptMidTurnApproval(io, {
       kind: "runaway_anomaly",
       message: "Runaway spend anomaly — hard stop",
     }, true);
@@ -1177,7 +1177,7 @@ describe("promptToolApproval", () => {
 
   test("runaway_anomaly denies on anything but yes", async () => {
     const { io } = fakeIo([""]);
-    const verdict = await promptToolApproval(io, {
+    const verdict = await promptMidTurnApproval(io, {
       kind: "runaway_anomaly",
     }, true);
     expect(verdict.decision).toBe("deny");

@@ -499,7 +499,6 @@ export type WorkbenchRuntimeResult =
   | NativeWorkbenchRuntimeResult
   | ExternalAgentWorkbenchRuntimeResult;
 
-export type WorkbenchRunResult = WorkbenchRuntimeResult;
 
 export interface WorkbenchValidationSummary {
   ok: boolean;
@@ -1392,7 +1391,7 @@ function estimateRuntimeInputCount(text: string): number {
 
 export async function runWorkbench(
   args = process.argv.slice(2),
-): Promise<WorkbenchRunResult | void> {
+): Promise<WorkbenchRuntimeResult | void> {
   const invocation = resolveWorkbenchInvocation(args);
   const runtimeInput = buildWorkbenchRuntimeInput(invocation);
   // This in-process one-shot path owns the Dolt pool lifecycle: the

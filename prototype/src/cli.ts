@@ -1527,9 +1527,6 @@ export async function promptMidTurnApproval(
   return { decision: "deny", reason: "operator declined" };
 }
 
-/** @deprecated Use promptMidTurnApproval — kept as an alias for existing tests. */
-export const promptToolApproval = promptMidTurnApproval;
-
 export function formatRuntimeEvent(
   event: Record<string, unknown>,
 ): string | null {
