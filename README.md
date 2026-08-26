@@ -379,12 +379,6 @@ deno task codex-chatgpt-login
 
 After ACP initialization and before `session/new`, Workbench asks the adapter for `authentication/status`. The response must be an object whose top-level `type` is exactly `chat-gpt`; a missing response or any other top-level type fails closed. Workbench supplies no API-key or metered-provider fallback. Only after that check succeeds does Workbench persist the profile-declared `subscription_oauth` and `subscription_quota` labels, with `runner_route_source=profile_declared` and the adapter-reported `runner_auth_type=chat-gpt`. Those fields describe the external agent's access route; the existing `authn_*` fields continue to describe the caller. Workbench carries ACP's optional, unstable prompt-response usage and latest context-window snapshot as separately labeled ACP evidence; it does not reinterpret those values as native accounting or attest a model identity. ACP may also report cumulative session cost, which remains distinct from native per-turn cost. The pinned Codex adapter currently reports token/context usage on this subscription route but no currency cost, so the terminal receipt says `subscription quota (USD not reported)`. Workbench starts the adapter as a dedicated process group after verifying the exact negative-PGID signal syntax against an inert process group. If the adapter leader is still active, completion, error, timeout, and cancellation cleanup attempt to signal that group. Signal subprocesses, process-group polling, child-status waits, and stream-drain waits each have deadlines. A process-group termination failure is thrown directly when no earlier primary failure exists; otherwise it is attached as that primary error's cause. Stderr-drain cancellation destroys the owned stream and suppresses late stream errors.
 
-#### Active work coordination
-
-Workbench owns delegated agent coordination from inside the operator surface. The session coordination prototype keeps the underlying primitive small: coordination claims, launch packets, exit receipts, scope paths, heartbeats, stale-base warnings, deterministic path overlap, and registry/git drift checks. The normal command-line entrypoints remain `dyfj` for the CLI/TUI client and, eventually, `dyfj workbench` for the GUI.
-
-The coordination primitive is visibility-first and intended to make concurrent agent work observable before richer orchestration grows around it.
-
 Useful validation tasks:
 
 ```sh
