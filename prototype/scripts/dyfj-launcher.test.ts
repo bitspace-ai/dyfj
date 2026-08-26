@@ -545,36 +545,6 @@ describe("dyfj launcher routing", () => {
     }
   });
 
-  test("HTTP transport does not force deno when a fresh compiled binary is present", async () => {
-    if (!(await hasFreshCompiledBin())) return;
-
-    const customOnly = await dryRun({
-      HOME: "/home/c",
-      DYFJ_SOCKET: "/run/custom.sock",
-    });
-    const customWithHttp = await dryRun(
-      {
-        HOME: "/home/c",
-        DYFJ_SOCKET: "/run/custom.sock",
-        DYFJ_SERVER_URL: "http://127.0.0.1:8787",
-      },
-    );
-    expect(customOnly.route).toBe("deno");
-    expect(customWithHttp.route).toBe("compiled");
-  });
-
-  test("--unix forces deno fallback despite DYFJ_SERVER_URL with a custom socket", async () => {
-    const { route, sock } = await dryRun(
-      {
-        HOME: "/home/c",
-        DYFJ_SOCKET: "/run/custom.sock",
-        DYFJ_SERVER_URL: "http://127.0.0.1:8787",
-      },
-      ["--unix", "models"],
-    );
-    expect(sock).toBe("/run/custom.sock");
-    expect(route).toBe("deno");
-  });
 
   test("committed launcher carries no literal host path", async () => {
     const text = await Deno.readTextFile(LAUNCHER);
@@ -686,7 +656,7 @@ describe("dyfj launcher autostart classification", () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, ["--help"]);
     expect(autostart).toBe("no");
   });
-  test("an HTTP session is out of scope", async () => {
+  test("retired HTTP transport flags decline autostart as unknown", async () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, [
       "--server",
       "http://127.0.0.1:18080",
@@ -781,7 +751,7 @@ describe("prompt values cannot become launcher control input", () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, ["--help"]);
     expect(autostart).toBe("no");
   });
-  test("a -p prompt of --server does not switch transport", async () => {
+  test("a -p prompt of --server does not decline autostart", async () => {
     const { autostart } = await dryRun({ HOME: "/home/c" }, [
       "-p",
       "--server",
@@ -896,8 +866,8 @@ describe("a -p prompt makes the invocation a turn the runtime is needed for", ()
   });
 });
 
-describe("the probe invokes the client on the UDS seam explicitly", () => {
-  test("both client routes pass --unix before status", async () => {
+describe("the probe invokes the client on the UDS seam", () => {
+  test("both client routes invoke status without a retired transport flag", async () => {
     const lines = (await Deno.readTextFile(LAUNCHER)).split("\n");
     const open = lines.findIndex((l) => l.trim() === "probe_runtime() {");
     expect(open).toBeGreaterThanOrEqual(0);
@@ -910,8 +880,9 @@ describe("the probe invokes the client on the UDS seam explicitly", () => {
     // One per route — compiled and deno. A third would be an unreviewed call.
     expect(invocations).toHaveLength(2);
     for (const line of invocations) {
-      expect(line).toContain("--unix");
-      expect(line.indexOf("--unix")).toBeLessThan(line.indexOf(" status "));
+      expect(line).toContain(" status ");
+      expect(line).not.toContain("--unix");
+      expect(line).not.toContain("--server");
     }
   });
 });

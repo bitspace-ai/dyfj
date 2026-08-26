@@ -209,11 +209,8 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   // ── engine: session/identity — declared, but NOT config (rides the connection) ──
   { key: "principalId", envVar: "DYFJ_PRINCIPAL_ID", domain: "engine", type: "string", kind: "value", sessionState: true },
   // ── client: the engine-free CLI's own slice ──
-  { key: "serverUrl", envVar: "DYFJ_SERVER_URL", domain: "client", type: "string", kind: "value" },
   { key: "socket", envVar: "DYFJ_SOCKET", domain: "client", type: "string", kind: "value" },
   { key: "workspace", envVar: "DYFJ_WORKSPACE", domain: "client", type: "string", kind: "value" },
-  { key: "unix", envVar: "DYFJ_UNIX", domain: "client", type: "string", kind: "value" },
-  { key: "clientApiKey", envVar: "DYFJ_WORKBENCH_API_KEY", domain: "client", type: "string", kind: "secret-pointer" },
   { key: "clientModel", envVar: "DYFJ_WORKBENCH_MODEL", domain: "client", type: "string", kind: "value" },
   { key: "clientHint", envVar: "DYFJ_WORKBENCH_HINT", domain: "client", type: "string", kind: "value" },
   { key: "clientTier", envVar: "DYFJ_WORKBENCH_TIER", domain: "client", type: "string", kind: "value" },

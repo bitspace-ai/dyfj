@@ -1,6 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
 import {
-  bufferedTurn,
   buildServeUnixArgs,
   buildTurnBody,
   type CliConfig,
@@ -13,7 +12,6 @@ import {
   formatReceipt,
   formatRuntimeEvent,
   formatRuntimeStatus,
-  friendlyError,
   handleReplFastCommand,
   handleReplIdeaCommand,
   handleReplModelCommand,
@@ -22,7 +20,6 @@ import {
   handleTurnRuntimeEvent,
   installRootFromModuleUrl,
   type Io,
-  isLoopbackServerUrl,
   main,
   memoryMcpNetGrant,
   nodeRunGrant,
@@ -53,7 +50,6 @@ import {
   socketTurn,
   spinnerGuardedTurnHandlers,
   type StartRuntimeFn,
-  streamTurn,
   toolchainReadGrant,
   type TurnInterruptSource,
   type TurnResult,
@@ -181,7 +177,6 @@ describe("readlineTurnInterruptSource", () => {
 
 function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
   return {
-    serverUrl: "http://localhost:8787",
     socket: "/tmp/dyfj-test.sock",
     mode: "turn",
     color: false,
@@ -220,9 +215,7 @@ function result(overrides: Partial<TurnResult> = {}): TurnResult {
 
 type Frame =
   | { t: "delta"; text: string }
-  | { t: "event"; event: Record<string, unknown> }
-  | { t: "done"; result: TurnResult }
-  | { t: "error"; message: string };
+  | { t: "event"; event: Record<string, unknown> };
 
 /**
  * The wire shape of the superseding-retry signal — `satisfies` pins the
@@ -244,31 +237,6 @@ function unparsedMarkupEvent(): Record<string, unknown> {
     count: 64,
     countIsLowerBound: true,
   } satisfies UnparsedToolCallMarkupDetectedEvent;
-}
-
-function sseResponse(frames: Frame[]): Response {
-  const body = frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join("");
-  return new Response(body, {
-    status: 200,
-    headers: { "content-type": "text/event-stream" },
-  });
-}
-
-function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function recordingFetch(responses: Response[]) {
-  const calls: Array<{ url: string; init: RequestInit }> = [];
-  let i = 0;
-  const fn = ((url: string | URL | Request, init?: RequestInit) => {
-    calls.push({ url: String(url), init: init ?? {} });
-    return Promise.resolve(responses[i++] ?? new Response("", { status: 500 }));
-  }) as unknown as typeof fetch;
-  return { fn, calls };
 }
 
 function fakeIo(
@@ -294,77 +262,6 @@ function fakeIo(
   return { io, stdout, stderr, raw, prompts };
 }
 
-// ── streamTurn / bufferedTurn ────────────────────────────────────────────────
-
-describe("streamTurn", () => {
-  test("renders deltas, forwards events, returns the done result", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "event", event: { type: "modelSelected", modelSlug: "x" } },
-        { t: "delta", text: "Hello " },
-        { t: "delta", text: "world" },
-        { t: "done", result: result() },
-      ]),
-    ]);
-    const deltas: string[] = [];
-    const events: Record<string, unknown>[] = [];
-    const r = await streamTurn(
-      cfg(),
-      { prompt: "hi" },
-      { onDelta: (t) => deltas.push(t), onEvent: (e) => events.push(e) },
-      fn,
-    );
-    expect(deltas.join("")).toBe("Hello world");
-    expect(events).toHaveLength(1);
-    expect(r.sessionId).toBe(result().sessionId);
-  });
-
-  test("throws on an error frame", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([{ t: "error", message: "boom" }]),
-    ]);
-    await expect(
-      streamTurn(cfg(), { prompt: "x" }, { onDelta: () => {} }, fn),
-    ).rejects.toThrow("boom");
-  });
-
-  test("surfaces a pre-stream JSON error", async () => {
-    const { fn } = recordingFetch([
-      jsonResponse({ error: "bad request" }, 400),
-    ]);
-    await expect(
-      streamTurn(cfg(), { prompt: "x" }, { onDelta: () => {} }, fn),
-    ).rejects.toThrow("bad request");
-  });
-
-  test("sends Accept: text/event-stream and the JSON body", async () => {
-    const { fn, calls } = recordingFetch([
-      sseResponse([{ t: "done", result: result() }]),
-    ]);
-    await streamTurn(cfg(), { prompt: "hi" }, { onDelta: () => {} }, fn);
-    const headers = calls[0].init.headers as Record<string, string>;
-    expect(headers["accept"]).toBe("text/event-stream");
-    expect(JSON.parse(calls[0].init.body as string)).toMatchObject({
-      prompt: "hi",
-    });
-  });
-});
-
-describe("bufferedTurn", () => {
-  test("returns the JSON result", async () => {
-    const { fn } = recordingFetch([jsonResponse(result())]);
-    const r = await bufferedTurn(cfg(), { prompt: "x" }, fn);
-    expect(r.text).toBe(result().text);
-  });
-
-  test("throws the server error message on non-2xx", async () => {
-    const { fn } = recordingFetch([jsonResponse({ error: "nope" }, 500)]);
-    await expect(bufferedTurn(cfg(), { prompt: "x" }, fn)).rejects.toThrow(
-      "nope",
-    );
-  });
-});
-
 // ── socketTurn (turns over the UDS seam) ─────────────────────────────────────
 
 /** A fake UDS connect that streams the given frames, then resolves `turn`. */
@@ -382,6 +279,30 @@ function fakeTurnConnect(frames: Frame[], r: TurnResult): ConnectFn {
       },
       close: () => {},
     });
+}
+
+function sequentialTurnConnect(
+  turns: Array<{ frames?: Frame[]; result?: TurnResult; error?: unknown }>,
+): { connect: ConnectFn; params: unknown[] } {
+  let i = 0;
+  const params: unknown[] = [];
+  const connect: ConnectFn = (_socketPath, options) =>
+    Promise.resolve({
+      request: (method: string, requestParams?: unknown) => {
+        if (method === "turn") {
+          params.push(requestParams);
+          const turn = turns[i++] ?? {};
+          if (turn.error !== undefined) return Promise.reject(turn.error);
+          for (const f of turn.frames ?? []) {
+            if (f.t === "delta" || f.t === "event") options?.onStream?.(f);
+          }
+          return Promise.resolve(turn.result ?? result());
+        }
+        return Promise.resolve(undefined);
+      },
+      close: () => {},
+    });
+  return { connect, params };
 }
 
 describe("socketTurn", () => {
@@ -895,7 +816,7 @@ describe("socketTurn over a real Unix socket (integration)", () => {
   });
 });
 
-// ── tool approval over the --unix seam ───────────────────────────────────────
+// ── tool approval over the UDS seam ──────────────────────────────────────────
 
 /** A fake UDS connect whose `turn` asks for approval mid-call, capturing the verdict. */
 function fakeApprovalConnect(
@@ -1184,7 +1105,7 @@ describe("promptMidTurnApproval", () => {
   });
 });
 
-describe("runExec tool approval (--unix)", () => {
+describe("runExec tool approval", () => {
   test("prompts and sends the operator's approval back to the server", async () => {
     const captured: { verdict?: ToolApprovalVerdict } = {};
     const { io, stderr } = fakeIo(["y"]);
@@ -1193,7 +1114,7 @@ describe("runExec tool approval (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       fakeApprovalConnect(
         {
           commandId: "write_file",
@@ -1218,7 +1139,7 @@ describe("runExec tool approval (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       fakeApprovalConnect(
         { commandId: "write_file", title: "Write File", arguments: {} },
         result(),
@@ -1267,7 +1188,7 @@ describe("runExec tool approval (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       connect,
       true,
     )).resolves.toBe(0);
@@ -1281,69 +1202,79 @@ describe("runExec tool approval (--unix)", () => {
 
 describe("runExec", () => {
   test("streams text to stdout and the receipt to stderr", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([{ t: "delta", text: "Hi" }, {
-        t: "done",
-        result: result(),
-      }]),
-    ]);
     const { io, stdout, stderr } = fakeIo();
-    const code = await runExec("hello", cfg(), io, false, fn);
+    const code = await runExec(
+      "hello",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect([{ t: "delta", text: "Hi" }], result()),
+    );
     expect(code).toBe(0);
     expect(stdout.join("")).toBe("Hi\n");
     expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
   });
 
   test("surfaces tool progress events to stderr", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([
-        {
-          t: "event",
-          event: {
-            type: "toolStepStarted",
-            step: 1,
-            toolCallCount: 1,
-          },
-        },
-        {
-          t: "event",
-          event: {
-            type: "toolCallStarted",
-            commandId: "bash",
-            callId: "call-1",
-          },
-        },
-        {
-          t: "event",
-          event: {
-            type: "toolCallCompleted",
-            commandId: "bash",
-            callId: "call-1",
-            isError: false,
-            durationMs: 85,
-          },
-        },
-        { t: "done", result: result() },
-      ]),
-    ]);
     const { io, stderr } = fakeIo();
-    const code = await runExec("inspect", cfg(), io, false, fn);
+    const code = await runExec(
+      "inspect",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect(
+        [
+          {
+            t: "event",
+            event: {
+              type: "toolStepStarted",
+              step: 1,
+              toolCallCount: 1,
+            },
+          },
+          {
+            t: "event",
+            event: {
+              type: "toolCallStarted",
+              commandId: "bash",
+              callId: "call-1",
+            },
+          },
+          {
+            t: "event",
+            event: {
+              type: "toolCallCompleted",
+              commandId: "bash",
+              callId: "call-1",
+              isError: false,
+              durationMs: 85,
+            },
+          },
+        ],
+        result(),
+      ),
+    );
     expect(code).toBe(0);
     expect(stderr).toContain("tool: step 1 running 1 call(s)");
     expect(stderr).toContain("tool: bash started");
     expect(stderr).toContain("tool: bash finished (85ms)");
   });
 
-  test("renders the shared unparsed-markup warning before the SSE receipt", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "delta", text: "provider text" },
-        { t: "event", event: unparsedMarkupEvent() },
-        { t: "done", result: result({ text: "provider text" }) },
-      ]),
-    ]);
+  test("renders the shared unparsed-markup warning before the receipt", async () => {
     const { io, stderr } = fakeIo();
-    const code = await runExec("make the change", cfg(), io, false, fn);
+    const code = await runExec(
+      "make the change",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect(
+        [
+          { t: "delta", text: "provider text" },
+          { t: "event", event: unparsedMarkupEvent() },
+        ],
+        result({ text: "provider text" }),
+      ),
+    );
     expect(code).toBe(0);
     const warningIndex = stderr.findIndex((line) =>
       line.startsWith("WARNING:")
@@ -1359,14 +1290,17 @@ describe("runExec", () => {
   });
 
   test("renders streamed markdown without raw markers", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "delta", text: "## Tools\n- **read_file**\n" },
-        { t: "done", result: result() },
-      ]),
-    ]);
     const { io, stdout } = fakeIo();
-    const code = await runExec("list tools", cfg(), io, false, fn);
+    const code = await runExec(
+      "list tools",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect(
+        [{ t: "delta", text: "## Tools\n- **read_file**\n" }],
+        result(),
+      ),
+    );
     expect(code).toBe(0);
     const out = stdout.join("");
     expect(out).not.toMatch(/##|\*\*/);
@@ -1375,11 +1309,14 @@ describe("runExec", () => {
   });
 
   test("falls back to result.text when a turn streams no deltas", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([{ t: "done", result: result({ text: "buffered answer" }) }]),
-    ]);
     const { io, stdout } = fakeIo();
-    const code = await runExec("x", cfg(), io, false, fn);
+    const code = await runExec(
+      "x",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect([], result({ text: "buffered answer" })),
+    );
     expect(code).toBe(0);
     expect(stdout.join("")).toBe("buffered answer\n");
   });
@@ -1388,16 +1325,21 @@ describe("runExec", () => {
     // The stale attempt opened a code fence that never closed; the signal
     // must reset that parse state or the replacement's markdown would render
     // verbatim as code-block lines.
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "delta", text: "```\nstale partial\n" },
-        { t: "event", event: supersedeEvent() },
-        { t: "delta", text: "**fresh** answer\n" },
-        { t: "done", result: result({ text: "**fresh** answer" }) },
-      ]),
-    ]);
     const { io, stdout } = fakeIo();
-    const code = await runExec("long question", cfg(), io, false, fn);
+    const code = await runExec(
+      "long question",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect(
+        [
+          { t: "delta", text: "```\nstale partial\n" },
+          { t: "event", event: supersedeEvent() },
+          { t: "delta", text: "**fresh** answer\n" },
+        ],
+        result({ text: "**fresh** answer" }),
+      ),
+    );
     expect(code).toBe(0);
     const out = stdout.join("");
     const markerAt = out.indexOf("retrying with recovered context");
@@ -1412,37 +1354,36 @@ describe("runExec", () => {
     // The signal re-arms the buffered-text fallback: everything streamed
     // before it is stale, so if nothing streams after, the authoritative
     // receipt text must render rather than leaving only the stale partial.
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "delta", text: "stale partial" },
-        { t: "event", event: supersedeEvent() },
-        { t: "done", result: result({ text: "authoritative answer" }) },
-      ]),
-    ]);
     const { io, stdout } = fakeIo();
-    const code = await runExec("x", cfg(), io, false, fn);
+    const code = await runExec(
+      "x",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect(
+        [
+          { t: "delta", text: "stale partial" },
+          { t: "event", event: supersedeEvent() },
+        ],
+        result({ text: "authoritative answer" }),
+      ),
+    );
     expect(code).toBe(0);
     expect(stdout.join("")).toContain("authoritative answer");
   });
 
   test("--json prints the buffered result and no receipt", async () => {
-    const { fn } = recordingFetch([jsonResponse(result())]);
     const { io, stdout, stderr } = fakeIo();
-    const code = await runExec("hello", cfg(), io, true, fn);
+    const code = await runExec(
+      "hello",
+      cfg(),
+      io,
+      true,
+      fakeTurnConnect([], result()),
+    );
     expect(code).toBe(0);
     expect(JSON.parse(stdout.join(""))).toMatchObject({ text: result().text });
     expect(stderr).toHaveLength(0);
-  });
-
-  test("reports an unreachable runtime with a hint", async () => {
-    const fn = (() =>
-      Promise.reject(
-        new TypeError("error sending request"),
-      )) as unknown as typeof fetch;
-    const { io, stderr } = fakeIo();
-    const code = await runExec("x", cfg(), io, false, fn);
-    expect(code).toBe(1);
-    expect(stderr.join("\n")).toContain("not reachable");
   });
 });
 
@@ -1604,7 +1545,7 @@ describe("handleTurnRuntimeEvent", () => {
   });
 });
 
-describe("runExec over the socket (--unix)", () => {
+describe("runExec over the socket", () => {
   test("streams text + receipt over the seam", async () => {
     const { io, stdout, stderr } = fakeIo();
     const code = await runExec(
@@ -1612,7 +1553,7 @@ describe("runExec over the socket (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       fakeTurnConnect([{ t: "delta", text: "Hi" }], result()),
     );
     expect(code).toBe(0);
@@ -1633,7 +1574,7 @@ describe("runExec over the socket (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       fakeTurnConnect(
         [],
         result({ stopReason: "aborted", text: "buffered partial text" }),
@@ -1691,7 +1632,7 @@ describe("runExec over the socket (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       connect,
     );
 
@@ -1742,7 +1683,7 @@ describe("runExec over the socket (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       connect,
     );
 
@@ -1769,7 +1710,7 @@ describe("runExec over the socket (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       fakeTurnConnect([], result()),
     );
 
@@ -1778,14 +1719,14 @@ describe("runExec over the socket (--unix)", () => {
   });
 
   test("honors the superseding-retry signal over the UDS seam too", async () => {
-    // Same frame shapes as SSE, so the reset contract holds across transports.
+    // Stream frames over the UDS seam honor the same supersede contract.
     const { io, stdout } = fakeIo();
     const code = await runExec(
       "long question",
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       fakeTurnConnect(
         [
           { t: "delta", text: "stale partial\n" },
@@ -1809,7 +1750,7 @@ describe("runExec over the socket (--unix)", () => {
       cfg({ unix: true }),
       io,
       false,
-      fetch,
+
       fakeTurnConnect(
         [{ t: "event", event: unparsedMarkupEvent() }],
         result({ text: "provider text" }),
@@ -1836,7 +1777,7 @@ describe("runExec over the socket (--unix)", () => {
       cfg({ unix: true, socket: "/run/missing.sock" }),
       io,
       false,
-      fetch,
+
       () => {
         throw new Error("No such file or directory (os error 2)");
       },
@@ -1850,43 +1791,43 @@ describe("runExec over the socket (--unix)", () => {
 
 describe("runRepl", () => {
   test("holds a multi-turn conversation and resumes the session", async () => {
-    const { fn, calls } = recordingFetch([
-      sseResponse([{ t: "delta", text: "a" }, {
-        t: "done",
+    const { connect, params } = sequentialTurnConnect([
+      {
+        frames: [{ t: "delta", text: "a" }],
         result: result({ sessionId: "SESS1", text: "a" }),
-      }]),
-      sseResponse([{ t: "delta", text: "b" }, {
-        t: "done",
+      },
+      {
+        frames: [{ t: "delta", text: "b" }],
         result: result({ sessionId: "SESS1", text: "b" }),
-      }]),
+      },
     ]);
     const { io, stdout } = fakeIo(["first", "second"]);
-    await runRepl(cfg(), io, fn);
+    await runRepl(cfg(), io, connect, false);
 
-    expect(calls).toHaveLength(2);
-    expect(JSON.parse(calls[0].init.body as string).sessionId).toBeUndefined();
-    expect(JSON.parse(calls[1].init.body as string).sessionId).toBe("SESS1");
+    expect(params).toHaveLength(2);
+    expect((params[0] as { sessionId?: string }).sessionId).toBeUndefined();
+    expect((params[1] as { sessionId?: string }).sessionId).toBe("SESS1");
     expect(stdout.join("")).toContain("a");
     expect(stdout.join("")).toContain("b");
   });
 
   test("skips blank lines and exits on /exit", async () => {
-    const { fn, calls } = recordingFetch([
-      sseResponse([{ t: "done", result: result() }]),
+    const { connect, params } = sequentialTurnConnect([
+      { result: result() },
     ]);
     const { io } = fakeIo(["   ", "real", "/exit", "never"]);
-    await runRepl(cfg(), io, fn);
-    expect(calls).toHaveLength(1);
+    await runRepl(cfg(), io, connect, false);
+    expect(params).toHaveLength(1);
   });
 
   test("keeps the REPL alive after a turn error", async () => {
-    const { fn, calls } = recordingFetch([
-      sseResponse([{ t: "error", message: "transient" }]),
-      sseResponse([{ t: "done", result: result() }]),
+    const { connect, params } = sequentialTurnConnect([
+      { error: new DomainError("transient") },
+      { result: result() },
     ]);
     const { io, stderr } = fakeIo(["one", "two"]);
-    await runRepl(cfg(), io, fn);
-    expect(calls).toHaveLength(2);
+    await runRepl(cfg(), io, connect, false);
+    expect(params).toHaveLength(2);
     expect(stderr.join("\n")).toContain("transient");
   });
 
@@ -1914,7 +1855,7 @@ describe("runRepl", () => {
     const code = await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       connect,
       false,
       interrupts,
@@ -1933,16 +1874,16 @@ describe("runRepl", () => {
   test("receipts carry the running session total across turns", async () => {
     const paid = (totalUsd: number) =>
       result({ cost: { estimatedUsd: 0, totalUsd, paidInferenceUsed: true } });
-    const { fn } = recordingFetch([
-      sseResponse([{ t: "done", result: paid(0.01) }]),
-      sseResponse([{ t: "done", result: paid(0.02) }]),
+    const { connect } = sequentialTurnConnect([
+      { result: paid(0.01) },
+      { result: paid(0.02) },
     ]);
     const { io, stderr } = fakeIo(["one", "two"]);
-    await runRepl(cfg(), io, fn);
-    const text = stderr.join("\n");
+    await runRepl(cfg(), io, connect, false);
+    const rendered = stderr.join("\n");
     // Each receipt shows the sum of every per-turn cost so far.
-    expect(text).toContain("session $0.0100");
-    expect(text).toContain("session $0.0300");
+    expect(rendered).toContain("session $0.0100");
+    expect(rendered).toContain("session $0.0300");
   });
 
   test("Ctrl-C cancels one UDS turn and carries its session into the next request", async () => {
@@ -1998,7 +1939,7 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       connect,
       false,
     );
@@ -2045,7 +1986,7 @@ describe("runRepl", () => {
       write(text);
     };
 
-    await runRepl(cfg({ unix: true }), io, fetch, connect);
+    await runRepl(cfg({ unix: true }), io, connect);
 
     expect(bodies).toHaveLength(2);
     expect(bodies[0].sessionId).toBeUndefined();
@@ -2074,7 +2015,7 @@ describe("runRepl", () => {
       if (rawWrites === 2) throw new Error("terminal erase failed");
     };
 
-    await runRepl(cfg({ unix: true }), io, fetch, connect);
+    await runRepl(cfg({ unix: true }), io, connect);
 
     expect(bodies).toHaveLength(2);
     expect(bodies[0].sessionId).toBeUndefined();
@@ -2124,7 +2065,7 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       connect,
       false,
       interrupts,
@@ -2202,7 +2143,7 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       connect,
       true,
       interrupts,
@@ -2237,7 +2178,7 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       connect,
       false,
       interrupts,
@@ -2274,7 +2215,7 @@ describe("runRepl", () => {
     const pending = runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       connect,
       false,
       interrupts,
@@ -2331,7 +2272,7 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       connect,
       false,
       interrupts,
@@ -2422,7 +2363,7 @@ describe("parseArgs", () => {
       ).toContain("runner cannot be combined");
     }
   });
-  test("collects routing + server flags", () => {
+  test("collects routing flags", () => {
     const p = parseArgs([
       "--model",
       "m",
@@ -2430,8 +2371,6 @@ describe("parseArgs", () => {
       "2",
       "--hint",
       "code",
-      "--server",
-      "http://h",
       "exec",
       "hi",
     ]);
@@ -2439,7 +2378,6 @@ describe("parseArgs", () => {
       model: "m",
       tier: 2,
       hint: "code",
-      serverUrl: "http://h",
     });
     expect(p.prompt).toBe("hi");
     expect(parseArgs(["--workspace", "/ws", "exec", "hi"]).overrides.workspace)
@@ -2450,6 +2388,11 @@ describe("parseArgs", () => {
   });
   test("rejects an unknown flag", () => {
     expect(parseArgs(["--wat"]).error).toContain("unknown flag");
+  });
+  test("rejects retired HTTP transport flags", () => {
+    expect(parseArgs(["--server", "http://h"]).error).toContain("unknown flag");
+    expect(parseArgs(["--unix"]).error).toContain("unknown flag");
+    expect(parseArgs(["--key", "k"]).error).toContain("unknown flag");
   });
   test("canonicalizes a valid --session value", () => {
     expect(
@@ -2504,9 +2447,6 @@ describe("parseArgs", () => {
     expect(parseArgs(["--socket", "/run/x.sock", "models"]).overrides.socket)
       .toBe("/run/x.sock");
   });
-  test("--unix routes turns over the socket", () => {
-    expect(parseArgs(["--unix", "exec", "x"]).overrides.unix).toBe(true);
-  });
   test("--approve-paid sets the paid opt-in", () => {
     expect(parseArgs(["--approve-paid", "exec", "x"]).overrides.approvePaid)
       .toBe(true);
@@ -2541,7 +2481,6 @@ describe("parseArgs", () => {
 describe("resolveConfig", () => {
   test("overrides beat env, env beats defaults", () => {
     const env = new Map([
-      ["DYFJ_SERVER_URL", "http://env"],
       ["DYFJ_WORKBENCH_MODEL", "envmodel"],
       ["NO_COLOR", "1"],
     ]);
@@ -2550,36 +2489,21 @@ describe("resolveConfig", () => {
       { get: (k) => env.get(k) },
       true,
     );
-    expect(c.serverUrl).toBe("http://env");
     expect(c.model).toBe("flagmodel");
     expect(c.color).toBe(false);
   });
-  test("defaults the server and enables color on a TTY", () => {
+  test("enables color on a TTY", () => {
     const c = resolveConfig({}, { get: () => undefined }, true);
-    expect(c.serverUrl).toBe("http://127.0.0.1:8787");
     expect(c.color).toBe(true);
   });
-  test("defaults to the UDS seam locally; --server switches to HTTP", () => {
-    // No server configured → local-first default is the UDS seam.
+  test("defaults unix to true; an explicit unix: false is honored", () => {
     expect(resolveConfig({}, { get: () => undefined }).unix).toBe(true);
-    // An explicit --server opts into HTTP.
-    expect(
-      resolveConfig({ serverUrl: "http://remote.example" }, {
-        get: () => undefined,
-      }).unix,
-    ).toBe(false);
-    // DYFJ_SERVER_URL env also opts into HTTP.
-    expect(
-      resolveConfig({}, {
-        get: (k) => (k === "DYFJ_SERVER_URL" ? "http://e" : undefined),
-      }).unix,
-    ).toBe(false);
-    // --unix forces the seam even with a server configured.
-    expect(
-      resolveConfig({ unix: true, serverUrl: "http://e" }, {
-        get: () => undefined,
-      }).unix,
-    ).toBe(true);
+    expect(resolveConfig({ unix: false }, { get: () => undefined }).unix).toBe(
+      false,
+    );
+    expect(resolveConfig({ unix: true }, { get: () => undefined }).unix).toBe(
+      true,
+    );
   });
   test("mode defaults to turn and honors the override", () => {
     expect(resolveConfig({}, { get: () => undefined }).mode).toBe("turn");
@@ -2646,16 +2570,6 @@ describe("resolveConfig", () => {
       resolveConfig({ socket: "/flag.sock" }, { get: (k) => env.get(k) })
         .socket,
     ).toBe("/flag.sock");
-  });
-  test("unix: --unix / --unix=false / DYFJ_UNIX override the default", () => {
-    expect(resolveConfig({ unix: true }, { get: () => undefined }).unix).toBe(
-      true,
-    );
-    expect(resolveConfig({ unix: false }, { get: () => undefined }).unix).toBe(
-      false,
-    );
-    const env = new Map([["DYFJ_UNIX", "1"]]);
-    expect(resolveConfig({}, { get: (k) => env.get(k) }).unix).toBe(true);
   });
 });
 
@@ -2981,8 +2895,8 @@ describe("runtime lifecycle commands", () => {
   });
 
   // Every client error printer must share one discipline: runStart's printer
-  // needs the same oversized-case pin friendlyError/socketError carry.
-  test("runStart truncates an oversized runtime-start error the same way as friendlyError", async () => {
+  // needs the same oversized-case pin socketError carries.
+  test("runStart truncates an oversized runtime-start error the same way as socketError", async () => {
     const payload = "x".repeat(200_000);
     const { io, stderr } = fakeIo();
     const code = await runStart(cfg(), io, () => {
@@ -4967,7 +4881,7 @@ describe("session posture", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       postureConnect({
         defaultTurnModel: { slug: "qwen-local", tier: 0, local: true },
         permissionLevel: "operator",
@@ -4983,7 +4897,7 @@ describe("session posture", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-      fetch,
+
       () => Promise.reject(new Error("connection refused")),
     );
     expect(stderr.join("\n")).not.toContain("posture:");
@@ -5026,26 +4940,6 @@ describe("buildTurnBody", () => {
     )
       .toBeUndefined();
     expect(buildTurnBody("hi", cfg()).workspace).toBeUndefined();
-  });
-  test("never auto-sends the implicit cwd workspace to a remote server", () => {
-    const remote = cfg({
-      workspace: "/work/dir",
-      serverUrl: "https://remote.example",
-    });
-    // Implicit cwd default must not cross the local->remote boundary.
-    expect(buildTurnBody("hi", remote).workspace).toBeUndefined();
-    // An explicitly-supplied workspace is honored even for a remote server.
-    const remoteExplicit = cfg({
-      workspace: "/work/dir",
-      serverUrl: "https://remote.example",
-      workspaceExplicit: true,
-    });
-    expect(buildTurnBody("hi", remoteExplicit).workspace).toBe("/work/dir");
-  });
-  test("isLoopbackServerUrl recognizes loopback hosts only", () => {
-    expect(isLoopbackServerUrl("http://127.0.0.1:8787")).toBe(true);
-    expect(isLoopbackServerUrl("http://localhost:8787")).toBe(true);
-    expect(isLoopbackServerUrl("https://workbench.example.test")).toBe(false);
   });
 });
 
@@ -5173,18 +5067,13 @@ describe("presentation", () => {
     );
     expect(formatReceipt(result(), false)).not.toContain("reasoning");
   });
-  test("friendlyError maps connection failures to a start hint", () => {
-    const s = friendlyError(new TypeError("tcp connect error"), cfg());
-    expect(s).toContain("not reachable");
-  });
-
   // dispatchRequest (jsonrpc.ts) forwards a server error's message to
   // the client verbatim, and a rejected event-log INSERT can embed the whole
   // offending payload in that message (the original defect quoted pages of
   // source code this way). The client must never render that raw payload.
-  test("friendlyError truncates an oversized message to a fixed label + byte-count, never the raw payload", () => {
+  test("socketError truncates an oversized message to a fixed label + byte-count, never the raw payload", () => {
     const payload = "SELECT ".repeat(20_000); // well over 100KB
-    const s = friendlyError(new RangeError(payload), cfg());
+    const s = socketError(new RangeError(payload), cfg());
     expect(s.length).toBeLessThan(1000);
     expect(s).not.toContain(payload);
     // The label is the fixed literal "Error", not the subclass name — the
@@ -5197,94 +5086,24 @@ describe("presentation", () => {
     );
   });
 
-  test("friendlyError renders a short DomainError message unchanged — trusted by provenance", () => {
-    const s = friendlyError(
+  test("socketError renders a short DomainError message unchanged — trusted by provenance", () => {
+    const s = socketError(
       new DomainError("missing required argument: path"),
       cfg(),
     );
     expect(s).toBe("dyfj: missing required argument: path");
   });
 
-  test("friendlyError never passes a plain Error's message through, even a short one", () => {
-    // A plain Error is exactly what a reconstructed network/fetch failure
-    // looks like — provenance unknown — so no size threshold makes it safe.
+  test("socketError never passes a plain Error's message through, even a short one", () => {
     const message = "missing required argument: path";
-    const s = friendlyError(new Error(message), cfg());
+    const s = socketError(new Error(message), cfg());
     expect(s).not.toContain(message);
     expect(s).toBe(
       `dyfj: [Error, ${new TextEncoder().encode(message).byteLength} bytes]`,
     );
   });
 
-  test("friendlyError trusts an honest server-relayed error, through the real bufferedTurn reconstruction", async () => {
-    // Through the real wire path (not a directly-constructed DomainError,
-    // which can't catch a regression in the reconstruction itself): a normal
-    // server error message survives byte-identical.
-    const { fn } = recordingFetch([
-      jsonResponse({ error: "session not found" }, 404),
-    ]);
-    let thrown: unknown;
-    try {
-      await bufferedTurn(cfg(), { prompt: "x" }, fn);
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(DomainError);
-    expect(friendlyError(thrown, cfg())).toBe("dyfj: session not found");
-  });
-
-  // A wire-reconstructed error becomes a DomainError, and DomainError gets
-  // the capped-PASSTHROUGH treatment (unlike a foreign error, which gets
-  // zero content) — so these assert bounded length and no control/escape
-  // bytes, not "no prefix survives": a capped prefix surviving is the
-  // intended behavior here, by design ("bounded", not
-  // "eliminated"). The escape-sequence check is what actually proves
-  // sanitizeBoundaryText ran, since a capped-but-unsanitized prefix would
-  // still start with the payload's own leading bytes either way.
-  test("bufferedTurn sanitizes an oversized or control-character-laden wire message before it becomes a DomainError", async () => {
-    // config.serverUrl is operator-configurable, so the wire is not a trust
-    // boundary — a hostile or misbehaving peer's response body must not ride
-    // DomainError's capped-passthrough treatment unsanitized.
-    const escapePrefix = String.fromCharCode(27) + "[31m";
-    const payload = escapePrefix + "SELECT ".repeat(20_000); // well over 100KB
-    const { fn } = recordingFetch([jsonResponse({ error: payload }, 500)]);
-    let thrown: unknown;
-    try {
-      await bufferedTurn(cfg(), { prompt: "x" }, fn);
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(DomainError);
-    const rendered = friendlyError(thrown, cfg());
-    expect(rendered.length).toBeLessThan(1000);
-    expect(rendered.length).toBeLessThan(payload.length);
-    expect(rendered).not.toContain(String.fromCharCode(27));
-  });
-
-  test("streamTurn sanitizes an oversized SSE error frame the same way", async () => {
-    // Same adversarial leading-ESC shape as the buffered test above: without
-    // it, this test can't distinguish SSE-path sanitization from downstream
-    // capping alone (a capped-but-unsanitized prefix and a capped-and-
-    // sanitized prefix both satisfy a length-only assertion).
-    const escapePrefix = String.fromCharCode(27) + "[31m";
-    const payload = escapePrefix + "SELECT ".repeat(20_000);
-    const { fn } = recordingFetch([
-      sseResponse([{ t: "error", message: payload }]),
-    ]);
-    let thrown: unknown;
-    try {
-      await streamTurn(cfg(), { prompt: "x" }, { onDelta: () => {} }, fn);
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(DomainError);
-    const rendered = friendlyError(thrown, cfg());
-    expect(rendered.length).toBeLessThan(1000);
-    expect(rendered.length).toBeLessThan(payload.length);
-    expect(rendered).not.toContain(String.fromCharCode(27));
-  });
-
-  test("socketError truncates an oversized message the same way as friendlyError", () => {
+  test("socketError truncates a long Error payload without echoing it", () => {
     const payload = "x".repeat(200_000);
     const s = socketError(new Error(payload), cfg());
     expect(s.length).toBeLessThan(1000);
@@ -6096,14 +5915,14 @@ describe("runtimeEventIsVisible", () => {
 
 describe("runExec spinner integration", () => {
   test("paints at submit and erases before streamed output on a TTY", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "delta", text: "hi\n" },
-        { t: "done", result: result() },
-      ]),
-    ]);
     const { io, raw, stdout } = fakeIo([], { errIsTerminal: true });
-    const code = await runExec("x", cfg(), io, false, fn);
+    const code = await runExec(
+      "x",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect([{ t: "delta", text: "hi\n" }], result()),
+    );
     expect(code).toBe(0);
     expect(raw[0]).toBe(`${ERASE_LINE}⠋ working… 0s`);
     expect(raw[raw.length - 1]).toBe(ERASE_LINE);
@@ -6114,15 +5933,20 @@ describe("runExec spinner integration", () => {
     // The real ordering: modelSelected arrives before the provider wait, then
     // the first delta. The spinner must survive the event, yield around the
     // delta, resume, and retire only at the terminal result.
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "event", event: { type: "modelSelected", modelSlug: "x" } },
-        { t: "delta", text: "hi\n" },
-        { t: "done", result: result() },
-      ]),
-    ]);
     const { io, raw } = fakeIo([], { errIsTerminal: true });
-    const code = await runExec("x", cfg(), io, false, fn);
+    const code = await runExec(
+      "x",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect(
+        [
+          { t: "event", event: { type: "modelSelected", modelSlug: "x" } },
+          { t: "delta", text: "hi\n" },
+        ],
+        result(),
+      ),
+    );
     expect(code).toBe(0);
     expect(raw.filter((w) => w === ERASE_LINE)).toHaveLength(2);
     expect(raw).toContain(`${ERASE_LINE}⠙ working… 0s`);
@@ -6130,32 +5954,40 @@ describe("runExec spinner integration", () => {
   });
 
   test("erases the spinner when the turn fails (no orphaned line)", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([{ t: "error", message: "boom" }]),
-    ]);
     const { io, raw } = fakeIo([], { errIsTerminal: true });
-    const code = await runExec("x", cfg(), io, false, fn);
+    const code = await runExec(
+      "x",
+      cfg(),
+      io,
+      false,
+      sequentialTurnConnect([{ error: new DomainError("boom") }]).connect,
+    );
     expect(code).toBe(1);
     expect(raw[raw.length - 1]).toBe(ERASE_LINE);
   });
 
   test("--json turns never see spinner bytes", async () => {
-    const { fn } = recordingFetch([jsonResponse(result())]);
     const { io, raw } = fakeIo([], { errIsTerminal: true });
-    const code = await runExec("x", cfg(), io, true, fn);
+    const code = await runExec(
+      "x",
+      cfg(),
+      io,
+      true,
+      fakeTurnConnect([], result()),
+    );
     expect(code).toBe(0);
     expect(raw).toEqual([]);
   });
 
   test("piped stderr sees no spinner bytes", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "delta", text: "hi" },
-        { t: "done", result: result() },
-      ]),
-    ]);
     const { io, raw } = fakeIo();
-    const code = await runExec("x", cfg(), io, false, fn);
+    const code = await runExec(
+      "x",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect([{ t: "delta", text: "hi" }], result()),
+    );
     expect(code).toBe(0);
     expect(raw).toEqual([]);
   });
@@ -6163,18 +5995,12 @@ describe("runExec spinner integration", () => {
 
 describe("runRepl spinner integration", () => {
   test("each turn pauses around output, resumes, and retires at completion", async () => {
-    const { fn } = recordingFetch([
-      sseResponse([
-        { t: "delta", text: "first\n" },
-        { t: "done", result: result() },
-      ]),
-      sseResponse([
-        { t: "delta", text: "second\n" },
-        { t: "done", result: result() },
-      ]),
+    const { connect } = sequentialTurnConnect([
+      { frames: [{ t: "delta", text: "first\n" }], result: result() },
+      { frames: [{ t: "delta", text: "second\n" }], result: result() },
     ]);
     const { io, raw, stdout } = fakeIo(["one", "two"], { errIsTerminal: true });
-    await runRepl(cfg(), io, fn);
+    await runRepl(cfg(), io, connect, false);
     // Two turns → a pause erase and a terminal erase for each, with a fresh
     // spinner instance (and therefore a fresh first frame) per turn.
     const erases = raw.filter((write) => write === ERASE_LINE);
@@ -6200,16 +6026,14 @@ describe("replPrompt", () => {
   });
 
   test("runRepl prompts with the plain gutter when color is off", async () => {
-    const { fn } = recordingFetch([]);
     const { io, prompts } = fakeIo([]);
-    await runRepl(cfg({ color: false }), io, fn);
+    await runRepl(cfg({ color: false }), io, fakeTurnConnect([], result()), false);
     expect(prompts).toEqual(["\ndyfj> "]);
   });
 
   test("runRepl prompts with the styled gutter when color is on", async () => {
-    const { fn } = recordingFetch([]);
     const { io, prompts } = fakeIo([]);
-    await runRepl(cfg({ color: true }), io, fn);
+    await runRepl(cfg({ color: true }), io, fakeTurnConnect([], result()), false);
     expect(prompts).toEqual([replPrompt(true)]);
   });
 });
