@@ -136,7 +136,6 @@ export function productionLanes(
         "src/uds-path.ts",
         "src/uds-client.ts",
         "src/uds-serve.ts",
-        "src/mcp-client.ts",
         "mcp/server.ts",
         "src/cli.ts",
         "scripts/esbuild-binary.ts",
