@@ -23,14 +23,11 @@ import {
   buildPaidEscalationPreflightBanner,
   buildWorkbenchReceipt,
   buildWorkbenchRuntimeInput,
-  buildWorkbenchShellBanner,
   buildWorkspaceGrounding,
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
   formatMoney,
   isNextWorkMode,
-  isWorkbenchShellExitCommand,
-  isWorkbenchShellSessionCommand,
   maybeBuildPaidEscalationPreflightBanner,
   PaidEscalationDeclinedError,
   type PaidEscalationPreflightInput,
@@ -1190,16 +1187,6 @@ describe("resolveWorkbenchInvocation", () => {
     });
   });
 
-  test("treats shell as an interactive harness mode", () => {
-    const invocation = resolveWorkbenchInvocation(["shell"], {});
-
-    expect(invocation).toEqual({
-      mode: "shell",
-      prompt: "",
-      routingOptions: {},
-    });
-  });
-
   test("loads routing defaults from environment", () => {
     const invocation = resolveWorkbenchInvocation(["ask", "next?"], {
       DYFJ_WORKBENCH_MODEL: "qwen3:32b",
@@ -1258,16 +1245,6 @@ describe("buildWorkbenchRuntimeInput", () => {
       prompt: "summarize the repo",
       routingOptions: { modelId: "gemma4:e2b", tier: 0 },
     });
-  });
-
-  test("keeps shell mode outside the single-turn runtime boundary", () => {
-    const input = buildWorkbenchRuntimeInput({
-      mode: "shell",
-      prompt: "",
-      routingOptions: {},
-    });
-
-    expect(input).toBeNull();
   });
 });
 
@@ -4087,28 +4064,6 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
       (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens =
         prevMax;
     }
-  });
-});
-
-describe("workbench shell helpers", () => {
-  test("recognizes explicit shell exit commands", () => {
-    expect(isWorkbenchShellExitCommand(":quit")).toBe(true);
-    expect(isWorkbenchShellExitCommand(":q")).toBe(true);
-    expect(isWorkbenchShellExitCommand("exit")).toBe(true);
-    expect(isWorkbenchShellExitCommand("read project memory")).toBe(false);
-  });
-
-  test("recognizes the shell session pointer command", () => {
-    expect(isWorkbenchShellSessionCommand(":session")).toBe(true);
-    expect(isWorkbenchShellSessionCommand("session")).toBe(false);
-  });
-
-  test("shows the barebones shell commands in the banner", () => {
-    const banner = buildWorkbenchShellBanner();
-
-    expect(banner).toContain("DYFJ Workbench Shell");
-    expect(banner).toContain(":session");
-    expect(banner).toContain(":quit");
   });
 });
 
