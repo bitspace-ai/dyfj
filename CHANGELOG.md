@@ -31,7 +31,6 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 - **Interactive Mutating Tool Approvals**: Added interactive `y/N` approval prompts over the UDS seam for mutating tools (such as `write_file`).
 - **Google Generative AI (Gemini) Provider**: Native `generateContent` / `streamGenerateContent` adapter behind the paid-escalation gate.
 - **Hosted OpenAI Inference**: Added hosted API route for OpenAI-compatible completions alongside local routes.
-- **Inter-Agent Coordination Primitives**: Added session-coordination claims, launch packets, exit receipts, and heartbeats for visibility across delegated agent work.
 
 ### Changed
 

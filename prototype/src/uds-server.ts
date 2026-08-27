@@ -191,8 +191,8 @@ export interface WorkbenchUnixServerOptions {
   acpSessions?: AcpSessionHandleMap;
 }
 
-// Mirrors http.ts loadPickerModels: degrade to the local defaults if the registry
-// is unavailable, preserving the local-first posture instead of an empty list.
+// Degrade to the local defaults if the registry is unavailable, preserving
+// the local-first posture instead of an empty list.
 async function loadPickerModels(): Promise<WorkbenchModel[]> {
   try {
     return withDefaultLocalWorkbenchModels(await loadWorkbenchModels());
@@ -428,8 +428,8 @@ function buildToolCatalog(
   return registry.list().map(projectCommand);
 }
 
-// The cataloged method surface, reusing the same runtime functions the REST
-// endpoints use so the two transports stay in parity.
+// The cataloged method surface, reusing the shared runtime functions so the
+// UDS handlers stay the single transport seam.
 export function buildWorkbenchHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
@@ -987,8 +987,8 @@ function resolveEngineTurnDeps(
   };
 }
 
-// The `turn` method: run an agentic turn over the shared turn-runner core — the
-// SAME lock/resume/clearance/paid path as HTTP — streaming intermediate text
+// The `turn` method: run an agentic turn over the shared turn-runner core —
+// lock/resume/clearance/paid — streaming intermediate text
 // deltas and runtime events back as `stream` notifications on this connection.
 // The final receipt is the RPC result; errors propagate as RPC errors.
 export function buildTurnHandlers(

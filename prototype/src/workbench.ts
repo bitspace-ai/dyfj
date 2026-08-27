@@ -221,7 +221,7 @@ export interface WorkbenchRuntimeInput {
   /**
    * Presentation sink for human-readable turn narration: context loading,
    * workspace/model/route lines, turn text, budget tally, and the receipt.
-   * The direct CLI/shell path injects console output; transport servers leave
+   * The in-process one-shot path injects console output; the UDS server leaves
    * it unset so client presentation never renders on the server console.
    * Default: silent — the runtime core does not narrate.
    */
@@ -1082,7 +1082,7 @@ export function parseBudgetTallyMode(
 /**
  * Resolve the env-derived runtime defaults at the process boundary,
  * so the core runtime reads no environment variables. Entrypoints (the CLI
- * one-shot and the HTTP server) spread this into the runtime input; a headless
+ * one-shot and the UDS server) spread this into the runtime input; a headless
  * driver supplies these explicitly instead. `rootOverride` stays undefined when
  * DYFJ_ROOT is unset, so the core falls back to the process cwd.
  */
@@ -1402,7 +1402,7 @@ export async function runWorkbench(
     return await runWorkbenchRuntime({
       ...runtimeInput,
       ...resolveRuntimeEnvDefaults(),
-      // The in-process CLI/shell is its own presenter.
+      // The in-process one-shot CLI is its own presenter.
       log: console.log,
       onTextDelta: (delta) => {
         process.stdout.write(delta);
@@ -3704,7 +3704,7 @@ async function runNativeWorkbenchRuntime(
     log("");
     log(receipt);
     // the runtime no longer closes the shared Dolt pool. A long-running
-    // host (HTTP server) runs many concurrent turns through this function; a
+    // host (the UDS server) runs many concurrent turns through this function; a
     // per-turn close would end the pool out from under an in-flight turn and
     // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
     // closes it in a finally; the server keeps it for the process lifetime).

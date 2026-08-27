@@ -958,6 +958,7 @@ export function parseMcpServersConfig(
       );
     }
     const url = assertSecureMcpServerUrl(server.url, where);
+    // "remote" is reserved for a future gateway client, not a shipped remote transport.
     if (
       server.minimum_clearance !== "loopback" &&
       server.minimum_clearance !== "remote"

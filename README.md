@@ -186,7 +186,7 @@ OPENAI_API_KEY     = "op://<vault>/<item>/credential"
 OPENROUTER_API_KEY = "op://<vault>/<item>/credential"
 GEMINI_API_KEY     = "op://<vault>/<item>/credential"
 XAI_API_KEY        = "op://<vault>/<item>/credential"
-# Also resolvable this way: DYFJ_MEMORY_MCP_TOKEN, DOLT_PASSWORD, DYFJ_WORKBENCH_API_KEY.
+# Also resolvable this way: DYFJ_MEMORY_MCP_TOKEN, DOLT_PASSWORD.
 ```
 
 **`config.toml` is a trust boundary.** `[secrets].command` is trusted executable configuration, not inert data: the launcher grants that binary `--allow-run` and the engine runs it automatically at boot. A shell or interpreter there (`["bash", "-c", …]`) runs arbitrary code. So protect `~/.dyfj/config.toml` with the same care as executable policy — restrictive file permissions, no untrusted writers. Pointer strings are passed to the command as process arguments, so vault/item identifiers may be visible to local process inspection (`ps`); that's metadata, not the secret value — prefer opaque vault/item names if that matters to you.
@@ -251,11 +251,10 @@ resolver uses its first pending credential as a session probe; if that probe
 fails, later credentials are marked unavailable without spawning, so multiple
 configured servers may be withheld. Invalid configuration fails boot.
 
-`minimum_clearance = "loopback"` withholds the tools from remote turns.
+`minimum_clearance = "loopback"` withholds the tools from remote-clearance turns.
 `minimum_clearance = "remote"` declares eligibility for both remote and
-loopback turns. The current boot integration is the UDS daily-driver runtime;
-the standalone HTTP server does not load configured external tools yet. A read
-tool can run without a per-call prompt only when its configured approval is
+loopback turns. The current boot integration is the UDS daily-driver runtime.
+A read tool can run without a per-call prompt only when its configured approval is
 `allow`. Every `write_external` tool must use `ask`, and Workbench still
 requires approval when the operator permission profile is active.
 
@@ -591,3 +590,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-08-19 - Validation guidance now documents operator-scoped exclusive Vitest locking, run-scoped survivor cleanup, and next-run recovery of a saved Vitest process group.
 - 2026-08-18 - The CLI/UDS turn path now documents ephemeral ACP progress indication on an interactive TTY spinner. Raw thought text is not a display or history surface.
 - 2026-08-18 - Validation guidance now documents exclusive, wall-clock-bounded prototype Vitest runs and zero-survivor reaping of test runtimes.
+- 2026-08-27 - Dropped remaining current-state HTTP server, Workbench shell, and workbench API-key claims from operating docs. MCP `minimum_clearance = "remote"` remains a policy value reserved for a future gateway client, not a shipped remote transport.

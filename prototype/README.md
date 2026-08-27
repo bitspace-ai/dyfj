@@ -34,7 +34,7 @@ mlx_lm.server \
 
 Workbench uses `http://127.0.0.1:18080/v1` for that MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the fallback explicitly.
 
-Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; served HTTP and UDS engines also load `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence for served engines. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use.
+Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use.
 
 With no configured companion default, a bare turn uses the registry's local
 default. The operator can instead configure a hosted companion default or
@@ -62,10 +62,9 @@ into environment variables. `[[mcp.servers]]` currently accepts only strict MCP
 tool must be both discovered and named in the server's configured `tools`
 allowlist. Read tools may be configured with `approval = "allow"`; every
 `write_external` tool requires `approval = "ask"`. Set
-`minimum_clearance = "loopback"` to withhold a server's tools from remote turns,
+`minimum_clearance = "loopback"` to withhold a server's tools from remote-clearance turns,
 or `"remote"` to declare eligibility on both transport clearances. The current
-boot integration is the UDS daily-driver runtime; the standalone HTTP server
-does not load configured external tools yet. Use `dyfj start` so the launcher
+boot integration is the UDS daily-driver runtime. Use `dyfj start` so the launcher
 can derive the configured host grants. The complete configuration, trust,
 result-framing, and receipt-redaction contract is in the root README under
 "Configured external MCP tools."
@@ -144,8 +143,6 @@ deno task compile-cli   # dist/dyfj (launcher) + dist/dyfj-bin (compiled)
 
 The launcher execs the fast compiled binary on the default socket path and falls back to `deno run` with a runtime-resolved `unix:` net grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path away from `~/.dyfj/run/workbench.sock`. Without a compile step, `prototype/scripts/dyfj-launcher.sh` behaves the same via the `deno run` fallback.
 
-The session coordination prototype lives below the operator surface. It is a visibility and advisory layer for coordination claims, launch packets, heartbeats, stale-base warnings, deterministic scope overlap, hook checks, reconciliation, and exit receipts. Workbench uses that primitive for delegated work while the CLI remains the daily-driver conversation client.
-
 The prototype reads Dolt connection settings from environment variables. For the default local server:
 
 ```sh
@@ -212,7 +209,7 @@ The response must include generated text. Health/list endpoints such as Ollama `
 
 ## Layout
 
-- `src/` — Workbench entrypoint, shell, the JSON-RPC/UDS transport seam, shared runtime boundary, native provider path, ACP client runner, command registry, memory, budget, session persistence, event verification, utilities, tests
+- `src/` — Workbench entrypoint, the JSON-RPC/UDS transport seam, shared runtime boundary, native provider path, ACP client runner, command registry, memory, budget, session persistence, event verification, utilities, tests
 - `mcp/` — MCP server (`server.ts`)
 - `examples/` — diagnostic programs, verification helpers, and historical transport spikes; these are not operator launch paths
 

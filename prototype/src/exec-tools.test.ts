@@ -102,7 +102,7 @@ describe("buildSafeBashEnv", () => {
     // Secrets set in the parent env must NOT be forwarded to bash (CWE-532).
     Deno.env.set("ANTHROPIC_API_KEY", "fixture-should-not-leak");
     Deno.env.set("DOLT_PASSWORD", "test-should-not-leak");
-    Deno.env.set("DYFJ_WORKBENCH_API_KEY", "bearer-should-not-leak");
+    Deno.env.set("DYFJ_MEMORY_MCP_TOKEN", "bearer-should-not-leak");
     try {
       const env = buildSafeBashEnv();
       for (const key of Object.keys(env)) {
@@ -110,13 +110,13 @@ describe("buildSafeBashEnv", () => {
       }
       expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
       expect(env).not.toHaveProperty("DOLT_PASSWORD");
-      expect(env).not.toHaveProperty("DYFJ_WORKBENCH_API_KEY");
+      expect(env).not.toHaveProperty("DYFJ_MEMORY_MCP_TOKEN");
       // PATH must be forwarded so commands still resolve.
       expect(env.PATH).toBeDefined();
     } finally {
       Deno.env.delete("ANTHROPIC_API_KEY");
       Deno.env.delete("DOLT_PASSWORD");
-      Deno.env.delete("DYFJ_WORKBENCH_API_KEY");
+      Deno.env.delete("DYFJ_MEMORY_MCP_TOKEN");
     }
   });
 });

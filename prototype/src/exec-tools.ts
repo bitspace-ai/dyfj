@@ -34,7 +34,7 @@ const DEFAULT_MAX_BYTES = 64 * 1024;
 
 // bash runs with a deliberately minimal environment. clearEnv drops the parent
 // process env — which holds the projected provider keys (ANTHROPIC/OPENAI/GEMINI),
-// the Dolt password, the workbench bearer key, and MCP tokens — and only this
+// the Dolt password, and MCP tokens — and only this
 // non-secret allowlist is forwarded, so an approved command cannot read or print
 // the runtime's secrets through the inherited environment (CWE-532). Reads are
 // defensive: a var the runtime is not granted is simply absent (PATH must be
