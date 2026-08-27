@@ -1,4 +1,4 @@
-Superseded 2026-08-26: `runWorkbenchShell` and the HTTP peer server (`workbench-http`) were demolished; JSON-RPC over UDS is the only seam. Body below is the 2026-06-04 inventory, left as history.
+Superseded 2026-08-26: `runWorkbenchShell` and the HTTP peer server (`workbench-http`) were removed; JSON-RPC over UDS is the only seam. Body below is the 2026-06-04 inventory, left as history.
 
 # Workbench Runtime Veneers
 
