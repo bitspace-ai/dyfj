@@ -108,6 +108,18 @@ export function productionLanes(
     : "";
   return [
     {
+      label: "Retired-surface scan",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "test",
+        `--allow-read=${root}`,
+        "--allow-run=git",
+        "scripts/retired-surface-scan.ts",
+      ],
+      cwd: root,
+    },
+    {
       label: "Aggregate gate orchestration tests",
       command: denoExecutable,
       commandLabel: "deno",
