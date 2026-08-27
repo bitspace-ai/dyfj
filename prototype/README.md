@@ -2,7 +2,7 @@
 
 This is the TypeScript prototype layer of DYFJ.
 
-This layer contains working prototype code for Workbench CLI/shell, the JSON-RPC/UDS transport seam, shared runtime execution, a local ACP-client foundation, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
+This layer contains working prototype code for Workbench CLI, the JSON-RPC/UDS transport seam, shared runtime execution, a local ACP-client foundation, memory, command routing, provider routing, budget tracking, session persistence, MCP, and tests. Stabilized components can move into `../core/` when the Rust boundary is worth the extra compile-time structure.
 
 If you want to understand DYFJ's stance on why prototype-and-substrate coexist in the same repo, read the project README at the repo root, especially the Layer 0 stance on Rust as a moving boundary.
 
