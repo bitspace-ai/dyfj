@@ -10,9 +10,13 @@ I've always pushed against proprietary lock-in, and always tried to optimize for
 
 Before I started this project I experimented with some open source harnesses. That's when I accidentally blew through $600 in an afternoon of API tokens using pi (operator error, _not_ anything wrong with pi; I was holding it wrong) and became super gun-shy and started building with extreme cost awareness front-and-center.
 
-**Virtually none of this project** has been coded by hand. This is all coming out of my interactions with the various harnesses, to a point of dogfooding. I am doing this in my personal time - evenings, weekends, vacations.
+**Virtually none of this project** has been coded by hand. This is all coming out of my interactions with the various harnesses, to a point of dogfooding. I am doing this in my personal time - evenings, weekends, vacations.  
 
-## Almost Everything Hereafter is AI Generated
+It's not vibe-coded; I'm applying over 30 years of field experience to the same field at a higher level of abstraction.  
+
+The other half of this project is a private corpus of data, scripts, utilities, and media; the context in which this system operates. 
+
+## Almost Everything Else is AI Generated
 
 This README is the _operating context_ for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
