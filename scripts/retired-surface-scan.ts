@@ -18,6 +18,14 @@
  *
  * Goal: "X is a live HTTP/shell/bearer-key surface" fails; "X retired / is gone"
  * changelog lines pass. Do not gut the scan to silence a current-state hit.
+ *
+ * Diagnostics are value-free: a report names path, line number, and needle —
+ * never the matched line's content. Tracked files are untrusted
+ * pre-publication input; a matching line can carry a credential, private
+ * text, terminal-control bytes, or an arbitrarily large payload, and none of
+ * that belongs in terminal or CI output. Paths are control-stripped and
+ * bounded, reported hits are capped, and git failures are summarized without
+ * raw unbounded stderr.
  */
 
 import { fileURLToPath } from "node:url";
@@ -35,6 +43,12 @@ export const DENY_LIST: readonly string[] = [
   "standalone HTTP",
   "session-coordination",
   "mcp-client",
+  // Retired turn-seam transport wording. `serverUrl` was the removed HTTP
+  // client's operator-configurable endpoint; "SSE frame" is the retired HTTP
+  // streaming transport's framing. Provider adapters still legitimately speak
+  // SSE to model APIs, so these needles stay narrow instead of denying "SSE".
+  "serverUrl",
+  "SSE frame",
 ];
 
 const DATED_LINE = /^- 20\d\d-\d\d-\d\d/;
@@ -42,11 +56,12 @@ const CHANGELOG_HEADING = /^## \[([^\]]+)\]\s*$/;
 const DATED_HEADING_VALUE = /^20\d\d-\d\d-\d\d$/;
 const RETIREMENT_ANNOUNCEMENT = /\bretired\b|\bis gone\b|\bare gone\b/i;
 
+// Deliberately carries no matched-line content: nothing downstream can echo
+// what it never held.
 export interface RetiredSurfaceHit {
   path: string;
   line: number;
   needle: string;
-  text: string;
 }
 
 function posixPath(path: string): string {
@@ -110,7 +125,6 @@ export function scanText(path: string, content: string): RetiredSurfaceHit[] {
           path: posixPath(path),
           line: index + 1,
           needle,
-          text: line,
         });
       }
     }
@@ -122,6 +136,21 @@ export function repoRootFromMeta(): string {
   return fileURLToPath(new URL("..", import.meta.url));
 }
 
+// Strip control characters (including ANSI escape introducers) and bound
+// length, so text destined for terminal/CI output cannot inject terminal
+// control sequences or flood the log. Filters by code point rather than a
+// literal containing control characters.
+export function sanitizeForLog(raw: string, maxChars: number): string {
+  let out = "";
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) continue;
+    out += ch;
+    if (out.length >= maxChars) return `${out}…`;
+  }
+  return out;
+}
+
 export async function trackedFiles(root: string): Promise<string[]> {
   const result = await new Deno.Command("git", {
     args: ["-C", root, "ls-files", "-z"],
@@ -129,9 +158,10 @@ export async function trackedFiles(root: string): Promise<string[]> {
     stderr: "piped",
   }).output();
   if (!result.success) {
+    // Summarize, never relay: git stderr is bounded and control-stripped.
     throw new Error(
       `retired-surface scan: git ls-files failed (${result.code}): ${
-        new TextDecoder().decode(result.stderr)
+        sanitizeForLog(new TextDecoder().decode(result.stderr), 256)
       }`,
     );
   }
@@ -150,10 +180,21 @@ export async function scanRepo(root: string): Promise<RetiredSurfaceHit[]> {
   return hits;
 }
 
+export const MAX_REPORTED_HITS = 50;
+
+// Value-free by construction: path (sanitized and bounded), line number, and
+// needle are sufficient to locate a failure; the matched content never
+// appears. Reporting is capped so a pathological tree cannot flood the log.
 export function formatHits(hits: RetiredSurfaceHit[]): string {
-  return hits.map((hit) =>
-    `${hit.path}:${hit.line}: ${hit.needle}: ${hit.text.trim()}`
-  ).join("\n");
+  const shown = hits.slice(0, MAX_REPORTED_HITS).map((hit) =>
+    `${sanitizeForLog(hit.path, 300)}:${hit.line}: ${
+      sanitizeForLog(hit.needle, 100)
+    }`
+  );
+  if (hits.length > MAX_REPORTED_HITS) {
+    shown.push(`… and ${hits.length - MAX_REPORTED_HITS} more hits not shown`);
+  }
+  return shown.join("\n");
 }
 
 if (import.meta.main) {
@@ -261,6 +302,87 @@ Deno.test("this scanner file is allowlisted", () => {
     ),
     [],
   );
+});
+
+Deno.test("retired serverUrl and SSE-frame wording fails as current-state", () => {
+  const content = [
+    "// config.serverUrl is operator-configurable",
+    "// SSE frame protocol, negotiated via Accept",
+  ].join("\n");
+  const hits = scanText("prototype/src/example.ts", content);
+  assertEquals(hits.map((hit) => hit.needle).sort(), ["SSE frame", "serverUrl"]);
+});
+
+Deno.test("retirement announcements for the transport wording pass", () => {
+  const content = [
+    "## [Unreleased]",
+    "",
+    "### Removed",
+    "",
+    "- Stale SSE frame and serverUrl transport comments are gone.",
+  ].join("\n");
+  assertEquals(scanText("CHANGELOG.md", content), []);
+});
+
+Deno.test("formatted output is value-free: matched content never appears", () => {
+  // Assembled at runtime so no secret-shaped literal sits in tracked source.
+  const secret = ["sk-live", "EXAMPLE", "abcdef0123456789"].join("-");
+  const hits = scanText(
+    "docs/example.md",
+    `The standalone HTTP server uses key ${secret}.\n`,
+  );
+  assertEquals(hits.length, 1);
+  const formatted = formatHits(hits);
+  if (formatted.includes(secret)) {
+    throw new Error("secret-like content reached formatted output");
+  }
+  assertEquals(formatted, "docs/example.md:1: standalone HTTP");
+});
+
+Deno.test("oversized matched lines never inflate formatted output", () => {
+  const hits = scanText(
+    "docs/example.md",
+    `${"x".repeat(100_000)} standalone HTTP ${"y".repeat(100_000)}\n`,
+  );
+  const formatted = formatHits(hits);
+  if (formatted.length > 500) {
+    throw new Error(`formatted output too large: ${formatted.length} chars`);
+  }
+});
+
+Deno.test("control bytes in paths are stripped from formatted output", () => {
+  const hits = scanText(
+    "docs/\x1b[2Jevil\rname.md",
+    "the standalone HTTP server\n",
+  );
+  const formatted = formatHits(hits);
+  for (const ch of formatted) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error("control byte reached formatted output");
+    }
+  }
+  assertEquals(formatted, "docs/[2Jevilname.md:1: standalone HTTP");
+});
+
+Deno.test("hit reporting is capped", () => {
+  const lines = Array.from(
+    { length: MAX_REPORTED_HITS + 10 },
+    () => "the standalone HTTP server",
+  ).join("\n");
+  const hits = scanText("docs/example.md", lines);
+  assertEquals(hits.length, MAX_REPORTED_HITS + 10);
+  const formatted = formatHits(hits).split("\n");
+  assertEquals(formatted.length, MAX_REPORTED_HITS + 1);
+  assertEquals(formatted.at(-1), "… and 10 more hits not shown");
+});
+
+Deno.test("sanitizeForLog strips control bytes and bounds length", () => {
+  assertEquals(
+    sanitizeForLog("fatal:\x1b[31m boom\r\n", 256),
+    "fatal:[31m boom",
+  );
+  assertEquals(sanitizeForLog("a".repeat(300), 256), `${"a".repeat(256)}…`);
 });
 
 Deno.test("tracked tree has no current-state retired-surface claims", async () => {

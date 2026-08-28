@@ -17,8 +17,8 @@
  */
 
 /**
- * Native-loop receipt carried identically on buffered (JSON) and streaming
- * (SSE) paths. External-agent turns use the separate receipt below because ACP
+ * Native-loop receipt carried identically on buffered and streaming turns
+ * over the UDS JSON-RPC seam. External-agent turns use the separate receipt below because ACP
  * usage signals are optional and this foundation does not ingest or map them
  * into Workbench-native model, token, tool-step, or USD accounting.
  */
@@ -156,8 +156,9 @@ export interface ExternalAgentTurnReceipt {
 export type TurnReceipt = NativeTurnReceipt | ExternalAgentTurnReceipt;
 
 /**
- * SSE frame protocol, negotiated via `Accept: text/event-stream`. Each wire
- * frame is `data: <json>\n\n` carrying one of these, discriminated by `t`:
+ * Stream-frame union for streaming turns. The server delivers each frame as
+ * the params of a JSON-RPC `stream` notification on the UDS connection,
+ * carrying one of these, discriminated by `t`:
  *   delta  — incremental model text
  *   event  — a lifecycle record (opaque JSON; the typed record is the receipt,
  *            with the superseding-retry and unparsed-markup signals pinned
@@ -181,8 +182,8 @@ export type TurnStreamFrame =
  * whatever streams after, or the receipt's `text`.
  *
  * The superseding-retry shape is part of the wire contract:
- * deltas and events share one ordered channel on both transports (SSE frames,
- * UDS `stream` notifications), so in-order delivery of the signal relative to
+ * deltas and events share one ordered channel (UDS `stream` notifications),
+ * so in-order delivery of the signal relative to
  * the deltas around it is guaranteed. Continuation retries (output-cap
  * recovery) never emit it — their retry streams only new text.
  */
@@ -226,7 +227,7 @@ export type UnparsedToolCallMarkupDetectedEvent = {
 /**
  * Discriminator guard for consumers reading opaque event records.
  *
- * Takes `unknown`: event frames arrive as unvalidated JSON over SSE and the UDS
+ * Takes `unknown`: event frames arrive as unvalidated JSON over the UDS
  * seam, so a buggy or hostile producer can send `null` or a primitive. Reject
  * those instead of throwing on a property read.
  *
@@ -251,8 +252,8 @@ export function isSupersedingRetryStarted(
 /**
  * Buffered (non-streaming) JSON turn response: the receipt plus the batched
  * lifecycle events. The streaming path delivers the same receipt in the `done`
- * frame and the same events as `event` frames — transports differ only in how
- * events arrive, never in the receipt.
+ * frame and the same events as `event` frames — the two modes differ only in
+ * how events arrive, never in the receipt.
  */
 export type BufferedTurnResponse = TurnReceipt & {
   events: Array<Record<string, unknown>>;
@@ -275,7 +276,7 @@ export type BufferedTurnResponse = TurnReceipt & {
 export class DomainError extends Error {}
 
 // The safe cap on a DomainError's message crossing the turn/wire boundary. A
-// runtime event, a UDS/SSE notification, a console-bound presenter, or a CLI
+// runtime event, a UDS `stream` notification, a console-bound presenter, or a CLI
 // error printer that forwards `err.message` verbatim risks leaking whatever
 // that message contains — safe for a DomainError (bounded by construction),
 // unsafe for anything else. Shared here (not duplicated per side) because the
@@ -387,8 +388,8 @@ export function takeCodePointPrefix(
  *   - A message reconstructed on one side of the wire from a string the
  *     OTHER side sent — the sender already ran its own message through
  *     summarizeError, but the wire itself is not a trust boundary
- *     (config.serverUrl is operator-configurable; the UDS peer is a local
- *     socket, not this process), so honest content passes through unaffected
+ *     (the UDS peer is another local process, not this one), so honest
+ *     content passes through unaffected
  *     while a hostile or buggy peer's content is bounded and inert.
  */
 export function sanitizeBoundaryText(raw: string, maxBytes: number): string {
