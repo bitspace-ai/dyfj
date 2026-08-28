@@ -48,7 +48,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Removed
 
-- **Stale transport wording retired**: doc comments claiming an SSE frame transport and an operator-configurable serverUrl are gone from the turn seam; the retired-surface scan now denies that wording outside dated history, retirement announcements, and the scanner's own definition.
+- **Stale transport wording retired**: doc comments claiming an SSE frame transport and an operator-configurable serverUrl are gone from the turn seam; the retired-surface scan now denies that wording in tracked text files outside its documented allow rules.
 - **HTTP peer server and CLI HTTP client retired**: `http.ts` is gone, and the `dyfj` CLI no longer reaches a remote HTTP runtime (`--server`, `--unix`, `--key`). UDS JSON-RPC is the only seam; `events/query` already carries `asOf`. A remote or browser surface returns later as a thin gateway client of that seam.
 - **Workbench shell retired**: `runWorkbenchShell` is gone. The `dyfj` CLI REPL (`runRepl`) over UDS is the interactive surface.
 - **Session coordination retired**: `session-coordination.ts` is gone. It had no remaining production importers.
@@ -78,7 +78,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Security
 
-- **Value-free scan diagnostics**: the retired-surface scan reports path, line, and needle only — matched line content never reaches terminal or CI output. Paths are control-stripped and bounded, reported hits are capped, and git failures are summarized without raw stderr.
+- **Value-free scan diagnostics**: the retired-surface scan reports path, line, and needle only — matched line content never reaches terminal or CI output. Paths are control-stripped and bounded, hit collection and reporting are capped, and a git failure reports its exit code only — stderr is never relayed.
 - **CLI network authority narrowed**: the `dyfj` CLI's Deno grants (launcher and compiled binary) no longer include loopback TCP; the Unix socket is the CLI's only network grant. The runtime server keeps its own explicit per-host grants.
 - Enforced strict loopback-only transport boundaries for mutating tool execution and private/shareable memory injection.
 - Redacted schema-flagged payload arguments (such as `write_file` content) from durable tool-call events and session replays.

@@ -15,6 +15,8 @@
  *   retired files. Live capability claims in Unreleased still fail.
  * - `notes/workbench-runtime-veneers.md` (superseded inventory).
  * - This file, so the deny-list can be defined here.
+ * - Files containing a NUL byte are skipped as binary; their bytes are not
+ *   scanned as text.
  *
  * Goal: "X is a live HTTP/shell/bearer-key surface" fails; "X retired / is gone"
  * changelog lines pass. Do not gut the scan to silence a current-state hit.
@@ -24,8 +26,8 @@
  * pre-publication input; a matching line can carry a credential, private
  * text, terminal-control bytes, or an arbitrarily large payload, and none of
  * that belongs in terminal or CI output. Paths are control-stripped and
- * bounded, hit collection and reporting are both capped, and git failures
- * are summarized without raw unbounded stderr.
+ * bounded, hit collection and reporting are both capped, and a git failure
+ * reports its exit code only — stderr is never relayed.
  */
 
 import { fileURLToPath } from "node:url";
@@ -111,9 +113,9 @@ export function scanText(
   content: string,
   limit: number = Number.POSITIVE_INFINITY,
 ): RetiredSurfaceHit[] {
+  if (limit <= 0) return [];
   if (isAllowlistedPath(path)) return [];
   if (content.includes("\0")) return [];
-  if (limit <= 0) return [];
   const hits: RetiredSurfaceHit[] = [];
   let changelogSection: ChangelogSection = null;
   const lines = content.split(/\r?\n/);
@@ -175,11 +177,11 @@ export async function trackedFiles(root: string): Promise<string[]> {
     stderr: "piped",
   }).output();
   if (!result.success) {
-    // Summarize, never relay: git stderr is bounded and control-stripped.
+    // Exit code only: git stderr is not relayed at all, so a failure message
+    // that happens to carry sensitive content never reaches the diagnostic.
+    // Re-run `git ls-files` by hand to see why it failed.
     throw new Error(
-      `retired-surface scan: git ls-files failed (${result.code}): ${
-        sanitizeForLog(new TextDecoder().decode(result.stderr), 256)
-      }`,
+      `retired-surface scan: git ls-files failed (exit ${result.code})`,
     );
   }
   return new TextDecoder().decode(result.stdout).split("\0").filter(Boolean);
@@ -209,8 +211,10 @@ export async function scanRepo(root: string): Promise<RetiredSurfaceHit[]> {
 export const MAX_REPORTED_HITS = 50;
 
 // Value-free by construction: path (sanitized and bounded), line number, and
-// needle are sufficient to locate a failure; the matched content never
-// appears. Reporting is capped so a pathological tree cannot flood the log.
+// needle locate a failure for ordinary repository paths (an exotic path —
+// literal backslashes, or long enough to truncate — may render ambiguously);
+// the matched content never appears. Reporting is capped so a pathological
+// tree cannot flood the log.
 export function formatHits(hits: RetiredSurfaceHit[]): string {
   const shown = hits.slice(0, MAX_REPORTED_HITS).map((hit) =>
     `${sanitizeForLog(hit.path, 300)}:${hit.line}: ${
