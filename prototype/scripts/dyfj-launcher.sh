@@ -19,7 +19,10 @@ SOCKET_FLAG_VALUE=""
 reject_grant_delimiters() {
   case "$1" in
     *,*)
-      echo "dyfj: socket path must not contain a comma (it would corrupt the Deno net grant): $1" >&2
+      # Content-free: the rejected value is operator input but may carry
+      # control bytes or private path content; the operator knows what they
+      # passed, so name the sources instead of echoing the value.
+      echo "dyfj: socket path must not contain a comma (it would corrupt the Deno net grant); check --socket, DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME" >&2
       return 1
       ;;
   esac
