@@ -18,6 +18,9 @@
  * - Files containing a NUL byte are skipped as binary; their bytes are not
  *   scanned as text.
  *
+ * Tracked paths are read from the worktree (symlinks followed): the scan
+ * checks the bytes it reads at each tracked path, not Git blob contents.
+ *
  * Goal: "X is a live HTTP/shell/bearer-key surface" fails; "X retired / is gone"
  * changelog lines pass. Do not gut the scan to silence a current-state hit.
  *
@@ -171,11 +174,20 @@ export function sanitizeForLog(raw: string, maxChars: number): string {
 }
 
 export async function trackedFiles(root: string): Promise<string[]> {
-  const result = await new Deno.Command("git", {
-    args: ["-C", root, "ls-files", "-z"],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  let result: Deno.CommandOutput;
+  try {
+    result = await new Deno.Command("git", {
+      args: ["-C", root, "ls-files", "-z"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  } catch {
+    // Spawn failures (git missing, not executable) get the same code-authored
+    // treatment as nonzero exits: the raw platform exception is never relayed.
+    throw new Error(
+      "retired-surface scan: cannot run git (is it installed and executable?)",
+    );
+  }
   if (!result.success) {
     // Exit code only: git stderr is not relayed at all, so a failure message
     // that happens to carry sensitive content never reaches the diagnostic.
@@ -192,13 +204,32 @@ export async function trackedFiles(root: string): Promise<string[]> {
 // unbounded hit list before the report is capped.
 export const MAX_COLLECTED_HITS = 1000;
 
+// Fail-closed and value-free: an unreadable tracked path (dangling symlink,
+// permissions, concurrent removal) fails the scan with a code-authored
+// message carrying only the sanitized repo-relative path. The raw exception
+// is never relayed — its message embeds the unsanitized filesystem path.
+export async function readTrackedFile(
+  root: string,
+  path: string,
+): Promise<Uint8Array> {
+  try {
+    return await Deno.readFile(`${root}/${path}`);
+  } catch {
+    throw new Error(
+      `retired-surface scan: cannot read tracked file ${
+        sanitizeForLog(posixPath(path), 300)
+      }`,
+    );
+  }
+}
+
 export async function scanRepo(root: string): Promise<RetiredSurfaceHit[]> {
   const files = await trackedFiles(root);
   const hits: RetiredSurfaceHit[] = [];
   for (const path of files) {
     const remaining = MAX_COLLECTED_HITS - hits.length;
     if (remaining <= 0) break;
-    const bytes = await Deno.readFile(`${root}/${path}`);
+    const bytes = await readTrackedFile(root, path);
     if (bytes.includes(0)) continue;
     const content = new TextDecoder().decode(bytes);
     for (const hit of scanText(path, content, remaining)) {
@@ -374,6 +405,7 @@ Deno.test("oversized matched lines never inflate formatted output", () => {
     "docs/example.md",
     `${"x".repeat(100_000)} standalone HTTP ${"y".repeat(100_000)}\n`,
   );
+  assertEquals(hits.length, 1);
   const formatted = formatHits(hits);
   if (formatted.length > 500) {
     throw new Error(`formatted output too large: ${formatted.length} chars`);
@@ -405,6 +437,27 @@ Deno.test("hit reporting is capped", () => {
   const formatted = formatHits(hits).split("\n");
   assertEquals(formatted.length, MAX_REPORTED_HITS + 1);
   assertEquals(formatted.at(-1), "… and 10 more hits not shown");
+});
+
+Deno.test("a failed tracked-file read is value-free and fail-closed", async () => {
+  let message = "";
+  try {
+    await readTrackedFile(
+      "/nonexistent-root-for-this-test",
+      `docs/\x1b[2Jevil${"x".repeat(400)}.md`,
+    );
+    throw new Error("expected readTrackedFile to throw");
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  // Exact equality with the code-authored message: no platform error text of
+  // ANY flavor, no filesystem root, no control bytes can be present, because
+  // nothing beyond this exact string is.
+  const expectedPath = sanitizeForLog(`docs/\x1b[2Jevil${"x".repeat(400)}.md`, 300);
+  assertEquals(
+    message,
+    `retired-surface scan: cannot read tracked file ${expectedPath}`,
+  );
 });
 
 Deno.test("sanitizeForLog strips control bytes and bounds length", () => {
