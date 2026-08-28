@@ -33,7 +33,6 @@ function fakeIo(): { io: Io; stdout: string[]; stderr: string[] } {
 
 function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
   return {
-    serverUrl: "http://localhost:8787",
     socket: "/tmp/fake-wb.sock",
     mode: "turn",
     color: false,

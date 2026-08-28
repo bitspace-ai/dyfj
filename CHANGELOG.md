@@ -8,7 +8,8 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Added
 
-- **Warm ACP Session Reuse**: Sequential ACP turns in the same Workbench session, workspace, and execution profile reuse one live worker and ACP session. Concurrent same-session work fails as busy instead of queueing. Turn cancellation keeps a healthy handle; protocol or process failure replaces it. Idle sessions retire on a TTL and capacity fails closed without eviction. UDS close, SIGINT, and `dyfj stop` wait for in-flight creation and for every started close to settle, then surface a retained close failure instead of reporting success. A shutdown failure exits with status 1. A timed-out reused route-evidence replay aborts its callback signal so a late durable selection event does not land. Standalone HTTP owns the same map without a close hook; idle TTL and process exit retire those handles.
+- **Retired-surface scan**: The aggregate test gate fails when demolished Workbench surface names reappear outside dated history, the superseded veneers note, or the scanner's own definition.
+- **Warm ACP Session Reuse**: Sequential ACP turns in the same Workbench session, workspace, and execution profile reuse one live worker and ACP session. Concurrent same-session work fails as busy instead of queueing. Turn cancellation keeps a healthy handle; protocol or process failure replaces it. Idle sessions retire on a TTL and capacity fails closed without eviction. UDS close, SIGINT, and `dyfj stop` wait for in-flight creation and for every started close to settle, then surface a retained close failure instead of reporting success. A shutdown failure exits with status 1. A timed-out reused route-evidence replay aborts its callback signal so a late durable selection event does not land.
 - **Bounded Test Runtime Supervision**: Prototype Vitest runs through `run-vitest.ts` now take an exclusive operator-scoped run lock (`$HOME/.dyfj/run/dyfj-vitest-run.lock`), a wall-clock bound (`DYFJ_TEST_BOUND_SEC`, default 10 minutes or 3 minutes for a focused file/name), and a detached sibling reaper. Force-killing the runner reaps launcher/runtime leftovers, test sockets, and run-scoped `start-test-runtime-*.lock` files. A second run refuses to start while a prior run is still alive, including across checkouts. A hung suite fails the bound instead of occupying a worker indefinitely. Stale-lock recovery TERM-then-KILLs the saved Vitest process group only when identity and the recovering run generation match. Survivor discovery is scoped to the run tmp dir, spawn manifest, and explicit command needles.
 - **Live ACP Progress Indication**: Interactive TTY turns now show an ephemeral spinner status for the full in-flight turn (`thinking…`, a bounded tool title, or the truthful generic `working…`) with one live elapsed timer. The indicator yields while response text, status, or an approval prompt owns the terminal, then resumes until completion. Raw thought text is not rendered, persisted, or replayed, and progress events do not enter durable session history.
 - **ACP Usage Receipts**: External-agent receipts now carry ACP-reported optional unstable prompt-response usage and the latest context-window snapshot with explicit ACP provenance. The terminal receipt renders those fields when reported. Optional ACP cost remains labeled as cumulative session cost; subscription-backed Codex turns state that USD cost was not reported instead of inventing a dollar figure.
@@ -31,7 +32,6 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 - **Interactive Mutating Tool Approvals**: Added interactive `y/N` approval prompts over the UDS seam for mutating tools (such as `write_file`).
 - **Google Generative AI (Gemini) Provider**: Native `generateContent` / `streamGenerateContent` adapter behind the paid-escalation gate.
 - **Hosted OpenAI Inference**: Added hosted API route for OpenAI-compatible completions alongside local routes.
-- **Inter-Agent Coordination Primitives**: Added session-coordination claims, launch packets, exit receipts, and heartbeats for visibility across delegated agent work.
 
 ### Changed
 
@@ -48,6 +48,10 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 
 ### Removed
 
+- **HTTP peer server and CLI HTTP client retired**: `http.ts` is gone, and the `dyfj` CLI no longer reaches a remote HTTP runtime (`--server`, `--unix`, `--key`). UDS JSON-RPC is the only seam; `events/query` already carries `asOf`. A remote or browser surface returns later as a thin gateway client of that seam.
+- **Workbench shell retired**: `runWorkbenchShell` is gone. The `dyfj` CLI REPL (`runRepl`) over UDS is the interactive surface.
+- **Session coordination retired**: `session-coordination.ts` is gone. It had no remaining production importers.
+- **Legacy stdio MCP client retired**: `mcp-client.ts` (stdio client to the in-repo memory server) is gone. Streamable HTTP `mcp-tools` and the memory server remain.
 - Dropped vestigial `reflections`, `skills`, and capability scaffolding tables from Dolt schema (`schema/018_drop_vestigial.sql`).
 - Removed `settings.example.json` in favor of `config.toml` and `.env`.
 

@@ -80,6 +80,15 @@ Deno.test("aggregate gate source does not advertise a stale direct entrypoint", 
   }
 });
 
+Deno.test("aggregate lanes include the retired-surface scan", () => {
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "Retired-surface scan");
+  if (!lane) throw new Error("retired-surface scan lane is missing");
+  assertEquals(lane.command, "/fixtures/runtime/deno");
+  assertStringIncludes(lane.args.join(" "), "scripts/retired-surface-scan.ts");
+});
+
 Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", () => {
   const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
     candidate,

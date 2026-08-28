@@ -1,7 +1,7 @@
 /**
  * dyfj — the CLI/TUI daily-driver client (Slice 1: line REPL + exec).
  *
- * A THIN client over the Workbench runtime's REST + SSE surface — it never
+ * A THIN client over the Workbench runtime's JSON-RPC/UDS seam — it never
  * imports the engine (no mysql2, no provider SDKs), so the compiled binary
  * stays small and the server can migrate to Rust under the same contract.
  *
@@ -62,7 +62,7 @@ import {
 import type { WorkbenchSessionEvent } from "./sessions";
 
 // ── Seam contract (shared with the server) ──────────────────────────
-// The receipt and SSE frame shapes are defined once in turn-contract.ts and
+// The receipt and stream frame shapes are defined once in turn-contract.ts and
 // imported by both sides, so this thin client can never silently drift from
 // what the server sends. Type imports are erased at compile, and the one value
 // import (the superseding-retry guard) comes from that dependency-free
@@ -94,8 +94,6 @@ export interface TurnRequest {
 }
 
 export interface CliConfig {
-  serverUrl: string;
-  key?: string;
   /**
    * Context mode: native "turn" = companion + memory; native
    * "ask"/"next-work" = repo context. External runners receive the literal
@@ -111,9 +109,12 @@ export interface CliConfig {
   workspace?: string;
   /** True when workspace came from --workspace/DYFJ_WORKSPACE, not the cwd default. */
   workspaceExplicit?: boolean;
-  /** Unix socket path for the JSON-RPC seam (models/sessions, and turns with `unix`). */
+  /** Unix socket path for the JSON-RPC seam. */
   socket: string;
-  /** Route turns over the UDS/JSON-RPC seam instead of HTTP/SSE (--unix). */
+  /**
+   * Use UDS JSON-RPC for REPL idea/packet/session extras. Turns always use
+   * the seam; when false, those extras use the in-process registry.
+   */
   unix?: boolean;
   /**
    * Opt into paid (hosted) inference for this turn/session (--approve-paid).
@@ -144,34 +145,6 @@ export interface Io {
   close(): void;
 }
 
-const DEFAULT_SERVER = "http://127.0.0.1:8787";
-
-// ── HTTP / SSE client ────────────────────────────────────────────────────────
-
-function buildHeaders(
-  config: CliConfig,
-  stream: boolean,
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-  };
-  if (stream) headers["accept"] = "text/event-stream";
-  if (config.key) headers["authorization"] = `Bearer ${config.key}`;
-  return headers;
-}
-
-/** True when the server URL points at the local loopback interface. */
-export function isLoopbackServerUrl(serverUrl: string): boolean {
-  let host: string;
-  try {
-    host = new URL(serverUrl).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  // URL() strips the brackets from IPv6 hosts, so compare the bare form too.
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
-}
-
 export function buildTurnBody(
   prompt: string,
   config: CliConfig,
@@ -193,123 +166,14 @@ export function buildTurnBody(
   if (sessionId !== undefined) body.sessionId = sessionId;
   // Send the workspace only when establishing a NEW session (no sessionId): the
   // server persists it on the session row, and resumed turns read it back, so
-  // the cwd is sent once on init rather than re-sent every turn. The IMPLICIT
-  // cwd default is sent only to a loopback server — never auto-disclose the
-  // operator's local absolute path to a remote endpoint. An explicitly supplied
-  // --workspace / DYFJ_WORKSPACE is honored regardless (the operator chose it).
-  const maySendWorkspace = config.workspaceExplicit ||
-    isLoopbackServerUrl(config.serverUrl);
-  if (
-    config.workspace !== undefined && sessionId === undefined &&
-    maySendWorkspace
-  ) {
+  // the cwd is sent once on init rather than re-sent every turn. The UDS seam
+  // is local, so the implicit cwd default is always eligible.
+  if (config.workspace !== undefined && sessionId === undefined) {
     body.workspace = config.workspace;
   }
   // Per-turn paid opt-in; the engine ignores it on non-loopback transports.
   if (config.approvePaid) body.approvePaidInference = true;
   return body;
-}
-
-async function readErrorMessage(response: Response): Promise<string> {
-  try {
-    const data = await response.json() as { error?: string };
-    if (data?.error) return data.error;
-  } catch {
-    // non-JSON body
-  }
-  return `HTTP ${response.status}`;
-}
-
-/** POST a turn and stream the SSE frames; resolves with the final result. */
-export async function streamTurn(
-  config: CliConfig,
-  body: TurnRequest,
-  handlers: {
-    onDelta: (text: string) => void;
-    onEvent?: (event: Record<string, unknown>) => void;
-  },
-  fetchFn: typeof fetch = fetch,
-): Promise<TurnResult> {
-  const response = await fetchFn(`${config.serverUrl}/api/turn`, {
-    method: "POST",
-    headers: buildHeaders(config, true),
-    body: JSON.stringify(body),
-  });
-  if (!response.ok || !response.body) {
-    // A well-behaved server already ran this through summarizeError (or it's
-    // a plain "HTTP <status>" fallback) before it hit the wire — DomainError,
-    // not a fresh unbounded local Error, so friendlyError doesn't re-collapse
-    // an already-safe message down to class + byte count a second time. But
-    // config.serverUrl is operator-configurable, so the wire itself is not a
-    // trust boundary: sanitizeBoundaryText caps and control-char-strips
-    // whatever arrived before it's stamped as trusted — a no-op for honest
-    // content, a bound on a hostile or misbehaving peer's.
-    throw new DomainError(
-      sanitizeBoundaryText(
-        await readErrorMessage(response),
-        MAX_ERROR_SUMMARY_BYTES,
-      ),
-    );
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let result: TurnResult | undefined;
-  let streamError: string | undefined;
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      const block = buffer.slice(0, sep).trim();
-      buffer = buffer.slice(sep + 2);
-      if (!block.startsWith("data:")) continue;
-      const frame = JSON.parse(
-        block.slice("data:".length).trim(),
-      ) as TurnStreamFrame;
-      if (frame.t === "delta") handlers.onDelta(frame.text);
-      else if (frame.t === "event") handlers.onEvent?.(frame.event);
-      else if (frame.t === "done") result = frame.result;
-      else if (frame.t === "error") streamError = frame.message;
-    }
-  }
-
-  // Same reasoning as above: the wire is not a trust boundary even though
-  // http.ts's SSE error frame already crossed its own sanitizing step.
-  if (streamError !== undefined) {
-    throw new DomainError(
-      sanitizeBoundaryText(streamError, MAX_ERROR_SUMMARY_BYTES),
-    );
-  }
-  if (result === undefined) {
-    throw new DomainError("stream ended without a result");
-  }
-  return result;
-}
-
-/** POST a turn and read the buffered JSON result (no streaming). */
-export async function bufferedTurn(
-  config: CliConfig,
-  body: TurnRequest,
-  fetchFn: typeof fetch = fetch,
-): Promise<TurnResult> {
-  const response = await fetchFn(`${config.serverUrl}/api/turn`, {
-    method: "POST",
-    headers: buildHeaders(config, false),
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new DomainError(
-      sanitizeBoundaryText(
-        await readErrorMessage(response),
-        MAX_ERROR_SUMMARY_BYTES,
-      ),
-    );
-  }
-  return await response.json() as TurnResult;
 }
 
 // ── Presentation ─────────────────────────────────────────────────────────────
@@ -602,8 +466,8 @@ export function spinnerGuardedTurnHandlers(
 /**
  * Route one runtime event from a streaming turn: the superseding-retry signal
  * resets the renderer (the contract every streaming client must honor); other
- * events render as stderr status lines. Shared by the HTTP/SSE and UDS paths —
- * the frame shapes match, so honoring the contract once covers both.
+ * events render as stderr status lines. The UDS stream frames carry the same
+ * shapes the contract defines, so honoring it here covers the seam.
  */
 export function handleTurnRuntimeEvent(
   event: unknown,
@@ -779,18 +643,6 @@ export function formatPostureLine(posture: SessionPosture): string {
 // error printer renders: a sane excerpt plus the error class and full byte
 // count, never a multi-KB dump.
 
-export function friendlyError(error: unknown, config: CliConfig): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (
-    /connection refused|error sending request|tcp connect|econnrefused|failed to fetch|client error/i
-      .test(message)
-  ) {
-    return `dyfj: runtime not reachable at ${config.serverUrl}. ` +
-      `Start it with: deno task workbench-http`;
-  }
-  return `dyfj: ${summarizeError(error)}`;
-}
-
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 export async function runExec(
@@ -798,13 +650,12 @@ export async function runExec(
   config: CliConfig,
   io: Io,
   json: boolean,
-  fetchFn: typeof fetch = fetch,
   connect: ConnectFn = connectUnixClient,
   interactive = true,
   interrupts: TurnInterruptSource | undefined = io.turnInterrupts,
 ): Promise<number> {
   const body = buildTurnBody(prompt, config, config.sessionId);
-  const approvalController = config.unix ? new AbortController() : undefined;
+  const approvalController = new AbortController();
   let interruptInstalled = false;
   let interruptRequested = false;
   let stopTurnIndicator = () => {};
@@ -839,18 +690,16 @@ export async function runExec(
   let exitCode = 0;
   try {
     if (json) {
-      const result = config.unix
-        ? await socketTurn(
-          config,
-          body,
-          {
-            onApproval,
-            abortSignal: approvalController?.signal,
-            onConnected: installInterrupt,
-          },
-          connect,
-        )
-        : await bufferedTurn(config, body, fetchFn);
+      const result = await socketTurn(
+        config,
+        body,
+        {
+          onApproval,
+          abortSignal: approvalController.signal,
+          onConnected: installInterrupt,
+        },
+        connect,
+      );
       io.out(`${JSON.stringify(result, null, 2)}\n`);
     } else {
       const spinner = createTurnSpinner(config, io);
@@ -878,18 +727,16 @@ export async function runExec(
       spinner.start();
       let result: TurnResult;
       try {
-        result = config.unix
-          ? await socketTurn(
-            config,
-            body,
-            {
-              ...terminalHandlers,
-              abortSignal: approvalController?.signal,
-              onConnected: installInterrupt,
-            },
-            connect,
-          )
-          : await streamTurn(config, body, terminalHandlers, fetchFn);
+        result = await socketTurn(
+          config,
+          body,
+          {
+            ...terminalHandlers,
+            abortSignal: approvalController.signal,
+            onConnected: installInterrupt,
+          },
+          connect,
+        );
       } finally {
         // Covers every non-streaming exit — turn failure, declined approval,
         // buffered-only turns — so no orphaned spinner line survives the turn.
@@ -909,14 +756,12 @@ export async function runExec(
     }
   } catch (error) {
     turnFailed = true;
-    io.err(
-      config.unix ? socketError(error, config) : friendlyError(error, config),
-    );
+    io.err(socketError(error, config));
     exitCode = 1;
   } finally {
     let cleanupError: unknown;
     try {
-      approvalController?.abort();
+      approvalController.abort();
     } catch (error) {
       cleanupError = error;
     }
@@ -926,11 +771,7 @@ export async function runExec(
       cleanupError ??= error;
     }
     if (!turnFailed && cleanupError !== undefined) {
-      io.err(
-        config.unix
-          ? socketError(cleanupError, config)
-          : friendlyError(cleanupError, config),
-      );
+      io.err(socketError(cleanupError, config));
       exitCode = 1;
     }
   }
@@ -940,23 +781,20 @@ export async function runExec(
 export async function runRepl(
   config: CliConfig,
   io: Io,
-  fetchFn: typeof fetch = fetch,
   connect: ConnectFn = connectUnixClient,
   interactive = true,
   interrupts: TurnInterruptSource | undefined = io.turnInterrupts,
 ): Promise<number> {
   io.err(
-    `dyfj — ${
-      config.unix ? config.socket : config.serverUrl
-    } · Ctrl-D or /exit to quit`,
+    `dyfj — ${config.socket} · Ctrl-D or /exit to quit`,
   );
-  // Session-start posture line (UDS seam only — HTTP sessions have no status
-  // RPC). An unreachable runtime prints nothing here: the first turn already
-  // reports reachability loudly, and the REPL must still open. Interactive
-  // sessions only: with piped stdin, readline closes on EOF during any await
-  // that precedes the first readLine, so this fetch would silently swallow the
-  // piped input; scripted sessions keep main-line behavior byte-identical.
-  if (config.unix && interactive) {
+  // Session-start posture line. An unreachable runtime prints nothing here:
+  // the first turn already reports reachability loudly, and the REPL must
+  // still open. Interactive sessions only: with piped stdin, readline closes
+  // on EOF during any await that precedes the first readLine, so this probe
+  // would silently swallow the piped input; scripted sessions keep main-line
+  // behavior byte-identical.
+  if (interactive) {
     const posture = await fetchSessionPosture(config, connect);
     if (!("error" in posture)) io.err(formatPostureLine(posture));
   }
@@ -1011,7 +849,7 @@ export async function runRepl(
             spinner.start();
           },
         });
-        const abortController = config.unix ? new AbortController() : undefined;
+        const abortController = new AbortController();
         const onApproval = (request: unknown) =>
           promptMidTurnApproval(
             io,
@@ -1053,23 +891,21 @@ export async function runRepl(
         let result: TurnResult;
         try {
           spinner.start();
-          result = config.unix
-            ? await socketTurn(
-              config,
-              body,
-              {
-                ...terminalHandlers,
-                abortSignal: abortController?.signal,
-                onConnected: () => {
-                  if (interrupts !== undefined) {
-                    interrupts.add(interrupt);
-                    interruptInstalled = true;
-                  }
-                },
+          result = await socketTurn(
+            config,
+            body,
+            {
+              ...terminalHandlers,
+              abortSignal: abortController.signal,
+              onConnected: () => {
+                if (interrupts !== undefined) {
+                  interrupts.add(interrupt);
+                  interruptInstalled = true;
+                }
               },
-              connect,
-            )
-            : await streamTurn(config, body, terminalHandlers, fetchFn);
+            },
+            connect,
+          );
           sessionState.sessionId = result.sessionId;
         } catch (error) {
           turnFailed = true;
@@ -1133,11 +969,7 @@ export async function runRepl(
           ),
         );
       } catch (error) {
-        io.err(
-          config.unix
-            ? socketError(error, config)
-            : friendlyError(error, config),
-        );
+        io.err(socketError(error, config));
         if (error instanceof TurnCancellationUncertainError) {
           exitCode = 1;
           break;
@@ -1228,8 +1060,7 @@ export type StartRuntimeFn = (
 
 /**
  * Run a turn over the UDS/JSON-RPC seam: forward `stream` notifications to the
- * handlers and resolve with the receipt (the RPC result). Mirrors streamTurn's
- * shape so runExec/runRepl can pick a transport transparently. Over UDS there is
+ * handlers and resolve with the receipt (the RPC result). Over UDS there is
  * no `done`/`error` frame — the receipt is the result, errors are RPC errors.
  */
 export async function socketTurn(
@@ -1526,9 +1357,6 @@ export async function promptMidTurnApproval(
   }
   return { decision: "deny", reason: "operator declined" };
 }
-
-/** @deprecated Use promptMidTurnApproval — kept as an alias for existing tests. */
-export const promptToolApproval = promptMidTurnApproval;
 
 export function formatRuntimeEvent(
   event: Record<string, unknown>,
@@ -3700,9 +3528,7 @@ interface ParsedArgs {
 }
 
 const VALUE_FLAGS = new Set([
-  "--server",
   "--socket",
-  "--key",
   "--mode",
   "--model",
   "--tier",
@@ -3729,8 +3555,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
       json = true;
     } else if (arg === "--launcher-autostarted") {
       launcherAutostarted = true;
-    } else if (arg === "--unix") {
-      overrides.unix = true;
     } else if (arg === "--approve-paid") {
       overrides.approvePaid = true;
     } else if (arg === "--fast") {
@@ -3750,9 +3574,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (VALUE_FLAGS.has(arg)) {
       const value = argv[++i];
       if (value === undefined) return error(`missing value for ${arg}`);
-      if (arg === "--server") overrides.serverUrl = value;
-      else if (arg === "--socket") overrides.socket = value;
-      else if (arg === "--key") overrides.key = value;
+      if (arg === "--socket") overrides.socket = value;
       else if (arg === "--model") overrides.model = value;
       else if (arg === "--runner") {
         if (value !== "fixture" && value !== "codex-chatgpt") {
@@ -3901,13 +3723,7 @@ export function resolveConfig(
       ? hintEnv
       : undefined;
   const explicitWorkspace = overrides.workspace ?? env.get("DYFJ_WORKSPACE");
-  // Local-first default: talk to the UDS loopback seam (where serve-unix listens)
-  // unless the operator explicitly points at an HTTP server. So `dyfj exec "…"`
-  // just works against the local runtime; `--server <url>` opts into HTTP/remote.
-  const explicitServer = overrides.serverUrl ?? env.get("DYFJ_SERVER_URL");
   return {
-    serverUrl: explicitServer ?? DEFAULT_SERVER,
-    key: overrides.key ?? env.get("DYFJ_WORKBENCH_API_KEY"),
     mode: overrides.mode ?? "turn",
     model: overrides.model ?? env.get("DYFJ_WORKBENCH_MODEL"),
     tier: overrides.tier ?? tier,
@@ -3915,15 +3731,14 @@ export function resolveConfig(
     runner: overrides.runner,
     sessionId: overrides.sessionId,
     // Workspace follows the directory `dyfj` runs in; --workspace or
-    // DYFJ_WORKSPACE override it. The implicit cwd is sent only to a loopback
-    // server (buildTurnBody); an explicit value is honored anywhere.
+    // DYFJ_WORKSPACE override it. The UDS seam is local, so the implicit cwd
+    // is always sent on a new session (buildTurnBody).
     workspace: explicitWorkspace ?? cwd,
     workspaceExplicit: explicitWorkspace !== undefined,
     socket: overrides.socket ?? resolveSocketPath(env),
-    // Default to the UDS seam locally; an explicit --server / DYFJ_SERVER_URL
-    // routes over HTTP instead. --unix (or DYFJ_UNIX=1) always forces the seam.
-    unix: overrides.unix ??
-      (env.get("DYFJ_UNIX") === "1" || explicitServer === undefined),
+    // Turns always use the UDS seam. unix remains set so REPL idea/packet
+    // extras use JSON-RPC; tests may pass unix: false for the in-process registry.
+    unix: overrides.unix ?? true,
     approvePaid: overrides.approvePaid ?? false,
     fast: overrides.fast,
     color: !env.get("NO_COLOR") && isTty,
@@ -3932,11 +3747,10 @@ export function resolveConfig(
 
 const HELP = `dyfj — Workbench daily-driver client
 
-Talks to the local runtime over the UDS seam by default; a bare invocation
+Talks to the local runtime over the UDS seam; a bare invocation
 starts the runtime itself if none is answering (see Launcher lifecycle
 below), and \`dyfj start\` still runs one in the foreground by hand. Permission posture (strict | operator) is engine config in
-~/.dyfj/config.toml, not a flag here. Use --server <url> to reach a remote HTTP
-runtime instead.
+~/.dyfj/config.toml, not a flag here.
 
 Usage:
   dyfj                      interactive REPL (multi-turn, streaming)
@@ -3967,10 +3781,7 @@ REPL commands:
 
 Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
-  --server <url>   reach a remote HTTP runtime instead of the local UDS seam (env DYFJ_SERVER_URL)
   --socket <path>  local UDS socket path (env DYFJ_SOCKET)
-  --unix           force the UDS seam (the local default; needed only to override --server)
-  --key <key>      bearer key for remote servers (env DYFJ_WORKBENCH_API_KEY)
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --fast           enable fast speed tier for supported models (faster generation)
   --no-fast        disable fast speed tier (standard speed)
@@ -4108,7 +3919,6 @@ export async function main(argv: string[], io: Io): Promise<number> {
       config,
       io,
       parsed.json,
-      fetch,
       connectUnixClient,
       interactive,
     );
@@ -4133,7 +3943,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       parsed.launcherAutostarted === true,
     );
   }
-  return await runRepl(config, io, fetch, connectUnixClient, interactive);
+  return await runRepl(config, io, connectUnixClient, interactive);
 }
 
 if (import.meta.main) {

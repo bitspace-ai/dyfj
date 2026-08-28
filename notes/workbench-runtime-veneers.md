@@ -1,9 +1,10 @@
+Superseded 2026-08-26: `runWorkbenchShell` and the HTTP peer server (`workbench-http`) were removed; JSON-RPC over UDS is the only seam. Body below is the 2026-06-04 inventory, left as history.
+
 # Workbench Runtime Veneers
 
 Status: historical implementation inventory for the original CLI/HTTP split
-(2026-06-04). The direct tasks below still exist for development, but the
-current operator entrypoint is `dyfj` over the Unix-socket seam; a bare
-invocation autostarts that runtime. HTTP remains a supported explicit server.
+(2026-06-04). The direct tasks below were removed 2026-08-26; the operator
+entrypoint is `dyfj` over the Unix-socket seam.
 
 ## Original Direct Entry Points
 

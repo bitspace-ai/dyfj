@@ -198,10 +198,6 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   { key: "memoryMcpTool", envVar: "DYFJ_MEMORY_MCP_TOOL", domain: "engine", type: "string", kind: "value" },
   // Header NAME only (the token itself stays a secret pointer below).
   { key: "memoryMcpTokenHeader", envVar: "DYFJ_MEMORY_MCP_TOKEN_HEADER", domain: "engine", type: "string", kind: "value" },
-  // ── engine: HTTP-transport-specific (only the workbench-http profile) ──
-  { key: "httpHost", envVar: "DYFJ_WORKBENCH_HTTP_HOST", domain: "engine", type: "string", kind: "value" },
-  { key: "httpPort", envVar: "DYFJ_WORKBENCH_HTTP_PORT", domain: "engine", type: "string", kind: "value" },
-  { key: "httpAllowedHosts", envVar: "DYFJ_WORKBENCH_ALLOWED_HOSTS", domain: "engine", type: "string", kind: "value" },
   // ── engine: secret POINTERS (resolved at point of use; never stored here) ──
   { key: "anthropicApiKey", envVar: "ANTHROPIC_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "openaiApiKey", envVar: "OPENAI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
@@ -210,15 +206,11 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   { key: "xaiApiKey", envVar: "XAI_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "doltPassword", envVar: "DOLT_PASSWORD", domain: "engine", type: "string", kind: "secret-pointer" },
   { key: "memoryMcpToken", envVar: "DYFJ_MEMORY_MCP_TOKEN", domain: "engine", type: "string", kind: "secret-pointer" },
-  { key: "httpApiKey", envVar: "DYFJ_WORKBENCH_API_KEY", domain: "engine", type: "string", kind: "secret-pointer" },
   // ── engine: session/identity — declared, but NOT config (rides the connection) ──
   { key: "principalId", envVar: "DYFJ_PRINCIPAL_ID", domain: "engine", type: "string", kind: "value", sessionState: true },
   // ── client: the engine-free CLI's own slice ──
-  { key: "serverUrl", envVar: "DYFJ_SERVER_URL", domain: "client", type: "string", kind: "value" },
   { key: "socket", envVar: "DYFJ_SOCKET", domain: "client", type: "string", kind: "value" },
   { key: "workspace", envVar: "DYFJ_WORKSPACE", domain: "client", type: "string", kind: "value" },
-  { key: "unix", envVar: "DYFJ_UNIX", domain: "client", type: "string", kind: "value" },
-  { key: "clientApiKey", envVar: "DYFJ_WORKBENCH_API_KEY", domain: "client", type: "string", kind: "secret-pointer" },
   { key: "clientModel", envVar: "DYFJ_WORKBENCH_MODEL", domain: "client", type: "string", kind: "value" },
   { key: "clientHint", envVar: "DYFJ_WORKBENCH_HINT", domain: "client", type: "string", kind: "value" },
   { key: "clientTier", envVar: "DYFJ_WORKBENCH_TIER", domain: "client", type: "string", kind: "value" },
@@ -966,6 +958,7 @@ export function parseMcpServersConfig(
       );
     }
     const url = assertSecureMcpServerUrl(server.url, where);
+    // "remote" is reserved for a future gateway client, not a shipped remote transport.
     if (
       server.minimum_clearance !== "loopback" &&
       server.minimum_clearance !== "remote"

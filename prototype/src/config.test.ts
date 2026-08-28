@@ -250,10 +250,9 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
     new Set(denoJson.permissions[name]?.env ?? []);
 
   // Turn-running engine profiles: each runs the SAME turn, so each must grant
-  // the whole engine env surface (minus HTTP-transport-specific vars).
+  // the whole engine env surface.
   const ENGINE_PROFILES = [
     "workbench",
-    "workbench-http",
     "serve-unix",
   ] as const;
 
@@ -270,14 +269,6 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
       }
     });
   }
-
-  // Env legitimately present only in the workbench-http profile.
-  const HTTP_ONLY = new Set([
-    "DYFJ_WORKBENCH_HTTP_HOST",
-    "DYFJ_WORKBENCH_HTTP_PORT",
-    "DYFJ_WORKBENCH_ALLOWED_HOSTS",
-    "DYFJ_WORKBENCH_API_KEY",
-  ]);
 
   // System/runtime env not part of the DYFJ config surface.
   const SYSTEM_ENV = new Set([
@@ -301,11 +292,7 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
   for (const profile of ENGINE_PROFILES) {
     test(`${profile} grants every declared engine env var`, () => {
       const granted = profileEnv(profile);
-      const missing = engineEnv.filter(
-        (e) =>
-          !granted.has(e) &&
-          !(profile !== "workbench-http" && HTTP_ONLY.has(e)),
-      );
+      const missing = engineEnv.filter((e) => !granted.has(e));
       expect(missing).toEqual([]);
     });
   }
@@ -327,15 +314,6 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
     });
   }
 
-  // Net derivation from the schema is a follow-on (the schema declares env, not
-  // net hosts yet); until then, retain the serve-unix ⊇ workbench-http net
-  // backstop so the UDS turn can dial everything the HTTP turn can.
-  test("serve-unix net ⊇ workbench-http net (minus the HTTP server's own port)", () => {
-    const http = denoJson.permissions["workbench-http"].net ?? [];
-    const uds = new Set(denoJson.permissions["serve-unix"].net ?? []);
-    const missing = http.filter((n) => n !== "127.0.0.1:8787" && !uds.has(n));
-    expect(missing).toEqual([]);
-  });
 });
 
 describe("loadConfig daily budget env override", () => {

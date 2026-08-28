@@ -1,7 +1,6 @@
 {
   "tasks": {
     "workbench": "deno task --cwd prototype workbench",
-    "workbench-http": "deno task --cwd prototype workbench-http",
     "serve-unix": "deno task --cwd prototype serve-unix",
     "cli": "deno task --cwd prototype cli",
     "context-size-response": "deno task --cwd prototype context-size-response",

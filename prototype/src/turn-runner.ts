@@ -1,10 +1,9 @@
 // Shared turn execution core. The security-sensitive turn path —
 // request resolution, per-session serialization, resume
 // reconstruction, paid-escalation gating, and the runtime invocation —
-// lifted out of the HTTP driver so EVERY transport (HTTP/SSE in http.ts, the
-// JSON-RPC/UDS server in uds-server.ts) runs the IDENTICAL turn with identical
-// clearance behavior. There must be exactly one copy of the money/audit/clearance
-// orchestration; this is it.
+// lives here so the JSON-RPC/UDS server in uds-server.ts runs the IDENTICAL
+// turn with identical clearance behavior. There must be exactly one copy of
+// the money/audit/clearance orchestration; this is it.
 
 import {
   type PaidEscalationVerdict,

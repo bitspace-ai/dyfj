@@ -141,7 +141,7 @@ export interface PaidEscalationPreflightInput {
 export type BudgetTallyMode = "on" | "paid" | "off";
 
 export interface WorkbenchInvocation {
-  mode: "ask" | "next-work" | "turn" | "shell";
+  mode: "ask" | "next-work" | "turn";
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
 }
@@ -160,7 +160,7 @@ export interface WorkbenchAuthContext {
 }
 
 export interface WorkbenchRuntimeInput {
-  mode: Exclude<WorkbenchInvocation["mode"], "shell">;
+  mode: WorkbenchInvocation["mode"];
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
   /** Explicit external-loop selection. When absent, the runtime selects native execution or ACP based on model routing. */
@@ -221,7 +221,7 @@ export interface WorkbenchRuntimeInput {
   /**
    * Presentation sink for human-readable turn narration: context loading,
    * workspace/model/route lines, turn text, budget tally, and the receipt.
-   * The direct CLI/shell path injects console output; transport servers leave
+   * The in-process one-shot path injects console output; the UDS server leaves
    * it unset so client presentation never renders on the server console.
    * Default: silent — the runtime core does not narrate.
    */
@@ -499,7 +499,6 @@ export type WorkbenchRuntimeResult =
   | NativeWorkbenchRuntimeResult
   | ExternalAgentWorkbenchRuntimeResult;
 
-export type WorkbenchRunResult = WorkbenchRuntimeResult;
 
 export interface WorkbenchValidationSummary {
   ok: boolean;
@@ -1083,7 +1082,7 @@ export function parseBudgetTallyMode(
 /**
  * Resolve the env-derived runtime defaults at the process boundary,
  * so the core runtime reads no environment variables. Entrypoints (the CLI
- * one-shot and the HTTP server) spread this into the runtime input; a headless
+ * one-shot and the UDS server) spread this into the runtime input; a headless
  * driver supplies these explicitly instead. `rootOverride` stays undefined when
  * DYFJ_ROOT is unset, so the core falls back to the process cwd.
  */
@@ -1166,24 +1165,6 @@ export function isNextWorkMode(mode: WorkbenchInvocation["mode"]): boolean {
   return mode === "next-work";
 }
 
-export function isWorkbenchShellExitCommand(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return normalized === ":quit" || normalized === ":q" ||
-    normalized === "exit";
-}
-
-export function isWorkbenchShellSessionCommand(value: string): boolean {
-  return value.trim().toLowerCase() === ":session";
-}
-
-export function buildWorkbenchShellBanner(): string {
-  return [
-    "DYFJ Workbench Shell",
-    "Enter a prompt to run one Workbench turn.",
-    ":session shows the last session pointer; :quit exits.",
-  ].join("\n");
-}
-
 function printNextWorkResult(
   result: NextWorkValidationResult,
   rawText: string,
@@ -1254,19 +1235,16 @@ export function resolveWorkbenchInvocation(
   env: Record<string, string | undefined> = process.env,
 ): WorkbenchInvocation {
   const mode =
-    args[0] === "ask" || args[0] === "next-work" || args[0] === "shell"
+    args[0] === "ask" || args[0] === "next-work"
       ? args[0]
       : "turn";
-  const effectiveArgs = mode === "ask" || mode === "next-work" ||
-      mode === "shell"
+  const effectiveArgs = mode === "ask" || mode === "next-work"
     ? args.slice(1)
     : args;
   const cliModel = getArg(effectiveArgs, "--model");
   const cliTier = getArg(effectiveArgs, "--tier");
   const cliHint = getArg(effectiveArgs, "--hint");
-  const prompt = mode === "shell"
-    ? ""
-    : mode === "ask" || mode === "next-work"
+  const prompt = mode === "ask" || mode === "next-work"
     ? firstPositional(effectiveArgs) ?? "what should I work on next here?"
     : getArg(effectiveArgs, "--prompt") ??
       "What is the next useful DYFJ workbench step?";
@@ -1284,8 +1262,7 @@ export function resolveWorkbenchInvocation(
 
 export function buildWorkbenchRuntimeInput(
   invocation: WorkbenchInvocation,
-): WorkbenchRuntimeInput | null {
-  if (invocation.mode === "shell") return null;
+): WorkbenchRuntimeInput {
   return {
     mode: invocation.mode,
     prompt: invocation.prompt,
@@ -1412,58 +1389,20 @@ function estimateRuntimeInputCount(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-async function runWorkbenchShell(baseArgs: string[]): Promise<void> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  let lastSession: WorkbenchRunResult | null = null;
-  console.log(buildWorkbenchShellBanner());
-  try {
-    while (true) {
-      const answer = await rl.question("\nworkbench> ");
-      const prompt = answer.trim();
-      if (prompt.length === 0) continue;
-      if (isWorkbenchShellExitCommand(prompt)) {
-        console.log("bye");
-        return;
-      }
-      if (isWorkbenchShellSessionCommand(prompt)) {
-        if (lastSession === null) {
-          console.log("No session yet.");
-        } else {
-          console.log(`Session: ${lastSession.sessionId}`);
-          console.log(`Trace:   ${lastSession.traceId}`);
-        }
-        continue;
-      }
-
-      const result = await runWorkbench([...baseArgs, "--prompt", prompt]);
-      if (result) lastSession = result;
-    }
-  } finally {
-    rl.close();
-  }
-}
-
 export async function runWorkbench(
   args = process.argv.slice(2),
-): Promise<WorkbenchRunResult | void> {
+): Promise<WorkbenchRuntimeResult | void> {
   const invocation = resolveWorkbenchInvocation(args);
-  if (invocation.mode === "shell") {
-    await runWorkbenchShell(args.slice(1));
-    return;
-  }
-
   const runtimeInput = buildWorkbenchRuntimeInput(invocation);
-  if (runtimeInput === null) return;
   // This in-process one-shot path owns the Dolt pool lifecycle: the
   // runtime no longer closes it, so close here after the single turn so the
-  // process exits cleanly. (The REPL drives this per turn; the HTTP server
-  // bypasses runWorkbench and keeps the pool for the process lifetime.)
+  // process exits cleanly.
   const { closeDoltPool } = await import("./utils");
   try {
     return await runWorkbenchRuntime({
       ...runtimeInput,
       ...resolveRuntimeEnvDefaults(),
-      // The in-process CLI/shell is its own presenter.
+      // The in-process one-shot CLI is its own presenter.
       log: console.log,
       onTextDelta: (delta) => {
         process.stdout.write(delta);
@@ -3765,7 +3704,7 @@ async function runNativeWorkbenchRuntime(
     log("");
     log(receipt);
     // the runtime no longer closes the shared Dolt pool. A long-running
-    // host (HTTP server) runs many concurrent turns through this function; a
+    // host (the UDS server) runs many concurrent turns through this function; a
     // per-turn close would end the pool out from under an in-flight turn and
     // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
     // closes it in a finally; the server keeps it for the process lifetime).

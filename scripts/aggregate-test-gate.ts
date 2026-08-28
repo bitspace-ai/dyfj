@@ -108,6 +108,18 @@ export function productionLanes(
     : "";
   return [
     {
+      label: "Retired-surface scan",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "test",
+        `--allow-read=${root}`,
+        "--allow-run=git",
+        "scripts/retired-surface-scan.ts",
+      ],
+      cwd: root,
+    },
+    {
       label: "Aggregate gate orchestration tests",
       command: denoExecutable,
       commandLabel: "deno",
@@ -128,7 +140,6 @@ export function productionLanes(
       args: [
         "check",
         "--sloppy-imports",
-        "src/http.ts",
         "src/workbench.ts",
         "src/jsonrpc.ts",
         "src/jsonrpc-peer.ts",
@@ -136,7 +147,6 @@ export function productionLanes(
         "src/uds-path.ts",
         "src/uds-client.ts",
         "src/uds-serve.ts",
-        "src/mcp-client.ts",
         "mcp/server.ts",
         "src/cli.ts",
         "scripts/esbuild-binary.ts",

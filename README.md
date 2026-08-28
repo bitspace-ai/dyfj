@@ -10,16 +10,20 @@ I've always pushed against proprietary lock-in, and always tried to optimize for
 
 Before I started this project I experimented with some open source harnesses. That's when I accidentally blew through $600 in an afternoon of API tokens using pi (operator error, _not_ anything wrong with pi; I was holding it wrong) and became super gun-shy and started building with extreme cost awareness front-and-center.
 
-**Virtually none of this project** has been coded by hand. This is all coming out of my interactions with the various harnesses, to a point of dogfooding. I am doing this in my personal time - evenings, weekends, vacations.
+**Virtually none of this project** has been coded by hand. This is all coming out of my interactions with the various harnesses, to a point of dogfooding. I am doing this in my personal time - evenings, weekends, vacations.  
 
-## Almost Everything Hereafter is AI Generated
+It's not vibe-coded; I'm applying over 30 years of field experience to the same field at a higher level of abstraction.  
+
+The other half of this project is a private corpus of data, scripts, utilities, and media; the context in which this system operates. 
+
+## Almost Everything Else is AI Generated
 
 This README is the _operating context_ for the project. Decisions up front. How-to-run-it in the middle. Rationale below. If you're acting on this work - as me, or as an agent - read Section 1 in 60 seconds and you'll know the rules. If you want the why, keep reading past Section 4. If you want to run it, jump to Section 5.
 
 ## Repo layout
 
 - `core/` - Rust substrate. Contains the first schema tracer bullet: a small event read/write library plus a demo binary that round-trips an event through Dolt. Where stabilized components live.
-- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI/shell, local HTTP veneer, the JSON-RPC/UDS transport seam, an ACP client foundation, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or stay here as fast-moving prototype code.
+- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI, the JSON-RPC/UDS transport seam, an ACP client foundation, memory, budget, MCP server, tests, and provider diagnostics). The active prototyping surface. Components either move down into `core/` as they stabilize or stay here as fast-moving prototype code.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `CHANGELOG.md` - dated change tracking in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 - `LICENSE` - MIT.
@@ -28,7 +32,7 @@ The split between `core/` and `prototype/` is a permanent two-tier structure whe
 
 ## Status
 
-Early and active. The prototype is functional - Workbench CLI/shell plus a thin engine-free `dyfj` CLI client over the REST and Unix-socket seams, HTTP veneer (loopback by default, with optional authenticated remote interfaces), SSE streaming on the turn path, a duplex JSON-RPC 2.0 seam over a Unix domain socket (the canonical loopback transport, sharing one turn core with the HTTP/SSE path), shared single-turn runtime boundary, a multi-step agent loop (iterating model↔tools with read-only workspace file tools), an operator-routed provider path with local models plus hosted providers (Anthropic, OpenAI, OpenRouter, and Google Gemini) behind paid-approval and budget controls, and a local ACP-client foundation verified against a deterministic fixture agent. The ACP runner is distinct from the native model/provider loop and records outer protocol evidence while treating agent-internal state as opaque. The prototype also includes a Dolt-backed model registry, Dolt-backed memory with privacy-class scoping, system prompts persisted in a Dolt prompts table, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
+Early and active. The prototype is functional - the `dyfj` CLI (REPL and one-shot) over a duplex JSON-RPC 2.0 Unix-socket seam (the canonical loopback transport), shared single-turn runtime boundary, a multi-step agent loop (iterating model↔tools with read-only workspace file tools), an operator-routed provider path with local models plus hosted providers (Anthropic, OpenAI, OpenRouter, and Google Gemini) behind paid-approval and budget controls, and a local ACP-client foundation verified against a deterministic fixture agent. The ACP runner is distinct from the native model/provider loop and records outer protocol evidence while treating agent-internal state as opaque. The prototype also includes a Dolt-backed model registry, Dolt-backed memory with privacy-class scoping, system prompts persisted in a Dolt prompts table, MCP server, budget tracking, paid-escalation preflight, session receipts with prompt-cache telemetry, event-sequence verification, and identity/authn metadata recorded on every runtime event. The Rust core has its first schema tracer bullet: write one event, read it back, and prove the DDL-backed contract from Rust. Schema is canonical and stable.
 
 Dated change tracking lives in [CHANGELOG.md](CHANGELOG.md).
 
@@ -186,7 +190,7 @@ OPENAI_API_KEY     = "op://<vault>/<item>/credential"
 OPENROUTER_API_KEY = "op://<vault>/<item>/credential"
 GEMINI_API_KEY     = "op://<vault>/<item>/credential"
 XAI_API_KEY        = "op://<vault>/<item>/credential"
-# Also resolvable this way: DYFJ_MEMORY_MCP_TOKEN, DOLT_PASSWORD, DYFJ_WORKBENCH_API_KEY.
+# Also resolvable this way: DYFJ_MEMORY_MCP_TOKEN, DOLT_PASSWORD.
 ```
 
 **`config.toml` is a trust boundary.** `[secrets].command` is trusted executable configuration, not inert data: the launcher grants that binary `--allow-run` and the engine runs it automatically at boot. A shell or interpreter there (`["bash", "-c", …]`) runs arbitrary code. So protect `~/.dyfj/config.toml` with the same care as executable policy — restrictive file permissions, no untrusted writers. Pointer strings are passed to the command as process arguments, so vault/item identifiers may be visible to local process inspection (`ps`); that's metadata, not the secret value — prefer opaque vault/item names if that matters to you.
@@ -251,11 +255,10 @@ resolver uses its first pending credential as a session probe; if that probe
 fails, later credentials are marked unavailable without spawning, so multiple
 configured servers may be withheld. Invalid configuration fails boot.
 
-`minimum_clearance = "loopback"` withholds the tools from remote turns.
+`minimum_clearance = "loopback"` withholds the tools from remote-clearance turns.
 `minimum_clearance = "remote"` declares eligibility for both remote and
-loopback turns. The current boot integration is the UDS daily-driver runtime;
-the standalone HTTP server does not load configured external tools yet. A read
-tool can run without a per-call prompt only when its configured approval is
+loopback turns. The current boot integration is the UDS daily-driver runtime.
+A read tool can run without a per-call prompt only when its configured approval is
 `allow`. Every `write_external` tool must use `ask`, and Workbench still
 requires approval when the operator permission profile is active.
 
@@ -312,38 +315,11 @@ path prefix. Common commands are:
 ./prototype/dist/dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
 ```
 
-The HTTP implementation remains available as an explicit standalone server; it
-is not the default terminal-client path:
-
-```sh
-deno task workbench-http
-```
-
-The HTTP veneer listens on `http://127.0.0.1:8787/` by default and exposes `POST /api/turn` for JSON turn requests (pass a `sessionId` to resume a conversation), `GET /api/models` for the model registry (active registry rows plus the local defaults), and a session surface: `GET /api/sessions` (grouped by project), `POST /api/sessions`, and `GET /api/sessions/{id}/events` with an optional `asOf` Dolt time-travel parameter.
-
-#### Remote access (optional, authenticated)
-
-Loopback is the default and needs no credentials. To reach the veneer from another machine - say, over a private overlay network such as WireGuard, Tailscale, or NetBird - bind additional interfaces and require a bearer key:
-
-```sh
-DYFJ_WORKBENCH_HTTP_HOST=127.0.0.1,<remote-interface-ip> \
-DYFJ_WORKBENCH_API_KEY="op://<vault>/<item>/credential" \
-  op run -- deno task workbench-http
-```
-
-- `DYFJ_WORKBENCH_HTTP_HOST` takes a comma-separated host list; each bound interface that is not loopback requires every request to present `Authorization: Bearer <key>`.
-- `DYFJ_WORKBENCH_ALLOWED_HOSTS` optionally allows extra non-loopback hostnames (an overlay-network FQDN, for example) beyond the bind list.
-- The server fails closed: non-loopback binds are refused when no API key is configured, unknown hostnames are rejected regardless of credentials, and a wrong bearer is rejected even on loopback.
-- Requests arriving with a valid bearer are recorded on the event log with `authn_mechanism = api_key`; keyless loopback requests record the local-policy basis. Identity is audit data, not an afterthought - see `schema/current/001_structure.sql` and the historical authn migration in `schema/history/011_events_authn.sql`.
-- The HTML surface prompts for the key on first remote use and keeps it in browser `localStorage`.
-
-Project the bearer key from your secret manager into the standalone HTTP process
-at launch. Do not put it in `.env`, and do not expose these ports publicly -
-this is an authenticated private-network posture, not an internet-facing one.
+The HTTP peer server is retired. UDS JSON-RPC is the only seam (`deno task serve-unix` / `dyfj`); a remote or browser surface returns later as a thin gateway client of that seam.
 
 #### JSON-RPC seam over a Unix domain socket
 
-Alongside the HTTP veneer, the workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket — the canonical `loopback` transport (no TCP port; gated by filesystem permissions; full local clearance). It is the seam the terminal clients use instead of HTTP, and both transports run the same shared turn core, so a turn behaves identically over HTTP/SSE and the socket. The bare `dyfj` launcher starts this runtime automatically when needed; the direct engine task remains available for development:
+The workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket — the canonical `loopback` transport (no TCP port; gated by filesystem permissions; full local clearance). It is the seam the terminal clients use. The bare `dyfj` launcher starts this runtime automatically when needed; the direct engine task remains available for development:
 
 ```sh
 deno task serve-unix      # serve the JSON-RPC seam on the Unix socket
@@ -358,9 +334,9 @@ The socket path resolves from `DYFJ_SOCKET`, else `$XDG_RUNTIME_DIR/dyfj/workben
 
 For a compiled daily-driver binary under Deno 2.9+, run `deno task compile-cli` in `prototype/` and put `dist/` on your `PATH`. The shipped `dist/dyfj` launcher execs the compiled binary on the default socket path and falls back to `deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or `XDG_RUNTIME_DIR` shifts the path.
 
-The seam exposes read methods for `runtime/status`, `surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`, and `tools/inspect`, plus streaming `turn` and cancellation `turn/cancel` methods (intermediate text deltas and runtime events arrive as `stream` notifications; the receipt is the result). `runtime/status` returns both the simple method id list and grouped method catalog metadata for CLI/TUI/GUI surfaces. The `dyfj` CLI drives turns over this seam (and over HTTP/SSE when `--server` is set), renders companion markdown line-by-line while streaming, wraps prose toward a 100-column maximum without splitting words, styles headers/emphasis/lists/quotes/code, and renders safe web, mail, and absolute local links as labeled terminal hyperlinks. On an interactive TTY, the ACP activity indicator remains available for the full turn: it yields while text, status, or an approval prompt owns the terminal, then resumes as `thinking…`, a bounded sanitized tool title, or the truthful generic `working…` with the original elapsed timer until completion. The client handles the mid-turn approval round-trip on stderr and sends one bounded `turn/cancel` request when Ctrl-C interrupts a connected TTY-backed UDS turn, whether REPL or one-shot. Raw ACP thought text is not rendered, persisted, or replayed. Before connection, and for non-TTY input, the client retains its normal SIGINT behavior. After an autostarted server installs its SIGINT handler, when cancellation is the terminal outcome after the active provider or tool operation settles, the turn stops without stopping the runtime; a REPL allows another turn on the same session, while a one-shot exits with its interrupted receipt. An independent provider or protocol error that settles first remains an error rather than being masked. `--json` stays buffered/raw. Remote reach can layer on the same contract through a tailnet transport.
+The seam exposes read methods for `runtime/status`, `surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`, and `tools/inspect`, plus streaming `turn` and cancellation `turn/cancel` methods (intermediate text deltas and runtime events arrive as `stream` notifications; the receipt is the result). `runtime/status` returns both the simple method id list and grouped method catalog metadata for CLI/TUI/GUI surfaces. The `dyfj` CLI drives turns over this seam, renders companion markdown line-by-line while streaming, wraps prose toward a 100-column maximum without splitting words, styles headers/emphasis/lists/quotes/code, and renders safe web, mail, and absolute local links as labeled terminal hyperlinks. On an interactive TTY, the ACP activity indicator remains available for the full turn: it yields while text, status, or an approval prompt owns the terminal, then resumes as `thinking…`, a bounded sanitized tool title, or the truthful generic `working…` with the original elapsed timer until completion. The client handles the mid-turn approval round-trip on stderr and sends one bounded `turn/cancel` request when Ctrl-C interrupts a connected TTY-backed UDS turn, whether REPL or one-shot. Raw ACP thought text is not rendered, persisted, or replayed. Before connection, and for non-TTY input, the client retains its normal SIGINT behavior. After an autostarted server installs its SIGINT handler, when cancellation is the terminal outcome after the active provider or tool operation settles, the turn stops without stopping the runtime; a REPL allows another turn on the same session, while a one-shot exits with its interrupted receipt. An independent provider or protocol error that settles first remains an error rather than being masked. `--json` stays buffered/raw. Remote reach can layer on the same contract through a tailnet transport.
 
-`--runner fixture` selects the deterministic external-agent test path instead of the native model loop. Workbench launches the local fixture directly over ACP v1 stdio with a cleared, profile-selected environment and the resolved workspace, bridges permission requests through the existing approval channel, applies deadlines to protocol waits and child cleanup operations, and records runner-specific events and a runner receipt. Sequential turns that share a Workbench session, workspace, and execution profile reuse one live ACP worker and session; a concurrent turn for that same key fails as busy instead of queueing. Turn cancellation keeps a healthy handle; a protocol or process failure removes it so the next turn can create a replacement. Idle handles retire on a TTL, a small resident-session bound fails closed without eviction, and UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight creation and for every started close to settle, then surface a retained close failure rather than reporting success. A shutdown failure exits with status 1. Standalone HTTP owns the same map without a close hook; idle TTL and process exit retire those handles. On an interactive Unix-socket client, every accepted ACP option (up to 16) is rendered as a numbered choice and the exact selected option identifier is returned to the agent; invalid input re-prompts within that same exchange up to three times before failing closed. Empty or closed input, a non-interactive client, or an unavailable approval handler selects the request's rejection option when one exists, otherwise the request is cancelled. Empty option lists and empty or duplicate identifiers fail at protocol ingress. This selection contract is common to every ACP profile. Transport (`local_stdio`) remains distinct from the selected access route (`local_sidecar`) and its cost basis (`local_free`). The fixture is protocol coverage, not evidence for a vendor agent or subscription route.
+`--runner fixture` selects the deterministic external-agent test path instead of the native model loop. Workbench launches the local fixture directly over ACP v1 stdio with a cleared, profile-selected environment and the resolved workspace, bridges permission requests through the existing approval channel, applies deadlines to protocol waits and child cleanup operations, and records runner-specific events and a runner receipt. Sequential turns that share a Workbench session, workspace, and execution profile reuse one live ACP worker and session; a concurrent turn for that same key fails as busy instead of queueing. Turn cancellation keeps a healthy handle; a protocol or process failure removes it so the next turn can create a replacement. Idle handles retire on a TTL, a small resident-session bound fails closed without eviction, and UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight creation and for every started close to settle, then surface a retained close failure rather than reporting success. A shutdown failure exits with status 1. On an interactive Unix-socket client, every accepted ACP option (up to 16) is rendered as a numbered choice and the exact selected option identifier is returned to the agent; invalid input re-prompts within that same exchange up to three times before failing closed. Empty or closed input, a non-interactive client, or an unavailable approval handler selects the request's rejection option when one exists, otherwise the request is cancelled. Empty option lists and empty or duplicate identifiers fail at protocol ingress. This selection contract is common to every ACP profile. Transport (`local_stdio`) remains distinct from the selected access route (`local_sidecar`) and its cost basis (`local_free`). The fixture is protocol coverage, not evidence for a vendor agent or subscription route.
 
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows systems where `/bin/kill` supports negative process-group signaling and the operator home is absolute and contains neither comma nor colon, through a local stdio child using the community-maintained `@agentclientprotocol/codex-acp` adapter; subscription inference may use remote services. Sequential Workbench turns reuse the same live adapter process and ACP session under the same session/workspace/profile rule as the fixture. Commas cannot be represented safely in this integration's comma-separated Deno grants, and colons would split the child's `PATH`, so the login task and runtime reject either delimiter. The route is separate from native model routing and does not accept `--model`, `--tier`, `--hint`, or remote callers. It also requires the standing trusted-workspace posture because the Codex agent can inspect workspace configuration. Workbench invokes the adapter with a dedicated home beneath `~/.dyfj/runner-homes/codex-chatgpt/`; it rejects a symlinked, non-owned, or group/other-writable operator home and rejects non-owned or group/other-writable existing `.dyfj` and runner-home directories without changing safe parent modes. It sets the runner-root, dedicated HOME, Codex-home, and Cargo-home directories to mode `0700`. The child receives a cleared environment; ambient API keys, credential-agent socket variables, and other unselected environment variables do not cross that boundary. ACP session updates remain finite per prompt: ordinary profiles allow 1,024 updates and this long-running profile allows 8,192, with the same resolved allowance enforced at protocol ingress and by the SDK consumer. Under a warm session those ingress counters reset at each prompt, so sequential turns do not inherit the previous exchange's budget. Newline-delimited protocol messages are bounded separately: ordinary profiles retain the 384 KiB ceiling, while this long-running profile permits newline-delimited messages up to 1 MiB each. The selected message ceiling is resolved once before stream construction and enforced before the SDK consumes the frame. Exceeding either update or message ceiling fails closed with a specific client diagnostic; the 16 MiB protocol-input and 60,000-byte agent-response caps apply per prompt/exchange; permission, timeout, cancellation, and process-cleanup bounds remain independent. This integration does not claim OpenAI support or endorsement, and it does not expand or interpret subscription terms. Use the `dyfj` launcher for this route; the generic direct engine tasks remain cross-platform and do not project its optional executable grant.
 
@@ -378,12 +354,6 @@ deno task codex-chatgpt-login
 ```
 
 After ACP initialization and before `session/new`, Workbench asks the adapter for `authentication/status`. The response must be an object whose top-level `type` is exactly `chat-gpt`; a missing response or any other top-level type fails closed. Workbench supplies no API-key or metered-provider fallback. Only after that check succeeds does Workbench persist the profile-declared `subscription_oauth` and `subscription_quota` labels, with `runner_route_source=profile_declared` and the adapter-reported `runner_auth_type=chat-gpt`. Those fields describe the external agent's access route; the existing `authn_*` fields continue to describe the caller. Workbench carries ACP's optional, unstable prompt-response usage and latest context-window snapshot as separately labeled ACP evidence; it does not reinterpret those values as native accounting or attest a model identity. ACP may also report cumulative session cost, which remains distinct from native per-turn cost. The pinned Codex adapter currently reports token/context usage on this subscription route but no currency cost, so the terminal receipt says `subscription quota (USD not reported)`. Workbench starts the adapter as a dedicated process group after verifying the exact negative-PGID signal syntax against an inert process group. If the adapter leader is still active, completion, error, timeout, and cancellation cleanup attempt to signal that group. Signal subprocesses, process-group polling, child-status waits, and stream-drain waits each have deadlines. A process-group termination failure is thrown directly when no earlier primary failure exists; otherwise it is attached as that primary error's cause. Stderr-drain cancellation destroys the owned stream and suppresses late stream errors.
-
-#### Active work coordination
-
-Workbench owns delegated agent coordination from inside the operator surface. The session coordination prototype keeps the underlying primitive small: coordination claims, launch packets, exit receipts, scope paths, heartbeats, stale-base warnings, deterministic path overlap, and registry/git drift checks. The normal command-line entrypoints remain `dyfj` for the CLI/TUI client and, eventually, `dyfj workbench` for the GUI.
-
-The coordination primitive is visibility-first and intended to make concurrent agent work observable before richer orchestration grows around it.
 
 Useful validation tasks:
 
@@ -521,7 +491,7 @@ Things that exist as boxes on a diagram.
   - Tool call mechanism (typed, validated, observable)
   - Context engineering pipeline: token counting / auto-compaction, incremental diffs (only changes since last turn), layered prompt composition (system + skills/tools + workspace anchors + retrieved context), retrieval tools (grep, LSP, AST, glob)
 - **Memory abstraction.** First-class subsystem, not a bolt-on. Distinct from the immutable log. Queryable, evictable, scoped, explicitly reasoned about.
-- **Workbench runtime boundary.** Shared single-turn runtime invoked by CLI/shell, the local HTTP/SSE veneer, and the JSON-RPC/UDS seam — every transport runs the identical turn through one shared core (`turn-runner`), not a per-transport copy. Presentation layers pass inputs and render results; the runtime owns model routing, command/tool execution, session/event writes, budget tracking, and receipt facts.
+- **Workbench runtime boundary.** Shared single-turn runtime invoked by the `dyfj` CLI over the JSON-RPC/UDS seam — every transport runs the identical turn through one shared core (`turn-runner`), not a per-transport copy. Presentation layers pass inputs and render results; the runtime owns model routing, command/tool execution, session/event writes, budget tracking, and receipt facts.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable, versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
 - **Inter-Agent Contracts & Capability Discovery.** Bilateral registration: agents advertise capabilities, agents declare needs, the substrate matches them. Per Section 1: the shared runtime event schema carries the audit and trace substrate; concrete discovery schema follows real producers and consumers.
@@ -574,7 +544,7 @@ Called out as conceptual influences rather than implementation dependencies.
 Things agreed to and evolving as work progresses.
 
 - Extend the current static command registry toward the `register()` / `lookup()` runtime shape when real consumers need it.
-- Extend Workbench veneer validation beyond the current CLI/shell and local HTTP smoke paths as the surface grows.
+- Extend Workbench veneer validation beyond the current CLI/UDS smoke paths as the surface grows.
 - Continue the cost-visibility surface beyond the shipped preflight/receipt path: soft/hard budget UX and later daily-scope budget projection.
 - Grow the Rust core only where components have stabilized enough to earn the boundary; the first schema tracer bullet is shipped.
 
@@ -624,3 +594,4 @@ Document revisions only. Code and behavior changes are tracked in [CHANGELOG.md]
 - 2026-08-19 - Validation guidance now documents operator-scoped exclusive Vitest locking, run-scoped survivor cleanup, and next-run recovery of a saved Vitest process group.
 - 2026-08-18 - The CLI/UDS turn path now documents ephemeral ACP progress indication on an interactive TTY spinner. Raw thought text is not a display or history surface.
 - 2026-08-18 - Validation guidance now documents exclusive, wall-clock-bounded prototype Vitest runs and zero-survivor reaping of test runtimes.
+- 2026-08-27 - Dropped remaining current-state HTTP server, Workbench shell, and workbench API-key claims from operating docs. MCP `minimum_clearance = "remote"` remains a policy value reserved for a future gateway client, not a shipped remote transport.
