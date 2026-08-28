@@ -24,8 +24,8 @@
  * pre-publication input; a matching line can carry a credential, private
  * text, terminal-control bytes, or an arbitrarily large payload, and none of
  * that belongs in terminal or CI output. Paths are control-stripped and
- * bounded, reported hits are capped, and git failures are summarized without
- * raw unbounded stderr.
+ * bounded, hit collection and reporting are both capped, and git failures
+ * are summarized without raw unbounded stderr.
  */
 
 import { fileURLToPath } from "node:url";
@@ -46,7 +46,10 @@ export const DENY_LIST: readonly string[] = [
   // Retired turn-seam transport wording. `serverUrl` was the removed HTTP
   // client's operator-configurable endpoint; "SSE frame" is the retired HTTP
   // streaming transport's framing. Provider adapters still legitimately speak
-  // SSE to model APIs, so these needles stay narrow instead of denying "SSE".
+  // SSE to model APIs, so the seam's own vocabulary is denied rather than
+  // "SSE" broadly. Like every needle here these are context-free substrings:
+  // a legitimate future use gets rephrased or allowlisted, never silently
+  // passed.
   "serverUrl",
   "SSE frame",
 ];
@@ -103,9 +106,14 @@ export function lineIsAllowed(
   return false;
 }
 
-export function scanText(path: string, content: string): RetiredSurfaceHit[] {
+export function scanText(
+  path: string,
+  content: string,
+  limit: number = Number.POSITIVE_INFINITY,
+): RetiredSurfaceHit[] {
   if (isAllowlistedPath(path)) return [];
   if (content.includes("\0")) return [];
+  if (limit <= 0) return [];
   const hits: RetiredSurfaceHit[] = [];
   let changelogSection: ChangelogSection = null;
   const lines = content.split(/\r?\n/);
@@ -126,6 +134,7 @@ export function scanText(path: string, content: string): RetiredSurfaceHit[] {
           line: index + 1,
           needle,
         });
+        if (hits.length >= limit) return hits;
       }
     }
   }
@@ -136,15 +145,23 @@ export function repoRootFromMeta(): string {
   return fileURLToPath(new URL("..", import.meta.url));
 }
 
-// Strip control characters (including ANSI escape introducers) and bound
-// length, so text destined for terminal/CI output cannot inject terminal
-// control sequences or flood the log. Filters by code point rather than a
-// literal containing control characters.
+// Strip characters that can manipulate terminal or CI output — C0 and C1
+// controls (both escape introducers), DEL, and the Unicode direction
+// controls that can visually reorder a rendered line — then bound length so
+// the log cannot flood. Filters by code point rather than a literal
+// containing control characters.
+function isLogUnsafe(code: number): boolean {
+  if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return true;
+  if (code === 0x061c || code === 0x200e || code === 0x200f) return true;
+  if (code >= 0x202a && code <= 0x202e) return true;
+  if (code >= 0x2066 && code <= 0x2069) return true;
+  return false;
+}
+
 export function sanitizeForLog(raw: string, maxChars: number): string {
   let out = "";
   for (const ch of raw) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f) continue;
+    if (isLogUnsafe(ch.codePointAt(0) ?? 0)) continue;
     out += ch;
     if (out.length >= maxChars) return `${out}…`;
   }
@@ -168,14 +185,23 @@ export async function trackedFiles(root: string): Promise<string[]> {
   return new TextDecoder().decode(result.stdout).split("\0").filter(Boolean);
 }
 
+// Collection stops here, not just at formatting: one hit already fails the
+// scan, so a pathological tree cannot make the scanner materialize an
+// unbounded hit list before the report is capped.
+export const MAX_COLLECTED_HITS = 1000;
+
 export async function scanRepo(root: string): Promise<RetiredSurfaceHit[]> {
   const files = await trackedFiles(root);
   const hits: RetiredSurfaceHit[] = [];
   for (const path of files) {
+    const remaining = MAX_COLLECTED_HITS - hits.length;
+    if (remaining <= 0) break;
     const bytes = await Deno.readFile(`${root}/${path}`);
     if (bytes.includes(0)) continue;
     const content = new TextDecoder().decode(bytes);
-    hits.push(...scanText(path, content));
+    for (const hit of scanText(path, content, remaining)) {
+      hits.push(hit);
+    }
   }
   return hits;
 }
@@ -383,6 +409,20 @@ Deno.test("sanitizeForLog strips control bytes and bounds length", () => {
     "fatal:[31m boom",
   );
   assertEquals(sanitizeForLog("a".repeat(300), 256), `${"a".repeat(256)}…`);
+});
+
+Deno.test("sanitizeForLog strips C1 and direction controls too", () => {
+  // U+009B is the single-byte CSI; U+202E is right-to-left override.
+  assertEquals(sanitizeForLog("a\u{009b}2Jb\u{202e}c\u{2066}d\u{200e}", 256), "a2Jbcd");
+});
+
+Deno.test("scanText stops collecting at the given limit", () => {
+  const lines = Array.from(
+    { length: 40 },
+    () => "the standalone HTTP server",
+  ).join("\n");
+  assertEquals(scanText("docs/example.md", lines, 7).length, 7);
+  assertEquals(scanText("docs/example.md", lines, 0), []);
 });
 
 Deno.test("tracked tree has no current-state retired-surface claims", async () => {
