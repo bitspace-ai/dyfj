@@ -9,7 +9,7 @@
     "serve-unix": "deno run --no-prompt -P=serve-unix --env-file=.env --sloppy-imports src/uds-serve.ts",
     "memory-recall-uat-fixture": "deno run --no-prompt --allow-net=127.0.0.1 scripts/memory-recall-uat-fixture.ts",
     "codex-chatgpt-login": "/bin/sh -c 'node_path=${DYFJ_NODE_PATH:-}; if [ -z \"$node_path\" ]; then node_path=$(command -v node 2>/dev/null) || node_path=; fi; case \"$node_path\" in *[,:]*) node_path=;; esac; case \"$HOME\" in /*) ;; *) echo \"dyfj: codex-chatgpt-login requires an absolute home path\" >&2; exit 1;; esac; case \"$HOME\" in *[,:]*) echo \"dyfj: codex-chatgpt-login home path contains an unsupported delimiter\" >&2; exit 1;; esac; if [ -z \"$node_path\" ] || [ \"${node_path#/}\" = \"$node_path\" ] || [ ! -f \"$node_path\" ] || [ ! -x \"$node_path\" ]; then echo \"dyfj: codex-chatgpt-login requires an absolute operator-authorized executable on PATH or in DYFJ_NODE_PATH\" >&2; exit 1; fi; DYFJ_NODE_PATH=\"$node_path\" exec deno run --no-prompt --allow-env=HOME,USER,DYFJ_NODE_PATH --allow-read=\".,$node_path,$HOME,$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt\" --allow-write=\"$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt\" --allow-run=\"bash,$node_path\" --allow-sys=uid --sloppy-imports scripts/codex-chatgpt-login.ts'",
-    "compile-cli": "deno compile --allow-env=DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,DYFJ_ROOT,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_MEMORY_MCP_URL,NO_COLOR --allow-read --allow-write --allow-run=deno --allow-net=127.0.0.1,localhost,unix:$HOME/.dyfj/run/workbench.sock --sloppy-imports -o dist/dyfj-bin src/cli.ts && cp scripts/dyfj-launcher.sh dist/dyfj && chmod +x dist/dyfj dist/dyfj-bin",
+    "compile-cli": "deno compile --allow-env=DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,DYFJ_ROOT,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_MEMORY_MCP_URL,NO_COLOR --allow-read --allow-write --allow-run=deno --allow-net=unix:$HOME/.dyfj/run/workbench.sock --sloppy-imports -o dist/dyfj-bin src/cli.ts && cp scripts/dyfj-launcher.sh dist/dyfj && chmod +x dist/dyfj dist/dyfj-bin",
     "context-size-response": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/context-size-response.ts",
     "model-response-modes": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/model-response-modes.ts",
     "structured-output": "deno run -P=local-model-diagnostic --env-file=.env --sloppy-imports examples/structured-output.ts",
@@ -131,10 +131,6 @@
         "DYFJ_WORKBENCH_TIER",
         "DYFJ_MEMORY_MCP_URL",
         "NO_COLOR"
-      ],
-      "net": [
-        "127.0.0.1",
-        "localhost"
       ],
       "read": true,
       "write": true,

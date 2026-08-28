@@ -280,7 +280,7 @@ probe_runtime() {
       --allow-read \
       --allow-write \
       --allow-run=deno \
-      --allow-net="127.0.0.1,localhost,unix:${sock}" \
+      --allow-net="unix:${sock}" \
       --sloppy-imports \
       "${proto}/src/cli.ts" \
       ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
@@ -605,7 +605,7 @@ run_deno_cli() {
     --allow-read \
     --allow-write \
     --allow-run=deno \
-    --allow-net="127.0.0.1,localhost,unix:${sock}" \
+    --allow-net="unix:${sock}" \
     --sloppy-imports \
     "${proto}/src/cli.ts" \
     "$@"
