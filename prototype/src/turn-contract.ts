@@ -182,8 +182,9 @@ export type TurnStreamFrame =
  * whatever streams after, or the receipt's `text`.
  *
  * The superseding-retry shape is part of the wire contract:
- * deltas and events share one ordered channel (UDS `stream` notifications),
- * so in-order delivery of the signal relative to
+ * deltas and events share one ordered channel — UDS `stream` notifications,
+ * whose writes the JSON-RPC peer serializes (`jsonrpc-peer.ts`) — so
+ * in-order delivery of the signal relative to
  * the deltas around it is guaranteed. Continuation retries (output-cap
  * recovery) never emit it — their retry streams only new text.
  */

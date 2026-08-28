@@ -1169,8 +1169,8 @@ export function buildTurnHandlers(
               };
             },
           ),
-        // Stream frames carry the shared TurnStreamFrame union, so every
-        // client consumes one frame shape. Deltas are
+        // Stream frames carry the shared TurnStreamFrame union — one wire
+        // shape for clients to consume. Deltas are
         // best-effort: a dropped one costs some rendered text, not correctness,
         // so the notify promise is observed (not left to reject unhandled) but
         // its failure is only logged, never surfaced to the runtime.
