@@ -11,20 +11,36 @@ set -euo pipefail
 # launcher starting a runtime it can never see answer.
 SOCKET_FLAG_VALUE=""
 
+# Deno's --allow-net list is comma-delimited, and the resolved socket path is
+# interpolated into that list as `unix:<path>`. A comma inside the path would
+# smuggle extra grant entries past the UDS-only boundary, so every source
+# (--socket, DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME) is rejected here before any
+# grant is built — the same rule cli.ts applies to the runtime child's grant.
+reject_grant_delimiters() {
+  case "$1" in
+    *,*)
+      # Content-free: the rejected value is operator input but may carry
+      # control bytes or private path content; the operator knows what they
+      # passed, so name the sources instead of echoing the value.
+      echo "dyfj: socket path must not contain a comma (it would corrupt the Deno net grant); check --socket, DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME" >&2
+      return 1
+      ;;
+  esac
+}
+
 resolve_socket_path() {
+  local resolved
   if [[ "$SOCKET_FLAG_SET" == "1" && -n "$SOCKET_FLAG_VALUE" ]]; then
-    printf '%s' "$SOCKET_FLAG_VALUE"
-    return
+    resolved="$SOCKET_FLAG_VALUE"
+  elif [[ -n "${DYFJ_SOCKET:-}" ]]; then
+    resolved="$DYFJ_SOCKET"
+  elif [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    resolved="$XDG_RUNTIME_DIR/dyfj/workbench.sock"
+  else
+    resolved="${HOME:-.}/.dyfj/run/workbench.sock"
   fi
-  if [[ -n "${DYFJ_SOCKET:-}" ]]; then
-    printf '%s' "$DYFJ_SOCKET"
-    return
-  fi
-  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
-    printf '%s' "$XDG_RUNTIME_DIR/dyfj/workbench.sock"
-    return
-  fi
-  printf '%s' "${HOME:-.}/.dyfj/run/workbench.sock"
+  reject_grant_delimiters "$resolved" || exit 1
+  printf '%s' "$resolved"
 }
 
 default_socket_path() {
@@ -280,7 +296,7 @@ probe_runtime() {
       --allow-read \
       --allow-write \
       --allow-run=deno \
-      --allow-net="127.0.0.1,localhost,unix:${sock}" \
+      --allow-net="unix:${sock}" \
       --sloppy-imports \
       "${proto}/src/cli.ts" \
       ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
@@ -605,7 +621,7 @@ run_deno_cli() {
     --allow-read \
     --allow-write \
     --allow-run=deno \
-    --allow-net="127.0.0.1,localhost,unix:${sock}" \
+    --allow-net="unix:${sock}" \
     --sloppy-imports \
     "${proto}/src/cli.ts" \
     "$@"
@@ -614,6 +630,10 @@ run_deno_cli() {
 main() {
   parse_launcher_args "$@"
   socket_forward_args
+  # Fail loudly here, before any routing: later resolutions run inside
+  # condition contexts where a rejection could be misread as ordinary
+  # fallback behavior.
+  resolve_socket_path >/dev/null
   local route autostart
   route="$(route_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})"
   if autostart_applies ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} && client_parse_check; then

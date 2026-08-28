@@ -709,7 +709,7 @@ describe("serveWorkbenchUnix turn method", () => {
     expect(await client.request("turn", { prompt: "hi" })).toEqual({
       receiptId: "r1",
     });
-    // Stream frames mirror the HTTP SSE frame shape (TurnStreamFrame).
+    // Stream frames carry the shared TurnStreamFrame union.
     expect(streamed).toEqual([
       { t: "delta", text: "hello " },
       { t: "delta", text: "world" },

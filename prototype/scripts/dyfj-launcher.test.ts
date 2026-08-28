@@ -1108,3 +1108,97 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
 });
 
 
+
+describe("socket-path grant delimiter safety", () => {
+  async function launchExpectingRejection(
+    env: Record<string, string>,
+    args: string[],
+  ): Promise<{ code: number; err: string }> {
+    const { code, stderr } = await new Deno.Command(BASH, {
+      args: [LAUNCHER, ...args],
+      env: {
+        ...Deno.env.toObject(),
+        DYFJ_LAUNCHER_DRY_RUN: "1",
+        ...env,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return { code, err: new TextDecoder().decode(stderr) };
+  }
+
+  test("a comma-bearing DYFJ_SOCKET fails closed before any grant is built", async () => {
+    const { code, err } = await launchExpectingRejection(
+      { DYFJ_SOCKET: "/tmp/x.sock,example.invalid:443" },
+      ["status"],
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("must not contain a comma");
+    // Content-free: the rejected value (which may carry private path content
+    // or control bytes) must not be echoed back.
+    expect(err).not.toContain("example.invalid");
+  });
+
+  test("the rejection is content-free for control-bearing values", async () => {
+    const { code, err } = await launchExpectingRejection(
+      { DYFJ_SOCKET: "/tmp/\u001b[2Jevil,x.sock" },
+      ["status"],
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("must not contain a comma");
+    expect(err).not.toContain("evil");
+    expect(err).not.toContain("\u001b");
+  });
+
+  test("a comma-bearing --socket flag fails closed before any grant is built", async () => {
+    const { code, err } = await launchExpectingRejection(
+      {},
+      ["--socket", "/tmp/x.sock,example.invalid:443", "status"],
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("must not contain a comma");
+  });
+
+  test("a comma-bearing XDG_RUNTIME_DIR fails closed before any grant is built", async () => {
+    const { code, err } = await launchExpectingRejection(
+      { XDG_RUNTIME_DIR: "/tmp/x,evil" },
+      ["status"],
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("must not contain a comma");
+  });
+});
+
+describe("compile-cli grant construction", () => {
+  async function compileWithHome(
+    home: string,
+  ): Promise<{ code: number; err: string }> {
+    const cwd = new URL("..", import.meta.url).pathname;
+    const { code, stderr } = await new Deno.Command("deno", {
+      args: ["task", "compile-cli"],
+      cwd,
+      env: { ...Deno.env.toObject(), HOME: home },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return { code, err: new TextDecoder().decode(stderr) };
+  }
+
+  test("whitespace in HOME fails closed before any compile", async () => {
+    const { code, err } = await compileWithHome("/tmp/has space");
+    expect(code).not.toBe(0);
+    expect(err).toContain("free of commas and whitespace");
+  });
+
+  test("a comma in HOME fails closed before any compile", async () => {
+    const { code, err } = await compileWithHome("/tmp/has,comma");
+    expect(code).not.toBe(0);
+    expect(err).toContain("free of commas and whitespace");
+  });
+
+  test("a relative HOME fails closed before any compile", async () => {
+    const { code, err } = await compileWithHome("relative/home");
+    expect(code).not.toBe(0);
+    expect(err).toContain("absolute home path");
+  });
+});

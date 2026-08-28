@@ -15,9 +15,22 @@
  *   retired files. Live capability claims in Unreleased still fail.
  * - `notes/workbench-runtime-veneers.md` (superseded inventory).
  * - This file, so the deny-list can be defined here.
+ * - Files containing a NUL byte are skipped as binary; their bytes are not
+ *   scanned as text.
+ *
+ * Tracked paths are read from the worktree (symlinks followed): the scan
+ * checks the bytes it reads at each tracked path, not Git blob contents.
  *
  * Goal: "X is a live HTTP/shell/bearer-key surface" fails; "X retired / is gone"
  * changelog lines pass. Do not gut the scan to silence a current-state hit.
+ *
+ * Diagnostics are value-free: a report names path, line number, and needle —
+ * never the matched line's content. Tracked files are untrusted
+ * pre-publication input; a matching line can carry a credential, private
+ * text, terminal-control bytes, or an arbitrarily large payload, and none of
+ * that belongs in terminal or CI output. Paths are control-stripped and
+ * bounded, hit collection and reporting are both capped, and a git failure
+ * reports its exit code only — stderr is never relayed.
  */
 
 import { fileURLToPath } from "node:url";
@@ -35,6 +48,15 @@ export const DENY_LIST: readonly string[] = [
   "standalone HTTP",
   "session-coordination",
   "mcp-client",
+  // Retired turn-seam transport wording. `serverUrl` was the removed HTTP
+  // client's operator-configurable endpoint; "SSE frame" is the retired HTTP
+  // streaming transport's framing. Provider adapters still legitimately speak
+  // SSE to model APIs, so the seam's own vocabulary is denied rather than
+  // "SSE" broadly. Like every needle here these are context-free substrings:
+  // a legitimate future use gets rephrased or allowlisted, never silently
+  // passed.
+  "serverUrl",
+  "SSE frame",
 ];
 
 const DATED_LINE = /^- 20\d\d-\d\d-\d\d/;
@@ -42,11 +64,12 @@ const CHANGELOG_HEADING = /^## \[([^\]]+)\]\s*$/;
 const DATED_HEADING_VALUE = /^20\d\d-\d\d-\d\d$/;
 const RETIREMENT_ANNOUNCEMENT = /\bretired\b|\bis gone\b|\bare gone\b/i;
 
+// Deliberately carries no matched-line content: nothing downstream can echo
+// what it never held.
 export interface RetiredSurfaceHit {
   path: string;
   line: number;
   needle: string;
-  text: string;
 }
 
 function posixPath(path: string): string {
@@ -88,7 +111,12 @@ export function lineIsAllowed(
   return false;
 }
 
-export function scanText(path: string, content: string): RetiredSurfaceHit[] {
+export function scanText(
+  path: string,
+  content: string,
+  limit: number = Number.POSITIVE_INFINITY,
+): RetiredSurfaceHit[] {
+  if (limit <= 0) return [];
   if (isAllowlistedPath(path)) return [];
   if (content.includes("\0")) return [];
   const hits: RetiredSurfaceHit[] = [];
@@ -110,8 +138,8 @@ export function scanText(path: string, content: string): RetiredSurfaceHit[] {
           path: posixPath(path),
           line: index + 1,
           needle,
-          text: line,
         });
+        if (hits.length >= limit) return hits;
       }
     }
   }
@@ -122,38 +150,112 @@ export function repoRootFromMeta(): string {
   return fileURLToPath(new URL("..", import.meta.url));
 }
 
+// Strip characters that can manipulate terminal or CI output — C0 and C1
+// controls (both escape introducers), DEL, and the Unicode direction
+// controls that can visually reorder a rendered line — then bound length so
+// the log cannot flood. Filters by code point rather than a literal
+// containing control characters.
+function isLogUnsafe(code: number): boolean {
+  if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return true;
+  if (code === 0x061c || code === 0x200e || code === 0x200f) return true;
+  if (code >= 0x202a && code <= 0x202e) return true;
+  if (code >= 0x2066 && code <= 0x2069) return true;
+  return false;
+}
+
+export function sanitizeForLog(raw: string, maxChars: number): string {
+  let out = "";
+  for (const ch of raw) {
+    if (isLogUnsafe(ch.codePointAt(0) ?? 0)) continue;
+    out += ch;
+    if (out.length >= maxChars) return `${out}…`;
+  }
+  return out;
+}
+
 export async function trackedFiles(root: string): Promise<string[]> {
-  const result = await new Deno.Command("git", {
-    args: ["-C", root, "ls-files", "-z"],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (!result.success) {
+  let result: Deno.CommandOutput;
+  try {
+    result = await new Deno.Command("git", {
+      args: ["-C", root, "ls-files", "-z"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  } catch {
+    // Spawn failures (git missing, not executable) get the same code-authored
+    // treatment as nonzero exits: the raw platform exception is never relayed.
     throw new Error(
-      `retired-surface scan: git ls-files failed (${result.code}): ${
-        new TextDecoder().decode(result.stderr)
-      }`,
+      "retired-surface scan: cannot run git (is it installed and executable?)",
+    );
+  }
+  if (!result.success) {
+    // Exit code only: git stderr is not relayed at all, so a failure message
+    // that happens to carry sensitive content never reaches the diagnostic.
+    // Re-run `git ls-files` by hand to see why it failed.
+    throw new Error(
+      `retired-surface scan: git ls-files failed (exit ${result.code})`,
     );
   }
   return new TextDecoder().decode(result.stdout).split("\0").filter(Boolean);
+}
+
+// Collection stops here, not just at formatting: one hit already fails the
+// scan, so a pathological tree cannot make the scanner materialize an
+// unbounded hit list before the report is capped.
+export const MAX_COLLECTED_HITS = 1000;
+
+// Fail-closed and value-free: an unreadable tracked path (dangling symlink,
+// permissions, concurrent removal) fails the scan with a code-authored
+// message carrying only the sanitized repo-relative path. The raw exception
+// is never relayed — its message embeds the unsanitized filesystem path.
+export async function readTrackedFile(
+  root: string,
+  path: string,
+): Promise<Uint8Array> {
+  try {
+    return await Deno.readFile(`${root}/${path}`);
+  } catch {
+    throw new Error(
+      `retired-surface scan: cannot read tracked file ${
+        sanitizeForLog(posixPath(path), 300)
+      }`,
+    );
+  }
 }
 
 export async function scanRepo(root: string): Promise<RetiredSurfaceHit[]> {
   const files = await trackedFiles(root);
   const hits: RetiredSurfaceHit[] = [];
   for (const path of files) {
-    const bytes = await Deno.readFile(`${root}/${path}`);
+    const remaining = MAX_COLLECTED_HITS - hits.length;
+    if (remaining <= 0) break;
+    const bytes = await readTrackedFile(root, path);
     if (bytes.includes(0)) continue;
     const content = new TextDecoder().decode(bytes);
-    hits.push(...scanText(path, content));
+    for (const hit of scanText(path, content, remaining)) {
+      hits.push(hit);
+    }
   }
   return hits;
 }
 
+export const MAX_REPORTED_HITS = 50;
+
+// Value-free by construction: path (sanitized and bounded), line number, and
+// needle locate a failure for ordinary repository paths (an exotic path —
+// literal backslashes, or long enough to truncate — may render ambiguously);
+// the matched content never appears. Reporting is capped so a pathological
+// tree cannot flood the log.
 export function formatHits(hits: RetiredSurfaceHit[]): string {
-  return hits.map((hit) =>
-    `${hit.path}:${hit.line}: ${hit.needle}: ${hit.text.trim()}`
-  ).join("\n");
+  const shown = hits.slice(0, MAX_REPORTED_HITS).map((hit) =>
+    `${sanitizeForLog(hit.path, 300)}:${hit.line}: ${
+      sanitizeForLog(hit.needle, 100)
+    }`
+  );
+  if (hits.length > MAX_REPORTED_HITS) {
+    shown.push(`… and ${hits.length - MAX_REPORTED_HITS} more hits not shown`);
+  }
+  return shown.join("\n");
 }
 
 if (import.meta.main) {
@@ -261,6 +363,123 @@ Deno.test("this scanner file is allowlisted", () => {
     ),
     [],
   );
+});
+
+Deno.test("retired serverUrl and SSE-frame wording fails as current-state", () => {
+  const content = [
+    "// config.serverUrl is operator-configurable",
+    "// SSE frame protocol, negotiated via Accept",
+  ].join("\n");
+  const hits = scanText("prototype/src/example.ts", content);
+  assertEquals(hits.map((hit) => hit.needle).sort(), ["SSE frame", "serverUrl"]);
+});
+
+Deno.test("retirement announcements for the transport wording pass", () => {
+  const content = [
+    "## [Unreleased]",
+    "",
+    "### Removed",
+    "",
+    "- Stale SSE frame and serverUrl transport comments are gone.",
+  ].join("\n");
+  assertEquals(scanText("CHANGELOG.md", content), []);
+});
+
+Deno.test("formatted output is value-free: matched content never appears", () => {
+  // Assembled at runtime so no secret-shaped literal sits in tracked source.
+  const secret = ["sk-live", "EXAMPLE", "abcdef0123456789"].join("-");
+  const hits = scanText(
+    "docs/example.md",
+    `The standalone HTTP server uses key ${secret}.\n`,
+  );
+  assertEquals(hits.length, 1);
+  const formatted = formatHits(hits);
+  if (formatted.includes(secret)) {
+    throw new Error("secret-like content reached formatted output");
+  }
+  assertEquals(formatted, "docs/example.md:1: standalone HTTP");
+});
+
+Deno.test("oversized matched lines never inflate formatted output", () => {
+  const hits = scanText(
+    "docs/example.md",
+    `${"x".repeat(100_000)} standalone HTTP ${"y".repeat(100_000)}\n`,
+  );
+  assertEquals(hits.length, 1);
+  const formatted = formatHits(hits);
+  if (formatted.length > 500) {
+    throw new Error(`formatted output too large: ${formatted.length} chars`);
+  }
+});
+
+Deno.test("control bytes in paths are stripped from formatted output", () => {
+  const hits = scanText(
+    "docs/\x1b[2Jevil\rname.md",
+    "the standalone HTTP server\n",
+  );
+  const formatted = formatHits(hits);
+  for (const ch of formatted) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error("control byte reached formatted output");
+    }
+  }
+  assertEquals(formatted, "docs/[2Jevilname.md:1: standalone HTTP");
+});
+
+Deno.test("hit reporting is capped", () => {
+  const lines = Array.from(
+    { length: MAX_REPORTED_HITS + 10 },
+    () => "the standalone HTTP server",
+  ).join("\n");
+  const hits = scanText("docs/example.md", lines);
+  assertEquals(hits.length, MAX_REPORTED_HITS + 10);
+  const formatted = formatHits(hits).split("\n");
+  assertEquals(formatted.length, MAX_REPORTED_HITS + 1);
+  assertEquals(formatted.at(-1), "… and 10 more hits not shown");
+});
+
+Deno.test("a failed tracked-file read is value-free and fail-closed", async () => {
+  let message = "";
+  try {
+    await readTrackedFile(
+      "/nonexistent-root-for-this-test",
+      `docs/\x1b[2Jevil${"x".repeat(400)}.md`,
+    );
+    throw new Error("expected readTrackedFile to throw");
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  // Exact equality with the code-authored message: no platform error text of
+  // ANY flavor, no filesystem root, no control bytes can be present, because
+  // nothing beyond this exact string is.
+  const expectedPath = sanitizeForLog(`docs/\x1b[2Jevil${"x".repeat(400)}.md`, 300);
+  assertEquals(
+    message,
+    `retired-surface scan: cannot read tracked file ${expectedPath}`,
+  );
+});
+
+Deno.test("sanitizeForLog strips control bytes and bounds length", () => {
+  assertEquals(
+    sanitizeForLog("fatal:\x1b[31m boom\r\n", 256),
+    "fatal:[31m boom",
+  );
+  assertEquals(sanitizeForLog("a".repeat(300), 256), `${"a".repeat(256)}…`);
+});
+
+Deno.test("sanitizeForLog strips C1 and direction controls too", () => {
+  // U+009B is the single-byte CSI; U+202E is right-to-left override.
+  assertEquals(sanitizeForLog("a\u{009b}2Jb\u{202e}c\u{2066}d\u{200e}", 256), "a2Jbcd");
+});
+
+Deno.test("scanText stops collecting at the given limit", () => {
+  const lines = Array.from(
+    { length: 40 },
+    () => "the standalone HTTP server",
+  ).join("\n");
+  assertEquals(scanText("docs/example.md", lines, 7).length, 7);
+  assertEquals(scanText("docs/example.md", lines, 0), []);
 });
 
 Deno.test("tracked tree has no current-state retired-surface claims", async () => {
