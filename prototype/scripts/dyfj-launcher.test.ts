@@ -1108,3 +1108,49 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
 });
 
 
+
+describe("socket-path grant delimiter safety", () => {
+  async function launchExpectingRejection(
+    env: Record<string, string>,
+    args: string[],
+  ): Promise<{ code: number; err: string }> {
+    const { code, stderr } = await new Deno.Command(BASH, {
+      args: [LAUNCHER, ...args],
+      env: {
+        ...Deno.env.toObject(),
+        DYFJ_LAUNCHER_DRY_RUN: "1",
+        ...env,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    return { code, err: new TextDecoder().decode(stderr) };
+  }
+
+  test("a comma-bearing DYFJ_SOCKET fails closed before any grant is built", async () => {
+    const { code, err } = await launchExpectingRejection(
+      { DYFJ_SOCKET: "/tmp/x.sock,example.invalid:443" },
+      ["status"],
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("must not contain a comma");
+  });
+
+  test("a comma-bearing --socket flag fails closed before any grant is built", async () => {
+    const { code, err } = await launchExpectingRejection(
+      {},
+      ["--socket", "/tmp/x.sock,example.invalid:443", "status"],
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("must not contain a comma");
+  });
+
+  test("a comma-bearing XDG_RUNTIME_DIR fails closed before any grant is built", async () => {
+    const { code, err } = await launchExpectingRejection(
+      { XDG_RUNTIME_DIR: "/tmp/x,evil" },
+      ["status"],
+    );
+    expect(code).not.toBe(0);
+    expect(err).toContain("must not contain a comma");
+  });
+});

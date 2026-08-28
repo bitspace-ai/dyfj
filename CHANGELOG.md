@@ -79,7 +79,7 @@ DYFJ is an actively developed prototype with no release tags yet, so entries are
 ### Security
 
 - **Value-free scan diagnostics**: the retired-surface scan reports path, line, and needle only — matched line content never reaches terminal or CI output. Paths are control-stripped and bounded, hit collection and reporting are capped, and a git failure reports its exit code only — stderr is never relayed.
-- **CLI network authority narrowed**: the `dyfj` CLI's Deno grants (launcher and compiled binary) no longer include loopback TCP; the Unix socket is the CLI's only network grant. The runtime server keeps its own explicit per-host grants.
+- **CLI network authority narrowed**: the `dyfj` CLI's Deno grants (launcher and compiled binary) no longer include loopback TCP; the Unix socket is the CLI's only network grant, and comma-bearing socket paths are rejected from every source before any grant is built, so path syntax cannot smuggle extra entries into the comma-delimited grant list. The runtime server keeps its own explicit per-host grants.
 - Enforced strict loopback-only transport boundaries for mutating tool execution and private/shareable memory injection.
 - Redacted schema-flagged payload arguments (such as `write_file` content) from durable tool-call events and session replays.
 - Anchored and re-verified workspace root identity on file-tool operations, refused enumerated symlinks and absolute paths, and rejected path traversal.
