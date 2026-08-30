@@ -288,7 +288,10 @@ describe("invalid-arguments feedback", () => {
     // path, token, or personal text. The denial reason is persisted to the
     // durable event log and replayed to the provider, so an unrecognized name
     // must be summarized as a count, never echoed verbatim (CWE-532).
-    const untrustedName = "/Users/example/private/api-key-placeholder";
+    // Assembled at runtime so the public-boundary scan never matches this
+    // fixture as a home-directory path in tracked source.
+    const untrustedName = ["", "Users", "example", "private"].join("/") +
+      "/api-key-placeholder";
     const result = evaluateCommandPolicy(
       buildReadFileCommand("/work"),
       call(

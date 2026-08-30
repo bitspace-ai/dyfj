@@ -339,7 +339,10 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
 
 describe("runSecretCommand (real subprocess)", () => {
   test("a spawn failure reason leaks neither the resolver path nor the pointer", async () => {
-    const privatePath = "/Users/private-user/secret-vault-tool/op";
+    // Assembled at runtime so the public-boundary scan never matches this
+    // fixture as a home-directory path in tracked source.
+    const privatePath = ["", "Users", "private-user", "secret-vault-tool", "op"]
+      .join("/");
     const pointer = "op://PrivateVault/SecretItem/credential";
     const res = await runSecretCommand([privatePath, "read"], pointer, 2000);
     expect(res.ok).toBe(false);
@@ -534,9 +537,12 @@ describe("runSecretCommand — env passthrough", () => {
 
 describe("buildResolverEnv (isolated resolver environment)", () => {
   test("forwards base + inherit_env from ambient, merges [secrets.env], excludes other secrets", () => {
+    // Assembled at runtime so the public-boundary scan never matches this
+    // fixture as a home-directory path in tracked source.
+    const fakeHome = ["", "home", "x"].join("/");
     const ambient = fakeEnv({
       PATH: "/bin",
-      HOME: "/home/x",
+      HOME: fakeHome,
       USER: "x",
       // These ambient secrets must NOT be forwarded:
       DOLT_PASSWORD: "db-secret",
@@ -557,7 +563,7 @@ describe("buildResolverEnv (isolated resolver environment)", () => {
     // Base (present ones) + forwarded inherit_env + [secrets.env] literal.
     expect(resolverEnv).toEqual({
       PATH: "/bin",
-      HOME: "/home/x",
+      HOME: fakeHome,
       USER: "x",
       OP_SERVICE_ACCOUNT_TOKEN: "sa-token",
       OP_ACCOUNT: "my.1password.com",

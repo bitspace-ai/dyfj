@@ -1983,7 +1983,10 @@ Deno.exit(output.code);`,
         workspaceRoot: Deno.cwd(),
       }, { sessionMap: map });
       expect(map.size).toBe(1);
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      const retirementDeadline = Date.now() + 2_000;
+      while (map.size !== 0 && Date.now() < retirementDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
       expect(map.size).toBe(0);
     } finally {
       await map.shutdown();

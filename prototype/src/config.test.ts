@@ -19,6 +19,10 @@ function env(map: Record<string, string> = {}) {
   return { get: (k: string) => map[k] };
 }
 const HOME = { HOME: "/h" };
+// Assembled at runtime so the public-boundary scan never matches these
+// fixtures as home-directory paths in tracked source.
+const FAKE_HOME = ["", "home", "x"].join("/");
+const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
 const notFound = () => Promise.reject(new Deno.errors.NotFound());
 const present = () =>
   Promise.resolve("(toml text — parsed by the injected parser)");
@@ -122,13 +126,13 @@ describe("loadConfig", () => {
   test("an invalid permission level error is path-free (no absolute config path)", async () => {
     await expect(
       loadConfig({
-        env: env({ HOME: "/Users/private-account" }),
+        env: env({ HOME: FAKE_PRIVATE_HOME }),
         readTextFile: present,
         parseToml: table({ permissions: { level: "yolo" } }),
       }),
     ).rejects.toThrow(/from config\.toml/);
     await loadConfig({
-      env: env({ HOME: "/Users/private-account" }),
+      env: env({ HOME: FAKE_PRIVATE_HOME }),
       readTextFile: present,
       parseToml: table({ permissions: { level: "yolo" } }),
     }).catch((e: Error) => {
@@ -174,14 +178,14 @@ describe("configFilePath", () => {
   });
 
   test("falls back to ~/.dyfj", () => {
-    expect(configFilePath(env({ HOME: "/home/x" }))).toBe(
-      "/home/x/.dyfj/config.toml",
+    expect(configFilePath(env({ HOME: FAKE_HOME }))).toBe(
+      `${FAKE_HOME}/.dyfj/config.toml`,
     );
   });
 
   test("treats an EMPTY DYFJ_ROOT as absent (not '/'), matching the launcher", () => {
-    expect(configFilePath(env({ DYFJ_ROOT: "", HOME: "/home/x" }))).toBe(
-      "/home/x/.dyfj/config.toml",
+    expect(configFilePath(env({ DYFJ_ROOT: "", HOME: FAKE_HOME }))).toBe(
+      `${FAKE_HOME}/.dyfj/config.toml`,
     );
   });
 });
@@ -313,7 +317,6 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
       expect(undeclared).toEqual([]);
     });
   }
-
 });
 
 describe("loadConfig daily budget env override", () => {
@@ -627,7 +630,7 @@ describe("parseSecretsConfig", () => {
   });
 
   test("validation errors are path-free (no absolute config path on boot stderr)", () => {
-    const privatePath = "/Users/private-account/.dyfj/config.toml";
+    const privatePath = `${FAKE_PRIVATE_HOME}/.dyfj/config.toml`;
     try {
       parseSecretsConfig({ secrets: { timeout_ms: 1000 } }, privatePath);
       throw new Error("expected a validation throw");

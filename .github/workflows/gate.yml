@@ -1,0 +1,103 @@
+# Clean-checkout deterministic gate.
+#
+# This workflow is the remote enforcement point for the public deterministic
+# checks it runs: the repository-owned aggregate command executes from a
+# clean checkout with a read-only token, no repository secrets, no private
+# repositories, and no hosted-model access. Local hooks may run the same
+# commands for speed, but a bypassed or absent hook cannot make this check
+# green, and a green run here claims nothing about gates that live outside
+# this repository (private disclosure overlay, independent review, operator
+# acceptance).
+#
+# `pull_request` runs untrusted code with a read-only token and no secrets by
+# construction. Do not add secret-bearing steps, write-scoped permissions, or
+# a trigger that hands untrusted code an elevated context.
+#
+# Supply-chain posture: the checkout action is pinned by full commit digest
+# (Dependabot proposes digest updates), toolchains are downloaded from
+# exact-version release URLs — never `latest`, never piped into a shell —
+# and every downloaded archive is checked against a SHA-256 digest committed
+# in this file before it is unpacked or executed. The digests are
+# repository-owned: they are never fetched at run time, because a checksum
+# file or trust root served by the same origin as the archive proves nothing
+# against an attacker who controls that origin. The exact-version URL and the
+# reported-version check remain as secondary evidence, not as the integrity
+# control. A digest is updated only together with its version pin, from an
+# operator inspect-before-apply.
+# The Rust toolchain comes from the repository's own exact pin in
+# `core/rust-toolchain.toml` via the runner's preinstalled rustup.
+name: gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A superseded run on the same pull-request ref is cancelled; cancellation
+# surfaces as a cancelled conclusion, distinct from a test failure.
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Stable required-check name for branch protection: "full-gate".
+  full-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Exact-subject and exact-range binding: the gate's subject.resolve /
+      # subject.digest lanes verify the checked-out commit against this id
+      # and recompute its digest, and the range lanes (secret.diff,
+      # diff.whitespace, markdown.links, shell.parse, dependency.policy)
+      # check exactly what the release range introduces. Missing or
+      # mismatched bindings fail closed inside the repository-owned command.
+      DYFJ_GATE_SUBJECT: ${{ github.sha }}
+      DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      # The only third-party action; pinned by full commit digest, with
+      # Dependabot watching for digest updates.
+      - name: Check out the subject commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Full history so the bound release range resolves to the exact
+          # base commit.
+          fetch-depth: 0
+          # The gate needs no git credential after checkout; do not leave
+          # the token in the checkout's git configuration.
+          persist-credentials: false
+      # The pinned SHA-256 below is the integrity control for this archive and
+      # is checked before the archive is unpacked or any byte of it is
+      # executed. The verifier prints only the checked path and an OK/FAILED
+      # status, so a mismatch stays value-free.
+      - name: Install Deno 2.9.6 (exact pinned version, digest-verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/deno.zip \
+            "https://github.com/denoland/deno/releases/download/v2.9.6/deno-x86_64-unknown-linux-gnu.zip"
+          printf '%s  %s\n' "394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2" /tmp/deno.zip | sha256sum -c -
+          mkdir -p "$HOME/.deno-pinned"
+          unzip -q -o /tmp/deno.zip -d "$HOME/.deno-pinned"
+          "$HOME/.deno-pinned/deno" --version | grep -F "deno 2.9.6"
+          echo "$HOME/.deno-pinned" >> "$GITHUB_PATH"
+      - name: Install Dolt 2.3.1 (exact pinned version, digest-verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/dolt.tar.gz \
+            "https://github.com/dolthub/dolt/releases/download/v2.3.1/dolt-linux-amd64.tar.gz"
+          printf '%s  %s\n' "0a2a318f27c5e1088a2883038573c2054e00f356dc9752e74bca934f8321959a" /tmp/dolt.tar.gz | sha256sum -c -
+          tar -xzf /tmp/dolt.tar.gz -C "$HOME"
+          "$HOME/dolt-linux-amd64/bin/dolt" version | grep -F "2.3.1"
+          echo "$HOME/dolt-linux-amd64/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned Rust toolchain (verified)
+        working-directory: core
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustc --version | grep -F "rustc 1.98.0"
+      # The single repository green bar. Lane definitions live in
+      # `scripts/` and root `deno.json`; this file does not restate them.
+      - name: Run the full deterministic gate
+        run: deno task test

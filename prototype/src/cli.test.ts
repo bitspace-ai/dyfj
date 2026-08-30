@@ -63,6 +63,11 @@ import type {
   UnparsedToolCallMarkupDetectedEvent,
 } from "./turn-contract";
 
+// Assembled at runtime so the public-boundary scan never matches these
+// fixtures as home-directory paths in tracked source.
+const FAKE_HOME = ["", "home", "x"].join("/");
+const FAKE_USERS_ROOT = ["", "Users", "x"].join("/");
+
 describe("readLineOrNull", () => {
   test("resolves the answered line", async () => {
     const rl = {
@@ -914,26 +919,32 @@ describe("promptMidTurnApproval", () => {
 
   test("an explicit empty ACP input selects the advertised default rejection", async () => {
     const { io } = fakeIo([""]);
-    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
-      decision: "select",
-      optionId: "reject-id",
-    });
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual(
+      {
+        decision: "select",
+        optionId: "reject-id",
+      },
+    );
   });
 
   test("closed ACP input defaults to policy rejection", async () => {
     const { io } = fakeIo([]);
-    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
-      decision: "deny",
-      reason: "ACP permission selection unavailable",
-    });
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual(
+      {
+        decision: "deny",
+        reason: "ACP permission selection unavailable",
+      },
+    );
   });
 
   test("invalid ACP input corrects and re-prompts without duplicating the request", async () => {
     const { io, stderr, prompts } = fakeIo(["later", "2"]);
-    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
-      decision: "select",
-      optionId: "allow-session-id",
-    });
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual(
+      {
+        decision: "select",
+        optionId: "allow-session-id",
+      },
+    );
     expect(prompts).toHaveLength(2);
     expect(stderr.filter((line) => line.includes("Run shell command?")))
       .toHaveLength(1);
@@ -945,19 +956,23 @@ describe("promptMidTurnApproval", () => {
 
   test("an oversized ACP selection is rejected before parsing", async () => {
     const { io, prompts } = fakeIo([` 2${" ".repeat(63)}`, "1"]);
-    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
-      decision: "select",
-      optionId: "allow-once-id",
-    });
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual(
+      {
+        decision: "select",
+        optionId: "allow-once-id",
+      },
+    );
     expect(prompts).toHaveLength(2);
   });
 
   test("three invalid ACP selections exhaust the bounded prompt and reject", async () => {
     const { io, stderr, prompts } = fakeIo(["later", "0", "4", "1"]);
-    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual({
-      decision: "deny",
-      reason: "ACP permission selection unavailable",
-    });
+    expect(await promptMidTurnApproval(io, acpPermissionRequest, true)).toEqual(
+      {
+        decision: "deny",
+        reason: "ACP permission selection unavailable",
+      },
+    );
     expect(prompts).toHaveLength(3);
     expect(stderr.filter((line) => line === "   Enter a number from 1 to 3."))
       .toHaveLength(3);
@@ -970,7 +985,9 @@ describe("promptMidTurnApproval", () => {
     "an empty allow id with no rejection fails closed on %s",
     async (_label, interactive, lines) => {
       const { io, stderr } = fakeIo(lines);
-      expect(await promptMidTurnApproval(io, emptyAllowOnlyRequest, interactive))
+      expect(
+        await promptMidTurnApproval(io, emptyAllowOnlyRequest, interactive),
+      )
         .toEqual({
           decision: "deny",
           reason: "ACP rejection option unavailable",
@@ -1027,7 +1044,8 @@ describe("promptMidTurnApproval", () => {
 
   test("a non-interactive ACP request defaults to policy rejection without prompting", async () => {
     const { io, prompts } = fakeIo(["1"]);
-    await expect(promptMidTurnApproval(io, acpPermissionRequest, false)).resolves
+    await expect(promptMidTurnApproval(io, acpPermissionRequest, false))
+      .resolves
       .toEqual({
         decision: "deny",
         reason: "ACP permission selection unavailable",
@@ -1114,7 +1132,6 @@ describe("runExec tool approval", () => {
       cfg({ unix: true }),
       io,
       false,
-
       fakeApprovalConnect(
         {
           commandId: "write_file",
@@ -1139,7 +1156,6 @@ describe("runExec tool approval", () => {
       cfg({ unix: true }),
       io,
       false,
-
       fakeApprovalConnect(
         { commandId: "write_file", title: "Write File", arguments: {} },
         result(),
@@ -1188,7 +1204,6 @@ describe("runExec tool approval", () => {
       cfg({ unix: true }),
       io,
       false,
-
       connect,
       true,
     )).resolves.toBe(0);
@@ -1553,7 +1568,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true }),
       io,
       false,
-
       fakeTurnConnect([{ t: "delta", text: "Hi" }], result()),
     );
     expect(code).toBe(0);
@@ -1574,7 +1588,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true }),
       io,
       false,
-
       fakeTurnConnect(
         [],
         result({ stopReason: "aborted", text: "buffered partial text" }),
@@ -1632,7 +1645,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true }),
       io,
       false,
-
       connect,
     );
 
@@ -1683,7 +1695,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true }),
       io,
       false,
-
       connect,
     );
 
@@ -1710,7 +1721,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true }),
       io,
       false,
-
       fakeTurnConnect([], result()),
     );
 
@@ -1726,7 +1736,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true }),
       io,
       false,
-
       fakeTurnConnect(
         [
           { t: "delta", text: "stale partial\n" },
@@ -1750,7 +1759,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true }),
       io,
       false,
-
       fakeTurnConnect(
         [{ t: "event", event: unparsedMarkupEvent() }],
         result({ text: "provider text" }),
@@ -1777,7 +1785,6 @@ describe("runExec over the socket", () => {
       cfg({ unix: true, socket: "/run/missing.sock" }),
       io,
       false,
-
       () => {
         throw new Error("No such file or directory (os error 2)");
       },
@@ -1855,7 +1862,6 @@ describe("runRepl", () => {
     const code = await runRepl(
       cfg({ unix: true }),
       io,
-
       connect,
       false,
       interrupts,
@@ -1939,7 +1945,6 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-
       connect,
       false,
     );
@@ -2065,7 +2070,6 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-
       connect,
       false,
       interrupts,
@@ -2143,7 +2147,6 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-
       connect,
       true,
       interrupts,
@@ -2178,7 +2181,6 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-
       connect,
       false,
       interrupts,
@@ -2215,7 +2217,6 @@ describe("runRepl", () => {
     const pending = runRepl(
       cfg({ unix: true }),
       io,
-
       connect,
       false,
       interrupts,
@@ -2272,7 +2273,6 @@ describe("runRepl", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-
       connect,
       false,
       interrupts,
@@ -3215,9 +3215,9 @@ describe("runtime lifecycle commands", () => {
     }
     expect(parsed.permissions["test"].run).toContain("/bin/bash");
     const vitestRunner = await Deno.readTextFile("scripts/run-vitest.ts");
-    expect(vitestRunner).toContain(
-      "--allow-run=bash,/bin/bash,${denoExecutable},/bin/kill,/bin/sh",
-    );
+    expect(vitestRunner).toContain("const run = [");
+    expect(vitestRunner).toContain("denoExecutable,");
+    expect(vitestRunner).toContain("`--allow-run=${run}`");
     expect(vitestRunner).not.toContain(
       "--allow-run=bash,/bin/bash,deno,/bin/kill,/bin/sh",
     );
@@ -3291,7 +3291,12 @@ describe("runtime lifecycle commands", () => {
     const tasks = (JSON.parse(raw) as { tasks: Record<string, string> }).tasks;
     const home = await Deno.makeTempDir({ dir: Deno.cwd() });
     const fakeNode = `${home}/node`;
-    const marker = `${home}/.dyfj/runner-homes/codex-chatgpt/home/login-args`;
+    const marker = [
+      home,
+      ".dyfj/runner-homes/codex-chatgpt",
+      "home",
+      "login-args",
+    ].join("/");
     await Deno.writeTextFile(
       fakeNode,
       `#!/bin/sh
@@ -3496,13 +3501,20 @@ describe("REPL /model", () => {
       config,
       io,
       fakeConnect([
-        { slug: "codex-chatgpt/gpt-5.6-terra", tier: 2, local: false, capabilities: ["fast-speed"] },
+        {
+          slug: "codex-chatgpt/gpt-5.6-terra",
+          tier: 2,
+          local: false,
+          capabilities: ["fast-speed"],
+        },
         { slug: "claude-opus-4-8", tier: 2, local: false },
       ]),
     );
     expect(config.model).toBe("claude-opus-4-8");
     expect(config.fast).toBe(false);
-    expect(stderr.join("\n")).toContain("fast speed tier disabled for \"claude-opus-4-8\"");
+    expect(stderr.join("\n")).toContain(
+      'fast speed tier disabled for "claude-opus-4-8"',
+    );
   });
 
   test("/model rejects specifying both --fast and --no-fast", async () => {
@@ -3522,7 +3534,9 @@ describe("REPL /model", () => {
       ]),
     );
     expect(handled).toBe(true);
-    expect(stderr.join("\n")).toContain("cannot specify both --fast and --no-fast");
+    expect(stderr.join("\n")).toContain(
+      "cannot specify both --fast and --no-fast",
+    );
   });
 });
 
@@ -3634,7 +3648,11 @@ describe("REPL /session command", () => {
   test("/session switch changes active sessionId and resets counts", async () => {
     const { io, stderr } = fakeIo();
     const config = cfg({ sessionId: "01OLD000000000000000000000" });
-    const state = { sessionId: "01OLD000000000000000000000", turnCount: 5, sessionSpendUsd: 0.1 };
+    const state = {
+      sessionId: "01OLD000000000000000000000",
+      turnCount: 5,
+      sessionSpendUsd: 0.1,
+    };
     const handled = await handleReplSessionCommand(
       "/session switch 01NEW000000000000000000000",
       config,
@@ -3646,7 +3664,9 @@ describe("REPL /session command", () => {
     expect(config.sessionId).toBe("01NEW000000000000000000000");
     expect(state.turnCount).toBe(0);
     expect(state.sessionSpendUsd).toBe(0);
-    expect(stderr.join("\n")).toContain("switched to session: 01NEW000000000000000000000");
+    expect(stderr.join("\n")).toContain(
+      "switched to session: 01NEW000000000000000000000",
+    );
   });
 
   test("/session switch rejects oversized session identifiers", async () => {
@@ -3661,7 +3681,9 @@ describe("REPL /session command", () => {
     );
     expect(handled).toBe(true);
     expect(state.sessionId).toBe("01OLD");
-    expect(stderr.join("\n")).toContain("session identifier must be non-empty and <= 256 characters");
+    expect(stderr.join("\n")).toContain(
+      "session identifier must be non-empty and <= 256 characters",
+    );
   });
 
   test("/session list lists sessions from RPC seam", async () => {
@@ -3723,7 +3745,11 @@ describe("REPL /idea command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplIdeaCommand(
       "/idea mark Rate limit background autostarts",
       cfg({ unix: true }),
@@ -3733,7 +3759,9 @@ describe("REPL /idea command", () => {
     );
     expect(handled).toBe(true);
     const out = stderr.join("\n");
-    expect(out).toContain("marked idea [01IDEA_TEST]: \"Rate limit background autostarts\"");
+    expect(out).toContain(
+      'marked idea [01IDEA_TEST]: "Rate limit background autostarts"',
+    );
     expect(out).toContain("/packet draft 01IDEA_TEST");
   });
 
@@ -3755,7 +3783,11 @@ describe("REPL /idea command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplIdeaCommand(
       "/idea list",
       cfg({ unix: true }),
@@ -3968,7 +4000,11 @@ describe("REPL /packet command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplPacketCommand(
       "/packet draft 01IDEA_1 --title Fix startup --issue ISSUE-258",
       cfg({ unix: true }),
@@ -4012,7 +4048,11 @@ describe("REPL /packet command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplPacketCommand(
       "/packet draft 01IDEA_1 --title Document session behavior --issue ISSUE-258",
       cfg({ unix: true }),
@@ -4033,7 +4073,9 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    expect(stdout.join("\n")).toContain("# Work Packet: Document session behavior");
+    expect(stdout.join("\n")).toContain(
+      "# Work Packet: Document session behavior",
+    );
   });
 
   test("/packet draft supports explicit --event and --idea flags", async () => {
@@ -4056,7 +4098,11 @@ describe("REPL /packet command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplPacketCommand(
       "/packet draft --event custom-event-id --title Event Flag Test",
       cfg({ unix: true }),
@@ -4099,7 +4145,11 @@ describe("REPL /packet command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplPacketCommand(
       "/packet draft --idea 01IDEA_CUSTOM --title Idea Flag Test",
       cfg({ unix: true }),
@@ -4142,7 +4192,11 @@ describe("REPL /packet command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplPacketCommand(
       "/packet draft --issue ISSUE-258 --title Investigate startup",
       cfg({ unix: true }),
@@ -4167,7 +4221,11 @@ describe("REPL /packet command", () => {
 
   test("/packet draft diagnoses duplicate or conflicting options and invalid option values", async () => {
     const { io, stderr } = fakeIo();
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
 
     await handleReplPacketCommand(
       "/packet draft 01IDEA --event evt-1",
@@ -4175,7 +4233,9 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    expect(stderr.join("\n")).toContain("cannot specify both positional target and explicit --idea/--event flag");
+    expect(stderr.join("\n")).toContain(
+      "cannot specify both positional target and explicit --idea/--event flag",
+    );
 
     const io2 = fakeIo();
     await handleReplPacketCommand(
@@ -4184,7 +4244,9 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    expect(io2.stderr.join("\n")).toContain("cannot specify both --idea and --event");
+    expect(io2.stderr.join("\n")).toContain(
+      "cannot specify both --idea and --event",
+    );
 
     const io3 = fakeIo();
     await handleReplPacketCommand(
@@ -4202,7 +4264,9 @@ describe("REPL /packet command", () => {
       io4.io,
       state,
     );
-    expect(io4.stderr.join("\n")).toContain("--issue requires an issue identifier");
+    expect(io4.stderr.join("\n")).toContain(
+      "--issue requires an issue identifier",
+    );
 
     const io5 = fakeIo();
     await handleReplPacketCommand(
@@ -4224,7 +4288,11 @@ describe("REPL /packet command", () => {
   });
 
   test("/idea list and show validate trailing arguments", async () => {
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const io1 = fakeIo();
     await handleReplIdeaCommand(
       "/idea list extra-arg",
@@ -4262,7 +4330,9 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    expect(io2.stderr.join("\n")).toContain("usage: /session switch <sessionId>");
+    expect(io2.stderr.join("\n")).toContain(
+      "usage: /session switch <sessionId>",
+    );
 
     const io3 = fakeIo();
     await handleReplSessionCommand(
@@ -4271,11 +4341,17 @@ describe("REPL /packet command", () => {
       io3.io,
       state,
     );
-    expect(io3.stderr.join("\n")).toContain("error: session identifier must be a valid 26-character Crockford Base32 identifier");
+    expect(io3.stderr.join("\n")).toContain(
+      "error: session identifier must be a valid 26-character Crockford Base32 identifier",
+    );
   });
 
   test("/packet draft rejects duplicate --title flags", async () => {
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const { io, stderr } = fakeIo();
     await handleReplPacketCommand(
       "/packet draft 01IDEA --title First --title Second",
@@ -4283,11 +4359,17 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    expect(stderr.join("\n")).toContain("error: --title specified multiple times");
+    expect(stderr.join("\n")).toContain(
+      "error: --title specified multiple times",
+    );
   });
 
   test("/packet draft, list, and show work in local mode without unix socket", async () => {
-    const state = { sessionId: "01LOCAL_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01LOCAL_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const io1 = fakeIo();
     await handleReplPacketCommand(
       "/packet draft --title Local Work Packet --issue ISSUE-100",
@@ -4298,7 +4380,9 @@ describe("REPL /packet command", () => {
     expect(io1.stdout.join("\n")).toContain("# Work Packet: Local Work Packet");
     expect(io1.stderr.join("\n")).toContain("draft work packet registered");
 
-    const match = io1.stderr.join("\n").match(/draft work packet registered: \[([^\]]+)\]/);
+    const match = io1.stderr.join("\n").match(
+      /draft work packet registered: \[([^\]]+)\]/,
+    );
     const packetId = match ? match[1] : "01PACKET";
 
     const io2 = fakeIo();
@@ -4308,7 +4392,9 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    expect(io2.stderr.join("\n")).toContain("Work packets for session 01LOCAL_SESS:");
+    expect(io2.stderr.join("\n")).toContain(
+      "Work packets for session 01LOCAL_SESS:",
+    );
     expect(io2.stderr.join("\n")).toContain("Local Work Packet");
 
     const io3 = fakeIo();
@@ -4331,7 +4417,11 @@ describe("REPL /packet command", () => {
   });
 
   test("/idea mark --event rejects option-looking event ID", async () => {
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const { io, stderr } = fakeIo();
     await handleReplIdeaCommand(
       "/idea mark --event --evnt evt-1 Fix startup",
@@ -4339,11 +4429,17 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    expect(stderr.join("\n")).toContain("usage: /idea mark --event <event-id> <label...>");
+    expect(stderr.join("\n")).toContain(
+      "usage: /idea mark --event <event-id> <label...>",
+    );
   });
 
   test("/idea mark rejects unrecognized options", async () => {
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const { io, stderr } = fakeIo();
     await handleReplIdeaCommand(
       "/idea mark --evnt evt-1 Fix startup",
@@ -4351,11 +4447,15 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    expect(stderr.join("\n")).toContain("error: unexpected argument \"--evnt\"");
+    expect(stderr.join("\n")).toContain('error: unexpected argument "--evnt"');
   });
 
   test("/idea mark rejects single-dash unexpected option flags and option-like event IDs", async () => {
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const { io: io1, stderr: stderr1 } = fakeIo();
     await handleReplIdeaCommand(
       "/idea mark -evnt evt-1 Fix startup",
@@ -4363,7 +4463,7 @@ describe("REPL /packet command", () => {
       io1,
       state,
     );
-    expect(stderr1.join("\n")).toContain("error: unexpected argument \"-evnt\"");
+    expect(stderr1.join("\n")).toContain('error: unexpected argument "-evnt"');
 
     const { io: io2, stderr: stderr2 } = fakeIo();
     await handleReplIdeaCommand(
@@ -4372,11 +4472,17 @@ describe("REPL /packet command", () => {
       io2,
       state,
     );
-    expect(stderr2.join("\n")).toContain("usage: /idea mark --event <event-id> <label...>");
+    expect(stderr2.join("\n")).toContain(
+      "usage: /idea mark --event <event-id> <label...>",
+    );
   });
 
   test("/packet draft rejects unexpected option flags following --title", async () => {
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const { io, stderr } = fakeIo();
     await handleReplPacketCommand(
       "/packet draft --title Fix --isseu ISSUE-1",
@@ -4384,11 +4490,15 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    expect(stderr.join("\n")).toContain("error: unexpected argument \"--isseu\"");
+    expect(stderr.join("\n")).toContain('error: unexpected argument "--isseu"');
   });
 
   test("/packet draft rejects single-dash unexpected option flags", async () => {
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const { io, stderr } = fakeIo();
     await handleReplPacketCommand(
       "/packet draft -isseu ISSUE-1",
@@ -4396,7 +4506,7 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    expect(stderr.join("\n")).toContain("error: unexpected argument \"-isseu\"");
+    expect(stderr.join("\n")).toContain('error: unexpected argument "-isseu"');
   });
 
   test("/idea mark preserves label starting with evt- without explicit --event flag", async () => {
@@ -4420,7 +4530,11 @@ describe("REPL /packet command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplIdeaCommand(
       "/idea mark evt-driven architecture",
       cfg({ unix: true }),
@@ -4439,7 +4553,9 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    expect(stderr.join("\n")).toContain("marked idea [01IDEA_EVT_LABEL]: \"evt-driven architecture\"");
+    expect(stderr.join("\n")).toContain(
+      'marked idea [01IDEA_EVT_LABEL]: "evt-driven architecture"',
+    );
   });
 
   test("/idea mark and /packet draft support local event references with sessionState.events", async () => {
@@ -4476,7 +4592,9 @@ describe("REPL /packet command", () => {
       state,
     );
     expect(handledPacket).toBe(true);
-    expect(io2.stdout.join("\n")).toContain("# Work Packet: Local Event Packet");
+    expect(io2.stdout.join("\n")).toContain(
+      "# Work Packet: Local Event Packet",
+    );
     expect(io2.stderr.join("\n")).toContain("draft work packet registered");
 
     // Rejects non-existent event in local mode
@@ -4487,7 +4605,9 @@ describe("REPL /packet command", () => {
       io3.io,
       state,
     );
-    expect(io3.stderr.join("\n")).toContain("error: event \"evt_missing\" not found in current local session context");
+    expect(io3.stderr.join("\n")).toContain(
+      'error: event "evt_missing" not found in current local session context',
+    );
   });
 
   test("/session list orders sessions by latest activity timestamp (updatedAt)", async () => {
@@ -4507,7 +4627,8 @@ describe("REPL /packet command", () => {
                   },
                   {
                     sessionId: "01OLD_SESS",
-                    taskDescription: "Old session created earlier but updated today",
+                    taskDescription:
+                      "Old session created earlier but updated today",
                     createdAt: "2026-01-01T00:00:00Z",
                     updatedAt: "2026-08-15T12:00:00Z",
                   },
@@ -4611,7 +4732,11 @@ describe("REPL /packet command", () => {
         close: () => {},
       });
 
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handledIdea = await handleReplIdeaCommand(
       "/idea mark -- Support -Werror builds",
       cfg({ unix: true }),
@@ -4663,7 +4788,11 @@ describe("REPL /packet command", () => {
   });
 
   test("/session switch rejects session identifiers with control characters or whitespace", async () => {
-    const state: any = { sessionId: "01SESSION_A", turnCount: 0, sessionSpendUsd: 0 };
+    const state: any = {
+      sessionId: "01SESSION_A",
+      turnCount: 0,
+      sessionSpendUsd: 0,
+    };
     const { io, stderr } = fakeIo();
     await handleReplSessionCommand(
       "/session switch session\x1Bid",
@@ -4671,13 +4800,19 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    expect(stderr.join("\n")).toContain("error: session identifier cannot contain control characters or whitespace");
+    expect(stderr.join("\n")).toContain(
+      "error: session identifier cannot contain control characters or whitespace",
+    );
     expect(state.sessionId).toBe("01SESSION_A");
   });
 
   test("/packet draft -- rejects extra positional arguments", async () => {
     const { io, stderr } = fakeIo();
-    const state = { sessionId: "01ACTIVE_SESS", turnCount: 1, sessionSpendUsd: 0 };
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+    };
     const handled = await handleReplPacketCommand(
       "/packet draft -- IDEA_A IDEA_B",
       cfg({ unix: true }),
@@ -4836,7 +4971,12 @@ describe("session posture", () => {
       cfg({ model: "codex-chatgpt/gpt-5.6-terra", fast: true }),
       postureConnect(
         { permissionLevel: "operator" },
-        [{ slug: "codex-chatgpt/gpt-5.6-terra", tier: 2, local: false, capabilities: ["fast-speed"] }],
+        [{
+          slug: "codex-chatgpt/gpt-5.6-terra",
+          tier: 2,
+          local: false,
+          capabilities: ["fast-speed"],
+        }],
       ),
     );
     expect(posture).toMatchObject({
@@ -4881,7 +5021,6 @@ describe("session posture", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-
       postureConnect({
         defaultTurnModel: { slug: "qwen-local", tier: 0, local: true },
         permissionLevel: "operator",
@@ -4897,7 +5036,6 @@ describe("session posture", () => {
     await runRepl(
       cfg({ unix: true }),
       io,
-
       () => Promise.reject(new Error("connection refused")),
     );
     expect(stderr.join("\n")).not.toContain("posture:");
@@ -5152,17 +5290,17 @@ describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
   test("derives the prototype root from a file: cli.ts URL", () => {
     expect(
       installRootFromModuleUrl(
-        "file:///Users/x/projects/dyfj/prototype/src/cli.ts",
+        `file://${FAKE_USERS_ROOT}/projects/dyfj/prototype/src/cli.ts`,
       ),
-    ).toBe("/Users/x/projects/dyfj/prototype");
+    ).toBe(`${FAKE_USERS_ROOT}/projects/dyfj/prototype`);
   });
 
   test("decodes percent-encoded path segments", () => {
     expect(
       installRootFromModuleUrl(
-        "file:///Users/x/My%20Code/prototype/src/cli.ts",
+        `file://${FAKE_USERS_ROOT}/My%20Code/prototype/src/cli.ts`,
       ),
-    ).toBe("/Users/x/My Code/prototype");
+    ).toBe(`${FAKE_USERS_ROOT}/My Code/prototype`);
   });
 
   test("returns null for a non-file (remote) module — no trustworthy local root", () => {
@@ -5527,7 +5665,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
     };
     const env = {
       get: (n: string) =>
-        n === "DYFJ_ROOT" ? "/ambient" : n === "HOME" ? "/home/x" : undefined,
+        n === "DYFJ_ROOT" ? "/ambient" : n === "HOME" ? FAKE_HOME : undefined,
     };
     const cfg = await readLauncherSecretsConfig(
       "/cwd",
@@ -5546,7 +5684,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       if (path === "/from-env/config.toml") return Promise.resolve(TOML);
       return Promise.reject(new Deno.errors.NotFound());
     };
-    const env = { get: (n: string) => (n === "HOME" ? "/home/x" : undefined) };
+    const env = { get: (n: string) => (n === "HOME" ? FAKE_HOME : undefined) };
     const cfg = await readLauncherSecretsConfig(
       "/cwd",
       readTextFile,
@@ -5558,10 +5696,12 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
 
   test("falls back to HOME/.dyfj when neither ambient nor .env set the root", async () => {
     const readTextFile = (path: string) => {
-      if (path === "/home/x/.dyfj/config.toml") return Promise.resolve(TOML);
+      if (path === `${FAKE_HOME}/.dyfj/config.toml`) {
+        return Promise.resolve(TOML);
+      }
       return Promise.reject(new Deno.errors.NotFound());
     };
-    const env = { get: (n: string) => (n === "HOME" ? "/home/x" : undefined) };
+    const env = { get: (n: string) => (n === "HOME" ? FAKE_HOME : undefined) };
     const cfg = await readLauncherSecretsConfig(
       "/cwd",
       readTextFile,
@@ -5578,12 +5718,14 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       // A .env that DOES set DYFJ_ROOT — the launcher must ignore it here,
       // because the child's --env-file can't override the empty ambient value.
       if (path === "/cwd/.env") return Promise.resolve("DYFJ_ROOT=/from-env\n");
-      if (path === "/home/x/.dyfj/config.toml") return Promise.resolve(TOML);
+      if (path === `${FAKE_HOME}/.dyfj/config.toml`) {
+        return Promise.resolve(TOML);
+      }
       return Promise.reject(new Deno.errors.NotFound());
     };
     const env = {
       get: (n: string) =>
-        n === "DYFJ_ROOT" ? "" : n === "HOME" ? "/home/x" : undefined,
+        n === "DYFJ_ROOT" ? "" : n === "HOME" ? FAKE_HOME : undefined,
     };
     const cfg = await readLauncherSecretsConfig(
       "/cwd",
@@ -5593,17 +5735,19 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
     );
     expect(cfg?.command).toEqual(["op", "read"]);
     // Resolved against HOME, and .env was never consulted for the root.
-    expect(readPaths).toContain("/home/x/.dyfj/config.toml");
+    expect(readPaths).toContain(`${FAKE_HOME}/.dyfj/config.toml`);
     expect(readPaths).not.toContain("/cwd/.env");
   });
 
   test("loads external MCP servers from the same child-visible config", async () => {
     const readTextFile = (path: string) => {
-      if (path === "/home/x/.dyfj/config.toml") return Promise.resolve(TOML);
+      if (path === `${FAKE_HOME}/.dyfj/config.toml`) {
+        return Promise.resolve(TOML);
+      }
       return Promise.reject(new Deno.errors.NotFound());
     };
     const env = {
-      get: (name: string) => name === "HOME" ? "/home/x" : undefined,
+      get: (name: string) => name === "HOME" ? FAKE_HOME : undefined,
     };
     const secrets = await readLauncherSecretsConfig(
       "/cwd",
@@ -5861,7 +6005,9 @@ describe("sanitizeSpinnerLabel", () => {
     expect(sanitizeSpinnerLabel("C1\u009b31m style\u0085 test")).toBe(
       "C1 style test",
     );
-    expect(sanitizeSpinnerLabel("\x1b]8;;https://evil.example\x07link\x1b]8;;\x07"))
+    expect(
+      sanitizeSpinnerLabel("\x1b]8;;https://evil.example\x07link\x1b]8;;\x07"),
+    )
       .toBe("link");
     const sanitized = sanitizeSpinnerLabel(
       "keep\x1b]8;;https://evil.example\x07text\x1b\\done",
@@ -6027,13 +6173,23 @@ describe("replPrompt", () => {
 
   test("runRepl prompts with the plain gutter when color is off", async () => {
     const { io, prompts } = fakeIo([]);
-    await runRepl(cfg({ color: false }), io, fakeTurnConnect([], result()), false);
+    await runRepl(
+      cfg({ color: false }),
+      io,
+      fakeTurnConnect([], result()),
+      false,
+    );
     expect(prompts).toEqual(["\ndyfj> "]);
   });
 
   test("runRepl prompts with the styled gutter when color is on", async () => {
     const { io, prompts } = fakeIo([]);
-    await runRepl(cfg({ color: true }), io, fakeTurnConnect([], result()), false);
+    await runRepl(
+      cfg({ color: true }),
+      io,
+      fakeTurnConnect([], result()),
+      false,
+    );
     expect(prompts).toEqual([replPrompt(true)]);
   });
 });

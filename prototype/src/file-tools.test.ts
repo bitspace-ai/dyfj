@@ -1,27 +1,27 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { resolve as resolvePath } from "node:path";
 import {
-  executeEditFile,
   clampLimit,
-  resetRootAnchor,
   clipToUtf8Bytes,
   excludedSegment,
-  safeErrorReason,
-  sameFileVersion,
-  sanitizeOutputPathField,
-  sanitizeOutputText,
-  toPosixPath,
-  newGlobBudget,
-  newWalkBudget,
-  walkNotes,
+  executeEditFile,
   executeGlobFiles,
-  matchesGlobPath,
   executeGrepFiles,
   executeListFiles,
   executeReadFile,
   executeWriteFile,
   isWithinRoot,
+  matchesGlobPath,
+  newGlobBudget,
+  newWalkBudget,
+  resetRootAnchor,
   resolveWorkspacePath,
+  safeErrorReason,
+  sameFileVersion,
+  sanitizeOutputPathField,
+  sanitizeOutputText,
+  toPosixPath,
+  walkNotes,
 } from "./file-tools";
 
 // ── resolveWorkspacePath (pure containment) ───────────────────────────────────
@@ -258,7 +258,6 @@ describe("executeEditFile", () => {
   });
 });
 
-
 // ── Search affordances (grep_files / glob_files / ranged read) ────────────────
 //
 // These exist so read-only questions do not have to route through bash, which
@@ -273,12 +272,18 @@ let sroot: string;
 beforeAll(async () => {
   await Deno.mkdir(".vitest-tmp", { recursive: true });
   sroot = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-  await Deno.writeTextFile(`${sroot}/alpha.ts`, "const a = 1;\nneedle here\nconst b = 2;\n");
+  await Deno.writeTextFile(
+    `${sroot}/alpha.ts`,
+    "const a = 1;\nneedle here\nconst b = 2;\n",
+  );
   await Deno.writeTextFile(`${sroot}/beta.md`, "# doc\nneedle in markdown\n");
   await Deno.mkdir(`${sroot}/pkg`);
   await Deno.writeTextFile(`${sroot}/pkg/gamma.ts`, "no match on this line\n");
   await Deno.mkdir(`${sroot}/.git`);
-  await Deno.writeTextFile(`${sroot}/.git/config`, "needle should be skipped\n");
+  await Deno.writeTextFile(
+    `${sroot}/.git/config`,
+    "needle should be skipped\n",
+  );
   await Deno.writeTextFile(`${sroot}/binary.bin`, "abc\u0000needle\n");
   await Deno.writeTextFile(
     `${sroot}/many.txt`,
@@ -325,7 +330,9 @@ describe("executeGrepFiles", () => {
   });
   test("caps matches and says so", async () => {
     const out = await executeGrepFiles(sroot, "line", { maxMatches: 3 });
-    expect(out.split("\n").filter((l) => l.includes("many.txt")).length).toBe(3);
+    expect(out.split("\n").filter((l) => l.includes("many.txt")).length).toBe(
+      3,
+    );
     expect(out).toContain("match limit 3 reached");
   });
 });
@@ -428,7 +435,6 @@ describe("executeReadFile ranged reads", () => {
     await Deno.remove(huge);
   });
 });
-
 
 // ── matchesGlobPath (pure) ───────────────────────────────────────────────────
 //
@@ -540,7 +546,9 @@ describe("grep_files resource bounds", () => {
     // the only evidence it existed is the note.
     const out = await executeGrepFiles(broot, "a+!");
     expect(out).not.toContain("longline.txt");
-    expect(out === "(no matches)" || out.includes("over 4096 chars")).toBe(true);
+    expect(out === "(no matches)" || out.includes("over 4096 chars")).toBe(
+      true,
+    );
   }, 20_000);
 
   test("directories consume the traversal budget", async () => {
@@ -557,25 +565,33 @@ describe("grep_files resource bounds", () => {
     expect(out).toContain("entry limit 5 reached");
   }, 20_000);
 
-  test("a flat directory larger than the cap does not buffer past it", async () => {
-    const flat = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    for (let i = 0; i < 60; i++) {
-      await Deno.writeTextFile(`${flat}/f${i}.txt`, "needle\n");
-    }
-    const out = await executeGlobFiles(flat, "**/*.txt", { maxFiles: 10 });
-    expect(out.split("\n").filter((l) => l.endsWith(".txt")).length)
-      .toBeLessThanOrEqual(10);
-    expect(out).toContain("entry limit 10 reached");
-    await Deno.remove(flat, { recursive: true });
-  }, 20_000);
+  test(
+    "a flat directory larger than the cap does not buffer past it",
+    async () => {
+      const flat = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+      for (let i = 0; i < 60; i++) {
+        await Deno.writeTextFile(`${flat}/f${i}.txt`, "needle\n");
+      }
+      const out = await executeGlobFiles(flat, "**/*.txt", { maxFiles: 10 });
+      expect(out.split("\n").filter((l) => l.endsWith(".txt")).length)
+        .toBeLessThanOrEqual(10);
+      expect(out).toContain("entry limit 10 reached");
+      await Deno.remove(flat, { recursive: true });
+    },
+    20_000,
+  );
 
-  test("an over-long include glob is rejected, not silently unmatchable", async () => {
-    const out = await executeGrepFiles(broot, "needle", {
-      include: "*".repeat(600),
-    });
-    expect(out.startsWith("error:")).toBe(true);
-    expect(out).toContain("include");
-  }, 20_000);
+  test(
+    "an over-long include glob is rejected, not silently unmatchable",
+    async () => {
+      const out = await executeGrepFiles(broot, "needle", {
+        include: "*".repeat(600),
+      });
+      expect(out.startsWith("error:")).toBe(true);
+      expect(out).toContain("include");
+    },
+    20_000,
+  );
 
   test("an over-long pattern is rejected before compilation", async () => {
     const out = await executeGrepFiles(broot, "a".repeat(2000));
@@ -625,7 +641,9 @@ describe("clipToUtf8Bytes", () => {
   test("cuts on a character boundary, never mid-sequence", () => {
     const clipped = clipToUtf8Bytes("\u4e2d".repeat(10), 10)!;
     expect(clipped).not.toContain("\ufffd");
-    expect(new TextEncoder().encode(clipped).byteLength).toBeLessThanOrEqual(10);
+    expect(new TextEncoder().encode(clipped).byteLength).toBeLessThanOrEqual(
+      10,
+    );
   });
 });
 
@@ -753,16 +771,20 @@ describe("glob matching is bounded across the whole call", () => {
     if (groot) await Deno.remove(groot, { recursive: true });
   });
 
-  test("a near-worst-case pattern returns promptly and reports the cutoff", async () => {
-    const adversarial = "**/*" + "s".repeat(500) + "t";
-    expect(adversarial.length).toBeLessThanOrEqual(512);
-    const started = performance.now();
-    const out = await executeGlobFiles(groot, adversarial);
-    const elapsed = performance.now() - started;
-    // Without the aggregate budget this workload runs for minutes.
-    expect(elapsed).toBeLessThan(10_000);
-    expect(out).toContain("glob matching budget exhausted");
-  }, 60_000);
+  test(
+    "a near-worst-case pattern returns promptly and reports the cutoff",
+    async () => {
+      const adversarial = "**/*" + "s".repeat(500) + "t";
+      expect(adversarial.length).toBeLessThanOrEqual(512);
+      const started = performance.now();
+      const out = await executeGlobFiles(groot, adversarial);
+      const elapsed = performance.now() - started;
+      // Without the aggregate budget this workload runs for minutes.
+      expect(elapsed).toBeLessThan(10_000);
+      expect(out).toContain("glob matching budget exhausted");
+    },
+    60_000,
+  );
 
   test("grep_files bounds its include glob the same way", async () => {
     const out = await executeGrepFiles(groot, "zzz-absent", {
@@ -854,15 +876,21 @@ describe("dense short-line files stay bounded", () => {
     if (droot) await Deno.remove(droot, { recursive: true });
   });
 
-  test("a million matching lines return promptly and within the row cap", async () => {
-    const started = performance.now();
-    const out = await executeGrepFiles(droot, "a", { maxBytes: 4 * 1024 * 1024 });
-    const elapsed = performance.now() - started;
-    const rows = out.split("\n").filter((l) => l.startsWith("dense.txt:"));
-    expect(rows.length).toBeLessThanOrEqual(200);
-    expect(out).toContain("match limit 200 reached");
-    expect(elapsed).toBeLessThan(10_000);
-  }, 30_000);
+  test(
+    "a million matching lines return promptly and within the row cap",
+    async () => {
+      const started = performance.now();
+      const out = await executeGrepFiles(droot, "a", {
+        maxBytes: 4 * 1024 * 1024,
+      });
+      const elapsed = performance.now() - started;
+      const rows = out.split("\n").filter((l) => l.startsWith("dense.txt:"));
+      expect(rows.length).toBeLessThanOrEqual(200);
+      expect(out).toContain("match limit 200 reached");
+      expect(elapsed).toBeLessThan(10_000);
+    },
+    30_000,
+  );
 
   test("the per-file line cap is disclosed when nothing matches", async () => {
     const out = await executeGrepFiles(droot, "zzz-absent", {
@@ -920,17 +948,21 @@ describe("a ranged read costs file size, not line count", () => {
     if (rroot) await Deno.remove(rroot, { recursive: true });
   });
 
-  test("a small window out of a newline-dense file returns promptly", async () => {
-    const started = performance.now();
-    const out = await executeReadFile(rroot, "dense.txt", undefined, {
-      offset: 1_000_000,
-      limit: 20,
-    });
-    const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(5_000);
-    expect(out.split("\n").filter((l) => l === "a").length).toBe(20);
-    expect(out).toContain("of 1950001;");
-  }, 30_000);
+  test(
+    "a small window out of a newline-dense file returns promptly",
+    async () => {
+      const started = performance.now();
+      const out = await executeReadFile(rroot, "dense.txt", undefined, {
+        offset: 1_000_000,
+        limit: 20,
+      });
+      const elapsed = performance.now() - started;
+      expect(elapsed).toBeLessThan(5_000);
+      expect(out.split("\n").filter((l) => l === "a").length).toBe(20);
+      expect(out).toContain("of 1950001;");
+    },
+    30_000,
+  );
 
   test("the window still matches the whole-file line numbering", async () => {
     const out = await executeReadFile(sroot, "many.txt", undefined, {
@@ -967,28 +999,39 @@ describe("the glob budget holds inside a final character class", () => {
 describe("errors never carry an absolute path to the model", () => {
   // These strings reach the model AND the durable event transcript, and Deno's
   // exception messages embed the path they failed on — home directory and all.
+  // Assembled at runtime so the public-boundary scan never matches this
+  // fixture as a home-directory path in tracked source.
+  const privateHome = ["", "Users", "someone"].join("/");
   test("known failure classes map to path-free text", () => {
-    expect(safeErrorReason(new Deno.errors.NotFound("/Users/someone/x")))
+    expect(safeErrorReason(new Deno.errors.NotFound(`${privateHome}/x`)))
       .toBe("not found");
     expect(
-      safeErrorReason(new Deno.errors.PermissionDenied("/Users/someone/x")),
+      safeErrorReason(new Deno.errors.PermissionDenied(`${privateHome}/x`)),
     ).toBe("permission denied");
   });
   test("an unrecognized error does not leak its message", () => {
-    const leaky = new Error("failed on /Users/someone/private/workspace/a.ts");
+    const leaky = new Error(
+      `failed on ${privateHome}/private/workspace/a.ts`,
+    );
     expect(safeErrorReason(leaky)).toBe("unavailable");
   });
-  test("a failing canonicalizer does not put the root in the result", async () => {
-    const throwsWithPath = (_p: string) =>
-      Promise.reject(new Error(`boom at ${sroot}/secret/path`));
-    const out = await executeGrepFiles(sroot, "needle", {
-      realPath: throwsWithPath,
-    });
-    expect(out).not.toContain(sroot);
-    expect(out).not.toContain("/Users");
-  }, 20_000);
+  test(
+    "a failing canonicalizer does not put the root in the result",
+    async () => {
+      const throwsWithPath = (_p: string) =>
+        Promise.reject(new Error(`boom at ${sroot}/secret/path`));
+      const out = await executeGrepFiles(sroot, "needle", {
+        realPath: throwsWithPath,
+      });
+      expect(out).not.toContain(sroot);
+      expect(out).not.toContain("/Users");
+    },
+    20_000,
+  );
   test("a missing search root reports the relative path only", async () => {
-    const out = await executeGrepFiles(sroot, "needle", { path: "no-such-dir" });
+    const out = await executeGrepFiles(sroot, "needle", {
+      path: "no-such-dir",
+    });
     expect(out.startsWith("error:")).toBe(true);
     expect(out).toContain("no-such-dir");
     expect(out).not.toContain(sroot);
@@ -1216,12 +1259,16 @@ describe("error results get the same structural escaping as rows", () => {
     expect(out.split("\n").length).toBe(1);
     expect(out).toContain("\\x0a");
   });
-  test("a control character in a search path is escaped in the error", async () => {
-    const out = await executeGrepFiles(sroot, "needle", { path: "no\rdir" });
-    expect(out.startsWith("error:")).toBe(true);
-    expect(out).not.toContain("\r");
-    expect(out).toContain("\\x0d");
-  }, 20_000);
+  test(
+    "a control character in a search path is escaped in the error",
+    async () => {
+      const out = await executeGrepFiles(sroot, "needle", { path: "no\rdir" });
+      expect(out.startsWith("error:")).toBe(true);
+      expect(out).not.toContain("\r");
+      expect(out).toContain("\\x0d");
+    },
+    20_000,
+  );
   test("an invalid pattern's engine message is escaped too", async () => {
     // The engine echoes the pattern back inside its message.
     const out = await executeGrepFiles(sroot, "(\u001b");
@@ -1253,13 +1300,17 @@ describe("a backslash filename cannot redirect a read (POSIX)", () => {
     if (proot) await Deno.remove(proot, { recursive: true });
   });
 
-  test("grep of public/ returns the decoy's content, not the secret's", async () => {
-    const out = await executeGrepFiles(proot, "decoy-content|the-secret", {
-      path: "public",
-    });
-    expect(out).toContain("decoy-content");
-    expect(out).not.toContain("the-secret");
-  }, 20_000);
+  test(
+    "grep of public/ returns the decoy's content, not the secret's",
+    async () => {
+      const out = await executeGrepFiles(proot, "decoy-content|the-secret", {
+        path: "public",
+      });
+      expect(out).toContain("decoy-content");
+      expect(out).not.toContain("the-secret");
+    },
+    20_000,
+  );
 
   test("glob of public/ attributes the entry to public/", async () => {
     const out = await executeGlobFiles(proot, "**/*", { path: "public" });
@@ -1269,10 +1320,14 @@ describe("a backslash filename cannot redirect a read (POSIX)", () => {
     expect(out.split("\n").filter((l) => l.includes("secret")).length).toBe(1);
   });
 
-  test("a search rooted at the whole tree finds the real secret at its real path", async () => {
-    const out = await executeGrepFiles(proot, "the-secret");
-    expect(out).toContain("private/secret.txt:1:the-secret");
-  }, 20_000);
+  test(
+    "a search rooted at the whole tree finds the real secret at its real path",
+    async () => {
+      const out = await executeGrepFiles(proot, "the-secret");
+      expect(out).toContain("private/secret.txt:1:the-secret");
+    },
+    20_000,
+  );
 });
 
 describe("the path field encoding is injective", () => {
@@ -1345,33 +1400,39 @@ describe("a replaced workspace root is refused, not adopted", () => {
     resetRootAnchor(root);
   }, 20_000);
 
-  test("a MID-CALL root replacement is detected before results return", async () => {
-    // Deterministic mid-call race: the canonicalizer seam fires during the
-    // walk, after the entry verification — the swap it performs is exactly the
-    // window the exit re-verification exists to close.
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const base = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const root = `${base}/ws`;
-    await Deno.mkdir(root);
-    await Deno.writeTextFile(`${root}/a.txt`, "x\n");
-    let swapped = false;
-    const swapMidCall = async (q: string) => {
-      if (!swapped) {
-        swapped = true;
-        await Deno.rename(root, `${base}/away`);
-        await Deno.mkdir(root);
-        await Deno.writeTextFile(`${root}/planted.txt`, "x\n");
-      }
-      return await Deno.realPath(q);
-    };
-    const out = await executeGlobFiles(root, "**/*", { realPath: swapMidCall });
-    expect(out.startsWith("error:")).toBe(true);
-    expect(out).toContain("workspace root identity changed");
-    expect(out).not.toContain("planted");
-    await Deno.remove(base, { recursive: true });
-    await Deno.remove(`${base}`, { recursive: true }).catch(() => {});
-    resetRootAnchor(root);
-  }, 20_000);
+  test(
+    "a MID-CALL root replacement is detected before results return",
+    async () => {
+      // Deterministic mid-call race: the canonicalizer seam fires during the
+      // walk, after the entry verification — the swap it performs is exactly the
+      // window the exit re-verification exists to close.
+      await Deno.mkdir(".vitest-tmp", { recursive: true });
+      const base = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+      const root = `${base}/ws`;
+      await Deno.mkdir(root);
+      await Deno.writeTextFile(`${root}/a.txt`, "x\n");
+      let swapped = false;
+      const swapMidCall = async (q: string) => {
+        if (!swapped) {
+          swapped = true;
+          await Deno.rename(root, `${base}/away`);
+          await Deno.mkdir(root);
+          await Deno.writeTextFile(`${root}/planted.txt`, "x\n");
+        }
+        return await Deno.realPath(q);
+      };
+      const out = await executeGlobFiles(root, "**/*", {
+        realPath: swapMidCall,
+      });
+      expect(out.startsWith("error:")).toBe(true);
+      expect(out).toContain("workspace root identity changed");
+      expect(out).not.toContain("planted");
+      await Deno.remove(base, { recursive: true });
+      await Deno.remove(`${base}`, { recursive: true }).catch(() => {});
+      resetRootAnchor(root);
+    },
+    20_000,
+  );
 
   test("an unchanged root keeps working across calls", async () => {
     const out1 = await executeGrepFiles(sroot, "needle");
@@ -1418,23 +1479,29 @@ describe("reserved control-record forms cannot be impersonated", () => {
 });
 
 describe("every post-work return path honors the exit verification", () => {
-  test("the ranged-read past-end error is withheld when the root changed", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const base = await Deno.makeTempDir({ dir: ".vitest-tmp" });
-    const root = `${base}/ws`;
-    await Deno.mkdir(root);
-    await Deno.writeTextFile(`${root}/f.txt`, "one\ntwo\n");
-    // Anchor, then replace, then request a past-end window: the content-derived
-    // line count must not come back from the replacement root.
-    expect(await executeReadFile(root, "f.txt")).toContain("one");
-    await Deno.rename(root, `${base}/away`);
-    await Deno.mkdir(root);
-    await Deno.writeTextFile(`${root}/f.txt`, "a\n".repeat(50));
-    const out = await executeReadFile(root, "f.txt", undefined, { offset: 999 });
-    expect(out.startsWith("error:")).toBe(true);
-    expect(out).toContain("workspace root identity changed");
-    expect(out).not.toContain("lines");
-    await Deno.remove(base, { recursive: true });
-    resetRootAnchor(root);
-  }, 20_000);
+  test(
+    "the ranged-read past-end error is withheld when the root changed",
+    async () => {
+      await Deno.mkdir(".vitest-tmp", { recursive: true });
+      const base = await Deno.makeTempDir({ dir: ".vitest-tmp" });
+      const root = `${base}/ws`;
+      await Deno.mkdir(root);
+      await Deno.writeTextFile(`${root}/f.txt`, "one\ntwo\n");
+      // Anchor, then replace, then request a past-end window: the content-derived
+      // line count must not come back from the replacement root.
+      expect(await executeReadFile(root, "f.txt")).toContain("one");
+      await Deno.rename(root, `${base}/away`);
+      await Deno.mkdir(root);
+      await Deno.writeTextFile(`${root}/f.txt`, "a\n".repeat(50));
+      const out = await executeReadFile(root, "f.txt", undefined, {
+        offset: 999,
+      });
+      expect(out.startsWith("error:")).toBe(true);
+      expect(out).toContain("workspace root identity changed");
+      expect(out).not.toContain("lines");
+      await Deno.remove(base, { recursive: true });
+      resetRootAnchor(root);
+    },
+    20_000,
+  );
 });

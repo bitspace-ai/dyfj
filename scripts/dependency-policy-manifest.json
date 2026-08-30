@@ -1,0 +1,250 @@
+{
+  "schema": "dyfj.dependency.policy.manifest",
+  "version": 1,
+  "surfaces": [
+    {
+      "id": "deno.workspace",
+      "source_class": "deno-registry",
+      "manifest_paths": [
+        "deno.json",
+        "prototype/deno.json"
+      ],
+      "lock_paths": [
+        "prototype/deno.lock"
+      ],
+      "required_evidence_classes": [
+        "inspect-result",
+        "selected-version",
+        "publication-timestamp",
+        "minimum-release-age",
+        "manifest-diff",
+        "lock-diff",
+        "clean-room-resolution",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "registry-minimum-hours",
+        "minimum_hours": 72
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "exact-version-pin",
+        "lockfile-integrity-hash"
+      ],
+      "provenance_evidence_classes": [
+        "registry-source-provenance"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy",
+        "test.aggregate"
+      ],
+      "known_missing_evidence_classes": []
+    },
+    {
+      "id": "cargo.core",
+      "source_class": "cargo-registry",
+      "manifest_paths": [
+        "core/Cargo.toml"
+      ],
+      "lock_paths": [
+        "core/Cargo.lock"
+      ],
+      "required_evidence_classes": [
+        "inspect-result",
+        "selected-version",
+        "publication-timestamp",
+        "minimum-release-age",
+        "manifest-diff",
+        "lock-diff",
+        "clean-room-resolution",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "registry-minimum-hours",
+        "minimum_hours": 72
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "exact-version-pin",
+        "lockfile-integrity-hash"
+      ],
+      "provenance_evidence_classes": [
+        "registry-source-provenance"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy",
+        "test.aggregate"
+      ],
+      "known_missing_evidence_classes": []
+    },
+    {
+      "id": "rust.toolchain",
+      "source_class": "rust-toolchain-release",
+      "manifest_paths": [
+        "core/rust-toolchain.toml"
+      ],
+      "lock_paths": [],
+      "required_evidence_classes": [
+        "immutable-upstream-revision",
+        "source-identity",
+        "exact-version-pin",
+        "provenance-class",
+        "clean-room-version-check",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "not-applicable",
+        "reason_class": "non-registry-versioned-release"
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "exact-version-pin",
+        "reported-version-check"
+      ],
+      "provenance_evidence_classes": [
+        "upstream-release-provenance"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy",
+        "test.aggregate"
+      ],
+      "known_missing_evidence_classes": []
+    },
+    {
+      "id": "github.workflow-config",
+      "source_class": "github-actions-config",
+      "manifest_paths": [
+        ".github/workflows/gate.yml",
+        ".github/dependabot.yml"
+      ],
+      "lock_paths": [],
+      "required_evidence_classes": [
+        "exact-config-diff",
+        "commit-digest-pin",
+        "source-identity",
+        "provenance-class",
+        "clean-room-resolution",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "not-applicable",
+        "reason_class": "immutable-git-and-repository-config"
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "commit-digest-pin"
+      ],
+      "provenance_evidence_classes": [
+        "upstream-release-provenance"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy",
+        "test.aggregate"
+      ],
+      "known_missing_evidence_classes": []
+    },
+    {
+      "id": "release.deno-archive",
+      "source_class": "github-release-asset",
+      "manifest_paths": [
+        ".github/workflows/gate.yml"
+      ],
+      "lock_paths": [],
+      "required_evidence_classes": [
+        "immutable-upstream-revision",
+        "source-identity",
+        "artifact-integrity-when-available",
+        "archive-checksum",
+        "provenance-class",
+        "clean-room-version-check",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "not-applicable",
+        "reason_class": "non-registry-versioned-release"
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "archive-checksum",
+        "exact-version-url",
+        "reported-version-check"
+      ],
+      "provenance_evidence_classes": [
+        "upstream-release-provenance"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy",
+        "test.aggregate"
+      ],
+      "known_missing_evidence_classes": [
+        "archive-signature"
+      ]
+    },
+    {
+      "id": "release.dolt-archive",
+      "source_class": "github-release-asset",
+      "manifest_paths": [
+        ".github/workflows/gate.yml"
+      ],
+      "lock_paths": [],
+      "required_evidence_classes": [
+        "immutable-upstream-revision",
+        "source-identity",
+        "artifact-integrity-when-available",
+        "archive-checksum",
+        "provenance-class",
+        "clean-room-version-check",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "not-applicable",
+        "reason_class": "non-registry-versioned-release"
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "archive-checksum",
+        "exact-version-url",
+        "reported-version-check"
+      ],
+      "provenance_evidence_classes": [
+        "upstream-release-provenance"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy",
+        "test.aggregate"
+      ],
+      "known_missing_evidence_classes": [
+        "archive-signature"
+      ]
+    },
+    {
+      "id": "dependency.manifest",
+      "source_class": "repository-owned-declaration",
+      "manifest_paths": [
+        "scripts/dependency-policy-manifest.json"
+      ],
+      "lock_paths": [],
+      "required_evidence_classes": [
+        "exact-config-diff",
+        "canonical-manifest-digest",
+        "provenance-class",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "not-applicable",
+        "reason_class": "repository-owned-content"
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "canonical-manifest-digest"
+      ],
+      "provenance_evidence_classes": [
+        "repository-owned-content"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy"
+      ],
+      "known_missing_evidence_classes": []
+    }
+  ]
+}

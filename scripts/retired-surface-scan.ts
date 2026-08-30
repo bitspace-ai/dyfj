@@ -18,8 +18,10 @@
  * - Files containing a NUL byte are skipped as binary; their bytes are not
  *   scanned as text.
  *
- * Tracked paths are read from the worktree (symlinks followed): the scan
- * checks the bytes it reads at each tracked path, not Git blob contents.
+ * Tracked paths are read from the worktree; a tracked symlink is never
+ * followed — the shared `readTrackedFile` scans the exact link-target bytes
+ * git tracks for that path, so the scan sees what the repository publishes
+ * without reading outside it.
  *
  * Goal: "X is a live HTTP/shell/bearer-key surface" fails; "X retired / is gone"
  * changelog lines pass. Do not gut the scan to silence a current-state hit.
@@ -30,10 +32,28 @@
  * text, terminal-control bytes, or an arbitrarily large payload, and none of
  * that belongs in terminal or CI output. Paths are control-stripped and
  * bounded, hit collection and reporting are both capped, and a git failure
- * reports its exit code only — stderr is never relayed.
+ * reports its exit code only — stderr is never relayed. The shared posture
+ * (sanitizing, caps, code-authored messages) lives in `scan-lib.ts`.
  */
 
-import { fileURLToPath } from "node:url";
+import {
+  MAX_COLLECTED_HITS,
+  MAX_REPORTED_HITS,
+  posixPath,
+  readTrackedFile as readTrackedFileWith,
+  repoRootFromMeta,
+  sanitizeForLog,
+  trackedFiles as trackedFilesWith,
+} from "./scan-lib.ts";
+
+export {
+  MAX_COLLECTED_HITS,
+  MAX_REPORTED_HITS,
+  repoRootFromMeta,
+  sanitizeForLog,
+};
+
+const SCAN_LABEL = "retired-surface scan";
 
 const WORKBENCH_BEARER_ENV = ["DYFJ", "WORKBENCH", "API", "KEY"].join("_");
 
@@ -70,10 +90,6 @@ export interface RetiredSurfaceHit {
   path: string;
   line: number;
   needle: string;
-}
-
-function posixPath(path: string): string {
-  return path.replaceAll("\\", "/");
 }
 
 export function isAllowlistedPath(path: string): boolean {
@@ -121,10 +137,17 @@ export function scanText(
   if (content.includes("\0")) return [];
   const hits: RetiredSurfaceHit[] = [];
   let changelogSection: ChangelogSection = null;
+  let datedBulletContinuation = false;
   const lines = content.split(/\r?\n/);
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     if (line === undefined) continue;
+    if (DATED_LINE.test(line)) {
+      datedBulletContinuation = true;
+    } else if (datedBulletContinuation) {
+      if (/^\s+\S/.test(line)) continue;
+      datedBulletContinuation = false;
+    }
     if (isChangelogPath(path)) {
       const heading = CHANGELOG_HEADING.exec(line);
       if (heading) {
@@ -146,81 +169,15 @@ export function scanText(
   return hits;
 }
 
-export function repoRootFromMeta(): string {
-  return fileURLToPath(new URL("..", import.meta.url));
+export function trackedFiles(root: string): Promise<string[]> {
+  return trackedFilesWith(root, SCAN_LABEL);
 }
 
-// Strip characters that can manipulate terminal or CI output — C0 and C1
-// controls (both escape introducers), DEL, and the Unicode direction
-// controls that can visually reorder a rendered line — then bound length so
-// the log cannot flood. Filters by code point rather than a literal
-// containing control characters.
-function isLogUnsafe(code: number): boolean {
-  if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return true;
-  if (code === 0x061c || code === 0x200e || code === 0x200f) return true;
-  if (code >= 0x202a && code <= 0x202e) return true;
-  if (code >= 0x2066 && code <= 0x2069) return true;
-  return false;
-}
-
-export function sanitizeForLog(raw: string, maxChars: number): string {
-  let out = "";
-  for (const ch of raw) {
-    if (isLogUnsafe(ch.codePointAt(0) ?? 0)) continue;
-    out += ch;
-    if (out.length >= maxChars) return `${out}…`;
-  }
-  return out;
-}
-
-export async function trackedFiles(root: string): Promise<string[]> {
-  let result: Deno.CommandOutput;
-  try {
-    result = await new Deno.Command("git", {
-      args: ["-C", root, "ls-files", "-z"],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-  } catch {
-    // Spawn failures (git missing, not executable) get the same code-authored
-    // treatment as nonzero exits: the raw platform exception is never relayed.
-    throw new Error(
-      "retired-surface scan: cannot run git (is it installed and executable?)",
-    );
-  }
-  if (!result.success) {
-    // Exit code only: git stderr is not relayed at all, so a failure message
-    // that happens to carry sensitive content never reaches the diagnostic.
-    // Re-run `git ls-files` by hand to see why it failed.
-    throw new Error(
-      `retired-surface scan: git ls-files failed (exit ${result.code})`,
-    );
-  }
-  return new TextDecoder().decode(result.stdout).split("\0").filter(Boolean);
-}
-
-// Collection stops here, not just at formatting: one hit already fails the
-// scan, so a pathological tree cannot make the scanner materialize an
-// unbounded hit list before the report is capped.
-export const MAX_COLLECTED_HITS = 1000;
-
-// Fail-closed and value-free: an unreadable tracked path (dangling symlink,
-// permissions, concurrent removal) fails the scan with a code-authored
-// message carrying only the sanitized repo-relative path. The raw exception
-// is never relayed — its message embeds the unsanitized filesystem path.
-export async function readTrackedFile(
+export function readTrackedFile(
   root: string,
   path: string,
 ): Promise<Uint8Array> {
-  try {
-    return await Deno.readFile(`${root}/${path}`);
-  } catch {
-    throw new Error(
-      `retired-surface scan: cannot read tracked file ${
-        sanitizeForLog(posixPath(path), 300)
-      }`,
-    );
-  }
+  return readTrackedFileWith(root, path, SCAN_LABEL);
 }
 
 export async function scanRepo(root: string): Promise<RetiredSurfaceHit[]> {
@@ -238,8 +195,6 @@ export async function scanRepo(root: string): Promise<RetiredSurfaceHit[]> {
   }
   return hits;
 }
-
-export const MAX_REPORTED_HITS = 50;
 
 // Value-free by construction: path (sanitized and bounded), line number, and
 // needle locate a failure for ordinary repository paths (an exotic path —
@@ -279,7 +234,6 @@ function assertEquals<T>(actual: T, expected: T): void {
   }
 }
 
-
 Deno.test("dated README-style lines are historical", () => {
   const line =
     "- 2026-06-04 - Workbench runtime split with CLI/shell and local HTTP veneers.";
@@ -287,6 +241,18 @@ Deno.test("dated README-style lines are historical", () => {
     scanText("README.md", `${line}\n`),
     [],
   );
+});
+
+Deno.test("wrapped dated README-style lines remain historical", () => {
+  const content = [
+    "- 2026-06-04 - Workbench runtime split into a shared boundary with",
+    "  CLI/shell and local HTTP veneers.",
+    "Current mcp-client capability.",
+  ].join("\n");
+  const hits = scanText("README.md", content);
+  if (hits.length !== 1 || hits[0]?.needle !== "mcp-client") {
+    throw new Error("dated bullet continuation was not bounded correctly");
+  }
 });
 
 Deno.test("CHANGELOG dated sections are historical", () => {
@@ -333,7 +299,11 @@ Deno.test("Unreleased live claims fail", () => {
   ].join("\n");
   const hits = scanText("CHANGELOG.md", content);
   const needles = hits.map((hit) => hit.needle).sort();
-  assertEquals(needles, ["/api/turn", "session-coordination", "standalone HTTP"]);
+  assertEquals(needles, [
+    "/api/turn",
+    "session-coordination",
+    "standalone HTTP",
+  ]);
 });
 
 Deno.test("current-state comments in TypeScript fail", () => {
@@ -371,7 +341,10 @@ Deno.test("retired serverUrl and SSE-frame wording fails as current-state", () =
     "// SSE frame protocol, negotiated via Accept",
   ].join("\n");
   const hits = scanText("prototype/src/example.ts", content);
-  assertEquals(hits.map((hit) => hit.needle).sort(), ["SSE frame", "serverUrl"]);
+  assertEquals(hits.map((hit) => hit.needle).sort(), [
+    "SSE frame",
+    "serverUrl",
+  ]);
 });
 
 Deno.test("retirement announcements for the transport wording pass", () => {
@@ -453,7 +426,10 @@ Deno.test("a failed tracked-file read is value-free and fail-closed", async () =
   // Exact equality with the code-authored message: no platform error text of
   // ANY flavor, no filesystem root, no control bytes can be present, because
   // nothing beyond this exact string is.
-  const expectedPath = sanitizeForLog(`docs/\x1b[2Jevil${"x".repeat(400)}.md`, 300);
+  const expectedPath = sanitizeForLog(
+    `docs/\x1b[2Jevil${"x".repeat(400)}.md`,
+    300,
+  );
   assertEquals(
     message,
     `retired-surface scan: cannot read tracked file ${expectedPath}`,
@@ -470,7 +446,10 @@ Deno.test("sanitizeForLog strips control bytes and bounds length", () => {
 
 Deno.test("sanitizeForLog strips C1 and direction controls too", () => {
   // U+009B is the single-byte CSI; U+202E is right-to-left override.
-  assertEquals(sanitizeForLog("a\u{009b}2Jb\u{202e}c\u{2066}d\u{200e}", 256), "a2Jbcd");
+  assertEquals(
+    sanitizeForLog("a\u{009b}2Jb\u{202e}c\u{2066}d\u{200e}", 256),
+    "a2Jbcd",
+  );
 });
 
 Deno.test("scanText stops collecting at the given limit", () => {

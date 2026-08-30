@@ -4,6 +4,9 @@ import { reapPidsAndCommandsContaining } from "./test-process-harness.ts";
 const LAUNCHER = new URL("./dyfj-launcher.sh", import.meta.url).pathname;
 const COMPILED_BIN = new URL("../dist/dyfj-bin", import.meta.url).pathname;
 const BASH = Deno.build.os === "darwin" ? "/bin/bash" : "bash";
+// Assembled at runtime so the public-boundary scan never matches this
+// fixture as a home-directory path in tracked source.
+const FAKE_HOME = ["", "home", "c"].join("/");
 
 async function hasCompiledBin(): Promise<boolean> {
   return await Deno.stat(COMPILED_BIN).then(() => true).catch(() => false);
@@ -84,18 +87,18 @@ describe("dyfj launcher routing", () => {
     expect(node.success).toBe(true);
     const nodePath = new TextDecoder().decode(node.stdout).trim();
     await expect(dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_NODE_PATH: nodePath,
     })).resolves.toMatchObject({ autostart: "yes", nodePath });
     await expect(dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_NODE_PATH: "node",
     }, ["-p", "inspect"])).resolves.toMatchObject({
       autostart: "yes",
       nodePath: "",
     });
     await expect(dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_NODE_PATH: nodePath,
     }, ["--runner", "fixture", "-p", "inspect"])).resolves.toMatchObject({
       autostart: "yes",
@@ -113,7 +116,7 @@ describe("dyfj launcher routing", () => {
     await Deno.chmod(node, 0o700);
     try {
       await expect(dryRun({
-        HOME: "/home/c",
+        HOME: FAKE_HOME,
         DYFJ_NODE_PATH: "",
         PATH: `${root}:${Deno.env.get("PATH") ?? "/usr/bin:/bin"}`,
       })).resolves.toMatchObject({ autostart: "yes", nodePath: node });
@@ -141,7 +144,7 @@ describe("dyfj launcher routing", () => {
     expect(linked.success).toBe(true);
     try {
       await expect(dryRun({
-        HOME: "/home/c",
+        HOME: FAKE_HOME,
         DYFJ_CODEX_TOOLCHAIN_PATH: directory,
         DYFJ_CODEX_RUSTUP_HOME: rustupHome,
       }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
@@ -149,7 +152,7 @@ describe("dyfj launcher routing", () => {
           toolchainDirectories: "2",
         });
       await expect(dryRun({
-        HOME: "/home/c",
+        HOME: FAKE_HOME,
         DYFJ_CODEX_TOOLCHAIN_PATH: directory,
         DYFJ_CODEX_RUSTUP_HOME: directory,
       }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
@@ -160,7 +163,7 @@ describe("dyfj launcher routing", () => {
         const value of ["relative", `${directory},extra`, `${directory}:extra`]
       ) {
         await expect(dryRun({
-          HOME: "/home/c",
+          HOME: FAKE_HOME,
           DYFJ_CODEX_TOOLCHAIN_PATH: value,
         }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
           .rejects.toThrow(
@@ -175,35 +178,35 @@ describe("dyfj launcher routing", () => {
         ]
       ) {
         await expect(dryRun({
-          HOME: "/home/c",
+          HOME: FAKE_HOME,
           DYFJ_CODEX_RUSTUP_HOME: value,
         }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
           .rejects.toThrow("absolute, delimiter-safe directory");
       }
       for (const value of [toolchainLink, `${toolchainLink}/`]) {
         await expect(dryRun({
-          HOME: "/home/c",
+          HOME: FAKE_HOME,
           DYFJ_CODEX_TOOLCHAIN_PATH: value,
         }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
           .rejects.toThrow("toolchain directory is unavailable");
       }
       for (const value of ["/", "///"]) {
         await expect(dryRun({
-          HOME: "/home/c",
+          HOME: FAKE_HOME,
           DYFJ_CODEX_TOOLCHAIN_PATH: value,
         }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
           .rejects.toThrow("toolchain directory is unavailable");
       }
       for (const value of [rustupLink, `${rustupLink}/`]) {
         await expect(dryRun({
-          HOME: "/home/c",
+          HOME: FAKE_HOME,
           DYFJ_CODEX_RUSTUP_HOME: value,
         }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
           .rejects.toThrow("Rustup home directory is unavailable");
       }
       for (const value of ["/", "///"]) {
         await expect(dryRun({
-          HOME: "/home/c",
+          HOME: FAKE_HOME,
           DYFJ_CODEX_RUSTUP_HOME: value,
         }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
           .rejects.toThrow("Rustup home directory is unavailable");
@@ -216,77 +219,83 @@ describe("dyfj launcher routing", () => {
     }
   });
 
-  test("rejects whole dot components before resolving toolchain directories", async () => {
-    const root = await Deno.makeTempDir({ dir: Deno.cwd() });
-    const child = `${root}/child`;
-    const alias = `${root}/alias`;
-    const dotted = [
-      `${root}/.cargo`,
-      `${root}/.rustup`,
-      `${root}/..cache`,
-      `${root}/tool.chain`,
-    ];
-    await Deno.mkdir(child);
-    for (const directory of dotted) await Deno.mkdir(directory);
-    const linked = await new Deno.Command("bash", {
-      args: ["-c", '/bin/ln -s "$1" "$2"', "bash", child, alias],
-    }).output();
-    expect(linked.success).toBe(true);
-    try {
-      for (
-        const [envName, diagnostic] of [
-          [
-            "DYFJ_CODEX_TOOLCHAIN_PATH",
-            "dyfj: Codex toolchain path must not contain dot components",
-          ],
-          [
-            "DYFJ_CODEX_RUSTUP_HOME",
-            "dyfj: Codex Rustup home must not contain dot components",
-          ],
-        ] as const
-      ) {
+  test(
+    "rejects whole dot components before resolving toolchain directories",
+    async () => {
+      const root = await Deno.makeTempDir({ dir: Deno.cwd() });
+      const child = `${root}/child`;
+      const alias = `${root}/alias`;
+      const dotted = [
+        `${root}/.cargo`,
+        `${root}/.rustup`,
+        `${root}/..cache`,
+        `${root}/tool.chain`,
+      ];
+      await Deno.mkdir(child);
+      for (const directory of dotted) await Deno.mkdir(directory);
+      const linked = await new Deno.Command("bash", {
+        args: ["-c", '/bin/ln -s "$1" "$2"', "bash", child, alias],
+      }).output();
+      expect(linked.success).toBe(true);
+      try {
         for (
-          const value of [
-            `${root}/./child`,
-            `${root}/../${root.split("/").at(-1)}/child`,
-            `${child}/.`,
-            `${child}/..`,
-            `${child}/./`,
-            `${child}/../`,
-            "/.",
-            "/..",
-            `${root}//.//child/`,
-            `${root}//..//${root.split("/").at(-1)}//child/`,
-            `${alias}/../child`,
-          ]
+          const [envName, diagnostic] of [
+            [
+              "DYFJ_CODEX_TOOLCHAIN_PATH",
+              "dyfj: Codex toolchain path must not contain dot components",
+            ],
+            [
+              "DYFJ_CODEX_RUSTUP_HOME",
+              "dyfj: Codex Rustup home must not contain dot components",
+            ],
+          ] as const
         ) {
-          let failure: Error | undefined;
-          try {
-            await dryRun({ HOME: "/home/c", [envName]: value }, [
+          for (
+            const value of [
+              `${root}/./child`,
+              `${root}/../${root.split("/").at(-1)}/child`,
+              `${child}/.`,
+              `${child}/..`,
+              `${child}/./`,
+              `${child}/../`,
+              "/.",
+              "/..",
+              `${root}//.//child/`,
+              `${root}//..//${root.split("/").at(-1)}//child/`,
+              `${alias}/../child`,
+            ]
+          ) {
+            let failure: Error | undefined;
+            try {
+              await dryRun({ HOME: FAKE_HOME, [envName]: value }, [
+                "--socket",
+                "/tmp/dyfj-toolchain-test.sock",
+                "-p",
+                "inspect",
+              ]);
+            } catch (error) {
+              failure = error instanceof Error
+                ? error
+                : new Error(String(error));
+            }
+            expect(failure?.message).toContain(diagnostic);
+            expect(failure?.message).not.toContain(value);
+          }
+          for (const directory of dotted) {
+            await expect(dryRun({ HOME: FAKE_HOME, [envName]: directory }, [
               "--socket",
               "/tmp/dyfj-toolchain-test.sock",
               "-p",
               "inspect",
-            ]);
-          } catch (error) {
-            failure = error instanceof Error ? error : new Error(String(error));
+            ])).resolves.toMatchObject({ toolchainDirectories: "1" });
           }
-          expect(failure?.message).toContain(diagnostic);
-          expect(failure?.message).not.toContain(value);
         }
-        for (const directory of dotted) {
-          await expect(dryRun({ HOME: "/home/c", [envName]: directory }, [
-            "--socket",
-            "/tmp/dyfj-toolchain-test.sock",
-            "-p",
-            "inspect",
-          ])).resolves.toMatchObject({ toolchainDirectories: "1" });
-        }
+      } finally {
+        await Deno.remove(root, { recursive: true });
       }
-    } finally {
-      await Deno.remove(root, { recursive: true });
-    }
-  }, 15_000);
+    },
+    15_000,
+  );
 
   test("rejects delimiter-bearing canonical toolchain paths without disclosing them", async () => {
     await Deno.mkdir(".vitest-tmp", { recursive: true });
@@ -318,7 +327,7 @@ describe("dyfj launcher routing", () => {
         let failure: Error | undefined;
         try {
           await dryRun({
-            HOME: "/home/c",
+            HOME: FAKE_HOME,
             [envName]: selected,
           }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]);
         } catch (error) {
@@ -343,7 +352,7 @@ describe("dyfj launcher routing", () => {
     await Deno.mkdir(rustupHome);
     try {
       await expect(dryRun({
-        HOME: "/home/c",
+        HOME: FAKE_HOME,
         DYFJ_CODEX_TOOLCHAIN_PATH: toolchain,
         DYFJ_CODEX_RUSTUP_HOME: rustupHome,
       }, ["--socket", "/tmp/dyfj-toolchain-test.sock", "-p", "inspect"]))
@@ -360,7 +369,7 @@ describe("dyfj launcher routing", () => {
     );
     try {
       await expect(dryRun({
-        HOME: "/home/c",
+        HOME: FAKE_HOME,
         DYFJ_NODE_PATH: directory,
       }, ["-p", "inspect"])).resolves.toMatchObject({
         autostart: "yes",
@@ -382,7 +391,7 @@ describe("dyfj launcher routing", () => {
         await Deno.writeTextFile(node, "#!/bin/sh\nexit 0\n");
         await Deno.chmod(node, 0o700);
         await expect(dryRun({
-          HOME: "/home/c",
+          HOME: FAKE_HOME,
           DYFJ_NODE_PATH: node,
         }, ["-p", "inspect"])).resolves.toMatchObject({
           autostart: "yes",
@@ -403,7 +412,7 @@ describe("dyfj launcher routing", () => {
     await Deno.chmod(node, 0o700);
     try {
       await expect(dryRun({
-        HOME: "/home/c",
+        HOME: FAKE_HOME,
         DYFJ_NODE_PATH: node,
       }, ["status"])).resolves.toMatchObject({ autostart: "no" });
       await expect(Deno.stat(marker)).rejects.toBeInstanceOf(
@@ -427,7 +436,7 @@ describe("dyfj launcher routing", () => {
     try {
       const startedAt = Date.now();
       await expect(dryRun({
-        HOME: "/home/c",
+        HOME: FAKE_HOME,
         DYFJ_NODE_PATH: node,
       }, ["-p", "inspect"])).resolves.toMatchObject({ autostart: "yes" });
       expect(Date.now() - startedAt).toBeLessThan(3_000);
@@ -505,8 +514,8 @@ describe("dyfj launcher routing", () => {
   });
 
   test("default path prefers compiled when the binary exists", async () => {
-    const { route, sock } = await dryRun({ HOME: "/home/c" });
-    expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
+    const { route, sock } = await dryRun({ HOME: FAKE_HOME });
+    expect(sock).toBe(`${FAKE_HOME}/.dyfj/run/workbench.sock`);
     if (await hasFreshCompiledBin()) {
       expect(route).toBe("compiled");
     } else {
@@ -516,7 +525,7 @@ describe("dyfj launcher routing", () => {
 
   test("DYFJ_SOCKET selects deno when the path is non-default", async () => {
     const { route, sock } = await dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_SOCKET: "/run/custom.sock",
     });
     expect(sock).toBe("/run/custom.sock");
@@ -525,7 +534,7 @@ describe("dyfj launcher routing", () => {
 
   test("XDG_RUNTIME_DIR selects deno when the path is non-default", async () => {
     const { route, sock } = await dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       XDG_RUNTIME_DIR: "/run/u",
     });
     expect(sock).toBe("/run/u/dyfj/workbench.sock");
@@ -534,17 +543,16 @@ describe("dyfj launcher routing", () => {
 
   test("explicit DYFJ_SOCKET matching the default still uses compiled when present", async () => {
     const { route, sock } = await dryRun({
-      HOME: "/home/c",
-      DYFJ_SOCKET: "/home/c/.dyfj/run/workbench.sock",
+      HOME: FAKE_HOME,
+      DYFJ_SOCKET: `${FAKE_HOME}/.dyfj/run/workbench.sock`,
     });
-    expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
+    expect(sock).toBe(`${FAKE_HOME}/.dyfj/run/workbench.sock`);
     if (await hasFreshCompiledBin()) {
       expect(route).toBe("compiled");
     } else {
       expect(route).toBe("deno");
     }
   });
-
 
   test("committed launcher carries no literal host path", async () => {
     const text = await Deno.readTextFile(LAUNCHER);
@@ -555,20 +563,20 @@ describe("dyfj launcher routing", () => {
   test("a socket path containing spaces remains intact in dry-run evidence", async () => {
     const sock = "/tmp/dyfj workbench.sock";
     await expect(dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_SOCKET: sock,
     }, ["--no-autostart", "status"])).resolves.toMatchObject({ sock });
   });
 
   test("dry-run validates optional paths when autostart is disabled", async () => {
     await expect(dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_CODEX_TOOLCHAIN_PATH: "relative-toolchain",
     }, ["--no-autostart", "status"])).rejects.toThrow(
       "absolute, delimiter-safe directory",
     );
     await expect(dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_CODEX_RUSTUP_HOME: "relative-rustup-home",
     }, ["--no-autostart", "status"])).rejects.toThrow(
       "absolute, delimiter-safe directory",
@@ -617,18 +625,18 @@ describe("dyfj launcher autostart classification", () => {
   // would ensure a runtime. The ensure path itself (probe, detached start,
   // readiness wait) exercises real process lifecycle and is validated in UAT.
   test("a bare invocation (REPL) autostarts", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" });
+    const { autostart } = await dryRun({ HOME: FAKE_HOME });
     expect(autostart).toBe("yes");
   });
   test("an exec prompt autostarts", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "exec",
       "hello there",
     ]);
     expect(autostart).toBe("yes");
   });
   test("a prompt merely containing the word start still autostarts", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "exec",
       "how do I start the runtime",
     ]);
@@ -637,46 +645,46 @@ describe("dyfj launcher autostart classification", () => {
   test("a bare positional prompt is an unknown command and declines", async () => {
     // `dyfj "hello"` is not a valid invocation — the client requires `exec`
     // or -p — so the parse-check contract correctly refuses to spawn for it.
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["hello there"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["hello there"]);
     expect(autostart).toBe("no");
   });
   test("`start` never autostarts (it IS the start)", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["start"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["start"]);
     expect(autostart).toBe("no");
   });
   test("`status` stays an honest reporter", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["status"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["status"]);
     expect(autostart).toBe("no");
   });
   test("`stop` never triggers autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["stop"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["stop"]);
     expect(autostart).toBe("no");
   });
   test("help never needs a runtime", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--help"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--help"]);
     expect(autostart).toBe("no");
   });
   test("retired HTTP transport flags decline autostart as unknown", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "--server",
       "http://127.0.0.1:18080",
     ]);
     expect(autostart).toBe("no");
   });
   test("--no-autostart opts out per call", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--no-autostart"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--no-autostart"]);
     expect(autostart).toBe("no");
   });
   test("DYFJ_AUTOSTART=0 opts out standing", async () => {
     const { autostart } = await dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_AUTOSTART: "0",
     });
     expect(autostart).toBe("no");
   });
   test("a custom socket still autostarts (on that socket)", async () => {
     const { autostart, route } = await dryRun({
-      HOME: "/home/c",
+      HOME: FAKE_HOME,
       DYFJ_SOCKET: "/run/custom.sock",
     });
     expect(autostart).toBe("yes");
@@ -686,7 +694,7 @@ describe("dyfj launcher autostart classification", () => {
 
 describe("autostart classification is position-aware and socket-coherent", () => {
   test("an explicit --socket drives the launcher's own resolution", async () => {
-    const { sock, route, autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { sock, route, autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "--socket",
       "/run/explicit.sock",
     ]);
@@ -696,20 +704,20 @@ describe("autostart classification is position-aware and socket-coherent", () =>
   });
   test("--socket beats DYFJ_SOCKET", async () => {
     const { sock } = await dryRun(
-      { HOME: "/home/c", DYFJ_SOCKET: "/run/env.sock" },
+      { HOME: FAKE_HOME, DYFJ_SOCKET: "/run/env.sock" },
       ["--socket", "/run/flag.sock"],
     );
     expect(sock).toBe("/run/flag.sock");
   });
   test("a -p prompt that is literally the word start still autostarts", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p", "start"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["-p", "start"]);
     expect(autostart).toBe("yes");
   });
   test("a --model value named status is a value, not a subcommand", async () => {
     // --model takes an arbitrary slug, so this pins value-position handling
     // without tripping the client's session-ref validation (a --session value
     // of "status" is genuinely invalid there, and correctly declines).
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "--model",
       "status",
     ]);
@@ -721,17 +729,17 @@ describe("prompt values cannot become launcher control input", () => {
   // Adversarial argument shapes: an argument in a value slot that LOOKS like
   // a launcher flag must be data, never control.
   test("a -p prompt of --socket does not capture the next arg as a socket", async () => {
-    const { sock, autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { sock, autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "-p",
       "--socket",
       "--model",
       "foo",
     ]);
-    expect(sock).toBe("/home/c/.dyfj/run/workbench.sock");
+    expect(sock).toBe(`${FAKE_HOME}/.dyfj/run/workbench.sock`);
     expect(autostart).toBe("yes");
   });
   test("a -p prompt of --no-autostart does not opt out", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "-p",
       "--no-autostart",
       "--model",
@@ -740,19 +748,19 @@ describe("prompt values cannot become launcher control input", () => {
     expect(autostart).toBe("yes");
   });
   test("a -p prompt of --help does not suppress autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p", "--help"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["-p", "--help"]);
     expect(autostart).toBe("yes");
   });
   test("a -p prompt of -h does not suppress autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p", "-h"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["-p", "-h"]);
     expect(autostart).toBe("yes");
   });
   test("a control-position --help still opts out", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--help"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--help"]);
     expect(autostart).toBe("no");
   });
   test("a -p prompt of --server does not decline autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "-p",
       "--server",
       "--model",
@@ -810,23 +818,23 @@ describe("autostart requires an absolute private log home", () => {
 
 describe("an invocation the client's parser rejects never triggers autostart", () => {
   test("an unknown flag declines autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--bogus"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--bogus"]);
     expect(autostart).toBe("no");
   });
   test("an invalid enum value declines autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--tier", "3"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--tier", "3"]);
     expect(autostart).toBe("no");
   });
   test("an explicitly empty --socket declines autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--socket", ""]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--socket", ""]);
     expect(autostart).toBe("no");
   });
   test("a value flag with no value declines autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["--socket"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--socket"]);
     expect(autostart).toBe("no");
   });
   test("a bare -p declines autostart", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, ["-p"]);
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["-p"]);
     expect(autostart).toBe("no");
   });
 });
@@ -836,7 +844,7 @@ describe("a -p prompt makes the invocation a turn the runtime is needed for", ()
     // The client resolves a prompt before subcommands, so this is a turn, not
     // the `status` report — suppressing autostart leaves it failing against
     // nothing.
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "-p",
       "status of the build",
       "status",
@@ -845,7 +853,7 @@ describe("a -p prompt makes the invocation a turn the runtime is needed for", ()
   });
 
   test("a help FLAG wins over a prompt", async () => {
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "--help",
       "-p",
       "hello",
@@ -857,7 +865,7 @@ describe("a -p prompt makes the invocation a turn the runtime is needed for", ()
     // parseArgs gives help precedence to the -h/--help FLAG state only: a
     // populated -p returns an exec command before positional-command
     // validation, so this invocation is a print turn and needs a runtime.
-    const { autostart } = await dryRun({ HOME: "/home/c" }, [
+    const { autostart } = await dryRun({ HOME: FAKE_HOME }, [
       "help",
       "-p",
       "hello",
@@ -914,200 +922,225 @@ async function safeRemove(dir: string) {
 }
 
 describe("start lock rate-limits repeated background autostart attempts", () => {
-  test("an active in-flight start lock prevents spawning a second start process", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const home = await Deno.realPath(
-      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
-    );
-    const sock = `${home}/test-runtime.sock`;
-    const base = "test-runtime";
-    const hashProc = new Deno.Command(BASH, {
-      args: ["-c", 'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1', "bash", sock],
-      stdout: "piped",
-    });
-    const hashOutput = await hashProc.output();
-    const hash = new TextDecoder().decode(hashOutput.stdout).trim();
-
-    const runDir = `${home}/.dyfj/run`;
-    await Deno.mkdir(runDir, { recursive: true });
-    const lockFile = `${runDir}/start-${base}-${hash}.lock`;
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    await Deno.writeTextFile(lockFile, `${nowSec}\n`);
-
-    const proc = new Deno.Command(BASH, {
-      args: [LAUNCHER, "--socket", sock, "sessions"],
-      env: {
-        ...Deno.env.toObject(),
-        HOME: home,
-        DYFJ_SOCKET: sock,
-        DYFJ_START_LOCK_TTL_SEC: "30",
-        DYFJ_LAUNCHER_DRY_RUN: "",
-      },
-      stdout: "null",
-      stderr: "piped",
-    }).spawn();
-
-    try {
-      const reader = proc.stderr.getReader();
-      const errText = await readUntilStderr(reader, "already in flight");
-      expect(errText).toContain("already in flight");
-      expect(errText).not.toContain("runtime not running at");
-      const lockContent = await Deno.readTextFile(lockFile);
-      expect(lockContent.trim()).toBe(`${nowSec}`);
-    } finally {
-      try {
-        proc.kill("SIGTERM");
-        await proc.status;
-      } catch {
-        // ignore
-      }
-      await reapPidsAndCommandsContaining([proc.pid], sock);
-      await safeRemove(home);
-    }
-  }, 10_000);
-
-  test("a stale in-flight start lock (> TTL) is overwritten and allows a fresh start", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const home = await Deno.realPath(
-      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
-    );
-    const sock = `${home}/test-runtime.sock`;
-    const base = "test-runtime";
-    const hashProc = new Deno.Command(BASH, {
-      args: ["-c", 'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1', "bash", sock],
-      stdout: "piped",
-    });
-    const hashOutput = await hashProc.output();
-    const hash = new TextDecoder().decode(hashOutput.stdout).trim();
-
-    const runDir = `${home}/.dyfj/run`;
-    await Deno.mkdir(runDir, { recursive: true });
-    const lockFile = `${runDir}/start-${base}-${hash}.lock`;
-
-    // Stale timestamp (100 seconds ago) with no alive PID
-    const staleSec = Math.floor(Date.now() / 1000) - 100;
-    await Deno.writeTextFile(lockFile, `${staleSec}\n`);
-
-    const beforeSec = Math.floor(Date.now() / 1000) - 2;
-    let spawnedPid: number | undefined;
-    let updatedTs: number | undefined;
-
-    const proc = new Deno.Command(BASH, {
-      args: [LAUNCHER, "--socket", sock, "sessions"],
-      env: {
-        ...Deno.env.toObject(),
-        HOME: home,
-        DYFJ_SOCKET: sock,
-        DYFJ_START_LOCK_TTL_SEC: "30",
-        DYFJ_LAUNCHER_DRY_RUN: "",
-      },
-      stdout: "null",
-      stderr: "piped",
-    }).spawn();
-
-    try {
-      const reader = proc.stderr.getReader();
-      const errText = await readUntilStderr(reader, "runtime not running at");
-      expect(errText).toContain("runtime not running at");
-      expect(errText).not.toContain("already in flight");
-      try {
-        const lockContent = await Deno.readTextFile(lockFile);
-        const parts = lockContent.trim().split(/\s+/);
-        if (parts.length >= 1) {
-          updatedTs = parseInt(parts[0], 10);
-        }
-        if (parts.length >= 2) {
-          spawnedPid = parseInt(parts[1], 10);
-        }
-      } catch {
-        // ignore if lock file was unlinked
-      }
-      if (updatedTs !== undefined) {
-        expect(updatedTs).toBeGreaterThanOrEqual(beforeSec);
-      }
-      if (spawnedPid !== undefined) {
-        expect(spawnedPid).toBeGreaterThan(0);
-      }
-    } finally {
-      try {
-        proc.kill("SIGTERM");
-        await proc.status;
-      } catch {
-        // ignore
-      }
-      await reapPidsAndCommandsContaining(
-        [proc.pid, spawnedPid ?? 0],
-        sock,
+  test(
+    "an active in-flight start lock prevents spawning a second start process",
+    async () => {
+      await Deno.mkdir(".vitest-tmp", { recursive: true });
+      const home = await Deno.realPath(
+        await Deno.makeTempDir({ dir: ".vitest-tmp" }),
       );
-      await safeRemove(home);
-    }
-  }, 10_000);
+      const sock = `${home}/test-runtime.sock`;
+      const base = "test-runtime";
+      const hashProc = new Deno.Command(BASH, {
+        args: [
+          "-c",
+          'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1',
+          "bash",
+          sock,
+        ],
+        stdout: "piped",
+      });
+      const hashOutput = await hashProc.output();
+      const hash = new TextDecoder().decode(hashOutput.stdout).trim();
 
-  test("an in-flight start lock with an active living process suppresses duplicate spawn", async () => {
-    await Deno.mkdir(".vitest-tmp", { recursive: true });
-    const home = await Deno.realPath(
-      await Deno.makeTempDir({ dir: ".vitest-tmp" }),
-    );
-    const sock = `${home}/test-runtime.sock`;
-    const base = "test-runtime";
-    const hashProc = new Deno.Command(BASH, {
-      args: ["-c", 'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1', "bash", sock],
-      stdout: "piped",
-    });
-    const hashOutput = await hashProc.output();
-    const hash = new TextDecoder().decode(hashOutput.stdout).trim();
+      const runDir = `${home}/.dyfj/run`;
+      await Deno.mkdir(runDir, { recursive: true });
+      const lockFile = `${runDir}/start-${base}-${hash}.lock`;
 
-    const runDir = `${home}/.dyfj/run`;
-    await Deno.mkdir(runDir, { recursive: true });
-    const lockFile = `${runDir}/start-${base}-${hash}.lock`;
+      const nowSec = Math.floor(Date.now() / 1000);
+      await Deno.writeTextFile(lockFile, `${nowSec}\n`);
 
-    // Spawn a dummy background process via BASH to represent a living in-flight start
-    const dummy = new Deno.Command(BASH, {
-      args: ["-c", "sleep 60"],
-    }).spawn();
+      const proc = new Deno.Command(BASH, {
+        args: [LAUNCHER, "--socket", sock, "sessions"],
+        env: {
+          ...Deno.env.toObject(),
+          HOME: home,
+          DYFJ_SOCKET: sock,
+          DYFJ_START_LOCK_TTL_SEC: "30",
+          DYFJ_LAUNCHER_DRY_RUN: "",
+        },
+        stdout: "null",
+        stderr: "piped",
+      }).spawn();
 
-    const nowSec = Math.floor(Date.now() / 1000);
-    await Deno.writeTextFile(lockFile, `${nowSec} ${dummy.pid}\n`);
-
-    const proc = new Deno.Command(BASH, {
-      args: [LAUNCHER, "--socket", sock, "sessions"],
-      env: {
-        ...Deno.env.toObject(),
-        HOME: home,
-        DYFJ_SOCKET: sock,
-        DYFJ_START_LOCK_TTL_SEC: "30",
-        DYFJ_LAUNCHER_DRY_RUN: "",
-      },
-      stdout: "null",
-      stderr: "piped",
-    }).spawn();
-
-    try {
-      const reader = proc.stderr.getReader();
-      const errText = await readUntilStderr(reader, "already in flight");
-      expect(errText).toContain("already in flight");
-      expect(errText).not.toContain("runtime not running at");
-    } finally {
       try {
-        proc.kill("SIGTERM");
-        await proc.status;
-      } catch {
-        // ignore
+        const reader = proc.stderr.getReader();
+        const errText = await readUntilStderr(reader, "already in flight");
+        expect(errText).toContain("already in flight");
+        expect(errText).not.toContain("runtime not running at");
+        const lockContent = await Deno.readTextFile(lockFile);
+        expect(lockContent.trim()).toBe(`${nowSec}`);
+      } finally {
+        try {
+          proc.kill("SIGTERM");
+          await proc.status;
+        } catch {
+          // ignore
+        }
+        await reapPidsAndCommandsContaining([proc.pid], sock);
+        await safeRemove(home);
       }
+    },
+    10_000,
+  );
+
+  test(
+    "a stale in-flight start lock (> TTL) is overwritten and allows a fresh start",
+    async () => {
+      await Deno.mkdir(".vitest-tmp", { recursive: true });
+      const home = await Deno.realPath(
+        await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+      );
+      const sock = `${home}/test-runtime.sock`;
+      const base = "test-runtime";
+      const hashProc = new Deno.Command(BASH, {
+        args: [
+          "-c",
+          'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1',
+          "bash",
+          sock,
+        ],
+        stdout: "piped",
+      });
+      const hashOutput = await hashProc.output();
+      const hash = new TextDecoder().decode(hashOutput.stdout).trim();
+
+      const runDir = `${home}/.dyfj/run`;
+      await Deno.mkdir(runDir, { recursive: true });
+      const lockFile = `${runDir}/start-${base}-${hash}.lock`;
+
+      // Stale timestamp (100 seconds ago) with no alive PID
+      const staleSec = Math.floor(Date.now() / 1000) - 100;
+      await Deno.writeTextFile(lockFile, `${staleSec}\n`);
+
+      const beforeSec = Math.floor(Date.now() / 1000) - 2;
+      let spawnedPid: number | undefined;
+      let updatedTs: number | undefined;
+
+      const proc = new Deno.Command(BASH, {
+        args: [LAUNCHER, "--socket", sock, "sessions"],
+        env: {
+          ...Deno.env.toObject(),
+          HOME: home,
+          DYFJ_SOCKET: sock,
+          DYFJ_START_LOCK_TTL_SEC: "30",
+          DYFJ_LAUNCHER_DRY_RUN: "",
+        },
+        stdout: "null",
+        stderr: "piped",
+      }).spawn();
+
       try {
-        dummy.kill("SIGTERM");
-        await dummy.status;
-      } catch {
-        // ignore
+        const reader = proc.stderr.getReader();
+        const errText = await readUntilStderr(reader, "runtime not running at");
+        expect(errText).toContain("runtime not running at");
+        expect(errText).not.toContain("already in flight");
+        try {
+          const lockContent = await Deno.readTextFile(lockFile);
+          const parts = lockContent.trim().split(/\s+/);
+          if (parts.length >= 1) {
+            updatedTs = parseInt(parts[0], 10);
+          }
+          if (parts.length >= 2) {
+            spawnedPid = parseInt(parts[1], 10);
+          }
+        } catch {
+          // ignore if lock file was unlinked
+        }
+        if (updatedTs !== undefined) {
+          expect(updatedTs).toBeGreaterThanOrEqual(beforeSec);
+        }
+        if (spawnedPid !== undefined) {
+          expect(spawnedPid).toBeGreaterThan(0);
+        }
+      } finally {
+        try {
+          proc.kill("SIGTERM");
+          await proc.status;
+        } catch {
+          // ignore
+        }
+        await reapPidsAndCommandsContaining(
+          [proc.pid, spawnedPid ?? 0],
+          sock,
+        );
+        await safeRemove(home);
       }
-      await reapPidsAndCommandsContaining([proc.pid, dummy.pid], sock);
-      await safeRemove(home);
-    }
-  }, 10_000);
+    },
+    10_000,
+  );
+
+  test(
+    "an in-flight start lock with an active living process suppresses duplicate spawn",
+    async () => {
+      await Deno.mkdir(".vitest-tmp", { recursive: true });
+      const home = await Deno.realPath(
+        await Deno.makeTempDir({ dir: ".vitest-tmp" }),
+      );
+      const sock = `${home}/test-runtime.sock`;
+      const base = "test-runtime";
+      const hashProc = new Deno.Command(BASH, {
+        args: [
+          "-c",
+          'h=$(printf "%s" "$1" | shasum -a 256 2>/dev/null | cut -c1-16); [[ -n "$h" ]] && echo "$h" || printf "%s" "$1" | cksum | cut -d" " -f1',
+          "bash",
+          sock,
+        ],
+        stdout: "piped",
+      });
+      const hashOutput = await hashProc.output();
+      const hash = new TextDecoder().decode(hashOutput.stdout).trim();
+
+      const runDir = `${home}/.dyfj/run`;
+      await Deno.mkdir(runDir, { recursive: true });
+      const lockFile = `${runDir}/start-${base}-${hash}.lock`;
+
+      // Spawn a dummy background process via BASH to represent a living in-flight start
+      const dummy = new Deno.Command(BASH, {
+        args: ["-c", "sleep 60"],
+      }).spawn();
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      await Deno.writeTextFile(lockFile, `${nowSec} ${dummy.pid}\n`);
+
+      const proc = new Deno.Command(BASH, {
+        args: [LAUNCHER, "--socket", sock, "sessions"],
+        env: {
+          ...Deno.env.toObject(),
+          HOME: home,
+          DYFJ_SOCKET: sock,
+          DYFJ_START_LOCK_TTL_SEC: "30",
+          DYFJ_LAUNCHER_DRY_RUN: "",
+        },
+        stdout: "null",
+        stderr: "piped",
+      }).spawn();
+
+      try {
+        const reader = proc.stderr.getReader();
+        const errText = await readUntilStderr(reader, "already in flight");
+        expect(errText).toContain("already in flight");
+        expect(errText).not.toContain("runtime not running at");
+      } finally {
+        try {
+          proc.kill("SIGTERM");
+          await proc.status;
+        } catch {
+          // ignore
+        }
+        try {
+          dummy.kill("SIGTERM");
+          await dummy.status;
+        } catch {
+          // ignore
+        }
+        await reapPidsAndCommandsContaining([proc.pid, dummy.pid], sock);
+        await safeRemove(home);
+      }
+    },
+    10_000,
+  );
 });
-
-
 
 describe("socket-path grant delimiter safety", () => {
   async function launchExpectingRejection(
@@ -1174,7 +1207,11 @@ describe("compile-cli grant construction", () => {
     home: string,
   ): Promise<{ code: number; err: string }> {
     const cwd = new URL("..", import.meta.url).pathname;
-    const { code, stderr } = await new Deno.Command("deno", {
+    const denoBin = Deno.env.get("DENO_BIN");
+    if (!denoBin) {
+      throw new Error("DENO_BIN must name the selected Deno executable");
+    }
+    const { code, stderr } = await new Deno.Command(denoBin, {
       args: ["task", "compile-cli"],
       cwd,
       env: { ...Deno.env.toObject(), HOME: home },
