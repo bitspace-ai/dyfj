@@ -39,6 +39,7 @@ describe("vitestArgs", () => {
       "uid",
       "hostname",
       "homedir",
+      "osRelease",
     ]);
   });
 });

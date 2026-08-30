@@ -44,7 +44,8 @@
         "networkInterfaces",
         "uid",
         "hostname",
-        "homedir"
+        "homedir",
+        "osRelease"
       ]
     },
     "workbench": {
