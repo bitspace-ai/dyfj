@@ -9,6 +9,11 @@
  * - Workflow files must not fetch mutable installer URLs (`releases/latest`,
  *   raw branch content) and must not pipe a downloaded script into a shell:
  *   an unpinned remote script is arbitrary code with no subject identity.
+ *   Network-to-shell is judged on whole logical commands, not on physical
+ *   lines: a YAML block or folded scalar, a backslash continuation, and a
+ *   line ending in `|` all spread one command over several lines, and a
+ *   line-at-a-time scan sees none of them. A `run:` value whose structure
+ *   cannot be resolved safely is reported rather than skipped.
  * - `core/rust-toolchain.toml` must pin an exact toolchain version, so the
  *   Rust lanes build with the same compiler everywhere.
  * - The committed `dyfj.dependency.policy.manifest/v1` declaration
@@ -78,8 +83,407 @@ const MUTABLE_URLS = [
   /\/latest\/download\//,
   /raw\.githubusercontent\.com\/\S+\/(main|master)\//,
 ];
-const PIPE_TO_SHELL =
-  /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?\S*\b(sh|bash|zsh|dash)\b/;
+const FETCH_COMMAND = /\b(?:curl|wget)\b/;
+
+// Command names that execute their standard input as a script. Compared
+// against the basename of a pipeline stage's command word.
+const SHELL_COMMANDS: ReadonlySet<string> = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "ash",
+]);
+
+// Wrappers that run the command that follows them, so the shell they invoke
+// is still the stage's effective command.
+const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
+  "sudo",
+  "doas",
+  "env",
+  "command",
+  "exec",
+  "nohup",
+  "time",
+  "xargs",
+]);
+
+// Bounds on the workflow structure a single scan will reason about. A file
+// past any of these is not understood rather than partially trusted.
+const MAX_RUN_BLOCK_LINES = 500;
+const MAX_SHELL_TEXT_CHARS = 100_000;
+const MAX_SHELL_COMMANDS = 2000;
+
+const UNPARSED_SHELL = "dependency.policy/unparsed-shell";
+const PIPE_TO_SHELL = "dependency.policy/pipe-to-shell";
+
+// A `run:` mapping key, with the sequence dash folded into the prefix so the
+// key's own column — not the line's indentation — bounds the value's block.
+const RUN_KEY = /^(\s*(?:-\s+)?)run:(?=$|\s)(.*)$/;
+
+// A block scalar header: `|`, `>`, either chomping indicator, an explicit
+// indentation indicator, and an optional trailing comment. Anything else
+// after `run:` is not a block scalar.
+const BLOCK_HEADER = /^([|>])(?:[+-]?\d*|\d*[+-]?)\s*(?:#.*)?$/;
+
+/**
+ * One workflow `run:` value, recovered as shell text.
+ *
+ * `understood` is false when the value's YAML structure could not be resolved
+ * safely — an alias or tag in place of a script, a tab in the indentation, a
+ * quoted scalar whose escapes are not modelled, or a block past the size
+ * bound. Such a block is reported rather than scanned, because a policy that
+ * silently skips what it cannot parse passes exactly the inputs an attacker
+ * would choose.
+ */
+interface RunBlock {
+  // 1-based line of the `run:` key, used for a not-understood diagnostic.
+  line: number;
+  // 1-based line the recovered shell text starts on.
+  textLine: number;
+  text: string;
+  understood: boolean;
+}
+
+function leadingWhitespace(line: string): string {
+  return /^[ \t]*/.exec(line)?.[0] ?? "";
+}
+
+/**
+ * Recovers the shell text of every `run:` value in a workflow file.
+ *
+ * Structure, not appetite, decides how lines are joined: a literal block
+ * (`|`) keeps its line breaks, because each line is its own command; a folded
+ * block (`>`), a multi-line plain scalar, and a multi-line quoted scalar are
+ * joined with a space, because that is what the YAML loader hands the shell.
+ * Nothing is stripped from the recovered text — quotes and `#` keep their
+ * shell meaning for the command parser to resolve.
+ */
+function runBlocks(content: string): RunBlock[] {
+  const lines = content.split(/\r?\n/);
+  const blocks: RunBlock[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const key = RUN_KEY.exec(lines[index] ?? "");
+    if (!key) {
+      index++;
+      continue;
+    }
+    const column = (key[1] ?? "").length;
+    const inline = (key[2] ?? "").trim();
+    const line = index + 1;
+    // The value's continuation is every following line indented past the key.
+    // Blank lines belong to it only when a more-indented line follows.
+    const body: string[] = [];
+    let last = index;
+    let overflow = false;
+    // YAML forbids tabs in indentation; one here means the block boundaries
+    // this scan computes are not the loader's.
+    let tabbed = leadingWhitespace(lines[index] ?? "").includes("\t");
+    for (let scan = index + 1; scan < lines.length; scan++) {
+      const text = lines[scan] ?? "";
+      if (text.trim() === "") {
+        body.push("");
+        continue;
+      }
+      const indent = leadingWhitespace(text);
+      if (indent.length <= column) break;
+      if (indent.includes("\t")) tabbed = true;
+      body.push(text);
+      last = scan;
+      if (body.length > MAX_RUN_BLOCK_LINES) {
+        overflow = true;
+        break;
+      }
+    }
+    while (body.length > 0 && body[body.length - 1] === "") body.pop();
+    index = last + 1;
+
+    const unparsed = (): RunBlock => ({
+      line,
+      textLine: line,
+      text: "",
+      understood: false,
+    });
+    if (overflow || tabbed) {
+      blocks.push(unparsed());
+      continue;
+    }
+    const header = BLOCK_HEADER.exec(inline);
+    if (header) {
+      // An empty block scalar is not an empty script: it means the body was
+      // not where this scan looked for it.
+      if (body.length === 0) {
+        blocks.push(unparsed());
+        continue;
+      }
+      blocks.push({
+        line,
+        textLine: line + 1,
+        text: header[1] === ">" ? body.join(" ") : body.join("\n"),
+        understood: true,
+      });
+      continue;
+    }
+    if (inline === "") {
+      if (body.length === 0) {
+        blocks.push(unparsed());
+        continue;
+      }
+      blocks.push({
+        line,
+        textLine: line + 1,
+        text: body.join(" "),
+        understood: true,
+      });
+      continue;
+    }
+    // An alias, anchor, or tag stands in for content this scan cannot resolve
+    // from the file in front of it.
+    if (/^[*&!]/.test(inline)) {
+      blocks.push(unparsed());
+      continue;
+    }
+    const folded = [inline, ...body].join(" ");
+    if (inline.startsWith("'") || inline.startsWith('"')) {
+      const scalar = quotedScalar(folded);
+      blocks.push(
+        scalar === undefined ? unparsed() : {
+          line,
+          textLine: line,
+          text: scalar,
+          understood: true,
+        },
+      );
+      continue;
+    }
+    blocks.push({ line, textLine: line, text: folded, understood: true });
+  }
+  return blocks;
+}
+
+// Resolves a YAML quoted scalar to its content, or nothing when the quoting
+// is not the plain case this scan models. A single-quoted scalar escapes only
+// by doubling the quote; a double-quoted scalar carries backslash escapes
+// whose expansion is not modelled here, so any backslash or interior quote is
+// refused instead of guessed at.
+function quotedScalar(value: string): string | undefined {
+  const quote = value[0];
+  if (quote !== "'" && quote !== '"') return undefined;
+  if (value.length < 2 || !value.endsWith(quote)) return undefined;
+  const inner = value.slice(1, -1);
+  if (quote === '"') {
+    return inner.includes("\\") || inner.includes('"') ? undefined : inner;
+  }
+  if ((inner.split("'").length - 1) % 2 !== 0) return undefined;
+  return inner.replaceAll("''", "'");
+}
+
+/** One logical shell command, split into its pipeline stages. */
+interface ShellCommand {
+  // 1-based line the command starts on.
+  line: number;
+  stages: string[];
+}
+
+interface ParsedShell {
+  commands: ShellCommand[];
+  understood: boolean;
+}
+
+/**
+ * Splits shell text into logical commands and pipeline stages.
+ *
+ * The scan is a quoting-aware single pass, not a line scan: a backslash
+ * before a newline, a newline after a `|`, `&&`, or `||`, and a newline
+ * inside a quote, a command substitution, or a backquote all continue the
+ * same logical command. `#` opens a comment only at a word start outside
+ * quotes, exactly as the shell reads it, so a `#` inside a URL or a quoted
+ * string cannot be used to hide the rest of a pipeline from the policy.
+ * Quotes are left in the stage text; only a stage's command word is unquoted,
+ * and only to name it.
+ *
+ * `understood` is false when the text ends inside a quote, inside an
+ * unclosed substitution, on a dangling escape or operator, or past the size
+ * bound — states in which the remaining structure is a guess.
+ */
+function parseShellCommands(
+  text: string,
+  firstLine: number,
+): ParsedShell {
+  if (text.length > MAX_SHELL_TEXT_CHARS) {
+    return { commands: [], understood: false };
+  }
+  const commands: ShellCommand[] = [];
+  let stages: string[] = [];
+  let stage = "";
+  let line = firstLine;
+  let commandLine = -1;
+  let quote: "'" | '"' | "`" | null = null;
+  let depth = 0;
+  let pendingOperator = false;
+  let danglingEscape = false;
+  let bounded = false;
+
+  const beginWord = (): void => {
+    if (commandLine < 0) commandLine = line;
+  };
+  const endStage = (): void => {
+    stages.push(stage);
+    stage = "";
+  };
+  const endCommand = (): void => {
+    endStage();
+    if (stages.some((entry) => entry.trim() !== "")) {
+      commands.push({ line: commandLine < 0 ? line : commandLine, stages });
+    }
+    stages = [];
+    commandLine = -1;
+  };
+
+  for (let index = 0; index < text.length; index++) {
+    if (commands.length >= MAX_SHELL_COMMANDS) {
+      bounded = true;
+      break;
+    }
+    const char = text[index] as string;
+    const next = text[index + 1];
+    if (quote !== null) {
+      if (char === "\n") line++;
+      // A single-quoted string has no escapes; the other two do.
+      if (char === "\\" && quote !== "'" && next !== undefined) {
+        if (next === "\n") line++;
+        stage += char + next;
+        index++;
+        continue;
+      }
+      stage += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "\\") {
+      if (next === undefined) {
+        danglingEscape = true;
+        break;
+      }
+      // A backslash-newline is a line continuation: the logical command runs
+      // straight on into the next physical line.
+      if (next === "\n") {
+        line++;
+        index++;
+        continue;
+      }
+      stage += char + next;
+      index++;
+      pendingOperator = false;
+      beginWord();
+      continue;
+    }
+    if (char === "#" && (stage === "" || /\s$/.test(stage))) {
+      while (index + 1 < text.length && text[index + 1] !== "\n") index++;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      stage += char;
+      pendingOperator = false;
+      beginWord();
+      continue;
+    }
+    if (char === "(") {
+      depth++;
+      stage += char;
+      pendingOperator = false;
+      beginWord();
+      continue;
+    }
+    if (char === ")") {
+      // Clamped, not signed: a `case` arm's unmatched `)` is ordinary syntax,
+      // while an unclosed `$(` is the state worth refusing.
+      if (depth > 0) depth--;
+      stage += char;
+      pendingOperator = false;
+      beginWord();
+      continue;
+    }
+    if (char === "|") {
+      if (next === "|") {
+        endCommand();
+        index++;
+      } else {
+        endStage();
+      }
+      pendingOperator = true;
+      continue;
+    }
+    if (char === "&") {
+      if (next === "&") {
+        endCommand();
+        index++;
+        pendingOperator = true;
+        continue;
+      }
+      endCommand();
+      pendingOperator = false;
+      continue;
+    }
+    if (char === ";") {
+      endCommand();
+      pendingOperator = false;
+      continue;
+    }
+    if (char === "\n") {
+      line++;
+      // A newline after a pipeline or list operator continues the command.
+      if (pendingOperator) stage += " ";
+      else endCommand();
+      continue;
+    }
+    stage += char;
+    if (!/\s/.test(char)) {
+      pendingOperator = false;
+      beginWord();
+    }
+  }
+  endCommand();
+  const understood = !bounded && !danglingEscape && !pendingOperator &&
+    quote === null && depth === 0;
+  return { commands, understood };
+}
+
+// The command word a pipeline stage runs, as a basename. Environment
+// assignments and wrappers that exec what follows them are stepped over, and
+// the word's own quoting and escaping are removed so `"sh"` and `s\h` name
+// the shell they run. Unquoting happens here and nowhere else: it can only
+// reveal a command name, never hide a pipeline operator.
+function stageCommand(stage: string): string | undefined {
+  const tokens = stage.trim().split(/\s+/);
+  for (const token of tokens) {
+    const bare = token.replace(/["'\\]/g, "");
+    if (bare === "") continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(bare)) continue;
+    if (bare.startsWith("-")) continue;
+    const name = bare.slice(bare.lastIndexOf("/") + 1);
+    if (COMMAND_WRAPPERS.has(name)) continue;
+    return name;
+  }
+  return undefined;
+}
+
+// True when a fetch stage feeds a later stage that executes its input: the
+// downloaded bytes are run as a script with no subject identity.
+function pipesFetchIntoShell(command: ShellCommand): boolean {
+  let fetched = false;
+  for (const stage of command.stages) {
+    if (fetched) {
+      const name = stageCommand(stage);
+      if (name !== undefined && SHELL_COMMANDS.has(name)) return true;
+    }
+    if (FETCH_COMMAND.test(stage)) fetched = true;
+  }
+  return false;
+}
 
 // Surfaces whose mutation is a dependency/configuration change requiring
 // operator-side inspect-before-apply evidence.
@@ -636,6 +1040,14 @@ export function scanWorkflowText(
   content: string,
 ): PublicSafetyHit[] {
   const hits: PublicSafetyHit[] = [];
+  const at = (line: number, rule: string): PublicSafetyHit => ({
+    path: posixPath(path),
+    line,
+    rule,
+  });
+  // Action references and installer URLs are line-shaped: a `uses:` value is
+  // one YAML scalar and a URL is one word, so a physical line is the whole
+  // claim.
   const lines = content.split(/\r?\n/);
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index] ?? "";
@@ -644,30 +1056,36 @@ export function scanWorkflowText(
       const reference = (uses[1] ?? "")
         .split(/\s+#/)[0]?.trim().replace(/^['"]|['"]$/g, "") ?? "";
       if (!DIGEST_PINNED.test(reference)) {
-        hits.push({
-          path: posixPath(path),
-          line: index + 1,
-          rule: "dependency.policy/unpinned-action",
-        });
+        hits.push(at(index + 1, "dependency.policy/unpinned-action"));
       }
     }
     if (MUTABLE_URLS.some((pattern) => pattern.test(line))) {
-      hits.push({
-        path: posixPath(path),
-        line: index + 1,
-        rule: "dependency.policy/mutable-installer-url",
-      });
-    }
-    if (PIPE_TO_SHELL.test(line)) {
-      hits.push({
-        path: posixPath(path),
-        line: index + 1,
-        rule: "dependency.policy/pipe-to-shell",
-      });
+      hits.push(at(index + 1, "dependency.policy/mutable-installer-url"));
     }
     if (hits.length >= MAX_COLLECTED_HITS) break;
   }
-  return hits;
+  // Network-to-shell is command-shaped, not line-shaped: a YAML block scalar,
+  // a folded scalar, and a backslash or trailing-operator continuation all
+  // carry one command across several physical lines. Recover the shell text
+  // and judge the logical command.
+  for (const block of runBlocks(content)) {
+    if (hits.length >= MAX_COLLECTED_HITS) break;
+    if (!block.understood) {
+      hits.push(at(block.line, UNPARSED_SHELL));
+      continue;
+    }
+    const parsed = parseShellCommands(block.text, block.textLine);
+    if (!parsed.understood) hits.push(at(block.line, UNPARSED_SHELL));
+    for (const command of parsed.commands) {
+      if (pipesFetchIntoShell(command)) {
+        hits.push(at(command.line, PIPE_TO_SHELL));
+      }
+      if (hits.length >= MAX_COLLECTED_HITS) break;
+    }
+  }
+  // One deterministic order for a file scanned in two passes.
+  hits.sort((left, right) => left.line - right.line);
+  return hits.slice(0, MAX_COLLECTED_HITS);
 }
 
 export function scanToolchainText(

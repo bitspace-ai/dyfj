@@ -250,6 +250,31 @@ Deno.test("gate workflow pins archive digests in-repository, never at run time",
   }
 });
 
+// A step name is an evidence claim a reader takes at face value. The Deno and
+// Dolt archives are checked against a digest committed here; the Rust
+// toolchain is not downloaded by this workflow at all, and its visible
+// evidence is the repository's exact pin plus a reported-version check. A
+// step may not claim more than its own body does.
+Deno.test("gate workflow claims digest verification only where a digest is checked", async () => {
+  const text = await workflowText();
+  assertIncludes(
+    text,
+    "name: Install the pinned Rust toolchain (exact pin, reported-version check)",
+  );
+  const lines = text.split("\n");
+  const stepName = /^\s*-\s+name:\s*(.+)$/;
+  for (let index = 0; index < lines.length; index++) {
+    const name = stepName.exec(lines[index] ?? "")?.[1];
+    if (name === undefined) continue;
+    let end = index + 1;
+    while (end < lines.length && !stepName.test(lines[end] ?? "")) end++;
+    const body = lines.slice(index, end).join("\n");
+    if (/digest-verified/.test(name) !== DIGEST_CHECK.test(body)) {
+      throw new Error(`step evidence claim does not match its body: ${name}`);
+    }
+  }
+});
+
 Deno.test("gate workflow run blocks fail closed on pipeline errors", async () => {
   const text = await workflowText();
   const multiline = text.match(/run: \|/g) ?? [];

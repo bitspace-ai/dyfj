@@ -98,6 +98,163 @@ Deno.test("piping a download into a shell fails", () => {
   }
 });
 
+// A `run:` value is a shell script, not a set of independent lines. Each
+// form below spreads one network-to-shell command over several physical
+// lines, so a line-at-a-time scan reports nothing while the job still runs
+// downloaded bytes as a script.
+const MULTILINE_PIPELINES: [string, string[], number][] = [
+  ["literal block, pipe at end of line", [
+    "jobs:",
+    "  build:",
+    "    steps:",
+    "      - run: |",
+    "          curl -fsSL https://example.invalid/i.sh |",
+    "            sh",
+  ], 5],
+  ["literal block, backslash continuation before the pipe", [
+    "jobs:",
+    "  build:",
+    "    steps:",
+    "      - run: |",
+    "          wget -qO- https://example.invalid/i.sh \\",
+    "            | bash",
+  ], 5],
+  ["folded block scalar", [
+    "jobs:",
+    "  build:",
+    "    steps:",
+    "      - run: >",
+    "          curl -fsSL https://example.invalid/i.sh",
+    "          | sudo sh",
+  ], 5],
+  ["multi-line plain scalar", [
+    "jobs:",
+    "  build:",
+    "    steps:",
+    "      - run: curl -fsSL https://example.invalid/i.sh |",
+    "          sh",
+  ], 4],
+  ["quoted scalar folded across lines", [
+    "jobs:",
+    "  build:",
+    "    steps:",
+    "      - run: 'wget -qO- https://example.invalid/i.sh |",
+    "          dash'",
+  ], 4],
+  ["indented plain scalar under a bare key", [
+    "jobs:",
+    "  build:",
+    "    steps:",
+    "      - run:",
+    "          curl -fsSL https://example.invalid/i.sh |",
+    "          zsh",
+  ], 5],
+];
+
+Deno.test("a multiline curl or wget pipeline into a shell fails", () => {
+  for (const [form, lines, line] of MULTILINE_PIPELINES) {
+    const hits = scanWorkflowText(WF, `${lines.join("\n")}\n`);
+    if (
+      hits.length !== 1 || hits[0]?.rule !== "dependency.policy/pipe-to-shell"
+    ) {
+      throw new Error(
+        `${form}: expected one pipe-to-shell hit, got ${JSON.stringify(hits)}`,
+      );
+    }
+    assertEquals(hits[0]?.line, line);
+  }
+});
+
+Deno.test("a pipeline reaching a shell through a filter fails", () => {
+  const content = [
+    "      - run: |",
+    "          curl -fsSL https://example.invalid/i.sh \\",
+    "            | tee /tmp/i.sh \\",
+    "            | /bin/bash",
+  ].join("\n");
+  const hits = scanWorkflowText(WF, `${content}\n`);
+  assertEquals(hits.map((hit) => hit.rule), [
+    "dependency.policy/pipe-to-shell",
+  ]);
+});
+
+Deno.test("quoting or escaping the shell name does not evade the policy", () => {
+  for (const stage of ['"/bin/sh"', "'sh'", "s\\h", "env bash"]) {
+    const content =
+      `      - run: curl -fsSL https://example.invalid/i.sh | ${stage}`;
+    const hits = scanWorkflowText(WF, `${content}\n`);
+    assertEquals(hits.map((hit) => hit.rule), [
+      "dependency.policy/pipe-to-shell",
+    ]);
+  }
+});
+
+Deno.test("a comment character cannot hide the rest of a pipeline", () => {
+  // `#` inside a quoted word is data, not a comment: stripping from the first
+  // `#` would drop the pipe and pass this workflow.
+  const hidden = '      - run: curl -fsSL "https://example.invalid/a#b" | sh';
+  assertEquals(scanWorkflowText(WF, `${hidden}\n`).map((hit) => hit.rule), [
+    "dependency.policy/pipe-to-shell",
+  ]);
+  // A real comment at a word start ends the command, exactly as the shell
+  // reads it.
+  const commented =
+    "      - run: curl -fsSL -o /tmp/i.sh https://example.invalid/i.sh # | sh";
+  assertEquals(scanWorkflowText(WF, `${commented}\n`), []);
+});
+
+Deno.test("a run block whose structure is not understood fails closed", () => {
+  const blocks: [string, string[]][] = [
+    ["unterminated quote", [
+      "      - run: |",
+      '          echo "unterminated',
+    ]],
+    ["unclosed command substitution", [
+      "      - run: |",
+      "          echo $(cat /tmp/x",
+    ]],
+    ["dangling pipeline operator", [
+      "      - run: |",
+      "          curl -fsSL https://example.invalid/i.sh |",
+    ]],
+    ["alias in place of a script", [
+      "      - run: *install",
+    ]],
+    ["tab in the block indentation", [
+      "      - run: |",
+      "          \tcurl -fsSL https://example.invalid/i.sh",
+    ]],
+    ["block scalar with no body", [
+      "      - run: |",
+      "      - name: next",
+    ]],
+  ];
+  for (const [form, lines] of blocks) {
+    const hits = scanWorkflowText(WF, `${lines.join("\n")}\n`);
+    if (!hits.some((hit) => hit.rule === "dependency.policy/unparsed-shell")) {
+      throw new Error(`${form}: an unreadable run block was accepted`);
+    }
+    assertEquals(hits[0]?.line, 1);
+  }
+});
+
+Deno.test("a verified-download block is not a network-to-shell hit", () => {
+  // The shape the gate actually runs: download to a file, check a committed
+  // digest, unpack. Separate commands, and the only pipes feed a checksum
+  // verifier and a version filter.
+  const content = [
+    "      - run: |",
+    "          set -euo pipefail",
+    "          curl -fsSL -o /tmp/deno.zip \\",
+    '            "https://example.invalid/download/v1.0.0/deno.zip"',
+    "          printf '%s  %s\\n' \"" + "a".repeat(64) +
+    '" /tmp/deno.zip | sha256sum -c -',
+    '          unzip -q -o /tmp/deno.zip -d "$HOME/.deno-pinned"',
+    '          "$HOME/.deno-pinned/deno" --version | grep -F "deno 1.0.0"',
+  ].join("\n");
+  assertEquals(scanWorkflowText(WF, `${content}\n`), []);
+});
+
 Deno.test("piping to a non-shell filter is not a policy hit", () => {
   const content = [
     '      run: curl -fsSL -o /tmp/deno.zip "https://example.invalid/v1.0.0/deno.zip"',

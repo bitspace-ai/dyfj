@@ -16,16 +16,20 @@
 # Supply-chain posture: the checkout action is pinned by full commit digest
 # (Dependabot proposes digest updates), toolchains are downloaded from
 # exact-version release URLs — never `latest`, never piped into a shell —
-# and every downloaded archive is checked against a SHA-256 digest committed
-# in this file before it is unpacked or executed. The digests are
-# repository-owned: they are never fetched at run time, because a checksum
-# file or trust root served by the same origin as the archive proves nothing
-# against an attacker who controls that origin. The exact-version URL and the
-# reported-version check remain as secondary evidence, not as the integrity
-# control. A digest is updated only together with its version pin, from an
-# operator inspect-before-apply.
-# The Rust toolchain comes from the repository's own exact pin in
-# `core/rust-toolchain.toml` via the runner's preinstalled rustup.
+# and every archive this workflow downloads itself is checked against a
+# SHA-256 digest committed in this file before it is unpacked or executed.
+# The digests are repository-owned: they are never fetched at run time,
+# because a checksum file or trust root served by the same origin as the
+# archive proves nothing against an attacker who controls that origin. The
+# exact-version URL and the reported-version check remain as secondary
+# evidence, not as the integrity control. A digest is updated only together
+# with its version pin, from an operator inspect-before-apply.
+# The Rust toolchain is the one archive this workflow does not download
+# itself: it comes from the repository's own exact pin in
+# `core/rust-toolchain.toml` via the runner's preinstalled rustup. Its
+# evidence here is therefore that exact pin plus the reported `rustc
+# --version` check — not a repository-owned archive digest like the Deno and
+# Dolt archives carry.
 name: gate
 
 on:
@@ -91,7 +95,7 @@ jobs:
           tar -xzf /tmp/dolt.tar.gz -C "$HOME"
           "$HOME/dolt-linux-amd64/bin/dolt" version | grep -F "2.3.1"
           echo "$HOME/dolt-linux-amd64/bin" >> "$GITHUB_PATH"
-      - name: Install the pinned Rust toolchain (verified)
+      - name: Install the pinned Rust toolchain (exact pin, reported-version check)
         working-directory: core
         run: |
           set -euo pipefail
