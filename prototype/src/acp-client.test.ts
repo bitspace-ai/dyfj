@@ -793,7 +793,7 @@ describe("runAcpAgent", () => {
     let confirmationCancelled = false;
     const resultPromise = runAcpAgent({
       profile: fixtureProfile(),
-      prompt: "FIXTURE_PERMISSION",
+      prompt: "FIXTURE_PERMISSION_CANCEL_PENDING",
       abortSignal: controller.signal,
       confirmPermission: (_permission, signal) => {
         prompted.resolve();

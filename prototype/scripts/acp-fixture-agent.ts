@@ -423,6 +423,10 @@ const app = agent({ name: "dyfj-acp-fixture" })
         }
         const responses = await Promise.all(permissionResponses);
         const response = responses[0];
+        if (prompt.includes("FIXTURE_PERMISSION_CANCEL_PENDING")) {
+          await fixture.cancel.promise;
+          return { stopReason: "cancelled" };
+        }
         if (scopeProbe || lateReject || rejectOnly) {
           if (fixture.cancelled) return { stopReason: "cancelled" };
           await chunk(
