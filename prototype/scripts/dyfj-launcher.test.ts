@@ -1208,13 +1208,16 @@ describe("compile-cli grant construction", () => {
   ): Promise<{ code: number; err: string }> {
     const cwd = new URL("..", import.meta.url).pathname;
     const denoBin = Deno.env.get("DENO_BIN");
+    const realHome = Deno.env.get("HOME") ?? "";
+    const denoDir = Deno.env.get("DENO_DIR") ??
+      `${realHome}/Library/Caches/deno`;
     if (!denoBin) {
       throw new Error("DENO_BIN must name the selected Deno executable");
     }
     const { code, stderr } = await new Deno.Command(denoBin, {
       args: ["task", "compile-cli"],
       cwd,
-      env: { ...Deno.env.toObject(), HOME: home },
+      env: { ...Deno.env.toObject(), HOME: home, DENO_DIR: denoDir },
       stdout: "piped",
       stderr: "piped",
     }).output();
