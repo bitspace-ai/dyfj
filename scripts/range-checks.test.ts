@@ -10,11 +10,12 @@ import {
 } from "./range-checks.ts";
 import {
   parseAddedLines,
+  rangeCommits,
   type ReleaseRange,
   resolveRangeBase,
   resolveReleaseRange,
 } from "./release-range.ts";
-import { formatHits } from "./public-safety-scan.ts";
+import { formatHits, type PublicSafetyHit } from "./public-safety-scan.ts";
 import { MAX_UNTRACKED_FILE_BYTES, MAX_UNTRACKED_FILES } from "./scan-lib.ts";
 import { headCommit, isWorktreeClean } from "./subject-check.ts";
 
@@ -63,33 +64,61 @@ async function gitIn(dir: string, args: string[]): Promise<void> {
   }
 }
 
+async function writeFiles(
+  dir: string,
+  files: Record<string, string>,
+): Promise<void> {
+  for (const [path, content] of Object.entries(files)) {
+    await Deno.writeTextFile(`${dir}/${path}`, content);
+  }
+}
+
+async function commitAll(dir: string, message: string): Promise<void> {
+  await gitIn(dir, ["add", "-A"]);
+  await gitIn(dir, ["commit", "-q", "--allow-empty", "-m", message]);
+}
+
+// A fixture repository holding `files` in a single base commit, whose id the
+// caller builds a range from.
+async function makeBaseFixture(
+  files: Record<string, string>,
+): Promise<{ dir: string; base: string }> {
+  const dir = await Deno.makeTempDir({ prefix: "dyfj-range-check-" });
+  await gitIn(dir, ["init", "-q"]);
+  await writeFiles(dir, files);
+  await commitAll(dir, "base");
+  return { dir, base: await headCommit(dir) };
+}
+
+// Both views of the fixture range: the net diff against the base tree and the
+// commits the range makes newly reachable.
+function fixtureRange(base: string): ReleaseRange {
+  return {
+    diffArgs: [base],
+    historyArgs: [`${base}..HEAD`],
+    authoritative: false,
+    description: "fixture range",
+  };
+}
+
 // A fixture repository: `files` land in the base commit, `changes` land in a
 // second commit, and the returned range covers base → worktree.
 async function makeRangeFixture(
   files: Record<string, string>,
   changes: Record<string, string>,
 ): Promise<{ dir: string; range: ReleaseRange }> {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-range-check-" });
-  await gitIn(dir, ["init", "-q"]);
-  for (const [path, content] of Object.entries(files)) {
-    await Deno.writeTextFile(`${dir}/${path}`, content);
-  }
-  await gitIn(dir, ["add", "."]);
-  await gitIn(dir, ["commit", "-q", "--allow-empty", "-m", "base"]);
-  const base = await headCommit(dir);
-  for (const [path, content] of Object.entries(changes)) {
-    await Deno.writeTextFile(`${dir}/${path}`, content);
-  }
-  await gitIn(dir, ["add", "."]);
-  await gitIn(dir, ["commit", "-q", "--allow-empty", "-m", "change"]);
-  return {
-    dir,
-    range: {
-      diffArgs: [base],
-      authoritative: false,
-      description: "fixture range",
-    },
-  };
+  const { dir, base } = await makeBaseFixture(files);
+  await writeFiles(dir, changes);
+  await commitAll(dir, "change");
+  return { dir, range: fixtureRange(base) };
+}
+
+// Findings are compared as a set: which commit of a range a value entered by
+// is not something the check promises to report in any particular order.
+function sortHits(hits: PublicSafetyHit[]): PublicSafetyHit[] {
+  return [...hits].sort((left, right) =>
+    `${left.path} ${left.line}`.localeCompare(`${right.path} ${right.line}`)
+  );
 }
 
 Deno.test("range base binding fails closed in CI without an immutable id", () => {
@@ -129,6 +158,7 @@ Deno.test("a bound range resolves exactly and rejects unknown bases", async () =
       envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_RANGE_BASE: base }),
     );
     assertEquals(resolved.diffArgs, [`${base}...HEAD`]);
+    assertEquals(resolved.historyArgs, [`${base}..HEAD`]);
     assertEquals(resolved.authoritative, true);
     let threw = false;
     try {
@@ -168,6 +198,74 @@ Deno.test("parseAddedLines numbers added lines from hunk headers", () => {
   ]);
 });
 
+Deno.test("parseAddedLines keeps added lines that look like file headers", () => {
+  // The first added line's own content starts with `++`, so its raw diff line
+  // starts with `+++` — identical in shape to the file header four lines
+  // above it. Only hunk state tells them apart, and a scan that dropped it
+  // would never see the value it carries.
+  const diff = [
+    "diff --git a/f b/f",
+    "index 1111111..2222222 100644",
+    "--- a/f",
+    "+++ b/f",
+    "@@ -0,0 +1,2 @@",
+    `+++token ${awsKeyFixture()}`,
+    "+plain",
+    "diff --git a/g b/g",
+    "--- a/g",
+    "+++ b/g",
+    "@@ -0,0 +1 @@",
+    "+in the second file",
+  ].join("\n");
+  assertEquals(parseAddedLines(diff), [
+    { line: 1, text: `++token ${awsKeyFixture()}` },
+    { line: 2, text: "plain" },
+    { line: 1, text: "in the second file" },
+  ]);
+});
+
+Deno.test("parseAddedLines reads combined merge hunks", () => {
+  // `git diff-tree -c` marks each line once per parent. Only a line added
+  // against every parent is content the merge itself introduced; the line
+  // inherited from one parent belongs to that parent's own commit.
+  const diff = [
+    "diff --combined f",
+    "index 1111111,2222222..3333333",
+    "--- a/f",
+    "+++ b/f",
+    "@@@ -3,1 -3,0 +3,2 @@@",
+    " +inherited from the first parent",
+    `++token ${awsKeyFixture()}`,
+  ].join("\n");
+  assertEquals(parseAddedLines(diff), [
+    { line: 4, text: `token ${awsKeyFixture()}` },
+  ]);
+});
+
+Deno.test("the range history walk is bounded and fails closed", async () => {
+  const { dir, range } = await makeRangeFixture({ "a.txt": "one\n" }, {});
+  try {
+    const commits = await rangeCommits(dir, range);
+    assertEquals(commits.length, 1);
+    assertEquals(commits[0]?.isMerge, false);
+    // A range with no history view has no commits to walk.
+    assertEquals(
+      await rangeCommits(dir, { ...range, historyArgs: undefined }),
+      [],
+    );
+    let threw = false;
+    try {
+      await rangeCommits(dir, range, "git", 0);
+    } catch (error) {
+      threw = true;
+      assertStringIncludes(String(error), "failing closed");
+    }
+    if (!threw) throw new Error("a range past the commit bound was walked");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("secret.diff flags added secrets, not preexisting ones", async () => {
   const { dir, range } = await makeRangeFixture(
     {
@@ -185,6 +283,90 @@ Deno.test("secret.diff flags added secrets, not preexisting ones", async () => {
     if (formatted.includes(awsKeyFixture())) {
       throw new Error("secret-shaped content reached formatted output");
     }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("secret.diff fails on a secret a later commit removed", async () => {
+  const { dir, base } = await makeBaseFixture({ "a.txt": "clean\n" });
+  try {
+    // The value is published in the range's ancestry even though the range's
+    // endpoints never hold it. The second added line's content starts with
+    // `++`, so its raw diff line is shaped exactly like a file header.
+    await writeFiles(dir, {
+      "a.txt": `clean\ntoken ${awsKeyFixture()}\n`,
+      "b.txt": `++token ${awsKeyFixture()}\n`,
+    });
+    await commitAll(dir, "introduce");
+    await writeFiles(dir, { "a.txt": "clean\n", "b.txt": "clean\n" });
+    await commitAll(dir, "remove");
+    const range = fixtureRange(base);
+
+    // Net endpoints only: the gap this check must not have.
+    assertEquals(
+      await secretDiffHits(dir, { ...range, historyArgs: undefined }),
+      [],
+    );
+    assertEquals(sortHits(await secretDiffHits(dir, range)), [
+      { path: "a.txt", line: 2, rule: "secret.diff/aws-access-key-id" },
+      { path: "b.txt", line: 1, rule: "secret.diff/aws-access-key-id" },
+    ]);
+
+    // The authoritative CI lane fails on it, value-free.
+    const ci = captureOut();
+    assertEquals(
+      await runRangeCheck(
+        "secret.diff",
+        dir,
+        envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_RANGE_BASE: base }),
+        ci.out,
+      ),
+      1,
+    );
+    assertStringIncludes(ci.text(), "a.txt:2: secret.diff/aws-access-key-id");
+    assertStringIncludes(ci.text(), "b.txt:1: secret.diff/aws-access-key-id");
+    if (ci.text().includes(awsKeyFixture())) {
+      throw new Error("secret-shaped content reached range-check output");
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("secret.diff covers merged branches and the merge itself", async () => {
+  const { dir, base } = await makeBaseFixture({ "a.txt": "clean\n" });
+  try {
+    // A merged branch introduces a secret and takes it back out again.
+    await gitIn(dir, ["checkout", "-qb", "side"]);
+    await writeFiles(dir, { "side.txt": `token ${awsKeyFixture()}\n` });
+    await commitAll(dir, "side introduces");
+    await writeFiles(dir, { "side.txt": "clean\n" });
+    await commitAll(dir, "side removes");
+    // The merge itself then introduces one that is in neither parent — an
+    // edit made while merging — which a later commit removes in turn.
+    await gitIn(dir, ["checkout", "-q", base]);
+    await writeFiles(dir, { "a.txt": "clean\nmainline\n" });
+    await commitAll(dir, "mainline");
+    await gitIn(dir, ["merge", "-q", "--no-ff", "--no-commit", "side"]);
+    await writeFiles(dir, {
+      "a.txt": `clean\nmainline\ntoken ${awsKeyFixture()}\n`,
+    });
+    await commitAll(dir, "merge");
+    await writeFiles(dir, { "a.txt": "clean\nmainline\n" });
+    await commitAll(dir, "drop the merge edit");
+    const range = fixtureRange(base);
+
+    assertEquals(
+      await secretDiffHits(dir, { ...range, historyArgs: undefined }),
+      [],
+    );
+    const commits = await rangeCommits(dir, range);
+    assertEquals(commits.filter((commit) => commit.isMerge).length, 1);
+    assertEquals(sortHits(await secretDiffHits(dir, range)), [
+      { path: "a.txt", line: 3, rule: "secret.diff/aws-access-key-id" },
+      { path: "side.txt", line: 1, rule: "secret.diff/aws-access-key-id" },
+    ]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -10,8 +10,14 @@
  *   rules from `public-safety-scan.ts`, reported under `secret.diff/*`. It
  *   is separate from the tree scan so a secret introduced by the change is
  *   caught even when later removal within the range would hide it from the
- *   tree scan. No path is skipped — the scanner's own source included. In a
- *   local (non-authoritative) run it additionally scans untracked non-ignored
+ *   tree scan. That covers the whole range and not just its endpoints: the
+ *   scan reads both the net diff and the added lines of every commit the
+ *   range makes newly reachable, merges included, because a value introduced
+ *   by one commit and removed by the next is still published in the ancestry
+ *   while appearing in no net diff. That walk is bounded too, and a range
+ *   past the bound fails closed rather than being scanned in part. No path
+ *   is skipped — the scanner's own source included. In a local
+ *   (non-authoritative) run it additionally scans untracked non-ignored
  *   files, which no `git diff` can see; ignored files stay excluded and
  *   symlinks are never followed. CI keeps the exact bound range instead,
  *   because `subject.resolve` already fails a subject tree carrying
@@ -55,8 +61,12 @@ import {
   untrackedFiles,
 } from "./scan-lib.ts";
 import {
+  type AddedLine,
   addedLinesFor,
+  addedLinesInCommit,
   changedFiles,
+  changedFilesInCommit,
+  rangeCommits,
   type ReleaseRange,
   resolveReleaseRange,
 } from "./release-range.ts";
@@ -77,6 +87,14 @@ export const RANGE_CHECKS = [
 ] as const;
 export type RangeCheck = (typeof RANGE_CHECKS)[number];
 
+// Two passes over the same range, because either one alone under-reports.
+//
+// The net pass is the range's endpoints, plus the working tree in a local run
+// — it is the only pass that sees uncommitted edits. The history pass reads
+// every commit the range makes newly reachable, which is the only way to see
+// a value that one commit introduced and a later one removed: that value is
+// published in the range's ancestry, yet no net diff of the endpoints has a
+// line to match. The same finding from both passes is reported once.
 export async function secretDiffHits(
   root: string,
   range: ReleaseRange,
@@ -84,19 +102,36 @@ export async function secretDiffHits(
 ): Promise<PublicSafetyHit[]> {
   const rules = rulesForFamily("secret.tree");
   const hits: PublicSafetyHit[] = [];
-  for (const path of await changedFiles(root, range, gitCommand)) {
-    if (hits.length >= MAX_COLLECTED_HITS) break;
-    for (const added of await addedLinesFor(root, range, path, gitCommand)) {
+  const seen = new Set<string>();
+  // Collects the matches in one file's added lines; false once collection has
+  // reached its bound and the caller should stop.
+  const collect = (path: string, added: readonly AddedLine[]): boolean => {
+    for (const line of added) {
       for (const rule of rules) {
-        if (rule.matches(added.text)) {
-          hits.push({
-            path: posixPath(path),
-            line: added.line,
-            rule: asDiffRuleId(rule.id),
-          });
-          if (hits.length >= MAX_COLLECTED_HITS) return hits;
-        }
+        if (!rule.matches(line.text)) continue;
+        const hit = {
+          path: posixPath(path),
+          line: line.line,
+          rule: asDiffRuleId(rule.id),
+        };
+        // A key of the reported fields only: no matched content is retained.
+        const key = `${hit.rule} ${hit.line} ${hit.path}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        hits.push(hit);
+        if (hits.length >= MAX_COLLECTED_HITS) return false;
       }
+    }
+    return true;
+  };
+  for (const path of await changedFiles(root, range, gitCommand)) {
+    const added = await addedLinesFor(root, range, path, gitCommand);
+    if (!collect(path, added)) return hits;
+  }
+  for (const commit of await rangeCommits(root, range, gitCommand)) {
+    for (const path of await changedFilesInCommit(root, commit, gitCommand)) {
+      const added = await addedLinesInCommit(root, commit, path, gitCommand);
+      if (!collect(path, added)) return hits;
     }
   }
   return hits;
