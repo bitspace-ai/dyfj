@@ -2,6 +2,7 @@ import {
   canonicalJson,
   computeEvidenceDigest,
   MANDATORY_CHECK_IDS,
+  MODEL_FAMILIES,
   POLICY_IDS,
   RISK_CLASSES,
   validateReceipt,
@@ -23,7 +24,7 @@ const NOW_MS = Date.parse("2026-08-29T12:00:00Z");
 // — the smallest checks object a conforming `repository.required_checks`
 // receipt can carry.
 function floorExecuted(
-  result: (id: string) => "pass" | "fail" = () => "pass",
+  result: (id: string) => "pass" | "fail" | "warn" = () => "pass",
   required: (id: string) => boolean = () => true,
 ): Record<string, unknown>[] {
   return MANDATORY_CHECK_IDS.map((id) => ({
@@ -394,6 +395,92 @@ Deno.test("passing decisions with failed required checks are rejected", async ()
   assertEquals((await validateReceipt(blocked)).valid, true);
 });
 
+Deno.test("an all-warn required-check receipt cannot pass", async () => {
+  // The verified failure: every mandatory check ran and returned `warn` —
+  // not one of them delivered the assurance it is required for — and the
+  // receipt still decided `allow`.
+  const warnExecuted = (r: Record<string, unknown>) => {
+    (r.checks as Record<string, unknown>).executed = floorExecuted(
+      () => "warn",
+    );
+  };
+  for (const decision of ["allow", "warn", "degraded", "needs-approval"]) {
+    await expectViolation((r) => {
+      r.decision = decision;
+      warnExecuted(r);
+    }, "receipt.schema/passing-with-warned-checks");
+  }
+  // A bypass reference cannot convert a warn into a mandatory pass either.
+  await expectViolation((r) => {
+    r.decision = "bypass";
+    r.bypass_ref = `exception-${"d".repeat(40)}`;
+    warnExecuted(r);
+  }, "receipt.schema/passing-with-warned-checks");
+  // The warn vocabulary itself stays legitimate: a non-passing decision may
+  // record exactly what the checks reported.
+  for (const decision of ["block", "unknown"]) {
+    const recorded = await makeReceipt((r) => {
+      r.decision = decision;
+      warnExecuted(r);
+    });
+    assertEquals((await validateReceipt(recorded)).valid, true);
+  }
+});
+
+Deno.test("a single warned mandatory check blocks a passing decision", async () => {
+  // Mixed pass/warn: the other ten mandatory checks passing does not cover
+  // for the one that only warned.
+  for (const warned of MANDATORY_CHECK_IDS) {
+    await expectViolation((r) => {
+      (r.checks as Record<string, unknown>).executed = floorExecuted((id) =>
+        id === warned ? "warn" : "pass"
+      );
+    }, "receipt.schema/passing-with-warned-checks");
+  }
+  // A warn alongside a failure reports both rules, not just the failure.
+  const mixed = await validateReceipt(
+    await makeReceipt((r) => {
+      (r.checks as Record<string, unknown>).executed = floorExecuted((id) => {
+        if (id === "secret.diff") return "warn";
+        return id === "test.aggregate" ? "fail" : "pass";
+      });
+    }),
+  );
+  assertEquals(mixed.valid, false);
+  for (
+    const violation of [
+      "receipt.schema/passing-with-warned-checks",
+      "receipt.schema/passing-with-failed-checks",
+    ]
+  ) {
+    if (!mixed.violations.includes(violation)) {
+      throw new Error(
+        `expected ${violation}, got ${JSON.stringify(mixed.violations)}`,
+      );
+    }
+  }
+});
+
+Deno.test("warn stays valid where nothing mandatory rests on it", async () => {
+  // An advisory check that warned is recorded and accepted; the required
+  // check beside it passed, so the receipt still carries a clean floor.
+  const advisory = await makeReceipt((r) => {
+    r.policy = { id: "repository.diff_hygiene", version: 1 };
+    (r.checks as Record<string, unknown>).executed = [
+      { id: "diff.whitespace", result: "pass", required: true },
+      { id: "markdown.links", result: "warn", required: false },
+    ];
+  });
+  assertEquals((await validateReceipt(advisory)).valid, true);
+  // Under any policy, though, a warn on a *required* check is not a pass.
+  await expectViolation((r) => {
+    r.policy = { id: "repository.diff_hygiene", version: 1 };
+    (r.checks as Record<string, unknown>).executed = [
+      { id: "diff.whitespace", result: "warn", required: true },
+    ];
+  }, "receipt.schema/passing-with-warned-checks");
+});
+
 // Moves one mandatory check out of `executed` into the named gap bucket so
 // the floor stays exactly-once while the gap rule is exercised.
 function moveToGap(
@@ -455,8 +542,8 @@ Deno.test("required independence needs supporting observation", async () => {
     required: true,
     status: "independent",
     observed_by: "runner-observed",
-    implementer_family: "family-a",
-    verifier_family: "family-b",
+    implementer_family: "anthropic",
+    verifier_family: "openai",
     ...overrides,
   });
   const supported = await makeReceipt((r) => {
@@ -470,7 +557,7 @@ Deno.test("required independence needs supporting observation", async () => {
       claim({ status: "unknown" }),
       claim({ observed_by: "model-asserted" }),
       claim({ observed_by: "self-attested" }),
-      claim({ verifier_family: "family-a" }),
+      claim({ verifier_family: "anthropic" }),
     ]
   ) {
     await expectViolation((r) => {
@@ -493,8 +580,8 @@ Deno.test("an independent status always needs supporting observation", async () 
     required: false,
     status: "independent",
     observed_by: "runner-observed",
-    implementer_family: "family-a",
-    verifier_family: "family-b",
+    implementer_family: "anthropic",
+    verifier_family: "openai",
     ...overrides,
   });
   for (
@@ -503,7 +590,7 @@ Deno.test("an independent status always needs supporting observation", async () 
       claim({ observed_by: "self-attested" }),
       claim({ implementer_family: "none" }),
       claim({ verifier_family: "unknown" }),
-      claim({ verifier_family: "family-a" }),
+      claim({ verifier_family: "anthropic" }),
     ]
   ) {
     await expectViolation((r) => {
@@ -584,8 +671,8 @@ function independenceClaim(
     required: true,
     status: "independent",
     observed_by: "runner-observed",
-    implementer_family: "family-a",
-    verifier_family: "family-b",
+    implementer_family: "anthropic",
+    verifier_family: "openai",
     ...overrides,
   };
 }
@@ -593,16 +680,16 @@ function independenceClaim(
 Deno.test("family identifiers outside the canonical form are rejected", async () => {
   for (
     const family of [
-      "Family-A",
-      "FAMILY-A",
-      "family_a",
-      " family-a",
-      "family-a ",
-      "family.a",
-      "family a",
-      "-family-a",
-      "family--a",
-      "fаmily-a", // Cyrillic lookalike
+      "Anthropic",
+      "ANTHROPIC",
+      "open_ai",
+      " openai",
+      "openai ",
+      "open.ai",
+      "open ai",
+      "-openai",
+      "open--ai",
+      "аnthropic", // Cyrillic lookalike
       "b".repeat(65),
     ]
   ) {
@@ -616,13 +703,13 @@ Deno.test("family identifiers outside the canonical form are rejected", async ()
 });
 
 Deno.test("case-differing spellings never satisfy different-family independence", async () => {
-  // The verified failure: `Family-A` versus `family-a` is one family wearing
-  // two spellings, and must never validate as independent.
+  // The verified failure: `Anthropic` versus `anthropic` is one family
+  // wearing two spellings, and must never validate as independent.
   for (
     const pair of [
-      { implementer_family: "family-a", verifier_family: "Family-A" },
-      { implementer_family: "Family-A", verifier_family: "family-a" },
-      { implementer_family: "FAMILY-A", verifier_family: "family-a" },
+      { implementer_family: "anthropic", verifier_family: "Anthropic" },
+      { implementer_family: "Anthropic", verifier_family: "anthropic" },
+      { implementer_family: "ANTHROPIC", verifier_family: "anthropic" },
     ]
   ) {
     const receipt = await makeReceipt((r) => {
@@ -646,8 +733,8 @@ Deno.test("case-differing spellings never satisfy different-family independence"
 Deno.test("separator aliases of one family are not two families", async () => {
   for (
     const pair of [
-      { implementer_family: "family-a", verifier_family: "familya" },
-      { implementer_family: "fam-ily-a", verifier_family: "family-a" },
+      { implementer_family: "openai", verifier_family: "open-ai" },
+      { implementer_family: "anthro-pic", verifier_family: "anthropic" },
     ]
   ) {
     await expectViolation((r) => {
@@ -770,12 +857,58 @@ Deno.test("the model family is a canonical identifier", async () => {
     observed_by: "runner-observed",
   });
   await expectViolation((r) => {
-    r.model = model("Family-A");
+    r.model = model("Anthropic");
   }, "receipt.schema/non-canonical-family");
   const canonical = await makeReceipt((r) => {
-    r.model = model("family-a");
+    r.model = model("anthropic");
   });
   assertEquals((await validateReceipt(canonical)).valid, true);
+});
+
+Deno.test("placeholder family identifiers are not production families", async () => {
+  // The verified failure: the vocabulary carried stand-in family names, so a
+  // receipt could claim two-family independent review — `family-a` reviewed
+  // by `family-b` — without either name identifying a real model family.
+  const model = (family: string): Record<string, unknown> => ({
+    provider: "provider-fixture",
+    model: "model-fixture",
+    family,
+    observed_by: "runner-observed",
+  });
+  for (const placeholder of ["family-a", "family-b", "family-c"]) {
+    await expectViolation((r) => {
+      r.independence = independenceClaim({
+        implementer_family: placeholder,
+      });
+    }, "receipt.schema/unknown-family");
+    await expectViolation((r) => {
+      r.model = model(placeholder);
+    }, "receipt.schema/unknown-family");
+  }
+  // A claim resting on two placeholders supports nothing at all.
+  await expectViolation((r) => {
+    r.independence = independenceClaim({
+      implementer_family: "family-a",
+      verifier_family: "family-b",
+    });
+  }, "receipt.schema/unsupported-independence");
+  // Every remaining family names a real one and still carries a claim.
+  for (const family of MODEL_FAMILIES) {
+    const receipt = await makeReceipt((r) => {
+      r.independence = independenceClaim({
+        implementer_family: family,
+        verifier_family: family === "anthropic" ? "openai" : "anthropic",
+      });
+    });
+    const result = await validateReceipt(receipt);
+    if (!result.valid) {
+      throw new Error(
+        `canonical family ${family} rejected: ${
+          JSON.stringify(result.violations)
+        }`,
+      );
+    }
+  }
 });
 
 Deno.test("unknown keys in nested objects are rejected without echo", async () => {
@@ -821,7 +954,7 @@ Deno.test("unknown keys in nested objects are rejected without echo", async () =
     r.model = {
       provider: "provider-fixture",
       model: "model-fixture",
-      family: "family-a",
+      family: "anthropic",
       observed_by: "runner-observed",
       [hostile]: "payload",
     };

@@ -9,12 +9,12 @@
  * references not bound to the supplied immutable digest (for every subject
  * kind), subject/digest mismatches, non-UTC or non-absolute timestamps,
  * stale or future subject timestamps, negative finding counts, passing
- * decisions with failed or missing required checks, unconfirmed redaction,
- * unbounded payloads, mutable approval or bypass references, runner identity
- * without a revision, non-canonical model families, families outside the
- * closed family vocabulary, unknown keys inside any nested object, receipts
- * whose canonical serialization is past the aggregate size bound or that
- * exceed the nesting-depth bound, and independence claims
+ * decisions with failed, warned, or missing required checks, unconfirmed
+ * redaction, unbounded payloads, mutable approval or bypass references,
+ * runner identity without a revision, non-canonical model families, families
+ * outside the closed family vocabulary, unknown keys inside any nested
+ * object, receipts whose canonical serialization is past the aggregate size
+ * bound or that exceed the nesting-depth bound, and independence claims
  * unsupported by runner-observed or operator-attested evidence are all
  * rejected.
  *
@@ -131,6 +131,12 @@ const SENTINEL_FAMILIES: readonly string[] = ["none", "unknown"];
 // requirement twice over. Only an id in this set — or an alias the closed
 // table below resolves into it — names a family; every other spelling is
 // rejected rather than admitted as a newly invented family.
+//
+// Every entry names a real model family. Placeholder identifiers are
+// deliberately absent: a vocabulary that carries stand-in names lets a
+// receipt claim two-family independent review without two real families
+// ever having been involved, so fixtures exercise the family rules with
+// real canonical ids like every other receipt.
 export const MODEL_FAMILIES = [
   "anthropic",
   "openai",
@@ -143,11 +149,6 @@ export const MODEL_FAMILIES = [
   "amazon",
   "microsoft",
   "cohere",
-  // Reserved conformance identifiers. They name no provider and exist so
-  // fixtures can exercise family rules without pinning a vendor.
-  "family-a",
-  "family-b",
-  "family-c",
 ] as const;
 
 // The closed alias table: known second names for a vocabulary family, mapped
@@ -215,12 +216,16 @@ const MAX_DEPTH = 6;
 // canonical form and is rejected even though Date.parse would accept it.
 const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
+// The controlled executed-result vocabulary. `warn` records a check that ran
+// and reported something short of a clean result; it is a legitimate result
+// to carry, but it is not a pass, so it never satisfies a required check for
+// a passing decision.
 export const CHECK_RESULTS = ["pass", "fail", "warn"] as const;
 
 // Decisions that a required deterministic gap must never accompany. A
-// required check that was skipped, unavailable, failed, or stale yields
-// `unknown` or `block`; `bypass` cannot convert a deterministic failure into
-// a pass and `degraded` never satisfies a mandatory check.
+// required check that was skipped, unavailable, failed, warned, or stale
+// yields `unknown` or `block`; `bypass` cannot convert a deterministic
+// failure into a pass and `degraded` never satisfies a mandatory check.
 const PASSING_DECISIONS: readonly string[] = [
   "allow",
   "warn",
@@ -468,12 +473,13 @@ function checkEntryViolations(
   kind: "executed" | "gap",
   violations: string[],
   seen: Map<string, CheckIdOccurrence>,
-): { requiredGap: boolean; executedFailure: boolean } {
+): { requiredGap: boolean; executedFailure: boolean; executedWarn: boolean } {
   let requiredGap = false;
   let executedFailure = false;
+  let executedWarn = false;
   if (!Array.isArray(entries) || entries.length > MAX_CHECK_ENTRIES) {
     violations.push("receipt.schema/invalid:checks");
-    return { requiredGap, executedFailure };
+    return { requiredGap, executedFailure, executedWarn };
   }
   for (const entry of entries) {
     if (!isPlainObject(entry) || !isBoundedString(entry.id)) {
@@ -515,6 +521,10 @@ function checkEntryViolations(
         continue;
       }
       if (result === "fail" && entry.required) executedFailure = true;
+      // A required check that only warned did not deliver the assurance it
+      // was required for. It is recorded, not repaired: the decision rule
+      // below refuses to call it a pass.
+      if (result === "warn" && entry.required) executedWarn = true;
     } else {
       if (!isBoundedString(entry.reason_class)) {
         violations.push("receipt.schema/invalid:checks");
@@ -523,7 +533,7 @@ function checkEntryViolations(
       if (entry.required) requiredGap = true;
     }
   }
-  return { requiredGap, executedFailure };
+  return { requiredGap, executedFailure, executedWarn };
 }
 
 function validateIdRevision(
@@ -779,6 +789,7 @@ export async function validateReceipt(
 
   let requiredGap = false;
   let executedFailure = false;
+  let executedWarn = false;
   const seenCheckIds = new Map<string, CheckIdOccurrence>();
   const checks = value.checks;
   if (
@@ -795,6 +806,7 @@ export async function validateReceipt(
       seenCheckIds,
     );
     executedFailure = executed.executedFailure;
+    executedWarn = executed.executedWarn;
     for (const key of ["skipped", "unavailable", "failed"] as const) {
       const gap = checkEntryViolations(
         checks[key],
@@ -934,6 +946,15 @@ export async function validateReceipt(
     }
     if (isPassing && executedFailure) {
       violations.push("receipt.schema/passing-with-failed-checks");
+    }
+    // `warn` is a legitimate recorded result, but it is not the executed
+    // `pass` a required check exists to produce. Under
+    // `repository.required_checks` every mandatory id is required and
+    // executed, so a passing decision there needs a clean pass on all of
+    // them; under any policy, a required check that only warned cannot be
+    // spent as satisfied assurance.
+    if (isPassing && executedWarn) {
+      violations.push("receipt.schema/passing-with-warned-checks");
     }
     if (decision === "bypass" && !isBoundedString(value.bypass_ref)) {
       violations.push("receipt.schema/missing-bypass-ref");
