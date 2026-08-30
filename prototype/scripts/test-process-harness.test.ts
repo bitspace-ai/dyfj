@@ -8,6 +8,7 @@ import {
   captureProcessIdentity,
   discoverSurvivors,
   isEmptyReport,
+  killArguments,
   killPid,
   listProcesses,
   lockPath,
@@ -142,6 +143,11 @@ async function waitForContenderResults(
 }
 
 describe("test process harness", () => {
+  test("separates process targets from kill options", () => {
+    expect(killArguments("123", "SIGKILL")).toEqual(["-KILL", "--", "123"]);
+    expect(killArguments("-123", "SIGTERM")).toEqual(["-TERM", "--", "-123"]);
+  });
+
   test("an exclusive lock refuses a second run while the first pid is alive", async () => {
     const tmpDir = await scopedTmp();
     const holder = spawnDetachedSleep("sleep 60");

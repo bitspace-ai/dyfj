@@ -223,13 +223,20 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
   return processes;
 }
 
+export function killArguments(
+  spec: string,
+  signal: "SIGTERM" | "SIGKILL",
+): string[] {
+  const flag = signal === "SIGKILL" ? "-KILL" : "-TERM";
+  return [flag, "--", spec];
+}
+
 async function sendKill(
   spec: string,
   signal: "SIGTERM" | "SIGKILL",
 ): Promise<void> {
-  const flag = signal === "SIGKILL" ? "-KILL" : "-TERM";
   await new Deno.Command("/bin/kill", {
-    args: [flag, spec],
+    args: killArguments(spec, signal),
     stdout: "null",
     stderr: "null",
   }).output().catch(() => undefined);

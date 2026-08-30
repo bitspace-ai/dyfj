@@ -29,7 +29,7 @@ void (async () => {
     if (Deno.ppid === 1 || Deno.ppid !== originParent) {
       try {
         await new Deno.Command("/bin/kill", {
-          args: ["-KILL", `-${Deno.pid}`],
+          args: ["-KILL", "--", `-${Deno.pid}`],
           stdout: "null",
           stderr: "null",
         }).output();

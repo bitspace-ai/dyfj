@@ -11,6 +11,10 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Portable process-group signaling**: Test-process cleanup now separates
+  `/bin/kill` options from process targets explicitly. GNU/Linux therefore
+  treats a negative process-group ID as the intended target instead of parsing
+  it as another signal option and signaling the test gate itself.
 - **Test-process cleanup isolation**: The supervised test harness no longer
   sends a process-group signal when a matched child shares the current test
   runner's or supervisor's process group. Those children are reaped by PID, so
