@@ -32,7 +32,10 @@ function assertExcludes(text: string, banned: string): void {
 
 Deno.test("gate workflow runs the repository-owned aggregate command", async () => {
   const text = await workflowText();
-  assertIncludes(text, "run: deno task test");
+  const runs = text.match(/^\s+run: deno task test$/gm) ?? [];
+  if (runs.length !== 2) {
+    throw new Error("Linux and macOS must each run the repository-owned gate");
+  }
 });
 
 Deno.test("gate workflow does not restate lane definitions in YAML", async () => {
@@ -103,6 +106,17 @@ Deno.test("gate workflow exposes the stable required-check job name", async () =
   assertIncludes(text, "\n  full-gate:\n");
 });
 
+Deno.test("gate workflow names explicit Linux and macOS runner versions", async () => {
+  const text = await workflowText();
+  assertIncludes(text, "runs-on: ubuntu-24.04");
+  assertIncludes(text, "\n  macos-portability:\n");
+  assertIncludes(text, "runs-on: macos-15");
+  assertIncludes(text, "deno-aarch64-apple-darwin.zip");
+  assertIncludes(text, "dolt-darwin-arm64.tar.gz");
+  assertExcludes(text, "runs-on: ubuntu-latest");
+  assertExcludes(text, "runs-on: macos-latest");
+});
+
 Deno.test("gate workflow binds the exact subject and release range", async () => {
   const text = await workflowText();
   assertIncludes(text, "DYFJ_GATE_SUBJECT: ${{ github.sha }}");
@@ -144,7 +158,7 @@ Deno.test("gate workflow verifies exact pinned tool versions", async () => {
 // so these helpers work on line order rather than on step prose.
 const DOWNLOAD_LINE = /\bcurl\b[^\n]*\s-o\s+(\S+)/;
 const UNPACK_COMMAND = /\b(unzip|tar|7z|gunzip|bsdtar|install)\b/;
-const DIGEST_CHECK = /\bsha256sum\b[^\n]*\s-c\b/;
+const DIGEST_CHECK = /\b(?:sha256sum\s+-c|shasum\s+-a\s+256\s+-c)\b/;
 
 interface ArchiveUse {
   path: string;

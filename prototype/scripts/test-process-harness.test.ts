@@ -131,15 +131,25 @@ function spawnLockContender(
 async function waitForContenderResults(
   paths: string[],
 ): Promise<string[]> {
-  await waitUntil(async () => {
-    const texts = await Promise.all(
-      paths.map((path) => Deno.readTextFile(path).catch(() => "")),
-    );
-    return texts.every((text) =>
-      text.startsWith("acquired ") || text.startsWith("conflict ")
-    );
-  }, 8_000, "lock contenders did not report acquire or conflict");
-  return await Promise.all(paths.map((path) => Deno.readTextFile(path)));
+  await waitUntil(
+    async () => {
+      const texts = await Promise.all(
+        paths.map((path) => Deno.readTextFile(path).catch(() => "")),
+      );
+      return texts.every((text) =>
+        text.startsWith("acquired ") || text.startsWith("conflict ") ||
+        text.startsWith("error ")
+      );
+    },
+    8_000,
+    "lock contenders did not report acquire or conflict",
+  );
+  const texts = await Promise.all(paths.map((path) => Deno.readTextFile(path)));
+  const failure = texts.find((text) => text.startsWith("error "));
+  if (failure !== undefined) {
+    throw new Error(`lock contender failed: ${failure.trim()}`);
+  }
+  return texts;
 }
 
 describe("test process harness", () => {
@@ -902,6 +912,32 @@ describe("test process harness", () => {
     const generation = acquired[0]!.trim().slice("acquired ".length);
     const held = await readLockFile(tmpDir, lockFile);
     expect(held?.generation).toBe(generation);
+  }, 15_000);
+
+  test("a new prototype root reclaims a stale operator lock without foreign-root access", async () => {
+    const operatorHome = await scopedTmp();
+    const rootA = await scopedTmp();
+    const rootB = await scopedTmp();
+    const lockFile = operatorVitestLockPath(operatorHome);
+    const holder = spawnDetachedSleep("sleep 60");
+    await acquireTestRunLock({
+      tmpDir: rootA,
+      lockFile,
+      boundSec: 30,
+      pid: holder.pid,
+    });
+    await killPid(holder.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(holder.pid),
+      2_000,
+      "stale lock holder did not exit",
+    );
+    const contender = spawnLockContender(rootB, lockFile);
+    const [text] = await waitForContenderResults([contender.resultPath]);
+    expect(text).toMatch(/^acquired /);
+    const held = await readLockFile(rootB, lockFile);
+    expect(held?.pid).toBe(contender.pid);
+    expect(held?.tmpDir).toBe(rootB);
   }, 15_000);
 
   test("two prototype roots reclaiming a stale operator lock yield one owner", async () => {

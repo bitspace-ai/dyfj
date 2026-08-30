@@ -1,13 +1,13 @@
 # Clean-checkout deterministic gate.
 #
 # This workflow is the remote enforcement point for the public deterministic
-# checks it runs: the repository-owned aggregate command executes from a
-# clean checkout with a read-only token, no repository secrets, no private
-# repositories, and no hosted-model access. Local hooks may run the same
-# commands for speed, but a bypassed or absent hook cannot make this check
-# green, and a green run here claims nothing about gates that live outside
-# this repository (private disclosure overlay, independent review, operator
-# acceptance).
+# checks it runs: the repository-owned aggregate command executes from clean
+# Linux and macOS checkouts with a read-only token, no repository secrets, no
+# private repositories, and no hosted-model access. Local hooks may run the
+# same commands for speed, but a bypassed or absent hook cannot make these
+# checks green, and a green run here claims nothing about gates that live
+# outside this repository (private disclosure overlay, independent review,
+# operator acceptance).
 #
 # `pull_request` runs untrusted code with a read-only token and no secrets by
 # construction. Do not add secret-bearing steps, write-scoped permissions, or
@@ -49,7 +49,7 @@ concurrency:
 jobs:
   # Stable required-check name for branch protection: "full-gate".
   full-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       # Exact-subject and exact-range binding: the gate's subject.resolve /
@@ -103,5 +103,50 @@ jobs:
           rustc --version | grep -F "rustc 1.98.0"
       # The single repository green bar. Lane definitions live in
       # `scripts/` and root `deno.json`; this file does not restate them.
+      - name: Run the full deterministic gate
+        run: deno task test
+
+  # Independent macOS execution makes process, filesystem, and runtime
+  # portability observable without changing the stable Linux required-check
+  # name above. The explicit runner label avoids an unbounded latest move;
+  # GitHub still owns patch-level image updates within that label.
+  macos-portability:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DYFJ_GATE_SUBJECT: ${{ github.sha }}
+      DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - name: Check out the subject commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Deno 2.9.6 (exact pinned version, digest-verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/deno.zip \
+            "https://github.com/denoland/deno/releases/download/v2.9.6/deno-aarch64-apple-darwin.zip"
+          printf '%s  %s\n' "213a2f304f04d3c9cb5220669afad138f60a5aab1fe80962abdeb8f35807a472" /tmp/deno.zip | shasum -a 256 -c -
+          mkdir -p "$HOME/.deno-pinned"
+          unzip -q -o /tmp/deno.zip -d "$HOME/.deno-pinned"
+          "$HOME/.deno-pinned/deno" --version | grep -F "deno 2.9.6"
+          echo "$HOME/.deno-pinned" >> "$GITHUB_PATH"
+      - name: Install Dolt 2.3.1 (exact pinned version, digest-verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/dolt.tar.gz \
+            "https://github.com/dolthub/dolt/releases/download/v2.3.1/dolt-darwin-arm64.tar.gz"
+          printf '%s  %s\n' "d738b9f523289e9c51dbe0e9f2623c8e032924c62fa72a443703020adf099d27" /tmp/dolt.tar.gz | shasum -a 256 -c -
+          mkdir -p "$HOME/.dolt-pinned"
+          tar -xzf /tmp/dolt.tar.gz -C "$HOME/.dolt-pinned" --strip-components=1
+          "$HOME/.dolt-pinned/bin/dolt" version | grep -F "2.3.1"
+          echo "$HOME/.dolt-pinned/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned Rust toolchain (exact pin, reported-version check)
+        working-directory: core
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustc --version | grep -F "rustc 1.98.0"
       - name: Run the full deterministic gate
         run: deno task test

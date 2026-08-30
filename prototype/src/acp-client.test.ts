@@ -91,18 +91,14 @@ async function forceStopRecordedProcessTree(
   const childPid = await readPid(pidFile);
   const grandchildPid = await readPid(grandchildPidFile);
   if (childPid !== null) {
-    await new Deno.Command("/bin/kill", {
-      args: ["-KILL", `-${childPid}`],
-      stdout: "null",
-      stderr: "null",
-    }).output().catch(() => undefined);
+    await runSignalCommand(["-KILL", "--", `-${childPid}`], 500).catch(
+      () => undefined,
+    );
   }
   if (grandchildPid !== null) {
-    await new Deno.Command("/bin/kill", {
-      args: ["-KILL", String(grandchildPid)],
-      stdout: "null",
-      stderr: "null",
-    }).output().catch(() => undefined);
+    await runSignalCommand(["-KILL", "--", String(grandchildPid)], 500).catch(
+      () => undefined,
+    );
   }
 }
 

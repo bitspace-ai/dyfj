@@ -925,21 +925,12 @@ async function reclaimDeadLock(opts: {
   }
   const generation = state.lock.generation;
   await sweepLockedTmpDir({
-    tmpDir: state.lock.tmpDir,
+    tmpDir: opts.tmpDir,
     ignorePids,
     commandNeedles: opts.commandNeedles,
     lockFile: opts.lockFile,
     expectedGeneration: generation,
   });
-  if (state.lock.tmpDir !== opts.tmpDir) {
-    await sweepLockedTmpDir({
-      tmpDir: opts.tmpDir,
-      ignorePids,
-      commandNeedles: opts.commandNeedles,
-      lockFile: opts.lockFile,
-      expectedGeneration: generation,
-    });
-  }
   const current = await readLockState(opts.lockFile);
   if (current.kind === "valid" && current.lock.generation !== generation) return;
   await removeLockFile(opts.lockFile);
@@ -1087,6 +1078,11 @@ if (import.meta.main) {
       );
       Deno.exit(2);
     }
+    const name = error instanceof Error ? error.name : "Error";
+    const detail = (error instanceof Error ? error.message : String(error))
+      .replaceAll(/\s+/g, " ")
+      .slice(0, 500);
+    await Deno.writeTextFile(resultPath, `error ${name}: ${detail}\n`);
     throw error;
   }
 }
