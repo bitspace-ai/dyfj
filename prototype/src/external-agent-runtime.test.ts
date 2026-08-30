@@ -422,8 +422,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       sessionId: "01EXISTINGSESSION0000000000",
       workspaceRoot: "/private/tmp",
     });
-    expect(result.text).toContain(`cwd=${Deno.cwd()}`);
-    expect(result.text).not.toContain("cwd=/private/tmp");
+    expect(result.text).toBe(`first|cwd=${Deno.cwd()}|last`);
   });
 
   test("rejects a resumed session without persisted workspace evidence", async () => {
@@ -722,10 +721,13 @@ Deno.exit(output.code);`,
     await Deno.chmod(nodePath, 0o700);
     const ambient = Deno.env.get("PATH");
     const prevHome = Deno.env.get("HOME");
+    const prevDenoDir = Deno.env.get("DENO_DIR");
     const prevNode = Deno.env.get("DYFJ_NODE_PATH");
     const prevToolchain = Deno.env.get("DYFJ_CODEX_TOOLCHAIN_PATH");
     const prevRustup = Deno.env.get("DYFJ_CODEX_RUSTUP_HOME");
     Deno.env.set("HOME", home);
+    // Keep fresh-checkout package initialization out of the disposable HOME.
+    Deno.env.set("DENO_DIR", join(Deno.cwd(), ".vitest-tmp", "deno-cache"));
     Deno.env.set("DYFJ_NODE_PATH", nodePath);
     Deno.env.set("DYFJ_CODEX_TOOLCHAIN_PATH", toolchain);
     Deno.env.set("DYFJ_CODEX_RUSTUP_HOME", rustupHome);
@@ -771,6 +773,8 @@ Deno.exit(output.code);`,
       else Deno.env.set("PATH", ambient);
       if (prevHome === undefined) Deno.env.delete("HOME");
       else Deno.env.set("HOME", prevHome);
+      if (prevDenoDir === undefined) Deno.env.delete("DENO_DIR");
+      else Deno.env.set("DENO_DIR", prevDenoDir);
       if (prevNode === undefined) Deno.env.delete("DYFJ_NODE_PATH");
       else Deno.env.set("DYFJ_NODE_PATH", prevNode);
       if (prevToolchain === undefined) Deno.env.delete("DYFJ_CODEX_TOOLCHAIN_PATH");
@@ -1983,7 +1987,10 @@ Deno.exit(output.code);`,
         workspaceRoot: Deno.cwd(),
       }, { sessionMap: map });
       expect(map.size).toBe(1);
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      const retirementDeadline = Date.now() + 2_000;
+      while (map.size !== 0 && Date.now() < retirementDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
       expect(map.size).toBe(0);
     } finally {
       await map.shutdown();

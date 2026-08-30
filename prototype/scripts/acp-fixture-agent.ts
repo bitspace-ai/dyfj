@@ -29,7 +29,7 @@ void (async () => {
     if (Deno.ppid === 1 || Deno.ppid !== originParent) {
       try {
         await new Deno.Command("/bin/kill", {
-          args: ["-KILL", `-${Deno.pid}`],
+          args: ["-KILL", "--", `-${Deno.pid}`],
           stdout: "null",
           stderr: "null",
         }).output();
@@ -423,6 +423,10 @@ const app = agent({ name: "dyfj-acp-fixture" })
         }
         const responses = await Promise.all(permissionResponses);
         const response = responses[0];
+        if (prompt.includes("FIXTURE_PERMISSION_EXPECT_CANCEL")) {
+          await fixture.cancel.promise;
+          return { stopReason: "cancelled" };
+        }
         if (scopeProbe || lateReject || rejectOnly) {
           if (fixture.cancelled) return { stopReason: "cancelled" };
           await chunk(

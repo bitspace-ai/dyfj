@@ -1,3 +1,5 @@
 [toolchain]
-channel = "stable"
+# Exact pin so local builds and clean-checkout CI compile with the same
+# toolchain; the repository dependency policy rejects a floating channel.
+channel = "1.98.0"
 components = ["rustfmt", "clippy"]

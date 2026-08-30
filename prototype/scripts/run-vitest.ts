@@ -18,9 +18,13 @@
  *   Supervised runs fail closed without an absolute HOME.
  *
  * `--version` / other non-`run` args stay an unsupervised passthrough so
- * existing launcher probes keep working.
+ * existing launcher probes keep working, including from a fresh checkout where
+ * prototype npm packages are not yet materialized: esbuild resolution is
+ * deferred past module load, an absent install drops the esbuild run grant and
+ * `ESBUILD_BINARY_PATH` instead of granting a nonexistent path, and a
+ * supervised `run` still refuses to start without the installed binary.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { resolveEsbuildBinary } from "./esbuild-binary.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
@@ -50,12 +54,23 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
   /[\\\/]$/,
   "",
 );
-const esbuildBinary = await resolveEsbuildBinary(prototypeRoot);
+const esbuildBinary = await installedEsbuildBinary();
 const denoExecutable = selectedDenoExecutable();
 const extraReads = await extraReadGrants();
 const reaperScript = fileURLToPath(
   new URL("./test-process-reaper.ts", import.meta.url),
 );
+
+// A fresh checkout has no materialized npm packages yet; an ambiguous install
+// (anything other than exactly one binary once the tree exists) still throws.
+async function installedEsbuildBinary(): Promise<string | undefined> {
+  try {
+    return await resolveEsbuildBinary(prototypeRoot);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw error;
+  }
+}
 
 async function extraReadGrants(): Promise<string[]> {
   try {
@@ -67,7 +82,7 @@ async function extraReadGrants(): Promise<string[]> {
   }
 }
 
-function vitestArgs(args: string[], extraReads: string[]): string[] {
+export function vitestArgs(args: string[], extraReads: string[]): string[] {
   const read = [
     ".",
     "..",
@@ -78,12 +93,22 @@ function vitestArgs(args: string[], extraReads: string[]): string[] {
     ...extraReads,
   ].join(",");
   const ffi = ["node_modules", ...extraReads].join(",");
+  const run = [
+    "bash",
+    "/bin/bash",
+    denoExecutable,
+    "/bin/kill",
+    "/bin/sh",
+    "/bin/ps",
+    ...(esbuildBinary === undefined ? [] : [esbuildBinary]),
+  ].join(",");
   return [
     "run",
+    "--no-prompt",
     "-P=test",
     `--allow-read=${read}`,
     "--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
-    `--allow-run=bash,/bin/bash,${denoExecutable},/bin/kill,/bin/sh,/bin/ps,${esbuildBinary}`,
+    `--allow-run=${run}`,
     `--allow-ffi=${ffi}`,
     "npm:vitest@3.2.6",
     ...args,
@@ -143,7 +168,9 @@ async function passthrough(args: string[]): Promise<number> {
     cwd: prototypeRoot,
     env: {
       ...Deno.env.toObject(),
-      ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}`,
+      ...(esbuildBinary === undefined
+        ? {}
+        : { ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}` }),
     },
     stdin: "inherit",
     stdout: "inherit",
@@ -172,6 +199,12 @@ async function supervised(args: string[]): Promise<number> {
   if (Deno.build.os === "windows") {
     console.error(
       "dyfj: supervised Vitest execution requires process groups (unavailable on Windows)",
+    );
+    return 1;
+  }
+  if (esbuildBinary === undefined) {
+    console.error(
+      "dyfj: supervised Vitest execution requires the installed esbuild binary (prototype npm packages are not materialized)",
     );
     return 1;
   }

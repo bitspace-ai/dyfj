@@ -9,4 +9,9 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
-
+  # Workflow actions are pinned by full commit digest; this lane proposes
+  # digest updates so pins do not silently rot.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

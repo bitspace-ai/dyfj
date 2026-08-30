@@ -223,13 +223,20 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
   return processes;
 }
 
+export function killArguments(
+  spec: string,
+  signal: "SIGTERM" | "SIGKILL",
+): string[] {
+  const flag = signal === "SIGKILL" ? "-KILL" : "-TERM";
+  return [flag, "--", spec];
+}
+
 async function sendKill(
   spec: string,
   signal: "SIGTERM" | "SIGKILL",
 ): Promise<void> {
-  const flag = signal === "SIGKILL" ? "-KILL" : "-TERM";
   await new Deno.Command("/bin/kill", {
-    args: [flag, spec],
+    args: killArguments(spec, signal),
     stdout: "null",
     stderr: "null",
   }).output().catch(() => undefined);
@@ -248,7 +255,29 @@ export async function killProcessGroup(
   signal: "SIGTERM" | "SIGKILL",
 ): Promise<void> {
   if (!Number.isSafeInteger(pgid) || pgid <= 1) return;
+  const callerPgids = await callerProcessGroups();
+  if (callerPgids.size === 0) {
+    console.error(
+      `dyfj: refusing to signal process group ${pgid}: caller process group is unavailable`,
+    );
+    return;
+  }
+  if (callerPgids.has(pgid)) {
+    console.error(
+      `dyfj: refusing to signal process group ${pgid}: group contains the caller or its parent`,
+    );
+    return;
+  }
   await sendKill(`-${pgid}`, signal);
+}
+
+async function callerProcessGroups(): Promise<Set<number>> {
+  const callerPids = new Set([Deno.pid, Deno.ppid]);
+  return new Set(
+    (await listProcesses())
+      .filter((proc) => callerPids.has(proc.pid) && proc.pgid > 1)
+      .map((proc) => proc.pgid),
+  );
 }
 
 export async function reapPidsAndCommandsContaining(
@@ -486,13 +515,26 @@ export function formatSurvivorReport(report: SurvivorReport): string {
 
 export async function reapSurvivors(
   report: SurvivorReport,
-  opts: { graceMs?: number; protectedPgids?: Set<number> } = {},
+  opts: {
+    graceMs?: number;
+    protectedPgids?: Set<number>;
+    individualOnlyPgids?: Set<number>;
+  } = {},
 ): Promise<void> {
   const graceMs = opts.graceMs ?? REAP_TERM_GRACE_MS;
   const protectedPgids = opts.protectedPgids ?? new Set();
+  const individualOnlyPgids = opts.individualOnlyPgids ?? new Set();
+  const survivorPids = new Set(report.processes.map((proc) => proc.pid));
   const pgids = new Set<number>();
   for (const proc of report.processes) {
-    if (proc.pgid > 1 && !protectedPgids.has(proc.pgid)) pgids.add(proc.pgid);
+    if (
+      proc.pgid > 1 &&
+      survivorPids.has(proc.pgid) &&
+      !protectedPgids.has(proc.pgid) &&
+      !individualOnlyPgids.has(proc.pgid)
+    ) {
+      pgids.add(proc.pgid);
+    }
   }
   for (const pgid of pgids) await killProcessGroup(pgid, "SIGTERM");
   for (const proc of report.processes) {
@@ -633,9 +675,14 @@ export async function sweepTestRuntime(opts: {
   if (opts.protectedPgids !== undefined) {
     for (const pgid of opts.protectedPgids) protectedPgids.add(pgid);
   }
+  const individualOnlyPgids = await callerProcessGroups();
+  if (individualOnlyPgids.size === 0) {
+    for (const proc of first.processes) individualOnlyPgids.add(proc.pgid);
+  }
   await reapSurvivors(first, {
     graceMs: opts.graceMs,
     protectedPgids,
+    individualOnlyPgids,
   });
   await removeSurvivorFiles(first);
   const leftover = await discoverSurvivors(opts);
@@ -878,21 +925,12 @@ async function reclaimDeadLock(opts: {
   }
   const generation = state.lock.generation;
   await sweepLockedTmpDir({
-    tmpDir: state.lock.tmpDir,
+    tmpDir: opts.tmpDir,
     ignorePids,
     commandNeedles: opts.commandNeedles,
     lockFile: opts.lockFile,
     expectedGeneration: generation,
   });
-  if (state.lock.tmpDir !== opts.tmpDir) {
-    await sweepLockedTmpDir({
-      tmpDir: opts.tmpDir,
-      ignorePids,
-      commandNeedles: opts.commandNeedles,
-      lockFile: opts.lockFile,
-      expectedGeneration: generation,
-    });
-  }
   const current = await readLockState(opts.lockFile);
   if (current.kind === "valid" && current.lock.generation !== generation) return;
   await removeLockFile(opts.lockFile);
@@ -1040,6 +1078,11 @@ if (import.meta.main) {
       );
       Deno.exit(2);
     }
+    const name = error instanceof Error ? error.name : "Error";
+    const detail = (error instanceof Error ? error.message : String(error))
+      .replaceAll(/\s+/g, " ")
+      .slice(0, 500);
+    await Deno.writeTextFile(resultPath, `error ${name}: ${detail}\n`);
     throw error;
   }
 }

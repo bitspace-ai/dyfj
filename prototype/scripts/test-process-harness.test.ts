@@ -8,7 +8,9 @@ import {
   captureProcessIdentity,
   discoverSurvivors,
   isEmptyReport,
+  killArguments,
   killPid,
+  listProcesses,
   lockPath,
   operatorVitestLockPath,
   processIsAlive,
@@ -129,18 +131,33 @@ function spawnLockContender(
 async function waitForContenderResults(
   paths: string[],
 ): Promise<string[]> {
-  await waitUntil(async () => {
-    const texts = await Promise.all(
-      paths.map((path) => Deno.readTextFile(path).catch(() => "")),
-    );
-    return texts.every((text) =>
-      text.startsWith("acquired ") || text.startsWith("conflict ")
-    );
-  }, 8_000, "lock contenders did not report acquire or conflict");
-  return await Promise.all(paths.map((path) => Deno.readTextFile(path)));
+  await waitUntil(
+    async () => {
+      const texts = await Promise.all(
+        paths.map((path) => Deno.readTextFile(path).catch(() => "")),
+      );
+      return texts.every((text) =>
+        text.startsWith("acquired ") || text.startsWith("conflict ") ||
+        text.startsWith("error ")
+      );
+    },
+    8_000,
+    "lock contenders did not report acquire or conflict",
+  );
+  const texts = await Promise.all(paths.map((path) => Deno.readTextFile(path)));
+  const failure = texts.find((text) => text.startsWith("error "));
+  if (failure !== undefined) {
+    throw new Error(`lock contender failed: ${failure.trim()}`);
+  }
+  return texts;
 }
 
 describe("test process harness", () => {
+  test("separates process targets from kill options", () => {
+    expect(killArguments("123", "SIGKILL")).toEqual(["-KILL", "--", "123"]);
+    expect(killArguments("-123", "SIGTERM")).toEqual(["-TERM", "--", "-123"]);
+  });
+
   test("an exclusive lock refuses a second run while the first pid is alive", async () => {
     const tmpDir = await scopedTmp();
     const holder = spawnDetachedSleep("sleep 60");
@@ -469,6 +486,66 @@ describe("test process harness", () => {
     expect(await processIsAlive(child.pid)).toBe(false);
   }, 15_000);
 
+  test("sweepTestRuntime never group-signals the caller", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawn("/bin/bash", ["-c", "sleep 60"], {
+      stdio: "ignore",
+    });
+    if (child.pid === undefined) throw new Error("child spawn produced no pid");
+    child.unref();
+    trackPid(child.pid);
+    const captured = await captureProcessIdentity(child.pid);
+    const caller = (await listProcesses()).find((proc) => proc.pid === Deno.pid);
+    expect(captured).not.toBeNull();
+    expect(caller).toBeDefined();
+    expect(captured!.pgid).toBe(caller!.pgid);
+    const generation = "shared-group-gen";
+    await recordSpawn(tmpDir, {
+      pid: child.pid,
+      pgid: captured!.pgid,
+      kind: "serve-unix",
+      sockets: [],
+      locks: [],
+      command: captured!.command,
+      lstart: captured!.lstart,
+      generation,
+      tmpDir,
+      startedAt: new Date().toISOString(),
+    });
+    const leftover = await sweepTestRuntime({
+      tmpDir,
+      expectedGeneration: generation,
+      graceMs: 200,
+    });
+    expect(isEmptyReport(leftover)).toBe(true);
+    expect(await processIsAlive(child.pid)).toBe(false);
+  }, 15_000);
+
+  test("saved Vitest group reaping refuses the caller's group", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawn("/bin/bash", ["-c", "sleep 60"], {
+      stdio: "ignore",
+    });
+    if (child.pid === undefined) throw new Error("child spawn produced no pid");
+    child.unref();
+    trackPid(child.pid);
+    const captured = await captureProcessIdentity(child.pid);
+    const caller = (await listProcesses()).find((proc) => proc.pid === Deno.pid);
+    expect(captured).not.toBeNull();
+    expect(caller).toBeDefined();
+    expect(captured!.pgid).toBe(caller!.pgid);
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: captured!.pgid,
+      leaderPid: child.pid,
+      lstart: captured!.lstart,
+      command: captured!.command,
+      generation: "shared-group-gen",
+      tmpDir,
+    });
+    await reapSavedVitestGroup(tmpDir, "shared-group-gen");
+    expect(await processIsAlive(child.pid)).toBe(true);
+  }, 15_000);
+
   test("a mismatched saved identity plus a numeric manifest match does not kill a foreign group", async () => {
     const tmpDir = await scopedTmp();
     const foreign = spawnDetachedSleep("sleep 60");
@@ -651,6 +728,60 @@ describe("test process harness", () => {
     );
   }, 15_000);
 
+  test("a separate reaper does not amplify one shared-group process into group authority", async () => {
+    const tmpDir = await scopedTmp();
+    const probe = spawn(selectedDenoExecutable(), [
+      ...processGroupSignalerEvalArgs(tmpDir),
+    ], { stdio: "ignore" });
+    if (probe.pid === undefined) throw new Error("probe spawn produced no pid");
+    probe.unref();
+    trackPid(probe.pid);
+    const probeIdentity = await captureProcessIdentity(probe.pid);
+    const caller = (await listProcesses()).find((proc) => proc.pid === Deno.pid);
+    expect(probeIdentity).not.toBeNull();
+    expect(caller).toBeDefined();
+    expect(probeIdentity!.pgid).toBe(caller!.pgid);
+
+    const supervisor = spawn("/bin/bash", ["-c", "sleep 60"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    if (supervisor.pid === undefined) {
+      throw new Error("supervisor spawn produced no pid");
+    }
+    supervisor.unref();
+    trackPid(supervisor.pid);
+
+    const reaper = spawn(selectedDenoExecutable(), [
+      "run",
+      "--allow-env",
+      `--allow-read=${prototypeRoot},${tmpDir}`,
+      `--allow-write=${tmpDir}`,
+      "--allow-run=/bin/kill,/bin/ps,/bin/bash",
+      reaperScript,
+      "--supervisor-pid",
+      String(supervisor.pid),
+      "--deadline-epoch",
+      String(Math.floor(Date.now() / 1000) + 30),
+      "--tmp-dir",
+      tmpDir,
+      "--command-needle",
+      tmpDir,
+      "--generation",
+      "shared-group-drill",
+    ], { detached: true, stdio: "ignore", cwd: prototypeRoot });
+    if (reaper.pid === undefined) throw new Error("reaper spawn produced no pid");
+    reaper.unref();
+    trackPid(reaper.pid);
+
+    await killPid(supervisor.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(probe.pid!),
+      8_000,
+      "reaper did not kill the shared-group probe by pid",
+    );
+  }, 15_000);
+
   test("a second prototype root is refused and cannot reap the first root's children", async () => {
     const operatorHome = await scopedTmp();
     const rootA = await scopedTmp();
@@ -781,6 +912,32 @@ describe("test process harness", () => {
     const generation = acquired[0]!.trim().slice("acquired ".length);
     const held = await readLockFile(tmpDir, lockFile);
     expect(held?.generation).toBe(generation);
+  }, 15_000);
+
+  test("a new prototype root reclaims a stale operator lock without foreign-root access", async () => {
+    const operatorHome = await scopedTmp();
+    const rootA = await scopedTmp();
+    const rootB = await scopedTmp();
+    const lockFile = operatorVitestLockPath(operatorHome);
+    const holder = spawnDetachedSleep("sleep 60");
+    await acquireTestRunLock({
+      tmpDir: rootA,
+      lockFile,
+      boundSec: 30,
+      pid: holder.pid,
+    });
+    await killPid(holder.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(holder.pid),
+      2_000,
+      "stale lock holder did not exit",
+    );
+    const contender = spawnLockContender(rootB, lockFile);
+    const [text] = await waitForContenderResults([contender.resultPath]);
+    expect(text).toMatch(/^acquired /);
+    const held = await readLockFile(rootB, lockFile);
+    expect(held?.pid).toBe(contender.pid);
+    expect(held?.tmpDir).toBe(rootB);
   }, 15_000);
 
   test("two prototype roots reclaiming a stale operator lock yield one owner", async () => {

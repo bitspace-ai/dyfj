@@ -42,7 +42,10 @@
         "cpus",
         "systemMemoryInfo",
         "networkInterfaces",
-        "uid"
+        "uid",
+        "hostname",
+        "homedir",
+        "osRelease"
       ]
     },
     "workbench": {

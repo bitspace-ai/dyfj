@@ -91,18 +91,14 @@ async function forceStopRecordedProcessTree(
   const childPid = await readPid(pidFile);
   const grandchildPid = await readPid(grandchildPidFile);
   if (childPid !== null) {
-    await new Deno.Command("/bin/kill", {
-      args: ["-KILL", `-${childPid}`],
-      stdout: "null",
-      stderr: "null",
-    }).output().catch(() => undefined);
+    await runSignalCommand(["-KILL", "--", `-${childPid}`], 500).catch(
+      () => undefined,
+    );
   }
   if (grandchildPid !== null) {
-    await new Deno.Command("/bin/kill", {
-      args: ["-KILL", String(grandchildPid)],
-      stdout: "null",
-      stderr: "null",
-    }).output().catch(() => undefined);
+    await runSignalCommand(["-KILL", "--", String(grandchildPid)], 500).catch(
+      () => undefined,
+    );
   }
 }
 
@@ -793,7 +789,7 @@ describe("runAcpAgent", () => {
     let confirmationCancelled = false;
     const resultPromise = runAcpAgent({
       profile: fixtureProfile(),
-      prompt: "FIXTURE_PERMISSION",
+      prompt: "FIXTURE_PERMISSION_EXPECT_CANCEL",
       abortSignal: controller.signal,
       confirmPermission: (_permission, signal) => {
         prompted.resolve();
@@ -881,7 +877,7 @@ describe("runAcpAgent", () => {
     const verdicts: string[] = [];
     const resultPromise = runAcpAgent({
       profile: fixtureProfile(),
-      prompt: "FIXTURE_PERMISSION",
+      prompt: "FIXTURE_PERMISSION_EXPECT_CANCEL",
       abortSignal: controller.signal,
       confirmPermission: async () => ({ optionId: "allow" }),
       onPermissionVerdict: async (verdict) => {

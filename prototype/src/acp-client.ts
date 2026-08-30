@@ -1354,8 +1354,8 @@ class LiveAcpSession implements AcpSessionHandle {
       });
     };
     const requestCancelAndWake = () => {
-      this.#closePermissionWindow();
       requestCancel();
+      this.#closePermissionWindow();
       abortRequested.resolve();
     };
     input.abortSignal?.addEventListener("abort", requestCancelAndWake, { once: true });

@@ -7,7 +7,8 @@
     "model-response-modes": "deno task --cwd prototype model-response-modes",
     "structured-output": "deno task --cwd prototype structured-output",
     "structured-output-streaming": "deno task --cwd prototype structured-output-streaming",
-    "test": "DENO_BIN=$(deno run prototype/scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN --allow-read=. --allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders --allow-run=\"$DENO_BIN,cargo,dolt\" --allow-net=127.0.0.1 scripts/aggregate-test-gate.ts",
+    "test": "DENO_BIN=$(deno run prototype/scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS --allow-read=. --allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders --allow-run=\"$DENO_BIN,cargo,dolt\" --allow-net=127.0.0.1 scripts/aggregate-test-gate.ts",
+    "test:fast": "DENO_BIN=$(deno run prototype/scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS --allow-read=. --allow-run=\"$DENO_BIN\" scripts/aggregate-test-gate.ts --fast",
     "test:schema": "deno test --allow-read=schema schema/validate-schema.test.ts",
     "validate-schema": "deno run --allow-read=schema --allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders --allow-run=dolt schema/validate-schema.ts",
     "verify-workbench-events": "deno task --cwd prototype verify-workbench-events"
