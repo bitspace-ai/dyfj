@@ -505,6 +505,31 @@ describe("test process harness", () => {
     expect(await processIsAlive(child.pid)).toBe(false);
   }, 15_000);
 
+  test("saved Vitest group reaping refuses the caller's group", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawn("/bin/bash", ["-c", "sleep 60"], {
+      stdio: "ignore",
+    });
+    if (child.pid === undefined) throw new Error("child spawn produced no pid");
+    child.unref();
+    trackPid(child.pid);
+    const captured = await captureProcessIdentity(child.pid);
+    const caller = (await listProcesses()).find((proc) => proc.pid === Deno.pid);
+    expect(captured).not.toBeNull();
+    expect(caller).toBeDefined();
+    expect(captured!.pgid).toBe(caller!.pgid);
+    await writeVitestGroupIdentity(tmpDir, {
+      pgid: captured!.pgid,
+      leaderPid: child.pid,
+      lstart: captured!.lstart,
+      command: captured!.command,
+      generation: "shared-group-gen",
+      tmpDir,
+    });
+    await reapSavedVitestGroup(tmpDir, "shared-group-gen");
+    expect(await processIsAlive(child.pid)).toBe(true);
+  }, 15_000);
+
   test("a mismatched saved identity plus a numeric manifest match does not kill a foreign group", async () => {
     const tmpDir = await scopedTmp();
     const foreign = spawnDetachedSleep("sleep 60");

@@ -248,7 +248,29 @@ export async function killProcessGroup(
   signal: "SIGTERM" | "SIGKILL",
 ): Promise<void> {
   if (!Number.isSafeInteger(pgid) || pgid <= 1) return;
+  const callerPgids = await callerProcessGroups();
+  if (callerPgids.size === 0) {
+    console.error(
+      `dyfj: refusing to signal process group ${pgid}: caller process group is unavailable`,
+    );
+    return;
+  }
+  if (callerPgids.has(pgid)) {
+    console.error(
+      `dyfj: refusing to signal process group ${pgid}: group contains the caller or its parent`,
+    );
+    return;
+  }
   await sendKill(`-${pgid}`, signal);
+}
+
+async function callerProcessGroups(): Promise<Set<number>> {
+  const callerPids = new Set([Deno.pid, Deno.ppid]);
+  return new Set(
+    (await listProcesses())
+      .filter((proc) => callerPids.has(proc.pid) && proc.pgid > 1)
+      .map((proc) => proc.pgid),
+  );
 }
 
 export async function reapPidsAndCommandsContaining(
@@ -644,13 +666,7 @@ export async function sweepTestRuntime(opts: {
   if (opts.protectedPgids !== undefined) {
     for (const pgid of opts.protectedPgids) protectedPgids.add(pgid);
   }
-  const processTable = await listProcesses();
-  const callerPids = new Set([Deno.pid, Deno.ppid]);
-  const individualOnlyPgids = new Set(
-    processTable
-      .filter((proc) => callerPids.has(proc.pid) && proc.pgid > 1)
-      .map((proc) => proc.pgid),
-  );
+  const individualOnlyPgids = await callerProcessGroups();
   if (individualOnlyPgids.size === 0) {
     for (const proc of first.processes) individualOnlyPgids.add(proc.pgid);
   }
