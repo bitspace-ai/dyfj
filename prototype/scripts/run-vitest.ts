@@ -82,7 +82,7 @@ async function extraReadGrants(): Promise<string[]> {
   }
 }
 
-function vitestArgs(args: string[], extraReads: string[]): string[] {
+export function vitestArgs(args: string[], extraReads: string[]): string[] {
   const read = [
     ".",
     "..",
@@ -104,6 +104,7 @@ function vitestArgs(args: string[], extraReads: string[]): string[] {
   ].join(",");
   return [
     "run",
+    "--no-prompt",
     "-P=test",
     `--allow-read=${read}`,
     "--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
