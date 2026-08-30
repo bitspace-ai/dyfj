@@ -25,6 +25,10 @@ README are tracked separately in its Revision history section.
 - **Assurance receipt semantics**: A required check that returns `warn` can no
   longer support a passing decision, and placeholder fixture family names no
   longer satisfy production different-family review claims.
+- **Noninteractive Vitest gate**: The production Vitest launcher now disables
+  runtime permission prompts and declares the previously implicit hostname and
+  home-directory queries in its named test profile. Missing permissions fail
+  immediately instead of hanging an unattended full gate.
 
 ### Added
 
