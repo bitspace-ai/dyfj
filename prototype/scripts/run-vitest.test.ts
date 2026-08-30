@@ -4,13 +4,27 @@ import { vitestArgs } from "./run-vitest.ts";
 describe("vitestArgs", () => {
   it("runs non-interactively without broad permission grants", () => {
     const args = vitestArgs(["run"], []);
+    const noPromptIndex = args.indexOf("--no-prompt");
+    const vitestIndex = args.indexOf("npm:vitest@3.2.6");
 
-    expect(args).toContain("--no-prompt");
-    expect(args).not.toContain("--allow-sys");
-    expect(args).not.toContain("--allow-read");
-    expect(args).not.toContain("--allow-write");
-    expect(args).not.toContain("--allow-run");
-    expect(args).not.toContain("--allow-ffi");
+    expect(noPromptIndex).toBeGreaterThan(args.indexOf("run"));
+    expect(noPromptIndex).toBeLessThan(vitestIndex);
+    for (
+      const broadGrant of [
+        "--allow-all",
+        "--allow-sys",
+        "--allow-read",
+        "--allow-write",
+        "--allow-run",
+        "--allow-ffi",
+        "-A",
+        "-S",
+        "-R",
+        "-W",
+      ]
+    ) {
+      expect(args).not.toContain(broadGrant);
+    }
   });
 
   it("keeps required system grants in the named test profile", async () => {
