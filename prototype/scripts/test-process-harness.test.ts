@@ -712,6 +712,60 @@ describe("test process harness", () => {
     );
   }, 15_000);
 
+  test("a separate reaper does not amplify one shared-group process into group authority", async () => {
+    const tmpDir = await scopedTmp();
+    const probe = spawn(selectedDenoExecutable(), [
+      ...processGroupSignalerEvalArgs(tmpDir),
+    ], { stdio: "ignore" });
+    if (probe.pid === undefined) throw new Error("probe spawn produced no pid");
+    probe.unref();
+    trackPid(probe.pid);
+    const probeIdentity = await captureProcessIdentity(probe.pid);
+    const caller = (await listProcesses()).find((proc) => proc.pid === Deno.pid);
+    expect(probeIdentity).not.toBeNull();
+    expect(caller).toBeDefined();
+    expect(probeIdentity!.pgid).toBe(caller!.pgid);
+
+    const supervisor = spawn("/bin/bash", ["-c", "sleep 60"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    if (supervisor.pid === undefined) {
+      throw new Error("supervisor spawn produced no pid");
+    }
+    supervisor.unref();
+    trackPid(supervisor.pid);
+
+    const reaper = spawn(selectedDenoExecutable(), [
+      "run",
+      "--allow-env",
+      `--allow-read=${prototypeRoot},${tmpDir}`,
+      `--allow-write=${tmpDir}`,
+      "--allow-run=/bin/kill,/bin/ps,/bin/bash",
+      reaperScript,
+      "--supervisor-pid",
+      String(supervisor.pid),
+      "--deadline-epoch",
+      String(Math.floor(Date.now() / 1000) + 30),
+      "--tmp-dir",
+      tmpDir,
+      "--command-needle",
+      tmpDir,
+      "--generation",
+      "shared-group-drill",
+    ], { detached: true, stdio: "ignore", cwd: prototypeRoot });
+    if (reaper.pid === undefined) throw new Error("reaper spawn produced no pid");
+    reaper.unref();
+    trackPid(reaper.pid);
+
+    await killPid(supervisor.pid, "SIGKILL");
+    await waitUntil(
+      async () => !await processIsAlive(probe.pid!),
+      8_000,
+      "reaper did not kill the shared-group probe by pid",
+    );
+  }, 15_000);
+
   test("a second prototype root is refused and cannot reap the first root's children", async () => {
     const operatorHome = await scopedTmp();
     const rootA = await scopedTmp();

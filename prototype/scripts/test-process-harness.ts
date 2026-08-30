@@ -517,10 +517,12 @@ export async function reapSurvivors(
   const graceMs = opts.graceMs ?? REAP_TERM_GRACE_MS;
   const protectedPgids = opts.protectedPgids ?? new Set();
   const individualOnlyPgids = opts.individualOnlyPgids ?? new Set();
+  const survivorPids = new Set(report.processes.map((proc) => proc.pid));
   const pgids = new Set<number>();
   for (const proc of report.processes) {
     if (
       proc.pgid > 1 &&
+      survivorPids.has(proc.pgid) &&
       !protectedPgids.has(proc.pgid) &&
       !individualOnlyPgids.has(proc.pgid)
     ) {
