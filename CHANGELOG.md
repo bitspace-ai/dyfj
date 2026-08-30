@@ -9,6 +9,23 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release-range secret coverage**: `secret.diff` now scans the added lines of
+  every commit made newly reachable by the bound range, including merge-only
+  additions, so a secret introduced and removed before the range endpoint still
+  fails the gate. Added source lines whose content begins with `++` are no
+  longer mistaken for diff file headers and skipped.
+- **Dependency command policy**: Network-to-shell detection now evaluates
+  bounded logical workflow commands across YAML block, folded, quoted, and
+  continued-line forms instead of scanning each physical line independently.
+  Workflow shell structures the scanner cannot resolve fail closed, and Rust
+  toolchain evidence is described as an exact pin plus a reported-version check
+  rather than an archive-digest verification.
+- **Assurance receipt semantics**: A required check that returns `warn` can no
+  longer support a passing decision, and placeholder fixture family names no
+  longer satisfy production different-family review claims.
+
 ### Added
 
 - **Clean-checkout CI gate**: A GitHub Actions workflow
