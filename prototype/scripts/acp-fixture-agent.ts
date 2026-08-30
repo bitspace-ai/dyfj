@@ -423,7 +423,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
         }
         const responses = await Promise.all(permissionResponses);
         const response = responses[0];
-        if (prompt.includes("FIXTURE_PERMISSION_CANCEL_PENDING")) {
+        if (prompt.includes("FIXTURE_PERMISSION_EXPECT_CANCEL")) {
           await fixture.cancel.promise;
           return { stopReason: "cancelled" };
         }
