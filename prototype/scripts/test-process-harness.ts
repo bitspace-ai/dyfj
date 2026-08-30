@@ -486,13 +486,24 @@ export function formatSurvivorReport(report: SurvivorReport): string {
 
 export async function reapSurvivors(
   report: SurvivorReport,
-  opts: { graceMs?: number; protectedPgids?: Set<number> } = {},
+  opts: {
+    graceMs?: number;
+    protectedPgids?: Set<number>;
+    individualOnlyPgids?: Set<number>;
+  } = {},
 ): Promise<void> {
   const graceMs = opts.graceMs ?? REAP_TERM_GRACE_MS;
   const protectedPgids = opts.protectedPgids ?? new Set();
+  const individualOnlyPgids = opts.individualOnlyPgids ?? new Set();
   const pgids = new Set<number>();
   for (const proc of report.processes) {
-    if (proc.pgid > 1 && !protectedPgids.has(proc.pgid)) pgids.add(proc.pgid);
+    if (
+      proc.pgid > 1 &&
+      !protectedPgids.has(proc.pgid) &&
+      !individualOnlyPgids.has(proc.pgid)
+    ) {
+      pgids.add(proc.pgid);
+    }
   }
   for (const pgid of pgids) await killProcessGroup(pgid, "SIGTERM");
   for (const proc of report.processes) {
@@ -633,9 +644,20 @@ export async function sweepTestRuntime(opts: {
   if (opts.protectedPgids !== undefined) {
     for (const pgid of opts.protectedPgids) protectedPgids.add(pgid);
   }
+  const processTable = await listProcesses();
+  const callerPids = new Set([Deno.pid, Deno.ppid]);
+  const individualOnlyPgids = new Set(
+    processTable
+      .filter((proc) => callerPids.has(proc.pid) && proc.pgid > 1)
+      .map((proc) => proc.pgid),
+  );
+  if (individualOnlyPgids.size === 0) {
+    for (const proc of first.processes) individualOnlyPgids.add(proc.pgid);
+  }
   await reapSurvivors(first, {
     graceMs: opts.graceMs,
     protectedPgids,
+    individualOnlyPgids,
   });
   await removeSurvivorFiles(first);
   const leftover = await discoverSurvivors(opts);

@@ -9,6 +9,7 @@ import {
   discoverSurvivors,
   isEmptyReport,
   killPid,
+  listProcesses,
   lockPath,
   operatorVitestLockPath,
   processIsAlive,
@@ -448,6 +449,41 @@ describe("test process harness", () => {
     const captured = await captureProcessIdentity(child.pid);
     expect(captured).not.toBeNull();
     const generation = "cleanup-gen";
+    await recordSpawn(tmpDir, {
+      pid: child.pid,
+      pgid: captured!.pgid,
+      kind: "serve-unix",
+      sockets: [],
+      locks: [],
+      command: captured!.command,
+      lstart: captured!.lstart,
+      generation,
+      tmpDir,
+      startedAt: new Date().toISOString(),
+    });
+    const leftover = await sweepTestRuntime({
+      tmpDir,
+      expectedGeneration: generation,
+      graceMs: 200,
+    });
+    expect(isEmptyReport(leftover)).toBe(true);
+    expect(await processIsAlive(child.pid)).toBe(false);
+  }, 15_000);
+
+  test("sweepTestRuntime never group-signals the caller", async () => {
+    const tmpDir = await scopedTmp();
+    const child = spawn("/bin/bash", ["-c", "sleep 60"], {
+      stdio: "ignore",
+    });
+    if (child.pid === undefined) throw new Error("child spawn produced no pid");
+    child.unref();
+    trackPid(child.pid);
+    const captured = await captureProcessIdentity(child.pid);
+    const caller = (await listProcesses()).find((proc) => proc.pid === Deno.pid);
+    expect(captured).not.toBeNull();
+    expect(caller).toBeDefined();
+    expect(captured!.pgid).toBe(caller!.pgid);
+    const generation = "shared-group-gen";
     await recordSpawn(tmpDir, {
       pid: child.pid,
       pgid: captured!.pgid,

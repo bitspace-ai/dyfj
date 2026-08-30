@@ -53,6 +53,8 @@ async function dryRun(
       ...Deno.env.toObject(),
       DYFJ_LAUNCHER_DRY_RUN: "1",
       DENO_DIR: denoDir,
+      DYFJ_CODEX_TOOLCHAIN_PATH: "",
+      DYFJ_CODEX_RUSTUP_HOME: "",
       ...env,
     },
     stdout: "piped",
