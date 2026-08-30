@@ -15,6 +15,8 @@ README are tracked separately in its Revision history section.
   sends a process-group signal when a matched child shares the current test
   runner's or supervisor's process group. Those children are reaped by PID, so
   platform differences in detached-process behavior cannot interrupt the gate.
+  Process-supervision tests now run in a separate supervised Vitest invocation
+  instead of concurrently with other process-spawning suites.
 - **Release-range secret coverage**: `secret.diff` now scans the added lines of
   every commit made newly reachable by the bound range, including merge-only
   additions, so a secret introduced and removed before the range endpoint still

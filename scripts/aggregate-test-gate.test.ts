@@ -307,6 +307,25 @@ Deno.test("aggregate lanes use one selected Deno command and grant identity", ()
   }
 });
 
+Deno.test("process supervision tests run in an isolated Vitest process group", () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const unit = lanes.find((lane) =>
+    lane.label === "Prototype unit Vitest suite"
+  );
+  const processHarness = lanes.find((lane) =>
+    lane.label === "Prototype process-harness Vitest suite"
+  );
+  if (!unit || !processHarness) throw new Error("Vitest lanes are missing");
+  assertStringIncludes(
+    unit.args.join(" "),
+    "--exclude scripts/test-process-harness.test.ts",
+  );
+  assertStringIncludes(
+    processHarness.args.join(" "),
+    "run scripts/test-process-harness.test.ts",
+  );
+});
+
 Deno.test("the focused Vitest launcher runs through direct selected Deno", async () => {
   await assertVitestLauncherRuns(Deno.execPath());
 });
