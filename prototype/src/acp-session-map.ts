@@ -10,7 +10,11 @@ import {
   startAcpSession,
   withTimeout,
 } from "./acp-client";
-import { DomainError } from "./turn-contract";
+import {
+  DomainError,
+  type ExternalAgentContinuityState,
+  type ExternalAgentDurableResumeStatus,
+} from "./turn-contract";
 
 export const DEFAULT_ACP_SESSION_CAPACITY = 8;
 export const DEFAULT_ACP_IDLE_TTL_MS = 5 * 60_000;
@@ -35,6 +39,51 @@ export class AcpSessionShutdownError extends DomainError {
   constructor() {
     super("ACP session map is shut down");
   }
+}
+
+export interface AcpContinuityEvidence {
+  state: ExternalAgentContinuityState;
+  durableResume: ExternalAgentDurableResumeStatus;
+}
+
+/**
+ * Decide how a turn keeps its meaning when the keyed native handle may be gone.
+ *
+ * The idle TTL retires handles as a resource policy, so an expired handle must
+ * never silently become a fresh, empty native session presented as the same
+ * conversation. A durable native resume is claimed only when BOTH the runner
+ * advertises `session/load` AND the caller verified the resumed external
+ * session identity; anything less reconstructs from Workbench-owned history.
+ */
+export function selectAcpContinuity(input: {
+  /** The acquired handle is the same live handle a prior turn released. */
+  warmHandleReused: boolean;
+  /** The Workbench session has prior turns that must reach the runner. */
+  priorTurns: boolean;
+  /** Runner-reported `agentCapabilities.loadSession` from initialize. */
+  agentAdvertisesSessionLoad: boolean;
+  /** External session id the caller loaded AND verified against its record. */
+  verifiedResumedExternalSessionId?: string;
+}): AcpContinuityEvidence {
+  if (input.warmHandleReused) {
+    return { state: "warm-reused", durableResume: "not-required" };
+  }
+  if (!input.priorTurns) {
+    return { state: "new", durableResume: "not-required" };
+  }
+  if (!input.agentAdvertisesSessionLoad) {
+    return {
+      state: "reconstructed",
+      durableResume: "unavailable-agent-capability",
+    };
+  }
+  if (input.verifiedResumedExternalSessionId === undefined) {
+    return {
+      state: "reconstructed",
+      durableResume: "unavailable-client-verification",
+    };
+  }
+  return { state: "durably-resumed", durableResume: "verified" };
 }
 
 export interface AcpSessionHandleKey {
@@ -224,6 +273,16 @@ export class AcpSessionHandleMap {
     input: AcpSessionHandleKey & AcpPromptInput & {
       create?: () => Promise<AcpSessionHandle>;
       onRouteVerified?: AcpRunInput["onRouteVerified"];
+      /**
+       * Bounded projection of the Workbench session's prior turns, supplied
+       * only when the session has history to carry. Called just once, and only
+       * when the acquired handle is NOT the warm one — so a live handle keeps
+       * its own inner history and nothing is replayed into it. Throwing here
+       * fails the turn before any prompt reaches the agent.
+       */
+      reconstructPrompt?: () => string;
+      /** Observed continuity for this turn, reported before the prompt. */
+      onContinuity?: (evidence: AcpContinuityEvidence) => void;
     },
   ): Promise<AcpRunResult> {
     const startedAt = Date.now();
@@ -276,7 +335,19 @@ export class AcpSessionHandleMap {
           input.abortSignal?.removeEventListener("abort", forwardAbort);
         }
       }
-      return await handle.prompt(input);
+      // Decide continuity against the handle actually acquired, not against an
+      // earlier probe: an idle handle can be retired between the two, and that
+      // race is exactly how a follow-up loses its antecedent.
+      const continuity = selectAcpContinuity({
+        warmHandleReused: reused,
+        priorTurns: input.reconstructPrompt !== undefined,
+        agentAdvertisesSessionLoad: handle.durableSessionLoad,
+      });
+      const prompt = continuity.state === "reconstructed"
+        ? input.reconstructPrompt!()
+        : input.prompt;
+      input.onContinuity?.(continuity);
+      return await handle.prompt({ ...input, prompt });
     } catch (error) {
       if (isTurnAborted(error)) return abortedResult();
       await this.drop(handle);

@@ -17,6 +17,36 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **ACP continuity after an expired handle**: A follow-up turn whose keyed ACP
+  handle has been retired no longer starts an empty native session while the
+  Workbench session is presented as continuous. Workbench now decides continuity
+  against the handle it actually acquired and, when that handle is a
+  replacement, projects a bounded transcript of the session's own prior turns
+  into its prompt. Each external-agent turn records one observed state — `new`,
+  `warm-reused`, `durably-resumed`, or `reconstructed` — with the durable-resume
+  status, the projected message and tool-exchange counts, and the prior and new
+  external session identifiers on the runner receipt. A durable native resume is
+  claimed only when the runner advertises ACP `session/load` and the resumed
+  external session identity is verified. Workbench now merges real ACP tool-call
+  updates and persists their terminal raw input/output as a bounded pair only
+  when the adapter supplied complete evidence and its values pass the explicit
+  credential-shape gate. Incomplete, oversized, or credential-shaped evidence
+  leaves only a fixed value-free gap marker; a replacement turn then refuses
+  before model work instead of silently losing the exchange. Prior tool work
+  travels as bounded, quoted historical evidence that preserves request/result
+  pairing, ordering, and outcome status — labelled as Workbench's record of an
+  expired session rather than as something the receiving agent did or may
+  repeat — and no recorded call is re-executed. The `dyfj` footer exposes the
+  continuity state, native-session disposition, and tool-evidence counts. Tool
+  metadata uses an inert ASCII grammar;
+  quotation protects the transcript structure but is not claimed as a semantic
+  prompt-injection boundary. A reconstruction is refused before any prompt
+  reaches the agent when it would exceed the prompt, 32-message, per-message,
+  per-field, or tool-argument complexity bounds, or when persisted tool history
+  is unpaired, malformed, or matches an explicitly checked credential shape.
+  At the Dolt read boundary, persisted JSON tool arguments are projected as
+  text and then validated by the session decoder. Malformed persisted tool
+  history from any runner kind is rejected before reconstruction.
 - **Portable process-group signaling**: Test-process cleanup now separates
   `/bin/kill` options from process targets explicitly. GNU/Linux therefore
   treats a negative process-group ID as the intended target instead of parsing

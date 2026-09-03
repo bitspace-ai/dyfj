@@ -3,6 +3,7 @@ import { join } from "node:path";
 import process from "node:process";
 import {
   type AcpExecutionProfile,
+  type AcpPromptInput,
   type AcpRunResult,
   type AcpSessionHandle,
   startAcpSession,
@@ -14,7 +15,9 @@ import {
   AcpSessionShutdownError,
   canonicalExecutionProfileDigest,
   encodeAcpSessionHandleKey,
+  selectAcpContinuity,
 } from "./acp-session-map";
+import { DomainError } from "./turn-contract";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},
@@ -88,13 +91,14 @@ async function readMethods(path: string): Promise<string[]> {
 }
 
 function fakeHandle(options: {
-  prompt?: () => Promise<AcpRunResult>;
+  prompt?: (input: AcpPromptInput) => Promise<AcpRunResult>;
   closeDelayMs?: number;
   closeWait?: Promise<void>;
   closeError?: Error;
   stayAliveOnCloseError?: boolean;
   keepAliveDuringClose?: boolean;
   routeEvidence?: AcpSessionHandle["routeEvidence"];
+  durableSessionLoad?: boolean;
 } = {}): AcpSessionHandle {
   let closed = false;
   let closePromise: Promise<void> | undefined;
@@ -109,6 +113,9 @@ function fakeHandle(options: {
     },
     get routeEvidence() {
       return options.routeEvidence;
+    },
+    get durableSessionLoad() {
+      return options.durableSessionLoad ?? false;
     },
     prompt: options.prompt ?? (() =>
       Promise.resolve({
@@ -235,6 +242,218 @@ describe("AcpSessionHandleMap sequential reuse", () => {
     ]);
     await Deno.remove(pidFile).catch(() => {});
     await Deno.remove(methodLog).catch(() => {});
+  });
+});
+
+describe("ACP continuity selection", () => {
+  test("a warm handle needs no replay and claims no resume", () => {
+    expect(selectAcpContinuity({
+      warmHandleReused: true,
+      priorTurns: true,
+      agentAdvertisesSessionLoad: true,
+      verifiedResumedExternalSessionId: "external-1",
+    })).toEqual({ state: "warm-reused", durableResume: "not-required" });
+  });
+
+  test("a session without prior turns is new, not reconstructed", () => {
+    expect(selectAcpContinuity({
+      warmHandleReused: false,
+      priorTurns: false,
+      agentAdvertisesSessionLoad: false,
+    })).toEqual({ state: "new", durableResume: "not-required" });
+  });
+
+  test("prior turns without a load-capable runner reconstruct", () => {
+    expect(selectAcpContinuity({
+      warmHandleReused: false,
+      priorTurns: true,
+      agentAdvertisesSessionLoad: false,
+    })).toEqual({
+      state: "reconstructed",
+      durableResume: "unavailable-agent-capability",
+    });
+  });
+
+  test("an advertised load without verified identity still reconstructs", () => {
+    expect(selectAcpContinuity({
+      warmHandleReused: false,
+      priorTurns: true,
+      agentAdvertisesSessionLoad: true,
+    })).toEqual({
+      state: "reconstructed",
+      durableResume: "unavailable-client-verification",
+    });
+  });
+
+  test("a durable resume needs both capability and verified identity", () => {
+    expect(selectAcpContinuity({
+      warmHandleReused: false,
+      priorTurns: true,
+      agentAdvertisesSessionLoad: true,
+      verifiedResumedExternalSessionId: "external-7",
+    })).toEqual({ state: "durably-resumed", durableResume: "verified" });
+  });
+});
+
+describe("AcpSessionHandleMap continuity", () => {
+  test("a warm turn keeps the agent's own history and replays nothing", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const prompts: string[] = [];
+    const handle = fakeHandle({
+      prompt: (input) => {
+        prompts.push(input.prompt);
+        return Promise.resolve({
+          text: "ok",
+          stopReason: "stop",
+          capabilities: [],
+          elapsedMs: 1,
+        });
+      },
+    });
+    const states: string[] = [];
+    try {
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "first turn",
+        create: () => Promise.resolve(handle),
+        onContinuity: (evidence) => states.push(evidence.state),
+      });
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "referential follow-up",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "must-not-be-replayed",
+        onContinuity: (evidence) => states.push(evidence.state),
+      });
+      expect(states).toEqual(["new", "warm-reused"]);
+      expect(prompts).toEqual(["first turn", "referential follow-up"]);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("a retired handle reconstructs prior turns into the replacement", async () => {
+    const profile = fixtureProfile();
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 2,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    const prompts: string[] = [];
+    const recordingHandle = () =>
+      fakeHandle({
+        prompt: (input) => {
+          prompts.push(input.prompt);
+          return Promise.resolve({
+            text: "ok",
+            stopReason: "stop",
+            capabilities: [],
+            elapsedMs: 1,
+          });
+        },
+      });
+    const states: string[] = [];
+    try {
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "first turn",
+        create: () => Promise.resolve(recordingHandle()),
+        onContinuity: (evidence) => states.push(evidence.state),
+      });
+      const idle = [...timers.values()][0];
+      idle?.();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      expect(map.size).toBe(0);
+
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "referential follow-up",
+        create: () => Promise.resolve(recordingHandle()),
+        reconstructPrompt: () => "transcript + referential follow-up",
+        onContinuity: (evidence) => states.push(evidence.state),
+      });
+      expect(states).toEqual(["new", "reconstructed"]);
+      expect(prompts).toEqual([
+        "first turn",
+        "transcript + referential follow-up",
+      ]);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("a load-capable runner still reconstructs in production", async () => {
+    // `durably-resumed` stays unreachable through the production path: even a
+    // runner advertising `session/load` cannot produce it, because nothing
+    // here loads a session or verifies a resumed external session identity.
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const evidence: unknown[] = [];
+    try {
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "referential follow-up",
+        create: () => Promise.resolve(fakeHandle({ durableSessionLoad: true })),
+        reconstructPrompt: () => "transcript + referential follow-up",
+        onContinuity: (value) => evidence.push(value),
+      });
+      expect(evidence).toEqual([{
+        state: "reconstructed",
+        durableResume: "unavailable-client-verification",
+      }]);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  test("the ACP client implements no session/load path", async () => {
+    const sources = await Promise.all(
+      ["acp-client.ts", "acp-session-map.ts", "external-agent-runtime.ts"].map(
+        (file) => Deno.readTextFile(join(import.meta.dirname!, file)),
+      ),
+    );
+    for (const source of sources) {
+      expect(source).not.toContain("methods.agent.session.load");
+      expect(source).not.toContain("loadSession(");
+      expect(source).not.toContain("resumeSession(");
+    }
+    // The capability is still read as runner-reported evidence.
+    expect(sources[0]).toContain("agentCapabilities?.loadSession === true");
+  });
+
+  test("an unprojectable transcript fails before the agent is prompted", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let prompted = false;
+    const handle = fakeHandle({
+      prompt: () => {
+        prompted = true;
+        return Promise.resolve({
+          text: "ok",
+          stopReason: "stop",
+          capabilities: [],
+          elapsedMs: 1,
+        });
+      },
+    });
+    try {
+      await expect(map.runTurn({
+        ...acquireKey(profile),
+        prompt: "referential follow-up",
+        create: () => Promise.resolve(handle),
+        reconstructPrompt: () => {
+          throw new DomainError("reconstruction refused");
+        },
+      })).rejects.toBeInstanceOf(DomainError);
+      expect(prompted).toBe(false);
+      expect(handle.isAlive).toBe(false);
+      expect(map.size).toBe(0);
+    } finally {
+      await map.shutdown();
+    }
   });
 });
 

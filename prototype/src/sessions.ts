@@ -1,6 +1,10 @@
 import { doltExec, doltQuery, generateULID, type SqlParam } from "./utils";
 import type { WorkbenchMessage } from "./provider";
 import { formatSummaryMessage } from "./context-compression";
+import {
+  ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
+  DomainError,
+} from "./turn-contract";
 
 export type SessionExec = (sql: string, params: SqlParam[]) => Promise<void>;
 export type SessionQuery = (
@@ -209,8 +213,16 @@ export function normalizeSessionTimestamp(val: unknown): string {
 }
 
 export function compareSessionActivity(
-  a: { updatedAt?: string | null; createdAt?: string | null; sessionId?: string },
-  b: { updatedAt?: string | null; createdAt?: string | null; sessionId?: string },
+  a: {
+    updatedAt?: string | null;
+    createdAt?: string | null;
+    sessionId?: string;
+  },
+  b: {
+    updatedAt?: string | null;
+    createdAt?: string | null;
+    sessionId?: string;
+  },
 ): number {
   const aTime = normalizeSessionTimestamp(a.updatedAt || a.createdAt);
   const bTime = normalizeSessionTimestamp(b.updatedAt || b.createdAt);
@@ -366,6 +378,8 @@ export interface WorkbenchSessionEvent {
   toolArguments: Record<string, unknown> | null;
   toolResult: string | null;
   toolIsError: boolean | null;
+  /** Whether every persisted field needed to reconstruct this tool event was valid. */
+  toolHistoryValid?: boolean | null;
   createdAt: string;
 }
 
@@ -399,6 +413,8 @@ function eventQuery(
       "NULL AS unparsed_tool_call_count_is_lower_bound"
     : "unparsed_tool_call_count, " +
       "unparsed_tool_call_count_is_lower_bound";
+  // Dolt/MySQL drivers may decode JSON columns to objects. Cast both
+  // runner_capabilities and tool_arguments so Workbench owns their validation.
   const runnerFields = historicalRunnerSchema
     ? "NULL AS runner_kind, NULL AS runner_profile, NULL AS runner_protocol, " +
       "NULL AS runner_protocol_version, NULL AS runner_stop_reason, " +
@@ -432,7 +448,8 @@ function eventQuery(
     `cost_total, duration_ms, ${providerCallFields}, ${unparsedToolCallFields}, ` +
     `${runnerFields}, ` +
     `tool_name, tool_call_id, ` +
-    `tool_arguments, tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
+    `CAST(tool_arguments AS CHAR) AS tool_arguments, ` +
+    `tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
     `WHERE session_id = ?${eventClause} ORDER BY created_at ${orderClause}, event_id ${orderClause}${limitClause};`;
 }
 
@@ -577,17 +594,20 @@ export async function fetchWorkbenchSessionEvents(input: {
   let historicalTraceContextSchema = false;
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      rows = await query(eventQuery(
-        asOfClause,
-        historicalProviderCallSchema,
-        historicalUnparsedToolCallSchema,
-        historicalRunnerSchema,
-        historicalRunnerAuthSchema,
-        historicalTraceContextSchema,
-        effectiveLimit,
-        order,
-        input.eventId,
-      ), queryArgs);
+      rows = await query(
+        eventQuery(
+          asOfClause,
+          historicalProviderCallSchema,
+          historicalUnparsedToolCallSchema,
+          historicalRunnerSchema,
+          historicalRunnerAuthSchema,
+          historicalTraceContextSchema,
+          effectiveLimit,
+          order,
+          input.eventId,
+        ),
+        queryArgs,
+      );
       break;
     } catch (error) {
       const missingProviderCall = isMissingProviderCallColumn(error);
@@ -600,91 +620,101 @@ export async function fetchWorkbenchSessionEvents(input: {
         !missingRunnerAuth && !missingTraceContext
       ) throw error;
       historicalProviderCallSchema ||= missingProviderCall;
-      historicalUnparsedToolCallSchema ||=
-        missingProviderCall || missingUnparsedToolCall;
-      historicalRunnerSchema ||=
-        missingProviderCall || missingUnparsedToolCall || missingRunner;
-      historicalRunnerAuthSchema ||=
-        missingProviderCall || missingUnparsedToolCall || missingRunner ||
+      historicalUnparsedToolCallSchema ||= missingProviderCall ||
+        missingUnparsedToolCall;
+      historicalRunnerSchema ||= missingProviderCall ||
+        missingUnparsedToolCall || missingRunner;
+      historicalRunnerAuthSchema ||= missingProviderCall ||
+        missingUnparsedToolCall || missingRunner ||
         missingRunnerAuth;
       // A snapshot missing any migration 003-006 column necessarily predates
       // migration 007 too, regardless of which missing column the driver names.
-      historicalTraceContextSchema ||=
-        missingProviderCall || missingUnparsedToolCall || missingRunner ||
+      historicalTraceContextSchema ||= missingProviderCall ||
+        missingUnparsedToolCall || missingRunner ||
         missingRunnerAuth || missingTraceContext;
     }
   }
-  if (rows === undefined) throw new Error("historical event schema did not converge");
+  if (rows === undefined) {
+    throw new Error("historical event schema did not converge");
+  }
   if (!explicitOrder && order === "desc") {
     rows.reverse();
   }
-  return rows.map((row) => ({
-    sessionId: input.sessionId,
-    eventId: row.event_id,
-    eventType: row.event_type,
-    traceId: row.trace_id,
-    spanId: row.span_id,
-    parentSpanId: nullableString(row.parent_span_id),
-    traceFlags: nullableNumber(row.trace_flags),
-    traceState: nullableString(row.trace_state),
-    spanKind: nullableString(row.span_kind),
-    parentIsRemote:
-      row.parent_is_remote === null || row.parent_is_remote === undefined ||
-        row.parent_is_remote === ""
-        ? null
-        : Number(row.parent_is_remote) === 1,
-    principalId: row.principal_id,
-    modelId: nullableString(row.model_id),
-    provider: nullableString(row.provider),
-    api: nullableString(row.api),
-    content: nullableString(row.content),
-    stopReason: nullableString(row.stop_reason),
-    tokensInput: nullableNumber(row.tokens_input),
-    tokensOutput: nullableNumber(row.tokens_output),
-    tokensCacheRead: nullableNumber(row.tokens_cache_read),
-    tokensCacheWrite: nullableNumber(row.tokens_cache_write),
-    costTotal: nullableString(row.cost_total),
-    durationMs: nullableNumber(row.duration_ms),
-    providerCallOrder: nullableNumber(row.provider_call_order),
-    providerCallPurpose: nullableString(row.provider_call_purpose),
-    providerErrorClass: nullableString(row.provider_error_class),
-    unparsedToolCallCount: nullableNumber(row.unparsed_tool_call_count),
-    unparsedToolCallCountIsLowerBound:
-      row.unparsed_tool_call_count_is_lower_bound === null ||
-        row.unparsed_tool_call_count_is_lower_bound === undefined ||
-        row.unparsed_tool_call_count_is_lower_bound === ""
-        ? null
-        : Number(row.unparsed_tool_call_count_is_lower_bound) === 1,
-    runnerKind: nullableString(row.runner_kind),
-    runnerProfile: nullableString(row.runner_profile),
-    runnerProtocol: nullableString(row.runner_protocol),
-    runnerProtocolVersion: nullableString(row.runner_protocol_version),
-    runnerStopReason: nullableString(row.runner_stop_reason),
-    runnerExternalSessionId: nullableString(row.runner_external_session_id),
-    runnerAgentName: nullableString(row.runner_agent_name),
-    runnerAgentVersion: nullableString(row.runner_agent_version),
-    runnerTransport: nullableString(row.runner_transport),
-    runnerAccessRoute: nullableString(row.runner_access_route),
-    runnerCostBasis: nullableString(row.runner_cost_basis),
-    runnerWorkspace: nullableString(row.runner_workspace),
-    runnerCapabilities: normalizeStringArray(row.runner_capabilities),
-    runnerEvidenceScope: nullableString(row.runner_evidence_scope),
-    runnerRouteSource: nullableString(row.runner_route_source),
-    runnerAuthType: nullableString(row.runner_auth_type),
-    permissionVerdict: nullableString(row.permission_verdict),
-    toolName: row.tool_name ? String(row.tool_name) : null,
-    toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
-    toolArguments: normalizeToolArguments(row.tool_arguments),
-    toolResult: row.tool_result ? String(row.tool_result) : null,
-    // tinyint(1) round-trips as a number or numeric string depending on the
-    // driver path; normalize either to a boolean, absent to null.
-    toolIsError:
-      row.tool_is_error === null || row.tool_is_error === undefined ||
-        row.tool_is_error === ""
-        ? null
-        : Number(row.tool_is_error) === 1,
-    createdAt: row.created_at,
-  }));
+  return rows.map((row) => {
+    const toolName = nullableString(row.tool_name);
+    const toolCallId = nullableString(row.tool_call_id);
+    const toolArguments = normalizeToolArguments(row.tool_arguments);
+    const toolResult = nullableStringPreservingEmpty(row.tool_result);
+    const toolError = normalizeToolErrorFlag(row.tool_is_error);
+    const toolHistoryValid = row.event_type === "tool_call"
+      ? toolName !== null && toolCallId !== null && toolArguments !== null &&
+        toolResult !== null && toolError.valid
+      : null;
+    return {
+      sessionId: input.sessionId,
+      eventId: row.event_id,
+      eventType: row.event_type,
+      traceId: row.trace_id,
+      spanId: row.span_id,
+      parentSpanId: nullableString(row.parent_span_id),
+      traceFlags: nullableNumber(row.trace_flags),
+      traceState: nullableString(row.trace_state),
+      spanKind: nullableString(row.span_kind),
+      parentIsRemote:
+        row.parent_is_remote === null || row.parent_is_remote === undefined ||
+          row.parent_is_remote === ""
+          ? null
+          : Number(row.parent_is_remote) === 1,
+      principalId: row.principal_id,
+      modelId: nullableString(row.model_id),
+      provider: nullableString(row.provider),
+      api: nullableString(row.api),
+      content: nullableString(row.content),
+      stopReason: nullableString(row.stop_reason),
+      tokensInput: nullableNumber(row.tokens_input),
+      tokensOutput: nullableNumber(row.tokens_output),
+      tokensCacheRead: nullableNumber(row.tokens_cache_read),
+      tokensCacheWrite: nullableNumber(row.tokens_cache_write),
+      costTotal: nullableString(row.cost_total),
+      durationMs: nullableNumber(row.duration_ms),
+      providerCallOrder: nullableNumber(row.provider_call_order),
+      providerCallPurpose: nullableString(row.provider_call_purpose),
+      providerErrorClass: nullableString(row.provider_error_class),
+      unparsedToolCallCount: nullableNumber(row.unparsed_tool_call_count),
+      unparsedToolCallCountIsLowerBound:
+        row.unparsed_tool_call_count_is_lower_bound === null ||
+          row.unparsed_tool_call_count_is_lower_bound === undefined ||
+          row.unparsed_tool_call_count_is_lower_bound === ""
+          ? null
+          : Number(row.unparsed_tool_call_count_is_lower_bound) === 1,
+      runnerKind: nullableString(row.runner_kind),
+      runnerProfile: nullableString(row.runner_profile),
+      runnerProtocol: nullableString(row.runner_protocol),
+      runnerProtocolVersion: nullableString(row.runner_protocol_version),
+      runnerStopReason: nullableString(row.runner_stop_reason),
+      runnerExternalSessionId: nullableString(row.runner_external_session_id),
+      runnerAgentName: nullableString(row.runner_agent_name),
+      runnerAgentVersion: nullableString(row.runner_agent_version),
+      runnerTransport: nullableString(row.runner_transport),
+      runnerAccessRoute: nullableString(row.runner_access_route),
+      runnerCostBasis: nullableString(row.runner_cost_basis),
+      runnerWorkspace: nullableString(row.runner_workspace),
+      runnerCapabilities: normalizeStringArray(row.runner_capabilities),
+      runnerEvidenceScope: nullableString(row.runner_evidence_scope),
+      runnerRouteSource: nullableString(row.runner_route_source),
+      runnerAuthType: nullableString(row.runner_auth_type),
+      permissionVerdict: nullableString(row.permission_verdict),
+      toolName,
+      toolCallId,
+      toolArguments,
+      toolResult,
+      // tinyint(1) round-trips as a number or numeric string depending on the
+      // driver path; normalize either to a boolean, absent to null.
+      toolIsError: toolError.value,
+      toolHistoryValid,
+      createdAt: row.created_at,
+    };
+  });
 }
 
 /**
@@ -755,25 +785,38 @@ export function buildConversationMessages(
       if (event.content === null) continue;
       messages.push({ role: "assistant", content: event.content });
     } else if (event.eventType === "tool_call") {
+      if (event.toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME) {
+        throw new DomainError(
+          "Session contains unavailable ACP tool history",
+        );
+      }
       // One tool_call event carries both halves: the call (name/id/arguments)
       // and its result. Emit them as a paired assistant+tool sequence so the
       // wire-format invariant holds — a `tool` message MUST be immediately
       // preceded by an `assistant` message bearing the same tool-call id.
-      if (event.toolCallId === null || event.toolName === null) continue;
+      if (
+        event.toolHistoryValid === false || event.toolCallId === null ||
+        event.toolName === null || event.toolArguments === null ||
+        event.toolResult === null || event.toolIsError === null
+      ) {
+        throw new DomainError(
+          "Session contains malformed persisted tool history",
+        );
+      }
       messages.push({
         role: "assistant",
         content: "",
         toolCalls: [{
           id: event.toolCallId,
           name: event.toolName,
-          arguments: parseToolArguments(event.toolArguments),
+          arguments: event.toolArguments,
         }],
       });
       messages.push({
         role: "tool",
         toolCallId: event.toolCallId,
         name: event.toolName,
-        content: event.toolResult ?? "",
+        content: event.toolResult,
         // Replay the failure mark, so a resumed transcript serializes the
         // result as an error (Anthropic is_error) exactly like the live turn.
         ...(event.toolIsError ? { isError: true } : {}),
@@ -808,6 +851,10 @@ function nullableString(raw: unknown): string | null {
   return raw === null || raw === undefined || raw === "" ? null : String(raw);
 }
 
+function nullableStringPreservingEmpty(raw: unknown): string | null {
+  return raw === null || raw === undefined ? null : String(raw);
+}
+
 function nullableNumber(raw: unknown): number | null {
   return raw === null || raw === undefined || raw === "" ? null : Number(raw);
 }
@@ -833,11 +880,19 @@ function normalizeToolArguments(raw: unknown): Record<string, unknown> | null {
   }
 }
 
-/** Default absent tool arguments to the empty object needed for replay. */
-function parseToolArguments(
-  raw: Record<string, unknown> | null,
-): Record<string, unknown> {
-  return raw ?? {};
+function normalizeToolErrorFlag(
+  raw: unknown,
+): { value: boolean | null; valid: boolean } {
+  if (raw === null || raw === undefined || raw === "") {
+    return { value: null, valid: false };
+  }
+  if (raw === true || raw === 1 || raw === "1") {
+    return { value: true, valid: true };
+  }
+  if (raw === false || raw === 0 || raw === "0") {
+    return { value: false, valid: true };
+  }
+  return { value: null, valid: false };
 }
 
 /**

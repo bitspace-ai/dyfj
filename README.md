@@ -585,13 +585,46 @@ runner-specific events and a runner receipt. Sequential turns that share a
 Workbench session, workspace, and execution profile reuse one live ACP worker
 and session; a concurrent turn for that same key fails as busy instead of
 queueing. Turn cancellation keeps a healthy handle; a protocol or process
-failure removes it so the next turn can create a replacement. Idle handles
-retire on a TTL, a small resident-session bound fails closed without eviction,
-and UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight creation
-and for every started close to settle, then surface a retained close failure
-rather than reporting success. A shutdown failure exits with status 1. On an
-interactive Unix-socket client, every accepted ACP option (up to 16) is rendered
-as a numbered choice and the exact selected option identifier is returned to the
+failure removes it so the next turn can create a replacement. A warm handle is a
+resource cache, not the evidence of continuity: when the keyed handle is gone
+but the Workbench session has prior turns, the replacement session is not
+prompted with the bare follow-up. Workbench projects a bounded transcript of
+that session's own earlier turns into the replacement prompt and labels the turn
+`reconstructed`; a live handle is `warm-reused` and receives no replay; a
+session without prior turns is `new`; and `durably-resumed` is claimed only when
+the runner advertises ACP `session/load` and Workbench can verify the resumed
+external session identity, which no currently pinned adapter provides. The
+runner receipt records that state, the durable-resume status, the count of
+projected messages and tool exchanges, and the prior and new external session
+identifiers. The terminal client also prints the continuity state, whether the
+native session was new, reused, or replaced, and the ACP tool-evidence count in
+each external-agent footer. Workbench merges each real ACP `tool_call` with its
+`tool_call_update` patches and persists a tool request/result pair only when the
+adapter supplies bounded terminal input and output that pass the credential-
+shape gate. Otherwise it records a fixed value-free gap marker, reports tool
+evidence as unavailable, and a later reconstruction refuses that session before
+model work. Persisted prior tool work is carried as historical evidence, not as
+a tool grant: each request and its persisted result are quoted line by line under
+labelled headers that keep their pairing, ordering, and outcome status
+(including failures and denials); identifiers and names are restricted to an
+inert ASCII metadata grammar, and the header tells the receiving agent that the
+records are Workbench's history of an expired session, not actions it took or
+may repeat. Quotation prevents historical content from forging the record
+structure; it is not a semantic prompt-injection boundary, so ordinary tool
+permission policy remains authoritative for anything the receiving agent may
+propose. A reconstruction is refused before any prompt reaches the agent —
+rather than silently shortened, reordered, or stripped — when it would exceed
+the ACP prompt limit, the 32-message projection bound, a per-message bound, a
+per-field tool bound, or the tool-argument depth/node limit, or when persisted
+tool history is unpaired, malformed, or carries one of the explicitly checked
+credential shapes in any field, including the explicit ACP gap marker. Idle
+handles retire on a TTL, a small
+resident-session bound fails closed without eviction, and UDS close, a
+foreground SIGINT, or `dyfj stop` wait for in-flight creation and for every
+started close to settle, then surface a retained close failure rather than
+reporting success. A shutdown failure exits with status 1. On an interactive
+Unix-socket client, every accepted ACP option (up to 16) is rendered as a
+numbered choice and the exact selected option identifier is returned to the
 agent; invalid input re-prompts within that same exchange up to three times
 before failing closed. Empty or closed input, a non-interactive client, or an
 unavailable approval handler selects the request's rejection option when one
@@ -1156,6 +1189,13 @@ Document revisions only. Code and behavior changes are tracked in
   under the stable `full-gate` check name, and the boundary that a green
   pipeline gate grants no runtime capability and claims nothing about private
   gates.
+- 2026-08-31 - The external-agent section now documents ACP turn continuity:
+  bounded reconstruction of a session's own prior turns into a replacement
+  native session, prior tool work carried as labelled non-executable historical
+  evidence with its pairing and outcome status, the `new` / `warm-reused` /
+  `durably-resumed` / `reconstructed` states recorded on the runner receipt with
+  projection counts and prior and new external session identifiers, and the
+  fail-closed limits on what a reconstruction may carry.
 - 2026-08-29 - Validation guidance now documents that the tree scans carry no
   allowlist and no path exemption (tests, binary-looking payloads, and the
   scanner source included), that tracked symlinks are scanned as link-target

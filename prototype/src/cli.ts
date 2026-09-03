@@ -551,6 +551,30 @@ export function formatReceipt(
       : result.runner.costBasis === "metered_usd"
       ? "USD not reported"
       : "cost unknown";
+    const continuity = result.runner.continuity;
+    const continuityEvidence = continuity === undefined
+      ? "continuity unestablished"
+      : `continuity ${continuity.state}${
+        continuity.state === "reconstructed"
+          ? ` ${continuity.priorMessagesProjected ?? 0}msg/${
+            continuity.toolExchangesProjected ?? 0
+          }tool`
+          : ""
+      }`;
+    const nativeSession = continuity === undefined
+      ? "native session unverified"
+      : continuity.state === "new"
+      ? "native session new"
+      : continuity.state === "warm-reused" ||
+          continuity.state === "durably-resumed"
+      ? "native session reused"
+      : "native session replaced";
+    const toolEvidence = result.runner.toolEvidence;
+    const tools = toolEvidence === undefined
+      ? "ACP tools unreported"
+      : toolEvidence.status === "unavailable"
+      ? `ACP tools unavailable (${toolEvidence.observedCalls} observed)`
+      : `ACP tools ${toolEvidence.recordedCalls}/${toolEvidence.observedCalls} recorded`;
     return dim(
       `— ${result.runner.profile} · ${result.runner.protocol}${
         result.runner.protocolVersion === undefined
@@ -558,7 +582,7 @@ export function formatReceipt(
           : ` v${result.runner.protocolVersion}`
       } · ${result.runner.transport} · ${
         result.runner.accessRoute ?? "unverified"
-      } · ${cost}${usage}${context} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
+      } · ${cost}${usage}${context} · ${continuityEvidence} · ${nativeSession} · ${tools} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
     );
   }
   const cost = formatUsdShort(result.cost.totalUsd);

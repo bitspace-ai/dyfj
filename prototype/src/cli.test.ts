@@ -5101,11 +5101,24 @@ describe("presentation", () => {
         transport: "local_stdio",
         accessRoute: "local_sidecar",
         costBasis: "local_free",
+        continuity: {
+          state: "reconstructed",
+          claimSource: "workbench_observed",
+          durableResume: "unavailable-client-verification",
+          priorMessagesProjected: 4,
+          toolExchangesProjected: 1,
+          priorExternalSessionId: "fixture-previous",
+        },
         evidence: {
           source: "acp",
           innerState: "opaque",
           toolchainDirectoryCount: 0,
           routeSource: "profile_declared",
+        },
+        toolEvidence: {
+          status: "complete",
+          observedCalls: 0,
+          recordedCalls: 0,
         },
         elapsedMs: 12,
       },
@@ -5114,9 +5127,13 @@ describe("presentation", () => {
     };
     const formatted = formatReceipt(external, false);
     expect(formatted).toContain(
-      "fixture · acp v1 · local_stdio · local_sidecar · $0 · 12ms",
+      "fixture · acp v1 · local_stdio · local_sidecar · $0",
     );
+    expect(formatted).toContain("· 12ms · explicit_external_agent");
     expect(formatted).not.toContain("tok");
+    expect(formatted).toContain(
+      "continuity reconstructed 4msg/1tool · native session replaced · ACP tools 0/0 recorded",
+    );
   });
 
   test("formatReceipt shows ACP usage while preserving its cost semantics", () => {
@@ -5140,6 +5157,11 @@ describe("presentation", () => {
           source: "acp" as const,
           innerState: "opaque" as const,
           toolchainDirectoryCount: 0 as const,
+        },
+        toolEvidence: {
+          status: "complete" as const,
+          observedCalls: 0,
+          recordedCalls: 0,
         },
         usage: {
           source: "acp" as const,

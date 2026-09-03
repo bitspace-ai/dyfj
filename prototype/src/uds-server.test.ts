@@ -394,6 +394,7 @@ describe("serveWorkbenchUnix read methods", () => {
           get isAlive() {
             return !closed;
           },
+          durableSessionLoad: false,
           prompt: async () => ({
             text: "",
             stopReason: "stop" as const,
@@ -438,6 +439,7 @@ describe("serveWorkbenchUnix read methods", () => {
           get isAlive() {
             return !closed;
           },
+          durableSessionLoad: false,
           prompt: async () => ({
             text: "",
             stopReason: "stop" as const,
@@ -528,6 +530,7 @@ describe("serveWorkbenchUnix read methods", () => {
           get isAlive() {
             return !closed;
           },
+          durableSessionLoad: false,
           prompt: async () => ({
             text: "",
             stopReason: "stop" as const,

@@ -205,6 +205,13 @@ export interface WorkbenchRuntimeInput {
    * Companion turn mode only; ignored for one-shot ask/next-work modes.
    */
   conversationMessages?: WorkbenchMessage[];
+  /**
+   * Last runner-reported external session id recorded for this Workbench
+   * session, assembled by the caller from prior events. Continuity evidence
+   * only: it identifies the native session a replacement turn succeeds, and
+   * never grants access to it.
+   */
+  priorExternalSessionId?: string;
   onTextDelta?: (delta: string) => void;
   /**
    * Runtime lifecycle events. A streaming caller (one that renders `onTextDelta`)

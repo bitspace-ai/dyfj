@@ -690,6 +690,54 @@ describe("fetchWorkbenchSessionEvents", () => {
       null,
     ]);
   });
+
+  test("preserves persisted tool-history validity instead of normalizing corruption", async () => {
+    const valid = {
+      event_id: "tool-event",
+      event_type: "tool_call",
+      trace_id: "trace",
+      principal_id: "workbench",
+      tool_name: "read_file",
+      tool_call_id: "call-1",
+      tool_arguments: '{"path":"README.md"}',
+      tool_result: "",
+      tool_is_error: "0",
+      created_at: "2026-06-12 10:00:00",
+    };
+    const [emptyResult] = await fetchWorkbenchSessionEvents({
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      query: () => Promise.resolve([valid]),
+    });
+    expect(emptyResult.toolHistoryValid).toBe(true);
+    expect(buildConversationMessages([emptyResult])).toContainEqual({
+      role: "tool",
+      toolCallId: "call-1",
+      name: "read_file",
+      content: "",
+    });
+
+    for (
+      const corrupted of [
+        { ...valid, tool_name: "" },
+        { ...valid, tool_call_id: "" },
+        { ...valid, tool_arguments: "[]" },
+        { ...valid, tool_result: null },
+        { ...valid, tool_is_error: "2" },
+      ]
+    ) {
+      const [event] = await fetchWorkbenchSessionEvents({
+        sessionId: "01ABCDEF0123456789ABCDEF01",
+        query: () =>
+          Promise.resolve([
+            corrupted as unknown as Record<string, string>,
+          ]),
+      });
+      expect(event.toolHistoryValid).toBe(false);
+      expect(() => buildConversationMessages([event])).toThrow(
+        "Session contains malformed persisted tool history",
+      );
+    }
+  });
 });
 
 describe("buildConversationMessages", () => {
@@ -702,6 +750,7 @@ describe("buildConversationMessages", () => {
       arguments?: Record<string, unknown>;
       result?: string;
       isError?: boolean;
+      valid?: boolean;
     } = {},
   ) => ({
     eventId: "01E",
@@ -751,7 +800,8 @@ describe("buildConversationMessages", () => {
     toolCallId: tool.callId ?? null,
     toolArguments: tool.arguments ?? null,
     toolResult: tool.result ?? null,
-    toolIsError: tool.isError ?? null,
+    toolIsError: eventType === "tool_call" ? tool.isError ?? false : null,
+    toolHistoryValid: eventType === "tool_call" ? tool.valid ?? true : null,
     createdAt: "2026-06-12 10:00:00",
   });
 
@@ -776,6 +826,21 @@ describe("buildConversationMessages", () => {
       { role: "user", content: "delegate this" },
       { role: "assistant", content: "external result" },
     ]);
+  });
+
+  test("refuses a persisted ACP tool-history gap", () => {
+    expect(() =>
+      buildConversationMessages([
+        event("session_start", "run the check"),
+        event("tool_call", null, {
+          name: "acp.history_unavailable",
+          callId: "gap-01",
+          arguments: {},
+          result: "",
+          isError: true,
+        }),
+      ])
+    ).toThrow("Session contains unavailable ACP tool history");
   });
 
   test("returns an empty array for sessions with no transcript content", () => {
