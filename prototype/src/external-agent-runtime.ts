@@ -571,11 +571,16 @@ function utf8ByteLengthWithinLimit(
   value: string,
   maxBytes: number,
 ): number | undefined {
+  const chunkCodeUnits = 4_096;
+  // A BMP character needs at most 3 UTF-8 bytes. A surrogate pair needs 4
+  // bytes across 2 code units, while a lone surrogate becomes U+FFFD (3
+  // bytes), so 3 bytes per UTF-16 code unit is a conservative chunk bound.
+  const maxBytesPerCodeUnit = 3;
   const encoder = new TextEncoder();
-  const buffer = new Uint8Array(12_288);
+  const buffer = new Uint8Array(chunkCodeUnits * maxBytesPerCodeUnit);
   let bytes = 0;
   for (let start = 0; start < value.length;) {
-    let end = Math.min(start + 4_096, value.length);
+    let end = Math.min(start + chunkCodeUnits, value.length);
     if (
       end < value.length && value.charCodeAt(end - 1) >= 0xD800 &&
       value.charCodeAt(end - 1) <= 0xDBFF &&
@@ -583,10 +588,14 @@ function utf8ByteLengthWithinLimit(
     ) {
       end -= 1;
     }
-    const { written } = encoder.encodeInto(value.slice(start, end), buffer);
+    const chunk = value.slice(start, end);
+    const { read, written } = encoder.encodeInto(chunk, buffer);
+    // A short read violates the buffer invariant. Return the overflow sentinel
+    // so the immediate caller refuses the field with its specific DomainError.
+    if (read !== chunk.length) return undefined;
     bytes += written;
     if (bytes > maxBytes) return undefined;
-    start = end;
+    start += read;
   }
   return bytes;
 }
