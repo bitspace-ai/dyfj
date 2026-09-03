@@ -87,6 +87,39 @@ export type ExternalAgentStopReason =
   | "refusal"
   | "cancelled";
 
+/** Fixed, value-free marker for an ACP tool exchange that cannot be replayed. */
+export const ACP_TOOL_HISTORY_UNAVAILABLE_NAME = "acp.history_unavailable";
+
+/**
+ * How this turn's semantic continuity was obtained. A native handle is a
+ * resource cache, never the evidence of continuity:
+ *   new              — the Workbench session had no prior turns to carry.
+ *   warm-reused      — the keyed native handle was still alive and kept its
+ *                      own inner history; nothing was replayed.
+ *   durably-resumed  — the runner loaded the prior native session AND the
+ *                      client verified the resumed external session identity.
+ *   reconstructed    — the native handle was gone, so Workbench projected its
+ *                      own bounded transcript into the replacement session.
+ */
+export type ExternalAgentContinuityState =
+  | "new"
+  | "warm-reused"
+  | "durably-resumed"
+  | "reconstructed";
+
+/**
+ * Why a durable native resume was or was not used. `unavailable-*` values are
+ * observations, not preferences: the first is runner-advertised capability, the
+ * second is Workbench's own ability to verify that a resumed external session
+ * is the one it recorded. Either one absent means the turn must reconstruct
+ * rather than claim a resume it cannot evidence.
+ */
+export type ExternalAgentDurableResumeStatus =
+  | "not-required"
+  | "unavailable-agent-capability"
+  | "unavailable-client-verification"
+  | "verified";
+
 /**
  * Outer receipt for a turn whose inner loop is owned by an external agent.
  * Native model, tool-step, and USD-accounting fields remain intentionally
@@ -113,6 +146,28 @@ export interface ExternalAgentTurnReceipt {
     transport: "local_stdio";
     accessRoute?: ExternalAgentAccessRoute;
     costBasis: ExternalAgentCostBasis;
+    /**
+     * Workbench-observed continuity for this turn. `claimSource` is fixed
+     * because every field here is decided by Workbench's own handle and
+     * transcript state, never by an agent statement about its memory. Absent
+     * when the turn ended before any native session was prompted — an
+     * undecided turn states nothing rather than claiming `new`.
+     */
+    continuity?: {
+      state: ExternalAgentContinuityState;
+      claimSource: "workbench_observed";
+      durableResume: ExternalAgentDurableResumeStatus;
+      /** Prior messages projected into a reconstructed replacement session. */
+      priorMessagesProjected?: number;
+      /**
+       * Prior tool request/result pairs carried as historical evidence in that
+       * projection. They are quoted history, never calls the receiving agent
+       * made or may repeat.
+       */
+      toolExchangesProjected?: number;
+      /** Last runner-reported external session id recorded for this session. */
+      priorExternalSessionId?: string;
+    };
     evidence: {
       source: "acp";
       innerState: "opaque";
@@ -123,6 +178,12 @@ export interface ExternalAgentTurnReceipt {
         | "api-key"
         | "gateway"
         | "unauthenticated";
+    };
+    /** Workbench's durable capture posture for ACP tool updates in this turn. */
+    toolEvidence: {
+      status: "complete" | "unavailable";
+      observedCalls: number;
+      recordedCalls: number;
     };
     /** ACP-reported prompt-response usage. ACP marks this surface unstable. */
     usage?: {
