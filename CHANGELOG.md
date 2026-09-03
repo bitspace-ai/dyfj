@@ -17,6 +17,15 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Bounded-field byte sizing fails closed on a short encoder read**: The
+  UTF-8 byte-limit helper that bounds ACP continuity history and tool fields
+  now documents the invariant it relies on (a 4,096-code-unit chunk fits a
+  12,288-byte buffer because UTF-8 needs at most three bytes per UTF-16 code
+  unit), advances by the encoder's reported read count, and treats a short
+  read as an overflow so the caller refuses the field instead of undercounting.
+  Non-ASCII bound tests cover three-byte characters, four-byte emoji, lone
+  surrogates, a surrogate pair straddling the chunk boundary, exact-limit and
+  one-byte-over inputs, and a forced short read.
 - **ACP continuity after an expired handle**: A follow-up turn whose keyed ACP
   handle has been retired no longer starts an empty native session while the
   Workbench session is presented as continuous. Workbench now decides continuity

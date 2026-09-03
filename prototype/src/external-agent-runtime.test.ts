@@ -2450,6 +2450,81 @@ describe("reconstructed tool history", () => {
     );
   }
 
+  function expectHistoryMessageByteBound(
+    exact: string,
+    oneOver: string,
+  ): void {
+    const encoder = new TextEncoder();
+    expect(encoder.encode(exact).byteLength).toBe(MAX_HISTORY_MESSAGE_BYTES);
+    expect(encoder.encode(oneOver).byteLength).toBe(
+      MAX_HISTORY_MESSAGE_BYTES + 1,
+    );
+    expect(() =>
+      reconstructAcpContinuityPrompt({
+        priorMessages: [{ role: "user", content: exact }],
+        prompt: "continue",
+      })
+    ).not.toThrow();
+    expect(() =>
+      reconstructAcpContinuityPrompt({
+        priorMessages: [{ role: "user", content: oneOver }],
+        prompt: "continue",
+      })
+    ).toThrow("history message limit");
+  }
+
+  test("counts three-byte characters at the byte limit", () => {
+    const exact = "界".repeat(Math.floor(MAX_HISTORY_MESSAGE_BYTES / 3)) +
+      "a".repeat(MAX_HISTORY_MESSAGE_BYTES % 3);
+    expectHistoryMessageByteBound(exact, `${exact}a`);
+  });
+
+  test("counts four-byte emoji at the byte limit", () => {
+    const exact = "😀".repeat(MAX_HISTORY_MESSAGE_BYTES / 4);
+    expectHistoryMessageByteBound(exact, `${exact}a`);
+  });
+
+  test("counts lone high surrogates at the byte limit", () => {
+    const exact = "a".repeat(MAX_HISTORY_MESSAGE_BYTES - 3) + "\uD800";
+    expectHistoryMessageByteBound(exact, `${exact}a`);
+  });
+
+  test("counts lone low surrogates at the byte limit", () => {
+    const exact = "a".repeat(MAX_HISTORY_MESSAGE_BYTES - 3) + "\uDC00";
+    expectHistoryMessageByteBound(exact, `${exact}a`);
+  });
+
+  test("keeps a surrogate pair together across the chunk boundary", () => {
+    const prefix = "a".repeat(4_095);
+    const exact = prefix + "😀" +
+      "a".repeat(MAX_HISTORY_MESSAGE_BYTES - prefix.length - 4);
+    expectHistoryMessageByteBound(exact, `${exact}a`);
+  });
+
+  test("fails closed when the encoder does not consume the full chunk", () => {
+    const NativeTextEncoder = TextEncoder;
+    class ShortReadTextEncoder extends NativeTextEncoder {
+      override encodeInto(
+        source: string,
+        destination: Uint8Array,
+      ): TextEncoderEncodeIntoResult {
+        const result = super.encodeInto(source, destination);
+        return { ...result, read: Math.max(0, result.read - 1) };
+      }
+    }
+    vi.stubGlobal("TextEncoder", ShortReadTextEncoder);
+    try {
+      expect(() =>
+        reconstructAcpContinuityPrompt({
+          priorMessages: [{ role: "user", content: "short read" }],
+          prompt: "continue",
+        })
+      ).toThrow("history message limit");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test("projects the exchange as labelled, quoted, ordered history", () => {
     const projection = reconstructAcpContinuityPrompt({
       priorMessages: toolHistory(),
