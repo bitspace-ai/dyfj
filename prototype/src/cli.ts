@@ -1029,7 +1029,7 @@ export async function runRepl(
           break;
         }
       }
-      sessionState.lastReplCommand = prompt;
+      sessionState.lastReplCommand = undefined;
     }
   } finally {
     io.close();

@@ -1820,6 +1820,83 @@ describe("runRepl", () => {
     expect(stdout.join("")).toContain("b");
   });
 
+  test("does not treat an unhandled slash-prefixed prompt as friction command context", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method, params) => {
+          calls.push({ method, params });
+          if (method === "turn") return Promise.resolve(result());
+          if (method === "friction/post") {
+            return Promise.resolve({
+              number: "F039",
+              commentId: "comment-39",
+              firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+            });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const prompt = "/unhandled free-text prompt";
+    const { io } = fakeIo([
+      prompt,
+      "/friction minor A concrete failure.",
+    ]);
+
+    await runRepl(cfg({ unix: true }), io, connect, false);
+
+    expect(calls.find((call) => call.method === "turn")?.params).toMatchObject({
+      prompt,
+    });
+    const frictionCall = calls.find((call) => call.method === "friction/post");
+    expect(frictionCall).toBeDefined();
+    expect((frictionCall?.params as { context: unknown }).context).not
+      .toHaveProperty("command");
+  });
+
+  test("forwards a consumed slash command as truncated friction context", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const previousSlashCommand = `/idea mark ${"x".repeat(200)}`;
+    const truncatedSlashCommand = previousSlashCommand.slice(0, 119) + "…";
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method, params) => {
+          calls.push({ method, params });
+          if (method === "turn") return Promise.resolve(result());
+          if (method === "ideas/mark") {
+            return Promise.resolve({
+              idea: {
+                ideaId: "idea-39",
+                label: "x".repeat(200),
+              },
+            });
+          }
+          if (method === "friction/post") {
+            return Promise.resolve({
+              number: "F039",
+              commentId: "comment-39",
+              firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+            });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const { io } = fakeIo([
+      "establish the session",
+      previousSlashCommand,
+      "/friction minor A concrete failure.",
+    ]);
+
+    await runRepl(cfg({ unix: true }), io, connect, false);
+
+    const frictionCall = calls.find((call) => call.method === "friction/post");
+    expect(frictionCall?.params).toMatchObject({
+      context: { command: truncatedSlashCommand },
+    });
+  });
+
   test("skips blank lines and exits on /exit", async () => {
     const { connect, params } = sequentialTurnConnect([
       { result: result() },
