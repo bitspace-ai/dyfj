@@ -88,7 +88,10 @@ toggles the fast speed tier for supported models,
 `/friction <sev> [--escaped] <text...>` posts a numbered daily-driver friction
 entry through the configured Linear MCP tools, and `/quit` or `/exit` quits
 cleanly. `/friction last` shows only the last successfully posted receipt from
-the current REPL.
+the current REPL. Its posted `Context:` line contains exactly the model slug,
+workspace basename, and previous slash command when one exists; the slash
+command is capped at 120 characters with a visible `…` marker, and free-text
+prompts and absolute workspace paths are never posted.
 
 The HTTP peer server is retired. UDS JSON-RPC is the only seam (`deno task serve-unix` / `dyfj`); a remote or browser surface returns later as a thin gateway client of that seam.
 
@@ -107,12 +110,15 @@ streaming `turn` and cancellation `turn/cancel` methods — over a socket resolv
 from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running
 the shared turn core. `friction/post` accepts
 `{ severity, escaped, text, context?: { sessionId, model, workspace, command } }`
-and returns `{ number, escapeNumber?, commentId, firstLine }`. It reuses the
-configured `linear.get_issue` and `linear.create_comment` command policies and
-their redacted tool-call receipts. Set `DYFJ_FRICTION_ISSUE_ID` on the runtime
-to identify the operator's friction-checkpoint issue; `friction/post` fails at
-the `configuration` stage when the variable is unset or blank.
-`runtime/status` includes grouped method catalog metadata for client surfaces.
+and returns `{ number, escapeNumber?, commentId, firstLine }`. The resulting
+`Context:` line contains exactly the model slug, workspace basename, and
+previous slash command when one exists; it never contains a free-text prompt or
+absolute workspace path. It reuses the configured `linear.get_issue` and
+`linear.create_comment` command policies and their redacted tool-call receipts.
+Set `DYFJ_FRICTION_ISSUE_ID` on the runtime to identify the operator's
+friction-checkpoint issue; `friction/post` fails at the `configuration` stage
+when the variable is unset or blank. `runtime/status` includes grouped method
+catalog metadata for client surfaces.
 The engine-free `dyfj` CLI reaches the read methods over it with `dyfj models`
 and `dyfj sessions`; after a TTY-backed UDS turn connects, Ctrl-C sends
 `turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY

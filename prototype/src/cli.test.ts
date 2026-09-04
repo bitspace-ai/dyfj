@@ -3740,11 +3740,20 @@ describe("REPL /friction command", () => {
     expect(stderr).toContain(
       "  DYFJ_FRICTION_ISSUE_ID must be set on the runtime",
     );
+    expect(stderr).toContain(
+      "  posted Context: model slug, workspace basename, previous slash command (if any)",
+    );
+    expect(stderr).toContain(
+      "  free-text prompts and absolute workspace paths are never posted",
+    );
   });
 
-  test("posts one line with session context and prints the honest receipt", async () => {
+  test("forwards a truncated slash command and workspace basename", async () => {
     const { io, stderr } = fakeIo();
     const calls: Array<{ method: string; params: unknown }> = [];
+    const previousSlashCommand = `/packet ${"x".repeat(200)}`;
+    const truncatedSlashCommand = previousSlashCommand.slice(0, 119) + "…";
+    expect(Array.from(truncatedSlashCommand)).toHaveLength(120);
     let approvalHandlerPresent = false;
     const fakeConnect: ConnectFn = (_socket, options) => {
       approvalHandlerPresent = options?.onApproval !== undefined;
@@ -3764,9 +3773,9 @@ describe("REPL /friction command", () => {
       sessionId: "01ACTIVE_SESS",
       turnCount: 1,
       sessionSpendUsd: 0,
-      workspace: "/workspace",
+      workspace: "/private/workspaces/example-repo",
       lastModelSlug: "model-slug",
-      lastReplCommand: "/packet draft",
+      lastReplCommand: previousSlashCommand,
     };
 
     expect(
@@ -3789,8 +3798,8 @@ describe("REPL /friction command", () => {
         context: {
           sessionId: "01ACTIVE_SESS",
           model: "model-slug",
-          workspace: "/workspace",
-          command: "/packet draft",
+          workspace: "example-repo",
+          command: truncatedSlashCommand,
         },
       },
     }]);
@@ -3799,6 +3808,53 @@ describe("REPL /friction command", () => {
       "comment id: comment-39",
     ]);
     expect(state.lastFriction?.commentId).toBe("comment-39");
+  });
+
+  test("does not forward a free-text previous input", async () => {
+    const { io } = fakeIo();
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const state: ReplSessionState = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+      workspace: "/private/workspaces/example-repo",
+      lastModelSlug: "model-slug",
+      lastReplCommand: "Summarize the operator's private notes.",
+    };
+
+    await handleReplFrictionCommand(
+      "/friction minor A concrete failure.",
+      cfg({ unix: true }),
+      io,
+      state,
+      () =>
+        Promise.resolve({
+          request: (method: string, params: unknown) => {
+            calls.push({ method, params });
+            return Promise.resolve({
+              number: "F039",
+              commentId: "comment-39",
+              firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+            });
+          },
+          close: () => {},
+        }),
+    );
+
+    expect(calls[0]).toMatchObject({
+      method: "friction/post",
+      params: {
+        context: {
+          sessionId: "01ACTIVE_SESS",
+          model: "model-slug",
+          workspace: "example-repo",
+        },
+      },
+    });
+    expect((calls[0].params as { context: unknown }).context).not
+      .toHaveProperty(
+        "command",
+      );
   });
 
   test("last shows only a previously successful receipt", async () => {

@@ -74,6 +74,8 @@ describe("postFriction", () => {
 
   test("numbers across all existing comments and posts the ritual body", async () => {
     const createComment = vi.fn(async () => framed({ id: "comment-39" }));
+    const previousSlashCommand = `/packet ${"x".repeat(200)}`;
+    const truncatedSlashCommand = previousSlashCommand.slice(0, 119) + "…";
     const result = await postFriction({
       issueIdentifier: "EX-100",
       request: {
@@ -82,8 +84,8 @@ describe("postFriction", () => {
         text: "The one-line capture path required a second paste.",
         context: {
           model: "model-slug",
-          workspace: "/workspace",
-          command: "/packet draft",
+          workspace: "/private/workspaces/example-repo",
+          command: previousSlashCommand,
         },
       },
       getIssueCommand,
@@ -114,9 +116,47 @@ describe("postFriction", () => {
         "",
         "The one-line capture path required a second paste.",
         "",
-        "Context: model=model-slug · workspace=/workspace · command=/packet draft",
+        `Context: model=model-slug · workspace=example-repo · command=${truncatedSlashCommand}`,
       ].join("\n"),
     });
+  });
+
+  test("does not post free-text input from the command context field", async () => {
+    let createdBody = "";
+    const createComment = vi.fn(
+      async (arguments_: Record<string, unknown>) => {
+        createdBody = String(arguments_.body);
+        return framed({ id: "comment-1" });
+      },
+    );
+    await postFriction({
+      issueIdentifier: "EX-100",
+      request: {
+        severity: "minor",
+        escaped: false,
+        text: "A concrete operator moment.",
+        context: {
+          model: "model-slug",
+          workspace: "/private/workspaces/example-repo",
+          command: "Summarize the operator's private notes.",
+        },
+      },
+      getIssueCommand,
+      createCommentCommand,
+      invoke: {
+        getIssue: async () => framed({ id: "issue-uuid", comments: [] }),
+        createComment,
+      },
+    });
+
+    expect(createComment).toHaveBeenCalledWith({
+      issueId: "issue-uuid",
+      body: expect.stringContaining(
+        "Context: model=model-slug · workspace=example-repo",
+      ),
+    });
+    expect(createdBody).not.toContain("private notes");
+    expect(createdBody).not.toContain("command=");
   });
 
   test("assigns independent next friction and escape numbers", async () => {

@@ -279,9 +279,13 @@ The REPL's `/friction <sev> [--escaped] <text...>` command posts one numbered
 entry to the daily-driver checkpoint through the configured Linear MCP read and
 write tools. The narrow UDS `friction/post` method retains their existing
 authorization: the read follows configured-external read policy and the comment
-write still asks for operator approval. Set `DYFJ_FRICTION_ISSUE_ID` on the
-runtime to identify the operator's friction-checkpoint issue; `/friction` fails
-at the `configuration` stage when the variable is unset or blank.
+write still asks for operator approval. Each posted `Context:` line contains
+exactly the model slug, workspace basename, and previous slash command when one
+exists; the slash command is capped at 120 characters with a visible `…` marker,
+and free-text prompts and absolute workspace paths are never posted. Set
+`DYFJ_FRICTION_ISSUE_ID` on the runtime to identify the operator's
+friction-checkpoint issue; `/friction` fails at the `configuration` stage when
+the variable is unset or blank.
 
 ### Hosted inference (paid approval)
 

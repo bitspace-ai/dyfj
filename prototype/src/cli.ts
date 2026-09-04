@@ -60,7 +60,7 @@ import {
   type WorkbenchWorkPacket,
 } from "./idea-packet";
 import type { WorkbenchSessionEvent } from "./sessions";
-import type { FrictionPostResult } from "./friction";
+import { type FrictionPostResult, normalizeFrictionContext } from "./friction";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and stream frame shapes are defined once in turn-contract.ts and
@@ -2024,6 +2024,10 @@ export async function handleReplFrictionCommand(
       "  /friction last                         show the last posted entry",
     );
     io.err("  sev: blocker | major | minor | paper-cut");
+    io.err(
+      "  posted Context: model slug, workspace basename, previous slash command (if any)",
+    );
+    io.err("  free-text prompts and absolute workspace paths are never posted");
     io.err("  DYFJ_FRICTION_ISSUE_ID must be set on the runtime");
     return true;
   }
@@ -2063,7 +2067,7 @@ export async function handleReplFrictionCommand(
     return true;
   }
 
-  const context = {
+  const context = normalizeFrictionContext({
     sessionId: sessionState.sessionId,
     ...(sessionState.lastModelSlug === undefined
       ? {}
@@ -2074,7 +2078,7 @@ export async function handleReplFrictionCommand(
     ...(sessionState.lastReplCommand === undefined
       ? {}
       : { command: sessionState.lastReplCommand }),
-  };
+  });
   let client: UnixClient | undefined;
   try {
     client = await connect(config.socket, {

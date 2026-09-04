@@ -1,4 +1,5 @@
 import type { CommandDefinition } from "./commands.ts";
+import { basename } from "node:path";
 
 export const FRICTION_SEVERITIES = [
   "blocker",
@@ -28,6 +29,33 @@ export interface FrictionPostInput {
   escaped: boolean;
   text: string;
   context?: FrictionContext;
+}
+
+export const FRICTION_COMMAND_MAX_CHARACTERS = 120;
+
+export function normalizeFrictionContext(
+  context: FrictionContext | undefined,
+): FrictionContext | undefined {
+  if (context === undefined) return undefined;
+  const commandCharacters = context.command?.startsWith("/")
+    ? Array.from(context.command)
+    : undefined;
+  const command = commandCharacters === undefined
+    ? undefined
+    : commandCharacters.length <= FRICTION_COMMAND_MAX_CHARACTERS
+    ? context.command
+    : commandCharacters.slice(0, FRICTION_COMMAND_MAX_CHARACTERS - 1).join("") +
+      "…";
+  return {
+    ...(context.sessionId === undefined
+      ? {}
+      : { sessionId: context.sessionId }),
+    ...(context.model === undefined ? {} : { model: context.model }),
+    ...(context.workspace === undefined
+      ? {}
+      : { workspace: basename(context.workspace) }),
+    ...(command === undefined ? {} : { command }),
+  };
 }
 
 export class FrictionStageError extends Error {
@@ -156,6 +184,7 @@ function formatLocalDate(now: Date): string {
 }
 
 function contextLine(context: FrictionContext | undefined): string {
+  context = normalizeFrictionContext(context);
   const fields = [
     context?.model === undefined ? undefined : `model=${context.model}`,
     context?.workspace === undefined
@@ -277,8 +306,8 @@ export async function postFriction(input: {
     throw new FrictionStageError("comment read", "comments could not be read");
   }
 
-  // The separately frozen historical log ends before F038. Numbering from the
-  // checkpoint issue's complete comment list is sufficient for this command.
+  // Numbers derive from the highest F/E number found in the checkpoint issue's
+  // own comments; no other source is consulted.
   const number = formatNumber("F", highestNumber(comments, "F") + 1);
   const escapeNumber = input.request.escaped
     ? formatNumber("E", highestNumber(comments, "E") + 1)
