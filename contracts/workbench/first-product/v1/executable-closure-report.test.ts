@@ -107,6 +107,19 @@ Deno.test("the generated report computes the fixed EC, RP, and target denominato
   }
 });
 
+Deno.test("the generated report equals the checked-in report byte-for-byte", async () => {
+  const report = await buildClosureReport();
+  const generated = `${JSON.stringify(report, null, 2)}\n`;
+  const committed = await Deno.readTextFile(
+    "contracts/workbench/first-product/v1/executable-closure-report.json",
+  );
+
+  assert(
+    generated === committed,
+    "checked-in closure report differs from fresh regeneration",
+  );
+});
+
 Deno.test("the report self-check fails on mutated evidence and computed results", async () => {
   const report = await buildClosureReport();
 

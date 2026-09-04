@@ -117,13 +117,15 @@ Deno.test("aggregate lanes include the contract package tests", () => {
   );
   // The suite reads its schemas and fixtures and needs nothing else.
   assertStringIncludes(lane.args.join(" "), "--allow-read=.");
-  assertStringIncludes(lane.args.join(" "), "--allow-run=git");
+  if (lane.args.some((argument) => argument.startsWith("--allow-run"))) {
+    throw new Error("contract package tests retain unused run permission");
+  }
   if (!FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error("contract package tests must also run in the fast subset");
   }
 });
 
-Deno.test("aggregate lanes generate the deterministic closure report", () => {
+Deno.test("aggregate lanes compare a regenerated closure report", () => {
   const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
     candidate,
   ) => candidate.label === "Contract closure report generation");
@@ -137,12 +139,77 @@ Deno.test("aggregate lanes generate the deterministic closure report", () => {
   );
   assertStringIncludes(
     lane.args.join(" "),
-    "--allow-write=contracts/workbench/first-product/v1/executable-closure-report.json",
+    "--output-path /tmp/dyfj-executable-closure-report-",
+  );
+  assertStringIncludes(
+    lane.args.join(" "),
+    "--compare-path contracts/workbench/first-product/v1/executable-closure-report.json",
+  );
+  if (
+    lane.args.some((argument) =>
+      argument ===
+        "--allow-write=contracts/workbench/first-product/v1/executable-closure-report.json"
+    )
+  ) {
+    throw new Error("closure report lane can overwrite the committed report");
+  }
+  assertStringIncludes(
+    lane.args.join(" "),
+    "--allow-write=/tmp/dyfj-executable-closure-report-",
   );
   if (!FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error(
       "contract closure report generation must also run in the fast subset",
     );
+  }
+});
+
+Deno.test("closure report lane fails when regeneration differs", async () => {
+  const directory = await Deno.makeTempDir({
+    prefix: "dyfj-closure-report-mismatch-",
+  });
+  const committedPath =
+    "contracts/workbench/first-product/v1/executable-closure-report.json";
+  const alteredPath = `${directory}/altered-report.json`;
+  const outputPath = `${directory}/generated-report.json`;
+  try {
+    const committed = await Deno.readTextFile(committedPath);
+    await Deno.writeTextFile(alteredPath, `${committed}\n`);
+    const lane = productionLanes(Deno.cwd(), Deno.execPath()).find((
+      candidate,
+    ) => candidate.label === "Contract closure report generation");
+    if (!lane) {
+      throw new Error("contract closure report generation lane is missing");
+    }
+    const outputIndex = lane.args.indexOf("--output-path");
+    const compareIndex = lane.args.indexOf("--compare-path");
+    if (outputIndex < 0 || compareIndex < 0) {
+      throw new Error("closure report lane lacks comparison arguments");
+    }
+    lane.args[outputIndex + 1] = outputPath;
+    lane.args[compareIndex + 1] = alteredPath;
+    lane.args = lane.args.map((argument) =>
+      argument.startsWith("--allow-read=")
+        ? `--allow-read=.,${alteredPath}`
+        : argument.startsWith("--allow-write=")
+        ? `--allow-write=${outputPath}`
+        : argument
+    );
+
+    const result = await new Deno.Command(lane.command, {
+      args: lane.args,
+      cwd: lane.cwd,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(result.code, 1);
+    assertStringIncludes(
+      new TextDecoder().decode(result.stderr),
+      "executable closure report mismatch: committed report differs from fresh regeneration",
+    );
+    assertEquals(await Deno.readTextFile(committedPath), committed);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
   }
 });
 

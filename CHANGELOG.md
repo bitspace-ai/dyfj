@@ -80,7 +80,8 @@ README are tracked separately in its Revision history section.
   or declared claim markers. Undeclared prose lies outside the trace. The report
   generator, preserved-probe test, report self-check, and focused validator
   tests run in the aggregate gate under the existing `test.aggregate` check, in
-  both full and fast modes.
+  both full and fast modes. The gate fails when the checked-in report differs
+  byte-for-byte from a fresh regeneration without rewriting the tracked file.
 - **macOS portability gate**: The full deterministic gate now runs in an
   independent macOS 15 arm64 clean checkout with digest-pinned Deno and Dolt
   archives, alongside the stable Linux required check on Ubuntu 24.04.

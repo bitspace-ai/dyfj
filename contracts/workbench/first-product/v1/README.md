@@ -206,9 +206,9 @@ mutation classes, and unsupported public claims fail the report. `blocked` and
 `not-applicable` are valid only when the generator observes a stated residual; a
 required identifier, witness, mutation class, or declared claim marker absent
 from the generator's observed evidence is never reported as `pass`. Its
-candidate identity deliberately hashes the contract source tree without the
-generated report itself, avoiding a self-referential digest; the report's own
-digest binds the generated output.
+candidate identity is the contract source manifest, which deliberately hashes
+the contract source tree without the generated report itself, avoiding a
+self-referential digest; the report's own digest binds the generated output.
 
 The report generator and self-check run under the repository's existing
 `test.aggregate` gate in both fast and full modes. A green report proves this
@@ -466,16 +466,18 @@ _representation_, using a placeholder value.
 ## Running the tests
 
 ```sh
-deno test --allow-read=. --allow-run=git \
+deno test --allow-read=. \
   contracts/workbench/first-product/v1/validate.test.ts \
   contracts/workbench/first-product/v1/executable-closure.test.ts \
   contracts/workbench/first-product/v1/executable-closure-report.test.ts
 ```
 
-The report self-check reads candidate identity from Git; no network permission
-is used. The same lane and deterministic report generator run inside the
-repository-owned aggregate gate (`deno task test` and `deno task test:fast`)
-under the existing `test.aggregate` check id.
+The report generator uses no network permission. The same lane and deterministic
+report generator run inside the repository-owned aggregate gate
+(`deno task
+test` and `deno task test:fast`) under the existing `test.aggregate`
+check id. The lane writes a temporary regeneration and fails when its bytes
+differ from the checked-in report; it never rewrites the checked-in report.
 
 ## Known limits
 
