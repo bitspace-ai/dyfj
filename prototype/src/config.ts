@@ -196,6 +196,13 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   { key: "doltDatabase", envVar: "DOLT_DATABASE", domain: "engine", type: "string", kind: "value" },
   { key: "memoryMcpUrl", envVar: "DYFJ_MEMORY_MCP_URL", domain: "engine", type: "string", kind: "value" },
   { key: "memoryMcpTool", envVar: "DYFJ_MEMORY_MCP_TOOL", domain: "engine", type: "string", kind: "value" },
+  {
+    key: "frictionIssueId",
+    envVar: "DYFJ_FRICTION_ISSUE_ID",
+    domain: "engine",
+    type: "string",
+    kind: "value",
+  },
   // Header NAME only (the token itself stays a secret pointer below).
   { key: "memoryMcpTokenHeader", envVar: "DYFJ_MEMORY_MCP_TOKEN_HEADER", domain: "engine", type: "string", kind: "value" },
   // ── engine: secret POINTERS (resolved at point of use; never stored here) ──

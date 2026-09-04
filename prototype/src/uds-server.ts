@@ -67,12 +67,23 @@ import {
 } from "./turn-runner";
 import {
   type CommandDefinition,
+  type ConfirmToolApproval,
   createCommandRegistry,
+  invokeCommandWithEvent,
   registerCoreCommands,
   type ToolApprovalVerdict,
 } from "./commands";
 import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
 import { AcpSessionHandleMap } from "./acp-session-map";
+import {
+  FRICTION_SEVERITIES,
+  type FrictionContext,
+  type FrictionPostInput,
+  FrictionStageError,
+  postFriction,
+  requireFrictionIssueIdentifier,
+} from "./friction";
+import { generateTraceId, writeEvent as writeDoltEvent } from "./utils";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -169,6 +180,14 @@ export interface WorkbenchUnixServerOptions {
   autostarted?: boolean;
   /** Boot-discovered external MCP commands available to this runtime. */
   externalMcpCommands?: readonly CommandDefinition[];
+  /** Configured operator friction-checkpoint issue identifier. */
+  frictionIssueId?: string;
+  /** Injectable wall clock for deterministic friction receipt tests. */
+  frictionNow?: () => Date;
+  /** Injectable durable tool-receipt writer for friction/post tests. */
+  frictionEventWriter?: (
+    event: Record<string, unknown>,
+  ) => Promise<void> | void;
   /** Engine default companion model (config), applied to bare turns. */
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config); the seam is always loopback. */
@@ -315,6 +334,7 @@ const METHOD_CATALOG = [
   { id: "sessions/list", namespace: "sessions", kind: "read" },
   { id: "sessions/inspect", namespace: "sessions", kind: "read" },
   { id: "events/query", namespace: "events", kind: "read" },
+  { id: "friction/post", namespace: "friction", kind: "interactive" },
   { id: "ideas/mark", namespace: "ideas", kind: "interactive" },
   { id: "ideas/list", namespace: "ideas", kind: "read" },
   { id: "ideas/get", namespace: "ideas", kind: "read" },
@@ -437,6 +457,13 @@ export function buildWorkbenchHandlers(
   const listSessions = options.listSessions ?? listWorkbenchSessions;
   const fetchSessionEvents = options.fetchSessionEvents ??
     fetchWorkbenchSessionEvents;
+  let frictionQueue: Promise<void> = Promise.resolve();
+
+  const withFrictionLock = async <T>(run: () => Promise<T>): Promise<T> => {
+    const result = frictionQueue.then(run, run);
+    frictionQueue = result.then(() => {}, () => {});
+    return await result;
+  };
 
   return {
     "runtime/liveness": () => {
@@ -641,6 +668,195 @@ export function buildWorkbenchHandlers(
       return {
         events: Array.isArray(fetched) ? fetched.slice(0, limit) : [],
       };
+    },
+
+    "friction/post": async (params, ctx) => {
+      const record = asRecord(params);
+      const severity = sanitizeRpcString(record.severity, "severity", {
+        required: true,
+        maxLen: 16,
+      });
+      if (
+        !FRICTION_SEVERITIES.includes(
+          severity as (typeof FRICTION_SEVERITIES)[number],
+        )
+      ) {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          `severity must be one of: ${FRICTION_SEVERITIES.join(", ")}`,
+        );
+      }
+      if (typeof record.escaped !== "boolean") {
+        throw new RpcError(
+          RpcErrorCode.invalidParams,
+          "escaped must be a boolean",
+        );
+      }
+      const text = sanitizeRpcString(record.text, "text", {
+        required: true,
+        maxLen: 32_768,
+        singleLine: false,
+      })!;
+      let context: FrictionContext | undefined;
+      if (record.context !== undefined) {
+        if (
+          typeof record.context !== "object" || record.context === null ||
+          Array.isArray(record.context)
+        ) {
+          throw new RpcError(
+            RpcErrorCode.invalidParams,
+            "context must be an object",
+          );
+        }
+        const rawContext = record.context as Record<string, unknown>;
+        const sessionId = sanitizeRpcIdentifier(
+          rawContext.sessionId,
+          "context.sessionId",
+          { maxLen: 256 },
+        );
+        const model = sanitizeRpcString(rawContext.model, "context.model", {
+          maxLen: 256,
+        });
+        const workspace = sanitizeRpcString(
+          rawContext.workspace,
+          "context.workspace",
+          { maxLen: 4096 },
+        );
+        const command = sanitizeRpcString(
+          rawContext.command,
+          "context.command",
+          { maxLen: 32_768 },
+        );
+        context = {
+          ...(sessionId === undefined ? {} : { sessionId }),
+          ...(model === undefined ? {} : { model }),
+          ...(workspace === undefined ? {} : { workspace }),
+          ...(command === undefined ? {} : { command }),
+        };
+      }
+
+      let issueIdentifier: string;
+      try {
+        issueIdentifier = requireFrictionIssueIdentifier(
+          options.frictionIssueId,
+        );
+      } catch (error) {
+        const message = error instanceof FrictionStageError
+          ? error.message
+          : `friction/post failed: ${summarizeError(error)}`;
+        throw new RpcError(RpcErrorCode.internalError, message);
+      }
+
+      const externalCommands = options.externalMcpCommands ?? [];
+      const getIssueCommand = externalCommands.find((command) =>
+        command.id === "mcp.linear.get_issue"
+      );
+      if (getIssueCommand === undefined) {
+        throw new RpcError(
+          RpcErrorCode.internalError,
+          "get_issue failed: configured Linear tool is unavailable",
+        );
+      }
+      const createCommentCommand = externalCommands.find((command) =>
+        command.id === "mcp.linear.create_comment"
+      );
+      if (createCommentCommand === undefined) {
+        throw new RpcError(
+          RpcErrorCode.internalError,
+          "create_comment failed: configured Linear tool is unavailable",
+        );
+      }
+      const registry = createCommandRegistry([
+        getIssueCommand,
+        createCommentCommand,
+      ]);
+      const traceId = generateTraceId();
+      const invoke = async (
+        command: CommandDefinition,
+        arguments_: Record<string, unknown>,
+      ): Promise<unknown> => {
+        const call = {
+          commandId: command.id,
+          callId: crypto.randomUUID(),
+          caller: {
+            principalId: "operator",
+            principalType: "human" as const,
+          },
+          arguments: arguments_,
+        };
+        const confirmApproval: ConfirmToolApproval = (request) =>
+          ctx.request("approval", request).then(
+            toApprovalVerdict,
+            () => ({
+              decision: "deny" as const,
+              reason: "approval request failed (no client approver?)",
+            }),
+          );
+        const policyContext = {
+          permissionLevel: options.engineConfig?.permissionLevel ??
+            options.permissionLevel ?? "strict",
+          loopback: true,
+        } as const;
+        const result = context?.sessionId === undefined
+          ? await invokeCommandWithEvent(
+            registry,
+            call,
+            {
+              sessionId: "friction-unpersisted",
+              traceId,
+              writeEvent: () => {},
+            },
+            confirmApproval,
+            policyContext,
+          )
+          : await invokeCommandWithEvent(
+            registry,
+            call,
+            {
+              sessionId: context.sessionId,
+              traceId,
+              writeEvent: async (event) => {
+                try {
+                  await (options.frictionEventWriter ?? writeDoltEvent)(event);
+                } catch (error) {
+                  const kind = error instanceof Error ? error.name : "unknown";
+                  console.warn(`friction tool receipt write failed (${kind})`);
+                }
+              },
+            },
+            confirmApproval,
+            policyContext,
+          );
+        if (result.isError) throw new Error(result.reason);
+        return result.result;
+      };
+
+      try {
+        return await withFrictionLock(() =>
+          postFriction({
+            issueIdentifier,
+            request: {
+              severity: severity as FrictionPostInput["severity"],
+              escaped: record.escaped as boolean,
+              text,
+              ...(context === undefined ? {} : { context }),
+            },
+            getIssueCommand,
+            createCommentCommand,
+            invoke: {
+              getIssue: (arguments_) => invoke(getIssueCommand, arguments_),
+              createComment: (arguments_) =>
+                invoke(createCommentCommand, arguments_),
+            },
+            now: options.frictionNow,
+          })
+        );
+      } catch (error) {
+        const message = error instanceof FrictionStageError
+          ? error.message
+          : `friction/post failed: ${summarizeError(error)}`;
+        throw new RpcError(RpcErrorCode.internalError, message);
+      }
     },
 
     "sessions/inspect": async (params) => {

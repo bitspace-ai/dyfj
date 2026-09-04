@@ -11,6 +11,12 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **REPL friction capture**: `/friction <sev> [--escaped] <text...>` now posts
+  one numbered ritual-format entry through a narrow loopback `friction/post`
+  method that reuses configured Linear MCP read/write authorization, prints an
+  honest comment receipt, and retains the last successful receipt in the REPL.
+  `DYFJ_FRICTION_ISSUE_ID` must identify the operator's friction-checkpoint
+  issue.
 - **macOS portability gate**: The full deterministic gate now runs in an
   independent macOS 15 arm64 clean checkout with digest-pinned Deno and Dolt
   archives, alongside the stable Linux required check on Ubuntu 24.04.
