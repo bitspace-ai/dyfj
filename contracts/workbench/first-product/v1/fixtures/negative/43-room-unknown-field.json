@@ -1,0 +1,28 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A room carrying a field the schema does not declare",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "structure.unknown-field",
+    "note": "Closed objects reject any field their schema does not declare."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "undeclared_field": "not part of the room schema",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "room_memberships": []
+}

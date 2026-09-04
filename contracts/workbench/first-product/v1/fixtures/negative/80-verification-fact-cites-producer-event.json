@@ -1,0 +1,18 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "Independent-verification claims cite a producer event",
+  "expectation": { "outcome": "reject", "rule": "claim-source.separation" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/receipts/3/body/verification/evidence/0/event",
+      "value": "ev-artifact-committed"
+    },
+    {
+      "op": "replace",
+      "path": "/receipts/3/body/facts/independent_verification/evidence/0/event",
+      "value": "ev-artifact-committed"
+    }
+  ]
+}

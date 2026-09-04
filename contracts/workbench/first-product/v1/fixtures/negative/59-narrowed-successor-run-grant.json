@@ -1,0 +1,47 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run uses a principal-preserving narrowed successor of its Task envelope grant",
+  "expectation": {
+    "outcome": "accept",
+    "note": "An attributable successor grant is valid when it preserves principals and does not broaden the Task envelope."
+  },
+  "mutations": [
+    {
+      "op": "copy",
+      "from": "/capability_grants/1",
+      "path": "/capability_grants/-"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/id",
+      "value": "grant-run-narrowed-r3"
+    },
+    { "op": "replace", "path": "/capability_grants/2/revision", "value": 3 },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/supersedes",
+      "value": "grant-primary-envelope-r2"
+    },
+    { "op": "remove", "path": "/capability_grants/2/approval_event" },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/policy_basis/decision",
+      "value": "allowed"
+    },
+    {
+      "op": "remove",
+      "path": "/capability_grants/2/policy_basis/approval_event"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/scope/budget/limit_minor_units",
+      "value": 1200
+    },
+    {
+      "op": "replace",
+      "path": "/runs/1/capability_grant",
+      "value": "grant-run-narrowed-r3"
+    }
+  ]
+}

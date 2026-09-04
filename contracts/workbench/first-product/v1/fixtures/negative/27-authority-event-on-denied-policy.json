@@ -1,0 +1,101 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "An approval recorded under a denied policy basis",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "A denied policy decision carries no authority for the event resting on it."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-approval-denied-basis",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "trace": "trace-focused",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "approval",
+      "type": "budget-envelope-raised",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "operator-direct"
+      },
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "denied"
+      },
+      "claim_source": "operator-accepted",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 1,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "State and event committed together."
+          }
+        ]
+      }
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-operator",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

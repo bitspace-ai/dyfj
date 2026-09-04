@@ -1,0 +1,338 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dyfj:contracts:workbench:first-product:v1:common",
+  "title": "Workbench first-product common definitions",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "identity_basis": {
+      "enum": [
+        "assigned-opaque",
+        "derived-from-process",
+        "derived-from-model",
+        "derived-from-runner",
+        "derived-from-native-session",
+        "derived-from-interface-position"
+      ]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "maxLength": 48
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 400
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integrity_class",
+        "secrecy_tags",
+        "visibility",
+        "sensitivity"
+      ],
+      "properties": {
+        "integrity_class": {
+          "enum": ["untrusted", "unverified", "attested", "verified"]
+        },
+        "secrecy_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 16,
+          "items": {
+            "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+          }
+        },
+        "visibility": {
+          "enum": ["operator-only", "room", "workbench"]
+        },
+        "sensitivity": {
+          "enum": ["low", "moderate", "high", "restricted"]
+        }
+      }
+    },
+    "clearance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cleared_secrecy_tags",
+        "cleared_visibility",
+        "cleared_sensitivity"
+      ],
+      "properties": {
+        "cleared_secrecy_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 16,
+          "items": {
+            "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+          }
+        },
+        "cleared_visibility": {
+          "enum": ["operator-only", "room", "workbench"]
+        },
+        "cleared_sensitivity": {
+          "enum": ["low", "moderate", "high", "restricted"]
+        }
+      }
+    },
+    "claim_source": {
+      "enum": [
+        "workbench-observed",
+        "runner-reported",
+        "independently-verified",
+        "operator-accepted"
+      ]
+    },
+    "external_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "external",
+        "authority",
+        "locator_class",
+        "version_evidence"
+      ],
+      "properties": {
+        "external": { "const": true },
+        "authority": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+        },
+        "locator_class": {
+          "enum": [
+            "artifact-store",
+            "repository",
+            "provider-record",
+            "operator-workspace"
+          ]
+        },
+        "version_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "description": "Version evidence owns exactly the companion its kind names: a digest or immutable snapshot carries the digest, a declared revision carries the revision, and neither carries the other's form.",
+          "properties": {
+            "kind": {
+              "enum": ["digest", "declared-revision", "immutable-snapshot"]
+            },
+            "digest": {
+              "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/digest"
+            },
+            "declared_revision": {
+              "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/revision"
+            }
+          },
+          "oneOf": [
+            {
+              "required": ["digest"],
+              "properties": {
+                "kind": { "enum": ["digest", "immutable-snapshot"] },
+                "declared_revision": false
+              }
+            },
+            {
+              "required": ["declared_revision"],
+              "properties": {
+                "kind": { "const": "declared-revision" },
+                "digest": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    "policy_basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "decision"],
+      "properties": {
+        "policy_id": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        },
+        "decision": { "enum": ["allowed", "allowed-with-approval", "denied"] },
+        "approval_event": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        }
+      }
+    },
+    "evidence_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+        },
+        "event": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        },
+        "artifact": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        },
+        "context_packet": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        },
+        "run": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        },
+        "digest": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/digest"
+        },
+        "note": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/note"
+        }
+      }
+    },
+    "payload_field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "representation", "secrecy_tags"],
+      "description": "Each representation owns exactly its applicable companion form. An inline value carries bytes, a pointer carries a reference, a digest carries a digest, and a redacted field carries none of them.",
+      "oneOf": [
+        {
+          "required": ["inline_value"],
+          "properties": {
+            "representation": { "const": "inline-value" },
+            "reference": false,
+            "digest": false
+          }
+        },
+        {
+          "required": ["reference"],
+          "properties": {
+            "representation": { "const": "pointer" },
+            "inline_value": false,
+            "digest": false
+          }
+        },
+        {
+          "required": ["digest"],
+          "properties": {
+            "representation": { "const": "digest" },
+            "inline_value": false,
+            "reference": false
+          }
+        },
+        {
+          "properties": {
+            "representation": { "const": "redacted" },
+            "inline_value": false,
+            "reference": false,
+            "digest": false
+          }
+        }
+      ],
+      "properties": {
+        "name": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+        },
+        "representation": {
+          "enum": ["inline-value", "pointer", "digest", "redacted"]
+        },
+        "secrecy_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 16,
+          "items": {
+            "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+          }
+        },
+        "inline_value": { "type": "string", "maxLength": 256 },
+        "reference": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        },
+        "digest": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/digest"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields"],
+      "properties": {
+        "fields": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/payload_field"
+          }
+        }
+      }
+    },
+    "task_state": {
+      "enum": [
+        "task:proposed",
+        "task:ready",
+        "task:running",
+        "task:waiting",
+        "task:blocked",
+        "task:completed",
+        "task:accepted",
+        "task:closed",
+        "task:interrupted",
+        "task:failed",
+        "task:rejected",
+        "task:superseded",
+        "task:abandoned"
+      ]
+    },
+    "run_state": {
+      "enum": [
+        "run:pending",
+        "run:running",
+        "run:completed",
+        "run:interrupted",
+        "run:failed",
+        "run:superseded",
+        "run:abandoned"
+      ]
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "pattern": "^(task|run):[a-z][a-z0-9-]{2,31}$"
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "revision", "event", "progression_class"],
+      "properties": {
+        "from": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/lifecycle_state"
+        },
+        "to": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/lifecycle_state"
+        },
+        "revision": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/revision"
+        },
+        "event": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+        },
+        "progression_class": { "enum": ["required", "exceptional"] }
+      }
+    }
+  }
+}

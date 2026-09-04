@@ -1,0 +1,9 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run receipt omits its ContextPacket",
+  "expectation": { "outcome": "reject", "rule": "receipt.family-requirements" },
+  "mutations": [
+    { "op": "remove", "path": "/receipts/2/body/context_packet" }
+  ]
+}

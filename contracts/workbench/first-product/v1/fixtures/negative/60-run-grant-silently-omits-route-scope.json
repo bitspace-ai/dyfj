@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A relied-on Run grant silently omits its applicable Route scope",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "run.evidence-binding",
+    "note": "A Run grant must scope the Route it authorizes rather than relying on omission."
+  },
+  "mutations": [
+    { "op": "remove", "path": "/capability_grants/1/scope/route_scope" }
+  ]
+}

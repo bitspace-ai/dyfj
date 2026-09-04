@@ -1,0 +1,170 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "first-product-solo-operator",
+  "title": "The first-product deferral inventory omits a required entry",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "deferral.inventory",
+    "note": "The first-product profile requires the full deferral inventory to be recorded, not a subset."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "profile": "first-product-solo-operator",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-operator",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    },
+    {
+      "id": "membership-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-agent",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ],
+  "deferrals": [
+    {
+      "id": "deferral-child-agents",
+      "capability": "child-agents-and-recursive-delegation",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deferred."
+    },
+    {
+      "id": "deferral-promoted-memory",
+      "capability": "durable-promoted-memory-across-rooms",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deferred."
+    },
+    {
+      "id": "deferral-memory-claim",
+      "capability": "memory-claim-implementation",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "reserved_identifier": "memory-claim",
+      "note": "Deferred."
+    },
+    {
+      "id": "deferral-peer-sync",
+      "capability": "peer-synchronization-or-distributed-consensus",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deferred."
+    },
+    {
+      "id": "deferral-messaging-bridges",
+      "capability": "external-messaging-bridges",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deferred."
+    },
+    {
+      "id": "deferral-center-surfaces",
+      "capability": "additional-center-surfaces",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deferred."
+    },
+    {
+      "id": "deferral-self-modification",
+      "capability": "online-self-modification-or-optimizer-promotion",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deferred."
+    },
+    {
+      "id": "deferral-route-parity",
+      "capability": "route-feature-parity",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deferred."
+    }
+  ]
+}

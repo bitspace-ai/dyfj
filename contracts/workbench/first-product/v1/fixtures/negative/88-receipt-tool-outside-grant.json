@@ -1,0 +1,16 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run receipt claims a tool outside its effective grant",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation"
+  },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/receipts/2/body/tools_and_effects/0/tool",
+      "value": "external-send"
+    }
+  ]
+}

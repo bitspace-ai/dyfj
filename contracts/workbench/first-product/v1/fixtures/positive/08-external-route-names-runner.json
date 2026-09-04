@@ -1,0 +1,10 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "An external Route records its runner as well as its provider",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    { "op": "add", "path": "/routes/1/runner", "value": "external-runner" },
+    { "op": "remove", "path": "/routes/1/component_dispositions/runner" }
+  ]
+}

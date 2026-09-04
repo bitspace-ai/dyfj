@@ -1,0 +1,39 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A route that states neither a runner nor a provider",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "structure.mutual-exclusion",
+    "note": "A route requires at least one of runner or provider; lane alone does not supply applicable identity."
+  },
+  "routes": [
+    {
+      "id": "route-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "execution_lane": "native",
+      "access_modality": "local",
+      "model": "local-model",
+      "adapter": "native-direct",
+      "policy_basis": {
+        "policy_id": "policy-local-route",
+        "decision": "allowed"
+      },
+      "cost_basis": {
+        "kind": "local-compute"
+      },
+      "component_dispositions": {
+        "runner": "opaque",
+        "provider": "opaque",
+        "system_harness": "opaque",
+        "tool_vocabulary": "opaque",
+        "context_reasoning_policy": "opaque",
+        "authentication_posture": "opaque",
+        "inference_posture": "opaque"
+      }
+    }
+  ],
+  "room_memberships": []
+}

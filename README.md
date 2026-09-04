@@ -50,6 +50,11 @@ Section 5.
   Components either move down into `core/` as they stabilize or stay here as
   fast-moving prototype code.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
+- `contracts/` - versioned semantic contract packages: JSON Schema plus
+  repository-owned validators and synthetic fixtures that state domain,
+  lifecycle, label, and authority semantics. A validation boundary, not a
+  runtime, and not a replacement for the canonical `schema/` DDL. See
+  [`contracts/workbench/first-product/v1/README.md`](contracts/workbench/first-product/v1/README.md).
 - `CHANGELOG.md` - dated change tracking in
   [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 - `LICENSE` - MIT.
@@ -941,6 +946,39 @@ Things that exist as boxes on a diagram.
   them. Per Section 1: the shared runtime event schema carries the audit and
   trace substrate; concrete discovery schema follows real producers and
   consumers.
+- <!-- closure-claim: semantic-contract-behavior --> **Semantic contract
+  packages.** Versioned, machine-readable statements of domain semantics under
+  `contracts/`, validated by repository-owned code against synthetic fixtures.
+  The first package (`contracts/workbench/first-product/v1/`) freezes
+  first-product room, participant, agent, task, run, route, context, grant,
+  lease, event, projection, receipt, label, claim-source, and authority
+  semantics, and records what is explicitly deferred. Authorization is checked
+  as effective rather than
+  <!-- closure-claim: effective-event-authority --> declared — a named grant
+  must resolve to its own author, a denied policy basis carries no authority, a
+  conditional approval must be recorded no later than its first reliance, and a
+  machine-authored `operator-direct` event resolves to a preceding human
+  authorizing event for the same Task or Room. The validator rejects a false
+  Task-envelope approval flag but does not yet attribute that flag to an
+  approval event. <!-- closure-claim: receipt-reconciliation --> receipt fields
+  are reconciled against the entities and transition history they describe,
+  including that no receipt evidence may postdate the receipt's own commit
+  sequence. A deterministic policy rejects an egress-capable grant acting
+  through a Run on private, untrusted ContextPacket content without specific
+  authorization. Within a declared event family, the first inline writer a
+  corpus names establishes the package's cutover convention; later omitted or
+  competing writers are rejected, but no separate writer-authority record is
+  modeled. Run grants explicitly scope Task, Room, route, and any named
+  provider; omitted grant scopes and RouteSpec components carry an explicit
+  `not-applicable` or `opaque` disposition.
+  <!-- closure-claim: closure-report-evidence --> Its generated closure report
+  computes the 24-target, 61-invariant, and 31-probe evidence denominator from
+  validator observations inside the aggregate gate.
+  <!-- closure-claim: semantic-package-boundary --> These packages are a
+  validation boundary: they define the contract later data-layer work consumes,
+  they do not displace the canonical Dolt DDL (Layer 0 stance #4), and
+  validating a document proves the document only. It grants no runtime authority
+  and says nothing about how an implemented Workbench behaves.
 
 ### 6.3 Layer 2 - cross-cutting concerns
 
@@ -1161,3 +1199,17 @@ Document revisions only. Code and behavior changes are tracked in
   scanner source included), that tracked symlinks are scanned as link-target
   text rather than followed, and that the `gate-status` line is a bounded
   diagnostic, not an assurance receipt.
+- 2026-08-30 - Repo layout and Layer 1 now describe `contracts/`: versioned
+  semantic contract packages that state domain and authority semantics and are
+  validated by repository-owned code, without displacing the canonical Dolt DDL
+  or granting runtime authority. Layer 1 records that authorization in those
+  packages is checked as effective rather than declared, and that receipt fields
+  are reconciled against the history they describe.
+- 2026-08-30 - Layer 1's contract-package entry now names the agent surface
+  explicitly and records the corrected boundary: approval ordering before
+  reliance, receipt evidence that may never postdate its own commit, the
+  deterministic private-and-untrusted-and-egress grant policy, and sole-writer
+  authority per event family and cutover.
+- 2026-09-03 - The first-product semantic-package boundary, effective event
+  authority, and receipt reconciliation claims were brought current with the
+  executable closure evidence surface.

@@ -1,0 +1,1010 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dyfj:contracts:workbench:first-product:v1:domain",
+  "title": "Workbench first-product durable domain entities",
+  "$defs": {
+    "identifier": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+    },
+    "identity_basis": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identity_basis"
+    },
+    "revision": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/revision"
+    },
+    "tag": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+    },
+    "note": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/note"
+    },
+    "digest": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/digest"
+    },
+    "labels": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/labels"
+    },
+    "claim_source": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/claim_source"
+    },
+    "policy_basis": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/policy_basis"
+    },
+    "external_reference": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/external_reference"
+    },
+    "transition": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/transition"
+    },
+    "room": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "room_class",
+        "persistence",
+        "labels"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "room_class": { "enum": ["operator-room"] },
+        "persistence": { "enum": ["persistent", "ephemeral"] },
+        "profile": { "enum": ["first-product-solo-operator"] },
+        "labels": { "$ref": "#/$defs/labels" }
+      }
+    },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "participant_class",
+        "independent_of"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "participant_class": { "enum": ["human", "digital"] },
+        "independent_of": {
+          "description": "A participant identity is independent of exactly the four declared dimensions; cardinality plus uniqueness over the enum makes the whole set required.",
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "enum": ["model", "runner", "process", "user-interface"]
+          }
+        },
+        "agent_spec": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "speak_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy", "loop_prevention"],
+      "description": "The three speak policies are distinct shapes: always-on carries no trigger, mention carries a deterministic match, and scheduled carries a schedule.",
+      "oneOf": [
+        {
+          "properties": {
+            "policy": { "const": "always-on" },
+            "mention_match": false,
+            "schedule": false
+          }
+        },
+        {
+          "required": ["mention_match"],
+          "properties": {
+            "policy": { "const": "mention" },
+            "schedule": false
+          }
+        },
+        {
+          "required": ["schedule"],
+          "properties": {
+            "policy": { "const": "scheduled" },
+            "mention_match": false
+          }
+        }
+      ],
+      "properties": {
+        "policy": { "enum": ["always-on", "mention", "scheduled"] },
+        "mention_match": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "token"],
+          "properties": {
+            "kind": { "enum": ["deterministic-token"] },
+            "token": { "$ref": "#/$defs/tag" }
+          }
+        },
+        "schedule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "expression"],
+          "properties": {
+            "kind": { "enum": ["fixed-interval", "declared-calendar"] },
+            "expression": { "type": "string", "maxLength": 64 }
+          }
+        },
+        "loop_prevention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["automated_summons"],
+          "properties": {
+            "automated_summons": {
+              "enum": ["blocked", "operator-authorized-exception"]
+            },
+            "exception_grant": { "$ref": "#/$defs/identifier" }
+          }
+        }
+      }
+    },
+    "room_membership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "room",
+        "participant",
+        "present",
+        "may_author",
+        "may_speak",
+        "speak_rule"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "room": { "$ref": "#/$defs/identifier" },
+        "participant": { "$ref": "#/$defs/identifier" },
+        "present": { "type": "boolean" },
+        "may_author": { "type": "boolean" },
+        "may_speak": { "type": "boolean" },
+        "speak_rule": { "$ref": "#/$defs/speak_rule" }
+      }
+    },
+    "thread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "identity_basis", "revision", "room", "thread_class"],
+      "description": "A task-branch thread names the task it branches for. A main thread is not forbidden from naming one; no accepted source requires that.",
+      "oneOf": [
+        { "properties": { "thread_class": { "const": "main" } } },
+        {
+          "required": ["task"],
+          "properties": { "thread_class": { "const": "task-branch" } }
+        }
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "room": { "$ref": "#/$defs/identifier" },
+        "thread_class": { "enum": ["main", "task-branch"] },
+        "task": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "agent_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "spec_version",
+        "participant",
+        "behavior",
+        "posture",
+        "tools",
+        "guardrails"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "spec_version": { "type": "integer", "minimum": 1 },
+        "participant": { "$ref": "#/$defs/identifier" },
+        "behavior": {
+          "description": "Declared behavioral directives that bind this specification: the AgentSpec's behavior component, alongside identity, posture, tools, and guardrails. Content is authored per specification and not prescribed here.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/tag" }
+        },
+        "posture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["autonomy", "escalation"],
+          "properties": {
+            "autonomy": { "enum": ["assistive", "supervised-autonomous"] },
+            "escalation": {
+              "enum": ["ask-operator", "halt", "record-and-continue"]
+            }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/tag" }
+        },
+        "guardrails": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/tag" }
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "room",
+        "thread",
+        "state",
+        "envelope",
+        "execution_envelope",
+        "completion_criteria",
+        "verification_contract",
+        "transitions"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "room": { "$ref": "#/$defs/identifier" },
+        "thread": { "$ref": "#/$defs/identifier" },
+        "state": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/task_state"
+        },
+        "envelope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["approved", "grant"],
+          "properties": {
+            "approved": { "type": "boolean" },
+            "grant": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "execution_envelope": {
+          "description": "The complete authoritative Task envelope: objective, bounded context, assigned AgentSpec, posture, route requirements, tools, workspace, budget, and guardrails.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "objective",
+            "context_scope",
+            "assigned_agent_spec",
+            "posture",
+            "route_requirements",
+            "tools",
+            "workspace",
+            "budget",
+            "guardrails"
+          ],
+          "properties": {
+            "objective": { "$ref": "#/$defs/note" },
+            "context_scope": { "$ref": "#/$defs/note" },
+            "assigned_agent_spec": { "$ref": "#/$defs/identifier" },
+            "posture": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["autonomy", "escalation"],
+              "properties": {
+                "autonomy": { "enum": ["assistive", "supervised-autonomous"] },
+                "escalation": {
+                  "enum": ["ask-operator", "halt", "record-and-continue"]
+                }
+              }
+            },
+            "route_requirements": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["execution_lane"],
+              "properties": {
+                "execution_lane": { "enum": ["native", "external", "either"] },
+                "required_capabilities": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "maxItems": 16,
+                  "items": { "$ref": "#/$defs/tag" }
+                }
+              }
+            },
+            "tools": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/tag" }
+            },
+            "workspace": { "enum": ["none", "read-only", "read-write"] },
+            "budget": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["currency", "limit_minor_units"],
+              "properties": {
+                "currency": { "$ref": "#/$defs/tag" },
+                "limit_minor_units": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "guardrails": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/tag" }
+            }
+          }
+        },
+        "completion_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/note" }
+        },
+        "verification_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "required_evidence"],
+          "properties": {
+            "method": { "$ref": "#/$defs/tag" },
+            "required_evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": { "$ref": "#/$defs/tag" }
+            }
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "task",
+        "agent_spec",
+        "route",
+        "route_session",
+        "context_packet",
+        "capability_grant",
+        "attempt",
+        "state",
+        "transitions"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "task": { "$ref": "#/$defs/identifier" },
+        "agent_spec": { "$ref": "#/$defs/identifier" },
+        "route": { "$ref": "#/$defs/identifier" },
+        "route_session": { "$ref": "#/$defs/identifier" },
+        "context_packet": { "$ref": "#/$defs/identifier" },
+        "capability_grant": { "$ref": "#/$defs/identifier" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "state": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/run_state"
+        },
+        "transitions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "native_extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "authority", "portability", "opacity"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/tag" },
+        "authority": {
+          "enum": ["native-runner", "workbench", "shared-contract"]
+        },
+        "portability": {
+          "enum": ["native-only", "route-specific", "portable"]
+        },
+        "opacity": { "enum": ["governable", "observable", "opaque"] }
+      }
+    },
+    "evidence_disposition": {
+      "enum": ["not-applicable", "opaque"]
+    },
+    "route_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "execution_lane",
+        "access_modality",
+        "model",
+        "adapter",
+        "policy_basis",
+        "cost_basis"
+      ],
+      "description": "Lane identifies loop ownership; it does not decide whether runner or provider is forbidden. A route requires at least one of runner or provider, and may state both when both are applicable and observable. Access modality is left orthogonal to the lane.",
+      "anyOf": [
+        { "required": ["runner"] },
+        { "required": ["provider"] }
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "execution_lane": { "enum": ["native", "external"] },
+        "access_modality": {
+          "enum": [
+            "local",
+            "lab-hosted",
+            "aggregator-hosted",
+            "subscription-oauth",
+            "custom-hosted"
+          ]
+        },
+        "runner": { "$ref": "#/$defs/tag" },
+        "provider": { "$ref": "#/$defs/tag" },
+        "model": { "$ref": "#/$defs/tag" },
+        "adapter": { "$ref": "#/$defs/tag" },
+        "policy_basis": { "$ref": "#/$defs/policy_basis" },
+        "cost_basis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": [
+                "metered-tokens",
+                "subscription",
+                "local-compute",
+                "not-applicable"
+              ]
+            },
+            "currency": { "$ref": "#/$defs/tag" }
+          }
+        },
+        "system_harness": { "$ref": "#/$defs/tag" },
+        "tool_vocabulary": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/tag" }
+        },
+        "context_reasoning_policy": { "$ref": "#/$defs/tag" },
+        "authentication_posture": {
+          "enum": ["api-key", "oauth-session", "service-account", "none"]
+        },
+        "inference_posture": { "$ref": "#/$defs/tag" },
+        "component_dispositions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "runner": { "$ref": "#/$defs/evidence_disposition" },
+            "provider": { "$ref": "#/$defs/evidence_disposition" },
+            "system_harness": { "$ref": "#/$defs/evidence_disposition" },
+            "tool_vocabulary": { "$ref": "#/$defs/evidence_disposition" },
+            "context_reasoning_policy": {
+              "$ref": "#/$defs/evidence_disposition"
+            },
+            "authentication_posture": {
+              "$ref": "#/$defs/evidence_disposition"
+            },
+            "inference_posture": { "$ref": "#/$defs/evidence_disposition" }
+          }
+        },
+        "native_extensions": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/native_extension" }
+        }
+      }
+    },
+    "route_capability_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "identity_basis", "revision", "route", "capabilities"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "route": { "$ref": "#/$defs/identifier" },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capability", "classification", "required"],
+            "properties": {
+              "capability": { "$ref": "#/$defs/tag" },
+              "classification": {
+                "enum": ["governable", "observable", "opaque", "unavailable"]
+              },
+              "required": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "route_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "route",
+        "run",
+        "phases",
+        "continuity"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "route": { "$ref": "#/$defs/identifier" },
+        "run": { "$ref": "#/$defs/identifier" },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["phase", "sequence", "outcome", "spend_or_action"],
+            "properties": {
+              "phase": {
+                "enum": [
+                  "inspect",
+                  "prepare",
+                  "start-or-resume",
+                  "stream",
+                  "control",
+                  "finalize"
+                ]
+              },
+              "sequence": {
+                "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/sequence"
+              },
+              "outcome": {
+                "enum": ["accepted", "rejected", "completed", "halted"]
+              },
+              "spend_or_action": { "type": "boolean" },
+              "capability_report": { "$ref": "#/$defs/identifier" }
+            }
+          }
+        },
+        "continuity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class", "evidence"],
+          "properties": {
+            "class": {
+              "enum": [
+                "new",
+                "warm-reused",
+                "durably-resumed",
+                "reconstructed"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/evidence_item"
+              }
+            }
+          }
+        }
+      }
+    },
+    "context_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_id",
+        "source",
+        "digest",
+        "selection_reason",
+        "claim_source",
+        "labels"
+      ],
+      "properties": {
+        "entry_id": { "$ref": "#/$defs/tag" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "description": "A corpus-internal source names a reference; an external source carries its authority record. The two shapes never mix.",
+          "oneOf": [
+            {
+              "required": ["reference"],
+              "properties": {
+                "kind": { "enum": ["artifact", "event", "thread", "task"] },
+                "external": false
+              }
+            },
+            {
+              "required": ["external"],
+              "properties": {
+                "kind": { "const": "external" },
+                "reference": false
+              }
+            }
+          ],
+          "properties": {
+            "kind": {
+              "enum": ["artifact", "event", "thread", "task", "external"]
+            },
+            "reference": { "$ref": "#/$defs/identifier" },
+            "external": { "$ref": "#/$defs/external_reference" },
+            "source_revision": { "$ref": "#/$defs/revision" }
+          }
+        },
+        "digest": { "$ref": "#/$defs/digest" },
+        "selection_reason": { "$ref": "#/$defs/note" },
+        "claim_source": { "$ref": "#/$defs/claim_source" },
+        "labels": { "$ref": "#/$defs/labels" },
+        "rendered_section": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bounded_characters", "redacted"],
+          "properties": {
+            "bounded_characters": { "type": "integer", "minimum": 0 },
+            "redacted": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "context_packet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "route_neutral",
+        "digest",
+        "entries"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "task": { "$ref": "#/$defs/identifier" },
+        "run": { "$ref": "#/$defs/identifier" },
+        "route_neutral": { "const": true },
+        "digest": { "$ref": "#/$defs/digest" },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/context_entry" }
+        },
+        "compaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_packet", "strategy"],
+          "properties": {
+            "source_packet": { "$ref": "#/$defs/identifier" },
+            "strategy": { "$ref": "#/$defs/tag" }
+          }
+        }
+      }
+    },
+    "capability_grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "grantor",
+        "grantee",
+        "delegable",
+        "scope",
+        "policy_basis"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "grantor": { "$ref": "#/$defs/identifier" },
+        "grantee": { "$ref": "#/$defs/identifier" },
+        "delegable": { "const": false },
+        "supersedes": { "$ref": "#/$defs/identifier" },
+        "approval_event": { "$ref": "#/$defs/identifier" },
+        "policy_basis": { "$ref": "#/$defs/policy_basis" },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tools",
+            "resources",
+            "workspace",
+            "network",
+            "budget",
+            "approvals",
+            "external_impact",
+            "destination_classes"
+          ],
+          "properties": {
+            "tools": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/tag" }
+            },
+            "resources": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/tag" }
+            },
+            "workspace": { "enum": ["none", "read-only", "read-write"] },
+            "network": {
+              "enum": ["none", "loopback", "operator-approved-hosts"]
+            },
+            "budget": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["currency", "limit_minor_units"],
+              "properties": {
+                "currency": { "$ref": "#/$defs/tag" },
+                "limit_minor_units": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "approvals": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 16,
+              "items": { "$ref": "#/$defs/tag" }
+            },
+            "external_impact": {
+              "enum": ["none", "reversible", "irreversible"]
+            },
+            "destination_classes": {
+              "description": "Where this grant's authority may terminate. Governs the deterministic private-and-untrusted-and-egress rejection alongside network and the acted-upon content's labels.",
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "maxItems": 8,
+              "items": {
+                "enum": [
+                  "none",
+                  "operator-workspace",
+                  "approved-external-host",
+                  "external-uncontrolled"
+                ]
+              }
+            },
+            "provider_scope": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 16,
+              "items": { "$ref": "#/$defs/tag" }
+            },
+            "route_scope": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 16,
+              "items": { "$ref": "#/$defs/identifier" }
+            },
+            "task_scope": { "$ref": "#/$defs/identifier" },
+            "room_scope": { "$ref": "#/$defs/identifier" },
+            "secrecy_integrity_authorization": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "authorized_secrecy_tags",
+                "minimum_integrity_class"
+              ],
+              "properties": {
+                "authorized_secrecy_tags": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "maxItems": 16,
+                  "items": { "$ref": "#/$defs/tag" }
+                },
+                "minimum_integrity_class": {
+                  "enum": ["untrusted", "unverified", "attested", "verified"]
+                }
+              }
+            },
+            "scope_dispositions": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "provider_scope": { "$ref": "#/$defs/evidence_disposition" },
+                "route_scope": { "$ref": "#/$defs/evidence_disposition" },
+                "task_scope": { "$ref": "#/$defs/evidence_disposition" },
+                "room_scope": { "$ref": "#/$defs/evidence_disposition" },
+                "secrecy_integrity_authorization": {
+                  "$ref": "#/$defs/evidence_disposition"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "registration_lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "subject",
+        "state",
+        "expires_at",
+        "availability_only",
+        "effects_on_expiry"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reference"],
+          "properties": {
+            "kind": {
+              "enum": [
+                "route",
+                "tool",
+                "skill",
+                "native-session",
+                "agent-process"
+              ]
+            },
+            "reference": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "state": { "enum": ["active", "expired"] },
+        "expires_at": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/timestamp"
+        },
+        "availability_only": { "const": true },
+        "effects_on_expiry": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "availability-withdrawn",
+              "registration-removed",
+              "identity-deleted",
+              "history-erased",
+              "policy-revoked",
+              "continuity-rewritten",
+              "event-deleted"
+            ]
+          }
+        }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "revision",
+        "artifact_class",
+        "authoritative_ref",
+        "labels",
+        "correctable"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": { "$ref": "#/$defs/identity_basis" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "artifact_class": { "$ref": "#/$defs/tag" },
+        "authoritative_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "description": "An internal authoritative reference names a corpus entity; an external one carries its authority record. The two shapes never mix.",
+          "oneOf": [
+            {
+              "required": ["reference"],
+              "properties": {
+                "kind": { "const": "internal" },
+                "external": false
+              }
+            },
+            {
+              "required": ["external"],
+              "properties": {
+                "kind": { "const": "external" },
+                "reference": false
+              }
+            }
+          ],
+          "properties": {
+            "kind": { "enum": ["internal", "external"] },
+            "reference": { "$ref": "#/$defs/identifier" },
+            "external": { "$ref": "#/$defs/external_reference" }
+          }
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["digest", "version_evidence"],
+          "properties": {
+            "digest": { "$ref": "#/$defs/digest" },
+            "version_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "description": "The snapshot digest is the evidence for a digest or immutable-snapshot kind; a declared revision states its own revision instead. Neither kind carries the other's companion.",
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": { "enum": ["digest", "immutable-snapshot"] },
+                    "declared_revision": false
+                  }
+                },
+                {
+                  "required": ["declared_revision"],
+                  "properties": { "kind": { "const": "declared-revision" } }
+                }
+              ],
+              "properties": {
+                "kind": {
+                  "enum": ["digest", "declared-revision", "immutable-snapshot"]
+                },
+                "declared_revision": { "$ref": "#/$defs/revision" }
+              }
+            }
+          }
+        },
+        "derived_from": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "derivation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "claim_source"],
+          "properties": {
+            "kind": { "$ref": "#/$defs/tag" },
+            "claim_source": { "$ref": "#/$defs/claim_source" },
+            "verified_by": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "supersedes": { "$ref": "#/$defs/identifier" },
+        "correctable": { "type": "boolean" },
+        "labels": { "$ref": "#/$defs/labels" }
+      }
+    }
+  }
+}

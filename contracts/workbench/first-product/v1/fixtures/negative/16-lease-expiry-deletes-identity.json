@@ -1,0 +1,57 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A registration lease whose expiry deletes identity",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "lease.availability-only",
+    "note": "Lease expiry withdraws availability; it cannot delete identity, policy, or history."
+  },
+  "routes": [
+    {
+      "id": "route-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "execution_lane": "native",
+      "access_modality": "local",
+      "runner": "local-runner",
+      "model": "local-model",
+      "policy_basis": {
+        "policy_id": "policy-local-route",
+        "decision": "allowed"
+      },
+      "cost_basis": {
+        "kind": "local-compute"
+      },
+      "adapter": "native-direct",
+      "component_dispositions": {
+        "provider": "opaque",
+        "system_harness": "opaque",
+        "tool_vocabulary": "opaque",
+        "context_reasoning_policy": "opaque",
+        "authentication_posture": "opaque",
+        "inference_posture": "opaque"
+      }
+    }
+  ],
+  "registration_leases": [
+    {
+      "id": "lease-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 2,
+      "subject": {
+        "kind": "route",
+        "reference": "route-focused"
+      },
+      "state": "expired",
+      "expires_at": "2026-02-02T10:00:00Z",
+      "availability_only": true,
+      "effects_on_expiry": [
+        "availability-withdrawn",
+        "identity-deleted"
+      ]
+    }
+  ],
+  "room_memberships": []
+}

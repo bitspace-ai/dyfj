@@ -1,0 +1,46 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A conditional approval belongs to another Room",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "A human approval must match the Task or Room scope that relies on it."
+  },
+  "mutations": [
+    { "op": "copy", "from": "/rooms/0", "path": "/rooms/-" },
+    { "op": "replace", "path": "/rooms/1/id", "value": "room-other" },
+    { "op": "remove", "path": "/rooms/1/profile" },
+    {
+      "op": "copy",
+      "from": "/room_memberships/0",
+      "path": "/room_memberships/-"
+    },
+    {
+      "op": "replace",
+      "path": "/room_memberships/2/id",
+      "value": "membership-operator-other-room"
+    },
+    {
+      "op": "replace",
+      "path": "/room_memberships/2/room",
+      "value": "room-other"
+    },
+    { "op": "remove", "path": "/events/16/task" },
+    {
+      "op": "replace",
+      "path": "/events/16/room",
+      "value": "room-other"
+    },
+    {
+      "op": "replace",
+      "path": "/events/18/policy_basis/decision",
+      "value": "allowed-with-approval"
+    },
+    {
+      "op": "add",
+      "path": "/events/18/policy_basis/approval_event",
+      "value": "ev-approval-budget"
+    }
+  ]
+}

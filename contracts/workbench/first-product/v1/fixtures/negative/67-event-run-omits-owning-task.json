@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "An event names a Run but omits the Run's owning Task",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "run.evidence-binding",
+    "note": "An event that names a Run must agree with that Run's Task."
+  },
+  "mutations": [
+    { "op": "remove", "path": "/events/5/task" }
+  ]
+}

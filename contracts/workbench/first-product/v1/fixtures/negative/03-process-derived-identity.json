@@ -1,0 +1,27 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A stable identity declared as derived from a process",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "identity.stable-basis",
+    "note": "Stable identity must not be derived from a process, model, runner, native session, or interface position."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "derived-from-process",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "room_memberships": []
+}

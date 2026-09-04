@@ -1,0 +1,14 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "Two RouteSessions claim ownership of the same Run",
+  "expectation": { "outcome": "reject", "rule": "route.binding" },
+  "mutations": [
+    { "op": "copy", "from": "/route_sessions/0", "path": "/route_sessions/-" },
+    {
+      "op": "replace",
+      "path": "/route_sessions/2/id",
+      "value": "session-duplicate-owner"
+    }
+  ]
+}

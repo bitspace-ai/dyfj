@@ -1,0 +1,25 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A participant identity tied to the user interface it appears in",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "structure.collection",
+    "note": "Participant identity is independent of all four declared dimensions, not some."
+  },
+  "participants": [
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process"
+      ]
+    }
+  ],
+  "room_memberships": []
+}

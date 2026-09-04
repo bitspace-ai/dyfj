@@ -1,0 +1,62 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A capability report that omits its route's native capability",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "route.native-capability-erasure",
+    "note": "The shared contract must not erase a native capability the route declares."
+  },
+  "routes": [
+    {
+      "id": "route-native-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "execution_lane": "native",
+      "access_modality": "local",
+      "runner": "local-runner",
+      "model": "local-model",
+      "policy_basis": {
+        "policy_id": "policy-local-route",
+        "decision": "allowed"
+      },
+      "cost_basis": {
+        "kind": "local-compute"
+      },
+      "native_extensions": [
+        {
+          "capability": "native-session-control",
+          "authority": "native-runner",
+          "portability": "native-only",
+          "opacity": "observable"
+        }
+      ],
+      "adapter": "native-direct",
+      "component_dispositions": {
+        "provider": "opaque",
+        "system_harness": "opaque",
+        "tool_vocabulary": "opaque",
+        "context_reasoning_policy": "opaque",
+        "authentication_posture": "opaque",
+        "inference_posture": "opaque"
+      }
+    }
+  ],
+  "route_capability_reports": [
+    {
+      "id": "report-native-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "route": "route-native-focused",
+      "capabilities": [
+        {
+          "capability": "token-usage-visibility",
+          "classification": "observable",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "room_memberships": []
+}

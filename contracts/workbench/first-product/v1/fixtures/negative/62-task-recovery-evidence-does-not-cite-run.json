@@ -1,0 +1,17 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Task recovery cites an unrelated event instead of the failed Run",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "lifecycle.run-independence",
+    "note": "Recovery evidence must identify the failed or interrupted Run or its outcome event."
+  },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/events/15/state_transition/evidence",
+      "value": [{ "kind": "unrelated-note", "event": "ev-operator-request" }]
+    }
+  ]
+}

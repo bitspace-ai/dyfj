@@ -97,6 +97,55 @@ Deno.test("aggregate lanes include the retired-surface scan", () => {
   assertStringIncludes(lane.args.join(" "), "scripts/retired-surface-scan.ts");
 });
 
+Deno.test("aggregate lanes include the contract package tests", () => {
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "Contract package tests");
+  if (!lane) throw new Error("contract package test lane is missing");
+  assertEquals(lane.checkId, "test.aggregate");
+  assertStringIncludes(
+    lane.args.join(" "),
+    "contracts/workbench/first-product/v1/validate.test.ts",
+  );
+  assertStringIncludes(
+    lane.args.join(" "),
+    "contracts/workbench/first-product/v1/executable-closure.test.ts",
+  );
+  assertStringIncludes(
+    lane.args.join(" "),
+    "contracts/workbench/first-product/v1/executable-closure-report.test.ts",
+  );
+  // The suite reads its schemas and fixtures and needs nothing else.
+  assertStringIncludes(lane.args.join(" "), "--allow-read=.");
+  assertStringIncludes(lane.args.join(" "), "--allow-run=git");
+  if (!FAST_LANE_LABELS.includes(lane.label)) {
+    throw new Error("contract package tests must also run in the fast subset");
+  }
+});
+
+Deno.test("aggregate lanes generate the deterministic closure report", () => {
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "Contract closure report generation");
+  if (!lane) {
+    throw new Error("contract closure report generation lane is missing");
+  }
+  assertEquals(lane.checkId, "test.aggregate");
+  assertStringIncludes(
+    lane.args.join(" "),
+    "contracts/workbench/first-product/v1/executable-closure-report.ts",
+  );
+  assertStringIncludes(
+    lane.args.join(" "),
+    "--allow-write=contracts/workbench/first-product/v1/executable-closure-report.json",
+  );
+  if (!FAST_LANE_LABELS.includes(lane.label)) {
+    throw new Error(
+      "contract closure report generation must also run in the fast subset",
+    );
+  }
+});
+
 Deno.test("aggregate lanes include both public-safety scan families", () => {
   for (const family of ["secret.tree", "public.boundary"]) {
     const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((

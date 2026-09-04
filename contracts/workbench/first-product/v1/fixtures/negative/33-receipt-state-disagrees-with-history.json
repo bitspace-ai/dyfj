@@ -1,0 +1,464 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A receipt whose recorded revision the history never produced",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation",
+    "note": "A receipt reports its subject as of its commit event, reconstructed from transitions."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "threads": [
+    {
+      "id": "thread-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "thread_class": "main"
+    }
+  ],
+  "agent_specs": [
+    {
+      "id": "agent-spec-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "spec_version": 1,
+      "participant": "participant-agent",
+      "posture": {
+        "autonomy": "supervised-autonomous",
+        "escalation": "ask-operator"
+      },
+      "tools": [
+        "workspace-read"
+      ],
+      "guardrails": [
+        "operator-escalation"
+      ],
+      "behavior": [
+        "conversational-chief-of-staff"
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "id": "route-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "execution_lane": "native",
+      "access_modality": "local",
+      "runner": "local-runner",
+      "model": "local-model",
+      "policy_basis": {
+        "policy_id": "policy-local-route",
+        "decision": "allowed"
+      },
+      "cost_basis": {
+        "kind": "local-compute"
+      },
+      "adapter": "native-direct",
+      "component_dispositions": {
+        "provider": "opaque",
+        "system_harness": "opaque",
+        "tool_vocabulary": "opaque",
+        "context_reasoning_policy": "opaque",
+        "authentication_posture": "opaque",
+        "inference_posture": "opaque"
+      }
+    }
+  ],
+  "capability_grants": [
+    {
+      "id": "grant-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "grantor": "participant-operator",
+      "grantee": "participant-agent",
+      "delegable": false,
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "allowed"
+      },
+      "scope": {
+        "tools": [
+          "workspace-read"
+        ],
+        "resources": [
+          "workspace-notes"
+        ],
+        "workspace": "read-only",
+        "network": "none",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "approvals": [],
+        "external_impact": "none",
+        "destination_classes": [
+          "none"
+        ],
+        "task_scope": "task-focused",
+        "room_scope": "room-focused",
+        "route_scope": [
+          "route-focused"
+        ],
+        "scope_dispositions": {
+          "provider_scope": "not-applicable",
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "thread": "thread-focused",
+      "state": "task:proposed",
+      "envelope": {
+        "approved": true,
+        "grant": "grant-focused"
+      },
+      "completion_criteria": [
+        "The focused corpus records one task."
+      ],
+      "verification_contract": {
+        "method": "operator-review",
+        "required_evidence": [
+          "artifact-digest"
+        ]
+      },
+      "transitions": [],
+      "execution_envelope": {
+        "objective": "Focused fixture objective.",
+        "context_scope": "Focused fixture context scope.",
+        "assigned_agent_spec": "agent-spec-focused",
+        "posture": {
+          "autonomy": "supervised-autonomous",
+          "escalation": "ask-operator"
+        },
+        "route_requirements": {
+          "execution_lane": "either"
+        },
+        "tools": [
+          "workspace-read"
+        ],
+        "workspace": "read-only",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "guardrails": [
+          "no-external-impact"
+        ]
+      }
+    }
+  ],
+  "runs": [
+    {
+      "id": "run-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 2,
+      "task": "task-focused",
+      "agent_spec": "agent-spec-focused",
+      "route": "route-focused",
+      "attempt": 1,
+      "state": "run:running",
+      "transitions": [
+        {
+          "from": "run:pending",
+          "to": "run:running",
+          "revision": 2,
+          "event": "ev-run-started",
+          "progression_class": "required"
+        }
+      ],
+      "capability_grant": "grant-focused",
+      "context_packet": "packet-focused",
+      "route_session": "session-focused"
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-run-started",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "task": "task-focused",
+      "run": "run-focused",
+      "trace": "trace-focused",
+      "author": "participant-agent",
+      "author_class": "machine",
+      "family": "run",
+      "type": "run-started",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-focused"
+      },
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [],
+      "state_transition": {
+        "entity_kind": "run",
+        "entity": "run-focused",
+        "from": "run:pending",
+        "to": "run:running",
+        "entity_revision": 2,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "route-session-started",
+            "note": "Local session opened."
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 1,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "State and event committed together."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-interrupt-receipt-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "task": "task-focused",
+      "run": "run-focused",
+      "trace": "trace-focused",
+      "author": "participant-agent",
+      "author_class": "machine",
+      "family": "receipt",
+      "type": "interrupt-receipt-committed",
+      "at": "2026-02-02T10:01:00Z",
+      "sequence": 2,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-receipts",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-started"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 2,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Interrupt receipt committed with its event."
+          }
+        ]
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "id": "receipt-interrupt-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "schema_version": "workbench.first-product.receipt/v1",
+      "family": "interrupt",
+      "room": "room-focused",
+      "task": "task-focused",
+      "run": "run-focused",
+      "commit_event": "ev-interrupt-receipt-committed",
+      "attribution": {
+        "author": "participant-operator",
+        "claim_source": "workbench-observed"
+      },
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "evidence": [
+        {
+          "kind": "run-transition",
+          "event": "ev-run-started"
+        }
+      ],
+      "observed_effects": [],
+      "uncertainty": {
+        "kind": "bounded",
+        "note": "Propagation into the runner process was not observed."
+      },
+      "current_state": {
+        "entity_kind": "run",
+        "entity": "run-focused",
+        "state": "run:running",
+        "revision": 3
+      },
+      "next_action": "Decide whether to retry the task.",
+      "body": {
+        "outcome": "requested",
+        "preserved_state": {
+          "kind": "partial-output",
+          "note": "Partial output is retained."
+        },
+        "remaining_authority": {
+          "grant": "grant-focused",
+          "still_effective": true
+        }
+      }
+    }
+  ],
+  "context_packets": [
+    {
+      "id": "packet-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "task": "task-focused",
+      "run": "run-focused",
+      "route_neutral": true,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "entries": [
+        {
+          "entry_id": "focused-entry",
+          "source": {
+            "kind": "task",
+            "reference": "task-focused"
+          },
+          "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "selection_reason": "Minimal context for the focused fixture.",
+          "claim_source": "workbench-observed",
+          "labels": {
+            "integrity_class": "attested",
+            "secrecy_tags": [],
+            "visibility": "room",
+            "sensitivity": "low"
+          }
+        }
+      ]
+    }
+  ],
+  "route_sessions": [
+    {
+      "id": "session-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "route": "route-focused",
+      "run": "run-focused",
+      "phases": [
+        {
+          "phase": "inspect",
+          "sequence": 1,
+          "outcome": "completed",
+          "spend_or_action": false
+        },
+        {
+          "phase": "prepare",
+          "sequence": 2,
+          "outcome": "accepted",
+          "spend_or_action": false
+        },
+        {
+          "phase": "start-or-resume",
+          "sequence": 3,
+          "outcome": "completed",
+          "spend_or_action": false
+        }
+      ],
+      "continuity": {
+        "class": "new",
+        "evidence": [
+          {
+            "kind": "fresh-session-established"
+          }
+        ]
+      }
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-agent",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

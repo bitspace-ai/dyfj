@@ -1,0 +1,25 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run consumes a ContextPacket bound to another Task",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "run.evidence-binding",
+    "note": "Represented ContextPacket Task ownership must agree with the consuming Run."
+  },
+  "mutations": [
+    { "op": "copy", "from": "/tasks/0", "path": "/tasks/-" },
+    { "op": "replace", "path": "/tasks/1/id", "value": "task-other" },
+    { "op": "replace", "path": "/tasks/1/revision", "value": 1 },
+    { "op": "replace", "path": "/tasks/1/state", "value": "task:proposed" },
+    { "op": "replace", "path": "/tasks/1/thread", "value": "thread-main" },
+    { "op": "replace", "path": "/tasks/1/transitions", "value": [] },
+    {
+      "op": "replace",
+      "path": "/context_packets/0/task",
+      "value": "task-other"
+    },
+    { "op": "remove", "path": "/receipts/0" },
+    { "op": "remove", "path": "/receipts/1" }
+  ]
+}

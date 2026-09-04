@@ -1,0 +1,44 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "An automated summons cites an operator grant issued to another grantee",
+  "expectation": { "outcome": "reject", "rule": "solo-room.loop-prevention" },
+  "mutations": [
+    { "op": "copy", "from": "/participants/0", "path": "/participants/-" },
+    {
+      "op": "replace",
+      "path": "/participants/2/id",
+      "value": "participant-other-human"
+    },
+    {
+      "op": "copy",
+      "from": "/capability_grants/0",
+      "path": "/capability_grants/-"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/id",
+      "value": "grant-summons-other-grantee"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/grantee",
+      "value": "participant-other-human"
+    },
+    {
+      "op": "add",
+      "path": "/capability_grants/2/scope/approvals/-",
+      "value": "automated-summons-exception"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/triggers_automated_summons",
+      "value": true
+    },
+    {
+      "op": "add",
+      "path": "/events/24/summons_exception_grant",
+      "value": "grant-summons-other-grantee"
+    }
+  ]
+}

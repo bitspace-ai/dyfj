@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Task carries a distinct nonempty objective",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/tasks/0/execution_envelope/objective",
+      "value": "Produce a bounded weekly summary artifact."
+    }
+  ]
+}

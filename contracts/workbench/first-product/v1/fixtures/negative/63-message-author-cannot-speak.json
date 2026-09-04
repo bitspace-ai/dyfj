@@ -1,0 +1,15 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A message author lacks permission to speak in the Room",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "Message authorship requires an effective Room membership whose may_speak permission is true."
+  },
+  "mutations": [
+    { "op": "replace", "path": "/profile", "value": "focused-rule-fixture" },
+    { "op": "remove", "path": "/rooms/0/profile" },
+    { "op": "replace", "path": "/room_memberships/0/may_speak", "value": false }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A later event records a lower durable commit sequence",
+  "expectation": { "outcome": "reject", "rule": "event.causal-order" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/events/23/durable_commit/commit_sequence",
+      "value": 1
+    }
+  ]
+}

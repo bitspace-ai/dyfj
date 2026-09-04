@@ -1,0 +1,38 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A failed Run directly causes Task completion without an operator decision",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "lifecycle.run-independence",
+    "note": "A failed Run cannot cause a closing Task transition without a separate human operator decision."
+  },
+  "mutations": [
+    { "op": "replace", "path": "/runs/1/state", "value": "run:failed" },
+    {
+      "op": "replace",
+      "path": "/runs/1/transitions/1/to",
+      "value": "run:failed"
+    },
+    {
+      "op": "replace",
+      "path": "/runs/1/transitions/1/progression_class",
+      "value": "exceptional"
+    },
+    {
+      "op": "replace",
+      "path": "/events/23/state_transition/to",
+      "value": "run:failed"
+    },
+    {
+      "op": "replace",
+      "path": "/events/23/state_transition/progression_class",
+      "value": "exceptional"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/state_transition/caused_by_run",
+      "value": "run-attempt-two"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A receipt names a Room other than its Task and commit event",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation"
+  },
+  "mutations": [
+    { "op": "copy", "from": "/rooms/0", "path": "/rooms/-" },
+    { "op": "replace", "path": "/rooms/1/id", "value": "room-other" },
+    { "op": "remove", "path": "/rooms/1/profile" },
+    { "op": "replace", "path": "/receipts/2/room", "value": "room-other" }
+  ]
+}

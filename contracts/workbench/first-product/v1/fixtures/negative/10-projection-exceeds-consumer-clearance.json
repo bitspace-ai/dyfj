@@ -1,0 +1,121 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A projection rendered for an audience broader than its source visibility",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "label.clearance",
+    "note": "A projection is a rebuildable view; it cannot expand consumer clearance."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-operator-request",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "trace": "trace-focused",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "message",
+      "type": "operator-request",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "operator-direct"
+      },
+      "policy_basis": {
+        "policy_id": "policy-room",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "operator-only",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": []
+    }
+  ],
+  "projections": [
+    {
+      "id": "projection-conversation",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "family": "conversation",
+      "source_packets": [],
+      "source_events": [
+        "ev-operator-request"
+      ],
+      "source_labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "operator-only",
+        "sensitivity": "moderate"
+      },
+      "consumer_clearance": {
+        "cleared_secrecy_tags": [
+          "operator-private"
+        ],
+        "cleared_visibility": "room",
+        "cleared_sensitivity": "high"
+      },
+      "output_digest": "sha256:5e6f7081920304055e6f7081920304055e6f7081920304055e6f708192030405",
+      "rebuildable": true,
+      "grants_authority": false
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-operator",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

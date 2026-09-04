@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "An AgentSpec carries a distinct behavior representation",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/agent_specs/0/behavior",
+      "value": ["bounded-summary-producer"]
+    }
+  ]
+}
