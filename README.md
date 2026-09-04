@@ -275,6 +275,14 @@ through 64, and the environment value takes precedence for served engines. The
 final receipt reports `Tool steps: used/limit` and marks when the configured
 limit ended tool use.
 
+The REPL's `/friction <sev> [--escaped] <text...>` command posts one numbered
+entry to the daily-driver checkpoint through the configured Linear MCP read and
+write tools. The narrow UDS `friction/post` method retains their existing
+authorization: the read follows configured-external read policy and the comment
+write still asks for operator approval. Set `DYFJ_FRICTION_ISSUE_ID` on the
+runtime to identify the operator's friction-checkpoint issue; `/friction` fails
+at the `configuration` stage when the variable is unset or blank.
+
 ### Hosted inference (paid approval)
 
 With no configured companion default, a bare turn uses the registry's local
@@ -552,7 +560,8 @@ execs the compiled binary on the default socket path and falls back to
 
 The seam exposes read methods for `runtime/status`, `surface/snapshot`,
 `models/list`, `sessions/list`, `events/query`, `tools/list`, and
-`tools/inspect`, plus streaming `turn` and cancellation `turn/cancel` methods
+`tools/inspect`, the narrow operator-approved `friction/post` method, plus
+streaming `turn` and cancellation `turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications;
 the receipt is the result). `runtime/status` returns both the simple method id
 list and grouped method catalog metadata for CLI/TUI/GUI surfaces. The `dyfj`
@@ -1201,3 +1210,6 @@ Document revisions only. Code and behavior changes are tracked in
   scanner source included), that tracked symlinks are scanned as link-target
   text rather than followed, and that the `gate-status` line is a bounded
   diagnostic, not an assurance receipt.
+- 2026-09-03 - The run-it and transport sections now document the REPL friction
+  capture command, its narrow UDS method, configurable checkpoint, and retained
+  external-MCP authorization boundary.

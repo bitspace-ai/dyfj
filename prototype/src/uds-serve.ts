@@ -75,6 +75,8 @@ try {
     onParseError: (detail) => console.error(`[uds] ${detail}`),
     engineConfig: config,
     externalMcpCommands: externalMcp.commands,
+    frictionIssueId: Deno.env.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||
+      undefined,
     autostarted,
     onShutdown: () => shutdown({ disconnectPeers: false }),
     onStopComplete: (code) => {

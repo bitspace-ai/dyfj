@@ -60,6 +60,7 @@ import {
   type WorkbenchWorkPacket,
 } from "./idea-packet";
 import type { WorkbenchSessionEvent } from "./sessions";
+import type { FrictionPostResult } from "./friction";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and stream frame shapes are defined once in turn-contract.ts and
@@ -826,6 +827,7 @@ export async function runRepl(
     sessionId: config.sessionId,
     turnCount: 0,
     sessionSpendUsd: 0,
+    workspace: config.sessionId === undefined ? config.workspace : undefined,
     eventCounter: 0,
   };
   let exitCode = 0;
@@ -848,10 +850,16 @@ export async function runRepl(
           sessionState,
           connect,
         )
-      ) continue;
+      ) {
+        sessionState.lastReplCommand = prompt;
+        continue;
+      }
       if (
         await handleReplIdeaCommand(prompt, config, io, sessionState, connect)
-      ) continue;
+      ) {
+        sessionState.lastReplCommand = prompt;
+        continue;
+      }
       if (
         await handleReplPacketCommand(
           prompt,
@@ -860,9 +868,28 @@ export async function runRepl(
           sessionState,
           connect,
         )
+      ) {
+        sessionState.lastReplCommand = prompt;
+        continue;
+      }
+      if (
+        await handleReplFrictionCommand(
+          prompt,
+          config,
+          io,
+          sessionState,
+          connect,
+          interactive,
+        )
       ) continue;
-      if (await handleReplModelCommand(prompt, config, io, connect)) continue;
-      if (await handleReplFastCommand(prompt, config, io, connect)) continue;
+      if (await handleReplModelCommand(prompt, config, io, connect)) {
+        sessionState.lastReplCommand = prompt;
+        continue;
+      }
+      if (await handleReplFastCommand(prompt, config, io, connect)) {
+        sessionState.lastReplCommand = prompt;
+        continue;
+      }
       try {
         const body = buildTurnBody(prompt, config, sessionState.sessionId);
         const spinner = createTurnSpinner(config, io);
@@ -961,6 +988,9 @@ export async function runRepl(
           handlers.onEvent({ type: "turnAborted" });
         }
         sessionState.sessionId = result.sessionId;
+        sessionState.lastModelSlug = "model" in result
+          ? result.model.slug
+          : undefined;
         sessionState.turnCount++;
         sessionState.eventCounter = (sessionState.eventCounter ?? 0) + 1;
         const eventNum = sessionState.eventCounter;
@@ -999,6 +1029,7 @@ export async function runRepl(
           break;
         }
       }
+      sessionState.lastReplCommand = prompt;
     }
   } finally {
     io.close();
@@ -1723,6 +1754,9 @@ export interface ReplSessionState {
   workspace?: string;
   events?: WorkbenchSessionEvent[];
   eventCounter?: number;
+  lastModelSlug?: string;
+  lastReplCommand?: string;
+  lastFriction?: FrictionPostResult;
 }
 
 function formatShellArg(arg: string): string {
@@ -1916,15 +1950,19 @@ export async function handleReplSessionCommand(
       );
       return true;
     }
+    let targetWorkspace: string | undefined;
     if (config.unix) {
       try {
         const client = await connect(config.socket);
         try {
           const inspect = await client.request("sessions/inspect", {
             sessionId: targetId,
-          }) as { exists?: boolean };
+          }) as { exists?: boolean; workspace?: string | null };
           if (inspect.exists === false) {
             io.err(`warning: session "${targetId}" was not found on runtime`);
+          }
+          if (typeof inspect.workspace === "string") {
+            targetWorkspace = inspect.workspace;
           }
         } finally {
           client.close();
@@ -1937,7 +1975,10 @@ export async function handleReplSessionCommand(
     config.sessionId = targetId;
     sessionState.turnCount = 0;
     sessionState.sessionSpendUsd = 0;
+    sessionState.workspace = targetWorkspace;
     sessionState.events = [];
+    sessionState.lastModelSlug = undefined;
+    sessionState.lastReplCommand = undefined;
     io.err(`switched to session: ${targetId}`);
     return true;
   }
@@ -1950,6 +1991,119 @@ export async function handleReplSessionCommand(
 
 function isOptionLike(token: string): boolean {
   return token.startsWith("-") && token.length > 1;
+}
+
+const FRICTION_SEVERITY_SET = new Set([
+  "blocker",
+  "major",
+  "minor",
+  "paper-cut",
+]);
+
+export async function handleReplFrictionCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  sessionState: ReplSessionState,
+  connect: ConnectFn = connectUnixClient,
+  interactive = true,
+): Promise<boolean> {
+  if (line.length > 32768) {
+    io.err("command line exceeds maximum length of 32768 characters");
+    return true;
+  }
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("/friction")) return false;
+  if (trimmed !== "/friction" && !/^\/friction\s/.test(trimmed)) return false;
+
+  const rest = trimmed.slice("/friction".length).trim();
+  if (rest === "" || rest === "help") {
+    io.err("Friction capture commands:");
+    io.err("  /friction <sev> [--escaped] <text...>   post one friction entry");
+    io.err(
+      "  /friction last                         show the last posted entry",
+    );
+    io.err("  sev: blocker | major | minor | paper-cut");
+    io.err("  DYFJ_FRICTION_ISSUE_ID must be set on the runtime");
+    return true;
+  }
+  if (rest === "last") {
+    if (sessionState.lastFriction === undefined) {
+      io.err("no friction entry has been posted in this REPL");
+    } else {
+      io.err(sessionState.lastFriction.firstLine);
+      io.err(`comment id: ${sessionState.lastFriction.commentId}`);
+    }
+    return true;
+  }
+  const severityMatch = rest.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  const severity = severityMatch?.[1] ?? "";
+  if (!FRICTION_SEVERITY_SET.has(severity)) {
+    io.err(
+      "invalid friction severity; expected blocker, major, minor, or paper-cut",
+    );
+    return true;
+  }
+  let remainder = (severityMatch?.[2] ?? "").trim();
+  let escaped = false;
+  if (remainder === "--escaped" || remainder.startsWith("--escaped ")) {
+    escaped = true;
+    remainder = remainder.slice("--escaped".length).trim();
+  } else if (remainder.startsWith("-")) {
+    const option = remainder.split(/\s+/, 1)[0];
+    io.err(`unknown /friction option: ${option}`);
+    return true;
+  }
+  if (remainder === "") {
+    io.err("usage: /friction <sev> [--escaped] <text...>");
+    return true;
+  }
+  if (sessionState.sessionId === undefined) {
+    io.err("no session yet — send a prompt first before posting friction");
+    return true;
+  }
+
+  const context = {
+    sessionId: sessionState.sessionId,
+    ...(sessionState.lastModelSlug === undefined
+      ? {}
+      : { model: sessionState.lastModelSlug }),
+    ...(sessionState.workspace === undefined
+      ? {}
+      : { workspace: sessionState.workspace }),
+    ...(sessionState.lastReplCommand === undefined
+      ? {}
+      : { command: sessionState.lastReplCommand }),
+  };
+  let client: UnixClient | undefined;
+  try {
+    client = await connect(config.socket, {
+      onApproval: (request) => promptMidTurnApproval(io, request, interactive),
+    });
+    const result = await client.request("friction/post", {
+      severity,
+      escaped,
+      text: remainder,
+      context,
+    });
+    if (
+      typeof result !== "object" || result === null ||
+      typeof (result as Record<string, unknown>).number !== "string" ||
+      typeof (result as Record<string, unknown>).commentId !== "string" ||
+      typeof (result as Record<string, unknown>).firstLine !== "string"
+    ) {
+      throw new Error("friction/post returned an invalid receipt");
+    }
+    const receipt = result as FrictionPostResult;
+    sessionState.lastFriction = receipt;
+    io.err(receipt.firstLine);
+    io.err(`comment id: ${receipt.commentId}`);
+  } catch (error) {
+    io.err(`friction capture failed: ${summarizeError(error)}`);
+  } finally {
+    client?.close();
+  }
+  return true;
 }
 
 export async function handleReplIdeaCommand(
@@ -3801,6 +3955,8 @@ REPL commands:
                             --no-fast to toggle fast speed tier
   /fast [on|off]            toggle or set fast speed tier (for supported models)
   /session                  show the current session id (for --session resume)
+  /friction <sev> [--escaped] <text...>
+                            post a daily-driver friction entry
   /exit, /quit              exit the REPL
 
 Options:

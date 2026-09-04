@@ -12,6 +12,7 @@ import {
   formatReceipt,
   formatRuntimeEvent,
   formatRuntimeStatus,
+  handleReplFrictionCommand,
   handleReplFastCommand,
   handleReplIdeaCommand,
   handleReplModelCommand,
@@ -34,6 +35,7 @@ import {
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
   readServeUnixRunGrants,
+  type ReplSessionState,
   replPrompt,
   resolveConfig,
   runExec,
@@ -3723,6 +3725,178 @@ describe("REPL /session command", () => {
     expect(handled).toBe(true);
     expect(stderr.join("\n")).toContain("01S1");
     expect(stderr.join("\n")).toContain("First task");
+  });
+});
+
+describe("REPL /friction command", () => {
+  test("help names the required friction-checkpoint configuration", async () => {
+    const { io, stderr } = fakeIo();
+    await handleReplFrictionCommand(
+      "/friction help",
+      cfg(),
+      io,
+      { turnCount: 0, sessionSpendUsd: 0 },
+    );
+    expect(stderr).toContain(
+      "  DYFJ_FRICTION_ISSUE_ID must be set on the runtime",
+    );
+  });
+
+  test("posts one line with session context and prints the honest receipt", async () => {
+    const { io, stderr } = fakeIo();
+    const calls: Array<{ method: string; params: unknown }> = [];
+    let approvalHandlerPresent = false;
+    const fakeConnect: ConnectFn = (_socket, options) => {
+      approvalHandlerPresent = options?.onApproval !== undefined;
+      return Promise.resolve({
+        request: (method: string, params: unknown) => {
+          calls.push({ method, params });
+          return Promise.resolve({
+            number: "F039",
+            commentId: "comment-39",
+            firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+          });
+        },
+        close: () => {},
+      });
+    };
+    const state: ReplSessionState = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+      workspace: "/workspace",
+      lastModelSlug: "model-slug",
+      lastReplCommand: "/packet draft",
+    };
+
+    expect(
+      await handleReplFrictionCommand(
+        "/friction minor The command needed a multi-line paste.",
+        cfg({ unix: true }),
+        io,
+        state,
+        fakeConnect,
+      ),
+    ).toBe(true);
+
+    expect(approvalHandlerPresent).toBe(true);
+    expect(calls).toEqual([{
+      method: "friction/post",
+      params: {
+        severity: "minor",
+        escaped: false,
+        text: "The command needed a multi-line paste.",
+        context: {
+          sessionId: "01ACTIVE_SESS",
+          model: "model-slug",
+          workspace: "/workspace",
+          command: "/packet draft",
+        },
+      },
+    }]);
+    expect(stderr).toEqual([
+      "F039 · 2026-09-03 · minor · escaped? no",
+      "comment id: comment-39",
+    ]);
+    expect(state.lastFriction?.commentId).toBe("comment-39");
+  });
+
+  test("last shows only a previously successful receipt", async () => {
+    const { io, stderr } = fakeIo();
+    const state = {
+      turnCount: 0,
+      sessionSpendUsd: 0,
+      lastFriction: {
+        number: "F039",
+        commentId: "comment-39",
+        firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+      },
+    };
+    await handleReplFrictionCommand(
+      "/friction last",
+      cfg(),
+      io,
+      state,
+    );
+    expect(stderr).toEqual([
+      "F039 · 2026-09-03 · minor · escaped? no",
+      "comment id: comment-39",
+    ]);
+  });
+
+  test("reports the failed call without printing an unposted number", async () => {
+    const { io, stderr } = fakeIo();
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 0,
+      sessionSpendUsd: 0,
+    };
+    await handleReplFrictionCommand(
+      "/friction major A concrete failure.",
+      cfg(),
+      io,
+      state,
+      () =>
+        Promise.resolve({
+          request: () =>
+            Promise.reject(
+              new DomainError("create_comment failed: operator declined"),
+            ),
+          close: () => {},
+        }),
+    );
+    expect(stderr.join("\n")).toContain(
+      "create_comment failed: operator declined",
+    );
+    expect(stderr.join("\n")).not.toMatch(/F\d{3}/);
+    expect(state).not.toHaveProperty("lastFriction");
+  });
+
+  test("prints the configuration stage without an unposted number", async () => {
+    const { io, stderr } = fakeIo();
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 0,
+      sessionSpendUsd: 0,
+    };
+    await handleReplFrictionCommand(
+      "/friction minor A concrete failure.",
+      cfg(),
+      io,
+      state,
+      () =>
+        Promise.resolve({
+          request: () =>
+            Promise.reject(
+              new DomainError(
+                "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+              ),
+            ),
+          close: () => {},
+        }),
+    );
+    expect(stderr).toEqual([
+      "friction capture failed: configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+    ]);
+    expect(stderr.join("\n")).not.toMatch(/F\d{3}/);
+    expect(state).not.toHaveProperty("lastFriction");
+  });
+
+  test("rejects an invalid severity without connecting", async () => {
+    const { io, stderr } = fakeIo();
+    let connected = false;
+    await handleReplFrictionCommand(
+      "/friction trivial A concrete failure.",
+      cfg(),
+      io,
+      { turnCount: 0, sessionSpendUsd: 0 },
+      () => {
+        connected = true;
+        throw new Error("must not connect");
+      },
+    );
+    expect(connected).toBe(false);
+    expect(stderr.join("\n")).toContain("invalid friction severity");
   });
 });
 
