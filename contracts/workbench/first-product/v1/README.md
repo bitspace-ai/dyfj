@@ -187,6 +187,10 @@ names its Task and any Run that actually participated.
 
 ## Executable closure report
 
+An HTML comment of the form `<!-- closure-claim: <id> -->` marks the sentence
+whose claim the report generator traces to supporting invariant results. Only
+sentences with these markers are traced; unmarked prose lies outside the trace.
+
 <!-- closure-claim: explicit-positive-witnesses --> The generated
 
 `executable-closure-report.json` is the package-level evidence surface. It
@@ -199,10 +203,12 @@ executed accepted fixture or distinct accept-branch probe for every invariant
 and every allowed conditional branch. The generator also evaluates mutated
 copies of its observed evidence to prove that omitted identifiers, witnesses,
 mutation classes, and unsupported public claims fail the report. `blocked` and
-`not-applicable` are valid only with a stated residual; missing evidence is
-never reported as `pass`. Its candidate identity deliberately hashes the
-contract source tree without the generated report itself, avoiding a
-self-referential digest; the report's own digest binds the generated output.
+`not-applicable` are valid only when the generator observes a stated residual; a
+required identifier, witness, mutation class, or declared claim marker absent
+from the generator's observed evidence is never reported as `pass`. Its
+candidate identity deliberately hashes the contract source tree without the
+generated report itself, avoiding a self-referential digest; the report's own
+digest binds the generated output.
 
 The report generator and self-check run under the repository's existing
 `test.aggregate` gate in both fast and full modes. A green report proves this

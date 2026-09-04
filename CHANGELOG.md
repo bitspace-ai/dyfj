@@ -77,16 +77,17 @@ README are tracked separately in its Revision history section.
   mutation classes; maps every stable rule to invariant authority or structural
   safety; records ladder steps it does not execute as `not-evaluated`; and fails
   closed on missing or altered identifiers, witnesses, rules, classes, targets,
-  or public claims. The report generator, preserved-probe test, report
-  self-check, and focused validator tests run in the aggregate gate under the
-  existing `test.aggregate` check, in both full and fast modes.
+  or declared claim markers. Undeclared prose lies outside the trace. The report
+  generator, preserved-probe test, report self-check, and focused validator
+  tests run in the aggregate gate under the existing `test.aggregate` check, in
+  both full and fast modes.
 - **macOS portability gate**: The full deterministic gate now runs in an
   independent macOS 15 arm64 clean checkout with digest-pinned Deno and Dolt
   archives, alongside the stable Linux required check on Ubuntu 24.04.
 
 ### Fixed
 
-- <!-- closure-claim: round-two-semantic-corrections --> **Workbench contract
+- <!-- closure-claim: contract-evidence-closure --> **Workbench contract
   evidence closure**: Task-ending operator decisions now bind to the same Task
   and follow the causing Run, Run-to-RouteSession binding is bidirectional, Run
   receipts reconcile Route, ContextPacket, and capability posture, and

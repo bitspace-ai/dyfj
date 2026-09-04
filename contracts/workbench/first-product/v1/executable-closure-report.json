@@ -7,12 +7,12 @@
     "authority_record_digest": "recorded privately"
   },
   "candidate_identity": {
-    "head": "4895eed42a55f3ee6a4a9a2fd51bf4ea25e64ae7",
-    "tracked_binary_diff_sha256": "c9b742a0333da081f44e20a80f213a0768af0dc98f7a16f1854ea9323f919ae6",
+    "head": "807fe8a316559eab6774a60b105f1421a0f368a9",
+    "tracked_binary_diff_sha256": "f5654a12fef6f74150eeb972746d49415e0df577bebcc36eae4503acd0d939e3",
     "contract_source_manifest": {
-      "sha256": "7635cee7f030cae555312216655216e441af36e6fae2a585ee55c13f29494a82",
+      "sha256": "c5704c82de7107f4b488a2258acdc85e1675b0caf9e0e4e2af9ff5c14efa86cd",
       "file_count": 126,
-      "line_count": 26366,
+      "line_count": 26372,
       "formula": "Sort package files by package-relative path; exclude executable-closure-report.json; for each file append lowercase SHA-256(file bytes), two ASCII spaces, the package-relative path, and one LF; SHA-256 the concatenated rows.",
       "excludes": [
         "executable-closure-report.json (generated output)"
@@ -3417,7 +3417,7 @@
           "result": "pass"
         },
         {
-          "claim_id": "round-two-semantic-corrections",
+          "claim_id": "contract-evidence-closure",
           "ec_ids": [
             "EC-006",
             "EC-015",

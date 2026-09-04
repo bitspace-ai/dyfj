@@ -873,7 +873,7 @@ const PUBLIC_CLAIM_REQUIREMENTS: Record<string, Record<string, string[]>> = {
       "EC-038",
     ],
     "closure-report-evidence": ["EC-057", "EC-058", "EC-059", "EC-060"],
-    "round-two-semantic-corrections": [
+    "contract-evidence-closure": [
       "EC-006",
       "EC-015",
       "EC-020",
