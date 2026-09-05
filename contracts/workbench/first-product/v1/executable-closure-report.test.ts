@@ -2,7 +2,26 @@ import {
   buildClosureReport,
   type ClosureState,
   evaluateClosureReport,
+  eventFamilyInventoryComplete,
 } from "./executable-closure-report.ts";
+import { loadSchemaRegistry } from "./validate.ts";
+
+Deno.test("event inventory rejects each schema family omission", async () => {
+  const registry = await loadSchemaRegistry();
+  const schema = registry.document(
+    "urn:dyfj:contracts:workbench:first-product:v1:events",
+  ) as { $defs: { event_family: { enum: string[] } } };
+  const families = schema.$defs.event_family.enum;
+  assert(eventFamilyInventoryComplete(families), "complete inventory rejected");
+  assert(!eventFamilyInventoryComplete([]), "empty inventory accepted");
+  for (const omitted of families) {
+    const mutated = families.filter((family) => family !== omitted);
+    assert(
+      !eventFamilyInventoryComplete(mutated),
+      `inventory accepted without ${omitted}`,
+    );
+  }
+});
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);

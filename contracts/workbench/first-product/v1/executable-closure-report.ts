@@ -831,6 +831,12 @@ const REQUIRED_EVENT_FAMILIES = [
 const MANIFEST_FORMULA =
   "Sort package files by package-relative path; exclude executable-closure-report.json; for each file append lowercase SHA-256(file bytes), two ASCII spaces, the package-relative path, and one LF; SHA-256 the concatenated rows.";
 
+export function eventFamilyInventoryComplete(
+  families: readonly string[],
+): boolean {
+  return REQUIRED_EVENT_FAMILIES.every((family) => families.includes(family));
+}
+
 const INVARIANT_RESIDUALS: Record<string, string> = {
   "EC-010":
     "The Task envelope approval is represented as a boolean without an attributable approval event.",
@@ -1299,16 +1305,14 @@ export async function buildClosureReport(
     (definitions["event_family"] as Record<string, unknown>)[
       "enum"
     ] as string[];
-  const eventFamilyComplete = REQUIRED_EVENT_FAMILIES.every((family) =>
-    eventFamilies.includes(family)
-  );
+  const eventFamilyComplete = eventFamilyInventoryComplete(eventFamilies);
+  const omissionsRejected = REQUIRED_EVENT_FAMILIES.every((omitted) => {
+    const mutated = eventFamilies.filter((family) => family !== omitted);
+    return mutated.length < eventFamilies.length &&
+      !eventFamilyInventoryComplete(mutated);
+  });
   observations.set("self-check:event-family-inventory", {
-    result: eventFamilyComplete &&
-        !REQUIRED_EVENT_FAMILIES.every((family) =>
-          REQUIRED_EVENT_FAMILIES.slice(1).includes(family)
-        )
-      ? "pass"
-      : "fail",
+    result: eventFamilyComplete && omissionsRejected ? "pass" : "fail",
     stable_rule: "closure.self-check",
     actual_rules: [],
   });

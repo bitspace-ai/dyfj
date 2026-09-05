@@ -88,6 +88,9 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Event-family omission evidence**: The closure report removes each required
+  family from a copy of the schema inventory and checks that the same inventory
+  predicate rejects it before reporting the omission witness as passing.
 - <!-- closure-claim: contract-evidence-closure --> **Workbench contract
   evidence closure**: Task-ending operator decisions now bind to the same Task
   and follow the causing Run, Run-to-RouteSession binding is bidirectional, Run
