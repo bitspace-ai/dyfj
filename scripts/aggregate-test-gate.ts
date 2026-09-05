@@ -305,8 +305,6 @@ export function productionLanes(
 ): GateLane[] {
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
-  const closureReportOutput =
-    `/tmp/dyfj-executable-closure-report-${Deno.pid}.json`;
   const home = Deno.env.get("HOME");
   const homeRun = home !== undefined && home.startsWith("/")
     ? `,${home}/.dyfj/run`
@@ -520,11 +518,10 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
+        "--no-prompt",
+        "--deny-write",
         "--allow-read=.",
-        `--allow-write=${closureReportOutput}`,
         "contracts/workbench/first-product/v1/executable-closure-report.ts",
-        "--output-path",
-        closureReportOutput,
         "--compare-path",
         "contracts/workbench/first-product/v1/executable-closure-report.json",
       ],

@@ -1687,7 +1687,7 @@ interface ReportArguments {
   comparePath?: string;
 }
 
-function parseReportArguments(args: readonly string[]): ReportArguments {
+export function parseReportArguments(args: readonly string[]): ReportArguments {
   const parsed: ReportArguments = {};
   for (let index = 0; index < args.length; index++) {
     const argument = args[index];
@@ -1707,17 +1707,12 @@ function parseReportArguments(args: readonly string[]): ReportArguments {
     parsed[key] = value;
     index++;
   }
-  if (parsed.comparePath !== undefined && parsed.outputPath === undefined) {
-    throw new Error(
-      "executable closure report: --compare-path requires --output-path",
-    );
-  }
   if (
     parsed.outputPath !== undefined &&
-    parsed.outputPath === parsed.comparePath
+    parsed.comparePath !== undefined
   ) {
     throw new Error(
-      "executable closure report: output and comparison paths must differ",
+      "executable closure report: --output-path and --compare-path are mutually exclusive",
     );
   }
   return parsed;
@@ -1731,22 +1726,19 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 if (import.meta.main) {
   const root = Deno.cwd();
   const arguments_ = parseReportArguments(Deno.args);
-  const output = arguments_.outputPath ??
-    `${root}/contracts/workbench/first-product/v1/executable-closure-report.json`;
   const report = await buildClosureReport(root);
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
-  await Deno.writeTextFile(output, serialized);
   if (arguments_.comparePath !== undefined) {
-    try {
-      const committed = await Deno.readFile(arguments_.comparePath);
-      if (!bytesEqual(new TextEncoder().encode(serialized), committed)) {
-        throw new Error(
-          "executable closure report mismatch: committed report differs from fresh regeneration",
-        );
-      }
-    } finally {
-      await Deno.remove(output);
+    const committed = await Deno.readFile(arguments_.comparePath);
+    if (!bytesEqual(new TextEncoder().encode(serialized), committed)) {
+      throw new Error(
+        "executable closure report mismatch: committed report differs from fresh regeneration",
+      );
     }
+  } else {
+    const output = arguments_.outputPath ??
+      `${root}/contracts/workbench/first-product/v1/executable-closure-report.json`;
+    await Deno.writeTextFile(output, serialized);
   }
   console.log(
     "executable closure report: pass (61 EC, 31 RP, 24 targets; public-claim trace pass; 7 external ladder steps not evaluated)",

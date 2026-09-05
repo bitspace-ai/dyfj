@@ -476,8 +476,10 @@ The report generator uses no network permission. The same lane and deterministic
 report generator run inside the repository-owned aggregate gate
 (`deno task
 test` and `deno task test:fast`) under the existing `test.aggregate`
-check id. The lane writes a temporary regeneration and fails when its bytes
-differ from the checked-in report; it never rewrites the checked-in report.
+check id. The lane compares an in-memory regeneration with the checked-in
+report using `--compare-path`, with write permission denied. Different bytes
+fail the lane without creating an output file. Comparison and `--output-path`
+are mutually exclusive; bare invocation still regenerates the tracked report.
 
 ## Known limits
 

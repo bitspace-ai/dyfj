@@ -3,8 +3,41 @@ import {
   type ClosureState,
   evaluateClosureReport,
   eventFamilyInventoryComplete,
+  parseReportArguments,
 } from "./executable-closure-report.ts";
 import { loadSchemaRegistry } from "./validate.ts";
+
+Deno.test("report comparison is independent of output and rejects mixed modes", () => {
+  assert(
+    parseReportArguments(["--compare-path", "report.json"]).comparePath ===
+      "report.json",
+    "comparison requires an output",
+  );
+  assert(
+    parseReportArguments(["--output-path", "report.json"]).outputPath ===
+      "report.json",
+    "explicit generation changed",
+  );
+  assert(
+    Object.keys(parseReportArguments([])).length === 0,
+    "default generation changed",
+  );
+  for (
+    const args of [
+      ["--compare-path", "report.json", "--output-path", "other.json"],
+      ["--output-path", "report.json", "--compare-path", "report.json"],
+    ]
+  ) {
+    let rejected = false;
+    try {
+      parseReportArguments(args);
+    } catch (error) {
+      rejected = error instanceof Error &&
+        error.message.includes("mutually exclusive");
+    }
+    assert(rejected, "mixed output and comparison accepted");
+  }
+});
 
 Deno.test("event inventory rejects each schema family omission", async () => {
   const registry = await loadSchemaRegistry();

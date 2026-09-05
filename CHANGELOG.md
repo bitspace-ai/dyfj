@@ -94,6 +94,10 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Read-only closure comparison**: The deterministic gate compares the generated
+  report in memory with the committed bytes, with writes denied. It no longer
+  writes through a predictable temporary filename. Comparison rejects an output
+  path; explicit report generation remains a separate write operation.
 - **Event-family omission evidence**: The closure report removes each required
   family from a copy of the schema inventory and checks that the same inventory
   predicate rejects it before reporting the omission witness as passing.
