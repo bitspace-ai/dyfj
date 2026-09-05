@@ -1,0 +1,18 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A relied grant records a distinct bounded scope set",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/capability_grants/1/scope/route_scope",
+      "value": ["route-hosted-metered", "route-native-local"]
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/1/scope/provider_scope",
+      "value": ["synthetic-provider", "secondary-provider"]
+    }
+  ]
+}

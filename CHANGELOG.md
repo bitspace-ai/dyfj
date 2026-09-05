@@ -11,6 +11,77 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- <!-- closure-claim: semantic-contract-behavior --> **Workbench first-product
+  semantic contract package**: A new versioned package at
+  `contracts/workbench/first-product/v1/` states the first-product room,
+  participant, membership, thread, agent-specification, task, run, route,
+  capability-report, context-packet, grant, lease, artifact, event, projection,
+  receipt, route-control, label, claim-source, and authority semantics as JSON
+  Schema 2020-12 plus repository-owned TypeScript validators, with a synthetic
+  fixture corpus in which every negative fixture names the stable rule id it
+  must be rejected for and every one of the package's stable rule ids has a
+  named negative fixture. An AgentSpec binds identity, declared behavior,
+  posture, tools, and guardrails; a Task carries a complete execution envelope
+  (objective, context scope, assigned agent specification, posture, route
+  requirements, tools, workspace, budget, and guardrails) alongside its approval
+  envelope; and a Run requires and reconciles its Task, agent specification,
+  route session, an exclusively owned ContextPacket, and a CapabilityGrant. Task
+  and Run lifecycles are separate state types with separate transitions; the
+  required progression, Run-to-Task independence (including that a failed,
+  interrupted, abandoned, or superseded Run always leaves a recorded causal
+  consequence on its Task), per-Task run-attempt uniqueness, state-and-event
+  pairing, label and claim-source preservation, route-phase ordering and route
+  binding, continuity evidence, durable commit before acknowledgement, receipt
+  family requirements and receipt subject reconciliation, and explicit deferrals
+  are enforced, while the exceptional-state graph, adapter-specific context
+  projection, and detailed process provenance are deliberately left open.
+  `running` → `ready` and `completed` → `closed` are conditional edges: the
+  first requires a failed or interrupted Run's causal evidence, the second an
+  explicit attributable operator decision that never asserts or implies
+  acceptance. A RouteSpec requires lane, modality, model, adapter, policy basis,
+  and cost basis, plus at least one of runner or provider — lane identifies loop
+  ownership and does not forbid either field.
+  <!-- closure-claim: effective-event-authority --> Authorization is checked as effective rather than
+  declared: a grant-authorized event must name a resolved grant issued to its
+  own author, an authority-bearing event cannot rest on a denied policy
+  decision, an `allowed-with-approval` basis must resolve to a human-authored
+  approval recorded no later than its first reliance, and a machine-authored
+  `operator-direct` event must resolve to a preceding human authorizing event
+  for the same Task or Room. A false Task-envelope approval flag rejects, but
+  the missing attributable approval event is recorded as blocked. A Run grant
+  may transitively supersede its envelope grant when it keeps both principals
+  and does not broaden authority. Run grants explicitly scope Task, Room, route,
+  and any named provider; absent grant scopes and RouteSpec components require
+  an explicit `not-applicable` or `opaque` disposition. A deterministic policy
+  rejects an egress-capable grant (network reach plus an egress destination
+  class) acting on content that is simultaneously private and untrusted, receipt
+  evidence may never postdate the receipt's own commit sequence, a turn receipt
+  carries lifecycle state only when a Run participates. Within a declared event
+  family, the first inline writer establishes the package's cutover convention
+  and later omissions or competitors reject; selecting that writer has no
+  separate authority record and remains blocked. Structural alternatives —
+  payload representations, speak policies, thread classes, internal versus
+  external references, version evidence, and participant independence — are
+  enforced by schema rather than described in prose, and inline payload bytes
+  are forbidden wherever any secrecy tag applies rather than only for a fixed
+  list of tag names. The positive acceptance matrix is decided by test-owned
+  predicates over the fixture's own witnesses; a fixture's `proves` list is
+  display metadata only. The package adds no dependency, implements no
+  persistence, routing, or provider integration, grants no runtime authority,
+  and does not displace the canonical Dolt DDL. Validating a document proves the
+  document and nothing about a running system.
+  <!-- closure-claim: closure-report-evidence --> A generated deterministic closure report computes all
+  61 invariant results, all 31 preserved probe dispositions, and the 24-target
+  rollup from observed validator results; checks every reject branch against an
+  explicit expected-rule table and every invariant against explicit required
+  mutation classes; maps every stable rule to invariant authority or structural
+  safety; records ladder steps it does not execute as `not-evaluated`; and fails
+  closed on missing or altered identifiers, witnesses, rules, classes, targets,
+  or declared claim markers. Undeclared prose lies outside the trace. The report
+  generator, preserved-probe test, report self-check, and focused validator
+  tests run in the aggregate gate under the existing `test.aggregate` check, in
+  both full and fast modes. The gate fails when the checked-in report differs
+  byte-for-byte from a fresh regeneration without rewriting the tracked file.
 - **REPL friction capture**: `/friction <sev> [--escaped] <text...>` now posts
   one numbered ritual-format entry through a narrow loopback `friction/post`
   method that reuses configured Linear MCP read/write authorization, prints an
@@ -23,6 +94,26 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Read-only closure comparison**: The deterministic gate compares the generated
+  report in memory with the committed bytes, with writes denied. It no longer
+  writes through a predictable temporary filename. Comparison rejects an output
+  path; explicit report generation remains a separate write operation.
+- **Event-family omission evidence**: The closure report removes each required
+  family from a copy of the schema inventory and checks that the same inventory
+  predicate rejects it before reporting the omission witness as passing.
+- <!-- closure-claim: contract-evidence-closure --> **Workbench contract
+  evidence closure**: Task-ending operator decisions now bind to the same Task
+  and follow the causing Run, Run-to-RouteSession binding is bidirectional, Run
+  receipts reconcile Route, ContextPacket, and capability posture, and
+  independently verified material requires evidence from a distinct verifier.
+  Event grant scopes, summons grantees, receipt Room and participation, spend
+  reliance, receipt budget/tools/effects, receipt provenance and attribution,
+  and durable commit ordering are reconciled. Abandoned and superseded Runs now
+  require the same recorded Task consequence as failed and interrupted Runs. The
+  closure generator uses explicit allowed-branch witnesses, requires every
+  declared mutation class, runs internal report mutations, supports
+  residual-bearing `blocked` and `not-applicable` results, and maps public
+  claims to their supporting invariant results.
 - **Bounded-field byte sizing fails closed on a short encoder read**: The
   UTF-8 byte-limit helper that bounds ACP continuity history and tool fields
   now documents the invariant it relies on (a 4,096-code-unit chunk fits a

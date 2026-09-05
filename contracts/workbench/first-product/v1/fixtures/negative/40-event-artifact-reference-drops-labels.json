@@ -1,0 +1,131 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "An artifact event that drops the artifact's secrecy tag",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "label.preservation",
+    "note": "An event carrying a governed artifact preserves the labels that artifact stamped."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "artifact-workspace-note",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "artifact_class": "workspace-note",
+      "authoritative_ref": {
+        "kind": "external",
+        "external": {
+          "external": true,
+          "authority": "operator-workspace",
+          "locator_class": "operator-workspace",
+          "version_evidence": {
+            "kind": "digest",
+            "digest": "sha256:3c4d5e6f708192033c4d5e6f708192033c4d5e6f708192033c4d5e6f70819203"
+          }
+        }
+      },
+      "correctable": true,
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-artifact-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "trace": "trace-focused",
+      "author": "participant-agent",
+      "author_class": "machine",
+      "family": "artifact",
+      "type": "artifact-committed",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-artifacts",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "artifact_ref": "artifact-workspace-note",
+      "causal_parents": [],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 1,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Artifact reference committed with its event."
+          }
+        ]
+      }
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-agent",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

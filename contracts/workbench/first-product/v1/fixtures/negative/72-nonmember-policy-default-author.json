@@ -1,0 +1,28 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A nonmember authors an event under a policy-default basis",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "Changing the authorization kind cannot bypass effective Room membership."
+  },
+  "mutations": [
+    { "op": "copy", "from": "/participants/0", "path": "/participants/-" },
+    {
+      "op": "replace",
+      "path": "/participants/2/id",
+      "value": "participant-nonmember"
+    },
+    {
+      "op": "replace",
+      "path": "/events/0/author",
+      "value": "participant-nonmember"
+    },
+    {
+      "op": "replace",
+      "path": "/events/0/authorization_basis",
+      "value": { "kind": "policy-default" }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Route silently omits system-harness evidence and its disposition",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "run.evidence-binding",
+    "note": "An unobserved Route component must be recorded as opaque or not applicable."
+  },
+  "mutations": [
+    {
+      "op": "remove",
+      "path": "/routes/0/component_dispositions/system_harness"
+    }
+  ]
+}

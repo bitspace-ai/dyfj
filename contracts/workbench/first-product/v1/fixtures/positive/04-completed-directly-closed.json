@@ -1,0 +1,53 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Task closes directly from completed under a separate operator decision",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    { "op": "remove", "path": "/tasks/0/transitions/5" },
+    {
+      "op": "replace",
+      "path": "/tasks/0/transitions/5/from",
+      "value": "task:completed"
+    },
+    { "op": "replace", "path": "/tasks/0/transitions/5/revision", "value": 7 },
+    { "op": "replace", "path": "/tasks/0/revision", "value": 7 },
+    { "op": "replace", "path": "/events/26/family", "value": "approval" },
+    {
+      "op": "replace",
+      "path": "/events/26/type",
+      "value": "direct-closure-authorized"
+    },
+    { "op": "remove", "path": "/events/26/state_transition" },
+    {
+      "op": "replace",
+      "path": "/events/27/state_transition/from",
+      "value": "task:completed"
+    },
+    {
+      "op": "replace",
+      "path": "/events/27/state_transition/entity_revision",
+      "value": 7
+    },
+    {
+      "op": "add",
+      "path": "/events/27/state_transition/operator_decision",
+      "value": "ev-task-accepted"
+    },
+    {
+      "op": "replace",
+      "path": "/receipts/3/current_state/revision",
+      "value": 7
+    },
+    {
+      "op": "replace",
+      "path": "/receipts/3/body/facts/operator_acceptance/state",
+      "value": "absent"
+    },
+    {
+      "op": "replace",
+      "path": "/receipts/3/body/facts/operator_acceptance/evidence",
+      "value": []
+    }
+  ]
+}

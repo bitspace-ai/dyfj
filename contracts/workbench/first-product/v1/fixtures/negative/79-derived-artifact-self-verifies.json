@@ -1,0 +1,18 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A derived artifact elevates trust through its producer event",
+  "expectation": { "outcome": "reject", "rule": "provenance.preservation" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/artifacts/1/derivation/claim_source",
+      "value": "independently-verified"
+    },
+    {
+      "op": "add",
+      "path": "/artifacts/1/derivation/verified_by",
+      "value": "ev-artifact-committed"
+    }
+  ]
+}

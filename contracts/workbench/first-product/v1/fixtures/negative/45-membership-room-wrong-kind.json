@@ -1,0 +1,58 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A membership names a participant identifier where a room belongs",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "reference.kind",
+    "note": "A reference that resolves within the corpus must resolve to an entity of the declared kind."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "participant-operator",
+      "participant": "participant-operator",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

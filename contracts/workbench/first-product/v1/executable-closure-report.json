@@ -1,0 +1,3643 @@
+{
+  "schema": "dyfj.workbench.first-product.executable-closure-report/v1",
+  "result": "pass",
+  "package_version": "workbench.first-product/v1",
+  "authority": {
+    "public_reference": "workbench.first-product/v1",
+    "authority_record_digest": "recorded privately"
+  },
+  "candidate_identity": {
+    "contract_source_manifest": {
+      "sha256": "93f144554821569f6966a43779d9e4bb077d1723656cdf5b41270928b06e4c8d",
+      "file_count": 126,
+      "line_count": 26481,
+      "formula": "Sort package files by package-relative path; exclude executable-closure-report.json; for each file append lowercase SHA-256(file bytes), two ASCII spaces, the package-relative path, and one LF; SHA-256 the concatenated rows.",
+      "excludes": [
+        "executable-closure-report.json (generated output)"
+      ]
+    }
+  },
+  "denominator": {
+    "targets": 24,
+    "invariants": 61,
+    "probes": 31
+  },
+  "invariants": [
+    {
+      "id": "EC-001",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "persistent primary Room",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-31.allowed",
+          "branch": "additional ephemeral Room",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "cardinality"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "cardinality",
+          "evidence": "49-solo-room-not-persistent.json",
+          "result": "pass",
+          "stable_rule": "solo-room.defaults",
+          "actual_rules": [
+            "solo-room.defaults"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-002",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "stable opaque identities",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission",
+        "cardinality"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "01-missing-stable-identity.json",
+          "result": "pass",
+          "stable_rule": "structure.required",
+          "actual_rules": [
+            "structure.required"
+          ]
+        },
+        {
+          "mutation_class": "cardinality",
+          "evidence": "44-duplicate-identifier.json",
+          "result": "pass",
+          "stable_rule": "identity.uniqueness",
+          "actual_rules": [
+            "identity.uniqueness"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-003",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "automated summons blocked",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "probe:RP-24.forbidden",
+          "result": "pass",
+          "stable_rule": "solo-room.loop-prevention",
+          "actual_rules": [
+            "authority.basis",
+            "solo-room.loop-prevention"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-004",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "effective Room authorship membership",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "wrong-kind",
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "wrong-kind",
+          "evidence": "45-membership-room-wrong-kind.json",
+          "result": "pass",
+          "stable_rule": "reference.kind",
+          "actual_rules": [
+            "reference.kind"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "72-nonmember-policy-default-author.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-005",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "membership basis resolves",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "probe:RP-23.forbidden",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-006",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "always-on speak policy",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:07-scheduled-speak-policy.json",
+          "branch": "scheduled speak policy",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:06-operator-authorized-summons-exception.json",
+          "branch": "operator-authorized summons exception",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "83-summons-grant-names-another-grantee.json",
+          "result": "pass",
+          "stable_rule": "solo-room.loop-prevention",
+          "actual_rules": [
+            "solo-room.loop-prevention"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "97-summons-exception-denied-policy.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-007",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "main and Task-branch Threads reconcile",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "probe:RP-22.forbidden",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding",
+            "receipt.subject-reconciliation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-008",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:10-distinct-agent-behavior.json",
+          "branch": "distinct AgentSpec behavior",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "generated:agent-spec-behavior-omission",
+          "result": "pass",
+          "stable_rule": "structure.required",
+          "actual_rules": [
+            "structure.required"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-009",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:09-distinct-task-objective.json",
+          "branch": "distinct Task objective",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "generated:task-objective-omission",
+          "result": "pass",
+          "stable_rule": "structure.required",
+          "actual_rules": [
+            "structure.required"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-010",
+      "result": "blocked",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "approved envelope represented",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "41-task-completed-without-approved-envelope.json",
+          "result": "pass",
+          "stable_rule": "authority.task-envelope",
+          "actual_rules": [
+            "authority.task-envelope"
+          ]
+        }
+      ],
+      "residual": "The Task envelope approval is represented as a boolean without an attributable approval event."
+    },
+    {
+      "id": "EC-011",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "Run required references",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "probe:RP-01.forbidden",
+          "result": "pass",
+          "stable_rule": "structure.required",
+          "actual_rules": [
+            "structure.required"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-012",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "distinct Run attempts",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "cardinality"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "cardinality",
+          "evidence": "34-duplicate-run-attempt-number.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.run-attempt-uniqueness",
+          "actual_rules": [
+            "lifecycle.run-attempt-uniqueness"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-013",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "Task and Run assignment agreement",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "probe:RP-30.forbidden",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-014",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:59-narrowed-successor-run-grant.json",
+          "branch": "narrowed successor grant",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "probe:RP-17.forbidden",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-015",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "Run stays inside Task envelope",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch",
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "probe:RP-30.forbidden",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "87-receipt-cost-exceeds-task-budget.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "88-receipt-tool-outside-grant.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "89-receipt-external-effect-outside-grant.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-016",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "exclusive packet ownership",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-16.allowed",
+          "branch": "omitted packet reverse links",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission",
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "probe:RP-01.forbidden",
+          "result": "pass",
+          "stable_rule": "structure.required",
+          "actual_rules": [
+            "structure.required"
+          ]
+        },
+        {
+          "mutation_class": "mismatch",
+          "evidence": "probe:RP-02.forbidden",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        },
+        {
+          "mutation_class": "mismatch",
+          "evidence": "73-context-packet-bound-to-another-task.json",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-017",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "native Route runner",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:08-external-route-names-runner.json",
+          "branch": "external Route runner",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-09.allowed",
+          "branch": "native hosted Route",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "generated:route-identity-omission",
+          "result": "pass",
+          "stable_rule": "structure.mutual-exclusion",
+          "actual_rules": [
+            "structure.mutual-exclusion"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-018",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "Route component dispositions",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:08-external-route-names-runner.json",
+          "branch": "external Route runner",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-13.allowed",
+          "branch": "applicable system harness",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "61-route-silently-omits-component-disposition.json",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-019",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "unique capability classifications",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "cardinality"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "cardinality",
+          "evidence": "65-duplicate-capability-classification.json",
+          "result": "pass",
+          "stable_rule": "route.capability-rejection",
+          "actual_rules": [
+            "route.capability-rejection"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-020",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "bidirectional RouteSession binding",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch",
+        "cardinality"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "75-run-names-another-runs-session.json",
+          "result": "pass",
+          "stable_rule": "route.binding",
+          "actual_rules": [
+            "route.binding"
+          ]
+        },
+        {
+          "mutation_class": "cardinality",
+          "evidence": "94-duplicate-route-session-owner.json",
+          "result": "pass",
+          "stable_rule": "route.binding",
+          "actual_rules": [
+            "route.binding"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-021",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "execution RouteSession",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-29.allowed",
+          "branch": "inspection-only session",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission",
+        "temporal"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "probe:RP-29.forbidden",
+          "result": "pass",
+          "stable_rule": "route.phase-order",
+          "actual_rules": [
+            "route.phase-order"
+          ]
+        },
+        {
+          "mutation_class": "temporal",
+          "evidence": "85-session-spend-without-run-reliance.json",
+          "result": "pass",
+          "stable_rule": "route.phase-order",
+          "actual_rules": [
+            "route.phase-order"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-022",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "available required capabilities",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-29.allowed",
+          "branch": "inspection-only session",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "12-unavailable-capability-reaches-spend.json",
+          "result": "pass",
+          "stable_rule": "route.capability-rejection",
+          "actual_rules": [
+            "route.capability-rejection"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-023",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "approval precedes reliance",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-29.allowed",
+          "branch": "inspection-only session",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "temporal",
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "temporal",
+          "evidence": "probe:RP-06.forbidden",
+          "result": "pass",
+          "stable_rule": "event.causal-order",
+          "actual_rules": [
+            "event.causal-order",
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "temporal",
+          "evidence": "95-retroactive-event-policy-approval.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "98-approval-scope-mismatch.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "90-machine-operator-direct-lacks-authorizing-event.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-024",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "Finalize and halted control evidence",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-29.allowed",
+          "branch": "inspection-only session",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "58-terminal-run-uses-inspection-only-session.json",
+          "result": "pass",
+          "stable_rule": "route.phase-order",
+          "actual_rules": [
+            "route.phase-order"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-025",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "ContextPacket digest",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "generated:context-packet-digest-omission",
+          "result": "pass",
+          "stable_rule": "structure.required",
+          "actual_rules": [
+            "structure.required"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-026",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "derived provenance and labels",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "79-derived-artifact-self-verifies.json",
+          "result": "pass",
+          "stable_rule": "provenance.preservation",
+          "actual_rules": [
+            "provenance.preservation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-027",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:11-distinct-grant-scopes.json",
+          "branch": "distinct explicit grant scopes",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "60-run-grant-silently-omits-route-scope.json",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-028",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "effective grant principals and scope",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch",
+        "authority",
+        "temporal"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "probe:RP-18.forbidden",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding",
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "82-event-grant-room-scope-mismatch.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "97-summons-exception-denied-policy.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "98-approval-scope-mismatch.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "temporal",
+          "evidence": "residual:grant-expiry-not-represented",
+          "result": "not-applicable",
+          "stable_rule": "authority.basis",
+          "actual_rules": [],
+          "residual": "CapabilityGrant expiry is not represented by the frozen first-product schema."
+        }
+      ]
+    },
+    {
+      "id": "EC-029",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:59-narrowed-successor-run-grant.json",
+          "branch": "narrowed successor grant",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority",
+        "temporal"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "probe:RP-27.forbidden",
+          "result": "pass",
+          "stable_rule": "grant.no-self-broadening",
+          "actual_rules": [
+            "run.evidence-binding",
+            "grant.no-self-broadening",
+            "grant.egress-policy"
+          ]
+        },
+        {
+          "mutation_class": "temporal",
+          "evidence": "96-retroactive-grant-expansion-approval.json",
+          "result": "pass",
+          "stable_rule": "grant.no-self-broadening",
+          "actual_rules": [
+            "grant.no-self-broadening"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-030",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "no private untrusted egress",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "probe:RP-19.forbidden",
+          "result": "pass",
+          "stable_rule": "grant.egress-policy",
+          "actual_rules": [
+            "grant.egress-policy"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-031",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "lease expiry preserves identity",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "16-lease-expiry-deletes-identity.json",
+          "result": "pass",
+          "stable_rule": "lease.availability-only",
+          "actual_rules": [
+            "lease.availability-only"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-032",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "separate Task and Run state types",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "wrong-kind"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "wrong-kind",
+          "evidence": "04-run-state-used-as-task-state.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.state-type",
+          "actual_rules": [
+            "lifecycle.state-type"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-033",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "required Task progression",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:02-task-waiting-branch.json",
+          "branch": "waiting detour",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:03-task-blocked-branch.json",
+          "branch": "blocked detour",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "46-task-skips-required-progression.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.progression",
+          "actual_rules": [
+            "lifecycle.progression"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-034",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:02-task-waiting-branch.json",
+          "branch": "waiting returns to running",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:03-task-blocked-branch.json",
+          "branch": "blocked returns to running",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "46-task-skips-required-progression.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.progression",
+          "actual_rules": [
+            "lifecycle.progression"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-035",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "interrupted Run recovery",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:05-operator-decided-failed-run-ending.json",
+          "branch": "operator-decided ending cites failed Run",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "62-task-recovery-evidence-does-not-cite-run.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.run-independence",
+          "actual_rules": [
+            "lifecycle.run-independence"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-036",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:05-operator-decided-failed-run-ending.json",
+          "branch": "operator-decided ending cites failed Run",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "74-unrelated-operator-decision.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.run-independence",
+          "actual_rules": [
+            "lifecycle.run-independence"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-037",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "accepted then closed",
+          "result": "pass"
+        },
+        {
+          "evidence": "fixture:04-completed-directly-closed.json",
+          "branch": "completed directly closed",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "70-machine-authored-task-acceptance.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.run-independence",
+          "actual_rules": [
+            "lifecycle.run-independence"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-038",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "event containment",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission",
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "67-event-run-omits-owning-task.json",
+          "result": "pass",
+          "stable_rule": "run.evidence-binding",
+          "actual_rules": [
+            "run.evidence-binding"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "90-machine-operator-direct-lacks-authorizing-event.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-039",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "transition-event pairing",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "06-state-mutation-without-event.json",
+          "result": "pass",
+          "stable_rule": "lifecycle.transition-event-pairing",
+          "actual_rules": [
+            "lifecycle.transition-event-pairing"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-040",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "sequence and durable commit order",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "temporal"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "temporal",
+          "evidence": "probe:RP-06.forbidden",
+          "result": "pass",
+          "stable_rule": "event.causal-order",
+          "actual_rules": [
+            "event.causal-order",
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "temporal",
+          "evidence": "95-retroactive-event-policy-approval.json",
+          "result": "pass",
+          "stable_rule": "authority.basis",
+          "actual_rules": [
+            "authority.basis"
+          ]
+        },
+        {
+          "mutation_class": "temporal",
+          "evidence": "86-commit-sequence-regresses.json",
+          "result": "pass",
+          "stable_rule": "event.causal-order",
+          "actual_rules": [
+            "event.causal-order"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-041",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "separate claim sources",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "19-collapsed-claim-sources.json",
+          "result": "pass",
+          "stable_rule": "claim-source.separation",
+          "actual_rules": [
+            "claim-source.separation"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "92-receipt-claim-source-disagrees-with-author.json",
+          "result": "pass",
+          "stable_rule": "claim-source.separation",
+          "actual_rules": [
+            "claim-source.separation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-042",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "projection and derivation labels",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "09-projection-drops-source-labels.json",
+          "result": "pass",
+          "stable_rule": "label.preservation",
+          "actual_rules": [
+            "label.preservation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-043",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "complete event-family vocabulary",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "self-check:event-family-inventory",
+          "result": "pass",
+          "stable_rule": "closure.self-check",
+          "actual_rules": []
+        }
+      ]
+    },
+    {
+      "id": "EC-044",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "durable commit before acknowledgement",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "temporal"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "temporal",
+          "evidence": "17-acknowledgement-before-durable-commit.json",
+          "result": "pass",
+          "stable_rule": "authority.durable-commit",
+          "actual_rules": [
+            "authority.durable-commit"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-045",
+      "result": "blocked",
+      "positive_witness": [
+        {
+          "evidence": "probe:RP-15.allowed",
+          "branch": "declared inline writer cutover",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "probe:RP-28.forbidden",
+          "result": "pass",
+          "stable_rule": "authority.sole-writer",
+          "actual_rules": [
+            "authority.sole-writer"
+          ]
+        }
+      ],
+      "residual": "The first inline writer declaration establishes cutover without a separate authority record."
+    },
+    {
+      "id": "EC-046",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "immutable consequential artifact evidence",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "66-completion-artifact-lacks-immutable-evidence.json",
+          "result": "pass",
+          "stable_rule": "provenance.preservation",
+          "actual_rules": [
+            "provenance.preservation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-047",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "projection clearance",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "10-projection-exceeds-consumer-clearance.json",
+          "result": "pass",
+          "stable_rule": "label.clearance",
+          "actual_rules": [
+            "label.clearance"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-048",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "all receipt families",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "76-run-receipt-omits-context-packet.json",
+          "result": "pass",
+          "stable_rule": "receipt.family-requirements",
+          "actual_rules": [
+            "receipt.family-requirements"
+          ]
+        },
+        {
+          "mutation_class": "omission",
+          "evidence": "77-run-receipt-omits-route.json",
+          "result": "pass",
+          "stable_rule": "receipt.family-requirements",
+          "actual_rules": [
+            "receipt.family-requirements"
+          ]
+        },
+        {
+          "mutation_class": "omission",
+          "evidence": "78-run-receipt-omits-capability-posture.json",
+          "result": "pass",
+          "stable_rule": "receipt.family-requirements",
+          "actual_rules": [
+            "receipt.family-requirements"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-049",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "Run-participating turn",
+          "result": "pass"
+        },
+        {
+          "evidence": "probe:RP-10.allowed",
+          "branch": "pure conversational turn",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "84-receipt-participation-hidden-in-cited-event.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-050",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "Run receipt subject evidence",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "probe:RP-04.forbidden",
+          "result": "pass",
+          "stable_rule": "receipt.family-requirements",
+          "actual_rules": [
+            "receipt.family-requirements",
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "omission",
+          "evidence": "76-run-receipt-omits-context-packet.json",
+          "result": "pass",
+          "stable_rule": "receipt.family-requirements",
+          "actual_rules": [
+            "receipt.family-requirements"
+          ]
+        },
+        {
+          "mutation_class": "omission",
+          "evidence": "77-run-receipt-omits-route.json",
+          "result": "pass",
+          "stable_rule": "receipt.family-requirements",
+          "actual_rules": [
+            "receipt.family-requirements"
+          ]
+        },
+        {
+          "mutation_class": "omission",
+          "evidence": "78-run-receipt-omits-capability-posture.json",
+          "result": "pass",
+          "stable_rule": "receipt.family-requirements",
+          "actual_rules": [
+            "receipt.family-requirements"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-051",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "interrupted Run receipt",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "64-stopped-interrupt-lacks-halted-control.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-052",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "separate completion facts",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "80-verification-fact-cites-producer-event.json",
+          "result": "pass",
+          "stable_rule": "claim-source.separation",
+          "actual_rules": [
+            "claim-source.separation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-053",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "receipt subject reconciliation",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "mismatch",
+        "omission",
+        "authority",
+        "temporal"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "mismatch",
+          "evidence": "probe:RP-05.forbidden",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "authority.basis",
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "omission",
+          "evidence": "57-turn-receipt-conceals-run-through-body.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "mismatch",
+          "evidence": "81-receipt-room-disagrees.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "authority",
+          "evidence": "87-receipt-cost-exceeds-task-budget.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "omission",
+          "evidence": "84-receipt-participation-hidden-in-cited-event.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        },
+        {
+          "mutation_class": "temporal",
+          "evidence": "93-process-provenance-postdates-receipt.json",
+          "result": "pass",
+          "stable_rule": "receipt.subject-reconciliation",
+          "actual_rules": [
+            "receipt.subject-reconciliation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-054",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "pointer-only private payload",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "18-inline-secret-in-event-payload.json",
+          "result": "pass",
+          "stable_rule": "secrecy.inline-secret",
+          "actual_rules": [
+            "secrecy.inline-secret"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-055",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "explicit deferrals",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "21-deferred-capability-marked-required.json",
+          "result": "pass",
+          "stable_rule": "deferral.not-required",
+          "actual_rules": [
+            "deferral.not-required"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-056",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "fixture:first-product-baseline.json",
+          "branch": "deferred capabilities unavailable",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "21-deferred-capability-marked-required.json",
+          "result": "pass",
+          "stable_rule": "deferral.not-required",
+          "actual_rules": [
+            "deferral.not-required"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EC-057",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "package:package:schema-authoring-audit",
+          "branch": "schema authoring audit",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "wrong-kind"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "wrong-kind",
+          "evidence": "self-check:dormant-unsupported-schema-keyword",
+          "result": "pass",
+          "stable_rule": "closure.self-check",
+          "actual_rules": []
+        }
+      ]
+    },
+    {
+      "id": "EC-058",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "package:package:fixed-denominator",
+          "branch": "exact fixed denominator",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "cardinality"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "cardinality",
+          "evidence": "self-check:missing-ec-id",
+          "result": "pass",
+          "stable_rule": "closure.self-check",
+          "actual_rules": []
+        }
+      ]
+    },
+    {
+      "id": "EC-059",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "package:package:positive-witness-table",
+          "branch": "explicit branch witness table",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "self-check:missing-positive-witness",
+          "result": "pass",
+          "stable_rule": "closure.self-check",
+          "actual_rules": []
+        }
+      ]
+    },
+    {
+      "id": "EC-060",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "package:package:mutation-requirements",
+          "branch": "complete mutation requirements",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "omission"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "omission",
+          "evidence": "self-check:missing-mutation-class",
+          "result": "pass",
+          "stable_rule": "closure.self-check",
+          "actual_rules": []
+        }
+      ]
+    },
+    {
+      "id": "EC-061",
+      "result": "pass",
+      "positive_witness": [
+        {
+          "evidence": "package:package:public-claim-trace",
+          "branch": "public claim support trace",
+          "result": "pass"
+        }
+      ],
+      "required_mutation_classes": [
+        "authority"
+      ],
+      "negative_mutations": [
+        {
+          "mutation_class": "authority",
+          "evidence": "self-check:unsupported-public-claim",
+          "result": "pass",
+          "stable_rule": "closure.self-check",
+          "actual_rules": []
+        }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "id": "RP-01",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "structure.required"
+      ],
+      "actual_rules": [
+        "structure.required"
+      ],
+      "stable_rule": "structure.required",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-011",
+        "EC-016"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-02",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "run.evidence-binding"
+      ],
+      "actual_rules": [
+        "run.evidence-binding"
+      ],
+      "stable_rule": "run.evidence-binding",
+      "mutation_class": "mismatch",
+      "ec_ids": [
+        "EC-016"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-03",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "structure.required"
+      ],
+      "actual_rules": [
+        "structure.required"
+      ],
+      "stable_rule": "structure.required",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-011",
+        "EC-020"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-04",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "receipt.family-requirements",
+        "receipt.subject-reconciliation"
+      ],
+      "actual_rules": [
+        "receipt.family-requirements",
+        "receipt.subject-reconciliation"
+      ],
+      "stable_rule": "receipt.family-requirements",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-050",
+        "EC-053"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-05",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "authority.basis",
+        "receipt.subject-reconciliation"
+      ],
+      "actual_rules": [
+        "authority.basis",
+        "receipt.subject-reconciliation"
+      ],
+      "stable_rule": "receipt.subject-reconciliation",
+      "mutation_class": "mismatch",
+      "ec_ids": [
+        "EC-049",
+        "EC-053"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-06",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "event.causal-order",
+        "authority.basis"
+      ],
+      "actual_rules": [
+        "event.causal-order",
+        "authority.basis"
+      ],
+      "stable_rule": "event.causal-order",
+      "mutation_class": "temporal",
+      "ec_ids": [
+        "EC-023",
+        "EC-040"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-07",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "event.causal-order",
+        "receipt.subject-reconciliation"
+      ],
+      "actual_rules": [
+        "event.causal-order",
+        "receipt.subject-reconciliation"
+      ],
+      "stable_rule": "event.causal-order",
+      "mutation_class": "temporal",
+      "ec_ids": [
+        "EC-040",
+        "EC-053"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-08",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "lifecycle.run-independence"
+      ],
+      "actual_rules": [
+        "lifecycle.run-independence"
+      ],
+      "stable_rule": "lifecycle.run-independence",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-035"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-09",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-017",
+        "EC-018"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-10",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-049"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-11",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-009"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-12",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-008"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-13",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-018"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-14",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-027"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-15",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-045"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-16",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-016"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-16",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "run.evidence-binding",
+        "receipt.subject-reconciliation"
+      ],
+      "actual_rules": [
+        "run.evidence-binding",
+        "receipt.subject-reconciliation"
+      ],
+      "stable_rule": "run.evidence-binding",
+      "mutation_class": "mismatch",
+      "ec_ids": [
+        "EC-016"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-17",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-014",
+        "EC-029"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-17",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "run.evidence-binding"
+      ],
+      "actual_rules": [
+        "run.evidence-binding"
+      ],
+      "stable_rule": "run.evidence-binding",
+      "mutation_class": "authority",
+      "ec_ids": [
+        "EC-014",
+        "EC-029"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-18",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "run.evidence-binding",
+        "authority.basis"
+      ],
+      "actual_rules": [
+        "run.evidence-binding",
+        "authority.basis"
+      ],
+      "stable_rule": "run.evidence-binding",
+      "mutation_class": "mismatch",
+      "ec_ids": [
+        "EC-027",
+        "EC-028"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-19",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "grant.egress-policy"
+      ],
+      "actual_rules": [
+        "grant.egress-policy"
+      ],
+      "stable_rule": "grant.egress-policy",
+      "mutation_class": "authority",
+      "ec_ids": [
+        "EC-030"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-20",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "lifecycle.progression",
+        "lifecycle.run-independence"
+      ],
+      "actual_rules": [
+        "lifecycle.progression",
+        "lifecycle.run-independence"
+      ],
+      "stable_rule": "lifecycle.run-independence",
+      "mutation_class": "authority",
+      "ec_ids": [
+        "EC-036"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-21",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "lifecycle.run-independence"
+      ],
+      "actual_rules": [
+        "lifecycle.run-independence"
+      ],
+      "stable_rule": "lifecycle.run-independence",
+      "mutation_class": "mismatch",
+      "ec_ids": [
+        "EC-035"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-22",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "run.evidence-binding",
+        "receipt.subject-reconciliation"
+      ],
+      "actual_rules": [
+        "run.evidence-binding",
+        "receipt.subject-reconciliation"
+      ],
+      "stable_rule": "run.evidence-binding",
+      "mutation_class": "mismatch",
+      "ec_ids": [
+        "EC-007",
+        "EC-038"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-23",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "authority.basis"
+      ],
+      "actual_rules": [
+        "authority.basis"
+      ],
+      "stable_rule": "authority.basis",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-005"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-24",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "authority.basis",
+        "solo-room.loop-prevention"
+      ],
+      "actual_rules": [
+        "authority.basis",
+        "solo-room.loop-prevention"
+      ],
+      "stable_rule": "solo-room.loop-prevention",
+      "mutation_class": "authority",
+      "ec_ids": [
+        "EC-003",
+        "EC-006"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-25",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "receipt.subject-reconciliation"
+      ],
+      "actual_rules": [
+        "receipt.subject-reconciliation"
+      ],
+      "stable_rule": "receipt.subject-reconciliation",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-049",
+        "EC-053"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-26",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "receipt.subject-reconciliation"
+      ],
+      "actual_rules": [
+        "receipt.subject-reconciliation"
+      ],
+      "stable_rule": "receipt.subject-reconciliation",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-049",
+        "EC-053"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-27",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "run.evidence-binding",
+        "grant.no-self-broadening",
+        "grant.egress-policy"
+      ],
+      "actual_rules": [
+        "run.evidence-binding",
+        "grant.no-self-broadening",
+        "grant.egress-policy"
+      ],
+      "stable_rule": "grant.no-self-broadening",
+      "mutation_class": "authority",
+      "ec_ids": [
+        "EC-029"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-28",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "authority.sole-writer"
+      ],
+      "actual_rules": [
+        "authority.sole-writer"
+      ],
+      "stable_rule": "authority.sole-writer",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-045"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-29",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-021",
+        "EC-022",
+        "EC-023",
+        "EC-024"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-29",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "route.phase-order"
+      ],
+      "actual_rules": [
+        "route.phase-order"
+      ],
+      "stable_rule": "route.phase-order",
+      "mutation_class": "omission",
+      "ec_ids": [
+        "EC-021",
+        "EC-022",
+        "EC-023",
+        "EC-024"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-30",
+      "branch": "forbidden",
+      "expected": "reject",
+      "actual": "reject",
+      "expected_rules": [
+        "run.evidence-binding"
+      ],
+      "actual_rules": [
+        "run.evidence-binding"
+      ],
+      "stable_rule": "run.evidence-binding",
+      "mutation_class": "mismatch",
+      "ec_ids": [
+        "EC-013",
+        "EC-014",
+        "EC-015",
+        "EC-022"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "RP-31",
+      "branch": "allowed",
+      "expected": "accept",
+      "actual": "accept",
+      "expected_rules": [],
+      "actual_rules": [],
+      "stable_rule": null,
+      "mutation_class": null,
+      "ec_ids": [
+        "EC-001"
+      ],
+      "result": "pass"
+    }
+  ],
+  "targets": [
+    {
+      "id": "T01",
+      "subject": "Room",
+      "invariants": [
+        "EC-001"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T02",
+      "subject": "Participant",
+      "invariants": [
+        "EC-002",
+        "EC-003"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T03",
+      "subject": "RoomMembership",
+      "invariants": [
+        "EC-004",
+        "EC-005"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T04",
+      "subject": "SpeakRulePolicy",
+      "invariants": [
+        "EC-006"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T05",
+      "subject": "Thread",
+      "invariants": [
+        "EC-007"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T06",
+      "subject": "AgentSpec",
+      "invariants": [
+        "EC-008"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T07",
+      "subject": "Task",
+      "invariants": [
+        "EC-009",
+        "EC-010",
+        "EC-013",
+        "EC-014",
+        "EC-015"
+      ],
+      "result": "blocked",
+      "residual": "The Task envelope approval is represented as a boolean without an attributable approval event."
+    },
+    {
+      "id": "T08",
+      "subject": "Run",
+      "invariants": [
+        "EC-011",
+        "EC-012",
+        "EC-013",
+        "EC-014",
+        "EC-015",
+        "EC-016"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T09",
+      "subject": "RouteSpec",
+      "invariants": [
+        "EC-015",
+        "EC-017",
+        "EC-018",
+        "EC-020"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T10",
+      "subject": "RouteCapabilityReport",
+      "invariants": [
+        "EC-019",
+        "EC-022"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T11",
+      "subject": "ContextPacket",
+      "invariants": [
+        "EC-016",
+        "EC-025",
+        "EC-026"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T12",
+      "subject": "CapabilityGrant",
+      "invariants": [
+        "EC-014",
+        "EC-027",
+        "EC-028",
+        "EC-029",
+        "EC-030"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T13",
+      "subject": "RegistrationLease",
+      "invariants": [
+        "EC-031"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T14",
+      "subject": "ArtifactRef",
+      "invariants": [
+        "EC-046"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T15",
+      "subject": "event envelope",
+      "invariants": [
+        "EC-003",
+        "EC-004",
+        "EC-005",
+        "EC-006",
+        "EC-007",
+        "EC-038",
+        "EC-039",
+        "EC-040"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T16",
+      "subject": "lifecycle state",
+      "invariants": [
+        "EC-032",
+        "EC-033",
+        "EC-034",
+        "EC-035",
+        "EC-036",
+        "EC-037"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T17",
+      "subject": "claim source",
+      "invariants": [
+        "EC-041"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T18",
+      "subject": "labels",
+      "invariants": [
+        "EC-026",
+        "EC-042",
+        "EC-047",
+        "EC-054"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T19",
+      "subject": "event families",
+      "invariants": [
+        "EC-043"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T20",
+      "subject": "projection families",
+      "invariants": [
+        "EC-047"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T21",
+      "subject": "receipt families",
+      "invariants": [
+        "EC-048",
+        "EC-049",
+        "EC-050",
+        "EC-051",
+        "EC-052",
+        "EC-053",
+        "EC-054"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T22",
+      "subject": "route-control phases",
+      "invariants": [
+        "EC-020",
+        "EC-021",
+        "EC-022",
+        "EC-023",
+        "EC-024"
+      ],
+      "result": "pass"
+    },
+    {
+      "id": "T23",
+      "subject": "writer and acknowledgement authority",
+      "invariants": [
+        "EC-040",
+        "EC-044",
+        "EC-045"
+      ],
+      "result": "blocked",
+      "residual": "The first inline writer declaration establishes cutover without a separate authority record."
+    },
+    {
+      "id": "T24",
+      "subject": "MemoryClaim deferral",
+      "invariants": [
+        "EC-055",
+        "EC-056"
+      ],
+      "result": "pass"
+    }
+  ],
+  "stable_rules": [
+    {
+      "stable_rule": "structure.required",
+      "ec_ids": [],
+      "structural_safety": "JSON Schema structural safety and EC-057 authoring audit"
+    },
+    {
+      "stable_rule": "structure.type",
+      "ec_ids": [],
+      "structural_safety": "JSON Schema structural safety and EC-057 authoring audit"
+    },
+    {
+      "stable_rule": "structure.value-domain",
+      "ec_ids": [],
+      "structural_safety": "JSON Schema structural safety and EC-057 authoring audit"
+    },
+    {
+      "stable_rule": "structure.unknown-field",
+      "ec_ids": [],
+      "structural_safety": "JSON Schema structural safety and EC-057 authoring audit"
+    },
+    {
+      "stable_rule": "structure.collection",
+      "ec_ids": [],
+      "structural_safety": "JSON Schema structural safety and EC-057 authoring audit"
+    },
+    {
+      "stable_rule": "structure.mutual-exclusion",
+      "ec_ids": [],
+      "structural_safety": "JSON Schema structural safety and EC-057 authoring audit"
+    },
+    {
+      "stable_rule": "identity.stable-basis",
+      "ec_ids": [
+        "EC-002"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "identity.uniqueness",
+      "ec_ids": [
+        "EC-002"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "reference.closure",
+      "ec_ids": [
+        "EC-004",
+        "EC-005",
+        "EC-008",
+        "EC-038",
+        "EC-046"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "reference.kind",
+      "ec_ids": [
+        "EC-004",
+        "EC-011",
+        "EC-038",
+        "EC-048"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lifecycle.state-type",
+      "ec_ids": [
+        "EC-032"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lifecycle.progression",
+      "ec_ids": [
+        "EC-033",
+        "EC-034"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lifecycle.outcome-collapse",
+      "ec_ids": [
+        "EC-036",
+        "EC-037"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lifecycle.run-independence",
+      "ec_ids": [
+        "EC-035",
+        "EC-036",
+        "EC-037"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lifecycle.transition-event-pairing",
+      "ec_ids": [
+        "EC-039"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lifecycle.revision-order",
+      "ec_ids": [
+        "EC-010",
+        "EC-040"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lifecycle.run-attempt-uniqueness",
+      "ec_ids": [
+        "EC-012"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "event.causal-order",
+      "ec_ids": [
+        "EC-040"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "solo-room.defaults",
+      "ec_ids": [
+        "EC-001",
+        "EC-006"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "solo-room.loop-prevention",
+      "ec_ids": [
+        "EC-003",
+        "EC-006"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "label.preservation",
+      "ec_ids": [
+        "EC-026",
+        "EC-042",
+        "EC-047"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "label.clearance",
+      "ec_ids": [
+        "EC-047"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "provenance.preservation",
+      "ec_ids": [
+        "EC-026",
+        "EC-042",
+        "EC-046"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "route.phase-order",
+      "ec_ids": [
+        "EC-021",
+        "EC-024"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "route.capability-rejection",
+      "ec_ids": [
+        "EC-019",
+        "EC-022"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "route.binding",
+      "ec_ids": [
+        "EC-020",
+        "EC-022"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "route.continuity-evidence",
+      "ec_ids": [
+        "EC-024"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "route.native-extension-authority",
+      "ec_ids": [
+        "EC-018"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "route.native-capability-erasure",
+      "ec_ids": [
+        "EC-017",
+        "EC-019"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "authority.durable-commit",
+      "ec_ids": [
+        "EC-040",
+        "EC-044"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "authority.async-source",
+      "ec_ids": [
+        "EC-044"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "authority.basis",
+      "ec_ids": [
+        "EC-003",
+        "EC-004",
+        "EC-005",
+        "EC-006",
+        "EC-010",
+        "EC-023",
+        "EC-028",
+        "EC-038",
+        "EC-040"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "authority.task-envelope",
+      "ec_ids": [
+        "EC-010",
+        "EC-014",
+        "EC-015"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "grant.no-self-broadening",
+      "ec_ids": [
+        "EC-029"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "grant.principal-continuity",
+      "ec_ids": [
+        "EC-028",
+        "EC-029"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "lease.availability-only",
+      "ec_ids": [
+        "EC-031"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "receipt.family-requirements",
+      "ec_ids": [
+        "EC-048",
+        "EC-049",
+        "EC-050",
+        "EC-051",
+        "EC-052"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "receipt.subject-reconciliation",
+      "ec_ids": [
+        "EC-015",
+        "EC-048",
+        "EC-049",
+        "EC-050",
+        "EC-051",
+        "EC-052",
+        "EC-053"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "claim-source.separation",
+      "ec_ids": [
+        "EC-041",
+        "EC-052"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "secrecy.inline-secret",
+      "ec_ids": [
+        "EC-054"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "deferral.not-required",
+      "ec_ids": [
+        "EC-055",
+        "EC-056"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "deferral.inventory",
+      "ec_ids": [
+        "EC-055",
+        "EC-056"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "run.evidence-binding",
+      "ec_ids": [
+        "EC-007",
+        "EC-011",
+        "EC-013",
+        "EC-014",
+        "EC-015",
+        "EC-016",
+        "EC-018",
+        "EC-019",
+        "EC-020",
+        "EC-027",
+        "EC-028",
+        "EC-038"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "grant.egress-policy",
+      "ec_ids": [
+        "EC-030"
+      ],
+      "structural_safety": null
+    },
+    {
+      "stable_rule": "authority.sole-writer",
+      "ec_ids": [
+        "EC-045"
+      ],
+      "structural_safety": null
+    }
+  ],
+  "ladder": [
+    {
+      "id": "focused-tests",
+      "command": "deno test --allow-read=. contracts/workbench/first-product/v1/validate.test.ts contracts/workbench/first-product/v1/executable-closure.test.ts contracts/workbench/first-product/v1/executable-closure-report.test.ts",
+      "result": "not-evaluated"
+    },
+    {
+      "id": "format-check",
+      "command": "deno fmt --check (changed files)",
+      "result": "not-evaluated"
+    },
+    {
+      "id": "diff-check",
+      "command": "git diff --check",
+      "result": "not-evaluated"
+    },
+    {
+      "id": "fast-aggregate",
+      "command": "deno task test:fast",
+      "result": "not-evaluated"
+    },
+    {
+      "id": "full-aggregate",
+      "command": "deno task test",
+      "result": "not-evaluated"
+    },
+    {
+      "id": "dependency-inspection",
+      "command": "dependency.policy aggregate lane plus final diff inspection",
+      "result": "not-evaluated"
+    },
+    {
+      "id": "secret-scan",
+      "command": "secret.tree and secret.diff aggregate lanes",
+      "result": "not-evaluated"
+    },
+    {
+      "id": "public-claim-trace",
+      "command": "README.md, CHANGELOG.md, and package README categorical claims mapped to supporting EC results",
+      "result": "pass"
+    }
+  ],
+  "public_claim_trace": [
+    {
+      "path": "README.md",
+      "categorical_claims": [
+        {
+          "claim_id": "semantic-contract-behavior",
+          "ec_ids": [
+            "EC-001",
+            "EC-002",
+            "EC-003",
+            "EC-004",
+            "EC-005",
+            "EC-006",
+            "EC-007",
+            "EC-008",
+            "EC-009",
+            "EC-011",
+            "EC-012",
+            "EC-013",
+            "EC-014",
+            "EC-015",
+            "EC-016",
+            "EC-017",
+            "EC-018",
+            "EC-019",
+            "EC-020",
+            "EC-021",
+            "EC-022",
+            "EC-023",
+            "EC-024",
+            "EC-025",
+            "EC-026",
+            "EC-027",
+            "EC-028",
+            "EC-029",
+            "EC-030",
+            "EC-031",
+            "EC-032",
+            "EC-033",
+            "EC-034",
+            "EC-035",
+            "EC-036",
+            "EC-037",
+            "EC-038",
+            "EC-039",
+            "EC-040",
+            "EC-041",
+            "EC-042",
+            "EC-043",
+            "EC-044",
+            "EC-046",
+            "EC-047",
+            "EC-048",
+            "EC-049",
+            "EC-050",
+            "EC-051",
+            "EC-052",
+            "EC-053",
+            "EC-054",
+            "EC-055",
+            "EC-056"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "semantic-package-boundary",
+          "ec_ids": [
+            "EC-057",
+            "EC-058",
+            "EC-059",
+            "EC-060"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "effective-event-authority",
+          "ec_ids": [
+            "EC-004",
+            "EC-005",
+            "EC-023",
+            "EC-028",
+            "EC-038"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "receipt-reconciliation",
+          "ec_ids": [
+            "EC-048",
+            "EC-049",
+            "EC-050",
+            "EC-051",
+            "EC-052",
+            "EC-053"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "closure-report-evidence",
+          "ec_ids": [
+            "EC-058",
+            "EC-059",
+            "EC-060",
+            "EC-061"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        }
+      ],
+      "result": "pass"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "categorical_claims": [
+        {
+          "claim_id": "semantic-contract-behavior",
+          "ec_ids": [
+            "EC-001",
+            "EC-002",
+            "EC-003",
+            "EC-004",
+            "EC-005",
+            "EC-006",
+            "EC-007",
+            "EC-008",
+            "EC-009",
+            "EC-011",
+            "EC-012",
+            "EC-013",
+            "EC-014",
+            "EC-015",
+            "EC-016",
+            "EC-017",
+            "EC-018",
+            "EC-019",
+            "EC-020",
+            "EC-021",
+            "EC-022",
+            "EC-023",
+            "EC-024",
+            "EC-025",
+            "EC-026",
+            "EC-027",
+            "EC-028",
+            "EC-029",
+            "EC-030",
+            "EC-031",
+            "EC-032",
+            "EC-033",
+            "EC-034",
+            "EC-035",
+            "EC-036",
+            "EC-037",
+            "EC-038",
+            "EC-039",
+            "EC-040",
+            "EC-041",
+            "EC-042",
+            "EC-043",
+            "EC-044",
+            "EC-046",
+            "EC-047",
+            "EC-048",
+            "EC-049",
+            "EC-050",
+            "EC-051",
+            "EC-052",
+            "EC-053",
+            "EC-054",
+            "EC-055",
+            "EC-056"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "effective-event-authority",
+          "ec_ids": [
+            "EC-004",
+            "EC-005",
+            "EC-023",
+            "EC-028",
+            "EC-038"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "closure-report-evidence",
+          "ec_ids": [
+            "EC-057",
+            "EC-058",
+            "EC-059",
+            "EC-060"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "contract-evidence-closure",
+          "ec_ids": [
+            "EC-006",
+            "EC-015",
+            "EC-020",
+            "EC-021",
+            "EC-023",
+            "EC-026",
+            "EC-028",
+            "EC-036",
+            "EC-037",
+            "EC-038",
+            "EC-040",
+            "EC-041",
+            "EC-048",
+            "EC-049",
+            "EC-050",
+            "EC-052",
+            "EC-053",
+            "EC-058",
+            "EC-059",
+            "EC-060",
+            "EC-061"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        }
+      ],
+      "result": "pass"
+    },
+    {
+      "path": "contracts/workbench/first-product/v1/README.md",
+      "categorical_claims": [
+        {
+          "claim_id": "document-validation-boundary",
+          "ec_ids": [
+            "EC-057"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "semantic-contract-behavior",
+          "ec_ids": [
+            "EC-001",
+            "EC-002",
+            "EC-003",
+            "EC-004",
+            "EC-005",
+            "EC-006",
+            "EC-007",
+            "EC-008",
+            "EC-009",
+            "EC-011",
+            "EC-012",
+            "EC-013",
+            "EC-014",
+            "EC-015",
+            "EC-016",
+            "EC-017",
+            "EC-018",
+            "EC-019",
+            "EC-020",
+            "EC-021",
+            "EC-022",
+            "EC-023",
+            "EC-024",
+            "EC-025",
+            "EC-026",
+            "EC-027",
+            "EC-028",
+            "EC-029",
+            "EC-030",
+            "EC-031",
+            "EC-032",
+            "EC-033",
+            "EC-034",
+            "EC-035",
+            "EC-036",
+            "EC-037",
+            "EC-038",
+            "EC-039",
+            "EC-040",
+            "EC-041",
+            "EC-042",
+            "EC-043",
+            "EC-044",
+            "EC-046",
+            "EC-047",
+            "EC-048",
+            "EC-049",
+            "EC-050",
+            "EC-051",
+            "EC-052",
+            "EC-053",
+            "EC-054",
+            "EC-055",
+            "EC-056"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "operator-direct-evidence",
+          "ec_ids": [
+            "EC-004",
+            "EC-023",
+            "EC-038"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "receipt-evidence-binding",
+          "ec_ids": [
+            "EC-048",
+            "EC-049",
+            "EC-050",
+            "EC-052",
+            "EC-053"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "explicit-positive-witnesses",
+          "ec_ids": [
+            "EC-059",
+            "EC-060"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "route-control-binding",
+          "ec_ids": [
+            "EC-020",
+            "EC-021",
+            "EC-022",
+            "EC-023",
+            "EC-024"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "lifecycle-behavior",
+          "ec_ids": [
+            "EC-032",
+            "EC-033",
+            "EC-034",
+            "EC-035",
+            "EC-036",
+            "EC-037",
+            "EC-038",
+            "EC-039",
+            "EC-040"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "ordering-evidence",
+          "ec_ids": [
+            "EC-040",
+            "EC-044"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        },
+        {
+          "claim_id": "deferral-boundary",
+          "ec_ids": [
+            "EC-055",
+            "EC-056"
+          ],
+          "declared": true,
+          "supported": true,
+          "result": "pass"
+        }
+      ],
+      "result": "pass"
+    }
+  ],
+  "residual_unknowns": [
+    "Runtime conformance has not been evaluated.",
+    "Exceptional Task source-edge exhaustiveness remains deferred.",
+    "The first inline writer declaration establishes cutover without a separate authority record.",
+    "The Task envelope approval is represented as a boolean without an attributable approval event.",
+    "Event at timestamps are non-authoritative; ordering authority is event sequence and durable commit sequence.",
+    "The frozen executable-closure manifest contains private authority digests; replacing them requires an operator-approved versioned re-freeze."
+  ],
+  "excluded_runtime_behavior": [
+    "persistence",
+    "database or migration behavior",
+    "routing and provider calls",
+    "adapter and native-session execution",
+    "process control",
+    "user interfaces",
+    "publication and deployment"
+  ],
+  "self_check": {
+    "result": "pass",
+    "invariant_ids_exact": true,
+    "target_ids_exact": true,
+    "probe_ids_complete": true,
+    "probe_expectations_observed": true,
+    "positive_witnesses_observed": true,
+    "mutation_requirements_observed": true,
+    "invariant_results_computed": true,
+    "target_results_computed": true,
+    "rule_authority_complete": true,
+    "ladder_truthful": true,
+    "public_claims_observed": true,
+    "source_manifest_formula_stated": true
+  }
+}

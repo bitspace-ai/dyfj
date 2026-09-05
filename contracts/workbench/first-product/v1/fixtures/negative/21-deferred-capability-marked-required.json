@@ -1,0 +1,24 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A deferred capability marked required for the first product",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "deferral.not-required",
+    "note": "A deferral record must not make the deferred capability required or implemented."
+  },
+  "deferrals": [
+    {
+      "id": "deferral-child-agents",
+      "capability": "child-agents-and-recursive-delegation",
+      "status": "deferred",
+      "required": true,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Marked required while still recorded as deferred."
+    }
+  ],
+  "room_memberships": []
+}

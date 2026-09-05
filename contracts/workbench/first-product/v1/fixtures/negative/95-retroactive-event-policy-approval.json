@@ -1,0 +1,39 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run start relies on a later event-level policy approval",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "An event-level conditional approval must precede the event that relies on it."
+  },
+  "mutations": [
+    { "op": "copy", "from": "/events/16", "path": "/events/-" },
+    {
+      "op": "replace",
+      "path": "/events/30/id",
+      "value": "ev-approval-after-run-start"
+    },
+    { "op": "replace", "path": "/events/30/sequence", "value": 31 },
+    {
+      "op": "replace",
+      "path": "/events/30/durable_commit/commit_sequence",
+      "value": 31
+    },
+    {
+      "op": "replace",
+      "path": "/events/30/acknowledgement/sequence",
+      "value": 32
+    },
+    {
+      "op": "replace",
+      "path": "/events/18/policy_basis/decision",
+      "value": "allowed-with-approval"
+    },
+    {
+      "op": "add",
+      "path": "/events/18/policy_basis/approval_event",
+      "value": "ev-approval-after-run-start"
+    }
+  ]
+}

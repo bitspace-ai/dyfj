@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A completion receipt relies on an artifact without immutable evidence",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "provenance.preservation",
+    "note": "A consequential completion artifact must carry a snapshot, digest, or version evidence."
+  },
+  "mutations": [
+    { "op": "remove", "path": "/artifacts/1/snapshot" }
+  ]
+}

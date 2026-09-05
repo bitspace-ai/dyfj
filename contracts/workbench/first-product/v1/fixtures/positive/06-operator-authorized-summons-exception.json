@@ -1,0 +1,33 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A machine-authored summons uses an operator grant issued to its author",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    {
+      "op": "add",
+      "path": "/capability_grants/1/scope/approvals/-",
+      "value": "automated-summons-exception"
+    },
+    {
+      "op": "replace",
+      "path": "/room_memberships/1/speak_rule/loop_prevention/automated_summons",
+      "value": "operator-authorized-exception"
+    },
+    {
+      "op": "add",
+      "path": "/room_memberships/1/speak_rule/loop_prevention/exception_grant",
+      "value": "grant-primary-envelope-r2"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/triggers_automated_summons",
+      "value": true
+    },
+    {
+      "op": "add",
+      "path": "/events/24/summons_exception_grant",
+      "value": "grant-primary-envelope-r2"
+    }
+  ]
+}

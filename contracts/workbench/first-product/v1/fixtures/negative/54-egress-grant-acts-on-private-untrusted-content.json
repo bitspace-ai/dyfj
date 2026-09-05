@@ -1,0 +1,142 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "An egress-capable grant is relied on to act on private, untrusted content",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "grant.egress-policy",
+    "note": "The deterministic private-and-untrusted-and-egress policy forbids this combination."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "capability_grants": [
+    {
+      "id": "grant-egress",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "grantor": "participant-operator",
+      "grantee": "participant-agent",
+      "delegable": false,
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "allowed"
+      },
+      "scope": {
+        "tools": [
+          "web-fetch"
+        ],
+        "resources": [],
+        "workspace": "none",
+        "network": "operator-approved-hosts",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "approvals": [],
+        "external_impact": "reversible",
+        "destination_classes": [
+          "external-uncontrolled"
+        ],
+        "scope_dispositions": {
+          "provider_scope": "not-applicable",
+          "route_scope": "not-applicable",
+          "task_scope": "not-applicable",
+          "room_scope": "not-applicable",
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-egress-attempt",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "trace": "trace-focused",
+      "author": "participant-agent",
+      "author_class": "machine",
+      "family": "tool-invocation",
+      "type": "web-fetch",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-egress"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "runner-reported",
+      "labels": {
+        "integrity_class": "untrusted",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "high"
+      },
+      "causal_parents": []
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-agent",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

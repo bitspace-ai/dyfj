@@ -1,0 +1,246 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "An event claiming a state mutation the entity never recorded",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "lifecycle.transition-event-pairing",
+    "note": "An event that claims an absent state mutation is invalid."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "threads": [
+    {
+      "id": "thread-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "thread_class": "main"
+    }
+  ],
+  "capability_grants": [
+    {
+      "id": "grant-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "grantor": "participant-operator",
+      "grantee": "participant-agent",
+      "delegable": false,
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "allowed"
+      },
+      "scope": {
+        "tools": [
+          "workspace-read"
+        ],
+        "resources": [
+          "workspace-notes"
+        ],
+        "workspace": "read-only",
+        "network": "none",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "approvals": [],
+        "external_impact": "none",
+        "destination_classes": [
+          "none"
+        ],
+        "scope_dispositions": {
+          "provider_scope": "not-applicable",
+          "route_scope": "not-applicable",
+          "task_scope": "not-applicable",
+          "room_scope": "not-applicable",
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "thread": "thread-focused",
+      "state": "task:proposed",
+      "envelope": {
+        "approved": true,
+        "grant": "grant-focused"
+      },
+      "completion_criteria": [
+        "The focused corpus records one task."
+      ],
+      "verification_contract": {
+        "method": "operator-review",
+        "required_evidence": [
+          "artifact-digest"
+        ]
+      },
+      "transitions": [],
+      "execution_envelope": {
+        "objective": "Focused fixture objective.",
+        "context_scope": "Focused fixture context scope.",
+        "assigned_agent_spec": "agent-spec-focused",
+        "posture": {
+          "autonomy": "supervised-autonomous",
+          "escalation": "ask-operator"
+        },
+        "route_requirements": {
+          "execution_lane": "either"
+        },
+        "tools": [
+          "workspace-read"
+        ],
+        "workspace": "read-only",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "guardrails": [
+          "no-external-impact"
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-task-ready",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "task": "task-focused",
+      "trace": "trace-focused",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "task-transition",
+      "type": "task-ready",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "operator-direct"
+      },
+      "policy_basis": {
+        "policy_id": "policy-task",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-focused",
+        "from": "task:proposed",
+        "to": "task:ready",
+        "entity_revision": 2,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "operator-decision",
+            "note": "Claimed without a mutation."
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 1,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Event committed alone."
+          }
+        ]
+      }
+    }
+  ],
+  "agent_specs": [
+    {
+      "id": "agent-spec-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "spec_version": 1,
+      "participant": "participant-agent",
+      "behavior": [
+        "conversational-chief-of-staff"
+      ],
+      "posture": {
+        "autonomy": "supervised-autonomous",
+        "escalation": "ask-operator"
+      },
+      "tools": [
+        "workspace-read"
+      ],
+      "guardrails": [
+        "no-external-impact"
+      ]
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-operator",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

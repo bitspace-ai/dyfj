@@ -1,0 +1,2948 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "first-product-solo-operator",
+  "title": "First-product baseline: one persistent room, one task, two run attempts",
+  "proves": [
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5",
+    "P6",
+    "P7",
+    "P8",
+    "P9"
+  ],
+  "expectation": {
+    "outcome": "accept"
+  },
+  "rooms": [
+    {
+      "id": "room-operator-primary",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "profile": "first-product-solo-operator",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-primary-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ],
+      "agent_spec": "agent-spec-primary"
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-operator-primary",
+      "participant": "participant-operator",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    },
+    {
+      "id": "membership-primary-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-operator-primary",
+      "participant": "participant-primary-agent",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ],
+  "threads": [
+    {
+      "id": "thread-main",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-operator-primary",
+      "thread_class": "main"
+    },
+    {
+      "id": "thread-task-branch",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-operator-primary",
+      "thread_class": "task-branch",
+      "task": "task-render-summary"
+    }
+  ],
+  "agent_specs": [
+    {
+      "id": "agent-spec-primary",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "spec_version": 1,
+      "participant": "participant-primary-agent",
+      "behavior": [
+        "conversational-chief-of-staff",
+        "operator-escalating"
+      ],
+      "posture": {
+        "autonomy": "supervised-autonomous",
+        "escalation": "ask-operator"
+      },
+      "tools": [
+        "workspace-read",
+        "note-compose"
+      ],
+      "guardrails": [
+        "no-external-impact",
+        "operator-escalation"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-render-summary",
+      "identity_basis": "assigned-opaque",
+      "revision": 8,
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "state": "task:closed",
+      "envelope": {
+        "approved": true,
+        "grant": "grant-primary-envelope-r2"
+      },
+      "execution_envelope": {
+        "objective": "Summarize the workspace note for the weekly review.",
+        "context_scope": "The named workspace note and the request thread that opened the task.",
+        "assigned_agent_spec": "agent-spec-primary",
+        "posture": {
+          "autonomy": "supervised-autonomous",
+          "escalation": "ask-operator"
+        },
+        "route_requirements": {
+          "execution_lane": "either",
+          "required_capabilities": [
+            "token-usage-visibility"
+          ]
+        },
+        "tools": [
+          "workspace-read",
+          "note-compose"
+        ],
+        "workspace": "read-only",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 1500
+        },
+        "guardrails": [
+          "no-external-impact",
+          "operator-escalation"
+        ]
+      },
+      "completion_criteria": [
+        "A summary artifact exists and is attributable to a recorded run.",
+        "Verification evidence is recorded separately from the agent's own report."
+      ],
+      "verification_contract": {
+        "method": "operator-reviewed-artifact-check",
+        "required_evidence": [
+          "artifact-digest",
+          "verification-event"
+        ]
+      },
+      "transitions": [
+        {
+          "from": "task:proposed",
+          "to": "task:ready",
+          "revision": 2,
+          "event": "ev-task-ready",
+          "progression_class": "required"
+        },
+        {
+          "from": "task:ready",
+          "to": "task:running",
+          "revision": 3,
+          "event": "ev-task-running",
+          "progression_class": "required"
+        },
+        {
+          "from": "task:running",
+          "to": "task:ready",
+          "revision": 4,
+          "event": "ev-task-return-ready",
+          "progression_class": "required"
+        },
+        {
+          "from": "task:ready",
+          "to": "task:running",
+          "revision": 5,
+          "event": "ev-task-running-again",
+          "progression_class": "required"
+        },
+        {
+          "from": "task:running",
+          "to": "task:completed",
+          "revision": 6,
+          "event": "ev-task-completed",
+          "progression_class": "required"
+        },
+        {
+          "from": "task:completed",
+          "to": "task:accepted",
+          "revision": 7,
+          "event": "ev-task-accepted",
+          "progression_class": "required"
+        },
+        {
+          "from": "task:accepted",
+          "to": "task:closed",
+          "revision": 8,
+          "event": "ev-task-closed",
+          "progression_class": "required"
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "id": "run-attempt-one",
+      "identity_basis": "assigned-opaque",
+      "revision": 3,
+      "task": "task-render-summary",
+      "agent_spec": "agent-spec-primary",
+      "route": "route-native-local",
+      "route_session": "session-attempt-one",
+      "context_packet": "packet-attempt-one",
+      "capability_grant": "grant-primary-envelope",
+      "attempt": 1,
+      "state": "run:interrupted",
+      "transitions": [
+        {
+          "from": "run:pending",
+          "to": "run:running",
+          "revision": 2,
+          "event": "ev-run-one-started",
+          "progression_class": "required"
+        },
+        {
+          "from": "run:running",
+          "to": "run:interrupted",
+          "revision": 3,
+          "event": "ev-run-one-interrupted",
+          "progression_class": "exceptional"
+        }
+      ]
+    },
+    {
+      "id": "run-attempt-two",
+      "identity_basis": "assigned-opaque",
+      "revision": 3,
+      "task": "task-render-summary",
+      "agent_spec": "agent-spec-primary",
+      "route": "route-hosted-metered",
+      "route_session": "session-attempt-two",
+      "context_packet": "packet-attempt-two",
+      "capability_grant": "grant-primary-envelope-r2",
+      "attempt": 2,
+      "state": "run:completed",
+      "transitions": [
+        {
+          "from": "run:pending",
+          "to": "run:running",
+          "revision": 2,
+          "event": "ev-run-two-started",
+          "progression_class": "required"
+        },
+        {
+          "from": "run:running",
+          "to": "run:completed",
+          "revision": 3,
+          "event": "ev-run-two-completed",
+          "progression_class": "required"
+        }
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "id": "route-native-local",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "execution_lane": "native",
+      "access_modality": "local",
+      "runner": "local-runner",
+      "model": "local-model",
+      "adapter": "native-direct",
+      "policy_basis": {
+        "policy_id": "policy-local-route",
+        "decision": "allowed"
+      },
+      "cost_basis": {
+        "kind": "local-compute"
+      },
+      "native_extensions": [
+        {
+          "capability": "native-session-control",
+          "authority": "native-runner",
+          "portability": "native-only",
+          "opacity": "observable"
+        }
+      ],
+      "component_dispositions": {
+        "provider": "opaque",
+        "system_harness": "opaque",
+        "tool_vocabulary": "opaque",
+        "context_reasoning_policy": "opaque",
+        "authentication_posture": "opaque",
+        "inference_posture": "opaque"
+      }
+    },
+    {
+      "id": "route-hosted-metered",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "execution_lane": "external",
+      "access_modality": "aggregator-hosted",
+      "provider": "synthetic-provider",
+      "model": "synthetic-model",
+      "adapter": "synthetic-adapter",
+      "policy_basis": {
+        "policy_id": "policy-paid-route",
+        "decision": "allowed-with-approval",
+        "approval_event": "ev-approval-budget"
+      },
+      "cost_basis": {
+        "kind": "metered-tokens",
+        "currency": "usd"
+      },
+      "component_dispositions": {
+        "runner": "opaque",
+        "system_harness": "opaque",
+        "tool_vocabulary": "opaque",
+        "context_reasoning_policy": "opaque",
+        "authentication_posture": "opaque",
+        "inference_posture": "opaque"
+      }
+    }
+  ],
+  "route_capability_reports": [
+    {
+      "id": "report-native-local",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "route": "route-native-local",
+      "capabilities": [
+        {
+          "capability": "native-session-control",
+          "classification": "governable",
+          "required": true
+        },
+        {
+          "capability": "token-usage-visibility",
+          "classification": "observable",
+          "required": true
+        },
+        {
+          "capability": "internal-planning-trace",
+          "classification": "opaque",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "report-hosted-metered",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "route": "route-hosted-metered",
+      "capabilities": [
+        {
+          "capability": "token-usage-visibility",
+          "classification": "governable",
+          "required": true
+        },
+        {
+          "capability": "tool-invocation",
+          "classification": "governable",
+          "required": true
+        },
+        {
+          "capability": "internal-planning-trace",
+          "classification": "opaque",
+          "required": false
+        },
+        {
+          "capability": "native-session-control",
+          "classification": "unavailable",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "route_sessions": [
+    {
+      "id": "session-attempt-one",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "route": "route-native-local",
+      "run": "run-attempt-one",
+      "phases": [
+        {
+          "phase": "inspect",
+          "sequence": 1,
+          "outcome": "completed",
+          "spend_or_action": false,
+          "capability_report": "report-native-local"
+        },
+        {
+          "phase": "prepare",
+          "sequence": 2,
+          "outcome": "accepted",
+          "spend_or_action": false,
+          "capability_report": "report-native-local"
+        },
+        {
+          "phase": "start-or-resume",
+          "sequence": 3,
+          "outcome": "completed",
+          "spend_or_action": true
+        },
+        {
+          "phase": "stream",
+          "sequence": 4,
+          "outcome": "completed",
+          "spend_or_action": true
+        },
+        {
+          "phase": "control",
+          "sequence": 5,
+          "outcome": "halted",
+          "spend_or_action": true
+        },
+        {
+          "phase": "finalize",
+          "sequence": 6,
+          "outcome": "completed",
+          "spend_or_action": false
+        }
+      ],
+      "continuity": {
+        "class": "new",
+        "evidence": [
+          {
+            "kind": "fresh-session-established",
+            "note": "No prior process handle or durable session record was reused."
+          }
+        ]
+      }
+    },
+    {
+      "id": "session-attempt-two",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "route": "route-hosted-metered",
+      "run": "run-attempt-two",
+      "phases": [
+        {
+          "phase": "inspect",
+          "sequence": 1,
+          "outcome": "completed",
+          "spend_or_action": false,
+          "capability_report": "report-hosted-metered"
+        },
+        {
+          "phase": "prepare",
+          "sequence": 2,
+          "outcome": "accepted",
+          "spend_or_action": false,
+          "capability_report": "report-hosted-metered"
+        },
+        {
+          "phase": "start-or-resume",
+          "sequence": 3,
+          "outcome": "completed",
+          "spend_or_action": true
+        },
+        {
+          "phase": "stream",
+          "sequence": 4,
+          "outcome": "completed",
+          "spend_or_action": true
+        },
+        {
+          "phase": "finalize",
+          "sequence": 5,
+          "outcome": "completed",
+          "spend_or_action": false
+        }
+      ],
+      "continuity": {
+        "class": "reconstructed",
+        "evidence": [
+          {
+            "kind": "context-packet-rebuild",
+            "context_packet": "packet-attempt-two",
+            "note": "The second attempt rebuilt its context rather than resuming a session."
+          },
+          {
+            "kind": "source-packet",
+            "context_packet": "packet-attempt-one",
+            "note": "Rebuild source packet of the interrupted first attempt."
+          }
+        ]
+      }
+    }
+  ],
+  "context_packets": [
+    {
+      "id": "packet-attempt-one",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "route_neutral": true,
+      "digest": "sha256:1a2b3c4d5e6f70811a2b3c4d5e6f70811a2b3c4d5e6f70811a2b3c4d5e6f7081",
+      "entries": [
+        {
+          "entry_id": "workspace-note",
+          "source": {
+            "kind": "artifact",
+            "reference": "artifact-workspace-note",
+            "source_revision": 1
+          },
+          "digest": "sha256:81920304050607a881920304050607a881920304050607a881920304050607a8",
+          "selection_reason": "The task names this note as the material to summarize.",
+          "claim_source": "workbench-observed",
+          "labels": {
+            "integrity_class": "attested",
+            "secrecy_tags": [
+              "operator-private"
+            ],
+            "visibility": "room",
+            "sensitivity": "moderate"
+          },
+          "rendered_section": {
+            "bounded_characters": 900,
+            "redacted": false
+          }
+        },
+        {
+          "entry_id": "request-thread",
+          "source": {
+            "kind": "thread",
+            "reference": "thread-main",
+            "source_revision": 1
+          },
+          "digest": "sha256:920304050607a8b9920304050607a8b9920304050607a8b9920304050607a8b9",
+          "selection_reason": "The operator request that opened the task.",
+          "claim_source": "workbench-observed",
+          "labels": {
+            "integrity_class": "attested",
+            "secrecy_tags": [],
+            "visibility": "room",
+            "sensitivity": "low"
+          },
+          "rendered_section": {
+            "bounded_characters": 300,
+            "redacted": false
+          }
+        },
+        {
+          "entry_id": "external-reference-note",
+          "source": {
+            "kind": "external",
+            "external": {
+              "external": true,
+              "authority": "reference-corpus",
+              "locator_class": "repository",
+              "version_evidence": {
+                "kind": "declared-revision",
+                "declared_revision": 4
+              }
+            }
+          },
+          "digest": "sha256:a30405060708b9c0a30405060708b9c0a30405060708b9c0a30405060708b9c0",
+          "selection_reason": "Style reference held outside the Workbench.",
+          "claim_source": "runner-reported",
+          "labels": {
+            "integrity_class": "unverified",
+            "secrecy_tags": [],
+            "visibility": "room",
+            "sensitivity": "low"
+          },
+          "rendered_section": {
+            "bounded_characters": 200,
+            "redacted": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "packet-attempt-two",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "route_neutral": true,
+      "digest": "sha256:2b3c4d5e6f7081922b3c4d5e6f7081922b3c4d5e6f7081922b3c4d5e6f708192",
+      "compaction": {
+        "source_packet": "packet-attempt-one",
+        "strategy": "bounded-summary"
+      },
+      "entries": [
+        {
+          "entry_id": "compacted-first-attempt",
+          "source": {
+            "kind": "event",
+            "reference": "ev-context-assembled-one",
+            "source_revision": 1
+          },
+          "digest": "sha256:b405060708c9d0e1b405060708c9d0e1b405060708c9d0e1b405060708c9d0e1",
+          "selection_reason": "Compacted carry-forward of the interrupted attempt's context.",
+          "claim_source": "runner-reported",
+          "labels": {
+            "integrity_class": "unverified",
+            "secrecy_tags": [
+              "operator-private"
+            ],
+            "visibility": "room",
+            "sensitivity": "moderate"
+          },
+          "rendered_section": {
+            "bounded_characters": 600,
+            "redacted": true
+          }
+        },
+        {
+          "entry_id": "task-branch-thread",
+          "source": {
+            "kind": "thread",
+            "reference": "thread-task-branch",
+            "source_revision": 1
+          },
+          "digest": "sha256:c50607080910e1f2c50607080910e1f2c50607080910e1f2c50607080910e1f2",
+          "selection_reason": "Task branch discussion since the first attempt stopped.",
+          "claim_source": "workbench-observed",
+          "labels": {
+            "integrity_class": "attested",
+            "secrecy_tags": [],
+            "visibility": "room",
+            "sensitivity": "low"
+          },
+          "rendered_section": {
+            "bounded_characters": 250,
+            "redacted": false
+          }
+        }
+      ]
+    }
+  ],
+  "capability_grants": [
+    {
+      "id": "grant-primary-envelope",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "grantor": "participant-operator",
+      "grantee": "participant-primary-agent",
+      "delegable": false,
+      "policy_basis": {
+        "policy_id": "policy-operator-envelope",
+        "decision": "allowed"
+      },
+      "scope": {
+        "tools": [
+          "workspace-read",
+          "note-compose"
+        ],
+        "resources": [
+          "workspace-notes"
+        ],
+        "workspace": "read-only",
+        "network": "none",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 500
+        },
+        "approvals": [],
+        "external_impact": "none",
+        "destination_classes": [
+          "none"
+        ],
+        "provider_scope": [
+          "synthetic-provider"
+        ],
+        "task_scope": "task-render-summary",
+        "room_scope": "room-operator-primary",
+        "route_scope": [
+          "route-native-local"
+        ],
+        "scope_dispositions": {
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    },
+    {
+      "id": "grant-primary-envelope-r2",
+      "identity_basis": "assigned-opaque",
+      "revision": 2,
+      "grantor": "participant-operator",
+      "grantee": "participant-primary-agent",
+      "delegable": false,
+      "supersedes": "grant-primary-envelope",
+      "approval_event": "ev-approval-budget",
+      "policy_basis": {
+        "policy_id": "policy-operator-envelope",
+        "decision": "allowed-with-approval",
+        "approval_event": "ev-approval-budget"
+      },
+      "scope": {
+        "tools": [
+          "workspace-read",
+          "note-compose"
+        ],
+        "resources": [
+          "workspace-notes"
+        ],
+        "workspace": "read-only",
+        "network": "none",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 1500
+        },
+        "approvals": [
+          "paid-inference"
+        ],
+        "external_impact": "none",
+        "destination_classes": [
+          "none"
+        ],
+        "task_scope": "task-render-summary",
+        "room_scope": "room-operator-primary",
+        "route_scope": [
+          "route-hosted-metered"
+        ],
+        "provider_scope": [
+          "synthetic-provider"
+        ],
+        "scope_dispositions": {
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    }
+  ],
+  "registration_leases": [
+    {
+      "id": "lease-native-session",
+      "identity_basis": "assigned-opaque",
+      "revision": 2,
+      "subject": {
+        "kind": "native-session",
+        "reference": "session-attempt-one"
+      },
+      "state": "expired",
+      "expires_at": "2026-02-02T09:20:00Z",
+      "availability_only": true,
+      "effects_on_expiry": [
+        "availability-withdrawn"
+      ]
+    },
+    {
+      "id": "lease-workspace-read-tool",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "subject": {
+        "kind": "tool",
+        "reference": "workspace-read"
+      },
+      "state": "active",
+      "expires_at": "2026-03-01T00:00:00Z",
+      "availability_only": true,
+      "effects_on_expiry": [
+        "availability-withdrawn",
+        "registration-removed"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "artifact-workspace-note",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "artifact_class": "workspace-note",
+      "authoritative_ref": {
+        "kind": "external",
+        "external": {
+          "external": true,
+          "authority": "operator-workspace",
+          "locator_class": "operator-workspace",
+          "version_evidence": {
+            "kind": "digest",
+            "digest": "sha256:3c4d5e6f708192033c4d5e6f708192033c4d5e6f708192033c4d5e6f70819203"
+          }
+        }
+      },
+      "snapshot": {
+        "digest": "sha256:3c4d5e6f708192033c4d5e6f708192033c4d5e6f708192033c4d5e6f70819203",
+        "version_evidence": {
+          "kind": "immutable-snapshot"
+        }
+      },
+      "correctable": true,
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      }
+    },
+    {
+      "id": "artifact-run-summary",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "artifact_class": "run-summary",
+      "authoritative_ref": {
+        "kind": "internal",
+        "reference": "ev-artifact-committed"
+      },
+      "snapshot": {
+        "digest": "sha256:4d5e6f70819203044d5e6f70819203044d5e6f70819203044d5e6f7081920304",
+        "version_evidence": {
+          "kind": "digest"
+        }
+      },
+      "derived_from": [
+        "packet-attempt-two"
+      ],
+      "derivation": {
+        "kind": "run-summary",
+        "claim_source": "runner-reported"
+      },
+      "correctable": true,
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-operator-request",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-main",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "message",
+      "type": "operator-request",
+      "at": "2026-02-02T09:00:01Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "membership",
+        "membership": "membership-operator"
+      },
+      "policy_basis": {
+        "policy_id": "policy-room-authorship",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "payload": {
+        "fields": [
+          {
+            "name": "request-text",
+            "representation": "inline-value",
+            "secrecy_tags": [],
+            "inline_value": "Summarize the workspace note for the weekly review."
+          }
+        ]
+      },
+      "causal_parents": [],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 1,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Message and its state committed together."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 2,
+        "audience": "operator"
+      }
+    },
+    {
+      "id": "ev-task-proposed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-main",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "task-transition",
+      "type": "task-proposed",
+      "at": "2026-02-02T09:00:20Z",
+      "sequence": 2,
+      "authorization_basis": {
+        "kind": "membership",
+        "membership": "membership-operator"
+      },
+      "policy_basis": {
+        "policy_id": "policy-task-authoring",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-operator-request"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 2,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Task creation revision 1."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-task-ready",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "task-transition",
+      "type": "task-ready",
+      "at": "2026-02-02T09:01:00Z",
+      "sequence": 3,
+      "authorization_basis": {
+        "kind": "membership",
+        "membership": "membership-operator"
+      },
+      "policy_basis": {
+        "policy_id": "policy-task-authoring",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-task-proposed"
+      ],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "from": "task:proposed",
+        "to": "task:ready",
+        "entity_revision": 2,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "operator-decision",
+            "event": "ev-operator-request"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 3,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "State and transition event committed together."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 4,
+        "audience": "operator"
+      }
+    },
+    {
+      "id": "ev-context-assembled-one",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "context-assembly",
+      "type": "context-packet-assembled",
+      "at": "2026-02-02T09:01:30Z",
+      "sequence": 4,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "context_packet": "packet-attempt-one",
+      "causal_parents": [
+        "ev-task-ready"
+      ]
+    },
+    {
+      "id": "ev-task-running",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "authorizer": "participant-operator",
+      "family": "task-transition",
+      "type": "task-running",
+      "at": "2026-02-02T09:02:00Z",
+      "sequence": 5,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-task-ready"
+      ],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "from": "task:ready",
+        "to": "task:running",
+        "entity_revision": 3,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "context-assembled",
+            "event": "ev-context-assembled-one"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 5,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Task state and event committed together."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 6,
+        "audience": "both"
+      }
+    },
+    {
+      "id": "ev-run-one-started",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "run",
+      "type": "run-started",
+      "at": "2026-02-02T09:02:10Z",
+      "sequence": 6,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-task-running"
+      ],
+      "state_transition": {
+        "entity_kind": "run",
+        "entity": "run-attempt-one",
+        "from": "run:pending",
+        "to": "run:running",
+        "entity_revision": 2,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "route-session-started",
+            "note": "Native local session opened."
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 6,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Run state and event committed together."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-route-prepared-one",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "routing",
+      "type": "route-prepared",
+      "at": "2026-02-02T09:02:15Z",
+      "sequence": 7,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope"
+      },
+      "policy_basis": {
+        "policy_id": "policy-local-route",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-one-started"
+      ],
+      "integrity_evidence": [
+        {
+          "kind": "capability-report",
+          "note": "Required capabilities were available before spend."
+        }
+      ]
+    },
+    {
+      "id": "ev-tool-invoked-one",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "tool-invocation",
+      "type": "workspace-read",
+      "at": "2026-02-02T09:02:40Z",
+      "sequence": 8,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "runner-reported",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "secret"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "payload": {
+        "fields": [
+          {
+            "name": "workspace-credential",
+            "representation": "redacted",
+            "secrecy_tags": [
+              "secret"
+            ]
+          }
+        ]
+      },
+      "causal_parents": [
+        "ev-route-prepared-one"
+      ]
+    },
+    {
+      "id": "ev-process-provenance-one",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "process-provenance",
+      "type": "execution-process-recorded",
+      "at": "2026-02-02T09:02:45Z",
+      "sequence": 9,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "runner-reported",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-one-started"
+      ],
+      "extensions": [
+        {
+          "namespace": "runner-process-topology",
+          "authority": "native-runner",
+          "portability": "native-only",
+          "opacity": "opaque",
+          "tranche_status": "not-frozen"
+        }
+      ]
+    },
+    {
+      "id": "ev-turn-receipt-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "receipt",
+      "type": "turn-receipt-committed",
+      "at": "2026-02-02T09:03:00Z",
+      "sequence": 10,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-tool-invoked-one"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 10,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Turn receipt committed with its event."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 11,
+        "audience": "operator"
+      }
+    },
+    {
+      "id": "ev-interrupt-requested",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "interrupt",
+      "type": "interrupt-requested",
+      "at": "2026-02-02T09:03:20Z",
+      "sequence": 11,
+      "authorization_basis": {
+        "kind": "membership",
+        "membership": "membership-operator"
+      },
+      "policy_basis": {
+        "policy_id": "policy-operator-control",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-turn-receipt-committed"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 11,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Interrupt request committed before acknowledgement."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 12,
+        "audience": "both"
+      }
+    },
+    {
+      "id": "ev-cost-recorded-one",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "cost",
+      "type": "usage-recorded",
+      "at": "2026-02-02T09:03:25Z",
+      "sequence": 12,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-cost-telemetry",
+        "decision": "allowed"
+      },
+      "claim_source": "runner-reported",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-one-started"
+      ],
+      "asynchronous": true,
+      "authoritative_source": "ev-run-one-started"
+    },
+    {
+      "id": "ev-run-one-interrupted",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "authorizer": "participant-operator",
+      "family": "run",
+      "type": "run-interrupted",
+      "at": "2026-02-02T09:03:40Z",
+      "sequence": 13,
+      "authorization_basis": {
+        "kind": "operator-direct",
+        "authorizing_event": "ev-interrupt-requested"
+      },
+      "policy_basis": {
+        "policy_id": "policy-operator-control",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-interrupt-requested"
+      ],
+      "state_transition": {
+        "entity_kind": "run",
+        "entity": "run-attempt-one",
+        "from": "run:running",
+        "to": "run:interrupted",
+        "entity_revision": 3,
+        "progression_class": "exceptional",
+        "evidence": [
+          {
+            "kind": "interrupt-request",
+            "event": "ev-interrupt-requested"
+          },
+          {
+            "kind": "route-session-halted",
+            "note": "The control phase halted the session."
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 13,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Run state and event committed together."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 14,
+        "audience": "both"
+      }
+    },
+    {
+      "id": "ev-interrupt-receipt-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "receipt",
+      "type": "interrupt-receipt-committed",
+      "at": "2026-02-02T09:03:50Z",
+      "sequence": 14,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-receipts",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-one-interrupted"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 14,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Interrupt receipt committed with its event."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-run-receipt-one-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "receipt",
+      "type": "run-receipt-committed",
+      "at": "2026-02-02T09:04:00Z",
+      "sequence": 15,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-receipts",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-one-interrupted"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 15,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Run receipt committed with its event."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-task-return-ready",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "task-transition",
+      "type": "task-returned-to-ready",
+      "at": "2026-02-02T09:04:30Z",
+      "sequence": 16,
+      "authorization_basis": {
+        "kind": "membership",
+        "membership": "membership-operator"
+      },
+      "policy_basis": {
+        "policy_id": "policy-task-authoring",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-run-one-interrupted"
+      ],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "from": "task:running",
+        "to": "task:ready",
+        "entity_revision": 4,
+        "progression_class": "required",
+        "caused_by_run": "run-attempt-one",
+        "evidence": [
+          {
+            "kind": "run-outcome",
+            "run": "run-attempt-one"
+          },
+          {
+            "kind": "run-receipt",
+            "event": "ev-run-receipt-one-committed"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 16,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "The interrupted run is retained; the task returns to ready."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 17,
+        "audience": "operator"
+      }
+    },
+    {
+      "id": "ev-approval-budget",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "approval",
+      "type": "budget-envelope-raised",
+      "at": "2026-02-02T09:05:00Z",
+      "sequence": 17,
+      "authorization_basis": {
+        "kind": "operator-direct"
+      },
+      "policy_basis": {
+        "policy_id": "policy-operator-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "operator-accepted",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-task-return-ready"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 17,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Approval committed before it took effect."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 18,
+        "audience": "operator"
+      }
+    },
+    {
+      "id": "ev-task-running-again",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "authorizer": "participant-operator",
+      "family": "task-transition",
+      "type": "task-running",
+      "at": "2026-02-02T09:05:20Z",
+      "sequence": 18,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope-r2"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-approval-budget"
+      ],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "from": "task:ready",
+        "to": "task:running",
+        "entity_revision": 5,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "second-attempt-authorized",
+            "event": "ev-approval-budget"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 18,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Task state and event committed together."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-run-two-started",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "run",
+      "type": "run-started",
+      "at": "2026-02-02T09:05:30Z",
+      "sequence": 19,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope-r2"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-task-running-again"
+      ],
+      "state_transition": {
+        "entity_kind": "run",
+        "entity": "run-attempt-two",
+        "from": "run:pending",
+        "to": "run:running",
+        "entity_revision": 2,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "route-session-started",
+            "note": "Second attempt runs on a different route."
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 19,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Run state and event committed together."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-context-compacted",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "context-compaction",
+      "type": "context-packet-compacted",
+      "at": "2026-02-02T09:05:40Z",
+      "sequence": 20,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope-r2"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "context_packet": "packet-attempt-two",
+      "causal_parents": [
+        "ev-run-two-started"
+      ]
+    },
+    {
+      "id": "ev-process-provenance-two",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "process-provenance",
+      "type": "execution-process-recorded",
+      "at": "2026-02-02T09:06:00Z",
+      "sequence": 21,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope-r2"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "runner-reported",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-two-started"
+      ],
+      "extensions": [
+        {
+          "namespace": "provider-execution-topology",
+          "authority": "shared-contract",
+          "portability": "route-specific",
+          "opacity": "observable",
+          "tranche_status": "not-frozen"
+        }
+      ]
+    },
+    {
+      "id": "ev-artifact-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "artifact",
+      "type": "artifact-committed",
+      "at": "2026-02-02T09:06:30Z",
+      "sequence": 22,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope-r2"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "artifact_ref": "artifact-run-summary",
+      "causal_parents": [
+        "ev-context-compacted"
+      ],
+      "integrity_evidence": [
+        {
+          "kind": "artifact-digest",
+          "digest": "sha256:4d5e6f70819203044d5e6f70819203044d5e6f70819203044d5e6f7081920304"
+        }
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 22,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Artifact reference committed with its event."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 23,
+        "audience": "both"
+      }
+    },
+    {
+      "id": "ev-verification-recorded",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "verification",
+      "type": "artifact-verified",
+      "at": "2026-02-02T09:07:00Z",
+      "sequence": 23,
+      "authorization_basis": {
+        "kind": "operator-direct"
+      },
+      "policy_basis": {
+        "policy_id": "policy-verification",
+        "decision": "allowed"
+      },
+      "claim_source": "independently-verified",
+      "labels": {
+        "integrity_class": "verified",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-artifact-committed"
+      ],
+      "integrity_evidence": [
+        {
+          "kind": "recomputed-digest",
+          "digest": "sha256:4d5e6f70819203044d5e6f70819203044d5e6f70819203044d5e6f7081920304"
+        }
+      ]
+    },
+    {
+      "id": "ev-run-two-completed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "run",
+      "type": "run-completed",
+      "at": "2026-02-02T09:07:20Z",
+      "sequence": 24,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope-r2"
+      },
+      "policy_basis": {
+        "policy_id": "policy-agent-envelope",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-artifact-committed"
+      ],
+      "state_transition": {
+        "entity_kind": "run",
+        "entity": "run-attempt-two",
+        "from": "run:running",
+        "to": "run:completed",
+        "entity_revision": 3,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "artifact-commit",
+            "event": "ev-artifact-committed"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 24,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Run state and event committed together."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-task-completed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "authorizer": "participant-operator",
+      "family": "task-transition",
+      "type": "task-completed",
+      "at": "2026-02-02T09:07:40Z",
+      "sequence": 25,
+      "authorization_basis": {
+        "kind": "grant",
+        "grant": "grant-primary-envelope-r2"
+      },
+      "policy_basis": {
+        "policy_id": "policy-task-authoring",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-run-two-completed"
+      ],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "from": "task:running",
+        "to": "task:completed",
+        "entity_revision": 6,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "run-outcome",
+            "run": "run-attempt-two"
+          },
+          {
+            "kind": "artifact-commit",
+            "event": "ev-artifact-committed"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 25,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Task state and event committed together."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 26,
+        "audience": "both"
+      }
+    },
+    {
+      "id": "ev-projection-rebuilt",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "projection",
+      "type": "activity-projection-rebuilt",
+      "at": "2026-02-02T09:07:45Z",
+      "sequence": 26,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-projections",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-task-completed"
+      ],
+      "asynchronous": true,
+      "authoritative_source": "ev-task-completed"
+    },
+    {
+      "id": "ev-task-accepted",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "task-transition",
+      "type": "task-accepted",
+      "at": "2026-02-02T09:08:00Z",
+      "sequence": 27,
+      "authorization_basis": {
+        "kind": "operator-direct"
+      },
+      "policy_basis": {
+        "policy_id": "policy-task-authoring",
+        "decision": "allowed"
+      },
+      "claim_source": "operator-accepted",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-task-completed"
+      ],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "from": "task:completed",
+        "to": "task:accepted",
+        "entity_revision": 7,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "operator-acceptance",
+            "event": "ev-verification-recorded"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 27,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Acceptance is its own committed fact."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 28,
+        "audience": "operator"
+      }
+    },
+    {
+      "id": "ev-task-closed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "thread": "thread-task-branch",
+      "task": "task-render-summary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-operator",
+      "author_class": "human",
+      "family": "task-transition",
+      "type": "task-closed",
+      "at": "2026-02-02T09:08:30Z",
+      "sequence": 28,
+      "authorization_basis": {
+        "kind": "operator-direct"
+      },
+      "policy_basis": {
+        "policy_id": "policy-task-authoring",
+        "decision": "allowed"
+      },
+      "claim_source": "operator-accepted",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-task-accepted"
+      ],
+      "state_transition": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "from": "task:accepted",
+        "to": "task:closed",
+        "entity_revision": 8,
+        "progression_class": "required",
+        "evidence": [
+          {
+            "kind": "operator-closure",
+            "event": "ev-task-accepted"
+          }
+        ]
+      },
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 28,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Closure is separate from acceptance."
+          }
+        ]
+      },
+      "acknowledgement": {
+        "acknowledged": true,
+        "sequence": 29,
+        "audience": "operator"
+      }
+    },
+    {
+      "id": "ev-completion-receipt-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "receipt",
+      "type": "completion-receipt-committed",
+      "at": "2026-02-02T09:08:40Z",
+      "sequence": 29,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-receipts",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "causal_parents": [
+        "ev-task-closed"
+      ],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 29,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Completion receipt committed with its event."
+          }
+        ]
+      }
+    },
+    {
+      "id": "ev-lease-expired",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-operator-primary",
+      "trace": "trace-first-product-alpha",
+      "author": "participant-primary-agent",
+      "author_class": "machine",
+      "family": "routing",
+      "type": "registration-lease-expired",
+      "at": "2026-02-02T09:20:00Z",
+      "sequence": 30,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-registration",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [
+        "ev-run-one-interrupted"
+      ],
+      "integrity_evidence": [
+        {
+          "kind": "availability-withdrawn",
+          "note": "The native session is no longer available; its identity and history remain."
+        }
+      ]
+    }
+  ],
+  "projections": [
+    {
+      "id": "projection-conversation",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "family": "conversation",
+      "source_packets": [
+        "packet-attempt-one"
+      ],
+      "source_events": [
+        "ev-operator-request"
+      ],
+      "source_labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "consumer_clearance": {
+        "cleared_secrecy_tags": [
+          "operator-private"
+        ],
+        "cleared_visibility": "operator-only",
+        "cleared_sensitivity": "high"
+      },
+      "output_digest": "sha256:5e6f7081920304055e6f7081920304055e6f7081920304055e6f708192030405",
+      "rebuildable": true,
+      "grants_authority": false
+    },
+    {
+      "id": "projection-activity",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "family": "activity",
+      "source_packets": [],
+      "source_events": [
+        "ev-run-two-completed",
+        "ev-task-completed"
+      ],
+      "source_labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "consumer_clearance": {
+        "cleared_secrecy_tags": [],
+        "cleared_visibility": "room",
+        "cleared_sensitivity": "high"
+      },
+      "output_digest": "sha256:6f708192030405066f708192030405066f708192030405066f70819203040506",
+      "rebuildable": true,
+      "grants_authority": false
+    }
+  ],
+  "receipts": [
+    {
+      "id": "receipt-turn-one",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "schema_version": "workbench.first-product.receipt/v1",
+      "family": "turn",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "commit_event": "ev-turn-receipt-committed",
+      "attribution": {
+        "author": "participant-primary-agent",
+        "authorizer": "participant-operator",
+        "claim_source": "runner-reported"
+      },
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "evidence": [
+        {
+          "kind": "commit-event",
+          "event": "ev-turn-receipt-committed"
+        }
+      ],
+      "observed_effects": [
+        {
+          "effect": "workspace-read",
+          "claim_source": "workbench-observed",
+          "note": "One read-only workspace tool call was observed."
+        }
+      ],
+      "uncertainty": {
+        "kind": "bounded",
+        "note": "Internal planning remains opaque on this route and is not claimed."
+      },
+      "current_state": {
+        "entity_kind": "run",
+        "entity": "run-attempt-one",
+        "state": "run:running",
+        "revision": 2
+      },
+      "next_action": "Continue streaming until the operator interrupts or the run completes.",
+      "body": {
+        "route": {
+          "route": "route-native-local",
+          "reason": "Local route selected under the operator's default cost posture."
+        },
+        "context_packet": {
+          "reference": "packet-attempt-one",
+          "revision": 1,
+          "digest": "sha256:1a2b3c4d5e6f70811a2b3c4d5e6f70811a2b3c4d5e6f70811a2b3c4d5e6f7081"
+        },
+        "projection": {
+          "reference": "projection-conversation",
+          "revision": 1
+        },
+        "projected_payload_digest": "sha256:5e6f7081920304055e6f7081920304055e6f7081920304055e6f708192030405",
+        "capability_posture": {
+          "report": "report-native-local",
+          "report_revision": 1,
+          "unavailable_required": false
+        },
+        "usage": {
+          "input_tokens": 1840,
+          "output_tokens": 260
+        },
+        "cost": {
+          "currency": "usd",
+          "amount_minor_units": 0,
+          "basis": "local-compute"
+        },
+        "terminal_reason": "turn-boundary-reached"
+      }
+    },
+    {
+      "id": "receipt-interrupt-one",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "schema_version": "workbench.first-product.receipt/v1",
+      "family": "interrupt",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "commit_event": "ev-interrupt-receipt-committed",
+      "attribution": {
+        "author": "participant-operator",
+        "claim_source": "workbench-observed"
+      },
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "evidence": [
+        {
+          "kind": "interrupt-request",
+          "event": "ev-interrupt-requested"
+        },
+        {
+          "kind": "run-transition",
+          "event": "ev-run-one-interrupted"
+        }
+      ],
+      "observed_effects": [
+        {
+          "effect": "session-halted",
+          "claim_source": "workbench-observed"
+        }
+      ],
+      "uncertainty": {
+        "kind": "bounded",
+        "note": "Propagation into the runner process is runner-reported, not independently verified."
+      },
+      "current_state": {
+        "entity_kind": "run",
+        "entity": "run-attempt-one",
+        "state": "run:interrupted",
+        "revision": 3
+      },
+      "next_action": "Decide whether to retry the task with a second run attempt.",
+      "body": {
+        "outcome": "stopped",
+        "preserved_state": {
+          "kind": "partial-output",
+          "note": "Partial output and the assembled context packet are retained."
+        },
+        "remaining_authority": {
+          "grant": "grant-primary-envelope",
+          "still_effective": true
+        }
+      }
+    },
+    {
+      "id": "receipt-run-one",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "schema_version": "workbench.first-product.receipt/v1",
+      "family": "run",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-one",
+      "commit_event": "ev-run-receipt-one-committed",
+      "attribution": {
+        "author": "participant-primary-agent",
+        "authorizer": "participant-operator",
+        "claim_source": "runner-reported"
+      },
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "evidence": [
+        {
+          "kind": "commit-event",
+          "event": "ev-run-receipt-one-committed"
+        },
+        {
+          "kind": "run-transition",
+          "event": "ev-run-one-interrupted"
+        }
+      ],
+      "observed_effects": [
+        {
+          "effect": "workspace-read",
+          "claim_source": "workbench-observed"
+        }
+      ],
+      "uncertainty": {
+        "kind": "unresolved",
+        "note": "The run stopped before its completion criteria could be evaluated."
+      },
+      "current_state": {
+        "entity_kind": "run",
+        "entity": "run-attempt-one",
+        "state": "run:interrupted",
+        "revision": 3
+      },
+      "next_action": "Retain this attempt as evidence and start a second attempt.",
+      "body": {
+        "task_revision": 3,
+        "run_revision": 3,
+        "route": {
+          "route": "route-native-local",
+          "reason": "The first attempt used the native local route."
+        },
+        "context_packet": {
+          "reference": "packet-attempt-one",
+          "revision": 1,
+          "digest": "sha256:1a2b3c4d5e6f70811a2b3c4d5e6f70811a2b3c4d5e6f70811a2b3c4d5e6f7081"
+        },
+        "capability_posture": {
+          "report": "report-native-local",
+          "report_revision": 1,
+          "unavailable_required": false
+        },
+        "route_evidence": [
+          {
+            "kind": "route-session",
+            "note": "Native local session, continuity class new."
+          }
+        ],
+        "process_provenance": "ev-process-provenance-one",
+        "tools_and_effects": [
+          {
+            "tool": "workspace-read",
+            "effect": "read",
+            "claim_source": "workbench-observed"
+          }
+        ],
+        "artifacts": [],
+        "cost": {
+          "currency": "usd",
+          "amount_minor_units": 0,
+          "basis": "local-compute"
+        },
+        "verification": {
+          "state": "unsatisfied",
+          "claim_source": "workbench-observed",
+          "evidence": [
+            {
+              "kind": "verification-not-attempted",
+              "note": "The run stopped before verification."
+            }
+          ]
+        },
+        "preserved_state": {
+          "kind": "context-packet",
+          "note": "The assembled packet is retained for the next attempt."
+        }
+      }
+    },
+    {
+      "id": "receipt-completion",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "schema_version": "workbench.first-product.receipt/v1",
+      "family": "completion",
+      "room": "room-operator-primary",
+      "task": "task-render-summary",
+      "run": "run-attempt-two",
+      "commit_event": "ev-completion-receipt-committed",
+      "attribution": {
+        "author": "participant-operator",
+        "claim_source": "operator-accepted"
+      },
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      },
+      "evidence": [
+        {
+          "kind": "commit-event",
+          "event": "ev-completion-receipt-committed"
+        },
+        {
+          "kind": "artifact-commit",
+          "event": "ev-artifact-committed"
+        }
+      ],
+      "observed_effects": [
+        {
+          "effect": "artifact-written",
+          "claim_source": "workbench-observed",
+          "note": "The summary artifact reference was committed durably."
+        }
+      ],
+      "uncertainty": {
+        "kind": "bounded",
+        "note": "Summary content remains derived and correctable, not authoritative."
+      },
+      "current_state": {
+        "entity_kind": "task",
+        "entity": "task-render-summary",
+        "state": "task:closed",
+        "revision": 8
+      },
+      "next_action": "No further action; the task is closed and its runs are retained.",
+      "body": {
+        "artifacts": [
+          "artifact-run-summary"
+        ],
+        "changes": [
+          "One summary artifact reference was added to the task branch."
+        ],
+        "verification": {
+          "state": "satisfied",
+          "claim_source": "independently-verified",
+          "evidence": [
+            {
+              "kind": "verification-event",
+              "event": "ev-verification-recorded"
+            }
+          ]
+        },
+        "unresolved_risks": [
+          "The external style reference was unverified at assembly time."
+        ],
+        "cost": {
+          "currency": "usd",
+          "amount_minor_units": 240,
+          "basis": "metered-tokens"
+        },
+        "facts": {
+          "agent_reported_completion": {
+            "state": "asserted",
+            "claim_source": "runner-reported",
+            "evidence": [
+              {
+                "kind": "run-report",
+                "run": "run-attempt-two"
+              }
+            ]
+          },
+          "workbench_observed_effects": {
+            "state": "observed",
+            "claim_source": "workbench-observed",
+            "evidence": [
+              {
+                "kind": "artifact-commit",
+                "event": "ev-artifact-committed"
+              }
+            ]
+          },
+          "independent_verification": {
+            "state": "satisfied",
+            "claim_source": "independently-verified",
+            "evidence": [
+              {
+                "kind": "verification-event",
+                "event": "ev-verification-recorded"
+              }
+            ]
+          },
+          "operator_acceptance": {
+            "state": "accepted",
+            "claim_source": "operator-accepted",
+            "evidence": [
+              {
+                "kind": "acceptance-event",
+                "event": "ev-task-accepted"
+              }
+            ]
+          },
+          "closure": {
+            "state": "closed",
+            "claim_source": "operator-accepted",
+            "evidence": [
+              {
+                "kind": "closure-event",
+                "event": "ev-task-closed"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "deferrals": [
+    {
+      "id": "deferral-child-agents",
+      "capability": "child-agents-and-recursive-delegation",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "The first product runs one primary agent; delegation is not a first-product capability."
+    },
+    {
+      "id": "deferral-promoted-memory",
+      "capability": "durable-promoted-memory-across-rooms",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Context packets are per-run inputs; nothing here promotes them to durable memory."
+    },
+    {
+      "id": "deferral-memory-claim",
+      "capability": "memory-claim-implementation",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "reserved_identifier": "memory-claim",
+      "note": "The name is reserved for forward compatibility; no memory ontology is frozen here."
+    },
+    {
+      "id": "deferral-peer-sync",
+      "capability": "peer-synchronization-or-distributed-consensus",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "One Workbench instance is authoritative; no peer agreement protocol is defined."
+    },
+    {
+      "id": "deferral-messaging-bridges",
+      "capability": "external-messaging-bridges",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Rooms are local to the Workbench; no external messaging surface is contracted."
+    },
+    {
+      "id": "deferral-center-surfaces",
+      "capability": "additional-center-surfaces",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Projection families are conversation, activity, status, and inspector only."
+    },
+    {
+      "id": "deferral-self-modification",
+      "capability": "online-self-modification-or-optimizer-promotion",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Agent specifications are versioned and operator-authored, never self-promoted."
+    },
+    {
+      "id": "deferral-route-parity",
+      "capability": "route-feature-parity",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Capability reports state per-route truth; parity across routes is not claimed."
+    },
+    {
+      "id": "deferral-deployment-topology",
+      "capability": "new-distributed-deployment-topology",
+      "status": "deferred",
+      "required": false,
+      "implemented": false,
+      "authoritative": false,
+      "routable": false,
+      "note": "Deployment shape is unchanged by this package."
+    }
+  ]
+}

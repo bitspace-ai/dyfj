@@ -1,0 +1,27 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A room revision recorded as a string instead of an integer",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "structure.type",
+    "note": "Every declared type is enforced; a string is never accepted where an integer is required."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": "1",
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "room_memberships": []
+}

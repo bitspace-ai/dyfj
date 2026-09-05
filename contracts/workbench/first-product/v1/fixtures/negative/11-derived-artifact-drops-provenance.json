@@ -1,0 +1,63 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A derived artifact with no derivation provenance",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "provenance.preservation",
+    "note": "Derived content stays attributable to the sources it was derived from."
+  },
+  "artifacts": [
+    {
+      "id": "artifact-source-note",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "artifact_class": "workspace-note",
+      "authoritative_ref": {
+        "kind": "external",
+        "external": {
+          "external": true,
+          "authority": "operator-workspace",
+          "locator_class": "operator-workspace",
+          "version_evidence": {
+            "kind": "digest",
+            "digest": "sha256:3c4d5e6f708192033c4d5e6f708192033c4d5e6f708192033c4d5e6f70819203"
+          }
+        }
+      },
+      "correctable": true,
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      }
+    },
+    {
+      "id": "artifact-derived-summary",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "artifact_class": "run-summary",
+      "authoritative_ref": {
+        "kind": "internal",
+        "reference": "artifact-source-note"
+      },
+      "derived_from": [
+        "artifact-source-note"
+      ],
+      "correctable": true,
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [
+          "operator-private"
+        ],
+        "visibility": "room",
+        "sensitivity": "moderate"
+      }
+    }
+  ],
+  "room_memberships": []
+}

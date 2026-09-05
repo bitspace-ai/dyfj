@@ -1,0 +1,331 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "Independent verification claimed from the runner's own report",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "claim-source.separation",
+    "note": "Agent-reported, observed, independently verified, accepted, and closed stay distinct facts."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "threads": [
+    {
+      "id": "thread-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "thread_class": "main"
+    }
+  ],
+  "capability_grants": [
+    {
+      "id": "grant-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "grantor": "participant-operator",
+      "grantee": "participant-agent",
+      "delegable": false,
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "allowed"
+      },
+      "scope": {
+        "tools": [
+          "workspace-read"
+        ],
+        "resources": [
+          "workspace-notes"
+        ],
+        "workspace": "read-only",
+        "network": "none",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "approvals": [],
+        "external_impact": "none",
+        "destination_classes": [
+          "none"
+        ],
+        "scope_dispositions": {
+          "provider_scope": "not-applicable",
+          "route_scope": "not-applicable",
+          "task_scope": "not-applicable",
+          "room_scope": "not-applicable",
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "thread": "thread-focused",
+      "state": "task:proposed",
+      "envelope": {
+        "approved": true,
+        "grant": "grant-focused"
+      },
+      "completion_criteria": [
+        "The focused corpus records one task."
+      ],
+      "verification_contract": {
+        "method": "operator-review",
+        "required_evidence": [
+          "artifact-digest"
+        ]
+      },
+      "transitions": [],
+      "execution_envelope": {
+        "objective": "Focused fixture objective.",
+        "context_scope": "Focused fixture context scope.",
+        "assigned_agent_spec": "agent-spec-focused",
+        "posture": {
+          "autonomy": "supervised-autonomous",
+          "escalation": "ask-operator"
+        },
+        "route_requirements": {
+          "execution_lane": "either"
+        },
+        "tools": [
+          "workspace-read"
+        ],
+        "workspace": "read-only",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "guardrails": [
+          "no-external-impact"
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-completion-receipt-committed",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "task": "task-focused",
+      "trace": "trace-focused",
+      "author": "participant-agent",
+      "author_class": "machine",
+      "family": "receipt",
+      "type": "completion-receipt-committed",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "policy-default"
+      },
+      "policy_basis": {
+        "policy_id": "policy-receipts",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": [],
+      "durable_commit": {
+        "atomic": true,
+        "state_committed": true,
+        "event_committed": true,
+        "commit_sequence": 1,
+        "evidence": [
+          {
+            "kind": "durable-append",
+            "note": "Completion receipt committed with its event."
+          }
+        ]
+      }
+    }
+  ],
+  "receipts": [
+    {
+      "id": "receipt-completion-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "schema_version": "workbench.first-product.receipt/v1",
+      "family": "completion",
+      "room": "room-focused",
+      "task": "task-focused",
+      "commit_event": "ev-completion-receipt-committed",
+      "attribution": {
+        "author": "participant-agent",
+        "claim_source": "runner-reported"
+      },
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "evidence": [],
+      "observed_effects": [],
+      "uncertainty": {
+        "kind": "none",
+        "note": "The receipt claims no uncertainty."
+      },
+      "current_state": {
+        "entity_kind": "task",
+        "entity": "task-focused",
+        "state": "task:proposed",
+        "revision": 1
+      },
+      "next_action": "None recorded.",
+      "body": {
+        "artifacts": [],
+        "changes": [
+          "The agent reports that the work is done."
+        ],
+        "verification": {
+          "state": "satisfied",
+          "claim_source": "runner-reported",
+          "evidence": [
+            {
+              "kind": "runner-report",
+              "note": "The runner reported success."
+            }
+          ]
+        },
+        "unresolved_risks": [],
+        "cost": {
+          "currency": "usd",
+          "amount_minor_units": 0,
+          "basis": "local-compute"
+        },
+        "facts": {
+          "agent_reported_completion": {
+            "state": "asserted",
+            "claim_source": "runner-reported",
+            "evidence": [
+              {
+                "kind": "runner-report",
+                "note": "The runner reported success."
+              }
+            ]
+          },
+          "workbench_observed_effects": {
+            "state": "observed",
+            "claim_source": "workbench-observed",
+            "evidence": [
+              {
+                "kind": "no-effect-observed",
+                "note": "No effect was observed."
+              }
+            ]
+          },
+          "independent_verification": {
+            "state": "satisfied",
+            "claim_source": "runner-reported",
+            "evidence": [
+              {
+                "kind": "runner-report",
+                "note": "Reused as verification."
+              }
+            ]
+          },
+          "operator_acceptance": {
+            "state": "absent",
+            "claim_source": "operator-accepted",
+            "evidence": []
+          },
+          "closure": {
+            "state": "absent",
+            "claim_source": "operator-accepted",
+            "evidence": []
+          }
+        }
+      }
+    }
+  ],
+  "agent_specs": [
+    {
+      "id": "agent-spec-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "spec_version": 1,
+      "participant": "participant-agent",
+      "behavior": [
+        "conversational-chief-of-staff"
+      ],
+      "posture": {
+        "autonomy": "supervised-autonomous",
+        "escalation": "ask-operator"
+      },
+      "tools": [
+        "workspace-read"
+      ],
+      "guardrails": [
+        "no-external-impact"
+      ]
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-agent",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

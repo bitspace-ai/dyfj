@@ -1,0 +1,28 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "The Task takes the allowed blocked detour and returns to running",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/tasks/0/transitions/2/to",
+      "value": "task:blocked"
+    },
+    {
+      "op": "replace",
+      "path": "/tasks/0/transitions/3/from",
+      "value": "task:blocked"
+    },
+    {
+      "op": "replace",
+      "path": "/events/15/state_transition/to",
+      "value": "task:blocked"
+    },
+    {
+      "op": "replace",
+      "path": "/events/17/state_transition/from",
+      "value": "task:blocked"
+    }
+  ]
+}

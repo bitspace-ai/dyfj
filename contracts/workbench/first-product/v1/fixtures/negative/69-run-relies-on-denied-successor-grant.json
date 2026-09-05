@@ -1,0 +1,48 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run relies on a denied narrowed successor grant",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "A Run grant is relied authority even when no event cites that grant directly."
+  },
+  "mutations": [
+    {
+      "op": "copy",
+      "from": "/capability_grants/1",
+      "path": "/capability_grants/-"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/id",
+      "value": "grant-run-denied-r3"
+    },
+    { "op": "replace", "path": "/capability_grants/2/revision", "value": 3 },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/supersedes",
+      "value": "grant-primary-envelope-r2"
+    },
+    { "op": "remove", "path": "/capability_grants/2/approval_event" },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/policy_basis/decision",
+      "value": "denied"
+    },
+    {
+      "op": "remove",
+      "path": "/capability_grants/2/policy_basis/approval_event"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/scope/budget/limit_minor_units",
+      "value": 1200
+    },
+    {
+      "op": "replace",
+      "path": "/runs/1/capability_grant",
+      "value": "grant-run-denied-r3"
+    }
+  ]
+}

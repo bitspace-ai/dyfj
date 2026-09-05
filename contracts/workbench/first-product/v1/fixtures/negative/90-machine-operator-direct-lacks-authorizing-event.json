@@ -1,0 +1,12 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A machine-authored operator-direct event names no authorizing event",
+  "expectation": { "outcome": "reject", "rule": "authority.basis" },
+  "mutations": [
+    {
+      "op": "remove",
+      "path": "/events/12/authorization_basis/authorizing_event"
+    }
+  ]
+}

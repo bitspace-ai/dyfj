@@ -1,0 +1,27 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A stable identifier outside the declared identifier shape",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "structure.value-domain",
+    "note": "Identifiers are opaque lowercase tokens; free-form text is not an identifier."
+  },
+  "rooms": [
+    {
+      "id": "Room One",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "room_memberships": []
+}

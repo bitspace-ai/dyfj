@@ -1,0 +1,89 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "An event authorized by a grant it never names",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "Declaring a grant basis is not authorization; the grant must resolve."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "participants": [
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "ev-agent-message",
+      "identity_basis": "assigned-opaque",
+      "schema_version": "workbench.first-product.event/v1",
+      "workbench_instance": "workbench-alpha",
+      "room": "room-focused",
+      "trace": "trace-focused",
+      "author": "participant-agent",
+      "author_class": "machine",
+      "family": "message",
+      "type": "agent-message",
+      "at": "2026-02-02T10:00:00Z",
+      "sequence": 1,
+      "authorization_basis": {
+        "kind": "grant"
+      },
+      "policy_basis": {
+        "policy_id": "policy-room",
+        "decision": "allowed"
+      },
+      "claim_source": "workbench-observed",
+      "labels": {
+        "integrity_class": "unverified",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      },
+      "causal_parents": []
+    }
+  ],
+  "room_memberships": [
+    {
+      "id": "membership-fixture-1",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "participant": "participant-agent",
+      "present": true,
+      "may_author": true,
+      "may_speak": true,
+      "speak_rule": {
+        "policy": "always-on",
+        "loop_prevention": {
+          "automated_summons": "blocked"
+        }
+      }
+    }
+  ]
+}

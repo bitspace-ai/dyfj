@@ -1,0 +1,26 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A conversational receipt conceals Run participation carried by a cited event",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation"
+  },
+  "mutations": [
+    { "op": "remove", "path": "/receipts/0/task" },
+    { "op": "remove", "path": "/receipts/0/run" },
+    { "op": "remove", "path": "/receipts/0/current_state" },
+    { "op": "remove", "path": "/receipts/0/body/route" },
+    { "op": "remove", "path": "/receipts/0/body/context_packet" },
+    { "op": "remove", "path": "/receipts/0/body/capability_posture" },
+    { "op": "remove", "path": "/receipts/0/body/usage" },
+    { "op": "remove", "path": "/receipts/0/body/cost" },
+    { "op": "remove", "path": "/events/9/task" },
+    { "op": "remove", "path": "/events/9/run" },
+    {
+      "op": "add",
+      "path": "/receipts/0/evidence/-",
+      "value": { "kind": "tool-event", "event": "ev-tool-invoked-one" }
+    }
+  ]
+}

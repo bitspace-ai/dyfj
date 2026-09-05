@@ -1,0 +1,57 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A machine summons relies on a denied exception grant",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "authority.basis",
+    "note": "Derived from the valid operator-authorized summons exception; a denied grant carries no summons authority."
+  },
+  "mutations": [
+    {
+      "op": "add",
+      "path": "/capability_grants/1/scope/approvals/-",
+      "value": "automated-summons-exception"
+    },
+    {
+      "op": "replace",
+      "path": "/room_memberships/1/speak_rule/loop_prevention/automated_summons",
+      "value": "operator-authorized-exception"
+    },
+    {
+      "op": "add",
+      "path": "/room_memberships/1/speak_rule/loop_prevention/exception_grant",
+      "value": "grant-summons-denied"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/triggers_automated_summons",
+      "value": true
+    },
+    {
+      "op": "add",
+      "path": "/events/24/summons_exception_grant",
+      "value": "grant-summons-denied"
+    },
+    {
+      "op": "copy",
+      "from": "/capability_grants/0",
+      "path": "/capability_grants/-"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/id",
+      "value": "grant-summons-denied"
+    },
+    {
+      "op": "add",
+      "path": "/capability_grants/2/scope/approvals/-",
+      "value": "automated-summons-exception"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/policy_basis/decision",
+      "value": "denied"
+    }
+  ]
+}

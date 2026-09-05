@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A machine-authored receipt claims operator acceptance",
+  "expectation": { "outcome": "reject", "rule": "claim-source.separation" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/receipts/2/attribution/claim_source",
+      "value": "operator-accepted"
+    }
+  ]
+}

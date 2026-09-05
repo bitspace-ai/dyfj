@@ -1,0 +1,17 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A turn receipt conceals Run participation while retaining executable body evidence",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation",
+    "note": "Executable body and packet evidence reveal Run participation even when receipt and commit subjects are omitted."
+  },
+  "mutations": [
+    { "op": "remove", "path": "/receipts/0/task" },
+    { "op": "remove", "path": "/receipts/0/run" },
+    { "op": "remove", "path": "/receipts/0/current_state" },
+    { "op": "remove", "path": "/events/9/task" },
+    { "op": "remove", "path": "/events/9/run" }
+  ]
+}

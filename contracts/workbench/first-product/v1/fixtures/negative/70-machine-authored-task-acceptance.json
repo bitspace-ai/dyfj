@@ -1,0 +1,29 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A machine authors the Task acceptance transition",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "lifecycle.run-independence",
+    "note": "Task acceptance must be human-authored and operator-accepted."
+  },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/events/26/author",
+      "value": "participant-primary-agent"
+    },
+    { "op": "replace", "path": "/events/26/author_class", "value": "machine" },
+    {
+      "op": "replace",
+      "path": "/events/26/authorization_basis",
+      "value": { "kind": "grant", "grant": "grant-primary-envelope-r2" }
+    },
+    {
+      "op": "replace",
+      "path": "/events/26/claim_source",
+      "value": "workbench-observed"
+    },
+    { "op": "remove", "path": "/receipts/3" }
+  ]
+}

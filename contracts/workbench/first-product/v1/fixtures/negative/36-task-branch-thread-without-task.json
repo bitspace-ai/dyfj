@@ -1,0 +1,36 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A task-branch thread that names no task",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "structure.mutual-exclusion",
+    "note": "A task-branch thread names the task it branches for."
+  },
+  "rooms": [
+    {
+      "id": "room-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room_class": "operator-room",
+      "persistence": "persistent",
+      "labels": {
+        "integrity_class": "attested",
+        "secrecy_tags": [],
+        "visibility": "room",
+        "sensitivity": "low"
+      }
+    }
+  ],
+  "threads": [
+    {
+      "id": "thread-orphan-branch",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "room": "room-focused",
+      "thread_class": "task-branch"
+    }
+  ],
+  "room_memberships": []
+}

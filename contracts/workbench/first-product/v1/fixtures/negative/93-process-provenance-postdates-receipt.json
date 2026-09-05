@@ -1,0 +1,16 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run receipt cites process provenance recorded after its commit",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation"
+  },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/receipts/2/body/process_provenance",
+      "value": "ev-process-provenance-two"
+    }
+  ]
+}

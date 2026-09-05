@@ -1,0 +1,43 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A failed Run ending cites an earlier unrelated operator decision",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "lifecycle.run-independence",
+    "note": "The decision must concern the same Task and follow the causing Run's terminal transition."
+  },
+  "mutations": [
+    { "op": "replace", "path": "/runs/1/state", "value": "run:failed" },
+    {
+      "op": "replace",
+      "path": "/runs/1/transitions/1/to",
+      "value": "run:failed"
+    },
+    {
+      "op": "replace",
+      "path": "/runs/1/transitions/1/progression_class",
+      "value": "exceptional"
+    },
+    {
+      "op": "replace",
+      "path": "/events/23/state_transition/to",
+      "value": "run:failed"
+    },
+    {
+      "op": "replace",
+      "path": "/events/23/state_transition/progression_class",
+      "value": "exceptional"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/state_transition/caused_by_run",
+      "value": "run-attempt-two"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/state_transition/operator_decision",
+      "value": "ev-approval-budget"
+    }
+  ]
+}

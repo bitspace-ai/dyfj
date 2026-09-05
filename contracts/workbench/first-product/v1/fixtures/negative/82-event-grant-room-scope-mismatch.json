@@ -1,0 +1,31 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A grant-authorized event uses a grant scoped to another Room",
+  "expectation": { "outcome": "reject", "rule": "authority.basis" },
+  "mutations": [
+    { "op": "copy", "from": "/rooms/0", "path": "/rooms/-" },
+    { "op": "replace", "path": "/rooms/1/id", "value": "room-other" },
+    { "op": "remove", "path": "/rooms/1/profile" },
+    {
+      "op": "copy",
+      "from": "/capability_grants/1",
+      "path": "/capability_grants/-"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/id",
+      "value": "grant-event-other-room"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/2/scope/room_scope",
+      "value": "room-other"
+    },
+    {
+      "op": "replace",
+      "path": "/events/21/authorization_basis/grant",
+      "value": "grant-event-other-room"
+    }
+  ]
+}

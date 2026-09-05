@@ -1,0 +1,129 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "A grant revision that moves its authority to another grantee",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "grant.principal-continuity",
+    "note": "Changing a principal starts a new lineage; it is not a revision of the old grant."
+  },
+  "participants": [
+    {
+      "id": "participant-operator",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "human",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    },
+    {
+      "id": "participant-other-agent",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "participant_class": "digital",
+      "independent_of": [
+        "model",
+        "runner",
+        "process",
+        "user-interface"
+      ]
+    }
+  ],
+  "capability_grants": [
+    {
+      "id": "grant-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "grantor": "participant-operator",
+      "grantee": "participant-agent",
+      "delegable": false,
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "allowed"
+      },
+      "scope": {
+        "tools": [
+          "workspace-read"
+        ],
+        "resources": [
+          "workspace-notes"
+        ],
+        "workspace": "read-only",
+        "network": "none",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "approvals": [],
+        "external_impact": "none",
+        "destination_classes": [
+          "none"
+        ],
+        "scope_dispositions": {
+          "provider_scope": "not-applicable",
+          "route_scope": "not-applicable",
+          "task_scope": "not-applicable",
+          "room_scope": "not-applicable",
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    },
+    {
+      "id": "grant-focused-r2",
+      "identity_basis": "assigned-opaque",
+      "revision": 2,
+      "grantor": "participant-operator",
+      "grantee": "participant-other-agent",
+      "delegable": false,
+      "supersedes": "grant-focused",
+      "policy_basis": {
+        "policy_id": "policy-envelope",
+        "decision": "allowed"
+      },
+      "scope": {
+        "tools": [
+          "workspace-read"
+        ],
+        "resources": [
+          "workspace-notes"
+        ],
+        "workspace": "read-only",
+        "network": "none",
+        "budget": {
+          "currency": "usd",
+          "limit_minor_units": 100
+        },
+        "approvals": [],
+        "external_impact": "none",
+        "destination_classes": [
+          "none"
+        ],
+        "scope_dispositions": {
+          "provider_scope": "not-applicable",
+          "route_scope": "not-applicable",
+          "task_scope": "not-applicable",
+          "room_scope": "not-applicable",
+          "secrecy_integrity_authorization": "not-applicable"
+        }
+      }
+    }
+  ],
+  "room_memberships": []
+}

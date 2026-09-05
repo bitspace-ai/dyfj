@@ -1,0 +1,48 @@
+{
+  "schema": "dyfj.workbench.first-product.corpus/v1",
+  "package_version": "workbench.first-product/v1",
+  "profile": "focused-rule-fixture",
+  "title": "An external-lane route declares a native capability extension",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "route.native-extension-authority",
+    "note": "Only a native execution lane may declare native capability extensions."
+  },
+  "routes": [
+    {
+      "id": "route-focused",
+      "identity_basis": "assigned-opaque",
+      "revision": 1,
+      "execution_lane": "external",
+      "access_modality": "aggregator-hosted",
+      "provider": "synthetic-provider",
+      "model": "synthetic-model",
+      "adapter": "synthetic-adapter",
+      "policy_basis": {
+        "policy_id": "policy-route",
+        "decision": "allowed"
+      },
+      "cost_basis": {
+        "kind": "metered-tokens",
+        "currency": "usd"
+      },
+      "native_extensions": [
+        {
+          "capability": "native-session-control",
+          "authority": "native-runner",
+          "portability": "native-only",
+          "opacity": "observable"
+        }
+      ],
+      "component_dispositions": {
+        "runner": "opaque",
+        "system_harness": "opaque",
+        "tool_vocabulary": "opaque",
+        "context_reasoning_policy": "opaque",
+        "authentication_posture": "opaque",
+        "inference_posture": "opaque"
+      }
+    }
+  ],
+  "room_memberships": []
+}

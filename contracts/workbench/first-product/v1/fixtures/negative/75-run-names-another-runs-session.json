@@ -1,0 +1,18 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Run names a RouteSession owned by another Run and Route",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "route.binding",
+    "note": "Run-to-session binding is reconciled in both directions."
+  },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/runs/1/route_session",
+      "value": "session-attempt-one"
+    },
+    { "op": "remove", "path": "/route_sessions/1" }
+  ]
+}

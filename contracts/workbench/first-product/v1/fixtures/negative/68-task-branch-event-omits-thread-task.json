@@ -1,0 +1,13 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "An event on a task branch omits the Thread's Task",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "run.evidence-binding",
+    "note": "A task-branch event must agree with the Task owned by its Thread."
+  },
+  "mutations": [
+    { "op": "remove", "path": "/events/2/task" }
+  ]
+}

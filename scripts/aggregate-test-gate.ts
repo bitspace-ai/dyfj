@@ -512,6 +512,36 @@ export function productionLanes(
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
     {
+      label: "Contract closure report generation",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--no-prompt",
+        "--deny-write",
+        "--allow-read=.",
+        "contracts/workbench/first-product/v1/executable-closure-report.ts",
+        "--compare-path",
+        "contracts/workbench/first-product/v1/executable-closure-report.json",
+      ],
+      cwd: root,
+    },
+    {
+      label: "Contract package tests",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "test",
+        "--allow-read=.",
+        "contracts/workbench/first-product/v1/validate.test.ts",
+        "contracts/workbench/first-product/v1/executable-closure.test.ts",
+        "contracts/workbench/first-product/v1/executable-closure-report.test.ts",
+      ],
+      cwd: root,
+    },
+    {
       label: "Schema unit tests",
       checkId: "test.aggregate",
       command: denoExecutable,
@@ -593,6 +623,8 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Changed-shell parse check",
   "Dependency policy check",
   "Receipt schema validation",
+  "Contract closure report generation",
+  "Contract package tests",
   "Prototype source typecheck",
 ];
 

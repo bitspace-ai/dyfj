@@ -1,0 +1,17 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A stopped interrupt receipt lacks a halted Route control phase",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation",
+    "note": "A stopped outcome requires both an interrupted Run and observed halted control evidence."
+  },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/route_sessions/0/phases/4/outcome",
+      "value": "completed"
+    }
+  ]
+}

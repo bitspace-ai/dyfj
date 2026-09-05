@@ -1,0 +1,19 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "focused-minimal-corpus.json",
+  "title": "A membership uses the scheduled speak-policy branch",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/room_memberships/1/speak_rule/policy",
+      "value": "scheduled"
+    },
+    { "op": "remove", "path": "/room_memberships/1/speak_rule/mention_match" },
+    {
+      "op": "add",
+      "path": "/room_memberships/1/speak_rule/schedule",
+      "value": { "kind": "declared-calendar", "expression": "0 9 * * 1" }
+    }
+  ]
+}

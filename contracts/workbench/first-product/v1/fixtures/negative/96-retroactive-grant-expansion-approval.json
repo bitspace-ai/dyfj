@@ -1,0 +1,48 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A broadened grant revision relies on a later expansion approval",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "grant.no-self-broadening",
+    "note": "A grant-expansion approval must precede the grant's earliest reliance."
+  },
+  "mutations": [
+    { "op": "copy", "from": "/events/16", "path": "/events/-" },
+    {
+      "op": "replace",
+      "path": "/events/30/id",
+      "value": "ev-approval-after-grant-use"
+    },
+    { "op": "replace", "path": "/events/30/sequence", "value": 31 },
+    {
+      "op": "replace",
+      "path": "/events/30/durable_commit/commit_sequence",
+      "value": 31
+    },
+    {
+      "op": "replace",
+      "path": "/events/30/acknowledgement/sequence",
+      "value": 32
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/1/policy_basis/decision",
+      "value": "allowed"
+    },
+    {
+      "op": "remove",
+      "path": "/capability_grants/1/policy_basis/approval_event"
+    },
+    {
+      "op": "replace",
+      "path": "/capability_grants/1/approval_event",
+      "value": "ev-approval-after-grant-use"
+    },
+    {
+      "op": "add",
+      "path": "/capability_grants/1/scope/resources/-",
+      "value": "workspace-archive"
+    }
+  ]
+}

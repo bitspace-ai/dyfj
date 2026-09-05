@@ -1,0 +1,22 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A terminal Run names an inspection-only RouteSession without a completion receipt",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "route.phase-order",
+    "note": "A terminal Run must reach execution and Finalize even when no completion receipt names it."
+  },
+  "mutations": [
+    { "op": "remove", "path": "/route_sessions/1/phases/4" },
+    { "op": "remove", "path": "/route_sessions/1/phases/3" },
+    { "op": "remove", "path": "/route_sessions/1/phases/2" },
+    { "op": "remove", "path": "/route_sessions/1/phases/1" },
+    { "op": "remove", "path": "/receipts/3" },
+    {
+      "op": "replace",
+      "path": "/tasks/0/execution_envelope/route_requirements/required_capabilities",
+      "value": []
+    }
+  ]
+}

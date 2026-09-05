@@ -1,0 +1,159 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "focused-minimal-corpus.json",
+  "title": "A route session reaches spend before its Run has a reliance transition",
+  "expectation": { "outcome": "reject", "rule": "route.phase-order" },
+  "mutations": [
+    {
+      "op": "add",
+      "path": "/capability_grants/0/scope/task_scope",
+      "value": "task-focused"
+    },
+    {
+      "op": "add",
+      "path": "/capability_grants/0/scope/room_scope",
+      "value": "room-focused"
+    },
+    {
+      "op": "add",
+      "path": "/capability_grants/0/scope/route_scope",
+      "value": ["route-focused"]
+    },
+    {
+      "op": "remove",
+      "path": "/capability_grants/0/scope/scope_dispositions/task_scope"
+    },
+    {
+      "op": "remove",
+      "path": "/capability_grants/0/scope/scope_dispositions/room_scope"
+    },
+    {
+      "op": "remove",
+      "path": "/capability_grants/0/scope/scope_dispositions/route_scope"
+    },
+    {
+      "op": "add",
+      "path": "/routes",
+      "value": [{
+        "id": "route-focused",
+        "identity_basis": "assigned-opaque",
+        "revision": 1,
+        "execution_lane": "native",
+        "access_modality": "local",
+        "runner": "runner-focused",
+        "model": "model-focused",
+        "adapter": "adapter-focused",
+        "policy_basis": { "policy_id": "policy-route", "decision": "allowed" },
+        "cost_basis": { "kind": "local-compute" },
+        "component_dispositions": {
+          "provider": "not-applicable",
+          "system_harness": "not-applicable",
+          "tool_vocabulary": "not-applicable",
+          "context_reasoning_policy": "not-applicable",
+          "authentication_posture": "not-applicable",
+          "inference_posture": "not-applicable"
+        }
+      }]
+    },
+    {
+      "op": "add",
+      "path": "/route_capability_reports",
+      "value": [{
+        "id": "report-focused",
+        "identity_basis": "assigned-opaque",
+        "revision": 1,
+        "route": "route-focused",
+        "capabilities": [{
+          "capability": "workspace-read",
+          "classification": "governable",
+          "required": true
+        }]
+      }]
+    },
+    {
+      "op": "add",
+      "path": "/context_packets",
+      "value": [{
+        "id": "packet-focused",
+        "identity_basis": "assigned-opaque",
+        "revision": 1,
+        "task": "task-focused",
+        "run": "run-focused",
+        "route_neutral": true,
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "entries": [{
+          "entry_id": "thread-entry",
+          "source": {
+            "kind": "thread",
+            "reference": "thread-focused",
+            "source_revision": 1
+          },
+          "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "selection_reason": "The focused task thread is the only input.",
+          "claim_source": "workbench-observed",
+          "labels": {
+            "integrity_class": "attested",
+            "secrecy_tags": [],
+            "visibility": "room",
+            "sensitivity": "low"
+          }
+        }]
+      }]
+    },
+    {
+      "op": "add",
+      "path": "/runs",
+      "value": [{
+        "id": "run-focused",
+        "identity_basis": "assigned-opaque",
+        "revision": 1,
+        "task": "task-focused",
+        "agent_spec": "agent-spec-focused",
+        "route": "route-focused",
+        "route_session": "session-focused",
+        "context_packet": "packet-focused",
+        "capability_grant": "grant-focused",
+        "attempt": 1,
+        "state": "run:pending",
+        "transitions": []
+      }]
+    },
+    {
+      "op": "add",
+      "path": "/route_sessions",
+      "value": [{
+        "id": "session-focused",
+        "identity_basis": "assigned-opaque",
+        "revision": 1,
+        "route": "route-focused",
+        "run": "run-focused",
+        "phases": [
+          {
+            "phase": "inspect",
+            "sequence": 1,
+            "outcome": "completed",
+            "spend_or_action": false,
+            "capability_report": "report-focused"
+          },
+          {
+            "phase": "prepare",
+            "sequence": 2,
+            "outcome": "accepted",
+            "spend_or_action": false,
+            "capability_report": "report-focused"
+          },
+          {
+            "phase": "start-or-resume",
+            "sequence": 3,
+            "outcome": "completed",
+            "spend_or_action": true
+          }
+        ],
+        "continuity": {
+          "class": "new",
+          "evidence": [{ "kind": "fresh-session-established" }]
+        }
+      }]
+    }
+  ]
+}

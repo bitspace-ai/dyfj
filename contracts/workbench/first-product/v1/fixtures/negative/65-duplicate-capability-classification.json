@@ -1,0 +1,22 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A Route capability report classifies one capability twice",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "route.capability-rejection",
+    "note": "A capability report cannot carry duplicate or contradictory rows for one capability."
+  },
+  "mutations": [
+    {
+      "op": "copy",
+      "from": "/route_capability_reports/0/capabilities/2",
+      "path": "/route_capability_reports/0/capabilities/-"
+    },
+    {
+      "op": "replace",
+      "path": "/route_capability_reports/0/capabilities/3/classification",
+      "value": "observable"
+    }
+  ]
+}

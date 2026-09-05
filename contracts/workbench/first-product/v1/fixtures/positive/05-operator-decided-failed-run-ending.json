@@ -1,0 +1,23 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "An operator-decided Task ending cites an earlier interrupted Run",
+  "expectation": { "outcome": "accept" },
+  "mutations": [
+    {
+      "op": "add",
+      "path": "/events/24/state_transition/caused_by_run",
+      "value": "run-attempt-one"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/state_transition/operator_decision",
+      "value": "ev-approval-budget"
+    },
+    {
+      "op": "add",
+      "path": "/events/24/state_transition/evidence/-",
+      "value": { "kind": "run-outcome", "run": "run-attempt-one" }
+    }
+  ]
+}

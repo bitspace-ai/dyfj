@@ -1,0 +1,16 @@
+{
+  "fixture_kind": "derived-corpus",
+  "base": "first-product-baseline.json",
+  "title": "A completion receipt exceeds the Task budget",
+  "expectation": {
+    "outcome": "reject",
+    "rule": "receipt.subject-reconciliation"
+  },
+  "mutations": [
+    {
+      "op": "replace",
+      "path": "/receipts/3/body/cost/amount_minor_units",
+      "value": 1501
+    }
+  ]
+}

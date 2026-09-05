@@ -1,0 +1,183 @@
+{
+  "schema": "dyfj.workbench.first-product.executable-closure/v1",
+  "package_version": "workbench.first-product/v1",
+  "authority_semantics_sha256": "a99884fee36705ecb8295f3c2fc9335e68faec892e75ce22cfc4b871075b21ef",
+  "authority_record_sha256": "8743cd6ce146be2927a0c39c8c447a4c9ae85f3c2f012f03ab26193eae812617",
+  "denominator": {
+    "targets": 24,
+    "invariants": 61,
+    "probes": 31
+  },
+  "targets": [
+    { "id": "T01", "subject": "Room", "invariants": ["EC-001"] },
+    {
+      "id": "T02",
+      "subject": "Participant",
+      "invariants": ["EC-002", "EC-003"]
+    },
+    {
+      "id": "T03",
+      "subject": "RoomMembership",
+      "invariants": ["EC-004", "EC-005"]
+    },
+    { "id": "T04", "subject": "SpeakRulePolicy", "invariants": ["EC-006"] },
+    { "id": "T05", "subject": "Thread", "invariants": ["EC-007"] },
+    { "id": "T06", "subject": "AgentSpec", "invariants": ["EC-008"] },
+    {
+      "id": "T07",
+      "subject": "Task",
+      "invariants": ["EC-009", "EC-010", "EC-013", "EC-014", "EC-015"]
+    },
+    {
+      "id": "T08",
+      "subject": "Run",
+      "invariants": ["EC-011", "EC-012", "EC-013", "EC-014", "EC-015", "EC-016"]
+    },
+    {
+      "id": "T09",
+      "subject": "RouteSpec",
+      "invariants": ["EC-015", "EC-017", "EC-018", "EC-020"]
+    },
+    {
+      "id": "T10",
+      "subject": "RouteCapabilityReport",
+      "invariants": ["EC-019", "EC-022"]
+    },
+    {
+      "id": "T11",
+      "subject": "ContextPacket",
+      "invariants": ["EC-016", "EC-025", "EC-026"]
+    },
+    {
+      "id": "T12",
+      "subject": "CapabilityGrant",
+      "invariants": ["EC-014", "EC-027", "EC-028", "EC-029", "EC-030"]
+    },
+    { "id": "T13", "subject": "RegistrationLease", "invariants": ["EC-031"] },
+    { "id": "T14", "subject": "ArtifactRef", "invariants": ["EC-046"] },
+    {
+      "id": "T15",
+      "subject": "event envelope",
+      "invariants": [
+        "EC-003",
+        "EC-004",
+        "EC-005",
+        "EC-006",
+        "EC-007",
+        "EC-038",
+        "EC-039",
+        "EC-040"
+      ]
+    },
+    {
+      "id": "T16",
+      "subject": "lifecycle state",
+      "invariants": ["EC-032", "EC-033", "EC-034", "EC-035", "EC-036", "EC-037"]
+    },
+    { "id": "T17", "subject": "claim source", "invariants": ["EC-041"] },
+    {
+      "id": "T18",
+      "subject": "labels",
+      "invariants": ["EC-026", "EC-042", "EC-047", "EC-054"]
+    },
+    { "id": "T19", "subject": "event families", "invariants": ["EC-043"] },
+    { "id": "T20", "subject": "projection families", "invariants": ["EC-047"] },
+    {
+      "id": "T21",
+      "subject": "receipt families",
+      "invariants": [
+        "EC-048",
+        "EC-049",
+        "EC-050",
+        "EC-051",
+        "EC-052",
+        "EC-053",
+        "EC-054"
+      ]
+    },
+    {
+      "id": "T22",
+      "subject": "route-control phases",
+      "invariants": ["EC-020", "EC-021", "EC-022", "EC-023", "EC-024"]
+    },
+    {
+      "id": "T23",
+      "subject": "writer and acknowledgement authority",
+      "invariants": ["EC-040", "EC-044", "EC-045"]
+    },
+    {
+      "id": "T24",
+      "subject": "MemoryClaim deferral",
+      "invariants": ["EC-055", "EC-056"]
+    }
+  ],
+  "invariants": [
+    "EC-001",
+    "EC-002",
+    "EC-003",
+    "EC-004",
+    "EC-005",
+    "EC-006",
+    "EC-007",
+    "EC-008",
+    "EC-009",
+    "EC-010",
+    "EC-011",
+    "EC-012",
+    "EC-013",
+    "EC-014",
+    "EC-015",
+    "EC-016",
+    "EC-017",
+    "EC-018",
+    "EC-019",
+    "EC-020",
+    "EC-021",
+    "EC-022",
+    "EC-023",
+    "EC-024",
+    "EC-025",
+    "EC-026",
+    "EC-027",
+    "EC-028",
+    "EC-029",
+    "EC-030",
+    "EC-031",
+    "EC-032",
+    "EC-033",
+    "EC-034",
+    "EC-035",
+    "EC-036",
+    "EC-037",
+    "EC-038",
+    "EC-039",
+    "EC-040",
+    "EC-041",
+    "EC-042",
+    "EC-043",
+    "EC-044",
+    "EC-045",
+    "EC-046",
+    "EC-047",
+    "EC-048",
+    "EC-049",
+    "EC-050",
+    "EC-051",
+    "EC-052",
+    "EC-053",
+    "EC-054",
+    "EC-055",
+    "EC-056",
+    "EC-057",
+    "EC-058",
+    "EC-059",
+    "EC-060",
+    "EC-061"
+  ],
+  "package_invariants": ["EC-057", "EC-058", "EC-059", "EC-060", "EC-061"],
+  "evidence_requirements": {
+    "positive_witness": "required for every invariant and every allowed conditional branch",
+    "negative_mutation": "required for every rejectable invariant and applicable mutation class",
+    "result_states": ["pass", "fail", "blocked", "not-applicable"]
+  }
+}

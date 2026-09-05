@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dyfj:contracts:workbench:first-product:v1:corpus",
+  "title": "Workbench first-product contract corpus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "package_version", "profile", "expectation"],
+  "properties": {
+    "schema": { "const": "dyfj.workbench.first-product.corpus/v1" },
+    "package_version": { "const": "workbench.first-product/v1" },
+    "profile": {
+      "enum": ["first-product-solo-operator", "focused-rule-fixture"]
+    },
+    "title": { "type": "string", "maxLength": 120 },
+    "proves": {
+      "description": "Non-authoritative display metadata. The acceptance matrix is decided by test-owned predicates over the fixture's own witnesses, never by this list.",
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 16,
+      "items": { "type": "string", "pattern": "^P[0-9]{1,2}$" }
+    },
+    "expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["accept", "reject"] },
+        "rule": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$",
+          "maxLength": 64
+        },
+        "note": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/note"
+        }
+      }
+    },
+    "rooms": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/room"
+      }
+    },
+    "participants": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/participant"
+      }
+    },
+    "room_memberships": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/room_membership"
+      }
+    },
+    "threads": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/thread"
+      }
+    },
+    "agent_specs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/agent_spec"
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/task"
+      }
+    },
+    "runs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/run"
+      }
+    },
+    "routes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/route_spec"
+      }
+    },
+    "route_capability_reports": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/route_capability_report"
+      }
+    },
+    "route_sessions": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/route_session"
+      }
+    },
+    "context_packets": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/context_packet"
+      }
+    },
+    "capability_grants": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/capability_grant"
+      }
+    },
+    "registration_leases": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/registration_lease"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:domain#/$defs/artifact_ref"
+      }
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:events#/$defs/event"
+      }
+    },
+    "projections": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:views#/$defs/projection"
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:views#/$defs/receipt"
+      }
+    },
+    "deferrals": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "$ref": "urn:dyfj:contracts:workbench:first-product:v1:views#/$defs/deferral"
+      }
+    }
+  }
+}

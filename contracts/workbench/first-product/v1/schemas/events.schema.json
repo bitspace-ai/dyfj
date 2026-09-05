@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dyfj:contracts:workbench:first-product:v1:events",
+  "title": "Workbench first-product event envelope",
+  "$defs": {
+    "identifier": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identifier"
+    },
+    "tag": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/tag"
+    },
+    "note": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/note"
+    },
+    "sequence": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/sequence"
+    },
+    "revision": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/revision"
+    },
+    "evidence_item": {
+      "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/evidence_item"
+    },
+    "event_family": {
+      "enum": [
+        "message",
+        "task-transition",
+        "run",
+        "routing",
+        "tool-discovery",
+        "tool-invocation",
+        "skill-discovery",
+        "skill-invocation",
+        "process-provenance",
+        "approval",
+        "revocation",
+        "context-assembly",
+        "context-compaction",
+        "memory-proposal",
+        "memory-promotion",
+        "artifact",
+        "verification",
+        "cost",
+        "interrupt",
+        "receipt",
+        "projection"
+      ]
+    },
+    "typed_extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "authority",
+        "portability",
+        "opacity",
+        "tranche_status"
+      ],
+      "properties": {
+        "namespace": { "$ref": "#/$defs/tag" },
+        "authority": {
+          "enum": ["native-runner", "workbench", "shared-contract"]
+        },
+        "portability": {
+          "enum": ["native-only", "route-specific", "portable"]
+        },
+        "opacity": { "enum": ["governable", "observable", "opaque"] },
+        "tranche_status": { "enum": ["not-frozen", "frozen"] }
+      }
+    },
+    "state_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_kind",
+        "entity",
+        "from",
+        "to",
+        "entity_revision",
+        "progression_class",
+        "evidence"
+      ],
+      "properties": {
+        "entity_kind": { "enum": ["task", "run"] },
+        "entity": { "$ref": "#/$defs/identifier" },
+        "from": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/lifecycle_state"
+        },
+        "to": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/lifecycle_state"
+        },
+        "entity_revision": { "$ref": "#/$defs/revision" },
+        "progression_class": { "enum": ["required", "exceptional"] },
+        "caused_by_run": { "$ref": "#/$defs/identifier" },
+        "operator_decision": { "$ref": "#/$defs/identifier" },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/evidence_item" }
+        }
+      }
+    },
+    "durable_commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "atomic",
+        "state_committed",
+        "event_committed",
+        "commit_sequence",
+        "evidence"
+      ],
+      "properties": {
+        "atomic": { "type": "boolean" },
+        "state_committed": { "type": "boolean" },
+        "event_committed": { "type": "boolean" },
+        "commit_sequence": { "$ref": "#/$defs/sequence" },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/evidence_item" }
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity_basis",
+        "schema_version",
+        "workbench_instance",
+        "room",
+        "trace",
+        "author",
+        "author_class",
+        "family",
+        "type",
+        "at",
+        "sequence",
+        "authorization_basis",
+        "policy_basis",
+        "claim_source",
+        "labels",
+        "causal_parents"
+      ],
+      "description": "Envelope fields apply as applicable. An event body is carried inline or by governed artifact reference, never as both; an event family with no body carries neither, which is why this is an anyOf rather than an exclusive choice.",
+      "anyOf": [
+        { "properties": { "payload": false } },
+        { "properties": { "artifact_ref": false } }
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity_basis": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/identity_basis"
+        },
+        "schema_version": { "const": "workbench.first-product.event/v1" },
+        "workbench_instance": { "$ref": "#/$defs/tag" },
+        "room": { "$ref": "#/$defs/identifier" },
+        "thread": { "$ref": "#/$defs/identifier" },
+        "task": { "$ref": "#/$defs/identifier" },
+        "run": { "$ref": "#/$defs/identifier" },
+        "trace": { "$ref": "#/$defs/tag" },
+        "author": { "$ref": "#/$defs/identifier" },
+        "author_class": { "enum": ["human", "machine"] },
+        "authorizer": { "$ref": "#/$defs/identifier" },
+        "observers": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "family": { "$ref": "#/$defs/event_family" },
+        "type": { "$ref": "#/$defs/tag" },
+        "at": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/timestamp"
+        },
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "authorization_basis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "enum": [
+                "membership",
+                "grant",
+                "operator-direct",
+                "policy-default"
+              ]
+            },
+            "grant": { "$ref": "#/$defs/identifier" },
+            "membership": { "$ref": "#/$defs/identifier" },
+            "authorizing_event": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "policy_basis": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/policy_basis"
+        },
+        "claim_source": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/claim_source"
+        },
+        "labels": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/labels"
+        },
+        "payload": {
+          "$ref": "urn:dyfj:contracts:workbench:first-product:v1:common#/$defs/payload"
+        },
+        "artifact_ref": { "$ref": "#/$defs/identifier" },
+        "context_packet": { "$ref": "#/$defs/identifier" },
+        "causal_parents": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "supersedes": { "$ref": "#/$defs/identifier" },
+        "integrity_evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/evidence_item" }
+        },
+        "state_transition": { "$ref": "#/$defs/state_transition" },
+        "durable_commit": { "$ref": "#/$defs/durable_commit" },
+        "acknowledgement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["acknowledged", "sequence", "audience"],
+          "properties": {
+            "acknowledged": { "type": "boolean" },
+            "sequence": { "$ref": "#/$defs/sequence" },
+            "audience": { "enum": ["operator", "agent", "both"] }
+          }
+        },
+        "asynchronous": { "type": "boolean" },
+        "authoritative_source": { "$ref": "#/$defs/identifier" },
+        "writer_id": {
+          "description": "The durable substrate writer that committed this event. The first writer_id observed for a family is the inline authority record for that family's cutover sequence and writer; every later family event must name the same writer, so either an omitted or a competing post-cutover writer is rejected.",
+          "$ref": "#/$defs/tag"
+        },
+        "triggers_automated_summons": { "type": "boolean" },
+        "summons_exception_grant": { "$ref": "#/$defs/identifier" },
+        "extensions": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/typed_extension" }
+        }
+      }
+    }
+  }
+}
