@@ -84,7 +84,14 @@ dyfj sessions
 
 Inside the REPL, `/session` prints the current session id, `/model` shows or
 switches the active model (with optional `--fast` or `--no-fast`), `/fast [on|off]`
-toggles the fast speed tier for supported models, and `/quit` or `/exit` quits cleanly.
+toggles the fast speed tier for supported models,
+`/friction <sev> [--escaped] <text...>` posts a numbered daily-driver friction
+entry through the configured Linear MCP tools, and `/quit` or `/exit` quits
+cleanly. `/friction last` shows only the last successfully posted receipt from
+the current REPL. Its posted `Context:` line contains exactly the model slug,
+workspace basename, and previous slash command when one exists; the slash
+command is capped at 120 characters with a visible `…` marker, and free-text
+prompts and absolute workspace paths are never posted.
 
 The HTTP peer server is retired. UDS JSON-RPC is the only seam (`deno task serve-unix` / `dyfj`); a remote or browser surface returns later as a thin gateway client of that seam.
 
@@ -96,7 +103,33 @@ development use, the equivalent engine task is:
 deno task serve-unix
 ```
 
-It serves a duplex JSON-RPC 2.0 protocol — read methods for `runtime/status`, `surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`, and `tools/inspect`, plus streaming `turn` and cancellation `turn/cancel` methods — over a socket resolved from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running the shared turn core. `runtime/status` includes grouped method catalog metadata for client surfaces. The engine-free `dyfj` CLI reaches the read methods over it with `dyfj models` and `dyfj sessions`; after a TTY-backed UDS turn connects, Ctrl-C sends `turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY SIGINT behavior remains unchanged. After an autostarted server installs its SIGINT handler, when cancellation is the terminal outcome after the active provider or tool operation settles, the turn stops without stopping the runtime; a REPL allows another turn on the same session, while a one-shot exits with its interrupted receipt. An independent provider or protocol error that settles first remains an error rather than being masked. The launcher grants the concrete Unix-socket permission at runtime so custom `DYFJ_SOCKET` / `XDG_RUNTIME_DIR` paths keep working.
+It serves a duplex JSON-RPC 2.0 protocol — read methods for `runtime/status`,
+`surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`,
+and `tools/inspect`; the narrow operator-approved `friction/post` method; plus
+streaming `turn` and cancellation `turn/cancel` methods — over a socket resolved
+from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running
+the shared turn core. `friction/post` accepts
+`{ severity, escaped, text, context?: { sessionId, model, workspace, command } }`
+and returns `{ number, escapeNumber?, commentId, firstLine }`. The resulting
+`Context:` line contains exactly the model slug, workspace basename, and
+previous slash command when one exists; it never contains a free-text prompt or
+absolute workspace path. It reuses the configured `linear.get_issue` and
+`linear.create_comment` command policies and their redacted tool-call receipts.
+Set `DYFJ_FRICTION_ISSUE_ID` on the runtime to identify the operator's
+friction-checkpoint issue; `friction/post` fails at the `configuration` stage
+when the variable is unset or blank. `runtime/status` includes grouped method
+catalog metadata for client surfaces.
+The engine-free `dyfj` CLI reaches the read methods over it with `dyfj models`
+and `dyfj sessions`; after a TTY-backed UDS turn connects, Ctrl-C sends
+`turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY
+SIGINT behavior remains unchanged. After an autostarted server installs its
+SIGINT handler, when cancellation is the terminal outcome after the active
+provider or tool operation settles, the turn stops without stopping the runtime;
+a REPL allows another turn on the same session, while a one-shot exits with its
+interrupted receipt. An independent provider or protocol error that settles
+first remains an error rather than being masked. The launcher grants the
+concrete Unix-socket permission at runtime so custom `DYFJ_SOCKET` /
+`XDG_RUNTIME_DIR` paths keep working.
 
 The experimental `--runner fixture` selector takes the separate external-agent test path. It launches the repository's deterministic ACP v1 fixture over local stdio without a shell, passes only a profile-selected environment and the resolved workspace, and emits runner-specific outer evidence rather than model/provider accounting. Sequential turns that share a Workbench session, workspace, and execution profile reuse one live ACP worker and session; a concurrent turn for that same key fails as busy instead of queueing. Turn cancellation keeps a healthy handle; a protocol or process failure removes it so the next turn can create a replacement. Idle handles retire on a TTL, capacity fails closed without eviction, and UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight creation and for every started close to settle, then surface a retained close failure rather than reporting success. A shutdown failure exits with status 1. On an interactive TTY, ACP activity remains visible through the terminal result: thought/tool updates select a bounded label, text/status/approval output temporarily owns the terminal, and the indicator resumes with the original elapsed timer and a truthful generic `working…` label when no more specific activity is known. Raw thought text is not rendered, persisted, or replayed. Interactive Unix-socket clients render every accepted ACP permission option (up to 16) as a numbered choice and return the exact selected option identifier. Invalid input re-prompts inside the same exchange up to three times before failing closed; empty or closed input, non-interactive use, or an unavailable approver selects the request's rejection option when present, otherwise the request is cancelled. Empty option lists and empty or duplicate identifiers fail at protocol ingress. The same permission-selection contract applies to every ACP profile. On non-Windows systems, fixture containment requires `/bin/kill` with negative process-group support; Windows uses direct-child signaling. Initialization, prompt, cancellation acknowledgement, signal subprocesses, and child cleanup waits each have deadlines.
 

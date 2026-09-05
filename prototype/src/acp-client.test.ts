@@ -347,7 +347,7 @@ describe("runAcpAgent", () => {
     try {
       await Deno.writeTextFile(
         signaler,
-        "#!/bin/sh\ncase \"$3\" in -*) exit 1;; *) exit 0;; esac\n",
+        '#!/bin/sh\ncase "$3" in -*) exit 1;; *) exit 0;; esac\n',
       );
       await Deno.chmod(signaler, 0o700);
       await expect(assertProcessGroupSignaler(signaler)).rejects.toThrow(
@@ -1514,6 +1514,63 @@ describe("runAcpAgent", () => {
     expect(deltas).toEqual(["solution found"]);
     expect(result.text).toBe("solution found");
     expect(result.text).not.toContain("pondering problem");
+  });
+
+  test("merges bounded ACP tool updates into terminal evidence", async () => {
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_TOOL_HISTORY",
+    });
+    expect(result.text).toBe("recorded");
+    expect(result.toolEvidence).toEqual({
+      status: "complete",
+      observedCalls: 1,
+      calls: [{
+        toolCallId: "fixture-history-call",
+        title: "Read fixture history",
+        kind: "read",
+        status: "completed",
+        rawInputJson: '{"path":"fixture-history.txt"}',
+        rawOutputJson: '{"text":"codename=zephyr-quill-7"}',
+      }],
+    });
+  });
+
+  test.each([
+    ["FIXTURE_TOOL_HISTORY_DUPLICATE_ID", 1],
+    ["FIXTURE_TOOL_HISTORY_UNKNOWN_UPDATE", 0],
+    ["FIXTURE_TOOL_HISTORY_NONTERMINAL", 1],
+  ])(
+    "marks malformed or incomplete ACP tool history unavailable: %s",
+    async (prompt, observedCalls) => {
+      const result = await runAcpAgent({
+        profile: fixtureProfile(),
+        prompt,
+      });
+      expect(result.text).toBe("recorded");
+      expect(result.toolEvidence).toEqual({
+        status: "unavailable",
+        observedCalls,
+        calls: [],
+      });
+    },
+  );
+
+  test("marks interrupted ACP tool history unavailable", async () => {
+    const controller = new AbortController();
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_TOOL_HISTORY_INTERRUPTED",
+      abortSignal: controller.signal,
+      onProgress: (update) => {
+        if (update.kind === "tool_call") controller.abort();
+      },
+    });
+    expect(result.stopReason).toBe("aborted");
+    expect(result.toolEvidence).toMatchObject({
+      status: "unavailable",
+      calls: [],
+    });
   });
 
   test("a never-settling progress observer cannot stall the turn", async () => {

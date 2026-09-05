@@ -338,12 +338,28 @@ export function resolveTurnFromBody(
 async function buildResume(
   sessionId: string | undefined,
   fetchSessionEvents: FetchSessionEvents,
-): Promise<Pick<WorkbenchRuntimeInput, "sessionId" | "conversationMessages">> {
+): Promise<
+  Pick<
+    WorkbenchRuntimeInput,
+    "sessionId" | "conversationMessages" | "priorExternalSessionId"
+  >
+> {
   if (sessionId === undefined) return {};
   const priorEvents = await fetchSessionEvents({ sessionId });
+  // The most recent external session this Workbench session ran against.
+  // Carried as continuity evidence so a replacement native session can be
+  // reported as succeeding a named predecessor rather than appearing from
+  // nowhere.
+  let priorExternalSessionId: string | undefined;
+  for (const event of priorEvents) {
+    if (event.runnerExternalSessionId !== null) {
+      priorExternalSessionId = event.runnerExternalSessionId;
+    }
+  }
   return {
     sessionId,
     conversationMessages: buildConversationMessages(priorEvents),
+    ...(priorExternalSessionId === undefined ? {} : { priorExternalSessionId }),
   };
 }
 

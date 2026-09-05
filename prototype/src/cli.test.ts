@@ -12,6 +12,7 @@ import {
   formatReceipt,
   formatRuntimeEvent,
   formatRuntimeStatus,
+  handleReplFrictionCommand,
   handleReplFastCommand,
   handleReplIdeaCommand,
   handleReplModelCommand,
@@ -34,6 +35,7 @@ import {
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
   readServeUnixRunGrants,
+  type ReplSessionState,
   replPrompt,
   resolveConfig,
   runExec,
@@ -1816,6 +1818,83 @@ describe("runRepl", () => {
     expect((params[1] as { sessionId?: string }).sessionId).toBe("SESS1");
     expect(stdout.join("")).toContain("a");
     expect(stdout.join("")).toContain("b");
+  });
+
+  test("does not treat an unhandled slash-prefixed prompt as friction command context", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method, params) => {
+          calls.push({ method, params });
+          if (method === "turn") return Promise.resolve(result());
+          if (method === "friction/post") {
+            return Promise.resolve({
+              number: "F039",
+              commentId: "comment-39",
+              firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+            });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const prompt = "/unhandled free-text prompt";
+    const { io } = fakeIo([
+      prompt,
+      "/friction minor A concrete failure.",
+    ]);
+
+    await runRepl(cfg({ unix: true }), io, connect, false);
+
+    expect(calls.find((call) => call.method === "turn")?.params).toMatchObject({
+      prompt,
+    });
+    const frictionCall = calls.find((call) => call.method === "friction/post");
+    expect(frictionCall).toBeDefined();
+    expect((frictionCall?.params as { context: unknown }).context).not
+      .toHaveProperty("command");
+  });
+
+  test("forwards a consumed slash command as truncated friction context", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const previousSlashCommand = `/idea mark ${"x".repeat(200)}`;
+    const truncatedSlashCommand = previousSlashCommand.slice(0, 119) + "…";
+    const connect: ConnectFn = () =>
+      Promise.resolve({
+        request: (method, params) => {
+          calls.push({ method, params });
+          if (method === "turn") return Promise.resolve(result());
+          if (method === "ideas/mark") {
+            return Promise.resolve({
+              idea: {
+                ideaId: "idea-39",
+                label: "x".repeat(200),
+              },
+            });
+          }
+          if (method === "friction/post") {
+            return Promise.resolve({
+              number: "F039",
+              commentId: "comment-39",
+              firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+            });
+          }
+          return Promise.resolve(undefined);
+        },
+        close: () => {},
+      });
+    const { io } = fakeIo([
+      "establish the session",
+      previousSlashCommand,
+      "/friction minor A concrete failure.",
+    ]);
+
+    await runRepl(cfg({ unix: true }), io, connect, false);
+
+    const frictionCall = calls.find((call) => call.method === "friction/post");
+    expect(frictionCall?.params).toMatchObject({
+      context: { command: truncatedSlashCommand },
+    });
   });
 
   test("skips blank lines and exits on /exit", async () => {
@@ -3726,6 +3805,234 @@ describe("REPL /session command", () => {
   });
 });
 
+describe("REPL /friction command", () => {
+  test("help names the required friction-checkpoint configuration", async () => {
+    const { io, stderr } = fakeIo();
+    await handleReplFrictionCommand(
+      "/friction help",
+      cfg(),
+      io,
+      { turnCount: 0, sessionSpendUsd: 0 },
+    );
+    expect(stderr).toContain(
+      "  DYFJ_FRICTION_ISSUE_ID must be set on the runtime",
+    );
+    expect(stderr).toContain(
+      "  posted Context: model slug, workspace basename, previous slash command (if any)",
+    );
+    expect(stderr).toContain(
+      "  free-text prompts and absolute workspace paths are never posted",
+    );
+  });
+
+  test("forwards a truncated slash command and workspace basename", async () => {
+    const { io, stderr } = fakeIo();
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const previousSlashCommand = `/packet ${"x".repeat(200)}`;
+    const truncatedSlashCommand = previousSlashCommand.slice(0, 119) + "…";
+    expect(Array.from(truncatedSlashCommand)).toHaveLength(120);
+    let approvalHandlerPresent = false;
+    const fakeConnect: ConnectFn = (_socket, options) => {
+      approvalHandlerPresent = options?.onApproval !== undefined;
+      return Promise.resolve({
+        request: (method: string, params: unknown) => {
+          calls.push({ method, params });
+          return Promise.resolve({
+            number: "F039",
+            commentId: "comment-39",
+            firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+          });
+        },
+        close: () => {},
+      });
+    };
+    const state: ReplSessionState = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+      workspace: "/private/workspaces/example-repo",
+      lastModelSlug: "model-slug",
+      lastReplCommand: previousSlashCommand,
+    };
+
+    expect(
+      await handleReplFrictionCommand(
+        "/friction minor The command needed a multi-line paste.",
+        cfg({ unix: true }),
+        io,
+        state,
+        fakeConnect,
+      ),
+    ).toBe(true);
+
+    expect(approvalHandlerPresent).toBe(true);
+    expect(calls).toEqual([{
+      method: "friction/post",
+      params: {
+        severity: "minor",
+        escaped: false,
+        text: "The command needed a multi-line paste.",
+        context: {
+          sessionId: "01ACTIVE_SESS",
+          model: "model-slug",
+          workspace: "example-repo",
+          command: truncatedSlashCommand,
+        },
+      },
+    }]);
+    expect(stderr).toEqual([
+      "F039 · 2026-09-03 · minor · escaped? no",
+      "comment id: comment-39",
+    ]);
+    expect(state.lastFriction?.commentId).toBe("comment-39");
+  });
+
+  test("does not forward a free-text previous input", async () => {
+    const { io } = fakeIo();
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const state: ReplSessionState = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 1,
+      sessionSpendUsd: 0,
+      workspace: "/private/workspaces/example-repo",
+      lastModelSlug: "model-slug",
+      lastReplCommand: "Summarize the operator's private notes.",
+    };
+
+    await handleReplFrictionCommand(
+      "/friction minor A concrete failure.",
+      cfg({ unix: true }),
+      io,
+      state,
+      () =>
+        Promise.resolve({
+          request: (method: string, params: unknown) => {
+            calls.push({ method, params });
+            return Promise.resolve({
+              number: "F039",
+              commentId: "comment-39",
+              firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+            });
+          },
+          close: () => {},
+        }),
+    );
+
+    expect(calls[0]).toMatchObject({
+      method: "friction/post",
+      params: {
+        context: {
+          sessionId: "01ACTIVE_SESS",
+          model: "model-slug",
+          workspace: "example-repo",
+        },
+      },
+    });
+    expect((calls[0].params as { context: unknown }).context).not
+      .toHaveProperty(
+        "command",
+      );
+  });
+
+  test("last shows only a previously successful receipt", async () => {
+    const { io, stderr } = fakeIo();
+    const state = {
+      turnCount: 0,
+      sessionSpendUsd: 0,
+      lastFriction: {
+        number: "F039",
+        commentId: "comment-39",
+        firstLine: "F039 · 2026-09-03 · minor · escaped? no",
+      },
+    };
+    await handleReplFrictionCommand(
+      "/friction last",
+      cfg(),
+      io,
+      state,
+    );
+    expect(stderr).toEqual([
+      "F039 · 2026-09-03 · minor · escaped? no",
+      "comment id: comment-39",
+    ]);
+  });
+
+  test("reports the failed call without printing an unposted number", async () => {
+    const { io, stderr } = fakeIo();
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 0,
+      sessionSpendUsd: 0,
+    };
+    await handleReplFrictionCommand(
+      "/friction major A concrete failure.",
+      cfg(),
+      io,
+      state,
+      () =>
+        Promise.resolve({
+          request: () =>
+            Promise.reject(
+              new DomainError("create_comment failed: operator declined"),
+            ),
+          close: () => {},
+        }),
+    );
+    expect(stderr.join("\n")).toContain(
+      "create_comment failed: operator declined",
+    );
+    expect(stderr.join("\n")).not.toMatch(/F\d{3}/);
+    expect(state).not.toHaveProperty("lastFriction");
+  });
+
+  test("prints the configuration stage without an unposted number", async () => {
+    const { io, stderr } = fakeIo();
+    const state = {
+      sessionId: "01ACTIVE_SESS",
+      turnCount: 0,
+      sessionSpendUsd: 0,
+    };
+    await handleReplFrictionCommand(
+      "/friction minor A concrete failure.",
+      cfg(),
+      io,
+      state,
+      () =>
+        Promise.resolve({
+          request: () =>
+            Promise.reject(
+              new DomainError(
+                "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+              ),
+            ),
+          close: () => {},
+        }),
+    );
+    expect(stderr).toEqual([
+      "friction capture failed: configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+    ]);
+    expect(stderr.join("\n")).not.toMatch(/F\d{3}/);
+    expect(state).not.toHaveProperty("lastFriction");
+  });
+
+  test("rejects an invalid severity without connecting", async () => {
+    const { io, stderr } = fakeIo();
+    let connected = false;
+    await handleReplFrictionCommand(
+      "/friction trivial A concrete failure.",
+      cfg(),
+      io,
+      { turnCount: 0, sessionSpendUsd: 0 },
+      () => {
+        connected = true;
+        throw new Error("must not connect");
+      },
+    );
+    expect(connected).toBe(false);
+    expect(stderr.join("\n")).toContain("invalid friction severity");
+  });
+});
+
 describe("REPL /idea command", () => {
   test("/idea mark captures an idea and emits next-step hint", async () => {
     const { io, stderr } = fakeIo();
@@ -5101,11 +5408,24 @@ describe("presentation", () => {
         transport: "local_stdio",
         accessRoute: "local_sidecar",
         costBasis: "local_free",
+        continuity: {
+          state: "reconstructed",
+          claimSource: "workbench_observed",
+          durableResume: "unavailable-client-verification",
+          priorMessagesProjected: 4,
+          toolExchangesProjected: 1,
+          priorExternalSessionId: "fixture-previous",
+        },
         evidence: {
           source: "acp",
           innerState: "opaque",
           toolchainDirectoryCount: 0,
           routeSource: "profile_declared",
+        },
+        toolEvidence: {
+          status: "complete",
+          observedCalls: 0,
+          recordedCalls: 0,
         },
         elapsedMs: 12,
       },
@@ -5114,9 +5434,13 @@ describe("presentation", () => {
     };
     const formatted = formatReceipt(external, false);
     expect(formatted).toContain(
-      "fixture · acp v1 · local_stdio · local_sidecar · $0 · 12ms",
+      "fixture · acp v1 · local_stdio · local_sidecar · $0",
     );
+    expect(formatted).toContain("· 12ms · explicit_external_agent");
     expect(formatted).not.toContain("tok");
+    expect(formatted).toContain(
+      "continuity reconstructed 4msg/1tool · native session replaced · ACP tools 0/0 recorded",
+    );
   });
 
   test("formatReceipt shows ACP usage while preserving its cost semantics", () => {
@@ -5140,6 +5464,11 @@ describe("presentation", () => {
           source: "acp" as const,
           innerState: "opaque" as const,
           toolchainDirectoryCount: 0 as const,
+        },
+        toolEvidence: {
+          status: "complete" as const,
+          observedCalls: 0,
+          recordedCalls: 0,
         },
         usage: {
           source: "acp" as const,

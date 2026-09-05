@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
+  executeTurn,
   formatTurnSummaryLine,
   PAID_ESCALATION_NOT_APPROVED,
   PAID_ESCALATION_REMOTE_DENIED,
   paidEscalationVerdict,
   resolveTurnFromBody,
 } from "./turn-runner";
+import { fetchWorkbenchSessionEvents } from "./sessions";
 
 describe("resolveTurnFromBody paid posture", () => {
   test("selects the fixture runner only for a loopback turn", () => {
@@ -148,6 +150,44 @@ describe("paidEscalationVerdict", () => {
       decision: "deny",
       reason: PAID_ESCALATION_NOT_APPROVED,
     });
+  });
+});
+
+describe("executeTurn persisted-history boundary", () => {
+  test("corrupt persisted tool history fails before runtime model work", async () => {
+    const sessionId = "01ABCDEF0123456789ABCDEF01";
+    const events = await fetchWorkbenchSessionEvents({
+      sessionId,
+      query: () =>
+        Promise.resolve([{
+          event_id: "tool-event",
+          event_type: "tool_call",
+          trace_id: "trace",
+          principal_id: "workbench",
+          tool_name: "read_file",
+          tool_call_id: "call-1",
+          tool_arguments: "not-json",
+          tool_result: "README.md",
+          tool_is_error: "0",
+          created_at: "2026-09-01 12:00:00",
+        }]),
+    });
+    const resolved = resolveTurnFromBody({
+      prompt: "what did it find?",
+      sessionId,
+    }, true);
+    if ("error" in resolved) throw new Error(resolved.error);
+    let runtimeCalled = false;
+    await expect(executeTurn(resolved, {
+      authContext: {} as never,
+      loopback: true,
+      fetchSessionEvents: () => Promise.resolve(events),
+      runRuntime: () => {
+        runtimeCalled = true;
+        return Promise.reject(new Error("runtime must not start"));
+      },
+    })).rejects.toThrow("Session contains malformed persisted tool history");
+    expect(runtimeCalled).toBe(false);
   });
 });
 

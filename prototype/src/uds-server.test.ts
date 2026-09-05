@@ -81,6 +81,75 @@ const externalReadCommand: CommandDefinition<string> = {
   executor: () => "result",
 };
 
+function frictionCommands(input: {
+  comments?: string[];
+  getIssueError?: string;
+  createCommentError?: string;
+  createdBodies?: string[];
+} = {}): CommandDefinition[] {
+  return [
+    {
+      id: "mcp.linear.get_issue",
+      title: "External MCP: linear/get_issue",
+      description: "Configured external MCP read.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["read.external", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["mcp:linear/get_issue"],
+        network: "configured-external",
+        filesystem: "none",
+        cost: "none",
+      },
+      minimumClearance: "loopback",
+      redactArguments: true,
+      redactResult: true,
+      executor: () => {
+        if (input.getIssueError) throw new Error(input.getIssueError);
+        return {
+          id: "issue-uuid",
+          comments: (input.comments ?? []).map((body) => ({ body })),
+        };
+      },
+    },
+    {
+      id: "mcp.linear.create_comment",
+      title: "External MCP: linear/create_comment",
+      description: "Configured external MCP write.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          issueId: { type: "string" },
+          body: { type: "string" },
+        },
+        required: ["issueId", "body"],
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["write.external", "emit.event"],
+        defaultDecision: "ask",
+        resources: ["mcp:linear/create_comment"],
+        network: "configured-external",
+        filesystem: "none",
+        cost: "none",
+      },
+      minimumClearance: "loopback",
+      redactArguments: true,
+      redactResult: true,
+      executor: (call) => {
+        if (input.createCommentError) throw new Error(input.createCommentError);
+        input.createdBodies?.push(String(call.arguments.body));
+        return { id: "comment-created" };
+      },
+    },
+  ];
+}
+
 type EngineConfig = NonNullable<WorkbenchUnixServerOptions["engineConfig"]>;
 function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
   return {
@@ -333,6 +402,7 @@ describe("serveWorkbenchUnix read methods", () => {
           "sessions/list",
           "sessions/inspect",
           "events/query",
+          "friction/post",
           "ideas/mark",
           "ideas/list",
           "ideas/get",
@@ -353,6 +423,7 @@ describe("serveWorkbenchUnix read methods", () => {
           { id: "sessions/list", namespace: "sessions", kind: "read" },
           { id: "sessions/inspect", namespace: "sessions", kind: "read" },
           { id: "events/query", namespace: "events", kind: "read" },
+          { id: "friction/post", namespace: "friction", kind: "interactive" },
           { id: "ideas/mark", namespace: "ideas", kind: "interactive" },
           { id: "ideas/list", namespace: "ideas", kind: "read" },
           { id: "ideas/get", namespace: "ideas", kind: "read" },
@@ -394,6 +465,7 @@ describe("serveWorkbenchUnix read methods", () => {
           get isAlive() {
             return !closed;
           },
+          durableSessionLoad: false,
           prompt: async () => ({
             text: "",
             stopReason: "stop" as const,
@@ -438,6 +510,7 @@ describe("serveWorkbenchUnix read methods", () => {
           get isAlive() {
             return !closed;
           },
+          durableSessionLoad: false,
           prompt: async () => ({
             text: "",
             stopReason: "stop" as const,
@@ -528,6 +601,7 @@ describe("serveWorkbenchUnix read methods", () => {
           get isAlive() {
             return !closed;
           },
+          durableSessionLoad: false,
           prompt: async () => ({
             text: "",
             stopReason: "stop" as const,
@@ -603,6 +677,151 @@ describe("serveWorkbenchUnix read methods", () => {
       },
     );
     expect(received).toEqual([externalReadCommand]);
+  });
+
+  test("friction/post numbers comments and preserves write approval", async () => {
+    const createdBodies: string[] = [];
+    const approvals: unknown[] = [];
+    const receiptEvents: Record<string, unknown>[] = [];
+    const client = await connectClient(
+      await startServer({
+        ...fakes,
+        frictionIssueId: "CHECKPOINT-1",
+        frictionNow: () => new Date(2026, 8, 3, 12),
+        frictionEventWriter: (event) => {
+          receiptEvents.push(event);
+        },
+        externalMcpCommands: frictionCommands({
+          comments: ["F008 · prior", "F010 · E002 · prior escape"],
+          createdBodies,
+        }),
+      }),
+      {
+        approval: (request) => {
+          approvals.push(request);
+          return { decision: "approve" };
+        },
+      },
+    );
+
+    expect(
+      await client.request("friction/post", {
+        severity: "paper-cut",
+        escaped: true,
+        text: "A concrete operator moment.",
+        context: {
+          sessionId: "01FRICTIONSESSION00000000000",
+          model: "model-slug",
+          workspace: "/workspace",
+          command: "/packet draft",
+        },
+      }),
+    ).toEqual({
+      number: "F011",
+      escapeNumber: "E003",
+      commentId: "comment-created",
+      firstLine: "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes",
+    });
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({
+      commandId: "mcp.linear.create_comment",
+    });
+    expect(receiptEvents).toHaveLength(2);
+    expect(receiptEvents.map((event) => event.tool_name)).toEqual([
+      "mcp.linear.get_issue",
+      "mcp.linear.create_comment",
+    ]);
+    expect(receiptEvents[1]).toMatchObject({
+      authz_basis: "policy:allow:operator-approved",
+      tool_arguments: '{"issueId":"[redacted]","body":"[redacted]"}',
+      tool_result: "[redacted]",
+    });
+    expect(createdBodies[0]).toContain(
+      "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes",
+    );
+  });
+
+  test("friction/post validates severity before reading Linear", async () => {
+    let reads = 0;
+    const commands = frictionCommands();
+    commands[0].executor = () => {
+      reads++;
+      return { comments: [] };
+    };
+    const client = await connectClient(
+      await startServer({ ...fakes, externalMcpCommands: commands }),
+    );
+
+    await expect(client.request("friction/post", {
+      severity: "trivial",
+      escaped: false,
+      text: "moment",
+    })).rejects.toMatchObject({ code: RpcErrorCode.invalidParams });
+    expect(reads).toBe(0);
+  });
+
+  test.each([undefined, "   "])(
+    "friction/post requires the operator's friction-checkpoint issue and emits no receipt",
+    async (frictionIssueId) => {
+      let reads = 0;
+      let writes = 0;
+      const receiptEvents: Record<string, unknown>[] = [];
+      const commands = frictionCommands();
+      commands[0].executor = () => {
+        reads++;
+        return { comments: [] };
+      };
+      commands[1].executor = () => {
+        writes++;
+        return { id: "comment-created" };
+      };
+      const client = await connectClient(
+        await startServer({
+          ...fakes,
+          frictionIssueId,
+          externalMcpCommands: commands,
+          frictionEventWriter: (event) => {
+            receiptEvents.push(event);
+          },
+        }),
+      );
+
+      await expect(client.request("friction/post", {
+        severity: "minor",
+        escaped: false,
+        text: "moment",
+      })).rejects.toMatchObject({
+        message: expect.stringContaining(
+          "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+        ),
+      });
+      expect(reads).toBe(0);
+      expect(writes).toBe(0);
+      expect(receiptEvents).toEqual([]);
+    },
+  );
+
+  test("friction/post names create_comment failure and emits no receipt", async () => {
+    const client = await connectClient(
+      await startServer({
+        ...fakes,
+        frictionIssueId: "EX-100",
+        externalMcpCommands: frictionCommands({
+          createCommentError: "fixture refused",
+        }),
+        frictionEventWriter: () => {},
+      }),
+      { approval: () => ({ decision: "approve" }) },
+    );
+
+    await expect(client.request("friction/post", {
+      severity: "minor",
+      escaped: false,
+      text: "moment",
+      context: { sessionId: "01FRICTIONSESSION00000000000" },
+    })).rejects.toMatchObject({
+      message: expect.stringContaining("create_comment failed"),
+    });
   });
 
   test("tools/inspect returns one tool schema", async () => {
@@ -1664,4 +1883,3 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
     });
   });
 });
-

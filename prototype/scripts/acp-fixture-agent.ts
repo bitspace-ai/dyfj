@@ -13,9 +13,8 @@ if (pidFile !== undefined) await Deno.writeTextFile(pidFile, String(Deno.pid));
 const grandchildPidFile = Deno.args.find((arg) =>
   arg.startsWith("--grandchild-pid-file=")
 )?.slice("--grandchild-pid-file=".length);
-const methodLogFile = Deno.args.find((arg) =>
-  arg.startsWith("--method-log=")
-)?.slice("--method-log=".length);
+const methodLogFile = Deno.args.find((arg) => arg.startsWith("--method-log="))
+  ?.slice("--method-log=".length);
 
 async function logMethod(method: string): Promise<void> {
   if (methodLogFile === undefined) return;
@@ -529,6 +528,102 @@ const app = agent({ name: "dyfj-acp-fixture" })
         }
         return { stopReason: "end_turn" };
       }
+      if (
+        prompt.includes("FIXTURE_TOOL_HISTORY_DUPLICATE_ID")
+      ) {
+        for (let index = 0; index < 2; index++) {
+          await context.notify(methods.client.session.update, {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "fixture-duplicate-call",
+              title: "Read duplicate fixture",
+              kind: "read",
+              status: "completed",
+              rawInput: { path: "duplicate-fixture.txt" },
+              rawOutput: { text: `duplicate-${index}` },
+            },
+          });
+        }
+        await chunk(context, params.sessionId, "recorded");
+        return { stopReason: "end_turn" };
+      }
+      if (
+        prompt.includes("FIXTURE_TOOL_HISTORY_UNKNOWN_UPDATE")
+      ) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "fixture-unknown-call",
+            status: "completed",
+            rawOutput: { text: "unknown" },
+          },
+        });
+        await chunk(context, params.sessionId, "recorded");
+        return { stopReason: "end_turn" };
+      }
+      if (
+        prompt.includes("FIXTURE_TOOL_HISTORY_NONTERMINAL")
+      ) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "fixture-nonterminal-call",
+            title: "Read nonterminal fixture",
+            kind: "read",
+            status: "in_progress",
+            rawInput: { path: "nonterminal-fixture.txt" },
+          },
+        });
+        await chunk(context, params.sessionId, "recorded");
+        return { stopReason: "end_turn" };
+      }
+      if (
+        prompt.includes("FIXTURE_TOOL_HISTORY_INTERRUPTED")
+      ) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "fixture-interrupted-call",
+            title: "Read interrupted fixture",
+            kind: "read",
+            status: "in_progress",
+            rawInput: { path: "interrupted-fixture.txt" },
+          },
+        });
+        await fixture.cancel.promise;
+        return { stopReason: "cancelled" };
+      }
+      if (
+        prompt.includes("FIXTURE_TOOL_HISTORY") &&
+        !prompt.includes("FIXTURE_RECALL")
+      ) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "fixture-history-call",
+            title: "Read fixture history",
+            kind: "read",
+            status: "in_progress",
+            rawInput: { path: "fixture-history.txt" },
+          },
+        });
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "fixture-history-call",
+            status: "completed",
+            rawOutput: { text: "codename=zephyr-quill-7" },
+          },
+        });
+        await chunk(context, params.sessionId, "recorded");
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_THOUGHT_AND_PROGRESS")) {
         await context.notify(methods.client.session.update, {
           sessionId: params.sessionId,
@@ -548,6 +643,18 @@ const app = agent({ name: "dyfj-acp-fixture" })
           },
         });
         await chunk(context, params.sessionId, "solution found");
+        return { stopReason: "end_turn" };
+      }
+      if (prompt.includes("FIXTURE_RECALL")) {
+        // The fixture agent keeps no memory of its own, so this answer can only
+        // come from an antecedent present in the prompt it received — which is
+        // what makes it an oracle for reconstructed continuity.
+        const codename = /codename=([A-Za-z0-9-]{1,64})/.exec(prompt);
+        await chunk(
+          context,
+          params.sessionId,
+          codename === null ? "recalled=none" : `recalled=${codename[1]}`,
+        );
         return { stopReason: "end_turn" };
       }
       if (prompt.includes("FIXTURE_MAX_TOKENS")) {

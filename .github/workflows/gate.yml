@@ -64,7 +64,7 @@ jobs:
       # The only third-party action; pinned by full commit digest, with
       # Dependabot watching for digest updates.
       - name: Check out the subject commit
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history so the bound release range resolves to the exact
           # base commit.
@@ -118,7 +118,7 @@ jobs:
       DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - name: Check out the subject commit
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false

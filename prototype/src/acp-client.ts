@@ -105,6 +105,33 @@ export interface AcpUsageSnapshot {
   };
 }
 
+export interface AcpToolCallEvidence {
+  toolCallId: string;
+  title: string;
+  name?: string;
+  kind?: string;
+  status: "completed" | "failed";
+  rawInputJson: string;
+  rawOutputJson: string;
+}
+
+/**
+ * Bounded tool evidence observed on the ACP update stream. `unavailable`
+ * carries no raw values: callers can durably record the gap without retaining
+ * the incomplete or oversized material that caused it.
+ */
+export type AcpToolEvidence =
+  | {
+    status: "complete";
+    observedCalls: number;
+    calls: AcpToolCallEvidence[];
+  }
+  | {
+    status: "unavailable";
+    observedCalls: number;
+    calls: [];
+  };
+
 export interface AcpRunInput {
   profile: AcpExecutionProfile;
   prompt: string;
@@ -144,6 +171,7 @@ export interface AcpRunResult {
   routeEvidence?: AcpRouteEvidence;
   usage?: AcpTokenUsage;
   usageSnapshot?: AcpUsageSnapshot;
+  toolEvidence?: AcpToolEvidence;
   elapsedMs: number;
 }
 
@@ -166,6 +194,13 @@ export interface AcpSessionStartInput {
 export interface AcpSessionHandle {
   readonly isAlive: boolean;
   readonly routeEvidence?: AcpRouteEvidence;
+  /**
+   * Whether the connected agent advertised `agentCapabilities.loadSession`
+   * (ACP `session/load`) during initialize. Runner-reported capability
+   * evidence, not a promise that Workbench can verify a loaded session's
+   * identity — the continuity decision requires both.
+   */
+  readonly durableSessionLoad: boolean;
   prompt(input: AcpPromptInput): Promise<AcpRunResult>;
   close(): Promise<void>;
 }
@@ -1050,6 +1085,141 @@ function toolCallProgressFromUpdate(
   };
 }
 
+const MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES = 8_192;
+
+interface MutableAcpToolCallEvidence {
+  toolCallId: string;
+  title?: string;
+  name?: string;
+  kind?: string;
+  status?: string;
+  rawInputJson?: string;
+  rawOutputJson?: string;
+}
+
+interface AcpToolEvidenceAccumulator {
+  calls: Map<string, MutableAcpToolCallEvidence>;
+  invalid: boolean;
+}
+
+function boundedJson(value: unknown): string | undefined {
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+  if (json === undefined) return undefined;
+  return new TextEncoder().encode(json).byteLength <=
+      MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES
+    ? json
+    : undefined;
+}
+
+function optionalToolField(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 &&
+      new TextEncoder().encode(value).byteLength <=
+        MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES
+    ? value
+    : undefined;
+}
+
+function applyAcpToolPatch(
+  accumulator: AcpToolEvidenceAccumulator,
+  update: Record<string, unknown>,
+): void {
+  if (
+    update.sessionUpdate !== "tool_call" &&
+    update.sessionUpdate !== "tool_call_update"
+  ) {
+    return;
+  }
+  const toolCallId = optionalToolField(update.toolCallId);
+  if (toolCallId === undefined) {
+    accumulator.invalid = true;
+    return;
+  }
+  let call = accumulator.calls.get(toolCallId);
+  if (update.sessionUpdate === "tool_call") {
+    if (call !== undefined) {
+      accumulator.invalid = true;
+      return;
+    }
+    call = { toolCallId };
+    accumulator.calls.set(toolCallId, call);
+  } else if (call === undefined) {
+    accumulator.invalid = true;
+    return;
+  }
+  const patchString = (
+    key: "title" | "name" | "kind" | "status",
+  ): void => {
+    if (!Object.hasOwn(update, key)) return;
+    const value = optionalToolField(update[key]);
+    if (value === undefined) {
+      if (
+        key === "name" && update.sessionUpdate === "tool_call_update" &&
+        update[key] === null
+      ) {
+        return;
+      }
+      if (update[key] !== null) accumulator.invalid = true;
+      delete call![key];
+      return;
+    }
+    call![key] = value;
+  };
+  patchString("title");
+  patchString("name");
+  patchString("kind");
+  patchString("status");
+  for (
+    const [wireKey, targetKey] of [
+      ["rawInput", "rawInputJson"],
+      ["rawOutput", "rawOutputJson"],
+    ] as const
+  ) {
+    if (!Object.hasOwn(update, wireKey)) continue;
+    const json = boundedJson(update[wireKey]);
+    if (json === undefined) {
+      accumulator.invalid = true;
+      delete call[targetKey];
+    } else {
+      call[targetKey] = json;
+    }
+  }
+}
+
+function finishAcpToolEvidence(
+  accumulator: AcpToolEvidenceAccumulator,
+): AcpToolEvidence {
+  const observedCalls = accumulator.calls.size;
+  if (accumulator.invalid) {
+    return { status: "unavailable", observedCalls, calls: [] };
+  }
+  const calls: AcpToolCallEvidence[] = [];
+  for (const call of accumulator.calls.values()) {
+    if (
+      call.title === undefined ||
+      (call.name === undefined && call.kind === undefined) ||
+      (call.status !== "completed" && call.status !== "failed") ||
+      call.rawInputJson === undefined || call.rawOutputJson === undefined
+    ) {
+      return { status: "unavailable", observedCalls, calls: [] };
+    }
+    calls.push({
+      toolCallId: call.toolCallId,
+      title: call.title,
+      ...(call.name === undefined ? {} : { name: call.name }),
+      ...(call.kind === undefined ? {} : { kind: call.kind }),
+      status: call.status,
+      rawInputJson: call.rawInputJson,
+      rawOutputJson: call.rawOutputJson,
+    });
+  }
+  return { status: "complete", observedCalls, calls };
+}
+
 function nonnegativeSafeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
@@ -1212,6 +1382,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
       agentVersion: undefined,
       ...verifiedEvidence,
       capabilities: evidence.capabilities ?? [],
+      toolEvidence: { status: "complete", observedCalls: 0, calls: [] },
       ...(routeEvidence === undefined ? {} : { routeEvidence }),
       elapsedMs: Date.now() - startedAt,
     };
@@ -1280,6 +1451,7 @@ class LiveAcpSession implements AcpSessionHandle {
   #capabilities: string[] = [];
   #routeEvidence: AcpRouteEvidence | undefined;
   #closeCapability = false;
+  #durableSessionLoad = false;
   #lifecycleAbort = Promise.withResolvers<void>();
 
   constructor(input: AcpSessionStartInput) {
@@ -1313,6 +1485,10 @@ class LiveAcpSession implements AcpSessionHandle {
 
   get routeEvidence(): AcpRouteEvidence | undefined {
     return this.#routeEvidence;
+  }
+
+  get durableSessionLoad(): boolean {
+    return this.#durableSessionLoad;
   }
 
   async prompt(input: AcpPromptInput): Promise<AcpRunResult> {
@@ -1365,6 +1541,7 @@ class LiveAcpSession implements AcpSessionHandle {
           text: "",
           stopReason: "aborted" as const,
           ...resultEvidence,
+          toolEvidence: { status: "complete", observedCalls: 0, calls: [] },
           elapsedMs: Date.now() - startedAt,
         };
       }
@@ -1379,6 +1556,10 @@ class LiveAcpSession implements AcpSessionHandle {
       if (input.abortSignal?.aborted) requestCancelAndWake();
       let text = "";
       let usageSnapshot: AcpUsageSnapshot | undefined;
+      const toolEvidence: AcpToolEvidenceAccumulator = {
+        calls: new Map(),
+        invalid: false,
+      };
       let updateCount = 0;
       let pendingUpdate = session.nextUpdate();
       while (true) {
@@ -1470,6 +1651,7 @@ class LiveAcpSession implements AcpSessionHandle {
           if (toolProgress !== null) {
             deliverProgress(input.onProgress, toolProgress);
           }
+          applyAcpToolPatch(toolEvidence, updateRecord);
           pendingUpdate = session.nextUpdate();
           continue;
         }
@@ -1498,6 +1680,7 @@ class LiveAcpSession implements AcpSessionHandle {
           ...resultEvidence,
           ...(usage === undefined ? {} : { usage }),
           ...(usageSnapshot === undefined ? {} : { usageSnapshot }),
+          toolEvidence: finishAcpToolEvidence(toolEvidence),
           elapsedMs: Date.now() - startedAt,
         };
       }
@@ -1512,6 +1695,7 @@ class LiveAcpSession implements AcpSessionHandle {
           text: "",
           stopReason: "aborted",
           ...resultEvidence,
+          toolEvidence: { status: "unavailable", observedCalls: 0, calls: [] },
           elapsedMs: Date.now() - startedAt,
         };
       }
@@ -1630,6 +1814,8 @@ class LiveAcpSession implements AcpSessionHandle {
             );
           this.#closeCapability =
             !!initialized.agentCapabilities?.sessionCapabilities?.close;
+          this.#durableSessionLoad =
+            initialized.agentCapabilities?.loadSession === true;
           let pendingRouteEvidence: AcpRouteEvidence;
           if (profile.requiredAuthentication === "chat-gpt") {
             let authenticationStatus: unknown;
