@@ -814,12 +814,14 @@ describe("runAcpAgent", () => {
   });
 
   test("allows approval after a confirmation outlasts the active prompt budget", async () => {
+    // Exact deadline arithmetic is covered above; leave slack for real IPC.
+    const promptTimeoutMs = 1_000;
     const prompted = Promise.withResolvers<void>();
     const decision = Promise.withResolvers<{ optionId: string }>();
     const verdicts: string[] = [];
     let confirmationCancelled = false;
     const resultPromise = runAcpAgent({
-      profile: fixtureProfile({ promptTimeoutMs: 50 }),
+      profile: fixtureProfile({ promptTimeoutMs }),
       prompt: "FIXTURE_PERMISSION",
       confirmPermission: (_permission, signal) => {
         prompted.resolve();
@@ -833,7 +835,7 @@ describe("runAcpAgent", () => {
       },
     });
     await prompted.promise;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, promptTimeoutMs + 100));
     decision.resolve({ optionId: "allow" });
     await expect(resultPromise).resolves.toMatchObject({
       text: "approved",
@@ -844,12 +846,13 @@ describe("runAcpAgent", () => {
   });
 
   test("keeps the deadline paused until overlapping confirmations settle and honors both verdicts", async () => {
+    const promptTimeoutMs = 1_000;
     const prompted = Promise.withResolvers<void>();
     const firstDecision = Promise.withResolvers<{ optionId: string }>();
     const secondDecision = Promise.withResolvers<{ optionId: string }>();
     let confirmations = 0;
     const resultPromise = runAcpAgent({
-      profile: fixtureProfile({ promptTimeoutMs: 50 }),
+      profile: fixtureProfile({ promptTimeoutMs }),
       prompt: "FIXTURE_PERMISSION_OVERLAP",
       confirmPermission: () => {
         confirmations += 1;
@@ -860,9 +863,9 @@ describe("runAcpAgent", () => {
       },
     });
     await prompted.promise;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, promptTimeoutMs + 100));
     firstDecision.resolve({ optionId: "allow" });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, promptTimeoutMs + 100));
     secondDecision.resolve({ optionId: "deny" });
     await expect(resultPromise).resolves.toMatchObject({
       text: "denied",

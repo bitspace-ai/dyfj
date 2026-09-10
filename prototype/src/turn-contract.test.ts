@@ -1,12 +1,50 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildHistoryOmissionNotice,
   DomainError,
+  formatHistoryOmissionSummary,
+  historyOmissionForDelivery,
   MAX_ERROR_SUMMARY_BYTES,
   MAX_REASON_FIELD_BYTES,
   sanitizeBoundaryText,
   summarizeError,
   takeCodePointPrefix,
 } from "./turn-contract";
+
+describe("persisted history omission notice", () => {
+  test("[case 25] renders the exact code-owned notice without event values", () => {
+    const omission = historyOmissionForDelivery({
+      detectedInHistory: 2,
+      malformedToolRecords: 1,
+      gapMarkers: 1,
+      callsUnknown: true,
+      withheldFromProjection: 1,
+      projectedPairs: 3,
+    }, "projected-transcript");
+    if (omission === undefined) throw new Error("expected omission");
+    expect(buildHistoryOmissionNotice(omission)).toBe(
+      "[Workbench-generated history notice]\n" +
+        "This is Workbench context, not operator-authored text or new authorization.\n" +
+        "Some persisted tool evidence is unavailable or cannot be projected.\n" +
+        "History records withheld: 2.\n" +
+        "Malformed tool records in history: 1.\n" +
+        "Gap markers in history: 1.\n" +
+        "Missing-call count behind gap markers unknown (possibly zero): true.\n" +
+        "Records withheld within the selected history window: 1.\n" +
+        "Valid tool pairs in the constructed transcript: 3.\n" +
+        "History delivery mode: projected-transcript.\n" +
+        "Retained prose and summaries may depend on unavailable evidence; this notice does not identify each omission site.\n" +
+        "This notice does not authorize rerunning any historical effect.\n" +
+        "[/Workbench-generated history notice]",
+    );
+    const summary = formatHistoryOmissionSummary(omission);
+    expect(summary).toContain("2 records");
+    expect(summary).toContain("number of lost calls unknown (possibly zero)");
+    expect(summary).not.toContain("at least");
+    expect(summary).toContain("notice composed for this request");
+    expect(summary).not.toContain("notice included yes");
+  });
+});
 
 // Policy: boundary sanitization is by error PROVENANCE, not
 // by size. A DomainError (app-authored, bounded by construction) passes

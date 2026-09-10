@@ -39,6 +39,10 @@ import {
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   DomainError,
+  formatHistoryOmissionSummary,
+  historyOmissionForDelivery,
+  type HistoryOmissionReceipt,
+  prependHistoryOmissionNotice,
   sanitizeBoundaryText,
 } from "./turn-contract";
 import { hasDotPathComponent } from "./lexical-path";
@@ -1001,6 +1005,7 @@ function receiptText(input: {
   toolExchangesProjected?: number;
   priorExternalSessionId?: string;
   toolEvidence: PreparedAcpToolEvidence;
+  historyOmission?: HistoryOmissionReceipt;
   sessionProjectionSkipped?: boolean;
 }): string {
   const route = verifiedRouteFacts(input.profile, input.routeEvidence);
@@ -1032,6 +1037,9 @@ function receiptText(input: {
     `Prior external session: ${input.priorExternalSessionId ?? "not recorded"}`,
     `External session: ${input.result.externalSessionId ?? "not created"}`,
     `ACP tool evidence: ${input.toolEvidence.status} (${input.toolEvidence.calls.length}/${input.toolEvidence.observedCalls} calls recorded)`,
+    ...(input.historyOmission === undefined ? [] : [
+      formatHistoryOmissionSummary(input.historyOmission),
+    ]),
     `Workspace: ${input.workspaceEvidence}`,
     `Transport: ${input.profile.transport}`,
     `Access route: ${route.accessRoute ?? "unverified"}`,
@@ -1171,6 +1179,7 @@ export async function runExternalAgentWorkbenchRuntime(
   // Undecided until a native session is actually prompted: an aborted or
   // failed turn must not claim a continuity state it never reached.
   let continuity: AcpContinuityEvidence | undefined;
+  let historyOmission: HistoryOmissionReceipt | undefined;
   // Counted by the projection itself, so the receipt reports the tool evidence
   // actually carried rather than what the transcript happened to contain.
   let projectedToolExchanges = 0;
@@ -1299,9 +1308,21 @@ export async function runExternalAgentWorkbenchRuntime(
         prompt: input.prompt,
       });
       projectedToolExchanges = projection.toolExchanges;
-      return projection.prompt;
+      return prependHistoryOmissionNotice(
+        projection.prompt,
+        historyOmissionForDelivery(
+          input.historyOmission,
+          "projected-transcript",
+        ),
+      );
     };
-    let directPrompt = input.prompt;
+    let directPrompt = prependHistoryOmissionNotice(
+      input.prompt,
+      historyOmissionForDelivery(
+        input.historyOmission,
+        "no-prior-transcript",
+      ),
+    );
     if (
       dependencies.sessionMap === undefined && reconstructPrompt !== undefined
     ) {
@@ -1313,18 +1334,43 @@ export async function runExternalAgentWorkbenchRuntime(
         state: "reconstructed",
         durableResume: "unavailable-client-verification",
       };
+      historyOmission = historyOmissionForDelivery(
+        input.historyOmission,
+        "projected-transcript",
+      );
     } else if (dependencies.sessionMap === undefined) {
       continuity = { state: "new", durableResume: "not-required" };
+      historyOmission = historyOmissionForDelivery(
+        input.historyOmission,
+        "no-prior-transcript",
+      );
+    }
+    if (dependencies.sessionMap === undefined) {
+      assertAcpPromptWithinLimit(directPrompt);
     }
     const result = dependencies.sessionMap !== undefined
       ? await dependencies.sessionMap.runTurn({
         sessionId,
         workspace,
         profile,
-        prompt: input.prompt,
+        prompt: prependHistoryOmissionNotice(
+          input.prompt,
+          historyOmissionForDelivery(
+            input.historyOmission,
+            "warm-no-replay",
+          ),
+        ),
         reconstructPrompt,
         onContinuity: (evidence) => {
           continuity = evidence;
+          historyOmission = historyOmissionForDelivery(
+            input.historyOmission,
+            evidence.state === "reconstructed"
+              ? "projected-transcript"
+              : evidence.state === "new"
+              ? "no-prior-transcript"
+              : "warm-no-replay",
+          );
         },
         abortSignal: input.abortSignal,
         onTextDelta: input.onTextDelta,
@@ -1420,6 +1466,7 @@ export async function runExternalAgentWorkbenchRuntime(
       toolExchangesProjected: projectedToolExchanges,
       priorExternalSessionId,
       toolEvidence,
+      historyOmission,
     });
     await writeEvent({
       event_id: generateULID(),
@@ -1496,6 +1543,7 @@ export async function runExternalAgentWorkbenchRuntime(
         toolExchangesProjected: projectedToolExchanges,
         priorExternalSessionId,
         toolEvidence,
+        historyOmission,
         sessionProjectionSkipped: true,
       });
     }
@@ -1599,6 +1647,7 @@ export async function runExternalAgentWorkbenchRuntime(
       },
       route: { reason: "explicit_external_agent" },
       context: { sources: [] },
+      ...(historyOmission === undefined ? {} : { historyOmission }),
     };
   } catch (error) {
     try {

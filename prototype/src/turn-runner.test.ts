@@ -8,6 +8,7 @@ import {
   resolveTurnFromBody,
 } from "./turn-runner";
 import { fetchWorkbenchSessionEvents } from "./sessions";
+import type { WorkbenchRuntimeInput } from "./workbench";
 
 describe("resolveTurnFromBody paid posture", () => {
   test("selects the fixture runner only for a loopback turn", () => {
@@ -154,7 +155,7 @@ describe("paidEscalationVerdict", () => {
 });
 
 describe("executeTurn persisted-history boundary", () => {
-  test("corrupt persisted tool history fails before runtime model work", async () => {
+  test("[case 5 boundary] empty-after-withholding history fails before runtime model work", async () => {
     const sessionId = "01ABCDEF0123456789ABCDEF01";
     const events = await fetchWorkbenchSessionEvents({
       sessionId,
@@ -186,8 +187,69 @@ describe("executeTurn persisted-history boundary", () => {
         runtimeCalled = true;
         return Promise.reject(new Error("runtime must not start"));
       },
-    })).rejects.toThrow("Session contains malformed persisted tool history");
+    })).rejects.toThrow(
+      "Session history is empty after withholding unavailable tool evidence",
+    );
     expect(runtimeCalled).toBe(false);
+  });
+
+  test("[case 4 boundary] threads incident omission facts into runtime without changing persisted prompt", async () => {
+    const sessionId = "01ABCDEF0123456789ABCDEF01";
+    const events = await fetchWorkbenchSessionEvents({
+      sessionId,
+      query: () =>
+        Promise.resolve([
+          {
+            event_id: "gap-event",
+            event_type: "tool_call",
+            trace_id: "trace",
+            principal_id: "workbench",
+            tool_name: "acp.history_unavailable",
+            tool_call_id: "gap-1",
+            tool_arguments: "{}",
+            tool_result: "",
+            tool_is_error: "1",
+            created_at: "2026-09-01 12:00:01",
+          },
+          {
+            event_id: "prompt-event",
+            event_type: "session_start",
+            trace_id: "trace",
+            principal_id: "operator",
+            content: "original persisted prompt",
+            created_at: "2026-09-01 12:00:00",
+          },
+        ] as unknown as Record<string, string>[]),
+    });
+    const resolved = resolveTurnFromBody(
+      { prompt: "continue now", sessionId },
+      true,
+    );
+    if ("error" in resolved) throw new Error(resolved.error);
+    let captured: WorkbenchRuntimeInput | undefined;
+    await executeTurn(resolved, {
+      authContext: {} as never,
+      loopback: true,
+      fetchSessionEvents: () => Promise.resolve(events),
+      runRuntime: (input) => {
+        captured = input;
+        return Promise.resolve({
+          sessionId,
+          model: { slug: "fixture" },
+          tokens: { input: 0, output: 0 },
+          cost: { totalUsd: 0, paidInferenceUsed: false },
+        } as never);
+      },
+    });
+    expect(captured?.prompt).toBe("continue now");
+    expect(captured?.conversationMessages).toEqual([
+      { role: "user", content: "original persisted prompt" },
+    ]);
+    expect(captured?.historyOmission).toMatchObject({
+      detectedInHistory: 1,
+      gapMarkers: 1,
+      callsUnknown: true,
+    });
   });
 });
 

@@ -94,6 +94,23 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Fail-visible persisted-history continuation**: Malformed persisted tool
+  records and fixed ACP history-gap markers are now withheld per record across
+  runner kinds instead of invalidating an otherwise usable session. Resume
+  preserves valid tool pairs, empty valid results, prompts, prose, and stored
+  summaries. At the history-reconstruction boundary it refuses an
+  unrepresentable retained pair or a transcript left empty by withholding, and
+  it recomputes exact whole-history and selected-window record counts from
+  immutable events without deduplication or a false minimum missing-call count.
+  Continuing native companion, warm ACP, reconstructed ACP, and direct ACP
+  requests carry one value-free Workbench-generated notice outside compressible
+  history, while receipts report those counts separately from the actual
+  history-delivery mode. Receipts label notice composition, not confirmed
+  delivery. One-shot native ask and next-work requests remain transcript-free
+  and omit the omission notice and receipt. Existing downstream checks and
+  prompt bounds still apply to the final decorated ACP request, including the
+  existing acquired-handle close behavior on an oversized prompt; persisted
+  events are not changed or deleted.
 - **Read-only closure comparison**: The deterministic gate compares the generated
   report in memory with the committed bytes, with writes denied. It no longer
   writes through a predictable temporary filename. Comparison rejects an output

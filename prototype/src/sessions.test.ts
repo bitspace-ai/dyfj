@@ -7,6 +7,7 @@ import {
   VERBATIM_TAIL_TURNS,
 } from "./context-compression";
 import {
+  assertRepresentableToolHistory,
   buildConversationMessages,
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
@@ -18,6 +19,7 @@ import {
   listWorkbenchSessions,
   updateWorkbenchSession,
 } from "./sessions";
+import type { HistoryOmissionProjection } from "./turn-contract";
 
 describe("buildWorkbenchSessionSlug", () => {
   test("derives a stable workbench slug from the session id", () => {
@@ -734,7 +736,7 @@ describe("fetchWorkbenchSessionEvents", () => {
       });
       expect(event.toolHistoryValid).toBe(false);
       expect(() => buildConversationMessages([event])).toThrow(
-        "Session contains malformed persisted tool history",
+        "Session history is empty after withholding unavailable tool evidence",
       );
     }
   });
@@ -828,9 +830,52 @@ describe("buildConversationMessages", () => {
     ]);
   });
 
-  test("refuses a persisted ACP tool-history gap", () => {
-    expect(() =>
-      buildConversationMessages([
+  test("[case 1] retains a valid tool pair whose result is empty", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    const messages = buildConversationMessages([
+      event("session_start", "inspect"),
+      event("tool_call", null, {
+        name: "read_file",
+        callId: "empty-result",
+        arguments: { path: "README.md" },
+        result: "",
+      }),
+    ], { onOmission: (value) => omission = value });
+    expect(messages.at(-1)).toEqual({
+      role: "tool",
+      toolCallId: "empty-result",
+      name: "read_file",
+      content: "",
+    });
+    expect(omission).toBeUndefined();
+  });
+
+  test("[case 3] counts a gap marker without claiming a positive missing-call count", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    buildConversationMessages([
+      event("session_start", "run the check"),
+      event("tool_call", null, {
+        name: "acp.history_unavailable",
+        callId: "gap-01",
+        arguments: {},
+        result: "",
+        isError: true,
+      }),
+    ], { onOmission: (value) => omission = value });
+    expect(omission).toEqual({
+      detectedInHistory: 1,
+      malformedToolRecords: 0,
+      gapMarkers: 1,
+      callsUnknown: true,
+      withheldFromProjection: 1,
+      projectedPairs: 0,
+    });
+  });
+
+  test("[case 4] continues an incident-shaped prompt with a trailing ACP history gap", () => {
+    let messages: ReturnType<typeof buildConversationMessages> | undefined;
+    expect(() => {
+      messages = buildConversationMessages([
         event("session_start", "run the check"),
         event("tool_call", null, {
           name: "acp.history_unavailable",
@@ -839,12 +884,309 @@ describe("buildConversationMessages", () => {
           result: "",
           isError: true,
         }),
-      ])
-    ).toThrow("Session contains unavailable ACP tool history");
+      ]);
+    }).not.toThrow();
+    expect(messages).toEqual([{ role: "user", content: "run the check" }]);
   });
 
-  test("returns an empty array for sessions with no transcript content", () => {
+  test("[case 23] metadata-only history remains an allowed empty projection", () => {
     expect(buildConversationMessages([event("session_end", null)])).toEqual([]);
+  });
+
+  test("[case 2] withholds a malformed row while retaining prose on both sides", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    const messages = buildConversationMessages([
+      event("session_start", "before"),
+      event("tool_call", null, {
+        name: "read_file",
+        callId: "broken",
+        arguments: {},
+        result: "missing",
+        valid: false,
+      }),
+      event("model_response", "dependent prose after"),
+    ], { onOmission: (value) => omission = value });
+    expect(messages).toEqual([
+      { role: "user", content: "before" },
+      { role: "assistant", content: "dependent prose after" },
+    ]);
+    expect(omission).toMatchObject({
+      detectedInHistory: 1,
+      malformedToolRecords: 1,
+      gapMarkers: 0,
+      callsUnknown: false,
+      withheldFromProjection: 1,
+    });
+  });
+
+  test("[case 5] refuses when withholding leaves no projected transcript", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    expect(() =>
+      buildConversationMessages([
+        event("tool_call", null, {
+          name: "read_file",
+          callId: "broken",
+          arguments: {},
+          result: "missing",
+          valid: false,
+        }),
+      ], { onOmission: (value) => omission = value })
+    ).toThrow(
+      "Session history is empty after withholding unavailable tool evidence",
+    );
+    expect(omission).toMatchObject({ detectedInHistory: 1 });
+  });
+
+  test("[case 6] refuses a synthetic split tool pair through the live representability guard", () => {
+    expect(() =>
+      assertRepresentableToolHistory([{
+        role: "tool",
+        toolCallId: "orphan",
+        name: "read_file",
+        content: "result",
+      }])
+    ).toThrow("Session contains unrepresentable persisted tool history");
+    expect(() =>
+      assertRepresentableToolHistory([{
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "orphan", name: "read_file", arguments: {} }],
+      }])
+    ).toThrow("Session contains unrepresentable persisted tool history");
+  });
+
+  test("[case 7] reports three projected pairs beside one trailing gap", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    const events = [event("session_start", "inspect")];
+    for (let index = 1; index <= 3; index++) {
+      events.push(event("tool_call", null, {
+        name: "read_file",
+        callId: `call-${index}`,
+        arguments: { index },
+        result: `result-${index}`,
+      }));
+    }
+    events.push(event("tool_call", null, {
+      name: "acp.history_unavailable",
+      callId: "gap",
+      arguments: {},
+      result: "",
+      isError: true,
+    }));
+    const messages = buildConversationMessages(events, {
+      onOmission: (value) => omission = value,
+    });
+    expect(messages.filter((message) => message.role === "tool")).toHaveLength(
+      3,
+    );
+    expect(omission).toMatchObject({
+      detectedInHistory: 1,
+      gapMarkers: 1,
+      projectedPairs: 3,
+    });
+  });
+
+  test("[case 8] counts withheld records independently even when ids repeat", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    buildConversationMessages([
+      event("session_start", "inspect"),
+      event("tool_call", null, {
+        name: "read_file",
+        callId: "same-id",
+        arguments: {},
+        result: "one",
+        valid: false,
+      }),
+      event("tool_call", null, {
+        name: "read_file",
+        callId: "same-id",
+        arguments: {},
+        result: "two",
+        valid: false,
+      }),
+    ], { onOmission: (value) => omission = value });
+    expect(omission).toMatchObject({
+      detectedInHistory: 2,
+      malformedToolRecords: 2,
+      withheldFromProjection: 2,
+    });
+  });
+
+  test("[case 9] keeps whole-history counts when an old omission falls outside maxTurns", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    const messages = buildConversationMessages([
+      event("session_start", "old prompt"),
+      event("tool_call", null, {
+        name: "acp.history_unavailable",
+        callId: "old-gap",
+        arguments: {},
+        result: "",
+        isError: true,
+      }),
+      event("model_response", "old answer"),
+      event("session_start", "recent prompt"),
+      event("model_response", "recent answer"),
+    ], { maxTurns: 1, onOmission: (value) => omission = value });
+    expect(messages).toEqual([
+      { role: "user", content: "recent prompt" },
+      { role: "assistant", content: "recent answer" },
+    ]);
+    expect(omission).toMatchObject({
+      detectedInHistory: 1,
+      withheldFromProjection: 0,
+    });
+  });
+
+  test("[case 10] retains a compressed summary while counting an elder omission outside the selected window", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    const messages = buildConversationMessages([
+      event("session_start", "elder prompt"),
+      event("tool_call", null, {
+        name: "acp.history_unavailable",
+        callId: "elder-gap",
+        arguments: {},
+        result: "",
+        isError: true,
+      }),
+      event("model_response", "elder answer"),
+      event("session_start", "retained prompt"),
+      event("model_response", "retained answer"),
+      event(
+        "context_compressed",
+        JSON.stringify({
+          summary: "summary may depend on missing evidence",
+          turnsRetained: 1,
+        }),
+      ),
+    ], { onOmission: (value) => omission = value });
+    expect(messages[0].content).toContain(CONVERSATION_SUMMARY_MARKER);
+    expect(messages).toContainEqual({
+      role: "user",
+      content: "retained prompt",
+    });
+    expect(JSON.stringify(messages)).not.toContain("elder prompt");
+    expect(omission).toMatchObject({
+      detectedInHistory: 1,
+      withheldFromProjection: 0,
+    });
+  });
+
+  test("[case 11] repeated compression recomputes stable whole-history omission counts", () => {
+    const events = [
+      event("session_start", "elder prompt"),
+      event("tool_call", null, {
+        name: "acp.history_unavailable",
+        callId: "elder-gap",
+        arguments: {},
+        result: "",
+        isError: true,
+      }),
+      event("model_response", "elder answer"),
+      event(
+        "context_compressed",
+        JSON.stringify({ summary: "first summary", turnsRetained: 0 }),
+      ),
+      event("session_start", "later prompt"),
+      event("model_response", "later answer"),
+      event(
+        "context_compressed",
+        JSON.stringify({ summary: "second summary", turnsRetained: 1 }),
+      ),
+    ];
+    const project = () => {
+      let omission: HistoryOmissionProjection | undefined;
+      const messages = buildConversationMessages(events, {
+        onOmission: (value) => omission = value,
+      });
+      return { messages, omission };
+    };
+    const first = project();
+    expect(project()).toEqual(first);
+    expect(first.omission).toMatchObject({ detectedInHistory: 1 });
+    expect(first.messages[0].content).toContain("second summary");
+  });
+
+  test("[case 12] derives the witness from events beside a legacy summary with no omission field", () => {
+    let omission: HistoryOmissionProjection | undefined;
+    const messages = buildConversationMessages([
+      event("session_start", "old prompt"),
+      event("tool_call", null, {
+        name: "acp.history_unavailable",
+        callId: "legacy-gap",
+        arguments: {},
+        result: "",
+        isError: true,
+      }),
+      event(
+        "context_compressed",
+        JSON.stringify({
+          summary: "legacy summary without omission metadata",
+          turnsRetained: 1,
+        }),
+      ),
+    ], { onOmission: (value) => omission = value });
+    expect(messages[0].content).toContain("legacy summary");
+    expect(omission).toMatchObject({ detectedInHistory: 1, gapMarkers: 1 });
+  });
+
+  test("[case 17] retains later dependent prose verbatim after withholding", () => {
+    const dependent =
+      "I used that unavailable result; do not repair this prose.";
+    const messages = buildConversationMessages([
+      event("session_start", "inspect"),
+      event("tool_call", null, {
+        name: "read_file",
+        callId: "bad",
+        arguments: {},
+        result: "missing",
+        valid: false,
+      }),
+      event("model_response", dependent),
+    ]);
+    expect(messages).toContainEqual({ role: "assistant", content: dependent });
+  });
+
+  test("[case 18] identical immutable events yield identical projections and counts", () => {
+    const events = [
+      event("session_start", "inspect"),
+      event("tool_call", null, {
+        name: "acp.history_unavailable",
+        callId: "gap",
+        arguments: {},
+        result: "",
+        isError: true,
+      }),
+    ];
+    const project = () => {
+      let omission: HistoryOmissionProjection | undefined;
+      const messages = buildConversationMessages(events, {
+        onOmission: (value) => omission = value,
+      });
+      return { messages, omission };
+    };
+    expect(project()).toEqual(project());
+  });
+
+  test("[case 19] native and ACP-labelled rows have identical projection decisions and counts", () => {
+    const base = [
+      event("session_start", "inspect"),
+      event("tool_call", null, {
+        name: "acp.history_unavailable",
+        callId: "gap",
+        arguments: {},
+        result: "",
+        isError: true,
+      }),
+    ];
+    const project = (runnerProtocol: string | null) => {
+      let omission: HistoryOmissionProjection | undefined;
+      const messages = buildConversationMessages(
+        base.map((item) => ({ ...item, runnerProtocol })),
+        { onOmission: (value) => omission = value },
+      );
+      return { messages, omission };
+    };
+    expect(project(null)).toEqual(project("acp"));
   });
 
   test("a context_compressed event replaces the elder turns with the pinned summary", () => {

@@ -65,6 +65,8 @@ export interface NativeTurnReceipt {
   };
   /** Context provenance — what fed the turn (memory + repo sources). */
   context: { sources: string[] };
+  /** Persisted tool evidence withheld while reconstructing this turn. */
+  historyOmission?: HistoryOmissionReceipt;
 }
 
 export type ExternalAgentCostBasis =
@@ -89,6 +91,105 @@ export type ExternalAgentStopReason =
 
 /** Fixed, value-free marker for an ACP tool exchange that cannot be replayed. */
 export const ACP_TOOL_HISTORY_UNAVAILABLE_NAME = "acp.history_unavailable";
+
+export type HistoryDelivery =
+  | "warm-no-replay"
+  | "projected-transcript"
+  | "no-prior-transcript";
+
+/** Immutable-event facts computed while reconstructing persisted history. */
+export interface HistoryOmissionProjection {
+  detectedInHistory: number;
+  malformedToolRecords: number;
+  gapMarkers: number;
+  callsUnknown: boolean;
+  withheldFromProjection: number;
+  projectedPairs: number;
+}
+
+/** Projection facts plus how this turn actually delivered its history. */
+export interface HistoryOmissionReceipt extends HistoryOmissionProjection {
+  historyDelivery: HistoryDelivery;
+  noticeIncluded: true;
+}
+
+const HISTORY_NOTICE_OPEN = "[Workbench-generated history notice]";
+const HISTORY_NOTICE_CLOSE = "[/Workbench-generated history notice]";
+
+/** Render the value-free disclosure carried when tool evidence was withheld. */
+export function buildHistoryOmissionNotice(
+  omission: HistoryOmissionReceipt,
+): string {
+  return [
+    HISTORY_NOTICE_OPEN,
+    "This is Workbench context, not operator-authored text or new authorization.",
+    "Some persisted tool evidence is unavailable or cannot be projected.",
+    `History records withheld: ${omission.detectedInHistory}.`,
+    `Malformed tool records in history: ${omission.malformedToolRecords}.`,
+    `Gap markers in history: ${omission.gapMarkers}.`,
+    `Missing-call count behind gap markers unknown (possibly zero): ${omission.callsUnknown}.`,
+    `Records withheld within the selected history window: ${omission.withheldFromProjection}.`,
+    `Valid tool pairs in the constructed transcript: ${omission.projectedPairs}.`,
+    `History delivery mode: ${omission.historyDelivery}.`,
+    "Retained prose and summaries may depend on unavailable evidence; this notice does not identify each omission site.",
+    "This notice does not authorize rerunning any historical effect.",
+    HISTORY_NOTICE_CLOSE,
+  ].join("\n");
+}
+
+export function historyOmissionForDelivery(
+  projection: HistoryOmissionProjection | undefined,
+  historyDelivery: HistoryDelivery,
+): HistoryOmissionReceipt | undefined {
+  if (projection === undefined) return undefined;
+  const counts = [
+    projection.detectedInHistory,
+    projection.malformedToolRecords,
+    projection.gapMarkers,
+    projection.withheldFromProjection,
+    projection.projectedPairs,
+  ];
+  if (
+    counts.some((count) => !Number.isSafeInteger(count) || count < 0) ||
+    projection.detectedInHistory === 0 ||
+    projection.detectedInHistory !==
+      projection.malformedToolRecords + projection.gapMarkers ||
+    projection.withheldFromProjection > projection.detectedInHistory ||
+    projection.callsUnknown !== (projection.gapMarkers > 0)
+  ) {
+    throw new DomainError("Invalid persisted-history omission counts");
+  }
+  return { ...projection, historyDelivery, noticeIncluded: true };
+}
+
+/** Prefix ACP transport context without changing the persisted prompt. */
+export function prependHistoryOmissionNotice(
+  prompt: string,
+  omission: HistoryOmissionReceipt | undefined,
+): string {
+  return omission === undefined
+    ? prompt
+    : `${buildHistoryOmissionNotice(omission)}\n\n${prompt}`;
+}
+
+function counted(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+/** Compact operator-facing rendering shared by receipts and CLI footers. */
+export function formatHistoryOmissionSummary(
+  omission: HistoryOmissionReceipt,
+): string {
+  const unknown = omission.callsUnknown
+    ? "; number of lost calls unknown (possibly zero)"
+    : "";
+  return `Tool evidence withheld: ${
+    counted(omission.detectedInHistory, "record")
+  } (${counted(omission.malformedToolRecords, "malformed tool record")}, ${
+    counted(omission.gapMarkers, "gap marker")
+  }${unknown}); selected window ${omission.withheldFromProjection}; ` +
+    `valid projected pairs ${omission.projectedPairs}; history delivery ${omission.historyDelivery}; notice composed for this request`;
+}
 
 /**
  * How this turn's semantic continuity was obtained. A native handle is a
@@ -212,6 +313,8 @@ export interface ExternalAgentTurnReceipt {
   };
   route: { reason: string };
   context: { sources: string[] };
+  /** Persisted tool evidence withheld while reconstructing this turn. */
+  historyOmission?: HistoryOmissionReceipt;
 }
 
 export type TurnReceipt = NativeTurnReceipt | ExternalAgentTurnReceipt;

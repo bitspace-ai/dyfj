@@ -21,6 +21,7 @@ import {
 import type { CommandDefinition, ConfirmToolApproval } from "./commands";
 import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget";
 import type { PermissionLevel, WorkbenchConfig } from "./config";
+import type { HistoryOmissionProjection } from "./turn-contract";
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -339,9 +340,14 @@ async function buildResume(
   sessionId: string | undefined,
   fetchSessionEvents: FetchSessionEvents,
 ): Promise<
-  Pick<
-    WorkbenchRuntimeInput,
-    "sessionId" | "conversationMessages" | "priorExternalSessionId"
+  Partial<
+    Pick<
+      WorkbenchRuntimeInput,
+      | "sessionId"
+      | "conversationMessages"
+      | "priorExternalSessionId"
+      | "historyOmission"
+    >
   >
 > {
   if (sessionId === undefined) return {};
@@ -356,9 +362,16 @@ async function buildResume(
       priorExternalSessionId = event.runnerExternalSessionId;
     }
   }
+  let historyOmission: HistoryOmissionProjection | undefined;
+  const conversationMessages = buildConversationMessages(priorEvents, {
+    onOmission: (omission) => {
+      historyOmission = omission;
+    },
+  });
   return {
     sessionId,
-    conversationMessages: buildConversationMessages(priorEvents),
+    conversationMessages,
+    ...(historyOmission === undefined ? {} : { historyOmission }),
     ...(priorExternalSessionId === undefined ? {} : { priorExternalSessionId }),
   };
 }

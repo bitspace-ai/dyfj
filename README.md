@@ -620,9 +620,22 @@ each external-agent footer. Workbench merges each real ACP `tool_call` with its
 `tool_call_update` patches and persists a tool request/result pair only when the
 adapter supplies bounded terminal input and output that pass the credential-
 shape gate. Otherwise it records a fixed value-free gap marker, reports tool
-evidence as unavailable, and a later reconstruction refuses that session before
-model work. Persisted prior tool work is carried as historical evidence, not as
-a tool grant: each request and its persisted result are quoted line by line under
+evidence as unavailable. On later turns, Workbench recomputes persisted-history
+omissions from the immutable event log, withholds each malformed tool record or
+gap marker from the projected transcript, and retains valid pairs, empty valid
+results, operator prompts, prose, and stored summaries. Whole-history record
+counts remain separate from selected-window counts and from the actual delivery
+mode; a gap marker means the number of missing calls is unknown and possibly
+zero, never a positive lower bound. Every affected continuing native companion
+or ACP request carries a Workbench-generated notice outside compressible
+transcript messages, and operator receipts expose the same counts. One-shot
+native `ask` and `next-work` requests remain transcript-free and omit this
+notice and receipt. The notice states that retained prose and summaries may
+depend on unavailable evidence; it neither identifies each omission site nor
+authorizes replay of a historical effect.
+
+Persisted prior tool work is carried as historical evidence, not as a tool
+grant: each request and its persisted result are quoted line by line under
 labelled headers that keep their pairing, ordering, and outcome status
 (including failures and denials); identifiers and names are restricted to an
 inert ASCII metadata grammar, and the header tells the receiving agent that the
@@ -630,13 +643,16 @@ records are Workbench's history of an expired session, not actions it took or
 may repeat. Quotation prevents historical content from forging the record
 structure; it is not a semantic prompt-injection boundary, so ordinary tool
 permission policy remains authoritative for anything the receiving agent may
-propose. A reconstruction is refused before any prompt reaches the agent —
-rather than silently shortened, reordered, or stripped — when it would exceed
-the ACP prompt limit, the 32-message projection bound, a per-message bound, a
-per-field tool bound, or the tool-argument depth/node limit, or when persisted
-tool history is unpaired, malformed, or carries one of the explicitly checked
-credential shapes in any field, including the explicit ACP gap marker. Idle
-handles retire on a TTL, a small
+propose. History reconstruction refuses when withholding leaves nothing to
+project or when a retained request/result pairing is unrepresentable. Existing
+downstream bounds remain unchanged: a reconstruction is also refused before any
+prompt reaches the agent when it exceeds the ACP prompt limit, the 32-message
+projection bound, a per-message bound, a per-field tool bound, or the
+tool-argument depth/node limit, or when retained history carries one of the
+explicitly checked credential shapes. The notice is included in the final ACP
+prompt-size check. Its overhead can therefore refuse a near-limit turn; for an
+acquired handle, the existing error lifecycle closes and removes that handle
+without deleting persisted events. Idle handles retire on a TTL, a small
 resident-session bound fails closed without eviction, and UDS close, a
 foreground SIGINT, or `dyfj stop` wait for in-flight creation and for every
 started close to settle, then surface a retained close failure rather than
@@ -1269,3 +1285,8 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-03 - The run-it and transport sections now document the REPL friction
   capture command, its narrow UDS method, configurable checkpoint, and retained
   external-MCP authorization boundary.
+- 2026-09-08 - The external-agent continuation section now documents per-record
+  persisted tool-evidence withholding, immutable-event omission notices,
+  whole-history and selected-window counts, native companion and ACP notice
+  scope, the narrowed syntactic refusal conditions, and the unchanged final
+  prompt-size and acquired-handle lifecycle.

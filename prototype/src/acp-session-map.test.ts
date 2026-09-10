@@ -6,6 +6,7 @@ import {
   type AcpPromptInput,
   type AcpRunResult,
   type AcpSessionHandle,
+  assertAcpPromptWithinLimit,
   startAcpSession,
 } from "./acp-client";
 import {
@@ -17,7 +18,11 @@ import {
   encodeAcpSessionHandleKey,
   selectAcpContinuity,
 } from "./acp-session-map";
-import { DomainError } from "./turn-contract";
+import {
+  DomainError,
+  historyOmissionForDelivery,
+  prependHistoryOmissionNotice,
+} from "./turn-contract";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},
@@ -195,6 +200,68 @@ function acquireKey(
 }
 
 describe("AcpSessionHandleMap sequential reuse", () => {
+  test("[case 24] notice overhead over the prompt bound drops the warm handle before transport and prevents reuse", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let transportSends = 0;
+    let creates = 0;
+    const persistedEvents = Object.freeze([{ eventType: "tool_call" }]);
+    const firstHandle = fakeHandle({
+      prompt: (input) => {
+        assertAcpPromptWithinLimit(input.prompt);
+        transportSends += 1;
+        return Promise.resolve({
+          text: "ok",
+          stopReason: "stop",
+          capabilities: [],
+          elapsedMs: 1,
+        });
+      },
+    });
+    const omission = historyOmissionForDelivery({
+      detectedInHistory: 1,
+      malformedToolRecords: 0,
+      gapMarkers: 1,
+      callsUnknown: true,
+      withheldFromProjection: 1,
+      projectedPairs: 0,
+    }, "warm-no-replay");
+    const original = "x".repeat(59_700);
+    assertAcpPromptWithinLimit(original);
+    const decorated = prependHistoryOmissionNotice(original, omission);
+    try {
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "first",
+        create: () => {
+          creates += 1;
+          return Promise.resolve(firstHandle);
+        },
+      });
+      await expect(map.runTurn({
+        ...acquireKey(profile),
+        prompt: decorated,
+        reconstructPrompt: () => "must not replace a warm prompt",
+        create: () => Promise.resolve(fakeHandle()),
+      })).rejects.toThrow("ACP prompt exceeded the input limit");
+      expect(transportSends).toBe(1);
+      expect(firstHandle.isAlive).toBe(false);
+      expect(map.size).toBe(0);
+      expect(persistedEvents).toEqual([{ eventType: "tool_call" }]);
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "later",
+        create: () => {
+          creates += 1;
+          return Promise.resolve(fakeHandle());
+        },
+      });
+      expect(creates).toBe(2);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
   test("two sequential turns reuse one worker and one ACP session", async () => {
     const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
     const methodLog = await Deno.makeTempFile({ dir: Deno.cwd() });

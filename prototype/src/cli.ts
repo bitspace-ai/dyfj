@@ -17,6 +17,7 @@ import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import {
   DomainError,
+  formatHistoryOmissionSummary,
   isSupersedingRetryStarted,
   MAX_ERROR_SUMMARY_BYTES,
   sanitizeBoundaryText,
@@ -576,6 +577,9 @@ export function formatReceipt(
       : toolEvidence.status === "unavailable"
       ? `ACP tools unavailable (${toolEvidence.observedCalls} observed)`
       : `ACP tools ${toolEvidence.recordedCalls}/${toolEvidence.observedCalls} recorded`;
+    const history = result.historyOmission === undefined
+      ? ""
+      : ` · ${formatHistoryOmissionSummary(result.historyOmission)}`;
     return dim(
       `— ${result.runner.profile} · ${result.runner.protocol}${
         result.runner.protocolVersion === undefined
@@ -583,7 +587,7 @@ export function formatReceipt(
           : ` v${result.runner.protocolVersion}`
       } · ${result.runner.transport} · ${
         result.runner.accessRoute ?? "unverified"
-      } · ${cost}${usage}${context} · ${continuityEvidence} · ${nativeSession} · ${tools} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
+      } · ${cost}${usage}${context} · ${continuityEvidence} · ${nativeSession} · ${tools}${history} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
     );
   }
   const cost = formatUsdShort(result.cost.totalUsd);
@@ -599,8 +603,11 @@ export function formatReceipt(
   const toolSteps =
     `tools ${result.agent.toolStepsUsed}/${result.agent.maxToolSteps}` +
     (result.agent.limitReached ? " (limit reached)" : "");
+  const history = result.historyOmission === undefined
+    ? ""
+    : ` · ${formatHistoryOmissionSummary(result.historyOmission)}`;
   return dim(
-    `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${toolSteps} · ${result.route.reason}`,
+    `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${toolSteps}${history} · ${result.route.reason}`,
   );
 }
 

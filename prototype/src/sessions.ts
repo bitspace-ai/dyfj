@@ -4,6 +4,7 @@ import { formatSummaryMessage } from "./context-compression";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   DomainError,
+  type HistoryOmissionProjection,
 } from "./turn-contract";
 
 export type SessionExec = (sql: string, params: SqlParam[]) => Promise<void>;
@@ -730,14 +731,32 @@ export async function fetchWorkbenchSessionEvents(input: {
  */
 export function buildConversationMessages(
   events: WorkbenchSessionEvent[],
-  options: { maxTurns?: number } = {},
+  options: {
+    maxTurns?: number;
+    onOmission?: (omission: HistoryOmissionProjection | undefined) => void;
+  } = {},
 ): WorkbenchMessage[] {
   const maxTurns = options.maxTurns ?? 10;
-  const messages: WorkbenchMessage[] = [];
+  type ProjectionItem =
+    | { kind: "message"; message: WorkbenchMessage; projectedPair?: true }
+    | { kind: "withheld"; reason: "malformed" | "gap" };
+  const items: ProjectionItem[] = [];
+  let malformedToolRecords = 0;
+  let gapMarkers = 0;
+  const pushMessage = (
+    message: WorkbenchMessage,
+    projectedPair = false,
+  ) => {
+    items.push({
+      kind: "message",
+      message,
+      ...(projectedPair ? { projectedPair: true as const } : {}),
+    });
+  };
   // The pinned summary from the most recent context_compressed event, if any.
   // It survives the recent-turns cap below, mirroring the live session where a
   // compression replaced everything before it.
-  let pinnedSummary: WorkbenchMessage | null = null;
+  let pinnedSummary: ProjectionItem | null = null;
   for (const event of events) {
     if (event.eventType === "context_compressed") {
       // Compression replaced the elder turns with one summary, keeping a
@@ -772,23 +791,26 @@ export function buildConversationMessages(
       ) {
         continue;
       }
-      keepTrailingTurns(messages, turnsRetained);
-      pinnedSummary = formatSummaryMessage(summary);
-      messages.unshift(pinnedSummary);
+      keepTrailingProjectionTurns(items, turnsRetained);
+      pinnedSummary = {
+        kind: "message",
+        message: formatSummaryMessage(summary),
+      };
+      items.unshift(pinnedSummary);
     } else if (event.eventType === "session_start") {
       if (event.content === null) continue;
-      messages.push({ role: "user", content: event.content });
+      pushMessage({ role: "user", content: event.content });
     } else if (
       event.eventType === "model_response" ||
       event.eventType === "agent_response"
     ) {
       if (event.content === null) continue;
-      messages.push({ role: "assistant", content: event.content });
+      pushMessage({ role: "assistant", content: event.content });
     } else if (event.eventType === "tool_call") {
       if (event.toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME) {
-        throw new DomainError(
-          "Session contains unavailable ACP tool history",
-        );
+        gapMarkers += 1;
+        items.push({ kind: "withheld", reason: "gap" });
+        continue;
       }
       // One tool_call event carries both halves: the call (name/id/arguments)
       // and its result. Emit them as a paired assistant+tool sequence so the
@@ -799,11 +821,11 @@ export function buildConversationMessages(
         event.toolName === null || event.toolArguments === null ||
         event.toolResult === null || event.toolIsError === null
       ) {
-        throw new DomainError(
-          "Session contains malformed persisted tool history",
-        );
+        malformedToolRecords += 1;
+        items.push({ kind: "withheld", reason: "malformed" });
+        continue;
       }
-      messages.push({
+      pushMessage({
         role: "assistant",
         content: "",
         toolCalls: [{
@@ -812,7 +834,7 @@ export function buildConversationMessages(
           arguments: event.toolArguments,
         }],
       });
-      messages.push({
+      pushMessage({
         role: "tool",
         toolCallId: event.toolCallId,
         name: event.toolName,
@@ -820,16 +842,71 @@ export function buildConversationMessages(
         // Replay the failure mark, so a resumed transcript serializes the
         // result as an error (Anthropic is_error) exactly like the live turn.
         ...(event.toolIsError ? { isError: true } : {}),
-      });
+      }, true);
     }
   }
   // Pin the summary past the recent-turns cap: keep it, then the most recent
   // `maxTurns` turns that followed it. Without this a long post-compression run
   // could slice the summary off and lose all the compressed history.
-  if (pinnedSummary !== null && messages[0] === pinnedSummary) {
-    return [pinnedSummary, ...sliceToRecentTurns(messages.slice(1), maxTurns)];
+  const selected = pinnedSummary !== null && items[0] === pinnedSummary
+    ? [pinnedSummary, ...sliceProjectionToRecentTurns(items.slice(1), maxTurns)]
+    : sliceProjectionToRecentTurns(items, maxTurns);
+  const messages = selected.flatMap((item) =>
+    item.kind === "message" ? [item.message] : []
+  );
+  const detectedInHistory = malformedToolRecords + gapMarkers;
+  const omission = detectedInHistory === 0 ? undefined : {
+    detectedInHistory,
+    malformedToolRecords,
+    gapMarkers,
+    callsUnknown: gapMarkers > 0,
+    withheldFromProjection:
+      selected.filter((item) => item.kind === "withheld").length,
+    projectedPairs:
+      selected.filter((item) =>
+        item.kind === "message" && item.projectedPair === true
+      ).length,
+  } satisfies HistoryOmissionProjection;
+  options.onOmission?.(omission);
+  assertRepresentableToolHistory(messages);
+  if (omission !== undefined && messages.length === 0) {
+    throw new DomainError(
+      "Session history is empty after withholding unavailable tool evidence",
+    );
   }
-  return sliceToRecentTurns(messages, maxTurns);
+  return messages;
+}
+
+/** Fail closed if a projected transcript contains a split tool pair. */
+export function assertRepresentableToolHistory(
+  messages: readonly WorkbenchMessage[],
+): void {
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (message.role === "assistant" && (message.toolCalls?.length ?? 0) > 0) {
+      const calls = message.toolCalls!;
+      const result = messages[index + 1];
+      if (
+        calls.length !== 1 || result === undefined || result.role !== "tool" ||
+        result.toolCallId !== calls[0].id
+      ) {
+        throw new DomainError(
+          "Session contains unrepresentable persisted tool history",
+        );
+      }
+    } else if (message.role === "tool") {
+      const request = messages[index - 1];
+      if (
+        request === undefined || request.role !== "assistant" ||
+        request.toolCalls?.length !== 1 ||
+        request.toolCalls[0].id !== message.toolCallId
+      ) {
+        throw new DomainError(
+          "Session contains unrepresentable persisted tool history",
+        );
+      }
+    }
+  }
 }
 
 function normalizeStringArray(raw: unknown): string[] | null {
@@ -906,17 +983,22 @@ function normalizeToolErrorFlag(
  * the same thing to both paths. `turns` of 0 keeps nothing; more turns than
  * exist keeps everything.
  */
-function keepTrailingTurns(messages: WorkbenchMessage[], turns: number): void {
+function keepTrailingProjectionTurns<
+  T extends {
+    kind: "message" | "withheld";
+    message?: WorkbenchMessage;
+  },
+>(items: T[], turns: number): void {
   if (turns <= 0) {
-    messages.splice(0, messages.length);
+    items.splice(0, items.length);
     return;
   }
   const userIndices: number[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i].role === "user") userIndices.push(i);
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].message?.role === "user") userIndices.push(i);
   }
   if (userIndices.length <= turns) return;
-  messages.splice(0, userIndices[userIndices.length - turns]);
+  items.splice(0, userIndices[userIndices.length - turns]);
 }
 
 /**
@@ -925,14 +1007,19 @@ function keepTrailingTurns(messages: WorkbenchMessage[], turns: number): void {
  * `assistant` tool-call it answers (which the wire format forbids). For a
  * tool-free transcript this is exactly the prior "last maxTurns exchanges".
  */
-function sliceToRecentTurns(
-  messages: WorkbenchMessage[],
+function sliceProjectionToRecentTurns<
+  T extends {
+    kind: "message" | "withheld";
+    message?: WorkbenchMessage;
+  },
+>(
+  items: T[],
   maxTurns: number,
-): WorkbenchMessage[] {
+): T[] {
   const userIndices: number[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i].role === "user") userIndices.push(i);
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].message?.role === "user") userIndices.push(i);
   }
-  if (userIndices.length <= maxTurns) return messages;
-  return messages.slice(userIndices[userIndices.length - maxTurns]);
+  if (userIndices.length <= maxTurns) return items;
+  return items.slice(userIndices[userIndices.length - maxTurns]);
 }
