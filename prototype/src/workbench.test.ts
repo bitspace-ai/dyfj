@@ -121,6 +121,7 @@ const runtimeMocks = vi.hoisted(() => {
         server?: { name: string; version: string };
         extensions: string[];
       }) => void | Promise<void>),
+    memoryLoadError: null as Error | null,
     agentsInstructions: null as
       | null
       | {
@@ -335,14 +336,19 @@ vi.mock("./memory", () => ({
     core: Array<{ slug: string }>,
     index: Array<{ slug: string }>,
   ) => [...core, ...index].map((m) => `mem <memory:${m.slug}>`),
-  loadInjectedMemories: async () => [{
-    memoryId: "mem-user",
-    slug: "user-context",
-    type: "user",
-    name: "User Context",
-    description: "test",
-    content: "test",
-  }],
+  loadInjectedMemories: async () => {
+    if (runtimeMocks.memoryLoadError !== null) {
+      throw runtimeMocks.memoryLoadError;
+    }
+    return [{
+      memoryId: "mem-user",
+      slug: "user-context",
+      type: "user",
+      name: "User Context",
+      description: "test",
+      content: "test",
+    }];
+  },
   loadIndexedMemories: async () => [{
     slug: "project-context",
     type: "project",
@@ -485,6 +491,7 @@ beforeEach(() => {
   runtimeMocks.commandHook = null;
   runtimeMocks.recallEnabled = false;
   runtimeMocks.recallObserver = null;
+  runtimeMocks.memoryLoadError = null;
   runtimeMocks.agentsInstructions = null;
   runtimeMocks.askContextOptions.length = 0;
   runtimeMocks.askContextError = null;
@@ -1133,12 +1140,26 @@ describe("paid escalation preflight", () => {
         mode: "turn",
         prompt: "explore",
         routingOptions: {},
+        conversationMessages: [{ role: "user", content: "persisted prompt" }],
+        historyOmission: {
+          detectedInHistory: 1,
+          malformedToolRecords: 0,
+          gapMarkers: 1,
+          callsUnknown: true,
+          withheldFromProjection: 1,
+          projectedPairs: 0,
+        },
         confirmPaidEscalation: async () => ({
           decision: "deny" as const,
           reason: "operator declined",
         }),
       })).rejects.toThrow("Paid inference consent declined");
       expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+      const persisted = JSON.parse(
+        String(runtimeMocks.sessionUpdates.at(-1)?.content),
+      ) as { receipt: string };
+      expect(persisted.receipt).toContain("notice composed for this request");
+      expect(persisted.receipt).not.toContain("notice included yes");
     } finally {
       (runtimeMocks.model as { tier: number }).tier = prevTier;
       runtimeMocks.model.costInput = prevCost;
@@ -5018,6 +5039,323 @@ describe("runWorkbenchRuntime proactive context compression", () => {
     // The trusted-channel backstop reaches the actual companion turn — not just
     // the ask path — so a compressed summary is always covered by a system rule.
     expect(captured.systemPrompt ?? "").toContain(SUMMARY_TRUST_POLICY);
+  });
+
+  test("[follow-up case 15] successful native companion composition exposes the omission notice and receipt", async () => {
+    const captured: { systemPrompt?: string; messages?: WorkbenchMessage[] } =
+      {};
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      captured.systemPrompt = params.systemPrompt;
+      captured.messages = params.messages;
+      return Promise.resolve(turnResult("runtime response"));
+    });
+    const result = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "continue",
+      routingOptions: {},
+      conversationMessages: [{ role: "user", content: "persisted prompt" }],
+      historyOmission: {
+        detectedInHistory: 1,
+        malformedToolRecords: 0,
+        gapMarkers: 1,
+        callsUnknown: true,
+        withheldFromProjection: 1,
+        projectedPairs: 0,
+      },
+    });
+    expect(captured.systemPrompt).toContain(
+      "[Workbench-generated history notice]",
+    );
+    expect(captured.messages).toEqual([
+      { role: "user", content: "persisted prompt" },
+      { role: "user", content: "continue" },
+    ]);
+    expect(result.historyOmission).toMatchObject({
+      historyDelivery: "projected-transcript",
+      noticeIncluded: true,
+    });
+    expect(result.receipt).toContain("Tool evidence withheld: 1 record");
+    expect(result.receipt).toContain("notice composed for this request");
+    expect(result.receipt).not.toContain("notice included yes");
+    expect(result.context.sources).toContainEqual(
+      expect.stringContaining("persisted tool history notice"),
+    );
+  });
+
+  test("[follow-up A1] resumed native ask excludes omission notice and receipt without replaying transcript messages", async () => {
+    const captured: { systemPrompt?: string; messages?: WorkbenchMessage[] } =
+      {};
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      captured.systemPrompt = params.systemPrompt;
+      captured.messages = params.messages;
+      return Promise.resolve(turnResult("runtime response"));
+    });
+    const result = await runWorkbenchRuntime({
+      mode: "ask",
+      prompt: "inspect the repository",
+      routingOptions: {},
+      sessionId: "01TEST00000000000000000001",
+      conversationMessages: [{ role: "user", content: "not replayed" }],
+      historyOmission: {
+        detectedInHistory: 1,
+        malformedToolRecords: 1,
+        gapMarkers: 0,
+        callsUnknown: false,
+        withheldFromProjection: 1,
+        projectedPairs: 0,
+      },
+    });
+
+    expect(captured.systemPrompt).not.toContain(
+      "[Workbench-generated history notice]",
+    );
+    expect(captured.messages).toEqual([
+      { role: "user", content: "inspect the repository" },
+    ]);
+    expect(result).not.toHaveProperty("historyOmission");
+    expect(result.receipt).not.toContain("Tool evidence withheld:");
+    expect(result.context.sources).not.toContainEqual(
+      expect.stringContaining("persisted tool history notice"),
+    );
+  });
+
+  test("[follow-up A1] resumed native next-work excludes omission notice and receipt", async () => {
+    const captured: { systemPrompt?: string; messages?: WorkbenchMessage[] } =
+      {};
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      captured.systemPrompt = params.systemPrompt;
+      captured.messages = params.messages;
+      return Promise.resolve(turnResult(JSON.stringify({
+        worklet_id: "next-work.v0",
+        context_profile: "compact",
+        recommendation: "Continue the bounded task.",
+        rationale: "The scoped work is ready.",
+        evidence: ["README.md"],
+        risks: ["Keep the change bounded."],
+        next_commands: ["deno task test"],
+        confidence: "high",
+      })));
+    });
+    const result = await runWorkbenchRuntime({
+      mode: "next-work",
+      prompt: "what should I do next?",
+      routingOptions: {},
+      sessionId: "01TEST00000000000000000001",
+      conversationMessages: [{ role: "user", content: "not replayed" }],
+      historyOmission: {
+        detectedInHistory: 1,
+        malformedToolRecords: 0,
+        gapMarkers: 1,
+        callsUnknown: true,
+        withheldFromProjection: 1,
+        projectedPairs: 0,
+      },
+    });
+
+    expect(captured.systemPrompt).not.toContain(
+      "[Workbench-generated history notice]",
+    );
+    expect(captured.messages).toEqual([
+      { role: "user", content: expect.stringContaining("next-work.v0") },
+    ]);
+    expect(result).not.toHaveProperty("historyOmission");
+    expect(result.receipt).not.toContain("Tool evidence withheld:");
+    expect(result.context.sources).not.toContainEqual(
+      expect.stringContaining("persisted tool history notice"),
+    );
+  });
+
+  test("[follow-up N1] native companion failure before notice composition omits the omission receipt", async () => {
+    runtimeMocks.memoryLoadError = new Error("simulated context load failure");
+
+    await expect(runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "continue",
+      routingOptions: {},
+      sessionId: "01TEST00000000000000000001",
+      conversationMessages: [{ role: "user", content: "persisted prompt" }],
+      historyOmission: {
+        detectedInHistory: 1,
+        malformedToolRecords: 1,
+        gapMarkers: 0,
+        callsUnknown: false,
+        withheldFromProjection: 1,
+        projectedPairs: 0,
+      },
+    })).rejects.toThrow("simulated context load failure");
+
+    expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
+    const persisted = JSON.parse(
+      String(runtimeMocks.sessionUpdates.at(-1)?.content),
+    ) as { receipt: string; contextSources: string[] };
+    expect(persisted.receipt).not.toContain("Tool evidence withheld:");
+    expect(persisted.contextSources).not.toContainEqual(
+      expect.stringContaining("persisted tool history notice"),
+    );
+  });
+
+  test("[case 16] proactive compression leaves the native notice outside partitioned messages", async () => {
+    const previousWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 100;
+    const finalCalls: TurnParams[] = [];
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        return Promise.resolve(turnResult(validSummary));
+      }
+      finalCalls.push(params);
+      return Promise.resolve(turnResult("runtime response"));
+    });
+    try {
+      await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "new question",
+        routingOptions: {},
+        conversationMessages: bigHistory,
+        historyOmission: {
+          detectedInHistory: 1,
+          malformedToolRecords: 1,
+          gapMarkers: 0,
+          callsUnknown: false,
+          withheldFromProjection: 0,
+          projectedPairs: 0,
+        },
+      });
+      expect(finalCalls).toHaveLength(1);
+      expect(finalCalls[0].systemPrompt).toContain(
+        "[Workbench-generated history notice]",
+      );
+      expect(JSON.stringify(finalCalls[0].messages)).not.toContain(
+        "Workbench-generated history notice",
+      );
+    } finally {
+      runtimeMocks.model.contextWindow = previousWindow;
+    }
+  });
+
+  test("[case 22] persisted reactive compression is followed by event-recomputed notice on resume", async () => {
+    const previousWindow = runtimeMocks.model.contextWindow;
+    runtimeMocks.model.contextWindow = 1_000;
+    runtimeMocks.writtenEvents.length = 0;
+    let realCall = 0;
+    const systemPrompts: string[] = [];
+    runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+      if (params.systemPrompt === COMPRESSION_SYSTEM_PROMPT) {
+        return Promise.resolve(turnResult(validSummary));
+      }
+      systemPrompts.push(params.systemPrompt);
+      realCall += 1;
+      return Promise.resolve(
+        realCall === 1
+          ? {
+            ...turnResult("cut off"),
+            stopReason: "length",
+            usage: {
+              input: 975,
+              output: 10,
+              cost: { total: 0 },
+              cacheRead: 0,
+              cacheWrite: 0,
+            },
+          }
+          : turnResult("recovered answer"),
+      );
+    });
+    try {
+      const result = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "one more",
+        routingOptions: {},
+        conversationMessages: moderateHistory,
+        historyOmission: {
+          detectedInHistory: 2,
+          malformedToolRecords: 1,
+          gapMarkers: 1,
+          callsUnknown: true,
+          withheldFromProjection: 0,
+          projectedPairs: 1,
+        },
+      });
+      expect(result.text).toBe("recovered answer");
+      expect(systemPrompts.length).toBeGreaterThanOrEqual(2);
+      expect(
+        systemPrompts.every((prompt) =>
+          prompt.includes("[Workbench-generated history notice]")
+        ),
+      ).toBe(true);
+      expect(result.historyOmission?.detectedInHistory).toBe(2);
+
+      const compressed = runtimeMocks.writtenEvents.find(
+        (event) => event.event_type === "context_compressed",
+      );
+      expect(compressed).toBeDefined();
+      const { buildConversationMessages } = await vi.importActual<
+        typeof import("./sessions")
+      >("./sessions");
+      const event = (
+        eventType: string,
+        content: string | null,
+        tool: Record<string, unknown> = {},
+      ) =>
+        ({ eventType, content, ...tool }) as unknown as Parameters<
+          typeof buildConversationMessages
+        >[0][number];
+      const persistedHistory = moderateHistory.map((message) =>
+        event(
+          message.role === "user" ? "session_start" : "model_response",
+          message.content,
+        )
+      );
+      persistedHistory.splice(
+        2,
+        0,
+        event("tool_call", null, {
+          toolName: "acp.history_unavailable",
+          toolCallId: "gap-immutable",
+          toolArguments: {},
+          toolResult: "",
+          toolIsError: true,
+          toolHistoryValid: true,
+        }),
+      );
+      let recomputedOmission: Parameters<typeof runWorkbenchRuntime>[0][
+        "historyOmission"
+      ];
+      const resumedMessages = buildConversationMessages([
+        ...persistedHistory,
+        event("session_start", "one more"),
+        event("context_compressed", compressed?.content as string),
+        event("model_response", "recovered answer"),
+      ], {
+        onOmission: (omission) => {
+          recomputedOmission = omission;
+        },
+      });
+      expect(recomputedOmission).toMatchObject({
+        detectedInHistory: 1,
+        gapMarkers: 1,
+        callsUnknown: true,
+      });
+
+      let subsequentSystemPrompt = "";
+      runtimeMocks.runWorkbenchTurn.mockImplementation((params: TurnParams) => {
+        subsequentSystemPrompt = params.systemPrompt;
+        return Promise.resolve(turnResult("subsequent answer"));
+      });
+      const subsequent = await runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "after persisted compression",
+        routingOptions: {},
+        conversationMessages: resumedMessages,
+        historyOmission: recomputedOmission,
+      });
+      expect(subsequent.text).toBe("subsequent answer");
+      expect(subsequentSystemPrompt).toContain(
+        "History records withheld: 1.",
+      );
+      expect(subsequent.historyOmission?.detectedInHistory).toBe(1);
+    } finally {
+      runtimeMocks.model.contextWindow = previousWindow;
+    }
   });
 
   test("declines compression on a tier-0 HOSTED model (locality, not tier)", async () => {

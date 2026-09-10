@@ -5389,7 +5389,7 @@ describe("buildTurnBody", () => {
 });
 
 describe("presentation", () => {
-  test("formatReceipt reports ACP provenance and declared local-free cost", () => {
+  test("[case 25 footer] formatReceipt reports ACP history omission provenance and counts", () => {
     const external: TurnResult = {
       sessionId: "01CLISESSION0000000000000000",
       traceId: "0123456789abcdef0123456789abcdef",
@@ -5431,6 +5431,16 @@ describe("presentation", () => {
       },
       route: { reason: "explicit_external_agent" },
       context: { sources: [] },
+      historyOmission: {
+        detectedInHistory: 1,
+        malformedToolRecords: 0,
+        gapMarkers: 1,
+        callsUnknown: true,
+        withheldFromProjection: 1,
+        projectedPairs: 0,
+        historyDelivery: "projected-transcript",
+        noticeIncluded: true,
+      },
     };
     const formatted = formatReceipt(external, false);
     expect(formatted).toContain(
@@ -5441,6 +5451,35 @@ describe("presentation", () => {
     expect(formatted).toContain(
       "continuity reconstructed 4msg/1tool · native session replaced · ACP tools 0/0 recorded",
     );
+    expect(formatted).toContain("Tool evidence withheld: 1 record");
+    expect(formatted).toContain("number of lost calls unknown (possibly zero)");
+    expect(formatted).toContain("history delivery projected-transcript");
+    expect(formatted).toContain("notice composed for this request");
+    expect(formatted).not.toContain("notice included yes");
+  });
+
+  test("[case 15 footer] formatReceipt exposes native omission facts", () => {
+    const formatted = formatReceipt(
+      result({
+        historyOmission: {
+          detectedInHistory: 2,
+          malformedToolRecords: 2,
+          gapMarkers: 0,
+          callsUnknown: false,
+          withheldFromProjection: 1,
+          projectedPairs: 4,
+          historyDelivery: "projected-transcript",
+          noticeIncluded: true,
+        },
+      }),
+      false,
+    );
+    expect(formatted).toContain("Tool evidence withheld: 2 records");
+    expect(formatted).toContain("2 malformed tool records");
+    expect(formatted).toContain("selected window 1");
+    expect(formatted).toContain("valid projected pairs 4");
+    expect(formatted).toContain("notice composed for this request");
+    expect(formatted).not.toContain("notice included yes");
   });
 
   test("formatReceipt shows ACP usage while preserving its cost semantics", () => {

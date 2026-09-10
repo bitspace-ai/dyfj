@@ -36,13 +36,18 @@ import type { AcpSessionHandleMap } from "./acp-session-map";
 import type { PermissionLevel } from "./config";
 import type {
   ExternalAgentTurnReceipt,
+  HistoryOmissionProjection,
+  HistoryOmissionReceipt,
   NativeTurnReceipt,
   SupersedingRetryStartedEvent,
   TurnAbortedEvent,
   UnparsedToolCallMarkupDetectedEvent,
 } from "./turn-contract";
 import {
+  buildHistoryOmissionNotice,
   DomainError,
+  formatHistoryOmissionSummary,
+  historyOmissionForDelivery,
   MAX_REASON_FIELD_BYTES,
   sanitizeBoundaryText,
   summarizeError,
@@ -125,6 +130,7 @@ export interface WorkbenchReceiptInput {
    * log.
    */
   skippedEventWrites?: number;
+  historyOmission?: HistoryOmissionReceipt;
 }
 
 export interface PaidEscalationPreflightInput {
@@ -205,6 +211,8 @@ export interface WorkbenchRuntimeInput {
    * Companion turn mode only; ignored for one-shot ask/next-work modes.
    */
   conversationMessages?: WorkbenchMessage[];
+  /** Immutable-event omission facts computed by the resume projection. */
+  historyOmission?: HistoryOmissionProjection;
   /**
    * Last runner-reported external session id recorded for this Workbench
    * session, assembled by the caller from prior events. Continuity evidence
@@ -997,6 +1005,9 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
       `WARNING: ${input.skippedEventWrites} event write(s) failed — ` +
         `the session's audit log has gaps`,
     );
+  }
+  if (input.historyOmission !== undefined) {
+    lines.push(formatHistoryOmissionSummary(input.historyOmission));
   }
   if (input.totalElapsedMs !== undefined) {
     lines.push(`Total elapsed: ${input.totalElapsedMs}ms`);
@@ -1856,6 +1867,7 @@ async function runNativeWorkbenchRuntime(
   let contextBudget: PackedContextSummary | undefined;
   let contextProfile: AskContextProfile | undefined;
   let validation: WorkbenchValidationSummary | undefined;
+  let historyOmission: HistoryOmissionReceipt | undefined;
   const maxToolSteps = effectiveMaxToolSteps(runtimeInput.maxToolSteps);
   let toolSteps = 0;
   let toolStepLimitReached = false;
@@ -2103,6 +2115,23 @@ async function runNativeWorkbenchRuntime(
         sourceCount: coreMemories.length + memoryIndex.length +
           (agentsInstructions ? 1 : 0),
       });
+    }
+    // Native omission disclosure belongs only to companion turns. Expose the
+    // receipt after composing the trusted notice so an earlier context failure
+    // cannot claim that the request included it.
+    if (mode === "turn") {
+      const omissionForRequest = historyOmissionForDelivery(
+        runtimeInput.historyOmission,
+        "projected-transcript",
+      );
+      if (omissionForRequest !== undefined) {
+        const notice = buildHistoryOmissionNotice(omissionForRequest);
+        systemPrompt += `\n\n${notice}`;
+        contextSourceLines.push(
+          `persisted tool history notice (${omissionForRequest.detectedInHistory} records withheld; ${omissionForRequest.withheldFromProjection} in selected window)`,
+        );
+        historyOmission = omissionForRequest;
+      }
     }
 
     if (!resumingSession) {
@@ -3692,6 +3721,7 @@ async function runNativeWorkbenchRuntime(
         limitReached: toolStepLimitReached,
       },
       skippedEventWrites,
+      historyOmission,
     });
     await writeMaybe(
       () =>
@@ -3756,6 +3786,7 @@ async function runNativeWorkbenchRuntime(
         sources: contextSourceLines,
         budget: contextBudget,
       },
+      ...(historyOmission === undefined ? {} : { historyOmission }),
       agent: {
         toolStepsUsed: toolSteps,
         maxToolSteps,

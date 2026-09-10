@@ -2383,6 +2383,264 @@ Deno.exit(output.code);`,
       toolExchangesProjected: 0,
     });
   });
+
+  const omission = {
+    detectedInHistory: 2,
+    malformedToolRecords: 1,
+    gapMarkers: 1,
+    callsUnknown: true,
+    withheldFromProjection: 1,
+    projectedPairs: 3,
+  } as const;
+
+  function sessionMapStub(
+    state: "warm-reused" | "reconstructed",
+    prompts: string[],
+  ): AcpSessionHandleMap {
+    return {
+      runTurn: async (input: {
+        prompt: string;
+        reconstructPrompt?: () => string;
+        onContinuity?: (evidence: {
+          state: "warm-reused" | "reconstructed";
+          durableResume: "not-required" | "unavailable-client-verification";
+        }) => void;
+      }) => {
+        input.onContinuity?.({
+          state,
+          durableResume: state === "warm-reused"
+            ? "not-required"
+            : "unavailable-client-verification",
+        });
+        prompts.push(
+          state === "reconstructed" ? input.reconstructPrompt!() : input.prompt,
+        );
+        return {
+          text: "done",
+          stopReason: "stop" as const,
+          capabilities: [],
+          elapsedMs: 1,
+        };
+      },
+    } as unknown as AcpSessionHandleMap;
+  }
+
+  test("[case 13] a warm ACP handle receives one notice without replay and reports nonzero window counts", async () => {
+    const prompts: string[] = [];
+    const result = await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "current operator prompt",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId: "01ACPSESSION000000000000130",
+      workspaceRoot: Deno.cwd(),
+      conversationMessages: [{ role: "user", content: "persisted antecedent" }],
+      historyOmission: omission,
+    }, { sessionMap: sessionMapStub("warm-reused", prompts) });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].match(/\[Workbench-generated history notice\]/g))
+      .toHaveLength(1);
+    expect(prompts[0]).toContain("current operator prompt");
+    expect(prompts[0]).not.toContain("persisted antecedent");
+    expect(result.historyOmission).toMatchObject({
+      detectedInHistory: 2,
+      withheldFromProjection: 1,
+      projectedPairs: 3,
+      historyDelivery: "warm-no-replay",
+    });
+    expect(result.receipt).toContain("history delivery warm-no-replay");
+  });
+
+  test("[case 14] a replaced ACP handle decorates the completed reconstruction once", async () => {
+    const prompts: string[] = [];
+    const result = await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "current operator prompt",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId: "01ACPSESSION000000000000140",
+      workspaceRoot: Deno.cwd(),
+      conversationMessages: [{ role: "user", content: "persisted antecedent" }],
+      historyOmission: omission,
+    }, { sessionMap: sessionMapStub("reconstructed", prompts) });
+    expect(prompts[0]).toMatch(
+      /^\[Workbench-generated history notice\][\s\S]+\n\n\[dyfj-workbench reconstructed transcript\]/,
+    );
+    expect(prompts[0]).toContain("  | persisted antecedent");
+    expect(prompts[0].match(/\[Workbench-generated history notice\]/g))
+      .toHaveLength(1);
+    expect(result.historyOmission?.historyDelivery).toBe(
+      "projected-transcript",
+    );
+  });
+
+  test("[follow-up N3] the real session map selects one decorated reconstruction", async () => {
+    const prompts: string[] = [];
+    let closed = false;
+    const handle: AcpSessionHandle = {
+      get isAlive() {
+        return !closed;
+      },
+      durableSessionLoad: false,
+      prompt: ({ prompt }) => {
+        prompts.push(prompt);
+        return Promise.resolve({
+          text: "done",
+          stopReason: "stop",
+          capabilities: [],
+          elapsedMs: 1,
+        });
+      },
+      close: () => {
+        closed = true;
+        return Promise.resolve();
+      },
+    };
+    const map = new AcpSessionHandleMap({
+      capacity: 1,
+      idleTtlMs: 60_000,
+    });
+    const realRunTurn = map.runTurn.bind(map);
+    vi.spyOn(map, "runTurn").mockImplementation((input) =>
+      realRunTurn({
+        ...input,
+        create: () => Promise.resolve(handle),
+      })
+    );
+
+    try {
+      const result = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "current operator prompt",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000141",
+        workspaceRoot: Deno.cwd(),
+        conversationMessages: [{
+          role: "user",
+          content: "persisted antecedent",
+        }],
+        historyOmission: omission,
+      }, { sessionMap: map });
+
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatch(
+        /^\[Workbench-generated history notice\][\s\S]+\n\n\[dyfj-workbench reconstructed transcript\]/,
+      );
+      expect(prompts[0]).toContain("  | persisted antecedent");
+      expect(prompts[0]).toContain(
+        "Operator (current turn): current operator prompt",
+      );
+      expect(prompts[0].match(/\[Workbench-generated history notice\]/g))
+        .toHaveLength(1);
+      expect(result.runner.continuity).toMatchObject({
+        state: "reconstructed",
+        priorMessagesProjected: 1,
+      });
+      expect(result.historyOmission?.historyDelivery).toBe(
+        "projected-transcript",
+      );
+      expect(map.size).toBe(1);
+    } finally {
+      await map.shutdown();
+      expect(map.size).toBe(0);
+    }
+  });
+
+  test("[case 20] direct ACP prompts are decorated once only when omissions exist and persisted prompts stay unchanged", async () => {
+    const prompts: string[] = [];
+    const runAgent = (input: { prompt: string }) => {
+      prompts.push(input.prompt);
+      return Promise.resolve({
+        text: "done",
+        stopReason: "stop" as const,
+        capabilities: [],
+        elapsedMs: 1,
+      });
+    };
+    await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "plain prompt",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      workspaceRoot: Deno.cwd(),
+    }, { runAgent });
+    await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "persist exactly",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      workspaceRoot: Deno.cwd(),
+      historyOmission: omission,
+    }, { runAgent });
+    await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "referential prompt",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      workspaceRoot: Deno.cwd(),
+      conversationMessages: [{ role: "user", content: "prior" }],
+      historyOmission: omission,
+    }, { runAgent });
+    expect(prompts[0]).toBe("plain prompt");
+    expect(prompts[1].match(/\[Workbench-generated history notice\]/g))
+      .toHaveLength(1);
+    expect(prompts[2].match(/\[Workbench-generated history notice\]/g))
+      .toHaveLength(1);
+    expect(
+      state.events.filter((event) => event.event_type === "session_start")
+        .map((event) => event.content),
+    ).toEqual([
+      "plain prompt",
+      "persist exactly",
+      "referential prompt",
+    ]);
+  });
+
+  test("[case 21] direct ACP refuses when the final decorated prompt exceeds the existing bound", async () => {
+    let agentStarted = false;
+    await expect(runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "x".repeat(59_700),
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      workspaceRoot: Deno.cwd(),
+      historyOmission: omission,
+    }, {
+      runAgent: () => {
+        agentStarted = true;
+        return Promise.reject(new Error("must not start"));
+      },
+    })).rejects.toThrow("ACP prompt exceeded the input limit");
+    expect(agentStarted).toBe(false);
+  });
+
+  test("[case 26] warm and reconstructed delivery preserve identical projection counts", async () => {
+    const run = async (state: "warm-reused" | "reconstructed") => {
+      const result = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "continue",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: `01ACPSESSION00000000000026${
+          state === "warm-reused" ? "0" : "1"
+        }`,
+        workspaceRoot: Deno.cwd(),
+        conversationMessages: [{ role: "user", content: "prior" }],
+        historyOmission: omission,
+      }, { sessionMap: sessionMapStub(state, []) });
+      return result.historyOmission;
+    };
+    const warm = await run("warm-reused");
+    const reconstructed = await run("reconstructed");
+    expect({ ...warm, historyDelivery: undefined }).toEqual({
+      ...reconstructed,
+      historyDelivery: undefined,
+    });
+    expect(warm?.withheldFromProjection).toBe(1);
+    expect(warm?.historyDelivery).toBe("warm-no-replay");
+    expect(reconstructed?.historyDelivery).toBe("projected-transcript");
+  });
 });
 
 describe("reconstructed tool history", () => {
