@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import saveIssueSchema from "./linear-save-issue-schema.fixture.ts";
 import { parseMcpServersConfig, type SecretsConfig } from "./config.ts";
 import {
   boundedMcpFetch,
@@ -37,6 +38,24 @@ function serverTable(overrides: Record<string, unknown> = {}) {
       }],
     },
   };
+}
+
+function linearCreationTable(overrides: Record<string, unknown> = {}) {
+  return serverTable({
+    tools: [{
+      name: "create_issue",
+      effect: "write_external",
+      approval: "ask",
+    }],
+    linear_issue_creation: {
+      team_id: "team_fixture_01",
+      projects: {
+        "Synthetic Project": "project_fixture_01",
+        "Second Project": "project_fixture_02",
+      },
+    },
+    ...overrides,
+  });
 }
 
 describe("parseMcpServersConfig", () => {
@@ -86,6 +105,119 @@ describe("parseMcpServersConfig", () => {
     }]);
   });
 
+  test.each(
+    [
+      ["search_tool", false],
+      ["fetch_tool", false],
+      ["search_tool", true],
+      ["fetch_tool", true],
+    ] as const,
+  )(
+    "rejects create_issue as %s with binding=%s",
+    (capability, withBinding) => {
+      const capabilities = { [capability]: "create_issue" };
+      const table = withBinding
+        ? linearCreationTable({ capabilities })
+        : serverTable({
+          capabilities,
+          tools: [{
+            name: "create_issue",
+            effect: "write_external",
+            approval: "ask",
+          }],
+        });
+      expect(() => parseMcpServersConfig(table, CONFIG_PATH)).toThrow(
+        "create_issue cannot be a search or fetch capability; use linear_issue_creation",
+      );
+    },
+  );
+
+  test.each(["search_tool", "fetch_tool"])(
+    "rejects save_issue as %s",
+    (capability) => {
+      for (const withBinding of [false, true]) {
+        const overrides = {
+          capabilities: { [capability]: "save_issue" },
+          tools: [{
+            name: "save_issue",
+            effect: "write_external",
+            approval: "ask",
+          }],
+        };
+        expect(() =>
+          parseMcpServersConfig(
+            withBinding
+              ? linearCreationTable(overrides)
+              : serverTable(overrides),
+            CONFIG_PATH,
+          )
+        ).toThrow(/also required for save_issue/);
+      }
+    },
+  );
+  test("requires exactly one creation upstream", () => {
+    expect(() =>
+      parseMcpServersConfig(
+        linearCreationTable({
+          tools: [
+            { name: "create_issue", effect: "write_external", approval: "ask" },
+            { name: "save_issue", effect: "write_external", approval: "ask" },
+          ],
+        }),
+        CONFIG_PATH,
+      )
+    ).toThrow(/configure exactly one/);
+  });
+
+  test("accepts fixed Linear team and exact-name project bindings", () => {
+    const parsed = parseMcpServersConfig(linearCreationTable(), CONFIG_PATH);
+    expect(parsed[0].linearIssueCreation).toEqual({
+      teamId: "team_fixture_01",
+      projects: {
+        "Synthetic Project": "project_fixture_01",
+        "Second Project": "project_fixture_02",
+      },
+    });
+  });
+
+  test.each([
+    [
+      { linear_issue_creation: { team_id: "", projects: { Synthetic: "p1" } } },
+      /team_id/,
+    ],
+    [
+      { linear_issue_creation: { team_id: "team1", projects: {} } },
+      /projects must contain/,
+    ],
+    [
+      {
+        linear_issue_creation: {
+          team_id: "team1",
+          projects: { "   ": "project1" },
+        },
+      },
+      /project names/,
+    ],
+    [
+      { minimum_clearance: "remote" },
+      /minimum_clearance loopback/,
+    ],
+    [
+      {
+        tools: [{
+          name: "create_comment",
+          effect: "write_external",
+          approval: "ask",
+        }],
+      },
+      /requires create_issue/,
+    ],
+  ])("rejects malformed Linear issue binding %#", (overrides, pattern) => {
+    expect(() =>
+      parseMcpServersConfig(linearCreationTable(overrides), CONFIG_PATH)
+    ).toThrow(pattern);
+  });
+
   test("rejects capabilities pointing to undeclared tools", () => {
     const table = serverTable({
       capabilities: {
@@ -100,7 +232,10 @@ describe("parseMcpServersConfig", () => {
   test.each([
     [{ transport: "stdio" }, /streamable_http/],
     [{ url: "http://mcp.example/mcp" }, /https/],
-    [{ url: ["https://user", "pass@mcp.example/mcp"].join(":") }, /credentials/],
+    [
+      { url: ["https://user", "pass@mcp.example/mcp"].join(":") },
+      /credentials/,
+    ],
     [
       { tools: [{ name: "*", effect: "read", approval: "allow" }] },
       /tool name/,
@@ -156,6 +291,289 @@ describe("parseMcpServersConfig", () => {
 });
 
 describe("external MCP command projection", () => {
+  test("never exposes generic create_issue without a bounded binding", async () => {
+    const table = serverTable({
+      tools: [{
+        name: "create_issue",
+        effect: "write_external",
+        approval: "ask",
+      }],
+    });
+    const call = vi.fn();
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(table, CONFIG_PATH),
+      { linear_mcp: "secret-value" },
+      {
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [{ name: "create_issue", inputSchema: { type: "object" } }],
+        }),
+        call,
+      },
+    );
+    expect(built.commands).toEqual([]);
+    expect(built.diagnostics).toEqual([
+      {
+        serverId: "linear",
+        status: "withheld",
+        tool: "create_issue",
+        reason: "binding missing",
+      },
+      {
+        serverId: "linear",
+        status: "ready",
+        revision: "2026-07-28",
+        toolCount: 0,
+      },
+    ]);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  test.each(["create_issue", "save_issue"])(
+    "withholds unserializable %s without losing another tool",
+    async (upstreamTool) => {
+      const schema: Record<string, unknown> = { type: "object" };
+      schema.properties = { optional: schema };
+      const call = vi.fn();
+      const built = await buildExternalMcpCommands(
+        parseMcpServersConfig(
+          linearCreationTable({
+            tools: [
+              { name: upstreamTool, effect: "write_external", approval: "ask" },
+              { name: "get_issue", effect: "read", approval: "allow" },
+            ],
+          }),
+          CONFIG_PATH,
+        ),
+        { linear_mcp: "secret-value" },
+        {
+          discover: async () => ({
+            revision: "2026-07-28",
+            tools: [
+              { name: upstreamTool, inputSchema: schema },
+              {
+                name: "get_issue",
+                inputSchema: { type: "object", properties: {} },
+              },
+            ],
+          }),
+          call,
+        },
+      );
+      expect(built.commands.map((command) => command.id)).toEqual([
+        "mcp.linear.get_issue",
+      ]);
+      expect(built.diagnostics).toEqual([
+        {
+          serverId: "linear",
+          status: "withheld",
+          tool: upstreamTool,
+          reason: "unsupported schema",
+        },
+        {
+          serverId: "linear",
+          status: "ready",
+          revision: "2026-07-28",
+          toolCount: 1,
+        },
+      ]);
+      expect(call).not.toHaveBeenCalled();
+    },
+  );
+
+  test("withholds bounded create_issue on a discovered schema mismatch", async () => {
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
+      { linear_mcp: "secret-value" },
+      {
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [{
+            name: "create_issue",
+            inputSchema: {
+              type: "object",
+              properties: { title: { type: "string" } },
+            },
+          }],
+        }),
+        call: vi.fn(),
+      },
+    );
+    expect(built.commands).toEqual([]);
+    expect(built.diagnostics).toEqual([
+      {
+        serverId: "linear",
+        status: "withheld",
+        tool: "create_issue",
+        reason: "unsupported schema",
+      },
+      {
+        serverId: "linear",
+        status: "ready",
+        revision: "2026-07-28",
+        toolCount: 0,
+      },
+    ]);
+  });
+
+  test.each(
+    [
+      ["missing discovery", [], "tool not discovered"],
+      ["invalid schema", [{
+        name: "create_issue",
+        inputSchema: "untrusted schema details",
+      }], "unsupported schema"],
+    ] as const,
+  )("withholds with a fixed reason for %s", async (_name, tools, reason) => {
+    const call = vi.fn();
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
+      { linear_mcp: "secret-value" },
+      {
+        discover: async () => ({ revision: "2026-07-28", tools: [...tools] }),
+        call,
+      },
+    );
+    expect(built.commands).toEqual([]);
+    expect(built.diagnostics[0]).toEqual({
+      serverId: "linear",
+      status: "withheld",
+      tool: "create_issue",
+      reason,
+    });
+    expect(JSON.stringify(built.diagnostics)).not.toContain(
+      "untrusted schema details",
+    );
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  test("reserves create_issue on a non-Linear server without a binding", async () => {
+    const call = vi.fn();
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(
+        serverTable({
+          id: "other",
+          url: "https://example.com/mcp",
+          tools: [{
+            name: "create_issue",
+            effect: "write_external",
+            approval: "ask",
+          }],
+        }),
+        CONFIG_PATH,
+      ),
+      { linear_mcp: "secret-value" },
+      {
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [{ name: "create_issue", inputSchema: { type: "object" } }],
+        }),
+        call,
+      },
+    );
+    expect(built.commands).toEqual([]);
+    expect(built.diagnostics[0]).toEqual({
+      serverId: "other",
+      status: "withheld",
+      tool: "create_issue",
+      reason: "binding missing",
+    });
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  test("registers save_issue only as bounded create_issue with a binding", async () => {
+    for (const withBinding of [false, true]) {
+      const overrides = {
+        tools: [{
+          name: "save_issue",
+          effect: "write_external",
+          approval: "ask",
+        }],
+      };
+      const call = vi.fn();
+      const built = await buildExternalMcpCommands(
+        parseMcpServersConfig(
+          withBinding ? linearCreationTable(overrides) : serverTable(overrides),
+          CONFIG_PATH,
+        ),
+        { linear_mcp: "secret-value" },
+        {
+          discover: async () => ({
+            revision: "2026-07-28",
+            tools: [{ name: "save_issue", inputSchema: saveIssueSchema }],
+          }),
+          call,
+        },
+      );
+      expect(built.commands.map((c) => c.id)).toEqual(
+        withBinding ? ["mcp.linear.create_issue"] : [],
+      );
+      expect(externalMcpCommandsForTransport(built.commands, "remote")).toEqual(
+        [],
+      );
+      if (withBinding) {
+        expect(built.commands[0].inputSchema.properties).not.toHaveProperty(
+          "id",
+        );
+        expect(built.commands[0].permission.defaultDecision).toBe("ask");
+      } else {
+        expect(built.diagnostics[0]).toMatchObject({
+          tool: "save_issue",
+          reason: "binding missing",
+        });
+      }
+      expect(call).not.toHaveBeenCalled();
+    }
+  });
+
+  test("registers the bounded projection when binding and schema match", async () => {
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
+      { linear_mcp: "secret-value" },
+      {
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [{
+            name: "create_issue",
+            inputSchema: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                description: { type: "string" },
+                team: { type: "string" },
+                project: { type: "string" },
+                priority: { type: "integer" },
+                relatedTo: {
+                  type: "array",
+                  items: { type: "string" },
+                },
+              },
+              required: ["title", "team"],
+              additionalProperties: false,
+            },
+          }],
+        }),
+        call: vi.fn(),
+      },
+    );
+    expect(built.commands.map((command) => command.id)).toEqual([
+      "mcp.linear.create_issue",
+    ]);
+    expect(built.commands[0].inputSchema.properties).not.toHaveProperty("team");
+    expect(built.commands[0].permission).toMatchObject({
+      defaultDecision: "ask",
+      network: "configured-external",
+    });
+    expect(built.commands[0].minimumClearance).toBe("loopback");
+    expect(externalMcpCommandsForTransport(built.commands, "remote")).toEqual(
+      [],
+    );
+    expect(externalMcpCommandsForTransport(built.commands, "loopback")).toEqual(
+      built.commands,
+    );
+    expect(built.diagnostics[0]).toMatchObject({ toolCount: 1 });
+  });
+
   test("an inherited credential property is unavailable", async () => {
     const credentials = Object.create({ linear_mcp: "inherited-secret" });
     const discover = vi.fn();
@@ -220,9 +638,10 @@ describe("external MCP command projection", () => {
       revision: "2026-07-28",
       toolCount: 1,
     }]);
-    expect(result.commands.map((command: { id: string }) => command.id)).toEqual([
-      "mcp.linear.get_issue",
-    ]);
+    expect(result.commands.map((command: { id: string }) => command.id))
+      .toEqual([
+        "mcp.linear.get_issue",
+      ]);
     expect(result.commands[0]?.permission).toMatchObject({
       defaultDecision: "allow",
       network: "configured-external",
@@ -664,12 +1083,16 @@ describe("validateDoltPort & buildDoltAllowNetGrant", () => {
       expect(
         () => validateDoltPort(input),
         `expected validateDoltPort(${JSON.stringify(input)}) to throw`,
-      ).toThrow("invalid DOLT_PORT: must be a decimal integer between 1 and 65535");
+      ).toThrow(
+        "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+      );
 
       expect(
         () => buildDoltAllowNetGrant(input),
         `expected buildDoltAllowNetGrant(${JSON.stringify(input)}) to throw`,
-      ).toThrow("invalid DOLT_PORT: must be a decimal integer between 1 and 65535");
+      ).toThrow(
+        "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+      );
     }
   });
 

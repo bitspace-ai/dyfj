@@ -56,6 +56,7 @@ export type JsonSchemaProperty = {
   properties?: Record<string, JsonSchemaProperty>;
   additionalProperties?: boolean;
   items?: JsonSchemaProperty;
+  maxItems?: number;
   enum?: Array<string | number | boolean | null>;
   /**
    * Mark a payload-bearing argument (e.g. write_file `content`) sensitive: it is
@@ -121,7 +122,10 @@ export interface CommandDefinition<TResult = unknown> {
   /** Minimum transport clearance required before this command is registered. */
   minimumClearance?: "loopback" | "remote";
   /** Optional bounded public-safe event content for protocol-backed tools. */
-  eventContent?: (isError: boolean) => string;
+  eventContent?: (
+    isError: boolean,
+    result: CommandInvocationResult,
+  ) => string;
   /** OpenTelemetry span kind when this command crosses a protocol boundary. */
   spanKind?: "client" | "server" | "producer" | "consumer" | "internal";
   executor: (
@@ -1089,7 +1093,7 @@ export async function invokeCommandWithEvent<TResult = unknown>(
     command?.spanKind,
   );
   if (command?.eventContent !== undefined) {
-    event.content = command.eventContent(result.isError);
+    event.content = command.eventContent(result.isError, result);
   }
   await (context.writeEvent ?? writeDoltEvent)(event);
   return result;
@@ -1232,6 +1236,12 @@ function validateCommandArgumentValue(
     !new RegExp(property.pattern).test(String(value))
   ) {
     return `${field} does not match required pattern`;
+  }
+  if (
+    property.type === "array" && property.maxItems !== undefined &&
+    (value as unknown[]).length > property.maxItems
+  ) {
+    return `${field} exceeds the declared item limit`;
   }
   if (property.type === "array" && property.items !== undefined) {
     for (let index = 0; index < (value as unknown[]).length; index++) {

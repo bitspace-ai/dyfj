@@ -102,6 +102,38 @@ tools = [
   }]);
 });
 
+Deno.test("documented bounded Linear issue binding parses with stable IDs", () => {
+  const table = parseToml(`
+[secrets]
+command = ["secret-resolver"]
+
+[secrets.named]
+linear_mcp = "fixture-pointer"
+
+[[mcp.servers]]
+id = "linear"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+minimum_clearance = "loopback"
+auth = { type = "bearer", secret = "linear_mcp" }
+tools = [
+  { name = "create_issue", effect = "write_external", approval = "ask" },
+]
+
+[mcp.servers.linear_issue_creation]
+team_id = "team_fixture_01"
+projects = { "Synthetic Project" = "project_fixture_01" }
+`) as Record<string, unknown>;
+  const configPath = "/operator/.dyfj/config.toml";
+  const secrets = parseSecretsConfig(table, configPath);
+  assert(secrets !== null, "documented secrets configuration was omitted");
+  const parsed = parseMcpServersConfig(table, configPath, secrets);
+  assertEquals(parsed[0]?.linearIssueCreation, {
+    teamId: "team_fixture_01",
+    projects: { "Synthetic Project": "project_fixture_01" },
+  });
+});
+
 Deno.test("external MCP discovery and call stay strict, allowlisted, and framed", async () => {
   const calls: string[] = [];
   const requests: Array<{

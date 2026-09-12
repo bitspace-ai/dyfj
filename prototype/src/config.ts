@@ -343,6 +343,13 @@ export interface McpServerCapabilities {
   fetchTool?: string;
 }
 
+/** Operator-owned IDs used by the bounded native Linear issue-creation tool. */
+export interface LinearIssueCreationBinding {
+  teamId: string;
+  /** Exact model-visible project name to stable Linear project ID. */
+  projects: Readonly<Record<string, string>>;
+}
+
 export interface McpHttpServerConfig {
   id: string;
   transport: "streamable_http";
@@ -351,6 +358,7 @@ export interface McpHttpServerConfig {
   auth: { type: "bearer"; secret: string };
   tools: McpConfiguredTool[];
   capabilities?: McpServerCapabilities;
+  linearIssueCreation?: LinearIssueCreationBinding;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
@@ -859,6 +867,8 @@ const MCP_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MCP_SECRET_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const MAX_MCP_SERVERS = 8;
 const MAX_MCP_TOOLS_PER_SERVER = 32;
+const MAX_LINEAR_PROJECTS = 64;
+const LINEAR_CONFIG_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}(?![\s\S])/;
 
 function assertSecureMcpServerUrl(value: unknown, where: string): string {
   if (typeof value !== "string" || value.length === 0) {
@@ -947,6 +957,7 @@ export function parseMcpServersConfig(
         "auth",
         "tools",
         "capabilities",
+        "linear_issue_creation",
       ],
       where,
     );
@@ -1068,6 +1079,16 @@ export function parseMcpServersConfig(
           `config: MCP capabilities.fetch_tool must be a declared tool in ${where}`,
         );
       }
+      if (
+        rawCaps.search_tool === "create_issue" ||
+        rawCaps.fetch_tool === "create_issue" ||
+        rawCaps.search_tool === "save_issue" ||
+        rawCaps.fetch_tool === "save_issue"
+      ) {
+        throw new Error(
+          `config: create_issue cannot be a search or fetch capability; use linear_issue_creation (also required for save_issue) in ${where}`,
+        );
+      }
       if (rawCaps.search_tool === undefined && rawCaps.fetch_tool === undefined) {
         throw new Error(
           `config: MCP capabilities must declare search_tool or fetch_tool in ${where}`,
@@ -1082,6 +1103,80 @@ export function parseMcpServersConfig(
           : { fetchTool: rawCaps.fetch_tool }),
       };
     }
+    let linearIssueCreation: LinearIssueCreationBinding | undefined = undefined;
+    if (server.linear_issue_creation !== undefined) {
+      const rawBinding = exactObject(
+        server.linear_issue_creation,
+        "[[mcp.servers]].linear_issue_creation",
+        ["team_id", "projects"],
+        where,
+      );
+      if (
+        typeof rawBinding.team_id !== "string" ||
+        !LINEAR_CONFIG_ID.test(rawBinding.team_id)
+      ) {
+        throw new Error(
+          `config: Linear issue team_id must be a stable ID in ${where}`,
+        );
+      }
+      if (
+        typeof rawBinding.projects !== "object" ||
+        rawBinding.projects === null || Array.isArray(rawBinding.projects)
+      ) {
+        throw new Error(
+          `config: Linear issue projects must be an exact-name to ID table in ${where}`,
+        );
+      }
+      const projectEntries = Object.entries(
+        rawBinding.projects as Record<string, unknown>,
+      );
+      if (
+        projectEntries.length === 0 ||
+        projectEntries.length > MAX_LINEAR_PROJECTS
+      ) {
+        throw new Error(
+          `config: Linear issue projects must contain 1-${MAX_LINEAR_PROJECTS} entries in ${where}`,
+        );
+      }
+      const projects: Record<string, string> = Object.create(null);
+      for (const [name, id] of projectEntries) {
+        if (
+          name.length === 0 || name.length > 200 || name.trim().length === 0
+        ) {
+          throw new Error(
+            `config: Linear issue project names must be 1-200 UTF-16 code units and not whitespace-only in ${where}`,
+          );
+        }
+        if (typeof id !== "string" || !LINEAR_CONFIG_ID.test(id)) {
+          throw new Error(
+            `config: Linear issue project IDs must be stable IDs in ${where}`,
+          );
+        }
+        projects[name] = id;
+      }
+      const creationTools = tools.filter((tool) =>
+        tool.name === "create_issue" || tool.name === "save_issue"
+      );
+      const createIssue = creationTools[0];
+      if (
+        creationTools.length !== 1 || createIssue === undefined ||
+        createIssue.effect !== "write_external" ||
+        createIssue.approval !== "ask"
+      ) {
+        throw new Error(
+          `config: Linear issue creation requires create_issue as write_external with approval ask, or save_issue with the same policy; configure exactly one in ${where}`,
+        );
+      }
+      if (server.minimum_clearance !== "loopback") {
+        throw new Error(
+          `config: Linear issue creation requires minimum_clearance loopback in ${where}`,
+        );
+      }
+      linearIssueCreation = {
+        teamId: rawBinding.team_id,
+        projects,
+      };
+    }
     configured.push({
       id: server.id,
       transport: "streamable_http",
@@ -1090,6 +1185,7 @@ export function parseMcpServersConfig(
       auth: { type: "bearer", secret: auth.secret },
       tools,
       ...(capabilities === undefined ? {} : { capabilities }),
+      ...(linearIssueCreation === undefined ? {} : { linearIssueCreation }),
     });
   }
   return configured;
