@@ -1232,6 +1232,30 @@ describe("runExec", () => {
     expect(stderr.join("\n")).toContain("Qwen3 Coder 30B");
   });
 
+  test("surfaces reconciliation guidance for failed Linear creation independently of model prose", async () => {
+    const { io, stderr } = fakeIo();
+    await runExec(
+      "create",
+      cfg(),
+      io,
+      false,
+      fakeTurnConnect([
+        {
+          t: "event",
+          event: {
+            type: "toolCallCompleted",
+            commandId: "mcp.linear.create_issue",
+            isError: true,
+            durationMs: 10,
+          },
+        },
+        { t: "delta", text: "No issue was created." },
+      ], result({ text: "No issue was created." })),
+    );
+    expect(stderr.join("\n")).toContain("the issue may already exist");
+    expect(stderr.join("\n")).toContain("reconcile in Linear before retrying");
+  });
+
   test("surfaces tool progress events to stderr", async () => {
     const { io, stderr } = fakeIo();
     const code = await runExec(

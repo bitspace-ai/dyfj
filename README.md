@@ -462,6 +462,61 @@ tools = [
 ]
 ```
 
+The native runner exposes a configured `save_issue` (or legacy `create_issue`)
+as the local, create-only `mcp.<server>.create_issue` tool. The binding fixes one team ID and maps exact
+model-visible project names to stable project IDs; neither ID is model input:
+
+```toml
+[[mcp.servers]]
+id = "linear"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+minimum_clearance = "loopback"
+auth = { type = "bearer", secret = "linear_mcp" }
+tools = [
+  { name = "get_issue", effect = "read", approval = "allow" },
+  { name = "save_issue", effect = "write_external", approval = "ask" },
+]
+
+[mcp.servers.linear_issue_creation]
+team_id = "team_stable_id"
+projects = { "Synthetic Project" = "project_stable_id" }
+```
+
+Both `save_issue` and `create_issue` are reserved across configured MCP servers:
+without `linear_issue_creation`, neither is exposed as a generic tool. Configure
+exactly one with the binding; neither may be a search/fetch capability. For
+`save_issue`, Workbench omits `id` and all update/template fields, selecting the
+connector's creation operation. The model cannot supply those fields. A malformed
+binding fails configuration, and an upstream
+schema that cannot accept `title`, `description`, `team`, `project`, `priority`,
+and `relatedTo` with the required types withholds the bounded tool. The creation
+projection permits nullable upstream strings by sending only strings, ignores
+unselected optional fields, and rejects unsupported constraints on the root or
+selected fields. Generic MCP schema handling is unchanged. Boot diagnostics
+identify a missing binding, missing discovered tool, or unsupported schema using
+fixed reasons without echoing upstream schema content. The local model input
+requires `title`, `description`, `project`, and `priority`, with optional
+`relatedTo`: titles are 1–200 UTF-16 code units and not whitespace-only,
+descriptions are at most 16,000 UTF-16 code units, projects are exact configured
+names of 1–200,
+priorities are integers 0–4, and `relatedTo` contains at most 10 distinct
+uppercase issue identifiers of at most 64 code units. These are Workbench
+limits, not claims about Linear's service limits.
+
+Each invocation still requires operator approval, including under the operator
+permission profile, and the tool is registered only for loopback native-runner
+turns. Schema validation runs before approval; the relation count and distinctness
+checks run after approval and before any connector call. Invalid relations at
+that stage produce a local error without creating an issue. Workbench injects
+the configured team and project IDs before the one create attempt. It does not automatically retry a transport failure. Success
+requires a syntactically valid issue identifier plus matching team/project ID
+evidence in the connector response; otherwise the outcome is indeterminate and
+requires reconciliation in Linear before retrying. The model receives only the
+validated identifier. Durable events keep generic MCP arguments/results redacted
+and add only that identifier to the bounded success metadata. This does not add
+the tool to bare ACP-backed sessions or add a REPL command or `/idea` workflow.
+
 Start this surface through `dyfj start`; the launcher derives the narrow Deno
 network grants from the configured hosts. At boot, Workbench discovers the
 server tools once and registers only the intersection with the configured
@@ -1290,3 +1345,7 @@ Document revisions only. Code and behavior changes are tracked in
   whole-history and selected-window counts, native companion and ACP notice
   scope, the narrowed syntactic refusal conditions, and the unchanged final
   prompt-size and acquired-handle lifecycle.
+- 2026-09-08 - The configured external-MCP section now documents native-runner
+  bounded Linear issue creation: fixed team/project IDs, local input limits,
+  per-call approval, schema/response validation, identifier-only receipts,
+  reconciliation-required ambiguity, and the ACP and `/idea` deferrals.

@@ -69,6 +69,25 @@ can derive the configured host grants. The complete configuration, trust,
 result-framing, and receipt-redaction contract is in the root README under
 "Configured external MCP tools."
 
+Both `save_issue` and legacy `create_issue` are reserved across configured servers.
+Configure exactly one with the Linear binding; search/fetch mappings are rejected.
+Both expose only local `mcp.<server>.create_issue`. Calls to `save_issue` omit `id`,
+patches and template fields, so this binding grants creation only. Boot diagnostics give fixed withholding reasons for a missing
+binding, missing discovered tool, or unsupported schema. The native runner
+exposes it
+only when that server also has a valid loopback-only `linear_issue_creation`
+binding with one fixed team ID and an exact project-name-to-ID allowlist. Local
+validation requires title, description, project, and priority; related issue
+identifiers are optional. Description length is at most 16,000 UTF-16 code units.
+Schema validation precedes approval; relation count and distinctness checks run
+after approval but before any connector call. For valid arguments, the connector
+receives configured IDs, never a model-selected team
+or project ID. Every attempt asks for approval. A validated success returns and
+persists only the issue identifier; transport or response ambiguity is not
+retried and requires reconciliation. Bare ACP sessions, a REPL command, and an
+`/idea` file workflow are not part of this surface. See the root README for the
+configuration and exact local limits.
+
 The operator commands are:
 
 ```sh

@@ -7,6 +7,10 @@ import type {
 import { CommandExecutionError } from "./commands.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
 import { buildWebCommands, createWebToolsSessionState } from "./web-tools.ts";
+import {
+  buildBoundedLinearCreateIssueCommand,
+  projectLinearCreationUpstreamSchema,
+} from "./linear-tools.ts";
 export {
   buildDoltAllowNetGrant,
   mcpServerNetGrants,
@@ -37,6 +41,7 @@ export interface McpDiscoveryResult {
 
 export interface McpCallResult {
   content?: Array<Record<string, unknown>>;
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
@@ -56,6 +61,12 @@ export interface ExternalMcpDeps {
 }
 
 export type ExternalMcpDiagnostic =
+  | {
+    serverId: string;
+    status: "withheld";
+    tool: "create_issue" | "save_issue";
+    reason: "binding missing" | "tool not discovered" | "unsupported schema";
+  }
   | {
     serverId: string;
     status: "ready";
@@ -388,7 +399,8 @@ export function formatUntrustedMcpResult(value: string): string {
   const escaped = value
     .replace(/<\s*\/\s*untrusted-mcp-result\s*>/gi, "<\\/untrusted-mcp-result>")
     .replace(/<\s*untrusted-mcp-result\s*>/gi, "<untrusted-mcp-result\\>");
-  return prefix + boundedUtf8(escaped, MAX_RESULT_BYTES - framingBytes) + suffix;
+  return prefix + boundedUtf8(escaped, MAX_RESULT_BYTES - framingBytes) +
+    suffix;
 }
 
 function eventContent(
@@ -464,8 +476,42 @@ export async function buildExternalMcpCommands(
         configured.name === server.capabilities?.fetchTool;
       if (isCapabilityMapped) continue;
 
-      const discovered = discoveredByName.get(configured.name);
-      if (discovered === undefined) continue;
+      const upstreamTool = configured.name;
+      const discovered = discoveredByName.get(upstreamTool);
+      if (upstreamTool === "create_issue" || upstreamTool === "save_issue") {
+        const binding = server.linearIssueCreation;
+        const schema = binding && discovered
+          ? projectLinearCreationUpstreamSchema(discovered.inputSchema, binding)
+          : undefined;
+        const command = binding && schema
+          ? buildBoundedLinearCreateIssueCommand({
+            server,
+            binding,
+            token,
+            revision: discovery.revision,
+            upstreamSchema: schema,
+            upstreamTool,
+            call,
+          })
+          : undefined;
+        if (command) {
+          commands.push(command);
+          toolCount++;
+        } else {
+          diagnostics.push({
+            serverId: server.id,
+            status: "withheld",
+            tool: upstreamTool,
+            reason: !binding
+              ? "binding missing"
+              : !discovered
+              ? "tool not discovered"
+              : "unsupported schema",
+          });
+        }
+        continue;
+      }
+      if (!discovered) continue;
       let inputSchema: JsonSchemaObject;
       try {
         inputSchema = sanitizeMcpInputSchema(discovered.inputSchema);

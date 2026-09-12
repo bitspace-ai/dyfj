@@ -11,6 +11,21 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Bounded native Linear issue creation**: A configured external MCP
+  `save_issue` (or legacy `create_issue`) can now back a create-only local tool
+  on native loopback turns with a fixed team,
+  an exact project-name-to-ID allowlist, strict local argument limits, and one
+  operator approval per attempt. Workbench withholds unbound or schema-mismatched
+  creation tools across configured servers, excludes update IDs and patch inputs,
+  projects supported creation fields, reports fixed withholding reasons
+  at boot, never retries ambiguous failures, validates returned
+  team/project evidence, and returns and durably records only the validated
+  issue identifier while retaining generic MCP argument/result redaction. Receipts
+  accept issue-style `id` aliases and distinguish display labels from explicit
+  association IDs. In the streaming CLI and interactive REPL, failed creation calls
+  display reconciliation guidance independently of model prose. Durable trace
+  evidence requires the OTel event migration. This
+  does not add the capability to bare ACP sessions or add a REPL command.
 - <!-- closure-claim: semantic-contract-behavior --> **Workbench first-product
   semantic contract package**: A new versioned package at
   `contracts/workbench/first-product/v1/` states the first-product room,

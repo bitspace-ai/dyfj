@@ -34,6 +34,8 @@ for (const diagnostic of externalMcp.diagnostics) {
   console.error(
     diagnostic.status === "ready"
       ? `external MCP ${diagnostic.serverId}: ready (${diagnostic.toolCount} tools, ${diagnostic.revision})`
+      : diagnostic.status === "withheld"
+      ? `external MCP ${diagnostic.serverId}: ${diagnostic.tool} withheld (${diagnostic.reason})`
       : `external MCP ${diagnostic.serverId}: unavailable (${diagnostic.reason})`,
   );
 }

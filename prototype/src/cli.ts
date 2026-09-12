@@ -1461,9 +1461,13 @@ export function formatRuntimeEvent(
     const duration = typeof event.durationMs === "number"
       ? ` (${event.durationMs}ms)`
       : "";
+    const reconciliation = event.isError === true &&
+        /^mcp\.[A-Za-z0-9_-]+\.create_issue$/.test(commandId)
+      ? "\nCreation not confirmed. If you approved this call, reconcile in Linear before retrying; the issue may already exist."
+      : "";
     return `tool: ${commandId} ${
       event.isError === true ? "failed" : "finished"
-    }${duration}`;
+    }${duration}${reconciliation}`;
   }
   if (event.type === "memoryRecallNegotiated") {
     const era = event.era === "modern" || event.era === "legacy"

@@ -121,7 +121,10 @@ export interface CommandDefinition<TResult = unknown> {
   /** Minimum transport clearance required before this command is registered. */
   minimumClearance?: "loopback" | "remote";
   /** Optional bounded public-safe event content for protocol-backed tools. */
-  eventContent?: (isError: boolean) => string;
+  eventContent?: (
+    isError: boolean,
+    result: CommandInvocationResult,
+  ) => string;
   /** OpenTelemetry span kind when this command crosses a protocol boundary. */
   spanKind?: "client" | "server" | "producer" | "consumer" | "internal";
   executor: (
@@ -1089,7 +1092,7 @@ export async function invokeCommandWithEvent<TResult = unknown>(
     command?.spanKind,
   );
   if (command?.eventContent !== undefined) {
-    event.content = command.eventContent(result.isError);
+    event.content = command.eventContent(result.isError, result);
   }
   await (context.writeEvent ?? writeDoltEvent)(event);
   return result;
