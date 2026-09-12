@@ -317,10 +317,102 @@ describe.each(["create_issue", "save_issue"] as const)(
           invocationArguments(override),
         );
         expect(approve).toHaveBeenCalledTimes(
-          ["too many relations", "duplicate relations"].includes(_name) ? 1 : 0,
+          _name === "duplicate relations" ? 1 : 0,
         );
         expect(result).toMatchObject({ isError: true });
         expect(call).not.toHaveBeenCalled();
+      },
+    );
+
+    test("rejects oversized relations before reading items or asking approval", async () => {
+      const relatedTo = Array(11).fill("SYN-1");
+      const readItem = vi.fn(() => {
+        throw new Error("item must not be read");
+      });
+      Object.defineProperty(relatedTo, "0", { get: readItem });
+      const call = vi.fn<LinearIssueMcpCall>();
+      const { result, approve } = await invoke(
+        call,
+        invocationArguments({ relatedTo }),
+      );
+      expect(result).toMatchObject({
+        isError: true,
+        authzBasis: "policy:deny:invalid-arguments",
+      });
+      expect(readItem).not.toHaveBeenCalled();
+      expect(approve).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalled();
+    });
+
+    test("accepts ten distinct relations", async () => {
+      const relatedTo = Array.from({ length: 10 }, (_, i) => `SYN-${i + 1}`);
+      const call = vi.fn<LinearIssueMcpCall>(async () => successResult());
+      const { result, approve } = await invoke(
+        call,
+        invocationArguments({ relatedTo }),
+      );
+      expect(result.isError).toBe(false);
+      expect(approve).toHaveBeenCalledTimes(1);
+      expect(call).toHaveBeenCalledTimes(1);
+      expect(call.mock.calls[0][0].arguments.relatedTo).toEqual(relatedTo);
+    });
+
+    test.each([
+      {
+        team_id: binding.teamId,
+        project_id: binding.projects["Synthetic Project"],
+        team: { id: binding.teamId },
+        project: { id: binding.projects["Synthetic Project"] },
+      },
+      { team: "Display team", project: "Display project" },
+    ])("accepts consistent ID evidence and display labels: %j", (extra) => {
+      expect(projectLinearIssueCreationReceipt(
+        {
+          structuredContent: {
+            identifier: "SYN-108",
+            teamId: binding.teamId,
+            projectId: binding.projects["Synthetic Project"],
+            ...extra,
+          },
+        },
+        binding.teamId,
+        binding.projects["Synthetic Project"],
+      )).toEqual({ identifier: "SYN-108" });
+    });
+
+    test.each([null, 42, false, [], {}, undefined])(
+      "rejects malformed explicit association IDs: %j",
+      async (malformed) => {
+        for (
+          const key of [
+            "teamId",
+            "team_id",
+            "projectId",
+            "project_id",
+            "team",
+            "project",
+          ]
+        ) {
+          const call = vi.fn<LinearIssueMcpCall>(async () => ({
+            structuredContent: {
+              identifier: "SYN-108",
+              teamId: binding.teamId,
+              projectId: binding.projects["Synthetic Project"],
+              team: { id: binding.teamId },
+              project: { id: binding.projects["Synthetic Project"] },
+              [key]: key === "team" || key === "project"
+                ? { id: malformed }
+                : malformed,
+            },
+          }));
+          const { result, events } = await invoke(call);
+          expect(result).toMatchObject({
+            isError: true,
+            reason: expect.stringContaining("indeterminate"),
+          });
+          expect(call).toHaveBeenCalledTimes(1);
+          expect(events[0].content).not.toContain('"identifier"');
+        }
       },
     );
 
@@ -355,8 +447,6 @@ describe.each(["create_issue", "save_issue"] as const)(
       { id: "SYN-106", teamId: "wrong_team" },
       { id: "SYN-106", projectId: "wrong_project" },
       { id: "SYN-106", team: { id: "wrong_team" } },
-      { id: "SYN-106", teamId: undefined, team: "Synthetic Team" },
-      { id: "SYN-106", projectId: undefined, project: "Synthetic Project" },
     ])(
       "rejects invalid alias or association evidence without retry: %j",
       async (override) => {
@@ -375,6 +465,32 @@ describe.each(["create_issue", "save_issue"] as const)(
           reason: expect.stringContaining("indeterminate"),
         });
         expect(call).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    test.each(["team", "project"] as const)(
+      "rejects a %s display label without an explicit ID",
+      async (association) => {
+        const response: Record<string, unknown> = {
+          identifier: "SYN-109",
+          teamId: binding.teamId,
+          team: "Synthetic Team",
+          projectId: binding.projects["Synthetic Project"],
+          project: "Synthetic Project",
+        };
+        delete response[`${association}Id`];
+        expect(Object.hasOwn(response, `${association}Id`)).toBe(false);
+        expect(Object.hasOwn(response, `${association}_id`)).toBe(false);
+        const call = vi.fn<LinearIssueMcpCall>(async () => ({
+          structuredContent: response,
+        }));
+        const { result, events } = await invoke(call);
+        expect(result).toMatchObject({
+          isError: true,
+          reason: expect.stringContaining("indeterminate"),
+        });
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(events[0].content).not.toContain('"identifier"');
       },
     );
 

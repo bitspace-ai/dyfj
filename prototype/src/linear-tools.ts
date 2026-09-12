@@ -233,6 +233,7 @@ export function boundedLinearCreateIssueSchema(
       },
       relatedTo: {
         type: "array",
+        maxItems: 10,
         items: { type: "string", pattern: RELATED_IDENTIFIER_PATTERN },
         description:
           "At most 10 distinct configured-connector issue identifiers.",
@@ -319,7 +320,10 @@ function associationIds(
 ): string[] {
   const ids: string[] = [];
   for (const key of [camelKey, snakeKey]) {
-    if (Object.hasOwn(value, key) && typeof value[key] === "string") {
+    if (Object.hasOwn(value, key)) {
+      if (typeof value[key] !== "string") {
+        throw new Error("invalid association ID");
+      }
       ids.push(value[key] as string);
     }
   }
@@ -330,9 +334,11 @@ function associationIds(
       ids.push(association);
     }
     if (
-      isRecord(association) && Object.hasOwn(association, "id") &&
-      typeof association.id === "string"
+      isRecord(association) && Object.hasOwn(association, "id")
     ) {
+      if (typeof association.id !== "string") {
+        throw new Error("invalid association ID");
+      }
       ids.push(association.id);
     }
   }

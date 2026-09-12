@@ -56,6 +56,7 @@ export type JsonSchemaProperty = {
   properties?: Record<string, JsonSchemaProperty>;
   additionalProperties?: boolean;
   items?: JsonSchemaProperty;
+  maxItems?: number;
   enum?: Array<string | number | boolean | null>;
   /**
    * Mark a payload-bearing argument (e.g. write_file `content`) sensitive: it is
@@ -1235,6 +1236,12 @@ function validateCommandArgumentValue(
     !new RegExp(property.pattern).test(String(value))
   ) {
     return `${field} does not match required pattern`;
+  }
+  if (
+    property.type === "array" && property.maxItems !== undefined &&
+    (value as unknown[]).length > property.maxItems
+  ) {
+    return `${field} exceeds the declared item limit`;
   }
   if (property.type === "array" && property.items !== undefined) {
     for (let index = 0; index < (value as unknown[]).length; index++) {

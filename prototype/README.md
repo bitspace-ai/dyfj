@@ -79,10 +79,10 @@ only when that server also has a valid loopback-only `linear_issue_creation`
 binding with one fixed team ID and an exact project-name-to-ID allowlist. Local
 validation requires title, description, project, and priority; related issue
 identifiers are optional. Description length is at most 16,000 UTF-16 code units.
-Schema validation precedes approval; relation count and distinctness checks run
-after approval but before any connector call. For valid arguments, the connector
+Schema validation precedes approval, with relation count checked before individual
+items; distinctness is checked after approval but before any connector call. For valid arguments, the connector
 receives configured IDs, never a model-selected team
-or project ID. Every attempt asks for approval. A validated success returns and
+or project ID. Each connector write requires operator approval. A validated success returns and
 persists only the issue identifier; transport or response ambiguity is not
 retried and requires reconciliation. Bare ACP sessions, a REPL command, and an
 `/idea` file workflow are not part of this surface. See the root README for the

@@ -504,15 +504,19 @@ priorities are integers 0–4, and `relatedTo` contains at most 10 distinct
 uppercase issue identifiers of at most 64 code units. These are Workbench
 limits, not claims about Linear's service limits.
 
-Each invocation still requires operator approval, including under the operator
+Each connector write requires operator approval, including under the operator
 permission profile, and the tool is registered only for loopback native-runner
-turns. Schema validation runs before approval; the relation count and distinctness
-checks run after approval and before any connector call. Invalid relations at
-that stage produce a local error without creating an issue. Workbench injects
-the configured team and project IDs before the one create attempt. It does not automatically retry a transport failure. Success
-requires a syntactically valid issue identifier plus matching team/project ID
-evidence in the connector response; otherwise the outcome is indeterminate and
-requires reconciliation in Linear before retrying. The model receives only the
+turns. Schema validation runs before approval, with relation count checked before
+individual items. Relation distinctness is checked after approval and before any
+connector call. Duplicate relations produce a local error without creating an
+issue. Workbench injects the configured team and project IDs before the one create
+attempt. It does not automatically retry a transport failure. Success requires a
+syntactically valid issue identifier plus matching team/project ID evidence in the
+connector response. Missing required ID evidence or an invalid issue identifier
+makes the outcome indeterminate and requires reconciliation in Linear before
+retrying. Malformed or conflicting values in explicit `teamId`, `team_id`,
+`projectId`, `project_id`, `team.id`, or `project.id` fields also make the outcome
+indeterminate, even when another ID matches. The model receives only the
 validated identifier. Durable events keep generic MCP arguments/results redacted
 and add only that identifier to the bounded success metadata. This does not add
 the tool to bare ACP-backed sessions or add a REPL command or `/idea` workflow.
@@ -1349,3 +1353,5 @@ Document revisions only. Code and behavior changes are tracked in
   bounded Linear issue creation: fixed team/project IDs, local input limits,
   per-call approval, schema/response validation, identifier-only receipts,
   reconciliation-required ambiguity, and the ACP and `/idea` deferrals.
+- 2026-09-12 - Clarified approval and relation-validation ordering and rejection
+  of malformed association ID evidence for native Linear issue creation.
