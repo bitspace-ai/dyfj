@@ -114,7 +114,11 @@ export function projectLinearCreationUpstreamSchema(
   binding: LinearIssueCreationBinding,
 ): JsonSchemaObject | undefined {
   if (!isRecord(value) || value.type !== "object") return undefined;
-  if (JSON.stringify(value).length > 64_000) return undefined;
+  try {
+    if (JSON.stringify(value).length > 64_000) return undefined;
+  } catch {
+    return undefined;
+  }
   const rootKeys = new Set([
     "$schema",
     "type",

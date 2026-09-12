@@ -551,6 +551,22 @@ describe("Linear identifier receipt projection", () => {
 });
 
 describe("creation-only upstream schema projection", () => {
+  test.each(["cycle", "throwing serializer", "undefined serialization"])(
+    "withholds a schema with %s",
+    (kind) => {
+      const schema: Record<string, unknown> = { ...saveIssueSchema };
+      if (kind === "cycle") schema.properties = { optional: schema };
+      else {schema.toJSON = () => {
+          if (kind === "throwing serializer") {
+            throw new Error("untrusted details");
+          }
+          return undefined;
+        };}
+      expect(projectLinearCreationUpstreamSchema(schema, binding))
+        .toBeUndefined();
+    },
+  );
+
   test("accepts the live save schema without exposing update fields or nullable inputs", () => {
     const projected = projectLinearCreationUpstreamSchema(
       saveIssueSchema,

@@ -20,7 +20,8 @@ README are tracked separately in its Revision history section.
   the connector call. Workbench withholds unbound or schema-mismatched
   creation tools across configured servers, excludes update IDs and patch inputs,
   projects supported creation fields, reports fixed withholding reasons
-  at boot, never retries ambiguous failures, validates returned
+  at boot, withholds creation tools when schema serialization fails,
+  never retries ambiguous failures, validates returned
   team/project evidence, and returns and durably records only the validated
   issue identifier while retaining generic MCP argument/result redaction. Receipts
   accept issue-style `id` aliases and distinguish display labels from explicit

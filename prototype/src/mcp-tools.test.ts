@@ -329,6 +329,58 @@ describe("external MCP command projection", () => {
     expect(call).not.toHaveBeenCalled();
   });
 
+  test.each(["create_issue", "save_issue"])(
+    "withholds unserializable %s without losing another tool",
+    async (upstreamTool) => {
+      const schema: Record<string, unknown> = { type: "object" };
+      schema.properties = { optional: schema };
+      const call = vi.fn();
+      const built = await buildExternalMcpCommands(
+        parseMcpServersConfig(
+          linearCreationTable({
+            tools: [
+              { name: upstreamTool, effect: "write_external", approval: "ask" },
+              { name: "get_issue", effect: "read", approval: "allow" },
+            ],
+          }),
+          CONFIG_PATH,
+        ),
+        { linear_mcp: "secret-value" },
+        {
+          discover: async () => ({
+            revision: "2026-07-28",
+            tools: [
+              { name: upstreamTool, inputSchema: schema },
+              {
+                name: "get_issue",
+                inputSchema: { type: "object", properties: {} },
+              },
+            ],
+          }),
+          call,
+        },
+      );
+      expect(built.commands.map((command) => command.id)).toEqual([
+        "mcp.linear.get_issue",
+      ]);
+      expect(built.diagnostics).toEqual([
+        {
+          serverId: "linear",
+          status: "withheld",
+          tool: upstreamTool,
+          reason: "unsupported schema",
+        },
+        {
+          serverId: "linear",
+          status: "ready",
+          revision: "2026-07-28",
+          toolCount: 1,
+        },
+      ]);
+      expect(call).not.toHaveBeenCalled();
+    },
+  );
+
   test("withholds bounded create_issue on a discovered schema mismatch", async () => {
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
