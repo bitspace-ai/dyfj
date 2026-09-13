@@ -391,6 +391,13 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Dependency refresh configuration**: Dependabot now targets the Deno
+  workspace at `prototype/` (its dependency manifest and lockfile) and the
+  Rust crate set at `core/`, instead of the repo-root `deno.json` (which
+  declares only deno tasks). The weekly GitHub Actions digest lane is
+  unchanged. The Rust toolchain pin and the Deno/Dolt archive pins in
+  `.github/workflows/gate.yml` remain manual inspect-before-apply updates, not
+  Dependabot-covered.
 - **Exact Rust toolchain pin**: `core/rust-toolchain.toml` now pins `1.98.0`
   instead of the floating `stable` channel, so local builds and clean-checkout
   CI compile with the same verified toolchain; the new `dependency.policy` check
