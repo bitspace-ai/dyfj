@@ -1,12 +1,18 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
+# Dependabot version-update configuration. See:
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
 version: 2
 updates:
-  - package-ecosystem: "deno" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # The Deno dependency manifest and lockfile live under prototype/, not the
+  # repo root (whose deno.json declares only deno tasks, no imports).
+  - package-ecosystem: "deno"
+    directory: "/prototype"
+    schedule:
+      interval: "weekly"
+  # The Rust substrate's crates are declared in core/Cargo.toml and locked by
+  # the committed core/Cargo.lock.
+  - package-ecosystem: "cargo"
+    directory: "/core"
     schedule:
       interval: "weekly"
   # Workflow actions are pinned by full commit digest; this lane proposes
@@ -15,3 +21,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+# Not Dependabot-covered: the Rust toolchain channel in
+# core/rust-toolchain.toml, and the exact Deno/Dolt archive versions plus
+# their committed SHA-256 digests in .github/workflows/gate.yml. Applying a
+# change to those is intended to be a manual, operator-inspected step; this
+# config enforces neither the inspection nor who may change them. Nothing in
+# the gate flags those pins when they age; see README "Dependency updates".
