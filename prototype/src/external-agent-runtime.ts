@@ -74,7 +74,7 @@ export function fixtureProfile(workspace: string): AcpExecutionProfile {
   };
 }
 
-export const CODEX_ACP_VERSION = "1.1.10";
+export const CODEX_ACP_VERSION = "1.11.0";
 const CODEX_CHATGPT_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const MAX_ADAPTER_PACKAGE_METADATA_BYTES = 65_536;
 

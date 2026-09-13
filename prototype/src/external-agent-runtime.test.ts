@@ -547,7 +547,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     await Deno.mkdir(`${packageRoot}/dist`, { recursive: true });
     await Deno.writeTextFile(
       `${packageRoot}/package.json`,
-      JSON.stringify({ version: "1.1.10" }),
+      JSON.stringify({ version: "1.11.0" }),
     );
     await Deno.writeTextFile(`${packageRoot}/dist/index.js`, "");
     const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
@@ -648,7 +648,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     await Deno.mkdir(`${packageRoot}/dist`, { recursive: true });
     await Deno.writeTextFile(
       `${packageRoot}/package.json`,
-      JSON.stringify({ version: "1.1.10" }),
+      JSON.stringify({ version: "1.11.0" }),
     );
     await Deno.writeTextFile(`${packageRoot}/dist/index.js`, "");
     const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
@@ -1116,7 +1116,7 @@ Deno.exit(output.code);`,
           join(dirname(codexPath!), "..", "package.json"),
         ),
       );
-      expect(packageMetadata.version).toBe("0.146.1");
+      expect(packageMetadata.version).toBe("0.153.4");
     } finally {
       await Deno.remove(nodePath);
       await Deno.remove(home, { recursive: true });
