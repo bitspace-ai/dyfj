@@ -950,16 +950,19 @@ public deterministic checks it runs.
 Dependabot proposes weekly update PRs for three surfaces, configured in
 `.github/dependabot.yml`: the Deno workspace under `prototype/` (its `deno.json`
 imports and `deno.lock`), the Rust crate set under `core/` (`Cargo.toml` and
-`Cargo.lock`), and the digest pin on the checkout action in
-`.github/workflows/gate.yml`.
+`Cargo.lock`), and the digest-pinned workflow actions under
+`.github/workflows/`.
 
-The remaining pins move only by manual operator inspect-before-apply, not by
-Dependabot: the Rust toolchain channel in `core/rust-toolchain.toml`, and the
-exact Deno/Dolt archive versions plus their committed SHA-256 digests in
-`.github/workflows/gate.yml`. No gate check flags these when they age, so
-keeping them fresh is a manual cadence. The `dependency.policy` check enforces
-pin discipline — exact versions, digests, a 72-hour minimum release age for
-registry-published dependencies — but it detects no staleness: freshness is the
+The pins Dependabot does not cover are the Rust toolchain channel in
+`core/rust-toolchain.toml`, and the exact Deno/Dolt archive versions plus their
+committed SHA-256 digests in `.github/workflows/gate.yml`. Applying a change to
+those is intended to be a manual, operator-inspected step; the configuration
+enforces neither the inspection nor who may change them. No gate check flags
+them when they age, so keeping them fresh is a manual cadence. The
+`dependency.policy` check enforces
+pin discipline — exact versions, digests, and a declared 72-hour minimum
+release-age floor for registry-published dependencies — but it detects no
+staleness: freshness is the
 operator's responsibility, not the gate's.
 
 Before treating a Workbench model failure as a DYFJ problem, validate that the

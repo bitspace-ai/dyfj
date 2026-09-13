@@ -396,8 +396,8 @@ README are tracked separately in its Revision history section.
   Rust crate set at `core/`, instead of the repo-root `deno.json` (which
   declares only deno tasks). The weekly GitHub Actions digest lane is
   unchanged. The Rust toolchain pin and the Deno/Dolt archive pins in
-  `.github/workflows/gate.yml` remain manual inspect-before-apply updates, not
-  Dependabot-covered.
+  `.github/workflows/gate.yml` are not Dependabot-covered; applying a change
+  to them is intended to be a manual, operator-inspected step.
 - **Exact Rust toolchain pin**: `core/rust-toolchain.toml` now pins `1.98.0`
   instead of the floating `stable` channel, so local builds and clean-checkout
   CI compile with the same verified toolchain; the new `dependency.policy` check

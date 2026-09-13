@@ -22,8 +22,9 @@ updates:
     schedule:
       interval: "weekly"
 
-# Not Dependabot-covered, and therefore moved only by manual operator
-# inspect-before-apply: the Rust toolchain channel in
+# Not Dependabot-covered: the Rust toolchain channel in
 # core/rust-toolchain.toml, and the exact Deno/Dolt archive versions plus
-# their committed SHA-256 digests in .github/workflows/gate.yml. Nothing in
+# their committed SHA-256 digests in .github/workflows/gate.yml. Applying a
+# change to those is intended to be a manual, operator-inspected step; this
+# config enforces neither the inspection nor who may change them. Nothing in
 # the gate flags those pins when they age; see README "Dependency updates".
