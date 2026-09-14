@@ -391,6 +391,9 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Current Codex ACP adapter**: Upgraded the pinned `codex-chatgpt` adapter to
+  `@agentclientprotocol/codex-acp` 1.11.0 and refreshed its locked compatible
+  Codex CLI dependency.
 - **Dependency refresh configuration**: Dependabot now targets the Deno
   workspace at `prototype/` (its dependency manifest and lockfile) and the
   Rust crate set at `core/`, instead of the repo-root `deno.json` (which

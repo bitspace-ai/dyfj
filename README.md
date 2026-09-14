@@ -792,10 +792,10 @@ dedicated receipt evidence fields disclose only how many distinct canonical
 operator directories were projected; agent-produced text is not a redaction
 boundary.
 
-The project configuration pins adapter version `1.1.10` exactly, and the Deno
+The project configuration pins adapter version `1.11.0` exactly, and the Deno
 lockfile records its transitive graph and registry integrity. The runtime reads
 the installed package metadata and rejects metadata that does not declare
-version `1.1.10`.
+version `1.11.0`.
 
 On start and autostart routes, the launcher considers `DYFJ_NODE_PATH` first and
 otherwise asks ambient `PATH` for Node. It projects the optional executable

@@ -138,7 +138,7 @@ Deno.test("an address at end of sentence still fails", () => {
 
 Deno.test("package and version specifiers are not emails", () => {
   const content = [
-    "npm:@agentclientprotocol/codex-acp@1.1.10",
+    "npm:@agentclientprotocol/codex-acp@1.11.0",
     "esbuild@0.20.1 pinned",
     "mysql://root@127.0.0.1:3306/dolt",
   ].join("\n");
