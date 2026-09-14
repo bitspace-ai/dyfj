@@ -391,6 +391,10 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Dependency updates**: Bumped `@david/dax` 0.42.0 → 0.50.0, `@std/toml`
+  1.0.8 → 1.0.11, `mysql2` 3.22.3 → 3.24.4, and `ulid` 2.4.0 → 3.0.2 in the
+  prototype, and `anyhow` 1.0.102 → 1.0.104, `rand` 0.10.1 → 0.10.2, and
+  `thiserror` 2.0.18 → 2.0.20 in `core`.
 - **Current Codex ACP adapter**: Upgraded the pinned `codex-chatgpt` adapter to
   `@agentclientprotocol/codex-acp` 1.11.0 and refreshed its locked compatible
   Codex CLI dependency.
