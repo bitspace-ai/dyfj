@@ -20,7 +20,7 @@
     "npm:@modelcontextprotocol/client@2.0.0": "2.0.0",
     "npm:@modelcontextprotocol/server@2.0.0": "2.0.0",
     "npm:mysql2@3.22.3": "3.22.3_@types+node@25.9.2",
-    "npm:ulid@2.4.0": "2.4.0",
+    "npm:ulid@3.0.2": "3.0.2",
     "npm:vitest@3.2.6": "3.2.6",
     "npm:zod@4.4.3": "4.4.3"
   },
@@ -876,8 +876,8 @@
     "tinyspy@4.0.4": {
       "integrity": "sha512-azl+t0z7pw/z958Gy9svOTuzqIk6xq+NSheJzn5MMWtWTFywIacg2wUlzKFGtt3cthx0r2SxMK0yzJOR0IES7Q=="
     },
-    "ulid@2.4.0": {
-      "integrity": "sha512-fIRiVTJNcSRmXKPZtGzFQv9WRrZ3M9eoptl/teFJvjOzmpU+/K/JH6HZ8deBfb5vMEpicJcLn7JmvdknlMq7Zg==",
+    "ulid@3.0.2": {
+      "integrity": "sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==",
       "bin": true
     },
     "undici-types@7.24.6": {
@@ -1009,7 +1009,7 @@
       "npm:@agentclientprotocol/codex-acp@1.11.0",
       "npm:@agentclientprotocol/sdk@1.3.0",
       "npm:mysql2@3.22.3",
-      "npm:ulid@2.4.0",
+      "npm:ulid@3.0.2",
       "npm:vitest@3.2.6"
     ]
   }

@@ -265,7 +265,7 @@
     "@std/toml": "jsr:@std/toml@1.0.8",
     "mysql2": "npm:mysql2@3.22.3",
     "mysql2/promise": "npm:mysql2@3.22.3/promise",
-    "ulid": "npm:ulid@2.4.0",
+    "ulid": "npm:ulid@3.0.2",
     "vitest": "npm:vitest@3.2.6"
   },
   "nodeModulesDir": "auto",
