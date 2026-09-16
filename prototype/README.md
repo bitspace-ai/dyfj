@@ -212,6 +212,7 @@ deno task check          # production and Vitest source typechecking
 deno task check:tests    # Vitest sources only
 deno task test           # checks first, then runs the prototype unit suite
 deno task test:file <path>  # run a single test file without full typecheck
+                         # (requires a path or -t pattern; exits 2 otherwise)
 deno task verify-workbench-events
 (cd .. && deno task test) # repository aggregate gate
 ```
