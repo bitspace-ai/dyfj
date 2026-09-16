@@ -1,7 +1,7 @@
 # DYFJ
 
 An operator-owned AI workbench and automation framework built for optionality —
-you choose where each task runs, local or hosted, with cost visible while work
+you choose your intelligence, local or hosted, with cost visible while work
 runs. Modular, vendor-loose, and explicit about model cost.
 
 ## Human-written preface
@@ -68,7 +68,8 @@ stance #3 below.
 Early and active. The prototype is functional - the `dyfj` CLI (REPL and
 one-shot) over a duplex JSON-RPC 2.0 Unix-socket seam (the canonical loopback
 transport), shared single-turn runtime boundary, a multi-step agent loop
-(iterating model↔tools with read-only workspace file tools), an operator-routed
+(iterating model↔tools with workspace file tools, an approval-gated `bash`
+escape hatch, and a bounded `git` tool), an operator-routed
 provider path with local models plus hosted providers (Anthropic, OpenAI,
 OpenRouter, and Google Gemini) behind paid-approval and budget controls, and a
 local ACP-client foundation verified against a deterministic fixture agent. The
@@ -1375,3 +1376,6 @@ Document revisions only. Code and behavior changes are tracked in
   reconciliation-required ambiguity, and the ACP and `/idea` deferrals.
 - 2026-09-12 - Clarified approval and relation-validation ordering and rejection
   of malformed association ID evidence for native Linear issue creation.
+- 2026-09-15 - Status corrected: the agent loop's workspace file tools are no
+  longer read-only, and the loop now carries an approval-gated `bash` escape
+  hatch and a bounded `git` tool limited to status, diff, log, add and commit.

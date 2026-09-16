@@ -649,6 +649,7 @@ describe("serveWorkbenchUnix read methods", () => {
       "write_file",
       "edit_file",
       "bash",
+      "git",
       "mcp.linear.get_issue",
     ]);
     expect(result.tools.find((tool: { id: string }) => tool.id === "bash"))

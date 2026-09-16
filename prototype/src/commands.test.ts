@@ -375,6 +375,7 @@ describe("registerCoreCommands", () => {
     expect(registry.list().map((c) => c.id).sort()).toEqual([
       "bash",
       "edit_file",
+      "git",
       "glob_files",
       "grep_files",
       "list_files",
@@ -1121,6 +1122,86 @@ describe("buildCommandToolCallEventPayload", () => {
     const registry = createCommandRegistry();
     registerCoreCommands(registry, { workspaceRoot: "/work" });
     expect(registry.lookup("bash")!.redactResult).toBe(true);
+  });
+
+  test("the real git command stays approval-gated under the operator profile", () => {
+    // The tool's own claim is that every git call reaches an approver. That
+    // holds because of the exec-class effect in its registered envelope, so
+    // pin the registered definition rather than a local fixture of it.
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    const git = registry.lookup("git")!;
+    expect(git.permission.effects).toContain("run.process");
+    for (
+      const args of [
+        { subcommand: "status" },
+        { subcommand: "log" },
+        { subcommand: "add", paths: ["a.ts"] },
+        { subcommand: "commit", message: "m" },
+      ]
+    ) {
+      const policy = evaluateCommandPolicy(
+        git,
+        call(args, { commandId: "git" }),
+        { permissionLevel: "operator", loopback: true },
+      );
+      expect(policy.decision).toBe("ask");
+    }
+  });
+
+  test("the real git command denies unrunnable calls before the approval prompt", () => {
+    // Both cases must be denied by policy, not by the executor: a call that
+    // can never run should not cost the operator an approval decision.
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    const git = registry.lookup("git")!;
+    for (
+      const args of [
+        { subcommand: "push" }, // outside the exposed enum
+        { subcommand: "log", limit: 1.5 }, // fractional, schema says integer
+      ]
+    ) {
+      const policy = evaluateCommandPolicy(
+        git,
+        call(args, { commandId: "git" }),
+        { permissionLevel: "operator", loopback: true },
+      );
+      expect(policy.decision).toBe("deny");
+      expect(policy.authzBasis).toBe("policy:deny:invalid-arguments");
+    }
+  });
+
+  test("the real git command keeps its result out of the persisted event", () => {
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    const git = registry.lookup("git")!;
+    expect(git.redactResult).toBe(true);
+
+    // A hook or credential helper runs inside git's process tree and can print
+    // anything it can read, so the durable event must carry the sentinel even
+    // though the model sees the real output in-turn.
+    const payload = buildCommandToolCallEventPayload(
+      call({ subcommand: "status" }, { commandId: "git" }),
+      {
+        decision: "allow" as const,
+        authzBasis: "policy:allow:operator-approved",
+        isError: false as const,
+        result:
+          "exit 0\nhook printed ANTHROPIC_API_KEY=fixture-should-not-persist",
+      },
+      {
+        eventId: "01TESTEVENT0000000000000000",
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        spanId: "0123456789abcdef",
+      },
+      { subcommand: "status" },
+      git.redactResult === true,
+    );
+    expect(payload.tool_result).toBe("[redacted]");
+    expect(payload.tool_result as string).not.toContain("ANTHROPIC_API_KEY");
+    // Arguments stay legible: knowing WHICH git operation ran is the point.
+    expect(JSON.stringify(payload.tool_arguments)).toContain("status");
   });
 
   test("invokeCommandWithEvent keeps a redactResult command's output out of the persisted event", async () => {

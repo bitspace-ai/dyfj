@@ -11,6 +11,32 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Bounded `git` agent tool**: The agent loop can now inspect and record
+  changes to the workspace through a `git` command with a closed subcommand set
+  — `status`, `diff`, `log`, `add`, `commit`. Arguments are typed and the
+  process argv is built from them, so no flags or shell syntax pass through;
+  `--literal-pathspecs` and a leading-`:` rejection keep a path argument a
+  filename rather than a pathspec expression, so magic prefixes such as
+  `:(top)` cannot reach outside a nested workspace. The tool exposes only those five
+  subcommands, so network ones (`push`, `pull`, `fetch`, `remote`) and
+  history-rewriting or working-tree-destroying ones (`reset`, `rebase`,
+  `checkout`, `clean`, `stash`) are rejected as invalid arguments before the
+  approval prompt rather than costing an operator decision; the reason each is
+  absent is recorded in the module for callers that bypass the schema. Like `bash`, it carries an
+  exec-class effect and therefore always requires per-call operator approval,
+  and its result is kept out of the durable event log; unlike `bash`, the
+  approval names the exact operation and paths. The permission envelope
+  declares `network: "external"` because git executes repository configuration
+  — hooks, credential helpers, textconv — which the tool deliberately leaves
+  enabled so an operator's own pre-commit checks still run. A `commit` without
+  paths is a repository operation: when the workspace is a subdirectory, a
+  best-effort probe says so in the result. Supplying paths to `commit` records
+  their working-tree content rather than narrowing the staged snapshot. Output is collected in full and then clipped to a byte cap,
+  and the timeout kills git but not descendants it spawned — the same two
+  limits `bash` has. The `workbench` and `serve-unix` permission profiles now
+  grant `run` access to `git`, which the runtime needs to execute the tool at
+  all.
+
 - **Bounded native Linear issue creation**: A configured external MCP
   `save_issue` (or legacy `create_issue`) can now back a create-only local tool
   on native loopback turns with a fixed team,
