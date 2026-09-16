@@ -17,10 +17,12 @@ README are tracked separately in its Revision history section.
   process argv is built from them, so no flags or shell syntax pass through;
   `--literal-pathspecs` and a leading-`:` rejection keep a path argument a
   filename rather than a pathspec expression, so magic prefixes such as
-  `:(top)` cannot reach outside a nested workspace. Network subcommands
-  (`push`, `pull`, `fetch`, `remote`) and history-rewriting or
-  working-tree-destroying ones (`reset`, `rebase`, `checkout`, `clean`,
-  `stash`) are refused by name with the reason. Like `bash`, it carries an
+  `:(top)` cannot reach outside a nested workspace. The tool exposes only those five
+  subcommands, so network ones (`push`, `pull`, `fetch`, `remote`) and
+  history-rewriting or working-tree-destroying ones (`reset`, `rebase`,
+  `checkout`, `clean`, `stash`) are rejected as invalid arguments before the
+  approval prompt rather than costing an operator decision; the reason each is
+  absent is recorded in the module for callers that bypass the schema. Like `bash`, it carries an
   exec-class effect and therefore always requires per-call operator approval,
   and its result is kept out of the durable event log; unlike `bash`, the
   approval names the exact operation and paths. The permission envelope

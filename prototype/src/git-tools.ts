@@ -94,8 +94,15 @@ export type GitSubcommand = typeof GIT_SUBCOMMANDS[number];
 
 /**
  * Subcommands refused by name rather than by falling through to the generic
- * "unsupported" message. The model gets the reason, so it routes to the
- * operator instead of retrying variations of a call that will never be allowed.
+ * "unsupported" message.
+ *
+ * Reachability, stated plainly: the registered tool schema constrains
+ * `subcommand` to an enum of the allowed set, so a model asking for `push`
+ * is denied as invalid arguments BEFORE the approval prompt and never sees
+ * these reasons. That ordering is deliberate — an unrunnable call should not
+ * cost the operator a decision. This table is defense in depth for callers
+ * that reach this function directly, and documentation of why each name is
+ * absent from the allowed set.
  */
 const REFUSED_SUBCOMMANDS: Readonly<Record<string, string>> = {
   push: "publishing is an operator action, not an agent action",

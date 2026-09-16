@@ -1149,6 +1149,28 @@ describe("buildCommandToolCallEventPayload", () => {
     }
   });
 
+  test("the real git command denies unrunnable calls before the approval prompt", () => {
+    // Both cases must be denied by policy, not by the executor: a call that
+    // can never run should not cost the operator an approval decision.
+    const registry = createCommandRegistry();
+    registerCoreCommands(registry, { workspaceRoot: "/work" });
+    const git = registry.lookup("git")!;
+    for (
+      const args of [
+        { subcommand: "push" }, // outside the exposed enum
+        { subcommand: "log", limit: 1.5 }, // fractional, schema says integer
+      ]
+    ) {
+      const policy = evaluateCommandPolicy(
+        git,
+        call(args, { commandId: "git" }),
+        { permissionLevel: "operator", loopback: true },
+      );
+      expect(policy.decision).toBe("deny");
+      expect(policy.authzBasis).toBe("policy:deny:invalid-arguments");
+    }
+  });
+
   test("the real git command keeps its result out of the persisted event", () => {
     const registry = createCommandRegistry();
     registerCoreCommands(registry, { workspaceRoot: "/work" });

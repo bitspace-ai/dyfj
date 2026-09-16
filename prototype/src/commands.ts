@@ -949,7 +949,10 @@ export function buildGitCommand(root: string): CommandDefinition<string> {
             "For `diff` only: show staged changes instead of working-tree changes.",
         },
         limit: {
-          type: "number",
+          // integer, not number: a fractional value would pass schema
+          // validation, reach the approval prompt, and only then be rejected by
+          // the executor. Deny it before it costs the operator a decision.
+          type: "integer",
           description:
             "For `log` only: how many commits to return (default 20, at most 200).",
         },
