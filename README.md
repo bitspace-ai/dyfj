@@ -1,7 +1,7 @@
 # DYFJ
 
 An operator-owned AI workbench and automation framework built for optionality —
-you choose where each task runs, local or hosted, with cost visible while work
+you choose your intelligence, local or hosted, with cost visible while work
 runs. Modular, vendor-loose, and explicit about model cost.
 
 ## Human-written preface
