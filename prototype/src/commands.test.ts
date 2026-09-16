@@ -375,6 +375,7 @@ describe("registerCoreCommands", () => {
     expect(registry.list().map((c) => c.id).sort()).toEqual([
       "bash",
       "edit_file",
+      "git",
       "glob_files",
       "grep_files",
       "list_files",
