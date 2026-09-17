@@ -102,7 +102,14 @@ export function requireFrictionIssueIdentifier(
   return issueIdentifier;
 }
 
-function unwrapMcpResult(value: unknown, source = "get_issue"): unknown {
+// Both the stage and the tool name are the caller's to supply: this helper is
+// reached from the issue read, the comment pages, and the write, and a fixed
+// stage staged a get_issue parse failure as a comment-read failure.
+function unwrapMcpResult(
+  value: unknown,
+  stage: FrictionStageError["stage"],
+  source: string,
+): unknown {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
   const framed = trimmed.match(
@@ -114,7 +121,7 @@ function unwrapMcpResult(value: unknown, source = "get_issue"): unknown {
   // ceiling beats reporting the parse failure it causes.
   if (payload.endsWith("[truncated]")) {
     throw new FrictionStageError(
-      "comment read",
+      stage,
       `${source} returned more than the tool-result ceiling allows`,
     );
   }
@@ -122,7 +129,7 @@ function unwrapMcpResult(value: unknown, source = "get_issue"): unknown {
     return JSON.parse(payload);
   } catch {
     throw new FrictionStageError(
-      "comment read",
+      stage,
       `${source} returned an unreadable response`,
     );
   }
@@ -149,7 +156,7 @@ function issueRecord(value: unknown): Record<string, unknown> {
   const root = asRecord(value);
   if (root === undefined) {
     throw new FrictionStageError(
-      "comment read",
+      "get_issue",
       "get_issue response was not an object",
     );
   }
@@ -252,7 +259,9 @@ export function createCommentArguments(
 function commentPage(
   value: unknown,
 ): { comments: string[]; cursor?: string; hasNextPage: boolean } {
-  const root = asRecord(unwrapMcpResult(value, "list_comments"));
+  const root = asRecord(
+    unwrapMcpResult(value, "comment read", "list_comments"),
+  );
   if (root === undefined) {
     throw new FrictionStageError(
       "comment read",
@@ -392,7 +401,7 @@ function issueId(issue: Record<string, unknown>, fallback: string): string {
 function createdCommentId(value: unknown): string {
   let parsed: unknown;
   try {
-    parsed = unwrapMcpResult(value);
+    parsed = unwrapMcpResult(value, "create_comment", "create_comment");
   } catch (error) {
     if (error instanceof FrictionStageError) {
       throw new FrictionStageError(
@@ -450,7 +459,7 @@ export async function postFriction(input: {
 
   let issue: Record<string, unknown>;
   try {
-    issue = issueRecord(unwrapMcpResult(rawIssue));
+    issue = issueRecord(unwrapMcpResult(rawIssue, "get_issue", "get_issue"));
   } catch (error) {
     if (error instanceof FrictionStageError) throw error;
     throw new FrictionStageError("get_issue", "issue could not be read");

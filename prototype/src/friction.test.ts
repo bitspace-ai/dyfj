@@ -266,6 +266,41 @@ describe("postFriction", () => {
     expect(createComment).not.toHaveBeenCalled();
   });
 
+  // The unwrap helper serves three callers, so an unreadable issue response must
+  // report the stage that was running rather than the comment read that follows.
+  test.each([
+    [
+      "unreadable",
+      "not json at all",
+      "get_issue returned an unreadable response",
+    ],
+    ["non-object", framed(null), "get_issue response was not an object"],
+  ])(
+    "stages a %s get_issue response as the issue read",
+    async (_label, response, publicReason) => {
+      const createComment = vi.fn();
+      await expect(postFriction({
+        issueIdentifier: "EX-100",
+        request: { severity: "minor", escaped: false, text: "moment" },
+        getIssueCommand,
+        listCommentsCommand,
+        createCommentCommand,
+        invoke: {
+          getIssue: async () => response,
+          listComments: commentsPage(),
+          createComment,
+        },
+      })).rejects.toMatchObject(
+        {
+          name: "FrictionStageError",
+          stage: "get_issue",
+          publicReason,
+        } satisfies Partial<FrictionStageError>,
+      );
+      expect(createComment).not.toHaveBeenCalled();
+    },
+  );
+
   // Comments are read from list_comments alone, so a body the parser cannot
   // read must name that tool and not the issue read that precedes it.
   test("names list_comments when a comment carries no readable text", async () => {
