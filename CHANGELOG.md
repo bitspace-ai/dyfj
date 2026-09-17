@@ -11,6 +11,12 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`deno task test:file <path>`**: Runs a single Vitest file, skipping the
+  whole-project typecheck that `deno task test` performs, for iteration while
+  editing one file. `deno task test` is unchanged and remains the entry point
+  before committing, since it typechecks the project and runs the full suite.
+  `prototype/README.md` records which to use when.
+
 - **Bounded `git` agent tool**: The agent loop can now inspect and record
   changes to the workspace through a `git` command with a closed subcommand set
   — `status`, `diff`, `log`, `add`, `commit`. Arguments are typed and the

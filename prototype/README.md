@@ -211,9 +211,15 @@ Useful checks:
 deno task check          # production and Vitest source typechecking
 deno task check:tests    # Vitest sources only
 deno task test           # checks first, then runs the prototype unit suite
+deno task test:file <path>  # run a single test file without full typecheck
+                         # (requires a path or -t pattern; exits 2 otherwise)
 deno task verify-workbench-events
 (cd .. && deno task test) # repository aggregate gate
 ```
+
+Use `test:file` for tight iteration loops while developing a single test — it skips
+the full typecheck and runs only your named file. Use `test` for the gate before commit,
+which typechecks the entire codebase and runs the full suite excluding integration tests.
 
 The root aggregate gate runs the schema, Rust, and isolated-Dolt integration
 lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
