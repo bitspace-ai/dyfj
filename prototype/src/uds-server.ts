@@ -80,6 +80,7 @@ import {
   type FrictionContext,
   type FrictionPostInput,
   FrictionStageError,
+  isLinearCommentCommandId,
   postFriction,
   requireFrictionIssueIdentifier,
 } from "./friction";
@@ -758,12 +759,12 @@ export function buildWorkbenchHandlers(
         );
       }
       const createCommentCommand = externalCommands.find((command) =>
-        command.id === "mcp.linear.create_comment"
+        isLinearCommentCommandId(command.id)
       );
       if (createCommentCommand === undefined) {
         throw new RpcError(
           RpcErrorCode.internalError,
-          "create_comment failed: configured Linear tool is unavailable",
+          "create_comment/save_comment failed: configured Linear tool is unavailable",
         );
       }
       const registry = createCommandRegistry([

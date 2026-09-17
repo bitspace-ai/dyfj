@@ -72,6 +72,17 @@ export class FrictionStageError extends Error {
   }
 }
 
+export const LINEAR_COMMENT_UPSTREAM_TOOLS = [
+  "create_comment",
+  "save_comment",
+] as const;
+
+export function isLinearCommentCommandId(id: string): boolean {
+  return LINEAR_COMMENT_UPSTREAM_TOOLS.some((tool) =>
+    id === `mcp.linear.${tool}`
+  );
+}
+
 export interface FrictionLinearInvoker {
   getIssue(arguments_: Record<string, unknown>): Promise<unknown>;
   createComment(arguments_: Record<string, unknown>): Promise<unknown>;
@@ -340,7 +351,9 @@ export async function postFriction(input: {
     if (error instanceof FrictionStageError) throw error;
     throw new FrictionStageError(
       "create_comment",
-      error instanceof Error ? error.message : "tool call failed",
+      error instanceof Error
+        ? error.message
+        : `${input.createCommentCommand.id} tool call failed`,
     );
   }
 

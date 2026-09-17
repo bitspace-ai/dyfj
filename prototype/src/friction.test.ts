@@ -1,6 +1,10 @@
 import { describe, expect, test, vi } from "vitest";
 import type { CommandDefinition } from "./commands.ts";
-import { FrictionStageError, postFriction } from "./friction.ts";
+import {
+  FrictionStageError,
+  isLinearCommentCommandId,
+  postFriction,
+} from "./friction.ts";
 import { formatUntrustedMcpResult } from "./mcp-tools.ts";
 
 const getIssueCommand: CommandDefinition = {
@@ -38,6 +42,27 @@ const createCommentCommand: CommandDefinition = {
     effects: ["write.external"],
     defaultDecision: "ask",
     resources: ["mcp:linear/create_comment"],
+  },
+  executor: () => "unused",
+};
+
+const saveCommentCommand: CommandDefinition = {
+  id: "mcp.linear.save_comment",
+  title: "Save comment",
+  description: "Fixture Linear write via save_comment",
+  inputSchema: {
+    type: "object",
+    properties: {
+      issueId: { type: "string" },
+      body: { type: "string" },
+    },
+    required: ["issueId", "body"],
+    additionalProperties: false,
+  },
+  permission: {
+    effects: ["write.external"],
+    defaultDecision: "ask",
+    resources: ["mcp:linear/save_comment"],
   },
   executor: () => "unused",
 };
@@ -240,5 +265,46 @@ describe("postFriction", () => {
         },
       },
     })).rejects.toThrow("create_comment failed: fixture write refused");
+  });
+
+  test("accepts save_comment as the upstream comment tool", async () => {
+    const createComment = vi.fn(async () => framed({ id: "comment-42" }));
+    const result = await postFriction({
+      issueIdentifier: "EX-100",
+      request: {
+        severity: "minor",
+        escaped: false,
+        text: "Saved via alternate tool.",
+      },
+      getIssueCommand,
+      createCommentCommand: saveCommentCommand,
+      invoke: {
+        getIssue: async () => framed({ id: "issue-uuid", comments: [] }),
+        createComment,
+      },
+    });
+
+    expect(result.commentId).toBe("comment-42");
+    expect(createComment).toHaveBeenCalledWith({
+      issueId: "issue-uuid",
+      body: expect.stringContaining("Saved via alternate tool."),
+    });
+  });
+});
+
+describe("isLinearCommentCommandId", () => {
+  test.each([
+    "mcp.linear.create_comment",
+    "mcp.linear.save_comment",
+  ])("accepts %s", (id) => {
+    expect(isLinearCommentCommandId(id)).toBe(true);
+  });
+
+  test.each([
+    "mcp.linear.get_issue",
+    "mcp.other.save_comment",
+    "save_comment",
+  ])("rejects %s", (id) => {
+    expect(isLinearCommentCommandId(id)).toBe(false);
   });
 });
