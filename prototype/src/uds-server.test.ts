@@ -84,6 +84,7 @@ const externalReadCommand: CommandDefinition<string> = {
 function frictionCommands(input: {
   comments?: string[];
   getIssueError?: string;
+  listCommentsError?: string;
   createCommentError?: string;
   createdBodies?: string[];
 } = {}): CommandDefinition[] {
@@ -111,9 +112,41 @@ function frictionCommands(input: {
       redactResult: true,
       executor: () => {
         if (input.getIssueError) throw new Error(input.getIssueError);
+        return { id: "issue-uuid" };
+      },
+    },
+    {
+      // Comments come from list_comments, not from the issue record: the
+      // handler must resolve this tool or refuse before any write.
+      id: "mcp.linear.list_comments",
+      title: "External MCP: linear/list_comments",
+      description: "Configured external MCP paged read.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          issueId: { type: "string" },
+          limit: { type: "number" },
+          cursor: { type: "string" },
+        },
+        required: ["issueId"],
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["read.external", "emit.event"],
+        defaultDecision: "allow",
+        resources: ["mcp:linear/list_comments"],
+        network: "configured-external",
+        filesystem: "none",
+        cost: "none",
+      },
+      minimumClearance: "loopback",
+      redactArguments: true,
+      redactResult: true,
+      executor: () => {
+        if (input.listCommentsError) throw new Error(input.listCommentsError);
         return {
-          id: "issue-uuid",
           comments: (input.comments ?? []).map((body) => ({ body })),
+          hasNextPage: false,
         };
       },
     },
@@ -150,6 +183,19 @@ function frictionCommands(input: {
   ];
 }
 
+// Fixture order is an implementation detail. Instrumenting by position let a
+// write counter land on the comment read when list_comments was added between
+// them, so the assertion stopped watching writes while still passing.
+function instrumentCommand(
+  commands: CommandDefinition[],
+  id: string,
+  executor: CommandDefinition["executor"],
+): void {
+  const command = commands.find((candidate) => candidate.id === id);
+  if (command === undefined) throw new Error(`fixture has no ${id}`);
+  command.executor = executor;
+}
+
 type EngineConfig = NonNullable<WorkbenchUnixServerOptions["engineConfig"]>;
 function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
   return {
@@ -171,13 +217,13 @@ describe("serveWorkbenchUnix read methods", () => {
   test("models/list returns the loaded models with a server-computed routable flag", async () => {
     const client = await connectClient(
       await startServer({
-      ...fakes,
-      loadModels: async () =>
-        anyVal([
-          { slug: "local-x", tier: 0, costInput: 0, costOutput: 0 },
-          { slug: "hosted-priced", tier: 2, costInput: 15, costOutput: 75 },
-          { slug: "hosted-unpriced", tier: 2, costInput: 0, costOutput: 0 },
-        ]),
+        ...fakes,
+        loadModels: async () =>
+          anyVal([
+            { slug: "local-x", tier: 0, costInput: 0, costOutput: 0 },
+            { slug: "hosted-priced", tier: 2, costInput: 15, costOutput: 75 },
+            { slug: "hosted-unpriced", tier: 2, costInput: 0, costOutput: 0 },
+          ]),
       }),
     );
     const { models } = anyVal(await client.request("models/list"));
@@ -194,26 +240,26 @@ describe("serveWorkbenchUnix read methods", () => {
   test("models/list marks locality server-side", async () => {
     const client = await connectClient(
       await startServer({
-      ...fakes,
-      loadModels: async () =>
-        anyVal([
-          {
-            slug: "local-x",
-            provider: "ollama",
-            baseUrl: "http://127.0.0.1:11434/v1",
-            tier: 0,
-            costInput: 0,
-            costOutput: 0,
-          },
-          {
-            slug: "hosted-x",
-            provider: "anthropic",
-            baseUrl: "https://api.anthropic.com",
-            tier: 2,
-            costInput: 15,
-            costOutput: 75,
-          },
-        ]),
+        ...fakes,
+        loadModels: async () =>
+          anyVal([
+            {
+              slug: "local-x",
+              provider: "ollama",
+              baseUrl: "http://127.0.0.1:11434/v1",
+              tier: 0,
+              costInput: 0,
+              costOutput: 0,
+            },
+            {
+              slug: "hosted-x",
+              provider: "anthropic",
+              baseUrl: "https://api.anthropic.com",
+              tier: 2,
+              costInput: 15,
+              costOutput: 75,
+            },
+          ]),
       }),
     );
     const { models } = anyVal(await client.request("models/list"));
@@ -229,34 +275,34 @@ describe("serveWorkbenchUnix read methods", () => {
   test("models/list marks access modality server-side", async () => {
     const client = await connectClient(
       await startServer({
-      ...fakes,
-      loadModels: async () =>
-        anyVal([
-          {
-            slug: "local-x",
-            provider: "ollama",
-            baseUrl: "http://127.0.0.1:11434/v1",
-            tier: 0,
-            costInput: 0,
-            costOutput: 0,
-          },
-          {
-            slug: "router-x",
-            provider: "openrouter",
-            baseUrl: "https://openrouter.ai/api/v1",
-            tier: 1,
-            costInput: 0.1,
-            costOutput: 0.2,
-          },
-          {
-            slug: "frontier-x",
-            provider: "anthropic",
-            baseUrl: "https://api.anthropic.com",
-            tier: 2,
-            costInput: 15,
-            costOutput: 75,
-          },
-        ]),
+        ...fakes,
+        loadModels: async () =>
+          anyVal([
+            {
+              slug: "local-x",
+              provider: "ollama",
+              baseUrl: "http://127.0.0.1:11434/v1",
+              tier: 0,
+              costInput: 0,
+              costOutput: 0,
+            },
+            {
+              slug: "router-x",
+              provider: "openrouter",
+              baseUrl: "https://openrouter.ai/api/v1",
+              tier: 1,
+              costInput: 0.1,
+              costOutput: 0.2,
+            },
+            {
+              slug: "frontier-x",
+              provider: "anthropic",
+              baseUrl: "https://api.anthropic.com",
+              tier: 2,
+              costInput: 15,
+              costOutput: 75,
+            },
+          ]),
       }),
     );
     const { models } = anyVal(await client.request("models/list"));
@@ -273,33 +319,33 @@ describe("serveWorkbenchUnix read methods", () => {
   test("runtime/status resolves the bare-turn route past a hosted configured default", async () => {
     const client = await connectClient(
       await startServer({
-      ...fakes,
-      loadModels: async () =>
-        anyVal([
-          {
-            slug: "local-x",
-            displayName: "Local X",
-            provider: "ollama",
-            baseUrl: "http://127.0.0.1:11434/v1",
-            tier: 0,
-            costInput: 0,
-            costOutput: 0,
-          },
-          {
-            slug: "hosted-x",
-            displayName: "Hosted X",
-            provider: "anthropic",
-            baseUrl: "https://api.anthropic.com",
-            tier: 2,
-            costInput: 15,
-            costOutput: 75,
-          },
-        ]),
-      engineConfig: anyVal({
-        defaultCompanionModel: "hosted-x",
-        permissionLevel: "operator",
-        approvePaidDefault: false,
-      }),
+        ...fakes,
+        loadModels: async () =>
+          anyVal([
+            {
+              slug: "local-x",
+              displayName: "Local X",
+              provider: "ollama",
+              baseUrl: "http://127.0.0.1:11434/v1",
+              tier: 0,
+              costInput: 0,
+              costOutput: 0,
+            },
+            {
+              slug: "hosted-x",
+              displayName: "Hosted X",
+              provider: "anthropic",
+              baseUrl: "https://api.anthropic.com",
+              tier: 2,
+              costInput: 15,
+              costOutput: 75,
+            },
+          ]),
+        engineConfig: anyVal({
+          defaultCompanionModel: "hosted-x",
+          permissionLevel: "operator",
+          approvePaidDefault: false,
+        }),
       }),
     );
     const { runtime } = anyVal(await client.request("runtime/status"));
@@ -569,10 +615,12 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("runtime/stop surfaces an onShutdown failure as internalError", async () => {
-    const client = await connectClient(await startServer({
-      ...fakes,
-      onShutdown: () => Promise.reject(new Error("ACP close failed")),
-    }));
+    const client = await connectClient(
+      await startServer({
+        ...fakes,
+        onShutdown: () => Promise.reject(new Error("ACP close failed")),
+      }),
+    );
     await expect(client.request("runtime/stop")).rejects.toMatchObject({
       code: RpcErrorCode.internalError,
       message: expect.stringContaining("runtime shutdown failed"),
@@ -727,12 +775,13 @@ describe("serveWorkbenchUnix read methods", () => {
     expect(approvals[0]).toMatchObject({
       commandId: "mcp.linear.create_comment",
     });
-    expect(receiptEvents).toHaveLength(2);
+    expect(receiptEvents).toHaveLength(3);
     expect(receiptEvents.map((event) => event.tool_name)).toEqual([
       "mcp.linear.get_issue",
+      "mcp.linear.list_comments",
       "mcp.linear.create_comment",
     ]);
-    expect(receiptEvents[1]).toMatchObject({
+    expect(receiptEvents[2]).toMatchObject({
       authz_basis: "policy:allow:operator-approved",
       tool_arguments: '{"issueId":"[redacted]","body":"[redacted]"}',
       tool_result: "[redacted]",
@@ -745,10 +794,10 @@ describe("serveWorkbenchUnix read methods", () => {
   test("friction/post validates severity before reading Linear", async () => {
     let reads = 0;
     const commands = frictionCommands();
-    commands[0].executor = () => {
+    instrumentCommand(commands, "mcp.linear.get_issue", () => {
       reads++;
       return { comments: [] };
-    };
+    });
     const client = await connectClient(
       await startServer({ ...fakes, externalMcpCommands: commands }),
     );
@@ -768,14 +817,14 @@ describe("serveWorkbenchUnix read methods", () => {
       let writes = 0;
       const receiptEvents: Record<string, unknown>[] = [];
       const commands = frictionCommands();
-      commands[0].executor = () => {
+      instrumentCommand(commands, "mcp.linear.get_issue", () => {
         reads++;
         return { comments: [] };
-      };
-      commands[1].executor = () => {
+      });
+      instrumentCommand(commands, "mcp.linear.create_comment", () => {
         writes++;
         return { id: "comment-created" };
-      };
+      });
       const client = await connectClient(
         await startServer({
           ...fakes,
@@ -1068,9 +1117,11 @@ describe("serveWorkbenchUnix turn method", () => {
       matchedSignalReason: true,
     });
     expect(executorStarted).toBe(false);
-    await expect(handlers.turn({ prompt: "next" }, ctx)).resolves.toMatchObject({
-      text: "next turn",
-    });
+    await expect(handlers.turn({ prompt: "next" }, ctx)).resolves.toMatchObject(
+      {
+        text: "next turn",
+      },
+    );
     resolveApproval({ decision: "approve" });
   });
 
@@ -1880,7 +1931,9 @@ describe("sessions/inspect, ideas, and packets over UDS", () => {
       ideaId: ideaRes.idea.ideaId,
     })).rejects.toMatchObject({
       code: RpcErrorCode.invalidParams,
-      message: expect.stringContaining("belongs to session \"01SESSION_OWNER_A\""),
+      message: expect.stringContaining(
+        'belongs to session "01SESSION_OWNER_A"',
+      ),
     });
   });
 });
