@@ -165,7 +165,7 @@ function commentBody(value: unknown): string {
   }
   throw new FrictionStageError(
     "comment read",
-    "get_issue returned a comment without readable text",
+    "list_comments returned a comment without readable text",
   );
 }
 

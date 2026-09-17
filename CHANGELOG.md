@@ -9,6 +9,25 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Changed
+
+- **Friction capture follows the Linear MCP tool set it actually finds**:
+  `friction/post` posts through either `linear.create_comment` or
+  `linear.save_comment`, and reads existing comments through
+  `linear.list_comments` rather than expecting them inside the `get_issue`
+  response. Both were upstream shapes that had moved, and the command failed
+  before it could post.
+
+  The comment read is paged and fail-closed. It follows the continuation shapes
+  it recognises — a top-level `hasNextPage` and cursor, or a `pageInfo` object
+  beside a `nodes`/`items` container — to the end, or it fails. The next number
+  is the highest one on the issue plus one, so numbering from a partial list
+  could reuse a number that already exists; a page promised without a cursor, a
+  tool declaring no cursor argument, continuation still pending after forty
+  pages, and a page clipped by the external-result ceiling each fail the read
+  instead. A server signalling continuation some other way reads as finished,
+  which the source states rather than hides.
+
 ### Added
 
 - **`deno task test:file <path>`**: Runs a single Vitest file, skipping the

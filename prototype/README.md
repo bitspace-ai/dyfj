@@ -132,8 +132,13 @@ the shared turn core. `friction/post` accepts
 and returns `{ number, escapeNumber?, commentId, firstLine }`. The resulting
 `Context:` line contains exactly the model slug, workspace basename, and
 previous slash command when one exists; it never contains a free-text prompt or
-absolute workspace path. It reuses the configured `linear.get_issue` and
-`linear.create_comment` command policies and their redacted tool-call receipts.
+absolute workspace path. It reuses the configured `linear.get_issue`, `linear.list_comments`, and
+comment-write command policies and their redacted tool-call receipts. The write is
+either `linear.create_comment` or `linear.save_comment`, whichever the configured
+server exposes. Comments come from `list_comments`, which is paged; the read follows
+the continuation shapes it recognises to the end or fails, because the next number is
+derived from the highest one already present and a partial read could reuse a number
+that exists.
 Set `DYFJ_FRICTION_ISSUE_ID` on the runtime to identify the operator's
 friction-checkpoint issue; `friction/post` fails at the `configuration` stage
 when the variable is unset or blank. `runtime/status` includes grouped method

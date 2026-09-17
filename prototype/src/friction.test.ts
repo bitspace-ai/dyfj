@@ -266,6 +266,28 @@ describe("postFriction", () => {
     expect(createComment).not.toHaveBeenCalled();
   });
 
+  // Comments are read from list_comments alone, so a body the parser cannot
+  // read must name that tool and not the issue read that precedes it.
+  test("names list_comments when a comment carries no readable text", async () => {
+    const createComment = vi.fn();
+    await expect(postFriction({
+      issueIdentifier: "EX-100",
+      request: { severity: "minor", escaped: false, text: "moment" },
+      getIssueCommand,
+      listCommentsCommand,
+      createCommentCommand,
+      invoke: {
+        getIssue: async () => framed({ id: "issue-uuid" }),
+        listComments: async () =>
+          framed({ comments: [{ author: "someone" }], hasNextPage: false }),
+        createComment,
+      },
+    })).rejects.toThrow(
+      "list_comments returned a comment without readable text",
+    );
+    expect(createComment).not.toHaveBeenCalled();
+  });
+
   test("labels a get_issue failure without attempting a write", async () => {
     const createComment = vi.fn();
     await expect(postFriction({

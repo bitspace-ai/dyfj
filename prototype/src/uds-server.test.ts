@@ -183,6 +183,19 @@ function frictionCommands(input: {
   ];
 }
 
+// Fixture order is an implementation detail. Instrumenting by position let a
+// write counter land on the comment read when list_comments was added between
+// them, so the assertion stopped watching writes while still passing.
+function instrumentCommand(
+  commands: CommandDefinition[],
+  id: string,
+  executor: CommandDefinition["executor"],
+): void {
+  const command = commands.find((candidate) => candidate.id === id);
+  if (command === undefined) throw new Error(`fixture has no ${id}`);
+  command.executor = executor;
+}
+
 type EngineConfig = NonNullable<WorkbenchUnixServerOptions["engineConfig"]>;
 function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
   return {
@@ -781,10 +794,10 @@ describe("serveWorkbenchUnix read methods", () => {
   test("friction/post validates severity before reading Linear", async () => {
     let reads = 0;
     const commands = frictionCommands();
-    commands[0].executor = () => {
+    instrumentCommand(commands, "mcp.linear.get_issue", () => {
       reads++;
       return { comments: [] };
-    };
+    });
     const client = await connectClient(
       await startServer({ ...fakes, externalMcpCommands: commands }),
     );
@@ -804,14 +817,14 @@ describe("serveWorkbenchUnix read methods", () => {
       let writes = 0;
       const receiptEvents: Record<string, unknown>[] = [];
       const commands = frictionCommands();
-      commands[0].executor = () => {
+      instrumentCommand(commands, "mcp.linear.get_issue", () => {
         reads++;
         return { comments: [] };
-      };
-      commands[1].executor = () => {
+      });
+      instrumentCommand(commands, "mcp.linear.create_comment", () => {
         writes++;
         return { id: "comment-created" };
-      };
+      });
       const client = await connectClient(
         await startServer({
           ...fakes,
