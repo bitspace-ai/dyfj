@@ -11,6 +11,31 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **A buffered provider request gets a larger header deadline**: every provider
+  request was bounded by a 30-second wait for response headers, written to
+  detect an unreachable provider. The endpoints reached by the buffered path
+  defer headers until the response body exists, and the Anthropic and Google
+  readers cannot stream tool-offering calls, so in practice that budget capped
+  generation: an agent-loop turn could not emit an edit that took more than 30
+  seconds to write, and died reporting a connection-shaped error. Buffered
+  requests now wait up to 300 seconds for headers; streaming requests keep the
+  30-second budget.
+
+  What this does not do: the timer is cleared once headers arrive, in both
+  modes, so body consumption afterwards remains unbounded exactly as before.
+  The larger budget covers generation only because those endpoints withhold
+  headers until they have a body — an observed property of the endpoints, not
+  a guarantee this code enforces.
+
+  The cost of the split is stated rather than hidden: before the first byte, a
+  buffered request that is silent because the route is dead and one that is
+  silent because it is generating look the same, so a buffered call left
+  pending without headers can now wait up to 300 seconds before failing. A
+  connection error the runtime reports promptly, such as a refused connection,
+  still fails promptly. Streaming calls keep the tight budget. Both timeout
+  messages now name the mode and the budget that elapsed, which the timer can
+  observe, and offer a cause as a possibility rather than a finding.
+
 - **Friction capture follows the Linear MCP tool set it actually finds**:
   `friction/post` posts through either `linear.create_comment` or
   `linear.save_comment`, and reads existing comments through

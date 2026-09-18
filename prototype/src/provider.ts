@@ -232,8 +232,50 @@ export const acpSubscriptionProviders: ReadonlySet<string> = new Set([
  * Bound the time to response HEADERS only: once headers arrive the abort timer
  * is cleared, so long streaming bodies are unaffected. Header-timeout failures
  * carry the provider label instead of becoming an infinite hang.
+ *
+ * This budget suits a STREAMING request, whose endpoints send headers before
+ * the body, so 30s without headers is worth failing on whatever the cause —
+ * the timer detects missing headers, it does not diagnose why. Endpoints on
+ * the buffered path withhold headers until the body exists, so this budget
+ * would cap generation there; see PROVIDER_BUFFERED_HEADER_TIMEOUT_MS.
  */
 export const PROVIDER_HEADER_TIMEOUT_MS = 30_000;
+
+/**
+ * Header budget for a BUFFERED request. Like the streaming budget this bounds
+ * the wait for response HEADERS, not the body: the timer is cleared once fetch
+ * resolves, and fetch resolves on headers. Body consumption after that is
+ * unbounded in both modes, as it was before this split.
+ *
+ * It is larger because the endpoints this path talks to defer headers until
+ * the response body exists, so the wait covers generation in practice. That is
+ * an observed property of those endpoints, not something this code enforces.
+ * Under the streaming budget an agent-loop turn could not emit an edit taking
+ * more than 30s to generate: the Anthropic and Google readers cannot stream
+ * tool-offering calls, so every such call was buffered and the turn died
+ * mid-write reporting a connection-shaped error.
+ *
+ * The cost of the split: a buffered request to a blackholed route now waits
+ * this long instead of 30s, because before the first byte a connection that is
+ * silent while generating and one that is silent because it is dead look the
+ * same. Streaming requests keep the tight budget and the fast detection.
+ * Streaming the tool-offering calls would remove the tradeoff rather than
+ * price it.
+ */
+export const PROVIDER_BUFFERED_HEADER_TIMEOUT_MS = 300_000;
+
+/**
+ * The header deadline a provider request should carry, given whether it
+ * streams. Returned as the trailing argument pair so each adapter states the
+ * rule once rather than repeating the constant and the mode.
+ */
+function providerFetchDeadline(
+  stream: boolean,
+): [number, "streaming" | "buffered"] {
+  return stream
+    ? [PROVIDER_HEADER_TIMEOUT_MS, "streaming"]
+    : [PROVIDER_BUFFERED_HEADER_TIMEOUT_MS, "buffered"];
+}
 
 export async function fetchWithHeaderTimeout(
   fetchFn: typeof fetch,
@@ -241,6 +283,7 @@ export async function fetchWithHeaderTimeout(
   init: RequestInit,
   label: string,
   timeoutMs: number = PROVIDER_HEADER_TIMEOUT_MS,
+  mode: "streaming" | "buffered" = "streaming",
 ): Promise<Response> {
   const timeoutController = new AbortController();
   const externalSignal = init.signal;
@@ -262,8 +305,13 @@ export async function fetchWithHeaderTimeout(
       throw err;
     }
     if (timedOut) {
+      // Name the mode and the budget that elapsed. The timer cannot see a
+      // cause: a queued streaming request and a dead route both present as
+      // silence, so both messages offer causes as possibilities rather than
+      // findings. The budgets differ by an order of magnitude, so which one
+      // ran out is itself the useful signal.
       throw new Error(
-        `${label}: no response headers within ${timeoutMs}ms (network unreachable or provider stalled)`,
+        `${label}: no response headers within ${timeoutMs}ms (${mode} request exceeded its budget; the provider may be unreachable or stalled)`,
       );
     }
     throw err;
@@ -530,7 +578,9 @@ export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
     return parseModelRegistryRows(rows);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("architecture") || message.includes("Unknown column")) {
+    if (
+      message.includes("architecture") || message.includes("Unknown column")
+    ) {
       const legacyRows = await doltQuery(
         "SELECT slug, display_name, provider, api, base_url, tier, " +
           "cost_input, cost_output, capabilities, " +
@@ -554,7 +604,14 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      capabilities: ["text", "code", "reasoning", "vision", "tools", "long-context"],
+      capabilities: [
+        "text",
+        "code",
+        "reasoning",
+        "vision",
+        "tools",
+        "long-context",
+      ],
       contextWindow: 262144,
       maxOutputTokens: 8192,
       modality: "local",
@@ -574,7 +631,14 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      capabilities: ["text", "code", "reasoning", "vision", "tools", "long-context"],
+      capabilities: [
+        "text",
+        "code",
+        "reasoning",
+        "vision",
+        "tools",
+        "long-context",
+      ],
       contextWindow: 131072,
       maxOutputTokens: 8192,
       modality: "local",
@@ -721,7 +785,11 @@ export function selectWorkbenchModel(
   options: WorkbenchRoutingOptions,
   defaultModelId?: string | null,
 ): WorkbenchSelection {
-  const finalize = (selected: WorkbenchModel, considered: string[], reason: string): WorkbenchSelection => {
+  const finalize = (
+    selected: WorkbenchModel,
+    considered: string[],
+    reason: string,
+  ): WorkbenchSelection => {
     if (options.fast === true && !modelSupportsFastSpeed(selected)) {
       throw new WorkbenchModelFastSpeedUnsupportedError(selected.slug);
     }
@@ -762,7 +830,11 @@ export function selectWorkbenchModel(
       }
       throw new WorkbenchModelNotFoundError(`tier:${options.tier}`);
     }
-    return finalize(selected, routable.map((model) => model.slug), "explicit_tier");
+    return finalize(
+      selected,
+      routable.map((model) => model.slug),
+      "explicit_tier",
+    );
   }
 
   // No explicit modelId or tier. If the request also gave no hint and the engine
@@ -1259,6 +1331,7 @@ async function executeOpenAICompatibleTurn(
       ),
     },
     `${model.provider}/${model.slug}`,
+    ...providerFetchDeadline(stream),
   ).catch((error) =>
     annotateProviderAbort(
       error,
@@ -1800,7 +1873,6 @@ export function buildAnthropicMessagesRequest(
   return body;
 }
 
-
 export function parseAnthropicStreamLine(
   line: string,
 ): AnthropicStreamEvent | null {
@@ -1909,6 +1981,7 @@ async function runAnthropicMessagesTurn(
       ),
     },
     `anthropic/${model.slug}`,
+    ...providerFetchDeadline(stream),
   ).catch((error) =>
     annotateProviderAbort(
       error,
@@ -2298,20 +2371,29 @@ async function runGoogleGenerativeAITurn(
     ? `${base}/v1beta/models/${model.slug}:streamGenerateContent?alt=sse`
     : `${base}/v1beta/models/${model.slug}:generateContent`;
   const requestStarted = now();
-  const response = await fetchWithHeaderTimeout(fetchFn, endpoint, {
-    method: "POST",
-    signal: params.abortSignal,
-    headers: {
-      "content-type": "application/json",
-      "x-goog-api-key": apiKey,
+  const response = await fetchWithHeaderTimeout(
+    fetchFn,
+    endpoint,
+    {
+      method: "POST",
+      signal: params.abortSignal,
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify(
+        buildGeminiRequest(params.systemPrompt, params.prompt, {
+          jsonObject: params.jsonObject,
+          maxOutputTokens: modelRequestedOutputCap(
+            model,
+            params.maxOutputTokens,
+          ),
+        }),
+      ),
     },
-    body: JSON.stringify(
-      buildGeminiRequest(params.systemPrompt, params.prompt, {
-        jsonObject: params.jsonObject,
-        maxOutputTokens: modelRequestedOutputCap(model, params.maxOutputTokens),
-      }),
-    ),
-  }, `gemini/${model.slug}`).catch((error) =>
+    `gemini/${model.slug}`,
+    ...providerFetchDeadline(stream),
+  ).catch((error) =>
     annotateProviderAbort(
       error,
       params.abortSignal,

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   buildAnthropicMessagesRequest,
   buildGeminiRequest,
@@ -11,10 +11,13 @@ import {
   getModelAccessModality,
   HostedProviderCredentialMissingError,
   MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
+  modelSupportsFastSpeed,
   parseAnthropicStreamLine,
   parseGeminiStreamLine,
   parseModelRegistryRows,
   parseOpenAIChatStreamLine,
+  PROVIDER_BUFFERED_HEADER_TIMEOUT_MS,
+  PROVIDER_HEADER_TIMEOUT_MS,
   runWorkbenchTurn,
   selectWorkbenchModel,
   toolWireNames,
@@ -23,9 +26,8 @@ import {
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   type WorkbenchModel,
-  WorkbenchModelNotFoundError,
-  modelSupportsFastSpeed,
   WorkbenchModelFastSpeedUnsupportedError,
+  WorkbenchModelNotFoundError,
 } from "./provider";
 
 const models: WorkbenchModel[] = [
@@ -938,16 +940,19 @@ describe("withDefaultLocalWorkbenchModels", () => {
     expect(slugs).toContain("muse-glimmer:30b");
     expect(slugs).toContain("deepseek-r1:32b");
     expect(slugs).toContain("mistral-small:24b-instruct-2501-q4_K_M");
-    expect(merged.filter((model) => model.slug === "gemma4:26b")).toHaveLength(1);
+    expect(merged.filter((model) => model.slug === "gemma4:26b")).toHaveLength(
+      1,
+    );
     expect(merged[merged.length - 1].displayName).toBe("Gemma 4 latest");
   });
 
   test("does not duplicate the default when the registry already has it", () => {
     const merged = withDefaultLocalWorkbenchModels(models);
 
-    expect(merged.filter((model) => model.slug === "laguna-xs-2.1")).toHaveLength(
-      1,
-    );
+    expect(merged.filter((model) => model.slug === "laguna-xs-2.1"))
+      .toHaveLength(
+        1,
+      );
   });
 });
 
@@ -4415,7 +4420,14 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       tier: 2,
       costInput: 1.25,
       costOutput: 4.25,
-      capabilities: ["text", "code", "reasoning", "tools", "thinking", "long-context"],
+      capabilities: [
+        "text",
+        "code",
+        "reasoning",
+        "tools",
+        "thinking",
+        "long-context",
+      ],
     };
 
     const result = await runWorkbenchTurn({
@@ -4452,7 +4464,15 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       tier: 2,
       costInput: 2.0,
       costOutput: 6.0,
-      capabilities: ["text", "code", "reasoning", "vision", "tools", "thinking", "long-context"],
+      capabilities: [
+        "text",
+        "code",
+        "reasoning",
+        "vision",
+        "tools",
+        "thinking",
+        "long-context",
+      ],
     };
 
     const result = await runWorkbenchTurn({
@@ -4489,7 +4509,15 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       tier: 2,
       costInput: 2.0,
       costOutput: 6.0,
-      capabilities: ["text", "code", "reasoning", "vision", "tools", "thinking", "long-context"],
+      capabilities: [
+        "text",
+        "code",
+        "reasoning",
+        "vision",
+        "tools",
+        "thinking",
+        "long-context",
+      ],
       contextWindow: 500000,
       maxOutputTokens: 65536,
       reasoningEffortControl: true,
@@ -6263,6 +6291,80 @@ describe("explicit tier preference", () => {
   });
 });
 
+// The Anthropic endpoint defers headers on a buffered call until the body
+// exists, so the streaming budget capped generation itself: a turn could not
+// emit an edit that took more than 30s to write. These drive the Anthropic
+// adapter rather than the deadline helper, so its budget cannot be changed
+// without a test moving; the other two adapters are not covered here, and
+// neither is body consumption after headers arrive.
+describe("provider request deadlines", () => {
+  const anthropicModel: WorkbenchModel = {
+    slug: "claude-haiku-4-5",
+    displayName: "Claude Haiku 4.5",
+    provider: "anthropic",
+    api: "anthropic-messages",
+    baseUrl: "https://api.anthropic.com",
+    tier: 1,
+    costInput: 1,
+    costOutput: 5,
+    capabilities: ["text", "code"],
+  };
+
+  function silentProvider(): typeof fetch {
+    return ((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+      })) as unknown as typeof fetch;
+  }
+
+  function anthropicTurn(onTextDelta?: (delta: string) => void) {
+    return runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "write the edit",
+      routing: { modelId: anthropicModel.slug },
+      models: [anthropicModel],
+      getEnv: () => "test-key",
+      fetchFn: silentProvider(),
+      ...(onTextDelta === undefined ? {} : { onTextDelta }),
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("a buffered turn outlives the streaming budget and dies on its own", async () => {
+    const turn = anthropicTurn();
+    const settled = vi.fn();
+    turn.then(settled, settled);
+
+    await vi.advanceTimersByTimeAsync(PROVIDER_HEADER_TIMEOUT_MS + 1_000);
+    expect(settled).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(
+      PROVIDER_BUFFERED_HEADER_TIMEOUT_MS - PROVIDER_HEADER_TIMEOUT_MS,
+    );
+    await expect(turn).rejects.toThrow(
+      /no response headers within 300000ms \(buffered request exceeded its budget/,
+    );
+  });
+
+  test("a streaming turn keeps the tight header budget", async () => {
+    const turn = anthropicTurn(() => {});
+    const rejection = expect(turn).rejects.toThrow(
+      /no response headers within 30000ms \(streaming request exceeded its budget/,
+    );
+    await vi.advanceTimersByTimeAsync(PROVIDER_HEADER_TIMEOUT_MS + 1);
+    await rejection;
+  });
+});
+
 describe("fetchWithHeaderTimeout", () => {
   test("aborts a blackholed connection with a named error", async () => {
     const blackhole =
@@ -6292,6 +6394,28 @@ describe("fetchWithHeaderTimeout", () => {
     await expect(
       fetchWithHeaderTimeout(refused, "http://x/", {}, "l", 1000),
     ).rejects.toThrow("connection refused");
+  });
+
+  test("a buffered request names its own budget, not the streaming one", async () => {
+    const blackhole =
+      ((_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        })) as unknown as typeof fetch;
+    await expect(
+      fetchWithHeaderTimeout(
+        blackhole,
+        "http://x/",
+        {},
+        "anthropic/test",
+        30,
+        "buffered",
+      ),
+    ).rejects.toThrow(
+      /anthropic\/test: no response headers within 30ms \(buffered request exceeded its budget/,
+    );
   });
 
   test("an earlier external abort wins when the header timer later fires before fetch rejects", async () => {
