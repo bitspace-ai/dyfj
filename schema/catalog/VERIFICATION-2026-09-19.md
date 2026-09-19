@@ -127,6 +127,33 @@ matching the sibling `deepseek/deepseek-v4-flash` row. That is deliberate.
 Whether the catalog should record observed provider capability is a separate
 question from whether its prices are right.
 
+### Gemini capabilities
+
+`capabilities` in this table describes the model, not what this software can
+currently reach. The sibling `gemini-3.6-flash` and `gemini-3.7-flash` rows
+both list `"tools"` and `"vision"`, and the Google adapter here supports
+neither: `buildGeminiRequest` in `prototype/src/provider.ts` types its parts as
+`{ text: string }` only, sends no tool declarations, and `functionCall` appears
+nowhere in that file.
+
+The new row departs from that convention in one place: it omits `"tools"`,
+deliberately, so the catalog does not advertise native tool support this
+software cannot deliver. `"vision"` is kept, matching the siblings and the
+vendor's own capability list.
+
+The omission is metadata and nothing more. No routing decision reads this
+field: model selection checks existence and pricing, and the only
+capability-gated choices in `prototype/src` test for `"fast-speed"` and
+`"code"`. A caller naming this model for tool-using work still gets it.
+
+That is an inconsistency, and it is recorded rather than smoothed over. Two
+rows advertise a tool capability that does not work and one does not. Settling
+it means deciding whether this column describes the vendor or the reachable
+surface, and then applying that answer to every row — a catalog-wide question,
+not one this slice should answer by itself. Restore `"tools"` here if the
+adapter gains tool support, or remove it from the siblings if the column comes
+to mean reachability.
+
 ## What this does not establish
 
 - Neither model was invoked. Nothing here shows that a turn routed to either

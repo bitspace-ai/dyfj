@@ -31,6 +31,22 @@
 -- charge and an hourly storage charge are different kinds of price, and this
 -- row bills against Google directly.
 --
+-- The Gemini row omits "tools" from its capabilities, departing from the
+-- sibling 3.6 and 3.7 Flash rows which list it. The Google adapter here cannot
+-- carry a tool call: buildGeminiRequest in prototype/src/provider.ts sends no
+-- tool declarations, and functionCall appears nowhere in that file, so the
+-- catalog should not advertise native tool support.
+--
+-- This is metadata only. Nothing reads the field when choosing a model: the
+-- only capability-gated selections in prototype/src test for "fast-speed" and
+-- "code". A caller naming this model for tool-using work still gets it.
+--
+-- The column otherwise describes the model rather than the reachable surface,
+-- which is why "vision" stays: the adapter builds text-only parts and cannot
+-- send an image either. Whether this column should mean vendor capability or
+-- reachable capability is a catalog-wide question; see
+-- schema/catalog/VERIFICATION-2026-09-19.md.
+--
 -- The Gemini prices above are promotional. Google lists them as holding
 -- through 2026-12-31 and doubling on 2027-01-01 to in $1.50 / out $7.50 /
 -- cache read $0.15. The catalog has no validity window, so these rows will be
@@ -97,7 +113,7 @@ INSERT INTO models (
     0.075000,
     0.000000,
     TRUE,
-    '["text","code","reasoning","vision","tools","thinking","long-context"]',
+    '["text","code","reasoning","vision","thinking","long-context"]',
     NULL,
     NULL,
     NULL,
