@@ -55,6 +55,29 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **DeepSeek V4.1 Flash and Gemini 3.8 Flash in the model catalog**: both are
+  routable, on the fresh-install path and the upgrade path alike. DeepSeek
+  reaches OpenRouter, Gemini reaches Google directly.
+
+  Their prices carry more caveats than a catalog row can hold, so
+  `schema/catalog/VERIFICATION-2026-09-19.md` records the source, capture date
+  and figure for each field beside the SQL. Two are worth knowing before
+  relying on a cost estimate. DeepSeek V4.1 Flash is priced by time of day —
+  half rate at most hours and all weekend, double for seven hours of every
+  weekday — and the row stores the peak, so off-peak turns cost half what the
+  catalog predicts. Gemini's rates are promotional and double on 2027-01-01,
+  after which the row understates cost until someone updates it.
+
+  The Gemini row omits the `tools` capability although the model supports
+  function calling, because this codebase's Google adapter sends no tool
+  declarations and parses no function calls. That is catalog metadata only; no
+  routing decision reads the field, so naming the model for tool-using work
+  still selects it.
+
+  This migration preserves each existing row's `active` state, so re-running it
+  will not re-enable either model if an operator disabled it. That is specific
+  to this migration; earlier ones do overwrite `active` on conflict.
+
 - **`deno task test:file <path>`**: Runs a single Vitest file, skipping the
   whole-project typecheck that `deno task test` performs, for iteration while
   editing one file. `deno task test` is unchanged and remains the entry point
