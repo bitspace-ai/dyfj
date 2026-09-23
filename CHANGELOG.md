@@ -11,6 +11,33 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Vitest test and hook timeouts are sized to the suite**: the suite ran on
+  Vitest's defaults of 5 seconds per test and 10 seconds per hook. Neither was
+  chosen for a suite whose workers spawn and reap real processes. Measured on an
+  idle machine with every test passing, the slowest single test takes 3.65
+  seconds and the five next-slowest all exceed 2.3 seconds, leaving the 5-second
+  default about 1.4x headroom. Separately, four files were seen failing under the full
+  parallel run in one afternoon — one on the hook timeout, one on the test
+  timeout, two on late timers during initialize — every one a timeout rather
+  than a failed assertion, and every one green when the file ran on its own.
+  Those failing files are not the same set as the slow tests measured above.
+  The timeouts are now 30 seconds per test and 45 seconds per hook. The
+  durations, the failures and the full-run results are recorded with their
+  method in `prototype/VERIFICATION-2026-09-22.md`.
+
+  What this does not establish is the cause. Three consecutive full runs pass at
+  2192/2192 with these values, which is a correlation with parallel execution
+  rather than an explanation of it. If these files start failing again, the
+  cause is still open and that is where to look.
+
+  The cost is that a test or hook which stays pending is reported later: it can
+  run to 30 seconds, or 45 for a hook, before the suite says so. These are
+  thresholds rather than cancellation or a required duration — work that
+  finishes sooner still finishes sooner, and a timed-out teardown that left a
+  child holding a resource still leaves it. The supervised Vitest phase keeps
+  its own deadline, defaulting to 600 seconds for a full run and 180 for a
+  recognised focused one.
+
 - **A buffered provider request gets a larger header deadline**: every provider
   request was bounded by a 30-second wait for response headers, written to
   detect an unreachable provider. The endpoints reached by the buffered path
