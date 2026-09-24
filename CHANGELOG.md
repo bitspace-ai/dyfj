@@ -11,6 +11,27 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The model list is grouped and unroutable models are quarantined**:
+  `dyfj models` printed one flat table ordered by tier and slug, and bare
+  `/model` printed every active slug as one comma-separated line. Rows with no
+  catalog pricing were tagged `[unpriced — not routable]` but stayed in that
+  line and could still be selected with `/model <slug>`, so the failure only
+  appeared at the first turn. Now `models/list` builds the structure on the
+  server (`buildWorkbenchModelListing` in `prototype/src/provider.ts`) and
+  returns `groups` (routable models grouped by access modality — local,
+  frontier-hosted, aggregator-hosted, subscription-oauth, custom-hosted — tier
+  then slug within each) and `unavailable` (active rows that are not routable,
+  each with a `reason`, currently always `unpriced`), next to the existing flat
+  `models` list. Any client of the socket gets the same grouping without
+  re-deriving it. `dyfj models` and bare `/model` both print the grouped list
+  followed by a separate `unavailable — quarantined, not selectable` section,
+  which stays visible so missing prices remain observable. `/model <slug>` on a
+  quarantined slug now fails at once with `not routable: unpriced`, before any
+  provider call, and leaves the active model and paid approval unchanged. An
+  unknown slug no longer prints every slug; it points to `/model` instead.
+  Against an older server that sends only `models`, the CLI still quarantines
+  rows that server marked `routable: false`.
+
 - **Vitest test and hook timeouts are sized to the suite**: the suite ran on
   Vitest's defaults of 5 seconds per test and 10 seconds per hook. Neither was
   chosen for a suite whose workers spawn and reap real processes. Measured on an

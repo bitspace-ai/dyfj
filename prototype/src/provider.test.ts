@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   buildAnthropicMessagesRequest,
+  buildWorkbenchModelListing,
   buildGeminiRequest,
   buildOpenAIChatRequest,
   defaultLocalWorkbenchModels,
@@ -594,6 +595,76 @@ describe("getModelAccessModality", () => {
         baseUrl: "https://api.x.ai/v1",
       }),
     ).toBe("custom-hosted");
+  });
+});
+
+describe("buildWorkbenchModelListing", () => {
+  const row = (
+    slug: string,
+    provider: string,
+    baseUrl: string,
+    tier: 0 | 1 | 2,
+    cost: number,
+  ): WorkbenchModel => ({
+    slug,
+    displayName: slug,
+    provider,
+    api: "openai-completions",
+    baseUrl,
+    tier,
+    costInput: cost,
+    costOutput: cost,
+    capabilities: [],
+  });
+  const catalog = [
+    row("z-frontier-t2", "openai", "https://api.openai.com/v1", 2, 5),
+    row("a-frontier-t1", "openai", "https://api.openai.com/v1", 1, 1),
+    row("b-frontier-t1", "anthropic", "https://api.anthropic.com", 1, 1),
+    row("router-t1", "openrouter", "https://openrouter.ai/api/v1", 1, 0.1),
+    row("router-unpriced", "openrouter", "https://openrouter.ai/api/v1", 1, 0),
+    row("frontier-unpriced", "anthropic", "https://api.anthropic.com", 2, 0),
+    row("codex-chatgpt/sub", "codex-chatgpt", "acp", 2, 0),
+    row("local-x", "ollama", "http://localhost:11434/v1", 0, 0),
+    row("proxy-x", "openai", "https://proxy.example.com/v1", 1, 1),
+  ];
+
+  test("groups routable rows by modality in display order, tier then slug within a group", () => {
+    const { groups } = buildWorkbenchModelListing(catalog);
+    expect(groups.map((g) => [g.modality, g.models.map((m) => m.slug)]))
+      .toEqual([
+        ["local", ["local-x"]],
+        ["frontier-hosted", ["a-frontier-t1", "b-frontier-t1", "z-frontier-t2"]],
+        ["aggregator-hosted", ["router-t1"]],
+        ["subscription-oauth", ["codex-chatgpt/sub"]],
+        ["custom-hosted", ["proxy-x"]],
+      ]);
+  });
+
+  test("quarantines unroutable rows out of every group with a reason", () => {
+    const { groups, unavailable } = buildWorkbenchModelListing(catalog);
+    const selectable = groups.flatMap((g) => g.models.map((m) => m.slug));
+    expect(selectable).not.toContain("router-unpriced");
+    expect(selectable).not.toContain("frontier-unpriced");
+    expect(unavailable.map((m) => [m.slug, m.reason, m.routable])).toEqual([
+      ["frontier-unpriced", "unpriced", false],
+      ["router-unpriced", "unpriced", false],
+    ]);
+  });
+
+  test("omits empty groups and keeps the flat annotated list in catalog order", () => {
+    const listing = buildWorkbenchModelListing([
+      row("b-router", "openrouter", "https://openrouter.ai/api/v1", 1, 0.1),
+      row("a-local", "ollama", "http://localhost:11434/v1", 0, 0),
+    ]);
+    expect(listing.groups.map((g) => g.modality)).toEqual([
+      "local",
+      "aggregator-hosted",
+    ]);
+    expect(listing.unavailable).toEqual([]);
+    expect(listing.models.map((m) => [m.slug, m.local, m.routable])).toEqual([
+      ["b-router", false, true],
+      ["a-local", true, true],
+    ]);
   });
 });
 

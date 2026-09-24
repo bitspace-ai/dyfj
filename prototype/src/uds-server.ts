@@ -7,11 +7,10 @@
 // option decisions over the same duplex seam.
 
 import {
+  buildWorkbenchModelListing,
   defaultLocalWorkbenchModels,
-  getModelAccessModality,
   isLocalWorkbenchModel,
   loadWorkbenchModels,
-  modelHasCatalogPricing,
   selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
@@ -521,17 +520,11 @@ export function buildWorkbenchHandlers(
       } satisfies WorkbenchSurfaceSnapshot;
     },
 
-    // `routable`, `local`, and `modality` are computed server-side (single sources:
-    // modelHasCatalogPricing, isLocalWorkbenchModel, getModelAccessModality) so clients
-    // can annotate rows without duplicating pricing, locality, or taxonomy rules.
-    "models/list": async () => ({
-      models: (await loadModels()).map((model) => ({
-        ...model,
-        routable: modelHasCatalogPricing(model),
-        local: isLocalWorkbenchModel(model),
-        modality: getModelAccessModality(model),
-      })),
-    }),
+    // Annotation, grouping, and quarantine are computed server-side
+    // (buildWorkbenchModelListing) so every client of the seam renders the
+    // same structure without duplicating pricing, locality, or taxonomy rules.
+    // `models` stays the flat annotated list for clients that look rows up.
+    "models/list": async () => buildWorkbenchModelListing(await loadModels()),
 
     "tools/list": async (params) => ({
       tools: buildToolCatalog(params, options.externalMcpCommands),

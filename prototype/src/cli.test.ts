@@ -2708,7 +2708,7 @@ describe("models/sessions over UDS", () => {
     expect(stdout.join("")).toContain("Gemma 4");
   });
 
-  test("runModels annotates rows the server marked unroutable", async () => {
+  test("runModels quarantines rows an older server marked unroutable", async () => {
     const { io, stdout } = fakeIo();
     const code = await runModels(
       cfg(),
@@ -2742,15 +2742,65 @@ describe("models/sessions over UDS", () => {
       }),
     );
     expect(code).toBe(0);
-    const out = stdout.join("");
-    const lines = out.split("\n");
-    expect(lines.find((l) => l.includes("gpt-6-preview"))).toContain(
-      "[unpriced — not routable]",
+    const [selectable, quarantine] = stdout.join("").split("\n\n");
+    expect(selectable).not.toContain("gpt-6-preview");
+    expect(selectable).toContain("claude-opus-4-8");
+    expect(selectable).not.toContain("unpriced");
+    expect(quarantine).toContain("unavailable — quarantined, not selectable");
+    expect(
+      quarantine.split("\n").find((l) => l.includes("gpt-6-preview")),
+    ).toContain("[not routable: unpriced]");
+  });
+
+  test("runModels renders server groups under modality headers with a quarantined section", async () => {
+    const { io, stdout } = fakeIo();
+    const code = await runModels(
+      cfg(),
+      io,
+      fakeConnect({
+        "models/list": {
+          models: [],
+          groups: [
+            {
+              modality: "local",
+              models: [{ slug: "gemma4", tier: 0, provider: "ollama" }],
+            },
+            {
+              modality: "frontier-hosted",
+              models: [
+                { slug: "gpt-5.6-luna", tier: 1, provider: "openai" },
+                { slug: "gpt-5.6-sol", tier: 2, provider: "openai" },
+              ],
+            },
+          ],
+          unavailable: [
+            {
+              slug: "router-unpriced",
+              tier: 1,
+              provider: "openrouter",
+              modality: "aggregator-hosted",
+              reason: "unpriced",
+            },
+          ],
+        },
+      }),
     );
-    expect(lines.find((l) => l.includes("gemma4"))).not.toContain("unpriced");
-    expect(lines.find((l) => l.includes("claude-opus-4-8"))).not.toContain(
-      "unpriced",
+    expect(code).toBe(0);
+    const lines = stdout.join("").split("\n");
+    const quarantineAt = lines.findIndex((l) =>
+      l.startsWith("unavailable — quarantined, not selectable (1):")
     );
+    expect(quarantineAt).toBeGreaterThan(0);
+    const selectable = lines.slice(0, quarantineAt);
+    expect(selectable.filter((l) => /^\S/.test(l) && l.length > 0)).toEqual([
+      "local:",
+      "frontier-hosted:",
+    ]);
+    expect(selectable.findIndex((l) => l.includes("gpt-5.6-luna")))
+      .toBeLessThan(selectable.findIndex((l) => l.includes("gpt-5.6-sol")));
+    expect(selectable.join("\n")).not.toContain("router-unpriced");
+    expect(lines[quarantineAt + 1]).toContain("router-unpriced");
+    expect(lines[quarantineAt + 1]).toContain("[not routable: unpriced]");
   });
 
   test("runSessions groups by project", async () => {
@@ -3443,6 +3493,50 @@ printf '%s\\n' "$*" > "$HOME/login-args"
 });
 
 describe("REPL /model", () => {
+  function listingConnect(methods: string[] = []): ConnectFn {
+    const listing = {
+      models: [
+        { slug: "gemma4", tier: 0, provider: "ollama", routable: true },
+        { slug: "gpt-5.6-luna", tier: 1, provider: "openai", routable: true },
+        {
+          slug: "router-unpriced",
+          tier: 1,
+          provider: "openrouter",
+          routable: false,
+        },
+      ],
+      groups: [
+        {
+          modality: "local",
+          models: [{ slug: "gemma4", tier: 0, provider: "ollama" }],
+        },
+        {
+          modality: "frontier-hosted",
+          models: [{ slug: "gpt-5.6-luna", tier: 1, provider: "openai" }],
+        },
+      ],
+      unavailable: [{
+        slug: "router-unpriced",
+        tier: 1,
+        provider: "openrouter",
+        modality: "aggregator-hosted",
+        reason: "unpriced",
+      }],
+    };
+    return () =>
+      Promise.resolve({
+        request: (method: string) => {
+          methods.push(method);
+          return method === "models/list"
+            ? Promise.resolve(listing)
+            : method === "runtime/status"
+            ? Promise.resolve({ runtime: {} })
+            : Promise.resolve({});
+        },
+        close: () => {},
+      });
+  }
+
   function fakeConnect(
     models: {
       slug: string;
@@ -3463,6 +3557,50 @@ describe("REPL /model", () => {
         close: () => {},
       });
   }
+
+  test("bare /model renders the grouped list, not a comma blob, and keeps quarantined slugs out of available", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "gpt-5.6-luna" });
+    await handleReplModelCommand(
+      "/model",
+      config,
+      io,
+      listingConnect(),
+    );
+    const out = stderr.join("\n");
+    const lines = stderr.flatMap((l) => l.split("\n"));
+    const availableAt = lines.indexOf("available:");
+    const quarantineAt = lines.findIndex((l) =>
+      l.startsWith("unavailable — quarantined, not selectable")
+    );
+    expect(availableAt).toBeGreaterThan(-1);
+    expect(quarantineAt).toBeGreaterThan(availableAt);
+    const available = lines.slice(availableAt + 1, quarantineAt);
+    expect(available).toContain("  local:");
+    expect(available).toContain("  frontier-hosted:");
+    expect(available.join("\n")).not.toContain("router-unpriced");
+    expect(out).not.toMatch(/available: \S+, /);
+    expect(lines[quarantineAt + 1]).toContain("router-unpriced");
+  });
+
+  test("/model <unroutable-slug> errors before any turn and leaves the model unchanged", async () => {
+    const { io, stderr } = fakeIo();
+    const methods: string[] = [];
+    const config = cfg({ model: "gpt-5.6-luna" });
+    const handled = await handleReplModelCommand(
+      "/model router-unpriced --approve-paid",
+      config,
+      io,
+      listingConnect(methods),
+    );
+    expect(handled).toBe(true);
+    expect(stderr.join("\n")).toContain(
+      'model "router-unpriced" is not routable: unpriced',
+    );
+    expect(config.model).toBe("gpt-5.6-luna");
+    expect(config.approvePaid).toBeUndefined();
+    expect(methods).toEqual(["models/list"]);
+  });
 
   test("/model with no arg prints the active model, slugs, and posture", async () => {
     const { io, stderr } = fakeIo();

@@ -101,8 +101,17 @@ dyfj models
 dyfj sessions
 ```
 
+`dyfj models` lists the selectable models under modality headers (local,
+frontier-hosted, aggregator-hosted, subscription-oauth, custom-hosted; tier then
+slug within each), followed by a separate `unavailable — quarantined, not
+selectable` section for active catalog rows that are not routable because they
+have no pricing. The section is shown so the pricing gap stays visible; its
+rows cannot be selected.
+
 Inside the REPL, `/session` prints the current session id, `/model` shows or
-switches the active model (with optional `--fast` or `--no-fast`), `/fast [on|off]`
+switches the active model (with optional `--fast` or `--no-fast`); bare `/model`
+prints the same grouped list, and `/model <slug>` on a quarantined slug fails
+immediately with `not routable: unpriced` instead of at the first turn. `/fast [on|off]`
 toggles the fast speed tier for supported models,
 `/friction <sev> [--escaped] <text...>` posts a numbered daily-driver friction
 entry through the configured Linear MCP tools, and `/quit` or `/exit` quits
@@ -143,6 +152,11 @@ Set `DYFJ_FRICTION_ISSUE_ID` on the runtime to identify the operator's
 friction-checkpoint issue; `friction/post` fails at the `configuration` stage
 when the variable is unset or blank. `runtime/status` includes grouped method
 catalog metadata for client surfaces.
+`models/list` returns `{ models, groups, unavailable }`: `groups` is the routable
+set grouped by access modality, `unavailable` the quarantined unroutable rows
+with a `reason`, and `models` the flat annotated list (`routable`, `local`,
+`modality`). The grouping is built server-side by `buildWorkbenchModelListing`
+in `src/provider.ts`, so every client of the seam renders the same structure.
 The engine-free `dyfj` CLI reaches the read methods over it with `dyfj models`
 and `dyfj sessions`; after a TTY-backed UDS turn connects, Ctrl-C sends
 `turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY

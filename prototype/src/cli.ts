@@ -1053,7 +1053,29 @@ interface ModelRow {
   tier?: number;
   /** Server-computed locality (on-machine loopback provider); absent on older servers. */
   local?: boolean;
+  /** Server-computed routability (catalog pricing present); absent on older servers. */
+  routable?: boolean;
+  /** Server-computed access modality; absent on older servers. */
+  modality?: string;
   capabilities?: string[];
+}
+interface ModelGroup {
+  modality?: string;
+  models?: ModelRow[];
+}
+/** Quarantined row: listed for visibility, never selectable. */
+interface UnavailableModelRow extends ModelRow {
+  reason?: string;
+}
+/**
+ * The `models/list` payload. `groups` and `unavailable` are the server-built
+ * selectable set and quarantine; older servers send only `models`.
+ */
+interface ModelListing {
+  slugs: string[];
+  models: ModelRow[];
+  groups?: ModelGroup[];
+  unavailable: UnavailableModelRow[];
 }
 interface SessionRow {
   slug?: string;
@@ -1601,24 +1623,37 @@ export async function probeRuntimeLiveness(
 export async function fetchModelSlugs(
   config: CliConfig,
   connect: ConnectFn = connectUnixClient,
-): Promise<{ slugs: string[]; models: ModelRow[] } | { error: string }> {
+): Promise<ModelListing | { error: string }> {
   try {
     const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
     const client = await connect(config.socket, undefined, signal);
     try {
-      const { models } = await client.request(
+      const { models, groups, unavailable } = await client.request(
         "models/list",
         undefined,
         signal,
       ) as {
         models: ModelRow[];
+        groups?: ModelGroup[];
+        unavailable?: UnavailableModelRow[];
       };
       const slugs = models
         .map((m) => m.slug)
         .filter((slug): slug is string =>
           typeof slug === "string" && slug.length > 0
         );
-      return { slugs, models };
+      return {
+        slugs,
+        models,
+        ...(Array.isArray(groups) ? { groups } : {}),
+        // An older server sends no quarantine; derive it from the per-row flag,
+        // and only an explicit false counts (absence must not smear "unpriced").
+        unavailable: Array.isArray(unavailable)
+          ? unavailable
+          : models
+            .filter((m) => m.routable === false)
+            .map((m) => ({ ...m, reason: "unpriced" })),
+      };
     } finally {
       client.close();
     }
@@ -2932,18 +2967,31 @@ export async function handleReplModelCommand(
       ? await fetchSessionPosture(config, connect)
       : initialPosture;
 
+    const listing = formatModelListing(listed);
     io.err(`active model: ${active}`);
-    io.err(`available: ${listed.slugs.join(", ") || "(none)"}`);
+    io.err("available:");
+    for (const row of listing.available) io.err(`  ${row}`);
+    for (const row of listing.unavailable) io.err(row);
     io.err("error" in posture ? posture.error : formatPostureLine(posture));
     return true;
   }
 
   const slug = args[0];
+  // Quarantined rows fail here, at selection time, so the operator never
+  // arms a model whose first turn would fail closed in the engine.
+  const quarantined = listed.unavailable.find((m) => m.slug === slug);
+  if (quarantined !== undefined) {
+    io.err(
+      `dyfj: model "${slug}" is not routable: ${
+        quarantined.reason ?? "unpriced"
+      } — it has no catalog pricing, so paid spend cannot be bounded. ` +
+        "Run /model to list available models.",
+    );
+    return true;
+  }
   if (!listed.slugs.includes(slug)) {
     io.err(
-      `unknown model "${slug}". available: ${
-        listed.slugs.join(", ") || "(none)"
-      }`,
+      `unknown model "${slug}". Run /model to list available models.`,
     );
     return true;
   }
@@ -2981,27 +3029,71 @@ export async function runModels(
     io.err(listed.error);
     return 1;
   }
-  const { models } = listed;
-  const slugWidth = models.reduce(
-    (w, m) => Math.max(w, (m.slug ?? "").length),
-    0,
-  );
-  for (const m of models) {
-    // Server-computed flag; only an explicit false marks a row (older servers
-    // omit the field, and absence must not smear "unpriced" over the list).
-    const unroutable = (m as { routable?: boolean }).routable === false
-      ? "  [unpriced — not routable]"
-      : "";
-    const modality = (m as { modality?: string }).modality;
-    const modalityStr = modality ? `${modality.padEnd(19)} ` : "";
-    io.out(
-      `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
-        `${modalityStr}${(m.provider ?? "").padEnd(10)} ${
-          m.displayName ?? ""
-        }${unroutable}\n`,
-    );
-  }
+  const listing = formatModelListing(listed);
+  for (const row of listing.available) io.out(`${row}\n`);
+  if (listing.unavailable.length > 0) io.out("\n");
+  for (const row of listing.unavailable) io.out(`${row}\n`);
   return 0;
+}
+
+function formatModelRow(
+  m: ModelRow,
+  widths: { slug: number; provider: number },
+  withModality: boolean,
+): string {
+  const modalityStr = withModality && m.modality
+    ? `${m.modality.padEnd(19)} `
+    : "";
+  return `${(m.slug ?? "").padEnd(widths.slug)} t${m.tier ?? "?"}  ` +
+    `${modalityStr}${(m.provider ?? "").padEnd(widths.provider)} ${
+      m.displayName ?? ""
+    }`;
+}
+
+/**
+ * Render a `models/list` payload as the selectable list plus the quarantined
+ * "unavailable" section. The grouping and quarantine come from the server;
+ * this only lays them out. Rows in `available` are indented under their
+ * modality header; `unavailable` is empty when nothing is quarantined.
+ */
+export function formatModelListing(
+  listed: ModelListing,
+): { available: string[]; unavailable: string[] } {
+  const quarantinedSlugs = new Set(listed.unavailable.map((m) => m.slug));
+  const shown = [
+    ...(listed.groups?.flatMap((g) => g.models ?? []) ?? listed.models),
+    ...listed.unavailable,
+  ];
+  const widths = {
+    slug: Math.max(0, ...shown.map((m) => (m.slug ?? "").length)),
+    provider: Math.max(10, ...shown.map((m) => (m.provider ?? "").length)),
+  };
+  const available: string[] = [];
+  if (listed.groups !== undefined) {
+    for (const group of listed.groups) {
+      available.push(`${group.modality ?? "(unclassified)"}:`);
+      for (const m of group.models ?? []) {
+        available.push(`  ${formatModelRow(m, widths, false)}`);
+      }
+    }
+  } else {
+    // Older server: no groups, so keep its flat order minus the quarantine.
+    for (const m of listed.models) {
+      if (!quarantinedSlugs.has(m.slug)) {
+        available.push(formatModelRow(m, widths, true));
+      }
+    }
+  }
+  if (available.length === 0) available.push("(none)");
+  const unavailable = listed.unavailable.length === 0 ? [] : [
+    `unavailable — quarantined, not selectable (${listed.unavailable.length}):`,
+    ...listed.unavailable.map((m) =>
+      `  ${formatModelRow(m, widths, true)}  [not routable: ${
+        m.reason ?? "unpriced"
+      }]`
+    ),
+  ];
+  return { available, unavailable };
 }
 
 /**

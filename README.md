@@ -633,7 +633,13 @@ The seam exposes read methods for `runtime/status`, `surface/snapshot`,
 streaming `turn` and cancellation `turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications;
 the receipt is the result). `runtime/status` returns both the simple method id
-list and grouped method catalog metadata for CLI/TUI/GUI surfaces. The `dyfj`
+list and grouped method catalog metadata for CLI/TUI/GUI surfaces. `models/list`
+returns the selectable set already shaped by the server: `groups` holds the
+routable models grouped by access modality (local, frontier-hosted,
+aggregator-hosted, subscription-oauth, custom-hosted; tier then slug within a
+group), `unavailable` holds active rows quarantined as not routable (today the
+only reason is `unpriced`), and `models` stays the flat annotated list. Every
+client of the seam inherits that grouping instead of re-deriving it. The `dyfj`
 CLI drives turns over this seam, renders companion markdown line-by-line while
 streaming, wraps prose toward a 100-column maximum without splitting words,
 styles headers/emphasis/lists/quotes/code, and renders safe web, mail, and
