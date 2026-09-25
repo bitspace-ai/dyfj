@@ -176,6 +176,10 @@ deferrable enhancement.
   Model-supplied arguments are ignored during permission checks.
 - **Immutable message log is ground truth.** Memory is a derived view; the log
   is the audit trail.
+  _Runtime status: not yet true in full. Events are append-only, but session
+  rows are updated in place, memories are written directly by the MCP server
+  without an event, and ideas/packets live only in process memory. Closing this
+  gap is specified in `specs/prd/PRD-15-log-as-ground-truth.md`._
 
 ---
 
@@ -1379,3 +1383,13 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-15 - Status corrected: the agent loop's workspace file tools are no
   longer read-only, and the loop now carries an approval-gated `bash` escape
   hatch and a bounded `git` tool limited to status, diff, log, add and commit.
+- 2026-09-25 - Restructuring specifications added under `specs/`: baseline
+  findings, target architecture, data layer, test architecture, phase-1 PRDs,
+  and sequenced agent work orders. README §4 testing bullets are superseded by
+  `specs/03-testing.md` §1 once its first work order lands.
+- 2026-09-25 - AGENTS.md engineering doctrine replaced (module graph acyclic
+  with named exceptions, runtime ownership as a tree, single writer per piece of
+  state, the event log as the write path); Section 1 now marks the
+  log-as-ground-truth decision with its current runtime status; specs updated
+  to match, including an event-first data layer and the Rust boundary at the
+  JSON-RPC seam.
