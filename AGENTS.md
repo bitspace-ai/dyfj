@@ -39,4 +39,8 @@ Documentation is part of the change, not a follow-up. A commit that changes beha
 
 Maintainers coordinate work in a private tracker. Use the available tracker integration to find ready work, claim, record progress, and close issues; for non-trivial work, create or claim an issue before editing. Keep tracker-specific identifiers and private coordination details out of public artifacts.
 
+## Restructuring in progress
+
+Phase-1 restructuring is specified in **`specs/`**. If you were handed a work order, read `specs/README.md` and that work order in `specs/work-orders.md`; its standing rules (behavior freeze, strangler discipline, tests move with code) apply on top of this file.
+
 That's it. Read the README.

@@ -1379,3 +1379,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-15 - Status corrected: the agent loop's workspace file tools are no
   longer read-only, and the loop now carries an approval-gated `bash` escape
   hatch and a bounded `git` tool limited to status, diff, log, add and commit.
+- 2026-09-25 - Restructuring specifications added under `specs/`: baseline
+  findings, target architecture, data layer, test architecture, phase-1 PRDs,
+  and sequenced agent work orders. README §4 testing bullets are superseded by
+  `specs/03-testing.md` §1 once its first work order lands.
