@@ -11,12 +11,16 @@ it does.
   - event rows, config/env keys, receipts
 
   The only exceptions are the approved deletions in §8.
-- **TypeScript only.** `core/` (Rust) is unchanged. The store seam (§5.3) is
-  shaped so a later Rust port replaces an adapter, not callers.
+- **TypeScript only.** `core/` (Rust) is unchanged. A later Rust component
+  arrives behind the JSON-RPC process seam, not behind an in-process TypeScript
+  interface (§10).
 - **Schema stays canonical** (Layer 0 #4). TypeScript row types are _generated_
   from it (see `02-data-layer.md`).
-- **Acyclic ownership** (AGENTS.md doctrine). The module graph is a DAG,
-  enforced by a gate lane.
+- **AGENTS.md engineering doctrine**, all four rules:
+  - module graph acyclic, with named exceptions (§4);
+  - runtime ownership a tree, with callbacks only through ports (§5.7);
+  - a single writer per piece of state (§5.7);
+  - the event log as the write path (`02-data-layer.md`).
 - **Seams now, domain later.** Seams are named and shaped so that
   `contracts/workbench/first-product/v1` concepts (Run, Route, Receipt, Grant,
   ContextPacket) have an obvious landing spot in phase 2. Phase 1 introduces
@@ -34,15 +38,14 @@ checked rule.
 
 ## 3. Directory layout and layers
 
-`prototype/src/` is reorganized into directories. Each directory:
+`prototype/src/` is reorganized into directories.
 
-- exposes its public API through `mod.ts` only;
-- opens `mod.ts` with a header comment stating its responsibility and allowed
-  dependencies.
-
-A module may import another directory **only through that directory's
-`mod.ts`**, and only from a strictly lower layer, or from the same layer when
-listed under _Same-layer edges_.
+- **Layer direction is enforced.** A module may import from a strictly lower
+  layer, or from the same layer when listed under _Same-layer edges_.
+- **Entry files are advisory.** A directory may expose a `mod.ts` with a header
+  comment stating its responsibility and allowed dependencies. Deep imports that
+  bypass it are reported, not failed. This keeps prototyping fast; promote the
+  rule to failing only if deep imports become a real source of breakage.
 
 | Layer | Directory            | Responsibility                                                                                                                                                                                                         | Replaces (today)                                                                                                                                                                                                       |
 | ----- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -91,13 +94,33 @@ This is the existing client/server split made explicit.
 ## 4. Enforcement
 
 A new gate lane, `arch.imports`, runs a repository-owned script that parses
-static and dynamic local imports and fails on any of:
+static and dynamic local imports.
 
-- an import cycle (including type-only cycles through barrels);
+**Fails on:**
+
+- an import cycle (including type-only cycles through barrels) that is not in
+  the named-cycle allow-list;
 - an upward-layer import or a non-listed same-layer edge;
-- a deep import that bypasses a directory's `mod.ts`;
 - a `cli/` import outside its allow-list;
-- dynamic `import()` of a local module. Today these exist only to hide cycles.
+- a dynamic `import()` of a local module that is not in the allow-list. Today
+  these exist only to hide cycles;
+- `mysql2` imported outside `store/`, and `Deno.env`/`process.env` read outside
+  `config/` and the entrypoints.
+
+**Reports, without failing:** deep imports that bypass a `mod.ts`.
+
+**Named-cycle allow-list** (`scripts/arch-cycles.json`). This implements
+AGENTS.md rule 1. Each entry must carry:
+
+- a name;
+- the exact module edges it permits;
+- a justification;
+- the path of a test that exercises the cycle.
+
+The lane fails if an entry's edges no longer occur, or if its cited test file
+does not exist. Import cycles are not the same thing as protocol round trips: a
+server→client approval request is a runtime round trip over ports, not an import
+cycle, and it needs no entry here. Those round trips are documented in §5.7.
 
 Rollout:
 
@@ -170,15 +193,18 @@ interface ProviderAdapter {
   - one registry line;
   - passing the provider conformance kit (`03-testing.md` §5).
 
-### 5.3 Store port
+### 5.3 Store port (event-first)
 
 This seam is specified in `02-data-layer.md`. In short:
 
-- **Repositories:** `events`, `sessions`, `memories`, `models`, `prompts`,
-  `spend`.
-- **Two adapters:** `DoltStore` and `MemoryStore`. The in-memory fake passes the
-  same store conformance suite.
-- **One connection pool** per process.
+- **One write path.** `journal.commit(batch)` appends events and applies their
+  projection updates in one transaction. Nothing else mutates state.
+- **Read-only repositories** over the projections and reference data: `events`,
+  `sessions`, `memories`, `models`, `prompts`, `spend`.
+- **Two adapters:** `DoltStore` and `MemoryStore`, proven equal by one
+  conformance suite.
+- **One connection pool** per process, owned by the composition root. It is not
+  a module-level singleton.
 
 ### 5.4 Tool definition
 
@@ -223,6 +249,38 @@ consume it. This breaks the `mcp-tools ⇄ web-tools` cycle.
 
 The filesystem is **not** a port: tests use real temp directories.
 
+### 5.7 Ownership and state
+
+This section implements AGENTS.md rules 2 and 3.
+
+- **Session owner.** One `SessionOwner` per active session, created and held by
+  `engine/`. It is the single writer for that session's:
+  - turn lock (replaces the lock in `turn-runner.ts`);
+  - external-agent (ACP) handle and its idle lifecycle (replaces direct use of
+    `acp-session-map` by callers);
+  - budget scope (session-envelope accumulation);
+  - cancel signal for the in-flight turn.
+
+  Other code sends it messages (`startTurn`, `cancel`, `release`); nothing else
+  mutates these. Behavior is frozen: busy/concurrency semantics stay identical,
+  and the golden suite pins them.
+- **Upward communication.** Stages return outcomes. Events go through the
+  journal. The only callbacks are the declared ports `Approver` and `onFrame`,
+  and neither may re-enter the engine. An approval answer resumes the waiting
+  stage; it never starts a new turn or reaches another session.
+- **Named protocol round trips** (runtime cycles over ports, documented here,
+  each with a golden or integration test):
+  1. **approval:** engine → `Approver` → JSON-RPC server→client request →
+     verdict. Golden scenarios 3–4.
+  2. **acp-permission:** ACP agent → client permission request → mapped verdict.
+     Golden scenario 8.
+  3. **cancel:** client `turn/cancel` → session owner → in-flight signal. Golden
+     scenario 9.
+- **No module-level mutable state.** Process-global state has to move under an
+  owner constructed in the composition root. Known cases:
+  - the Dolt pool (moves to `DoltStore`);
+  - `defaultIdeaPacketRegistry` (moves to the ideas/packets extension instance).
+
 ## 6. Extension interface
 
 ```ts
@@ -243,7 +301,9 @@ interface Extension {
 - **Boundaries.** Extensions may depend on L0–L3 `mod.ts` APIs. Core may not
   import extensions; only `server/` and `cli/` do.
 - **Ownership fix.** `sessions ⇄ idea-packet` is resolved by moving ideas and
-  packets into `extensions/`, where they read sessions through `store/`.
+  packets into `extensions/`, where they read sessions through `store/`. The
+  registry becomes state owned by the extension instance. It stays in-memory in
+  phase 1 (behavior freeze); PRD-15 makes it durable through the journal.
 
 ## 7. Composition root
 
@@ -286,9 +346,31 @@ No other module reads process-global state.
 ## 9. Out of scope for phase 1
 
 - New entities or DDL for Room/Task/Run/Grant/Lease/ContextPacket.
+- New event types and converting in-place mutations to events. That is PRD-15
+  (phase 1b), which runs after the phase-1 exit because it changes the rows that
+  get written.
 - Any Rust change.
 - New transports.
 - Normalizing env var, RPC, or event names.
 - Fixing bugs found during the work. They are recorded in `specs/bug-log.md`
   (public-safe prose) and fixed in separate, dedicated changes after phase 1 or
   with explicit approval.
+
+## 10. Rust boundary
+
+Stance #3 moves stabilized components into Rust. The boundary for that move is
+the **process seam that already exists**: JSON-RPC 2.0 over the Unix socket. It
+is not an in-process TypeScript interface backed by FFI or a hidden sidecar.
+
+- **What this means for a component moving to Rust:** it becomes a process that
+  speaks the existing (or an equally framed) JSON-RPC protocol. Candidates, in
+  likely order:
+  1. an event-journal service that owns `journal.commit` and replay;
+  2. the engine server itself.
+- **What phase 1 must do to keep that open:** keep every cross-component
+  contract in `contract/` as plain data (JSON-serializable, with no functions or
+  class instances crossing the seam). Keep `store/` behind a port so the
+  TypeScript adapter can later become a JSON-RPC client of a Rust journal.
+- **`core/events.rs` today** writes events straight to Dolt. That makes it a
+  second writer to the log, acceptable only as the schema tracer bullet. It must
+  not grow into a runtime writer except as (or through) the single journal.

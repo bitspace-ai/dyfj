@@ -131,12 +131,22 @@ internal move.
   - In phase 1, updating one requires the PR to state the one approved deletion
     that caused the change.
   - Any other snapshot diff is a failed refactor.
+  - In phase 1b (PRD-15), a diff that adds a new event type's rows is allowed
+    when the PR names that event type. Projected-table contents must stay
+    unchanged.
 
 ## 5. Conformance kits
 
 - **Store**
-  - Every repository method has a behavioral case: insert → read round-trip,
-    filter semantics, ordering, visibility scoping, spend baseline sums.
+  - Every reader method has a behavioral case: commit → read round-trip, filter
+    semantics, ordering, visibility scoping, and spend baseline sums.
+  - Journal cases:
+    - atomicity: a failing projector leaves neither the event nor the projection
+      changed;
+    - no update or delete path exists for events;
+    - every `UnjournaledMutation` kind in use is declared in
+      `store/unjournaled.ts`;
+    - projector determinism: the same events give the same rows.
   - The suite runs against `MemoryStore` (unit lane) and `DoltStore`
     (integration lane).
 - **Provider adapter**
@@ -172,6 +182,7 @@ internal move.
 | `test.golden` (new)                          | Golden suite.                                                                                                                                                                         |
 | `arch.imports` (new)                         | `01-architecture.md` §4.                                                                                                                                                              |
 | `schema.codegen`, `schema.equivalence` (new) | `02-data-layer.md`.                                                                                                                                                                   |
+| `projections.replay` (new, PRD-15)           | `02-data-layer.md` §7. Added in phase 1b.                                                                                                                                             |
 | typecheck lanes                              | One source of truth for the file list: derived by globbing, not hand-listed. This removes the current drift between `prototype/deno.json check` and `aggregate-test-gate.ts:438-456`. |
 | `test:fast`                                  | Adds `test.unit`, so the fast loop exercises product behavior.                                                                                                                        |
 | gate runner                                  | Runs every lane and reports all failures, instead of stopping at the first. The overall exit code is unchanged: any failure fails.                                                    |

@@ -14,15 +14,16 @@ This repo is **public** — it is the OSS framework half of DYFJ. Private strate
 
 ## Engineering Doctrine
 
-Architectural default: acyclic ownership and data flow.
+Architectural default: acyclic ownership, single writers, and one ground-truth log. Four graphs, four rules:
 
-Prefer data structures and modules that form DAGs: parents may own children, but children should not hold direct parent references. Communicate upward through callbacks, events, messages, return values, or commands.
+1. **Module graph: acyclic.** Imports form a DAG, enforced by the gate. An intentional cycle is allowed only by name, from a committed allow-list entry that states its justification and cites the test that exercises it.
+2. **Runtime ownership: a tree.** Parents may own children; children hold no parent references. Communicate upward through return values and emitted events first. Callbacks are allowed only through declared ports (for example an approver or a frame sink), and a callback must never re-enter the code that called it. Protocol round trips that are inherently bidirectional (server-to-client approval requests, ACP permission requests, MCP callbacks) are named cycles under rule 1's allow-list.
+3. **State: single writer.** Every piece of mutable state has exactly one owner, and everyone else changes it by sending that owner a message. Long-lived per-session state (turn lock, external-agent handle, budget scope) belongs to one session owner. No module-level mutable singletons.
+4. **Data: identity by stable ID, and the log is the write path.** Entities reference each other by stable ID, never by object reference. Every state change is recorded as an immutable event; tables are projections of the event log, rebuildable by replay. Reference data (model catalog, prompts) is the declared exception, versioned through `schema/`. Any other exception must be declared and justified where it is implemented.
 
-For many-to-many, recursive, or graph-shaped domains, normalize entities into flat maps keyed by stable IDs. Store relationships as IDs, not object references, unless the cycle is deliberately contained behind a narrow interface.
+Prefer pipelines of pure transformations over mutation-heavy objects. When mutation is necessary, rule 3 decides who may perform it.
 
-Prefer pipelines of pure transformations over mutation-heavy objects. If mutation is necessary, keep ownership explicit and localized.
-
-Any intentional cycle must be named, justified, and tested.
+**Why these rules:** acyclic, tree-owned code ports to Rust without ownership contortions (Layer 0 stance #3); an acyclic module graph lets an agent understand a module from its dependencies alone; single writers and a replayable log are what make audit, cost accounting, rewind, and fork trustworthy (README Section 1: the immutable log is ground truth).
 
 ## Documentation Discipline
 

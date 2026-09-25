@@ -1,7 +1,8 @@
 # 00 — Baseline findings (pre-interview)
 
-Status: draft input to the spec set. Observed facts from the tree at `774c9d5`,
-not decisions. Decisions come out of the interview and land in later specs.
+Status: input to the spec set. Observed facts from the tree at `774c9d5`, not
+decisions. Decisions come out of the interview and land in later specs. Revised
+after the doctrine review: defect 1 reworded, defects 10–11 added.
 
 ## Shape of the codebase
 
@@ -28,11 +29,14 @@ not decisions. Decisions come out of the interview and land in later specs.
 
 ## Architecture: structural defects
 
-1. **Import cycles** violate the DAG doctrine:
-   - `mcp-tools` ⇄ `web-tools` (runtime value cycle)
-   - `workbench` → `external-agent-runtime` → `workbench`, held together by a
-     lazy `await import`
-   - `sessions` ⇄ `idea-packet`, via a barrel re-export that inverts ownership
+1. **Unjustified import cycles.** The doctrine (AGENTS.md rule 1) allows a cycle
+   only when it is named, justified, and tested. None of these are:
+   - `mcp-tools` ⇄ `web-tools`: a runtime value cycle.
+   - `workbench` → `external-agent-runtime` → `workbench`: held together by a
+     lazy `await import`.
+   - `sessions` ⇄ `idea-packet`: type-only, through a barrel re-export. This is
+     less a cycle than an ownership inversion: `sessions` re-exports and so owns
+     the idea/packet API.
 2. **Engine helpers live in the orchestrator.** `turn-runner` and
    `external-agent-runtime` import from `workbench.ts`, the top-level module.
 3. **One ~2,200-line function.** `runNativeWorkbenchRuntime`
@@ -63,6 +67,22 @@ not decisions. Decisions come out of the interview and land in later specs.
      permission-grant computation for the launcher.
    - `uds-server.ts` builds its own command registry inline to post friction
      reports.
+
+10. **The log is not ground truth.** README Section 1 says it is. The mutation
+    inventory at `774c9d5`:
+
+    | Table / state       | Writers                                                                                                         | Evented?                                                            |
+    | ------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+    | `events`            | `writeEvent` (called from `workbench`, `external-agent-runtime`, `budget`, `utils`, commands); `core/events.rs` | append-only                                                         |
+    | `sessions`          | `sessions.ts` (2 INSERT, 1 UPDATE); `mcp/server.ts` (INSERT, UPDATE)                                            | only `session_start`/`session_end`; in-place updates carry no event |
+    | `memories`          | `mcp/server.ts` `write_memory` upsert only                                                                      | no                                                                  |
+    | ideas / packets     | `IdeaPacketRegistry` module-level singleton                                                                     | no, and not durable: lost on server restart                         |
+    | receipts            | rendered at display time                                                                                        | partially (budget/provider events); no receipt record               |
+    | `models`, `prompts` | `schema/catalog/` and migrations only                                                                           | reference data, versioned through `schema/`: the declared exception |
+
+11. **Module-level mutable state.** `defaultIdeaPacketRegistry` and the Dolt
+    pool singleton (`utils.ts` `_pool`) are process-global. This breaks
+    single-writer ownership (AGENTS.md rule 3).
 
 ## Testing: structural defects
 

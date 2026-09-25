@@ -20,3 +20,11 @@ changes with a CHANGELOG `Fixed` entry.
   (`prototype/src/external-agent-runtime.ts:530-553`).
   - **Status:** decision needed; this may be intended.
   - **Found during:** baseline analysis.
+- 2026-09-25 — **Ideas and packets are lost on server restart.**
+  - **Location:** `prototype/src/idea-packet.ts:809`
+    (`defaultIdeaPacketRegistry`, a module-level in-memory singleton).
+  - **Symptom:** marked ideas and drafted packets disappear when the engine
+    server restarts. They never reach the event log.
+  - **Status:** scheduled. PRD-15 WO-27 makes them durable. Phase 1 only moves
+    ownership (WO-20).
+  - **Found during:** doctrine review.

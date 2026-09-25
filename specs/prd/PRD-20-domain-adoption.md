@@ -13,6 +13,11 @@ claim-source separation.
 Today the runtime has `sessions` plus a flat `events` log, and the contract
 package has no runtime consumer.
 
+## Prerequisite
+
+PRD-15 (log as ground truth). Phase-2 entities are events plus projections from
+the start. Receipts become durable records built on the replayable log.
+
 ## Order (per Layer 0 #4: DDL first)
 
 1. **DDL.** Write it for the phase-2 entity subset, derived from the contract's

@@ -51,6 +51,7 @@ Extensibility:        WO-08,WO-12 -> WO-14 ;  WO-09,WO-12 -> WO-15
 Engine:               WO-14,WO-15,WO-22 -> WO-16 -> WO-17 -> WO-18
 Surfaces:             WO-11,WO-15,WO-17 -> WO-19 -> WO-20 -> WO-21
 Close-out:            all -> WO-23 -> WO-24
+Phase 1b (PRD-15):    WO-24 -> WO-25 -> WO-26, WO-27 (parallel) -> WO-28
 ```
 
 WO-01 through WO-04 can run in parallel. After WO-07, the chains led by WO-08,
@@ -86,7 +87,8 @@ WO-09, and WO-10 can also run in parallel.
 
 - **Spec:** `01-architecture.md` §3–4. **PRD:** 10.
 - **Scope:** `scripts/arch-imports.ts` plus its test,
-  `scripts/arch-imports-baseline.json`, and a gate lane.
+  `scripts/arch-imports-baseline.json`, `scripts/arch-cycles.json` (the
+  named-cycle allow-list, starting empty), and a gate lane.
 - **Steps:**
   1. **Parse imports.** Parse static and dynamic local imports under
      `prototype/src`, `prototype/mcp`, and `prototype/scripts`.
@@ -94,17 +96,22 @@ WO-09, and WO-10 can also run in parallel.
      keeping the "today" file→layer mapping in the same data file. Files not yet
      moved are mapped to their target layer by name.
   3. **Detect violations.** Detect cycles (Tarjan's algorithm), upward edges,
-     deep imports (active only once directories exist), and dynamic local
-     imports.
-  4. **Ratchet.** Write the baseline. The lane fails on any violation not in the
+     `cli/` allow-list breaches, and dynamic local imports. Subtract anything
+     covered by an allow-list entry. Report deep imports without failing.
+  4. **Validate the allow-list.** Each entry in `arch-cycles.json` has a name,
+     exact edges, a justification, and a test path. The lane fails when an
+     entry's edges no longer occur or its test path does not exist.
+  5. **Ratchet.** Write the baseline. The lane fails on any violation not in the
      baseline, and on any baseline entry that no longer occurs; the latter
      forces the baseline to shrink.
-  5. **Size report.** Emit a non-failing report of modules over 600 LOC and
+  6. **Size report.** Emit a non-failing report of modules over 600 LOC and
      functions over 150 lines.
 - **Acceptance:**
   - The baseline contains exactly the four cycles documented in
     `00-baseline-findings.md`, plus upward edges.
-  - The unit tests cover each rule type.
+  - The unit tests cover each rule type, including an allow-listed cycle that
+    passes, one whose cited test file is missing (fails), and a stale entry
+    (fails).
 
 ### WO-03 — `testing/` skeleton and `Deno.test` lane
 
@@ -269,17 +276,31 @@ WO-09, and WO-10 can also run in parallel.
 - **Steps:**
   1. **Inventory the SQL call sites** (`utils`, `sessions`, `memory`,
      `provider`, `prompts`, `budget`, `mcp/server.ts`, `mcp/memory-tools.ts`).
-     Map each one to a repository method.
-  2. **Implement the store.** Implement `DoltStore` with a single pool, and
-     `MemoryStore`.
-  3. **Write the conformance suite.** Include visibility-clearance cases for
-     loopback, non-loopback, and MCP stdio.
-  4. **Migrate all callers.** The MCP server uses the store too. Delete
-     `mcp/dolt-config.ts` and the MCP pool.
-  5. **Add an import rule.** Add the `arch.imports` rule: `mysql2` only in
-     `store/`.
+     Classify each one:
+     - reads map to a reader method;
+     - event appends map to `journal.commit`;
+     - every other write becomes a declared `UnjournaledMutation` kind in
+       `store/unjournaled.ts`, with the reason it has no event yet.
+
+     The expected kinds come from `00-baseline-findings.md` defect 10: session
+     insert (the second path), session update, and memory upsert. Report any
+     others you find.
+  2. **Implement the store.** Implement `journal.commit` (atomic: events plus
+     projection updates plus declared mutations in one transaction), the
+     read-only readers, `DoltStore` with a single pool passed in by the caller,
+     and `MemoryStore`.
+  3. **Write the conformance suite.** Include:
+     - visibility-clearance cases for loopback, non-loopback, and MCP stdio;
+     - the journal cases in `03-testing.md` §5.
+  4. **Migrate all callers.** The MCP server uses the same journal and readers.
+     Delete `mcp/dolt-config.ts`, the MCP pool, and the `utils.ts` pool
+     singleton.
+  5. **Add import rules.** `mysql2` only in `store/`, and no direct writes
+     outside `journal.commit`.
 - **Acceptance:**
-  - All SQL lives under `store/`.
+  - All SQL lives under `store/`, and every mutation goes through
+    `journal.commit`.
+  - The unjournaled list is committed and matches the inventory.
   - The conformance suite is green against both adapters.
   - The golden suite is unchanged.
 
@@ -290,7 +311,8 @@ WO-09, and WO-10 can also run in parallel.
   1. **Generate row types.** Write `schema/codegen.ts` and commit
      `store/generated/rows.ts`. Add the `schema.codegen` lane.
   2. **Type the event writes.** Add typed builders per event type and migrate
-     all `writeEvent` call sites to `EventRepository.append(EventInsert)`.
+     all `writeEvent` call sites to `journal.commit` with typed `EventInsert`
+     values.
   3. **Check schema equivalence.** Add the `schema.equivalence` lane. For both
      lanes, demonstrate in the PR that a deliberately broken branch fails.
   4. **Remove the drift shims.** Delete the five drift shims and the legacy
@@ -375,16 +397,22 @@ WO-09, and WO-10 can also run in parallel.
   1. **Split the runtime into stages.** Split `runNativeWorkbenchRuntime` into
      the stages `openSession`, `buildContext`, `budgetGate`, `loadTranscript`,
      `agentLoop`, and `finalize`, over `TurnState`.
-  2. **Fold in the turn runner.** Fold `turn-runner.ts` into `engine/` (turn
-     entry, session lock).
-  3. **Remove the old runtime.** Delete `workbench.ts`.
-  4. **Replace the old tests.** Replace the 5,916-line `workbench.test.ts` with
+  2. **Fold in the turn runner.** Fold `turn-runner.ts` into `engine/` as the
+     turn entry.
+  3. **Introduce `SessionOwner`** (`01-architecture.md` §5.7). It is the single
+     writer for the session's turn lock, budget scope, and cancel signal. The
+     ACP handle joins it in WO-18. Busy and concurrency semantics stay
+     identical: golden scenarios 5 and 9 must not change.
+  4. **Remove the old runtime.** Delete `workbench.ts`.
+  5. **Replace the old tests.** Replace the 5,916-line `workbench.test.ts` with
      per-stage unit tests plus a `engine.component.test.ts` wired with fakes.
      This WO carries the most test-migration weight.
 - **Acceptance:**
   - `workbench.ts` no longer exists.
   - No engine function exceeds 150 lines.
   - Zero `vi.mock` in `engine/`.
+  - The only callbacks in `engine/` are the `Approver` and `onFrame` ports, and
+    a component test proves an approval verdict cannot start a new turn.
   - The golden suite is unchanged.
 - **Size note:** if the PR exceeds roughly 3k changed lines, split it one stage
   at a time. Keep the not-yet-extracted remainder in `engine/native-runner.ts`
@@ -404,6 +432,9 @@ WO-09, and WO-10 can also run in parallel.
      `scripts/codex-chatgpt-login.ts` at it.
   4. **Implement the runner.** The ACP runner implements `Runner` and must not
      import engine internals.
+  5. **Move the ACP handle under `SessionOwner`.** Callers stop using
+     `acp-session-map` directly; the session owner holds the handle and its idle
+     expiry.
 - **Acceptance:**
   - The ACP files respect the size limits.
   - Golden scenario 8 is unchanged.
@@ -441,6 +472,9 @@ WO-09, and WO-10 can also run in parallel.
      `sessions`.
   4. **Reuse the Linear command.** Friction receives the Linear command through
      `ExtensionDeps`, not by building its own registry.
+  5. **Remove the singleton.** Delete `defaultIdeaPacketRegistry`. The registry
+     is owned by the ideas/packets extension instance built in the composition
+     root. It stays in memory; PRD-15 makes it durable.
 - **Acceptance:**
   - The `sessions ⇄ idea-packet` cycle is gone.
   - Core never imports `extensions/`.
@@ -523,6 +557,79 @@ WO-09, and WO-10 can also run in parallel.
   5. **Audit.** Write the audit into `specs/README.md` "Phase-1 exit": every PRD
      success metric, with its measured value.
 - **Acceptance:**
-  - The `arch.imports` baseline is empty.
+  - The `arch.imports` baseline is empty. Any remaining cycle is a named
+    allow-list entry, reported in the audit.
+  - No module-level mutable state in `src/`.
   - Every PRD requirement is checked off with evidence, or explicitly deferred
     with a reason.
+
+---
+
+## Phase 1b — log as ground truth (PRD-15)
+
+The phase-1 behavior freeze is relaxed **only** as PRD-15 "Allowed behavior
+change" states. All other standing rules apply.
+
+### WO-25 — Event-type design and DDL
+
+- **Spec:** `02-data-layer.md` §7. **PRD:** 15.
+- **Steps:**
+  1. **Design one event per mutation kind.** For each kind in
+     `store/unjournaled.ts`, design the event type (name, payload columns) and
+     the projector that reproduces today's row exactly. That includes
+     last-writer-wins for the memory upsert by slug.
+  2. **Design the ideas/packets events** and their projection, which makes them
+     durable.
+  3. **Write the migration.** Forward migration plus `current/` baseline update.
+     Drop `ON UPDATE CURRENT_TIMESTAMP` where a projector must set `updated_at`
+     from the event. Regenerate with `schema.codegen`; the `schema.equivalence`
+     lane must pass.
+- **Stop and ask:** this WO changes the canonical DDL. Put the event names,
+  payloads and the timestamp change in the PR description for maintainer
+  approval before any runtime code uses them.
+- **Acceptance:** migration applied in both schema lanes; the generated types
+  include the new event types; no runtime changes.
+
+### WO-26 — Journal session and memory writes
+
+- **PRD:** 15.
+- **Steps:**
+  1. **Session writes.** Replace the session unjournaled kinds with their events
+     and projectors, in both the runtime and the MCP server.
+  2. **Memory writes.** Replace the memory upsert with `memory_written` (or its
+     approved name) plus a projector.
+  3. **Shrink the list.** Remove each kind from `store/unjournaled.ts` as it is
+     replaced.
+  4. **Snapshots.** Update golden snapshots for the new event rows only. The PR
+     names each new event type, and projected tables must be byte-identical.
+- **Acceptance:** those kinds are gone from the list; conformance green on both
+  adapters; golden diffs limited to new event rows.
+
+### WO-27 — Durable ideas and packets
+
+- **PRD:** 15.
+- **Steps:**
+  1. **Events for mark and draft.** The extension's registry becomes a
+     projection built from its events, with no in-memory-only state.
+  2. **Restart scenario.** Add a golden scenario: mark an idea and draft a
+     packet, restart the server, then `ideas/list` and `packets/list` return
+     them.
+  3. **Docs.** CHANGELOG `Changed`: ideas and packets now persist across
+     restarts.
+- **Acceptance:** the restart scenario passes; RPC payloads are otherwise
+  unchanged.
+
+### WO-28 — Replay lane and ground-truth closure
+
+- **Spec:** `02-data-layer.md` §7. **PRD:** 15.
+- **Steps:**
+  1. **Add the replay lane.** Add `projections.replay`: after the golden
+     scenarios, truncate the projected tables, rebuild them from `events`, and
+     require them to be identical.
+  2. **Enforce an empty list.** Assert `store/unjournaled.ts` is empty and make
+     the conformance suite reject any addition.
+  3. **Docs.** Remove the "Runtime status" note under README Section 1's
+     ground-truth decision, add a README revision-history line, and write the
+     PRD-15 audit into `specs/README.md`.
+- **Acceptance:** replay lane green on every golden scenario; unjournaled list
+  empty; Section 1 note removed.
