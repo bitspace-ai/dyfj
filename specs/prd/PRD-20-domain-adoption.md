@@ -39,6 +39,10 @@ the start. Receipts become durable records built on the replayable log.
 
 ## Open questions for the phase-2 interview
 
+- **External route lane.** The contract models an external route lane
+  (RouteSpec). The ACP implementation is retired (`specs/backlog/acp-lane.md`).
+  Does phase 2 implement external routes, or does it keep the lane deferred?
+
 - **Room vs. session.** Does a Room subsume the current session, or wrap it?
 - **Session migration.** What is the migration story for existing
   `sessions`/`events` data?

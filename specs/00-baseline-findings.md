@@ -15,6 +15,10 @@ after the doctrine review: defect 1 reworded, defects 10–11 added.
 | `schema/`                              | current + catalog + 23 history + 12 migrations | Baseline vs history+migrations never compared                               |
 | `core/` Rust                           | 317 LOC                                        | Event write/read tracer only                                                |
 
+> **Later decision:** the ACP external-agent lane was retired to the backlog
+> (D17, WO-00). The findings below still describe the tree as observed,
+> including the ACP code.
+
 ## Architecture: what is sound (keep)
 
 - **Client/server split holds.** `cli.ts` never imports `workbench` or

@@ -42,22 +42,85 @@ Agents: read these before starting any WO.
 ## Sequence and dependencies
 
 ```
-Guardrails (PRD-10):  WO-01  WO-02  WO-03  WO-04  ->  WO-05  ->  WO-06
+Guardrails (PRD-10):  WO-00 -> WO-01  WO-02  WO-03  WO-04  ->  WO-05  ->  WO-06
 Foundations:          WO-07 -> WO-08 -> WO-11
                       WO-07 -> WO-09
                       WO-07 -> WO-10 -> WO-12 -> WO-13
                                         WO-12 -> WO-22
 Extensibility:        WO-08,WO-12 -> WO-14 ;  WO-09,WO-12 -> WO-15
-Engine:               WO-14,WO-15,WO-22 -> WO-16 -> WO-17 -> WO-18
+Engine:               WO-14,WO-15,WO-22 -> WO-16 -> WO-17      (WO-18 withdrawn)
 Surfaces:             WO-11,WO-15,WO-17 -> WO-19 -> WO-20 -> WO-21
 Close-out:            all -> WO-23 -> WO-24
 Phase 1b (PRD-15):    WO-24 -> WO-25 -> WO-26, WO-27 (parallel) -> WO-28
 ```
 
-WO-01 through WO-04 can run in parallel. After WO-07, the chains led by WO-08,
-WO-09, and WO-10 can also run in parallel.
+WO-00 goes first, alone. WO-01 through WO-04 can then run in parallel. After
+WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ---
+
+### WO-00 — Retire the ACP lane to the backlog
+
+- **Decision:** D17. The external-agent (ACP) lane leaves the runtime; git
+  history keeps it. **PRD:** 10.
+- **Why first:** the golden suite (WO-01) must never pin ACP behavior, and
+  retiring the lane removes an import cycle and the duplicated preflight before
+  any structural work order touches them.
+- **Scope:** delete, don't port:
+  - **runtime:** `src/acp-client.ts`, `src/acp-session-map.ts`,
+    `src/external-agent-runtime.ts`;
+  - **tests:** the ACP tests (`acp-client`, `acp-session-map`,
+    `external-agent-runtime`, `acp-runner.integration`) and ACP cases inside
+    `cli`, `uds-server`, `workbench`, `turn-runner`, `provider` and
+    `test-process-harness` tests;
+  - **scripts:** `scripts/acp-fixture-agent.ts`,
+    `scripts/codex-chatgpt-login.ts`, the `codex-chatgpt-login` task;
+  - **surfaces:** the `--runner` flag and ACP permission prompts in `cli.ts`,
+    the ACP verdict translation in `uds-server.ts`, the ACP dispatch branch and
+    lazy `await import`s in `workbench.ts`, ACP-only items in
+    `turn-contract.ts`;
+  - **dependencies:** `@agentclientprotocol/*` import-map entries and lockfile
+    entries, plus related dependency-policy and Dependabot entries;
+  - **env vars:** `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH`,
+    `DYFJ_CODEX_RUSTUP_HOME` in permission sets and `compile-cli`, where only
+    ACP uses them. Verify each one.
+- **Steps:**
+  1. **Record the last SHA.** Record the last commit that contains the lane in
+     `specs/backlog/acp-lane.md`.
+  2. **Classify everything that touches ACP.** Search for every reference and
+     classify each one as ACP-only (delete) or shared (keep). The
+     history-omission notices in `turn-contract.ts` are the likely shared case.
+     Stop and ask if something is ambiguous.
+  3. **Delete the ACP-only code and surfaces** listed above.
+  4. **Schema:** no DDL change. The `runner_selected`, `agent_permission` and
+     `agent_response` enum values stay, because existing databases hold those
+     rows. Add a catalog migration that deactivates every model reachable only
+     through an ACP route, so selecting one fails closed with the existing
+     not-routable error.
+  5. **Historical sessions:** `sessions/list`, `sessions/inspect` and
+     `events/query` must still read sessions that contain ACP events. If
+     continuing such a session natively needs a new behavior decision (skip,
+     summarize or refuse the ACP events), stop and ask. Don't pick one.
+  6. **Retired surfaces:** add the retired names (`--runner`,
+     `codex-chatgpt-login`, `acp-client`, `external-agent-runtime`) to the
+     deny-list in `scripts/retired-surface-scan.ts`. `specs/` describes the
+     retired lane historically (baseline findings, this work order, the backlog
+     note), so extend the scan's allow rules to cover those files explicitly
+     rather than weakening the needles.
+  7. **Docs:**
+     - Remove the README external-agent section and the ACP claims in
+       Status/Repo layout, and do the same in `prototype/README.md`.
+     - Add a CHANGELOG `Removed` entry that says the lane is retired and names
+       the files.
+     - Add a README revision-history line.
+     - Point `notes/` mentions at the backlog note.
+- **Acceptance:**
+  - No ACP runtime code or dependency remains: `deno.lock` has no
+    `@agentclientprotocol` or `@openai/codex`.
+  - The `workbench ↔ external-agent-runtime` cycle is gone.
+  - The retired-surface scan passes and is enforcing the new needles.
+  - The gate is green.
+  - A session recorded with ACP events still lists and inspects.
 
 ### WO-01 — Golden characterization suite
 
@@ -107,8 +170,9 @@ WO-09, and WO-10 can also run in parallel.
   6. **Size report.** Emit a non-failing report of modules over 600 LOC and
      functions over 150 lines.
 - **Acceptance:**
-  - The baseline contains exactly the four cycles documented in
-    `00-baseline-findings.md`, plus upward edges.
+  - The baseline contains exactly the cycles documented in
+    `00-baseline-findings.md` that are still present after WO-00 (expected:
+    `mcp-tools ⇄ web-tools` and `sessions ⇄ idea-packet`), plus upward edges.
   - The unit tests cover each rule type, including an allow-listed cycle that
     passes, one whose cited test file is missing (fails), and a stale entry
     (fails).
@@ -209,22 +273,18 @@ WO-09, and WO-10 can also run in parallel.
 - **Stop-and-ask trigger:** if two copies differ in a way that is user-visible
   (for example, bounding limits in receipts), log it and ask.
 
-### WO-08 — `contract/` and the engine back-edge
+### WO-08 — `contract/` and the engine back-edges
 
-- **Spec:** §3 (L1) and §5.1 (Runner). **PRD:** 11.
+- **Spec:** §3 (L1), §5.1. **PRD:** 11.
 - **Steps:**
   1. **Move the contract types.** Move `turn-contract.ts` and the runtime
      input/event/auth/result types (`workbench.ts:95-573`) into `src/contract/`.
-  2. **Define the runner interface.** Declare the `Runner` interface in
-     `contract/`.
-  3. **Relocate `workspaceRootForTransport`** and `resolveRuntimeEnvDefaults`
+  2. **Relocate `workspaceRootForTransport`** and `resolveRuntimeEnvDefaults`
      into their target layers.
-  4. **Break the cycle.** `external-agent-runtime` and `turn-runner` must no
-     longer import `workbench`.
-  5. **Remove the lazy imports.** Delete the lazy `await import` at
-     `workbench.ts:1486` and `workbench.ts:1576`.
-- **Acceptance:** the `workbench ↔ external-agent-runtime` cycle and both
-  dynamic imports are gone from the baseline.
+  3. **Remove the upward import.** `turn-runner` must no longer import
+     `workbench`.
+- **Acceptance:** no module imports `workbench.ts` except the entrypoint wiring,
+  and the upward edges are gone from the baseline.
 
 ### WO-09 — MCP transport module
 
@@ -359,9 +419,9 @@ WO-09, and WO-10 can also run in parallel.
      `memory.ts`.
   4. **Build one catalog.** Implement `buildToolCatalog` and replace all three
      assembly sites.
-  5. **Add the shared redactor.** Move the ACP secret-shape scrub into it. Do
-     not apply it to native tool results; record that decision as open in the
-     bug log.
+  5. **Add the shared redactor** for schema-declared redaction. The ACP-only
+     secret-shape scrub was deleted in WO-00. Whether native results need one
+     stays an open bug-log decision.
   6. **Build the tool conformance kit** and write `specs/recipes/add-tool.md`.
      Validate the recipe with a test-only tool.
 - **Acceptance:**
@@ -374,21 +434,16 @@ WO-09, and WO-10 can also run in parallel.
 
 - **Spec:** §5.1. **PRD:** 11.
 - **Steps:**
-  1. **Extract `resolveRoute`.** Extract model selection, paid preflight, and
-     runner choice into `engine/route.ts`. Both native and ACP use it. Delete
-     the duplicated preflight at `workbench.ts:1456-1491` and
-     `workbench.ts:1545-1589`.
-  2. **Fix the swallowed error.** The silent swallow of model-registry load
-     errors at `workbench.ts:1535-1543` is a behavior question. Log it in the
-     bug log and preserve the current behavior.
-  3. **Extract `observedProviderCall`.** Extract it into
+  1. **Extract `resolveRoute`.** Extract model selection and paid preflight into
+     `engine/route.ts`. The ACP duplicate is already gone (WO-00).
+  2. **Extract `observedProviderCall`.** Extract it into
      `engine/observed-call.ts`. Both `compressTranscript` and the agent loop use
      it.
-  4. **Add component tests** for both, using `MemoryStore`,
+  3. **Add component tests** for both, using `MemoryStore`,
      `ScriptedHttpTransport`, and the budget tracker.
 - **Acceptance:**
   - Each sequence has exactly one implementation.
-  - Golden scenarios 1, 6, 7, 8, and 12 are unchanged.
+  - Golden scenarios 1, 6, 7, and 12 are unchanged.
 
 ### WO-17 — Engine pipeline
 
@@ -400,9 +455,9 @@ WO-09, and WO-10 can also run in parallel.
   2. **Fold in the turn runner.** Fold `turn-runner.ts` into `engine/` as the
      turn entry.
   3. **Introduce `SessionOwner`** (`01-architecture.md` §5.7). It is the single
-     writer for the session's turn lock, budget scope, and cancel signal. The
-     ACP handle joins it in WO-18. Busy and concurrency semantics stay
-     identical: golden scenarios 5 and 9 must not change.
+     writer for the session's turn lock, budget scope, and cancel signal. Busy
+     and concurrency semantics stay identical: golden scenarios 5 and 9 must not
+     change.
   4. **Remove the old runtime.** Delete `workbench.ts`.
   5. **Replace the old tests.** Replace the 5,916-line `workbench.test.ts` with
      per-stage unit tests plus a `engine.component.test.ts` wired with fakes.
@@ -418,27 +473,10 @@ WO-09, and WO-10 can also run in parallel.
   at a time. Keep the not-yet-extracted remainder in `engine/native-runner.ts`
   so that each step stays gate-green.
 
-### WO-18 — `runners/acp/`
+### WO-18 — _(withdrawn)_
 
-- **Spec:** §3 (L3), §5.1. **PRD:** 11.
-- **Steps:**
-  1. **Move the ACP modules.** Move `acp-client` (split into
-     spawn/process-group, stream guard, evidence mapping, usage, permissions,
-     and the `LiveAcpSession` class), `acp-session-map`, and the runtime half of
-     `external-agent-runtime` into `runners/acp/`.
-  2. **Move history reconstruction** into its own module.
-  3. **Move the installer.** Move Codex profile provisioning
-     (`external-agent-runtime.ts:50-497`) into `runners/acp/codex/` and point
-     `scripts/codex-chatgpt-login.ts` at it.
-  4. **Implement the runner.** The ACP runner implements `Runner` and must not
-     import engine internals.
-  5. **Move the ACP handle under `SessionOwner`.** Callers stop using
-     `acp-session-map` directly; the session owner holds the handle and its idle
-     expiry.
-- **Acceptance:**
-  - The ACP files respect the size limits.
-  - Golden scenario 8 is unchanged.
-  - The ACP integration test is on `Deno.test` against the real fixture agent.
+Withdrawn: the ACP lane was retired to the backlog in WO-00 (decision D17). The
+number is kept so references stay stable.
 
 ### WO-19 — `server/` composition root and RPC modules
 
@@ -487,8 +525,7 @@ WO-09, and WO-10 can also run in parallel.
   - `cli/args.ts` (parse, resolve config, help);
   - `cli/render/` (spinner, ANSI sanitize via kernel, streaming markdown,
     receipt/posture formatting);
-  - `cli/turn-client.ts` (socket turn, cancellation, approval prompts, ACP
-    permission prompts);
+  - `cli/turn-client.ts` (socket turn, cancellation, approval prompts);
   - `cli/repl/` (loop plus core slash commands: session, model, fast; extension
     commands come from `extensions/*/client.ts`);
   - `cli/commands/` (models, sessions, status, stop, start);

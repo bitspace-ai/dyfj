@@ -1,6 +1,6 @@
 # PRD-10 — Guardrails before restructuring
 
-**Phase:** 1 (first). **Work orders:** WO-01 … WO-06.
+**Phase:** 1 (first). **Work orders:** WO-00 … WO-06.
 
 ## Problem
 
@@ -16,6 +16,8 @@ steps.
 
 ## Goals
 
+0. Retire the ACP lane to the backlog before anything pins its behavior (WO-00,
+   decision D17).
 1. Pin current observable behavior with a black-box golden suite
    (`03-testing.md` §4).
 2. Make architecture rules machine-checked, in ratchet mode: violations may only
@@ -34,6 +36,8 @@ steps.
 
 ## Requirements
 
+- **R0.** WO-00 has landed: no ACP runtime code, dependency or surface remains,
+  and the retired-surface scan enforces it.
 - **R1.** The golden scenarios 1–12 exist and pass on `main` before any
   structural work order merges.
 - **R2.** The `arch.imports` lane runs in the gate. It has a committed baseline

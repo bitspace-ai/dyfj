@@ -19,6 +19,7 @@ do not amend Section 1.
 | `prd/PRD-20`              | Phase-2 outline (domain adoption); not yet actionable                             |
 | `work-orders.md`          | Sequenced, one-PR-each instructions for agents                                    |
 | `bug-log.md`              | Bugs found during phase 1: logged, not fixed inline                               |
+| `backlog/`                | Retired or deferred capabilities, with re-entry criteria                          |
 
 An agent executing work should read `AGENTS.md`, README Section 1, this file,
 and then the single work order it was handed, plus the specs that work order
@@ -49,6 +50,12 @@ cites.
 | D14 | **Make "the log is ground truth" true.** The alternative, softening the Section 1 claim, was rejected.                                                                                                                                | Event-first store (`02-data-layer.md` §2); PRD-15 as phase 1b; Section 1 carries a runtime-status note until PRD-15 closes |
 | D15 | **Rust boundary is the JSON-RPC process seam**, not an in-process TypeScript interface.                                                                                                                                               | `01-architecture.md` §10                                                                                                   |
 | D16 | **Entry files (`mod.ts`) and the deep-import ban are advisory.** Layer direction and cycles stay enforced.                                                                                                                            | Keeps the prototype tier fast; promote the rule if deep imports cause breakage                                             |
+
+### Backlog decisions (2026-09-25)
+
+| #   | Decision                                                                                                         | Consequence                                                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| D17 | **ACP lane retired to the backlog.** It is removed from the runtime, not kept dormant, and git history keeps it. | WO-00 runs before the golden suite; WO-18 withdrawn; golden scenario 8 retired; `backlog/acp-lane.md` holds the re-entry criteria |
 
 ## Phase-1 exit
 

@@ -114,7 +114,8 @@ internal move.
        path. The WO must verify which predicate decides "paid" before relying on
        it.
   7. Anomaly hard stop at the configured multiple.
-  8. `--runner fixture` ACP turn against `scripts/acp-fixture-agent.ts`.
+  8. _(Retired with the ACP lane, WO-00. The number is kept so references stay
+     stable.)_
   9. `turn/cancel` mid-stream.
   10. Read methods: `runtime/status`, `runtime/liveness`, `surface/snapshot`,
       `models/list`, `sessions/list`, `sessions/inspect`, `events/query`,
