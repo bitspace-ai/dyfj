@@ -5,9 +5,9 @@
 - [ ] Docs-only changes after the review did not trigger a re-review (reissued receipt attached if the SHA changed)
 - [ ] Live-smoke output pasted in the PR or linked receipt
 
-Publish-gate report path:
+Publish-gate report path or link:
 
-`operator/reviews/<BIT-###>/publish-gate/<provider>-<YYYY-MM-DD>.md`
+`<paste report path or URL>`
 
 Receipt: local `.dyfj/security-receipts/publish-gate-<sha12>.json` in the
 reviewer's checkout (gitignored; do not commit it). Merge only when the PR
