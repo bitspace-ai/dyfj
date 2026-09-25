@@ -1703,6 +1703,95 @@ export function getModelAccessModality(model: {
   return "custom-hosted";
 }
 
+/** Display order of the access-modality groups in a model listing. */
+export const MODEL_ACCESS_MODALITY_ORDER: readonly ModelAccessModality[] = [
+  "local",
+  "frontier-hosted",
+  "aggregator-hosted",
+  "subscription-oauth",
+  "custom-hosted",
+];
+
+/** Why a listed model is quarantined out of the selectable set. */
+export type WorkbenchModelUnavailableReason = "unpriced";
+
+/**
+ * A catalog row annotated with the server-computed facts every client needs to
+ * render or gate it: routability (modelHasCatalogPricing), locality
+ * (isLocalWorkbenchModel), and access modality (getModelAccessModality).
+ */
+export type ListedWorkbenchModel = WorkbenchModel & {
+  modality: ModelAccessModality;
+  routable: boolean;
+  local: boolean;
+};
+
+export interface WorkbenchModelGroup {
+  modality: ModelAccessModality;
+  models: ListedWorkbenchModel[];
+}
+
+export interface WorkbenchModelListing {
+  /** Every row, annotated, in catalog order (tier, then slug). */
+  models: ListedWorkbenchModel[];
+  /**
+   * The selectable set: routable rows grouped by modality in
+   * MODEL_ACCESS_MODALITY_ORDER, tier then slug within a group. Empty groups
+   * are omitted.
+   */
+  groups: WorkbenchModelGroup[];
+  /**
+   * Quarantined rows: active in the catalog but not routable, so kept out of
+   * `groups`. Listed rather than hidden so the catalog gap stays observable.
+   */
+  unavailable: (ListedWorkbenchModel & {
+    reason: WorkbenchModelUnavailableReason;
+  })[];
+}
+
+function compareListedModels(
+  a: ListedWorkbenchModel,
+  b: ListedWorkbenchModel,
+): number {
+  return MODEL_ACCESS_MODALITY_ORDER.indexOf(a.modality) -
+      MODEL_ACCESS_MODALITY_ORDER.indexOf(b.modality) ||
+    a.tier - b.tier ||
+    (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+}
+
+/**
+ * Shape the catalog for a model picker: annotate each row, group the routable
+ * rows by access modality, and quarantine the unroutable ones. This is the
+ * single source for `models/list`, so every client of the seam (the Deno CLI
+ * and any other terminal client) inherits the same grouping and filtering
+ * instead of re-deriving it.
+ */
+export function buildWorkbenchModelListing(
+  models: WorkbenchModel[],
+): WorkbenchModelListing {
+  const annotated = models.map((model): ListedWorkbenchModel => {
+    const withModality = { ...model, modality: getModelAccessModality(model) };
+    return {
+      ...withModality,
+      routable: modelHasCatalogPricing(withModality),
+      local: isLocalWorkbenchModel(withModality),
+    };
+  });
+  const sorted = [...annotated].sort(compareListedModels);
+  const groups = MODEL_ACCESS_MODALITY_ORDER
+    .map((modality) => ({
+      modality,
+      models: sorted.filter((model) =>
+        model.routable && model.modality === modality
+      ),
+    }))
+    .filter((group) => group.models.length > 0);
+  const unavailable = sorted
+    .filter((model) => !model.routable)
+    .map((model) => ({ ...model, reason: "unpriced" as const }));
+  return { models: annotated, groups, unavailable };
+}
+
 export interface AnthropicStreamEvent {
   done: boolean;
   textDelta?: string;

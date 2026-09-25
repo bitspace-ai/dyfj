@@ -237,6 +237,59 @@ describe("serveWorkbenchUnix read methods", () => {
     ]);
   });
 
+  test("models/list groups the selectable set by modality and quarantines unroutable rows", async () => {
+    const client = await connectClient(
+      await startServer({
+        ...fakes,
+        loadModels: async () =>
+          anyVal([
+            {
+              slug: "frontier-x",
+              provider: "anthropic",
+              baseUrl: "https://api.anthropic.com",
+              tier: 2,
+              costInput: 15,
+              costOutput: 75,
+            },
+            {
+              slug: "local-x",
+              provider: "ollama",
+              baseUrl: "http://127.0.0.1:11434/v1",
+              tier: 0,
+              costInput: 0,
+              costOutput: 0,
+            },
+            {
+              slug: "router-unpriced",
+              provider: "openrouter",
+              baseUrl: "https://openrouter.ai/api/v1",
+              tier: 1,
+              costInput: 0,
+              costOutput: 0,
+            },
+          ]),
+      }),
+    );
+    const { groups, unavailable } = anyVal(
+      await client.request("models/list"),
+    );
+    expect(
+      groups.map((g: { modality: string; models: { slug: string }[] }) => [
+        g.modality,
+        g.models.map((m) => m.slug),
+      ]),
+    ).toEqual([
+      ["local", ["local-x"]],
+      ["frontier-hosted", ["frontier-x"]],
+    ]);
+    expect(
+      unavailable.map((m: { slug: string; reason: string }) => [
+        m.slug,
+        m.reason,
+      ]),
+    ).toEqual([["router-unpriced", "unpriced"]]);
+  });
+
   test("models/list marks locality server-side", async () => {
     const client = await connectClient(
       await startServer({
