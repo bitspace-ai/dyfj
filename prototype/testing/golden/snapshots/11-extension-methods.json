@@ -1,0 +1,403 @@
+{
+  "scenario": "extension methods with loopback third-party fakes",
+  "capture": {
+    "ideas/mark": {
+      "result": {
+        "idea": {
+          "ideaId": "<ULID:1>",
+          "sessionId": "<ULID:2>",
+          "eventId": null,
+          "label": "Golden idea",
+          "description": "An idea marked by the golden suite.",
+          "createdAt": "<TIMESTAMP nnnn-nn-nnTnn:nn:nn.nnnZ>"
+        }
+      }
+    },
+    "ideas/list": {
+      "result": {
+        "ideas": [
+          {
+            "ideaId": "<ULID:1>",
+            "sessionId": "<ULID:2>",
+            "eventId": null,
+            "label": "Golden idea",
+            "description": "An idea marked by the golden suite.",
+            "createdAt": "<TIMESTAMP nnnn-nn-nnTnn:nn:nn.nnnZ>"
+          }
+        ]
+      }
+    },
+    "ideas/get": {
+      "result": {
+        "idea": {
+          "ideaId": "<ULID:1>",
+          "sessionId": "<ULID:2>",
+          "eventId": null,
+          "label": "Golden idea",
+          "description": "An idea marked by the golden suite.",
+          "createdAt": "<TIMESTAMP nnnn-nn-nnTnn:nn:nn.nnnZ>"
+        }
+      }
+    },
+    "packets/draft": {
+      "result": {
+        "packet": {
+          "packetId": "<ULID:3>",
+          "ideaId": "<ULID:1>",
+          "sessionId": "<ULID:2>",
+          "issueId": null,
+          "title": "Golden packet",
+          "targetWorkspace": "<TMP>/workspace",
+          "sourceContext": {
+            "sessionId": "<ULID:2>",
+            "referencedEventId": null,
+            "excerpt": "[User]: [golden:s1] Say hello as JSON.\n\n[Assistant]: Golden reply (s1).\n\n[User]: [golden:s5] What did we say before?\n\n[Assistant]: History seen: user:[golden:s1] Say hello as JSON. | assistant:Golden reply (s1). | user:[golden:s5] What did we say before?",
+            "contextSources": []
+          },
+          "operatorIntent": "Characterize packet drafting.",
+          "proposedAcceptanceCriteria": [
+            "Fulfill the objective: \"Golden packet\"",
+            "Verify outcomes against operator intent and documented constraints"
+          ],
+          "verifierProvenance": {
+            "verifierType": "human_operator",
+            "independenceNotes": "Verifier evaluation must be independent of generation. Machine and model assertions serve as evidence, not self-certifying truth."
+          },
+          "createdAt": "<TIMESTAMP nnnn-nn-nnTnn:nn:nn.nnnZ>"
+        },
+        "markdown": "# Work Packet: Golden packet\n\n- **Packet ID:** `<ULID:3>`\n- **Date:** `<DATE>`\n- **Session:** `<ULID:2>`\n- **Related Issue:** none\n- **Target Workspace:** `<TMP>/workspace`\n\n## 1. Source Context\n\n[User]: [golden:s1] Say hello as JSON.\n\n[Assistant]: Golden reply (s1).\n\n[User]: [golden:s5] What did we say before?\n\n[Assistant]: History seen: user:[golden:s1] Say hello as JSON. | assistant:Golden reply (s1). | user:[golden:s5] What did we say before?\n\n## 2. Operator Intent\n\nCharacterize packet drafting.\n\n## 3. Proposed Acceptance Criteria\n\n- [ ] Fulfill the objective: \"Golden packet\"\n- [ ] Verify outcomes against operator intent and documented constraints\n\n## 4. Verification & Provenance\n\n- **Primary Verifier:** `human_operator`\n- **Independence Notes:** Verifier evaluation must be independent of generation. Machine and model assertions serve as evidence, not self-certifying truth.\n"
+      }
+    },
+    "packets/list": {
+      "result": {
+        "packets": [
+          {
+            "packetId": "<ULID:3>",
+            "ideaId": "<ULID:1>",
+            "sessionId": "<ULID:2>",
+            "issueId": null,
+            "title": "Golden packet",
+            "targetWorkspace": "<TMP>/workspace",
+            "sourceContext": {
+              "sessionId": "<ULID:2>",
+              "referencedEventId": null,
+              "excerpt": "[User]: [golden:s1] Say hello as JSON.\n\n[Assistant]: Golden reply (s1).\n\n[User]: [golden:s5] What did we say before?\n\n[Assistant]: History seen: user:[golden:s1] Say hello as JSON. | assistant:Golden reply (s1). | user:[golden:s5] What did we say before?",
+              "contextSources": []
+            },
+            "operatorIntent": "Characterize packet drafting.",
+            "proposedAcceptanceCriteria": [
+              "Fulfill the objective: \"Golden packet\"",
+              "Verify outcomes against operator intent and documented constraints"
+            ],
+            "verifierProvenance": {
+              "verifierType": "human_operator",
+              "independenceNotes": "Verifier evaluation must be independent of generation. Machine and model assertions serve as evidence, not self-certifying truth."
+            },
+            "createdAt": "<TIMESTAMP nnnn-nn-nnTnn:nn:nn.nnnZ>"
+          }
+        ]
+      }
+    },
+    "packets/get": {
+      "result": {
+        "packet": {
+          "packetId": "<ULID:3>",
+          "ideaId": "<ULID:1>",
+          "sessionId": "<ULID:2>",
+          "issueId": null,
+          "title": "Golden packet",
+          "targetWorkspace": "<TMP>/workspace",
+          "sourceContext": {
+            "sessionId": "<ULID:2>",
+            "referencedEventId": null,
+            "excerpt": "[User]: [golden:s1] Say hello as JSON.\n\n[Assistant]: Golden reply (s1).\n\n[User]: [golden:s5] What did we say before?\n\n[Assistant]: History seen: user:[golden:s1] Say hello as JSON. | assistant:Golden reply (s1). | user:[golden:s5] What did we say before?",
+            "contextSources": []
+          },
+          "operatorIntent": "Characterize packet drafting.",
+          "proposedAcceptanceCriteria": [
+            "Fulfill the objective: \"Golden packet\"",
+            "Verify outcomes against operator intent and documented constraints"
+          ],
+          "verifierProvenance": {
+            "verifierType": "human_operator",
+            "independenceNotes": "Verifier evaluation must be independent of generation. Machine and model assertions serve as evidence, not self-certifying truth."
+          },
+          "createdAt": "<TIMESTAMP nnnn-nn-nnTnn:nn:nn.nnnZ>"
+        },
+        "markdown": "# Work Packet: Golden packet\n\n- **Packet ID:** `<ULID:3>`\n- **Date:** `<DATE>`\n- **Session:** `<ULID:2>`\n- **Related Issue:** none\n- **Target Workspace:** `<TMP>/workspace`\n\n## 1. Source Context\n\n[User]: [golden:s1] Say hello as JSON.\n\n[Assistant]: Golden reply (s1).\n\n[User]: [golden:s5] What did we say before?\n\n[Assistant]: History seen: user:[golden:s1] Say hello as JSON. | assistant:Golden reply (s1). | user:[golden:s5] What did we say before?\n\n## 2. Operator Intent\n\nCharacterize packet drafting.\n\n## 3. Proposed Acceptance Criteria\n\n- [ ] Fulfill the objective: \"Golden packet\"\n- [ ] Verify outcomes against operator intent and documented constraints\n\n## 4. Verification & Provenance\n\n- **Primary Verifier:** `human_operator`\n- **Independence Notes:** Verifier evaluation must be independent of generation. Machine and model assertions serve as evidence, not self-certifying truth.\n"
+      }
+    },
+    "friction/post": {
+      "result": {
+        "number": "F003",
+        "commentId": "comment-golden-0001",
+        "firstLine": "F003 · <DATE> · minor · escaped? no"
+      }
+    },
+    "approvals": [
+      {
+        "request": {
+          "commandId": "mcp.linear.create_comment",
+          "callId": "<UUID:1>",
+          "title": "External MCP: linear/create_comment",
+          "arguments": {
+            "issueId": "issue-golden-0001",
+            "body": "F003 · <DATE> · minor · escaped? no\n\nGolden friction entry.\n\nContext: model=golden-local · command=/golden"
+          }
+        },
+        "response": {
+          "decision": "approve"
+        }
+      }
+    ],
+    "linearCalls": [
+      {
+        "tool": "get_issue",
+        "arguments": {
+          "id": "GOLD-1"
+        },
+        "authorization": "Bearer golden-linear-token"
+      },
+      {
+        "tool": "list_comments",
+        "arguments": {
+          "issueId": "GOLD-1",
+          "limit": 10
+        },
+        "authorization": "Bearer golden-linear-token"
+      },
+      {
+        "tool": "create_comment",
+        "arguments": {
+          "issueId": "issue-golden-0001",
+          "body": "F003 · <DATE> · minor · escaped? no\n\nGolden friction entry.\n\nContext: model=golden-local · command=/golden"
+        },
+        "authorization": "Bearer golden-linear-token"
+      }
+    ]
+  },
+  "rows": {
+    "sessions": [
+      {
+        "session_id": "<ULID:2>",
+        "slug": "workbench-<ULID:2>",
+        "session_name": "Workbench Harness Shell",
+        "external_id": null,
+        "project": null,
+        "workspace": "<TMP>/workspace",
+        "task_description": "[golden:s1] Say hello as JSON.",
+        "effort_level": null,
+        "status": "completed",
+        "progress_done": 1,
+        "progress_total": 1,
+        "mode": "interactive",
+        "iteration": null,
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s5] What did we say before?\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:2>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   default\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  10 in, 5 out\nCache:   0 read, 0 written\nCalls:   1\nTool steps: 0/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
+        "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
+        "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
+      }
+    ],
+    "events": [
+      {
+        "event_id": "<ULID:4>",
+        "session_id": "<ULID:2>",
+        "event_type": "tool_call",
+        "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
+        "trace_id": "<TRACE:2>",
+        "span_id": "<SPAN:1>",
+        "parent_span_id": null,
+        "trace_flags": 0,
+        "trace_state": null,
+        "span_kind": "client",
+        "parent_is_remote": 0,
+        "principal_id": "operator",
+        "principal_type": "human",
+        "action": "invoke",
+        "resource": "command:mcp.linear.get_issue",
+        "authz_basis": "policy:allow:operator-configured-external-read",
+        "authn_status": "unknown",
+        "authn_mechanism": null,
+        "authn_issuer_ref": null,
+        "authn_session_ref": null,
+        "authn_authenticated_at": null,
+        "authn_expires_at": null,
+        "authn_evidence_ref": null,
+        "model_id": null,
+        "provider": null,
+        "api": null,
+        "runner_kind": null,
+        "runner_profile": null,
+        "runner_protocol": null,
+        "runner_protocol_version": null,
+        "runner_stop_reason": null,
+        "runner_external_session_id": null,
+        "runner_agent_name": null,
+        "runner_agent_version": null,
+        "runner_transport": null,
+        "runner_access_route": null,
+        "runner_cost_basis": null,
+        "runner_workspace": null,
+        "runner_capabilities": null,
+        "runner_evidence_scope": null,
+        "runner_route_source": null,
+        "runner_auth_type": null,
+        "permission_verdict": null,
+        "tokens_input": null,
+        "tokens_output": null,
+        "tokens_cache_read": null,
+        "tokens_cache_write": null,
+        "cost_total": null,
+        "content": "{\"outcome\":\"complete\",\"externalMcp\":{\"server\":\"linear\",\"tool\":\"get_issue\",\"revision\":\"<DATE>\"}}",
+        "stop_reason": null,
+        "provider_call_order": null,
+        "provider_call_purpose": null,
+        "provider_error_class": null,
+        "unparsed_tool_call_count": null,
+        "unparsed_tool_call_count_is_lower_bound": null,
+        "tool_name": "mcp.linear.get_issue",
+        "tool_call_id": "<UUID:2>",
+        "tool_arguments": {
+          "id": "[redacted]"
+        },
+        "tool_result": "[redacted]",
+        "tool_is_error": 0,
+        "thinking": null,
+        "duration_ms": null
+      },
+      {
+        "event_id": "<ULID:5>",
+        "session_id": "<ULID:2>",
+        "event_type": "tool_call",
+        "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
+        "trace_id": "<TRACE:2>",
+        "span_id": "<SPAN:2>",
+        "parent_span_id": null,
+        "trace_flags": 0,
+        "trace_state": null,
+        "span_kind": "client",
+        "parent_is_remote": 0,
+        "principal_id": "operator",
+        "principal_type": "human",
+        "action": "invoke",
+        "resource": "command:mcp.linear.list_comments",
+        "authz_basis": "policy:allow:operator-configured-external-read",
+        "authn_status": "unknown",
+        "authn_mechanism": null,
+        "authn_issuer_ref": null,
+        "authn_session_ref": null,
+        "authn_authenticated_at": null,
+        "authn_expires_at": null,
+        "authn_evidence_ref": null,
+        "model_id": null,
+        "provider": null,
+        "api": null,
+        "runner_kind": null,
+        "runner_profile": null,
+        "runner_protocol": null,
+        "runner_protocol_version": null,
+        "runner_stop_reason": null,
+        "runner_external_session_id": null,
+        "runner_agent_name": null,
+        "runner_agent_version": null,
+        "runner_transport": null,
+        "runner_access_route": null,
+        "runner_cost_basis": null,
+        "runner_workspace": null,
+        "runner_capabilities": null,
+        "runner_evidence_scope": null,
+        "runner_route_source": null,
+        "runner_auth_type": null,
+        "permission_verdict": null,
+        "tokens_input": null,
+        "tokens_output": null,
+        "tokens_cache_read": null,
+        "tokens_cache_write": null,
+        "cost_total": null,
+        "content": "{\"outcome\":\"complete\",\"externalMcp\":{\"server\":\"linear\",\"tool\":\"list_comments\",\"revision\":\"<DATE>\"}}",
+        "stop_reason": null,
+        "provider_call_order": null,
+        "provider_call_purpose": null,
+        "provider_error_class": null,
+        "unparsed_tool_call_count": null,
+        "unparsed_tool_call_count_is_lower_bound": null,
+        "tool_name": "mcp.linear.list_comments",
+        "tool_call_id": "<UUID:3>",
+        "tool_arguments": {
+          "issueId": "[redacted]",
+          "limit": "[redacted]"
+        },
+        "tool_result": "[redacted]",
+        "tool_is_error": 0,
+        "thinking": null,
+        "duration_ms": null
+      },
+      {
+        "event_id": "<ULID:6>",
+        "session_id": "<ULID:2>",
+        "event_type": "tool_call",
+        "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
+        "trace_id": "<TRACE:2>",
+        "span_id": "<SPAN:3>",
+        "parent_span_id": null,
+        "trace_flags": 0,
+        "trace_state": null,
+        "span_kind": "client",
+        "parent_is_remote": 0,
+        "principal_id": "operator",
+        "principal_type": "human",
+        "action": "invoke",
+        "resource": "command:mcp.linear.create_comment",
+        "authz_basis": "policy:allow:operator-approved",
+        "authn_status": "unknown",
+        "authn_mechanism": null,
+        "authn_issuer_ref": null,
+        "authn_session_ref": null,
+        "authn_authenticated_at": null,
+        "authn_expires_at": null,
+        "authn_evidence_ref": null,
+        "model_id": null,
+        "provider": null,
+        "api": null,
+        "runner_kind": null,
+        "runner_profile": null,
+        "runner_protocol": null,
+        "runner_protocol_version": null,
+        "runner_stop_reason": null,
+        "runner_external_session_id": null,
+        "runner_agent_name": null,
+        "runner_agent_version": null,
+        "runner_transport": null,
+        "runner_access_route": null,
+        "runner_cost_basis": null,
+        "runner_workspace": null,
+        "runner_capabilities": null,
+        "runner_evidence_scope": null,
+        "runner_route_source": null,
+        "runner_auth_type": null,
+        "permission_verdict": null,
+        "tokens_input": null,
+        "tokens_output": null,
+        "tokens_cache_read": null,
+        "tokens_cache_write": null,
+        "cost_total": null,
+        "content": "{\"outcome\":\"complete\",\"externalMcp\":{\"server\":\"linear\",\"tool\":\"create_comment\",\"revision\":\"<DATE>\"}}",
+        "stop_reason": null,
+        "provider_call_order": null,
+        "provider_call_purpose": null,
+        "provider_error_class": null,
+        "unparsed_tool_call_count": null,
+        "unparsed_tool_call_count_is_lower_bound": null,
+        "tool_name": "mcp.linear.create_comment",
+        "tool_call_id": "<UUID:1>",
+        "tool_arguments": {
+          "body": "[redacted]",
+          "issueId": "[redacted]"
+        },
+        "tool_result": "[redacted]",
+        "tool_is_error": 0,
+        "thinking": null,
+        "duration_ms": null
+      }
+    ]
+  }
+}

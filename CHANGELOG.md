@@ -82,6 +82,24 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Golden characterization suite and its gate lane (`test.golden`)**:
+  twelve black-box scenarios now pin the engine's observable behavior before
+  the restructuring starts. They cover one-shot and multi-step turns, approval
+  under both permission postures, session resume, the budget ceiling and paid
+  consent gates, the runaway-anomaly hard stop, an ACP fixture turn,
+  mid-stream cancellation, the read and extension RPC methods, and transcript
+  compression. Each scenario drives the real engine server and `dyfj` CLI as
+  child processes against an isolated Dolt fixture, a loopback
+  OpenAI-compatible model server and a loopback Linear MCP server, and compares
+  stream frames, RPC responses, rendered CLI output, and every `events` and
+  `sessions` row it writes with committed snapshots. Only generated IDs,
+  timestamps, durations, temp paths, PIDs and the fixtures' loopback endpoints
+  are normalized; timestamps keep their format, so a change of wire format
+  still fails the lane. The aggregate gate runs the lane under `test.aggregate`,
+  and `deno task test:golden` (in `prototype/`) runs it alone. Three
+  pre-existing defects it surfaced are recorded in `specs/bug-log.md` and are
+  not fixed here.
+
 - **DeepSeek V4.1 Flash and Gemini 3.8 Flash in the model catalog**: both are
   routable, on the fresh-install path and the upgrade path alike. DeepSeek
   reaches OpenRouter, Gemini reaches Google directly.
