@@ -1,6 +1,13 @@
 # DYFJ Core (Rust)
 
-The Rust substrate for DYFJ. Today it contains the first schema tracer bullet: a small event read/write library plus a demo binary that round-trips one event through Dolt. It grows downward as components prove out in the prototype layer and earn their way into the substrate.
+The Rust substrate for DYFJ. It grows downward as components prove out in the prototype layer and earn their way into the substrate.
+
+A Cargo workspace with two members:
+
+- `dyfj-core` — the schema tracer bullet: a small event read/write library plus a demo binary that round-trips one event through Dolt.
+- `dyfj-repl` — the interactive REPL front-end. It owns the terminal and speaks the Workbench UDS protocol as a client, so the agent loop stays in `../prototype/`.
+
+`core/Cargo.toml` is both the workspace root and the `dyfj-core` package, so paths that reference `core/` are unchanged.
 
 ## Why Rust here
 
@@ -14,6 +21,8 @@ You don't need Rust pre-installed if you have [`rustup`](https://rustup.rs/) —
 cargo build
 cargo run
 ```
+
+`cargo build` builds both members. `cargo run -p dyfj-repl` starts the REPL against a running Workbench runtime, taking the socket from `DYFJ_SOCKET` or defaulting to `~/.dyfj/run/workbench.sock`.
 
 `cargo run` requires `DATABASE_URL` and a running Dolt SQL server. It inserts one `session_start` event, reads it back, and prints a match result. The ignored integration tests exercise the same live-Dolt path:
 

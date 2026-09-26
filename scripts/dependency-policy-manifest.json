@@ -44,7 +44,8 @@
       "id": "cargo.core",
       "source_class": "cargo-registry",
       "manifest_paths": [
-        "core/Cargo.toml"
+        "core/Cargo.toml",
+        "core/dyfj-repl/Cargo.toml"
       ],
       "lock_paths": [
         "core/Cargo.lock"
