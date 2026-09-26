@@ -1,7 +1,8 @@
 # PRD-11 — Runtime decomposition
 
 **Phase:** 1. **Priority driver:** agents struggle to change the code. **Work
-orders:** WO-07 … WO-11, WO-16, WO-17, WO-19, WO-21, WO-22 (WO-18 withdrawn).
+orders:** WO-07 … WO-11, WO-16, WO-17, WO-19, WO-21, WO-22; WO-18 deferred
+(D20).
 
 ## Problem
 
@@ -17,16 +18,18 @@ times. Every change is expensive in context and risky in blast radius.
    `arch.imports`.
 2. Break every import cycle and upward import.
 3. Replace `runNativeWorkbenchRuntime` with the staged pipeline in
-   `01-architecture.md` §5.1. There is one `resolveRoute` stage, and there is a
-   single `observedProviderCall`.
-4. Split `cli.ts`, `uds-server.ts`, `config.ts`, `commands.ts`, `budget.ts`, and
-   `sessions.ts` along the responsibility lines recorded in
-   `00-baseline-findings.md` and the architecture spec.
+   `01-architecture.md` §5.1. Native and ACP runners share `resolveRoute`, and
+   there is a single `observedProviderCall`.
+4. Split `uds-server.ts`, `config.ts`, `commands.ts`, `budget.ts`,
+   `sessions.ts`, and the non-interactive part of `cli.ts` (D23) along the
+   responsibility lines recorded in `00-baseline-findings.md` and the
+   architecture spec. Splitting `acp-client.ts` and `external-agent-runtime.ts`
+   is deferred with WO-18 (D20).
 5. Deduplicate kernel helpers into `kernel/` with one tested implementation
    each.
 6. Introduce the `SessionOwner` as the single writer for per-session turn lock,
-   budget scope, and cancel signal (`01-architecture.md` §5.7), and remove
-   module-level mutable state.
+   ACP handle, budget scope, and cancel signal (`01-architecture.md` §5.7), and
+   remove module-level mutable state.
 7. Make the server a single composition root, with RPC handlers in one module
    per namespace.
 

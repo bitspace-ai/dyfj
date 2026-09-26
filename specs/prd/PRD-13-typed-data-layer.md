@@ -30,7 +30,7 @@ apart without anyone noticing. Five runtime shims paper over schema drift.
 - Changing the DDL.
 - New tables.
 - Rust changes.
-- Phase-2 domain entities.
+- Roadmap domain entities.
 
 ## Requirements
 
@@ -52,7 +52,7 @@ apart without anyone noticing. Five runtime shims paper over schema drift.
 - Connection pools: 1 per process (down from 3 implementations), owned by the
   composition root.
 - Mutation paths: 1 (`journal.commit`), with the unjournaled-mutation kinds
-  counted as the baseline for PRD-15.
+  counted as the baseline for roadmap durable-state work.
 - A DDL change that is not regenerated fails the gate.
 
 ## Risks

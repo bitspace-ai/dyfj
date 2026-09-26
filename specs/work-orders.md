@@ -4,6 +4,12 @@ Each work order (WO) is sized for **one PR by one agent**. Hand an agent a
 single WO. The WO, together with the specs it cites, is the complete instruction
 set.
 
+These work orders are **enablers**: they make the codebase safe and cheap to
+change beneath a product roadmap that is tracked privately. Each WO states what
+it **enables** in capability terms. How WOs line up against roadmap work is
+recorded in the tracker as issue relations, not here; the dependency graph below
+orders the WOs among themselves.
+
 ## Standing rules for every WO
 
 Agents: read these before starting any WO.
@@ -49,88 +55,33 @@ Agents: read these before starting any WO.
 ## Sequence and dependencies
 
 ```
-Guardrails (PRD-10):  WO-00 -> WO-01  WO-02  WO-03  WO-04  ->  WO-05  ->  WO-06
+Guardrails (PRD-10):  WO-01  WO-02  WO-03  WO-04  ->  WO-05  ->  WO-06
 Foundations:          WO-07 -> WO-08 -> WO-11
                       WO-07 -> WO-09
                       WO-07 -> WO-10 -> WO-12 -> WO-13
                                         WO-12 -> WO-22
 Extensibility:        WO-08,WO-12 -> WO-14 ;  WO-09,WO-12 -> WO-15
-Engine:               WO-14,WO-15,WO-22 -> WO-16 -> WO-17      (WO-18 withdrawn)
+Engine:               WO-14,WO-15,WO-22 -> WO-16 -> WO-17
+Deferred:             WO-17 -> WO-18   (when external-agent route work resumes)
 Surfaces:             WO-11,WO-15,WO-17 -> WO-19 -> WO-20 -> WO-21
 Close-out:            all -> WO-23 -> WO-24
-Phase 1b (PRD-15):    WO-24 -> WO-25 -> WO-26, WO-27 (parallel) -> WO-28
 ```
 
-WO-00 goes first, alone. WO-01 through WO-04 can then run in parallel. After
-WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
+WO-01 through WO-04 can run in parallel. After WO-07, the chains led by WO-08,
+WO-09, and WO-10 can also run in parallel.
 
 ---
 
-### WO-00 — Retire the ACP lane to the backlog
+### WO-00 — _(withdrawn)_
 
-- **Decision:** D17. The external-agent (ACP) lane leaves the runtime; git
-  history keeps it. **PRD:** 10.
-- **Why first:** the golden suite (WO-01) must never pin ACP behavior, and
-  retiring the lane removes an import cycle and the duplicated preflight before
-  any structural work order touches them.
-- **Scope:** delete, don't port:
-  - **runtime:** `src/acp-client.ts`, `src/acp-session-map.ts`,
-    `src/external-agent-runtime.ts`;
-  - **tests:** the ACP tests (`acp-client`, `acp-session-map`,
-    `external-agent-runtime`, `acp-runner.integration`) and ACP cases inside
-    `cli`, `uds-server`, `workbench`, `turn-runner`, `provider` and
-    `test-process-harness` tests;
-  - **scripts:** `scripts/acp-fixture-agent.ts`,
-    `scripts/codex-chatgpt-login.ts`, the `codex-chatgpt-login` task;
-  - **surfaces:** the `--runner` flag and ACP permission prompts in `cli.ts`,
-    the ACP verdict translation in `uds-server.ts`, the ACP dispatch branch and
-    lazy `await import`s in `workbench.ts`, ACP-only items in
-    `turn-contract.ts`;
-  - **dependencies:** `@agentclientprotocol/*` import-map entries and lockfile
-    entries, plus related dependency-policy and Dependabot entries;
-  - **env vars:** `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH`,
-    `DYFJ_CODEX_RUSTUP_HOME` in permission sets and `compile-cli`, where only
-    ACP uses them. Verify each one.
-- **Steps:**
-  1. **Record the last SHA.** Record the last commit that contains the lane in
-     `specs/backlog/acp-lane.md`.
-  2. **Classify everything that touches ACP.** Search for every reference and
-     classify each one as ACP-only (delete) or shared (keep). The
-     history-omission notices in `turn-contract.ts` are the likely shared case.
-     Stop and ask if something is ambiguous.
-  3. **Delete the ACP-only code and surfaces** listed above.
-  4. **Schema:** no DDL change. The `runner_selected`, `agent_permission` and
-     `agent_response` enum values stay, because existing databases hold those
-     rows. Add a catalog migration that deactivates every model reachable only
-     through an ACP route, so selecting one fails closed with the existing
-     not-routable error.
-  5. **Historical sessions:** `sessions/list`, `sessions/inspect` and
-     `events/query` must still read sessions that contain ACP events. If
-     continuing such a session natively needs a new behavior decision (skip,
-     summarize or refuse the ACP events), stop and ask. Don't pick one.
-  6. **Retired surfaces:** add the retired names (`--runner`,
-     `codex-chatgpt-login`, `acp-client`, `external-agent-runtime`) to the
-     deny-list in `scripts/retired-surface-scan.ts`. `specs/` describes the
-     retired lane historically (baseline findings, this work order, the backlog
-     note), so extend the scan's allow rules to cover those files explicitly
-     rather than weakening the needles.
-  7. **Docs:**
-     - Remove the README external-agent section and the ACP claims in
-       Status/Repo layout, and do the same in `prototype/README.md`.
-     - Add a CHANGELOG `Removed` entry that says the lane is retired and names
-       the files.
-     - Add a README revision-history line.
-     - Point `notes/` mentions at the backlog note.
-- **Acceptance:**
-  - No ACP runtime code or dependency remains: `deno.lock` has no
-    `@agentclientprotocol` or `@openai/codex`.
-  - The `workbench ↔ external-agent-runtime` cycle is gone.
-  - The retired-surface scan passes and is enforcing the new needles.
-  - The gate is green.
-  - A session recorded with ACP events still lists and inspects.
+Withdrawn: the external-agent (ACP) lane is deferred, not retired (decision
+D20). It stays in the tree and keeps working; enabler WOs do not restructure it.
+The number is kept so references stay stable.
 
 ### WO-01 — Golden characterization suite
 
+- **Enables:** A behavioral regression net for every later step, including the
+  eventual cut-over of durable state to a single writer.
 - **Spec:** `03-testing.md` §4. **PRD:** 10.
 - **Scope:** `prototype/testing/golden/`,
   `prototype/testing/servers/model-server.ts`, a new gate lane `test.golden` in
@@ -155,6 +106,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-02 — `arch.imports` lane (ratchet) and size report
 
+- **Enables:** Machine-checked module boundaries, so an agent can change one
+  area without silently breaking another.
 - **Spec:** `01-architecture.md` §3–4. **PRD:** 10.
 - **Scope:** `scripts/arch-imports.ts` plus its test,
   `scripts/arch-imports-baseline.json`, `scripts/arch-cycles.json` (the
@@ -177,15 +130,15 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
   6. **Size report.** Emit a non-failing report of modules over 600 LOC and
      functions over 150 lines.
 - **Acceptance:**
-  - The baseline contains exactly the cycles documented in
-    `00-baseline-findings.md` that are still present after WO-00 (expected:
-    `mcp-tools ⇄ web-tools` and `sessions ⇄ idea-packet`), plus upward edges.
+  - The baseline contains exactly the four cycles documented in
+    `00-baseline-findings.md`, plus upward edges.
   - The unit tests cover each rule type, including an allow-listed cycle that
     passes, one whose cited test file is missing (fails), and a stale entry
     (fails).
 
 ### WO-03 — `testing/` skeleton and `Deno.test` lane
 
+- **Enables:** A fast `Deno.test` lane that every migrated test lands in.
 - **Spec:** `03-testing.md` §2–3, §6. **PRD:** 14.
 - **Scope:**
   - `prototype/testing/`: fakes for `ManualClock`, `SequentialIds`, `MapEnv`,
@@ -207,6 +160,7 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-04 — Explicit import extensions; drop `--sloppy-imports`
 
+- **Enables:** Mechanical, grep-safe file moves for every later work order.
 - **PRD:** 10.
 - **Scope:** every local import under `prototype/`, plus every `deno.json` task
   and `compile-cli`.
@@ -223,6 +177,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-05 — Approved deletions
 
+- **Enables:** A smaller surface to restructure, without paths the golden suite
+  would otherwise pin.
 - **Spec:** `01-architecture.md` §8 items 1, 3, and 4. Item 2 is done in WO-13.
   **PRD:** 10.
 - **Steps:**
@@ -241,6 +197,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-06 — Docs drift correction
 
+- **Enables:** Operating context that agents can trust while doing the rest of
+  this work.
 - **Spec:** `00-baseline-findings.md` "Docs drift". **PRD:** 10.
 - **Scope:** `README.md`, `prototype/README.md`, `prototype/mcp/README.md`,
   `schema/README.md`, `schema/migrations/README.md`,
@@ -259,6 +217,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-07 — `kernel/`
 
+- **Enables:** One tested implementation of each shared helper that later
+  modules depend on.
 - **Spec:** `01-architecture.md` §3 (L0). **PRD:** 11.
 - **Steps:**
   1. **Create the module.** Create `src/kernel/` with `mod.ts`.
@@ -280,21 +240,28 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 - **Stop-and-ask trigger:** if two copies differ in a way that is user-visible
   (for example, bounding limits in receipts), log it and ask.
 
-### WO-08 — `contract/` and the engine back-edges
+### WO-08 — `contract/` and the engine back-edge
 
-- **Spec:** §3 (L1), §5.1. **PRD:** 11.
+- **Enables:** A plain-data contract layer shared by runners and clients, which
+  any client (including a non-TypeScript one) can speak.
+- **Spec:** §3 (L1) and §5.1 (Runner). **PRD:** 11.
 - **Steps:**
   1. **Move the contract types.** Move `turn-contract.ts` and the runtime
      input/event/auth/result types (`workbench.ts:95-573`) into `src/contract/`.
-  2. **Relocate `workspaceRootForTransport`** and `resolveRuntimeEnvDefaults`
+  2. **Define the runner interface.** Declare the `Runner` interface in
+     `contract/`.
+  3. **Relocate `workspaceRootForTransport`** and `resolveRuntimeEnvDefaults`
      into their target layers.
-  3. **Remove the upward import.** `turn-runner` must no longer import
-     `workbench`.
-- **Acceptance:** no module imports `workbench.ts` except the entrypoint wiring,
-  and the upward edges are gone from the baseline.
+  4. **Break the cycle.** `external-agent-runtime` and `turn-runner` must no
+     longer import `workbench`.
+  5. **Remove the lazy imports.** Delete the lazy `await import` at
+     `workbench.ts:1486` and `workbench.ts:1576`.
+- **Acceptance:** the `workbench ↔ external-agent-runtime` cycle and both
+  dynamic imports are gone from the baseline.
 
 ### WO-09 — MCP transport module
 
+- **Enables:** Adding MCP-backed tools without import cycles.
 - **Spec:** §5.5. **PRD:** 11/12.
 - **Steps:**
   1. **Create the module.** Create `src/tools/mcp/transport.ts` with
@@ -309,6 +276,7 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-10 — `config/` with `Env` port
 
+- **Enables:** A single declared configuration surface.
 - **Spec:** §3 (L1). **PRD:** 11.
 - **Steps:**
   1. **Split the config module.** Split `config.ts` into `config/` submodules:
@@ -327,6 +295,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-11 — `transport/`
 
+- **Enables:** A transport layer that any client — the TypeScript CLI, a Rust
+  REPL, a desktop surface — can use.
 - **Spec:** §3 (L2), §7. **PRD:** 11.
 - **Steps:**
   1. **Move the transport modules.** Move `jsonrpc`, `jsonrpc-peer` (making it
@@ -339,6 +309,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-12 — Store port, `DoltStore`, `MemoryStore`
 
+- **Enables:** One write path, so durable state can move behind a single-writer
+  substrate by replacing one adapter rather than editing every caller.
 - **Spec:** `02-data-layer.md` §2. **PRD:** 13.
 - **Steps:**
   1. **Inventory the SQL call sites** (`utils`, `sessions`, `memory`,
@@ -373,6 +345,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-13 — Codegen, typed events, schema equivalence, shim removal
 
+- **Enables:** Gate-checked schema changes; required before new durable entities
+  are introduced.
 - **Spec:** `02-data-layer.md` §3–5. **PRD:** 13.
 - **Steps:**
   1. **Generate row types.** Write `schema/codegen.ts` and commit
@@ -393,6 +367,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-14 — Provider adapters and conformance kit
 
+- **Enables:** Adding a model provider or route family without touching the
+  engine.
 - **Spec:** `01-architecture.md` §5.2; `03-testing.md` §5. **PRD:** 12.
 - **Steps:**
   1. **Split `provider.ts`.** Split it into `providers/` as follows:
@@ -415,6 +391,7 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-15 — Tool unification, catalog builder, redactor, conformance kit
 
+- **Enables:** Adding a tool with one module and one catalog line.
 - **Spec:** `01-architecture.md` §5.4; `03-testing.md` §5. **PRD:** 12.
 - **Steps:**
   1. **Split the command core.** Split `commands.ts` into `tools/` core:
@@ -438,21 +415,30 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
 
 ### WO-16 — `resolveRoute` and `observedProviderCall`
 
+- **Enables:** One route-resolution step: the landing spot for route
+  specifications.
 - **Spec:** §5.1. **PRD:** 11.
 - **Steps:**
-  1. **Extract `resolveRoute`.** Extract model selection and paid preflight into
-     `engine/route.ts`. The ACP duplicate is already gone (WO-00).
-  2. **Extract `observedProviderCall`.** Extract it into
+  1. **Extract `resolveRoute`.** Extract model selection, paid preflight, and
+     runner choice into `engine/route.ts`. Both native and ACP use it. Delete
+     the duplicated preflight at `workbench.ts:1456-1491` and
+     `workbench.ts:1545-1589`.
+  2. **Fix the swallowed error.** The silent swallow of model-registry load
+     errors at `workbench.ts:1535-1543` is a behavior question. Log it in the
+     bug log and preserve the current behavior.
+  3. **Extract `observedProviderCall`.** Extract it into
      `engine/observed-call.ts`. Both `compressTranscript` and the agent loop use
      it.
-  3. **Add component tests** for both, using `MemoryStore`,
+  4. **Add component tests** for both, using `MemoryStore`,
      `ScriptedHttpTransport`, and the budget tracker.
 - **Acceptance:**
   - Each sequence has exactly one implementation.
-  - Golden scenarios 1, 6, 7, and 12 are unchanged.
+  - Golden scenarios 1, 6, 7, 8, and 12 are unchanged.
 
 ### WO-17 — Engine pipeline
 
+- **Enables:** Named pipeline stages where context assembly and continuity work
+  land.
 - **Spec:** §5.1. **PRD:** 11.
 - **Steps:**
   1. **Split the runtime into stages.** Split `runNativeWorkbenchRuntime` into
@@ -461,9 +447,9 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
   2. **Fold in the turn runner.** Fold `turn-runner.ts` into `engine/` as the
      turn entry.
   3. **Introduce `SessionOwner`** (`01-architecture.md` §5.7). It is the single
-     writer for the session's turn lock, budget scope, and cancel signal. Busy
-     and concurrency semantics stay identical: golden scenarios 5 and 9 must not
-     change.
+     writer for the session's turn lock, budget scope, and cancel signal. The
+     ACP handle joins it in WO-18. Busy and concurrency semantics stay
+     identical: golden scenarios 5 and 9 must not change.
   4. **Remove the old runtime.** Delete `workbench.ts`.
   5. **Replace the old tests.** Replace the 5,916-line `workbench.test.ts` with
      per-stage unit tests plus a `engine.component.test.ts` wired with fakes.
@@ -479,13 +465,36 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
   at a time. Keep the not-yet-extracted remainder in `engine/native-runner.ts`
   so that each step stays gate-green.
 
-### WO-18 — _(withdrawn)_
+### WO-18 — `runners/acp/` _(deferred)_
 
-Withdrawn: the ACP lane was retired to the backlog in WO-00 (decision D17). The
-number is kept so references stay stable.
+- **Enables:** Changeable external-agent (ACP) code, required before
+  external-agent route work resumes.
+- **Deferred (D20):** not on the enabler critical path. Until it runs, enabler
+  WOs keep the ACP lane working and golden scenario 8 green, but do not
+  restructure ACP internals.
+- **Spec:** §3 (L3), §5.1. **PRD:** 11.
+- **Steps:**
+  1. **Move the ACP modules.** Move `acp-client` (split into
+     spawn/process-group, stream guard, evidence mapping, usage, permissions,
+     and the `LiveAcpSession` class), `acp-session-map`, and the runtime half of
+     `external-agent-runtime` into `runners/acp/`.
+  2. **Move history reconstruction** into its own module.
+  3. **Move the installer.** Move Codex profile provisioning
+     (`external-agent-runtime.ts:50-497`) into `runners/acp/codex/` and point
+     `scripts/codex-chatgpt-login.ts` at it.
+  4. **Implement the runner.** The ACP runner implements `Runner` and must not
+     import engine internals.
+  5. **Move the ACP handle under `SessionOwner`.** Callers stop using
+     `acp-session-map` directly; the session owner holds the handle and its idle
+     expiry.
+- **Acceptance:**
+  - The ACP files respect the size limits.
+  - Golden scenario 8 is unchanged.
+  - The ACP integration test is on `Deno.test` against the real fixture agent.
 
 ### WO-19 — `server/` composition root and RPC modules
 
+- **Enables:** A single composition root that a desktop surface can connect to.
 - **Spec:** §7. **PRD:** 11.
 - **Steps:**
   1. **Create the composition root.** Create `server/main.ts` (replaces
@@ -503,50 +512,59 @@ number is kept so references stay stable.
 
 ### WO-20 — Extension interface and moves
 
+- **Enables:** Optional features that stay out of the core.
 - **Spec:** §6. **PRD:** 12.
 - **Steps:**
   1. **Define the interface.** Define `Extension` in `server/extensions.ts` and
      `ExtensionDeps`.
   2. **Move the features.** Move `ideas`, `packets` (from `idea-packet.ts`),
      `friction`, and `linear` into `extensions/<id>/`. Each gets:
-     - a server side with commands and RPC;
-     - a `client.ts` holding the REPL slash-command logic currently in
-       `cli.ts:2014-2792`.
+     - a server side with commands and RPC.
+
+     Their REPL slash-command logic (`cli.ts:2014-2792`) stays in the
+     interactive REPL for now; the interactive client is being replaced
+     separately (D23).
   3. **Remove the re-export.** Delete `export * from "./idea-packet"` from
      `sessions`.
   4. **Reuse the Linear command.** Friction receives the Linear command through
      `ExtensionDeps`, not by building its own registry.
   5. **Remove the singleton.** Delete `defaultIdeaPacketRegistry`. The registry
      is owned by the ideas/packets extension instance built in the composition
-     root. It stays in memory; PRD-15 makes it durable.
+     root. It stays in memory; making it durable is roadmap durable-state work.
 - **Acceptance:**
   - The `sessions ⇄ idea-packet` cycle is gone.
   - Core never imports `extensions/`.
   - Golden scenario 11 and the REPL commands are unchanged.
 
-### WO-21 — `cli/` split
+### WO-21 — `cli/` split (non-interactive parts)
 
-- **Spec:** §3 (L5). **PRD:** 11.
-- **Steps:** split `cli.ts` into the following modules:
+- **Enables:** Isolated, testable modules for the parts of the CLI that stay in
+  TypeScript.
+- **Spec:** §3 (L5). **PRD:** 11. **Decision:** D23.
+- **Scope:** only the parts of `cli.ts` that stay in TypeScript. The interactive
+  REPL (the loop, slash commands, and interactive approval prompts) is being
+  replaced by a separate client over the same UDS protocol; do not restructure
+  it here.
+- **Steps:** extract from `cli.ts`:
   - `cli/args.ts` (parse, resolve config, help);
   - `cli/render/` (spinner, ANSI sanitize via kernel, streaming markdown,
-    receipt/posture formatting);
-  - `cli/turn-client.ts` (socket turn, cancellation, approval prompts);
-  - `cli/repl/` (loop plus core slash commands: session, model, fast; extension
-    commands come from `extensions/*/client.ts`);
+    receipt/posture formatting) where `exec` and the subcommands use it;
+  - `cli/turn-client.ts` (socket turn and cancellation for `exec`);
   - `cli/commands/` (models, sessions, status, stop, start);
   - `cli/launcher/` (permission-grant computation, runtime autostart);
   - `cli/main.ts`.
 - **Update the build.** Update `compile-cli` and the launcher script.
-- **Split the tests.** Split `cli.test.ts` along the same lines, using `FakeIo`.
+- **Split the tests** for the extracted modules, using `FakeIo`.
 - **Acceptance:**
-  - `cli.ts` no longer exists.
+  - What remains in `cli.ts` is the interactive REPL only, importing the
+    extracted modules.
   - The client allow-list rule is green.
   - The golden CLI scenarios are unchanged.
   - A `compile-cli` smoke build succeeds.
 
 ### WO-22 — `budget/` and `context/`
 
+- **Enables:** Budget and context modules isolated for continuity and cost work.
 - **Spec:** §3 (L2). **PRD:** 11.
 - **Steps:**
   1. **Split budget.** Split `budget.ts` into tracker, envelope gates,
@@ -565,6 +583,7 @@ number is kept so references stay stable.
 
 ### WO-23 — Test sweep, Vitest removal, supervisor decision
 
+- **Enables:** A test suite with one framework and no mocks of internal modules.
 - **Spec:** `03-testing.md` §2, §7. **PRD:** 14.
 - **Steps:**
   1. **Migrate the remaining tests.** Move every remaining Vitest file to
@@ -587,6 +606,8 @@ number is kept so references stay stable.
 
 ### WO-24 — Gate reporting, fast loop, phase-1 exit audit
 
+- **Enables:** The enabler exit audit and a gate that reports every failing
+  lane.
 - **PRD:** 10–14 exit.
 - **Steps:**
   1. **Report every lane.** The aggregate gate runs all lanes and reports every
@@ -608,71 +629,9 @@ number is kept so references stay stable.
 
 ---
 
-## Phase 1b — log as ground truth (PRD-15)
+## Withdrawn: WO-25 … WO-28
 
-The phase-1 behavior freeze is relaxed **only** as PRD-15 "Allowed behavior
-change" states. All other standing rules apply.
-
-### WO-25 — Event-type design and DDL
-
-- **Spec:** `02-data-layer.md` §7. **PRD:** 15.
-- **Steps:**
-  1. **Design one event per mutation kind.** For each kind in
-     `store/unjournaled.ts`, design the event type (name, payload columns) and
-     the projector that reproduces today's row exactly. That includes
-     last-writer-wins for the memory upsert by slug.
-  2. **Design the ideas/packets events** and their projection, which makes them
-     durable.
-  3. **Write the migration.** Forward migration plus `current/` baseline update.
-     Drop `ON UPDATE CURRENT_TIMESTAMP` where a projector must set `updated_at`
-     from the event. Regenerate with `schema.codegen`; the `schema.equivalence`
-     lane must pass.
-- **Stop and ask:** this WO changes the canonical DDL. Put the event names,
-  payloads and the timestamp change in the PR description for maintainer
-  approval before any runtime code uses them.
-- **Acceptance:** migration applied in both schema lanes; the generated types
-  include the new event types; no runtime changes.
-
-### WO-26 — Journal session and memory writes
-
-- **PRD:** 15.
-- **Steps:**
-  1. **Session writes.** Replace the session unjournaled kinds with their events
-     and projectors, in both the runtime and the MCP server.
-  2. **Memory writes.** Replace the memory upsert with `memory_written` (or its
-     approved name) plus a projector.
-  3. **Shrink the list.** Remove each kind from `store/unjournaled.ts` as it is
-     replaced.
-  4. **Snapshots.** Update golden snapshots for the new event rows only. The PR
-     names each new event type, and projected tables must be byte-identical.
-- **Acceptance:** those kinds are gone from the list; conformance green on both
-  adapters; golden diffs limited to new event rows.
-
-### WO-27 — Durable ideas and packets
-
-- **PRD:** 15.
-- **Steps:**
-  1. **Events for mark and draft.** The extension's registry becomes a
-     projection built from its events, with no in-memory-only state.
-  2. **Restart scenario.** Add a golden scenario: mark an idea and draft a
-     packet, restart the server, then `ideas/list` and `packets/list` return
-     them.
-  3. **Docs.** CHANGELOG `Changed`: ideas and packets now persist across
-     restarts.
-- **Acceptance:** the restart scenario passes; RPC payloads are otherwise
-  unchanged.
-
-### WO-28 — Replay lane and ground-truth closure
-
-- **Spec:** `02-data-layer.md` §7. **PRD:** 15.
-- **Steps:**
-  1. **Add the replay lane.** Add `projections.replay`: after the golden
-     scenarios, truncate the projected tables, rebuild them from `events`, and
-     require them to be identical.
-  2. **Enforce an empty list.** Assert `store/unjournaled.ts` is empty and make
-     the conformance suite reject any addition.
-  3. **Docs.** Remove the "Runtime status" note under README Section 1's
-     ground-truth decision, add a README revision-history line, and write the
-     PRD-15 audit into `specs/README.md`.
-- **Acceptance:** replay lane green on every golden scenario; unjournaled list
-  empty; Section 1 note removed.
+These made the event log the write path for every state change (formerly
+PRD-15). That work is absorbed into the roadmap's durable-state work, which
+moves durable state behind a single writer; `02-data-layer.md` §7 keeps the
+design direction. The numbers are kept so references stay stable.

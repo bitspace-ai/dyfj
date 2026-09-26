@@ -23,8 +23,8 @@ it does.
   - the event log as the write path (`02-data-layer.md`).
 - **Seams now, domain later.** Seams are named and shaped so that
   `contracts/workbench/first-product/v1` concepts (Run, Route, Receipt, Grant,
-  ContextPacket) have an obvious landing spot in phase 2. Phase 1 introduces
-  none of those entities.
+  ContextPacket) have an obvious landing spot in roadmap domain work. Phase 1
+  introduces none of those entities.
 
 ## 2. Two-process shape (kept)
 
@@ -47,21 +47,23 @@ checked rule.
   bypass it are reported, not failed. This keeps prototyping fast; promote the
   rule to failing only if deep imports become a real source of breakage.
 
-| Layer | Directory          | Responsibility                                                                                                                                                                                                         | Replaces (today)                                                                                                                                                               |
-| ----- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| L0    | `kernel/`          | Pure helpers: UTF-8 byte bounding, code-point prefix, ANSI stripping, boundary-text sanitizing, ULID/trace IDs, canonical JSON, bounded regex, lexical path checks, error summarizing                                  | scattered copies in `utils`, `commands`, `file-tools`, `mcp-tools`, `turn-contract`, `idea-packet`, `uds-server`, `cli`, `streaming-markdown`; `bounded-regex`, `lexical-path` |
-| L1    | `contract/`        | Runtime contract types, no I/O: turn request/result, stream-frame union, receipt types, history-omission notices, `DomainError`, runtime input/event/auth types, stop-reason enum                                      | `turn-contract.ts` + runtime types currently in `workbench.ts:95-573`                                                                                                          |
-| L1    | `config/`          | Env-key schema (every `DYFJ_*` key declared), TOML load, secrets/MCP/budget/agent config parsing. Reads the environment only through an `Env` port                                                                     | `config.ts`, env adapters in `workbench`/`budget`/`provider`, undeclared reads in `repo-context`, the `.env` parser in `cli`                                                   |
-| L2    | `store/`           | Store port + Dolt adapter + generated row types. **The only directory that issues SQL**                                                                                                                                | SQL in `utils`, `sessions`, `memory`, `provider`, `prompts`, `budget`, `mcp/`                                                                                                  |
-| L2    | `providers/`       | `ProviderAdapter` interface, adapters (openai-compatible, anthropic, gemini), model registry and routing, HTTP-with-deadline transport, text tool-call extraction, token estimates                                     | `provider.ts`                                                                                                                                                                  |
-| L2    | `tools/`           | Command primitive: definition type, registry, call-shape policy, argument validation, redaction, invoke-with-event. Subdirs: `builtin/` (memory, file, exec, git), `mcp/` (transport, client factory, adapter), `web/` | `commands`, `file-tools`, `exec-tools`, `git-tools`, `mcp-tools`, `mcp-conformance`, `mcp-net-grants`, `web-tools`, `memory-search`, tool parts of `memory`                    |
-| L2    | `budget/`          | Tracker, envelope gates, anomaly gate. Writes events through the store port                                                                                                                                            | `budget.ts`                                                                                                                                                                    |
-| L2    | `context/`         | Workspace/repo context packing, prompt composition, transcript compression, length recovery, conversation projection from events                                                                                       | `repo-context`, `prompts`, `context-compression`, `length-recovery`, projection half of `sessions`                                                                             |
-| L2    | `transport/`       | JSON-RPC codec, framing, dispatcher, duplex peer, UDS path/bind/connect                                                                                                                                                | `jsonrpc`, `jsonrpc-peer`, `uds-path`, `uds-client`, socket half of `uds-server`                                                                                               |
-| L3    | `engine/`          | Turn pipeline (§5.1), agent loop, route resolution, observed provider call, session turn lock                                                                                                                          | `workbench.ts` runtime, `turn-runner.ts`                                                                                                                                       |
-| L4    | `extensions/<id>/` | Optional features behind the Extension interface (§6): `ideas`, `packets`, `friction`, `linear`                                                                                                                        | `idea-packet`, `friction`, `linear-tools`, and their RPC/REPL pieces                                                                                                           |
-| L5    | `server/`          | Composition root: builds ports and adapters, the tool catalog, extensions, and RPC handler modules (one per namespace); binds the socket                                                                               | `uds-serve`, `uds-server` handlers                                                                                                                                             |
-| L5    | `cli/`             | Client: args, config resolution, launcher/permission grants, REPL, subcommands, rendering (spinner, streaming markdown, receipts)                                                                                      | `cli.ts`, `busy-spinner`, `streaming-markdown`, `runtime-sigint`                                                                                                               |
+| Layer | Directory            | Responsibility                                                                                                                                                                                                         | Replaces (today)                                                                                                                                                                                                       |
+| ----- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L0    | `kernel/`            | Pure helpers: UTF-8 byte bounding, code-point prefix, ANSI stripping, boundary-text sanitizing, ULID/trace IDs, canonical JSON, bounded regex, lexical path checks, error summarizing                                  | scattered copies in `utils`, `commands`, `file-tools`, `acp-client`, `external-agent-runtime`, `mcp-tools`, `turn-contract`, `idea-packet`, `uds-server`, `cli`, `streaming-markdown`; `bounded-regex`, `lexical-path` |
+| L1    | `contract/`          | Runtime contract types, no I/O: turn request/result, stream-frame union, receipt types, history-omission notices, `DomainError`, runtime input/event/auth types, stop-reason enum                                      | `turn-contract.ts` + runtime types currently in `workbench.ts:95-573`                                                                                                                                                  |
+| L1    | `config/`            | Env-key schema (every `DYFJ_*` key declared), TOML load, secrets/MCP/budget/agent config parsing. Reads the environment only through an `Env` port                                                                     | `config.ts`, env adapters in `workbench`/`budget`/`provider`, undeclared reads in `repo-context`, the `.env` parser in `cli`                                                                                           |
+| L2    | `store/`             | Store port + Dolt adapter + generated row types. **The only directory that issues SQL**                                                                                                                                | SQL in `utils`, `sessions`, `memory`, `provider`, `prompts`, `budget`, `mcp/`                                                                                                                                          |
+| L2    | `providers/`         | `ProviderAdapter` interface, adapters (openai-compatible, anthropic, gemini), model registry and routing, HTTP-with-deadline transport, text tool-call extraction, token estimates                                     | `provider.ts`                                                                                                                                                                                                          |
+| L2    | `tools/`             | Command primitive: definition type, registry, call-shape policy, argument validation, redaction, invoke-with-event. Subdirs: `builtin/` (memory, file, exec, git), `mcp/` (transport, client factory, adapter), `web/` | `commands`, `file-tools`, `exec-tools`, `git-tools`, `mcp-tools`, `mcp-conformance`, `mcp-net-grants`, `web-tools`, `memory-search`, tool parts of `memory`                                                            |
+| L2    | `budget/`            | Tracker, envelope gates, anomaly gate. Writes events through the store port                                                                                                                                            | `budget.ts`                                                                                                                                                                                                            |
+| L2    | `context/`           | Workspace/repo context packing, prompt composition, transcript compression, length recovery, conversation projection from events                                                                                       | `repo-context`, `prompts`, `context-compression`, `length-recovery`, projection half of `sessions`                                                                                                                     |
+| L2    | `transport/`         | JSON-RPC codec, framing, dispatcher, duplex peer, UDS path/bind/connect                                                                                                                                                | `jsonrpc`, `jsonrpc-peer`, `uds-path`, `uds-client`, socket half of `uds-server`                                                                                                                                       |
+| L3    | `engine/`            | Turn pipeline (§5.1), agent loop, route resolution, observed provider call, session turn lock                                                                                                                          | `workbench.ts` runtime, `turn-runner.ts`                                                                                                                                                                               |
+| L3    | `runners/acp/`       | ACP client, session map, ACP turn runtime, history reconstruction                                                                                                                                                      | `acp-client`, `acp-session-map`, `external-agent-runtime` (runtime half)                                                                                                                                               |
+| L3    | `runners/acp/codex/` | Codex ChatGPT profile provisioning (an installer, not runtime)                                                                                                                                                         | `external-agent-runtime.ts:50-497`                                                                                                                                                                                     |
+| L4    | `extensions/<id>/`   | Optional features behind the Extension interface (§6): `ideas`, `packets`, `friction`, `linear`                                                                                                                        | `idea-packet`, `friction`, `linear-tools`, and their RPC/REPL pieces                                                                                                                                                   |
+| L5    | `server/`            | Composition root: builds ports and adapters, the tool catalog, extensions, and RPC handler modules (one per namespace); binds the socket                                                                               | `uds-serve`, `uds-server` handlers                                                                                                                                                                                     |
+| L5    | `cli/`               | Client: args, config resolution, launcher/permission grants, REPL, subcommands, rendering (spinner, streaming markdown, receipts)                                                                                      | `cli.ts`, `busy-spinner`, `streaming-markdown`, `runtime-sigint`                                                                                                                                                       |
 
 **Same-layer edges allowed:**
 
@@ -69,6 +71,9 @@ checked rule.
 - `budget/ → store/`
 - `tools/ → store/`
 - `context/ → store/`
+- `runners/acp/ → engine/` is **forbidden**. The shared pieces live in
+  `contract/` or `engine/route`, and `engine/` depends on `runners/acp/` through
+  a `Runner` interface declared in `contract/`.
 
 **Client restriction.** `cli/` may import only:
 
@@ -139,30 +144,29 @@ over an engine-owned `TurnState`.
   - Stages hold no module-level state.
   - Side effects go through ports only.
 - **Pipeline order:**
-  1. `resolveRoute`: model selection and paid-escalation preflight. The
-     duplicate preflight in `workbench.ts:1456-1491`/`1545-1589` exists only for
-     the ACP dispatch and goes away with its retirement (WO-00). _Phase-2
-     landing spot for RouteSpec._
+  1. `resolveRoute`: model selection, paid-escalation preflight, runner choice.
+     Native and ACP both use this one stage, which removes today's duplicate
+     preflight in `workbench.ts:1456-1491` and `1545-1589`. _Landing spot for
+     RouteSpec._
   2. `openSession`: create or continue a session, integrity checks,
      `session_start`.
   3. `buildContext`: workspace root, repo context, memory injection, system
-     prompt. _Phase-2 landing spot for ContextPacket._
+     prompt. _Landing spot for ContextPacket._
   4. `budgetGate`: envelope and anomaly checks before any spend.
   5. `loadTranscript`: project events into a conversation; proactive
      compression.
   6. `agentLoop`: steps up to `max_tool_steps`. Each step is an
      `observedProviderCall` (below), then tool dispatch via `tools/`
-     invoke-with-event. _Phase-2 landing spot for Run._
+     invoke-with-event. _Landing spot for Run._
   7. `finalize`: receipt, `session_end`/summary events, error classification.
-     _Phase-2 landing spot for receipt reconciliation._
+     _Landing spot for receipt reconciliation._
 - **`observedProviderCall`** is the single implementation of "call provider →
   write `provider_call`/`model_response` events → `budget.record`". Today that
   sequence is duplicated in `compressTranscript` (`workbench.ts:2354-2431`) and
   `runObservedTurn` (`2620-2710`); after this change both call it.
-- **One runner.** The native loop is the only runner. There is no `Runner`
-  interface; with a single implementation it would be speculative abstraction.
-  The ACP lane is retired to the backlog (`specs/backlog/acp-lane.md`); if it
-  re-enters, the interface is introduced then, behind `resolveRoute`.
+- **Runners.** `engine/` owns a `Runner` interface (`native`, `acp`). The ACP
+  runner receives the resolved route and ports; it never imports `engine/`
+  internals.
 - **Turn entry.** `turn-runner` logic (request resolution, session lock,
   `executeTurn`) folds into `engine/` as its entry.
 
@@ -250,6 +254,8 @@ This section implements AGENTS.md rules 2 and 3.
 - **Session owner.** One `SessionOwner` per active session, created and held by
   `engine/`. It is the single writer for that session's:
   - turn lock (replaces the lock in `turn-runner.ts`);
+  - external-agent (ACP) handle and its idle lifecycle (replaces direct use of
+    `acp-session-map` by callers);
   - budget scope (session-envelope accumulation);
   - cancel signal for the in-flight turn.
 
@@ -264,7 +270,9 @@ This section implements AGENTS.md rules 2 and 3.
   each with a golden or integration test):
   1. **approval:** engine → `Approver` → JSON-RPC server→client request →
      verdict. Golden scenarios 3–4.
-  2. **cancel:** client `turn/cancel` → session owner → in-flight signal. Golden
+  2. **acp-permission:** ACP agent → client permission request → mapped verdict.
+     Golden scenario 8.
+  3. **cancel:** client `turn/cancel` → session owner → in-flight signal. Golden
      scenario 9.
 - **No module-level mutable state.** Process-global state has to move under an
   owner constructed in the composition root. Known cases:
@@ -279,8 +287,8 @@ interface Extension {
   commands?(deps: ExtensionDeps): CommandDefinition[];
   rpc?(deps: ExtensionDeps): RpcMethodModule; // method descriptors + handlers
 }
-// client side, separate module: extensions/<id>/client.ts exports REPL slash-command handlers
-// that talk to the server only over JSON-RPC.
+// Client side: REPL slash-command logic stays in the interactive REPL for now;
+// the interactive client is being replaced separately (D23).
 ```
 
 - **Static registration.** The server composition root holds a static list of
@@ -293,7 +301,7 @@ interface Extension {
 - **Ownership fix.** `sessions ⇄ idea-packet` is resolved by moving ideas and
   packets into `extensions/`, where they read sessions through `store/`. The
   registry becomes state owned by the extension instance. It stays in-memory in
-  phase 1 (behavior freeze); PRD-15 makes it durable through the journal.
+  phase 1 (behavior freeze); making it durable is roadmap durable-state work.
 
 ## 7. Composition root
 
@@ -336,9 +344,8 @@ No other module reads process-global state.
 ## 9. Out of scope for phase 1
 
 - New entities or DDL for Room/Task/Run/Grant/Lease/ContextPacket.
-- New event types and converting in-place mutations to events. That is PRD-15
-  (phase 1b), which runs after the phase-1 exit because it changes the rows that
-  get written.
+- New event types and converting in-place mutations to events. That is roadmap
+  durable-state work, because it changes the rows that get written.
 - Any Rust change.
 - New transports.
 - Normalizing env var, RPC, or event names.

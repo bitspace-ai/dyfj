@@ -65,7 +65,7 @@ interface Journal {
   - The list may only shrink. `arch.imports` fails on any direct write that
     bypasses `commit`, and the conformance suite fails on a mutation kind that
     is not listed.
-  - PRD-15 empties the list.
+  - Roadmap durable-state work empties the list.
   - Routing these writes through `commit` in phase 1 changes no rows, so the
     golden suite stays unchanged.
 - **Reference data is the declared exception.** `models` and `prompts` are
@@ -155,7 +155,12 @@ Once equivalence and codegen are enforced:
 - **Deferred.** A `cargo sqlx prepare --check` lane (catching `.sqlx` cache
   drift) is deferred until the Rust line grows.
 
-## 7. Projections and replay (target state; delivered by PRD-15)
+## 7. Projections and replay (target state; delivered by roadmap durable-state work)
+
+This section records design direction for work tracked on the product roadmap.
+That work may move durable state behind a single-writer process
+(`01-architecture.md` §10); `journal.commit` is the client-side seam it
+replaces. Phase-1 work orders build the seam, not the target state.
 
 - **Every state change is an event.** The unjournaled list is empty. New event
   types cover session updates, memory writes, and idea/packet marks and drafts,
