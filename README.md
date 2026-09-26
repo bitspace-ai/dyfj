@@ -1435,3 +1435,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-26 - Validation guidance now documents the `arch.imports` gate lane:
   the layer mapping, the ratchet baseline that may only shrink, the named-cycle
   allow-list, and the non-failing deep-import and size reports.
+- 2026-09-26 - WO-02's acceptance now counts three baseline cycles, matching the
+  three listed in `specs/00-baseline-findings.md` and the tree; "four" was a
+  miscount introduced when the ACP cycle was reinstated.
