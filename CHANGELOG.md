@@ -9,6 +9,26 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Added
+
+- **`arch.imports` gate lane (ratchet mode)**: `scripts/arch-imports.ts` parses
+  static and dynamic local imports under `prototype/src`, `prototype/mcp`, and
+  `prototype/scripts` and checks them against the layer rules in
+  `specs/01-architecture.md` §3–4, kept as data in `scripts/arch-layers.json`.
+  It detects import cycles (type-only edges included), upward and non-listed
+  same-layer edges, `cli/` imports outside its allow-list, and dynamic local
+  imports. Today's violations are committed in
+  `scripts/arch-imports-baseline.json` — three cycles (`mcp-tools` ⇄
+  `web-tools`, `workbench` ⇄ `external-agent-runtime`, `sessions` ⇄
+  `idea-packet`) and 32 entries in all. The lane fails on any violation not in
+  the baseline and on any baseline entry that no longer occurs, so the count
+  can only go down. Intentional cycles need a named entry in
+  `scripts/arch-cycles.json` with exact edges, a justification, and an existing
+  test file; the list starts empty. Deep imports that bypass a `mod.ts` and a
+  size report (modules over 600 lines, functions over 150 lines) are printed
+  without failing. The lane runs in both `deno task test` and
+  `deno task test:fast` under the existing `test.aggregate` check id.
+
 ### Changed
 
 - **Vitest test and hook timeouts are sized to the suite**: the suite ran on
