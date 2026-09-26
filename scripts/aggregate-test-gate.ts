@@ -596,6 +596,26 @@ export function productionLanes(
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
+    // Golden characterization suite (`test.golden`): black-box snapshots of
+    // the engine server and CLI over an isolated Dolt fixture. The runner
+    // itself needs no network; it grants the tests loopback and the exact
+    // engine sockets it creates.
+    {
+      label: "Golden characterization suite (test.golden)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN",
+        "--allow-read=.",
+        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
+        `--allow-run=${denoExecutable}`,
+        "testing/golden/run.ts",
+      ],
+      cwd: prototype,
+      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+    },
   ];
 }
 

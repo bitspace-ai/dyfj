@@ -221,6 +221,8 @@ deno task test           # checks, test:unit, then the Vitest unit suite
 deno task test:file <path>  # run a single test file without full typecheck
                          # (requires a path or -t pattern; exits 2 otherwise)
 deno task verify-workbench-events
+deno task test:golden    # golden characterization suite (needs Dolt)
+deno task test:golden --update  # rewrite snapshots (see below)
 (cd .. && deno task test) # repository aggregate gate
 ```
 
@@ -239,14 +241,26 @@ temp roots, write access to temp roots only, and no run, net, or env grant, so u
 component tests stay off Dolt, the network, and child processes. Write fixture output to
 `Deno.makeTempDir()`, never the working tree.
 
-Shared test support lives in `testing/` (never imported by runtime code). Today it holds
-the port fakes in `testing/fakes/`: `ManualClock` (`Clock`), `SequentialIds`
-(`IdSource`, ULID-shaped), `MapEnv` (`Env`), and `fakeIo` (the CLI's terminal `Io`). A
-unit test replaces a port with its fake; module mocking is not allowed
-(`specs/03-testing.md` §1).
+Shared test support lives in `testing/` (never imported by runtime code): the golden
+suite in `testing/golden/`, loopback servers in `testing/servers/`, and the port fakes in
+`testing/fakes/`: `ManualClock` (`Clock`), `SequentialIds` (`IdSource`, ULID-shaped),
+`MapEnv` (`Env`), and `fakeIo` (the CLI's terminal `Io`). A unit test replaces a port with
+its fake; module mocking is not allowed (`specs/03-testing.md` §1). A fake's conformance
+suite lands with the port it stands in for.
 
-The root aggregate gate runs the schema, Rust, and isolated-Dolt integration
-lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
+`test:golden` runs the golden characterization suite in `testing/golden/`:
+twelve black-box scenarios that drive the engine server (`src/uds-serve.ts`)
+and the CLI (`src/cli.ts`) as child processes against an isolated Dolt
+fixture, a loopback model server (`testing/servers/model-server.ts`) and a
+loopback Linear MCP server. Each scenario's stream frames, RPC responses,
+rendered CLI output, and `events`/`sessions` rows are normalized (generated
+IDs, timestamps, durations, temp paths, PIDs and the fixtures' loopback
+endpoints only) and compared with `testing/golden/snapshots/`. During the
+phase-1 restructuring a snapshot may change only for a reason the PR states,
+as `specs/03-testing.md` §4 sets out; `--update` rewrites them.
+
+The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
+golden characterization lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
 and bounded: `$HOME/.dyfj/run/dyfj-vitest-run.lock` refuses a second run while
 a prior run is alive (including across checkouts), a hang fails
 `DYFJ_TEST_BOUND_SEC` (default 600s; 180s for a named file or `-t` pattern),

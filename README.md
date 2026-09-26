@@ -209,14 +209,23 @@ How the work actually happens, separate from what gets built.
 
 - **Tests land with the code, not after it.** Any commit that adds a function
   adds a test for it. PRs without tests are not "ready except for tests" -
-  they're not yet ready. The test doctrine is
-  [`specs/03-testing.md`](specs/03-testing.md) §1: a unit or component test
-  replaces only a declared port with its in-repo fake (shared fakes live in
-  `prototype/testing/`); module mocking is banned; real dependencies (Dolt,
-  child processes, sockets) belong to the integration tier, where third-party
-  network services are faked at the network boundary by loopback servers. New
-  tests use `Deno.test` with `@std/assert` and `@std/testing`; Vitest is being
-  retired as tests move with their modules.
+  they're not yet ready.
+- **Fakes live at declared ports only, and are proven against the real
+  thing.** A unit or component test replaces a declared port with its in-repo
+  fake; module mocking is banned, and existing Vitest tests that still mock move
+  to this shape as their modules move. Each fake that stands in for a real adapter
+  passes the same conformance suite as that adapter. Real dependencies (a real
+  Dolt instance, real processes, real sockets) belong to the integration tier;
+  third-party network services are faked at the network boundary with loopback
+  servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
+  Shared fakes live in `prototype/testing/fakes/`. New tests use `Deno.test`
+  with `@std/assert` and `@std/testing`; Vitest is being retired as tests move
+  with their modules.
+- **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
+  a black-box golden suite (`prototype/testing/golden/`, gate lane
+  `test.golden`) snapshots the engine server and CLI at process level. A
+  snapshot changes only with a stated reason, as `specs/03-testing.md` §4 sets
+  out.
 - **Model integration tests validate generation, not just service health.**
   Ollama `/api/version`, `/api/tags`, and `/api/ps` only prove the server
   process is answering. Workbench integration checks that depend on local
@@ -860,6 +869,7 @@ deno task check           # strict typecheck of production and test import graph
 deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events
+(cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
 
 `deno task test` runs a set of deterministic policy checks, each reported under
@@ -900,11 +910,19 @@ After the policy checks, the gate runs the retired-surface scan, the source and
 test-file typechecks (both file lists derived by walking the tree in
 `prototype/scripts/test-files.ts`, never hand-listed), the prototype `Deno.test`
 unit lane (`test.unit`: every non-integration `Deno.test` file, run in parallel
-with the op and resource sanitizers enabled and no run, net, or env grant), the prototype Vitest unit
-suite (files that import `vitest`; it may only shrink), current and historical
-schema checks, non-ignored Rust tests using offline SQLx metadata and no
-inherited `DATABASE_URL`, and an isolated-Dolt integration lane (including UDS
-and MCP round trips). The task resolves the Deno executable selected for the
+with the op and resource sanitizers enabled and no run, net, or env grant), the
+prototype Vitest unit suite (files that import `vitest`; it may only shrink),
+current and historical schema checks, non-ignored Rust tests using offline SQLx
+metadata and no inherited `DATABASE_URL`, an isolated-Dolt integration lane
+(including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
+golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
+model server and a loopback Linear MCP server, runs the engine server and the
+`dyfj` CLI as child processes, and compares normalized captures (stream frames,
+RPC responses, rendered CLI output, and every `events` and `sessions` row a
+scenario writes) with the snapshots committed under
+`prototype/testing/golden/snapshots/`. Its tests get loopback TCP and the exact
+Unix socket of each engine server they start, and cannot write the snapshot
+directory unless run with `--update`. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
 lane and permission grant. The prototype Vitest lane is exclusive and bounded:
 one operator-scoped lock (`$HOME/.dyfj/run/dyfj-vitest-run.lock`) refuses a
@@ -1419,7 +1437,13 @@ Document revisions only. Code and behavior changes are tracked in
   deferred rather than retired; the log-as-ground-truth PRD and the phase-2
   outline are withdrawn in favor of roadmap work; the contract package is open
   to roadmap contract work; the interactive REPL moves to a separate client.
-- 2026-09-26 - Section 4's testing bullet now points at the phase-1 test
-  doctrine (fakes only at declared ports, no module mocking, `Deno.test` for new
-  tests); the validation notes describe the glob-derived typecheck lists and the
-  `test.unit` lane.
+- 2026-09-26 - Section 4 testing bullets revised to the doctrine in
+  `specs/03-testing.md` §1 (fakes at declared ports, conformance-proven fakes,
+  loopback fakes for third-party services, golden tests pinning behavior);
+  validation guidance documents the golden characterization lane.
+- 2026-09-26 - Section 4 notes where shared fakes live and that new tests use
+  `Deno.test`; the validation notes describe the glob-derived typecheck lists
+  and the `test.unit` lane.
+- 2026-09-26 - Test spec freshened: conformance suites land with their ports
+  (decision D24), and the sanitizer rule names the explicit flags the pinned
+  Deno requires instead of calling them the default.
