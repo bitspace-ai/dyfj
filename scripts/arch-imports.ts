@@ -395,9 +395,7 @@ export function analyze(input: AnalysisInput): AnalysisResult {
     const key = edgeKey(e.from, e.to);
     edgeTypeOnly.set(key, (edgeTypeOnly.get(key) ?? true) && e.typeOnly);
   }
-  // The named-cycle allow-list exempts cycles and dynamic imports only
-  // (specs/01-architecture.md section 4): an allow-listed edge still has to
-  // respect layer direction and the cli/ allow-list.
+  // Allow-listed edges still obey layer and cli/ rules (spec section 4).
   for (const key of [...edgeTypeOnly.keys()].sort()) {
     const [from, to] = key.split(" -> ") as [string, string];
     const a = units.get(from);
