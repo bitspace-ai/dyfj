@@ -74,10 +74,11 @@ export function leadingImportSpecifiers(source: string): string[] {
         i = end;
         if (specifier === undefined && (bare || afterFrom)) {
           specifier = value;
-          // Without a semicolon the statement ends at the line break, unless
-          // an attribute clause follows.
-          const rest = /^[ \t]*(\S*)/.exec(source.slice(i))?.[1] ?? "";
-          if (!rest.startsWith(";") && !/^(?:with|assert)\b/.test(rest)) {
+          // Without a semicolon the statement ends here, unless an
+          // attribute clause follows (possibly on the next line).
+          const next = skipTrivia(source, i);
+          const word = readWord(source, next);
+          if (source[next] !== ";" && word !== "with" && word !== "assert") {
             break;
           }
         }

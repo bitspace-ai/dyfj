@@ -22,6 +22,11 @@ Deno.test("importsVitest recognises every import shape in use", () => {
       'import type { Mock } from "vitest";',
       'import {\n  describe,\n  test,\n} from "vitest";',
       'import "vitest";',
+      // After an import whose attribute clause starts on the next line.
+      'import data from "./data.json" with {\n  type: "json"\n};\n' +
+      'import { test } from "vitest";',
+      'import data from "./data.json"\n  with { type: "json" };\n' +
+      'import { test } from "vitest";',
     ]
   ) {
     assertEquals(importsVitest(source), true, source);
@@ -64,6 +69,11 @@ Deno.test("leadingImportSpecifiers reads only the leading import block", () => {
     'export * from "./re-export.ts";',
     'export { d } from "./d.ts"',
     'import e from "./e.ts"',
+    'import f from "./f.json"',
+    "  with {",
+    '    type: "json",',
+    "  };",
+    'import g from "./g.ts"',
     "",
     "const x = 1;",
     'import { late } from "./late.ts";',
@@ -76,6 +86,8 @@ Deno.test("leadingImportSpecifiers reads only the leading import block", () => {
     "./re-export.ts",
     "./d.ts",
     "./e.ts",
+    "./f.json",
+    "./g.ts",
   ]);
   assertEquals(leadingImportSpecifiers("export const x = 1;"), []);
   assertEquals(leadingImportSpecifiers(""), []);
