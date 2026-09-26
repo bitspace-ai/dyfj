@@ -28,6 +28,7 @@
  */
 
 import { parseImports } from "./arch-imports-lexer.ts";
+import { repoRootFromMeta } from "./scan-lib.ts";
 import { formatSizeReport, sizeReport } from "./arch-imports-size.ts";
 
 // ---------------------------------------------------------------------------
@@ -595,6 +596,5 @@ export async function main(
 }
 
 if (import.meta.main) {
-  const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-  Deno.exit(await main(Deno.args, root));
+  Deno.exit(await main(Deno.args, repoRootFromMeta().replace(/\/$/, "")));
 }

@@ -36,6 +36,9 @@ const OBJECT_AFTER = new Set("( [ , = : ? ! & | + - * % < > ~ ^".split(" "));
 // Whether a `{` after `head` opens a block (as opposed to an object literal).
 function opensBlock(head: Token | undefined): boolean {
   if (head?.kind === "punct") return !OBJECT_AFTER.has(head.value);
+  if (head?.kind === "id" && (head.value === "else" || head.value === "do")) {
+    return true;
+  }
   return !(head?.kind === "id" && REGEX_AFTER_KEYWORDS.has(head.value));
 }
 

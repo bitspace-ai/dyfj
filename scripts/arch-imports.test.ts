@@ -132,6 +132,8 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     n++ / 2; import j from "./after-postfix";
     const n = ({ x: 1 }) / import("./after-object-paren");
     function block() {} /import k from "\.\/after-block"/.test(s);
+    if (ok) {} else {} /import("\.\/after-else")/.test(s);
+    do {} while (0); import l from "./after-do";
     obj.import("./method");
   `);
   assertEquals(records.map((r) => r.specifier), [
@@ -140,6 +142,7 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     "./after-object",
     "./after-postfix",
     "./after-object-paren",
+    "./after-do",
   ]);
 });
 
