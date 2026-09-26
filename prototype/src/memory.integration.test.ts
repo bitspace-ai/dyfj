@@ -13,7 +13,7 @@ import {
   loadMemoriesByType,
   loadMemoryIndex,
   MEMORY_VISIBILITY_ALL,
-} from "./memory";
+} from "./memory.ts";
 
 describe("loadMemoriesByType (integration)", () => {
   test("loads the fixture user and feedback rows with their full content", async () => {

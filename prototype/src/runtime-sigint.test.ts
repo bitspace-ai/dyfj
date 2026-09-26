@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { installRuntimeSigintHandler } from "./runtime-sigint";
+import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
 
 describe("runtime SIGINT handling", () => {
   test("an autostarted runtime ignores terminal SIGINT", async () => {

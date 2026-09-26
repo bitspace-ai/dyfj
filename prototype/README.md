@@ -228,6 +228,15 @@ Use `test:file` for tight iteration loops while developing a single test — it 
 the full typecheck and runs only your named file. Use `test` for the gate before commit,
 which typechecks the entire codebase and runs the full suite excluding integration tests.
 
+Local imports name the file they load, extension included (`./utils.ts`, not
+`./utils`); no task passes `--sloppy-imports`, so an extensionless local import
+fails the typecheck. Third-party packages resolve through the `imports` map in
+`deno.json` rather than inline `npm:` or `jsr:` specifiers. To fix up a batch of
+extensionless imports, for example after a merge, run
+`deno run --allow-read=. --allow-write=. scripts/add-import-extensions.ts` from
+this directory; it rewrites each one to the file it resolves to and reports any
+it cannot resolve.
+
 `test:golden` runs the golden characterization suite in `testing/golden/`:
 twelve black-box scenarios that drive the engine server (`src/uds-serve.ts`)
 and the CLI (`src/cli.ts`) as child processes against an isolated Dolt

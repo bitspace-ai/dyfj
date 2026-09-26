@@ -1,5 +1,5 @@
-import { doltQuery } from "./utils";
-import { DomainError, sanitizeBoundaryText } from "./turn-contract";
+import { doltQuery } from "./utils.ts";
+import { DomainError, sanitizeBoundaryText } from "./turn-contract.ts";
 
 export type ModelAccessModality =
   | "local"

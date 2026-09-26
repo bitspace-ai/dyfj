@@ -18,8 +18,8 @@ import {
   type PreCallCheck,
   RunawayAnomalyHaltError,
   type TierSpend,
-} from "./budget";
-import { MAX_REASON_FIELD_BYTES } from "./turn-contract";
+} from "./budget.ts";
+import { MAX_REASON_FIELD_BYTES } from "./turn-contract.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -397,7 +397,7 @@ describe("ensureBudgetAllowed", () => {
   const dailyBudget = { dailyCostSoFar: 0, dailyLimitUsd: 25 };
 
   test("under ceiling proceeds without prompting", async () => {
-    const { ensureBudgetAllowed } = await import("./budget");
+    const { ensureBudgetAllowed } = await import("./budget.ts");
     const confirm = vi.fn();
     await ensureBudgetAllowed(
       {
@@ -414,7 +414,7 @@ describe("ensureBudgetAllowed", () => {
   });
 
   test("over ceiling with confirm proceeds on approve", async () => {
-    const { ensureBudgetAllowed } = await import("./budget");
+    const { ensureBudgetAllowed } = await import("./budget.ts");
     await ensureBudgetAllowed(
       {
         allowed: false,
@@ -431,7 +431,7 @@ describe("ensureBudgetAllowed", () => {
 
   test("over ceiling without confirm fails closed", async () => {
     const { BudgetExceededError, ensureBudgetAllowed } = await import(
-      "./budget"
+      "./budget.ts"
     );
     await expect(
       ensureBudgetAllowed(
@@ -450,7 +450,7 @@ describe("ensureBudgetAllowed", () => {
 
   test("over ceiling denies on decline", async () => {
     const { BudgetCeilingDeclinedError, ensureBudgetAllowed } = await import(
-      "./budget"
+      "./budget.ts"
     );
     await expect(
       ensureBudgetAllowed(
@@ -484,7 +484,7 @@ describe("createTurnBudgetCeilingGate", () => {
   };
 
   test("dedupes identical pre-flight and per-call gates to one confirm", async () => {
-    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const { createTurnBudgetCeilingGate } = await import("./budget.ts");
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const gate = createTurnBudgetCeilingGate(confirm);
     await gate.ensureAllowed(overPerCall);
@@ -493,7 +493,7 @@ describe("createTurnBudgetCeilingGate", () => {
   });
 
   test("re-prompts when session spend crosses after per-call was already confirmed", async () => {
-    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const { createTurnBudgetCeilingGate } = await import("./budget.ts");
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const gate = createTurnBudgetCeilingGate(confirm);
     await gate.ensureAllowed(overPerCall);
@@ -510,7 +510,7 @@ describe("createTurnBudgetCeilingGate", () => {
   });
 
   test("frames the session re-prompt as a session limit, not the per-call reason checkPreCall reports", async () => {
-    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const { createTurnBudgetCeilingGate } = await import("./budget.ts");
     const warnings: Array<{ reason: string; limitUsd: number }> = [];
     const confirm = vi.fn(async (w: { reason: string; limitUsd: number }) => {
       warnings.push({ reason: w.reason, limitUsd: w.limitUsd });
@@ -537,7 +537,7 @@ describe("createTurnBudgetCeilingGate", () => {
   });
 
   test("a confirmed session overrun covers later larger projections in the scope", async () => {
-    const { createTurnBudgetCeilingGate } = await import("./budget");
+    const { createTurnBudgetCeilingGate } = await import("./budget.ts");
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const gate = createTurnBudgetCeilingGate(confirm);
     await gate.ensureAllowed({
@@ -565,7 +565,7 @@ describe("createTurnBudgetCeilingGate", () => {
 
   test("decline still aborts without recording a confirmation", async () => {
     const { BudgetCeilingDeclinedError, createTurnBudgetCeilingGate } =
-      await import("./budget");
+      await import("./budget.ts");
     const confirm = vi.fn(async () => ({
       decision: "deny" as const,
       reason: "too much",
@@ -582,7 +582,7 @@ describe("createTurnBudgetCeilingGate", () => {
 
   test("without a confirm handler fails closed on every gate", async () => {
     const { BudgetExceededError, createTurnBudgetCeilingGate } = await import(
-      "./budget"
+      "./budget.ts"
     );
     const gate = createTurnBudgetCeilingGate(undefined);
     await expect(gate.ensureAllowed(overPerCall)).rejects.toBeInstanceOf(
@@ -622,7 +622,7 @@ describe("daily envelope", () => {
   });
 
   test("fetchSpendBaselines maps the rollup row and scopes by session and day", async () => {
-    const { fetchSpendBaselines } = await import("./budget");
+    const { fetchSpendBaselines } = await import("./budget.ts");
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const query = async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
@@ -653,7 +653,7 @@ describe("daily envelope", () => {
   });
 
   test("localDayStart is a local-midnight timestamp string", async () => {
-    const { localDayStart, localDayKey } = await import("./budget");
+    const { localDayStart, localDayKey } = await import("./budget.ts");
     const start = localDayStart(new Date(2026, 6, 6, 15, 30));
     expect(start).toBe("2026-07-06 00:00:00");
     expect(localDayKey(new Date(2026, 6, 6, 15, 30))).toBe("2026-07-06");
@@ -664,7 +664,7 @@ describe("daily envelope", () => {
       ceilingConfirmationStoreFor,
       createTurnBudgetCeilingGate,
       resetCeilingConfirmations,
-    } = await import("./budget");
+    } = await import("./budget.ts");
     resetCeilingConfirmations();
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const overDaily: PreCallCheck = {
@@ -707,7 +707,7 @@ describe("daily envelope", () => {
       ceilingConfirmationStoreFor,
       createTurnBudgetCeilingGate,
       resetCeilingConfirmations,
-    } = await import("./budget");
+    } = await import("./budget.ts");
     resetCeilingConfirmations();
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const overSession: PreCallCheck = {
@@ -751,7 +751,7 @@ describe("scope-period ceiling confirmations", () => {
       ceilingConfirmationStoreFor,
       createTurnBudgetCeilingGate,
       resetCeilingConfirmations,
-    } = await import("./budget");
+    } = await import("./budget.ts");
     resetCeilingConfirmations();
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const gate = createTurnBudgetCeilingGate(
@@ -787,7 +787,7 @@ describe("scope-period ceiling confirmations", () => {
       ceilingConfirmationStoreFor,
       createTurnBudgetCeilingGate,
       resetCeilingConfirmations,
-    } = await import("./budget");
+    } = await import("./budget.ts");
     resetCeilingConfirmations();
     const confirm = vi.fn(async () => ({ decision: "approve" as const }));
     const gate = createTurnBudgetCeilingGate(
@@ -818,7 +818,7 @@ describe("composite ceiling approvals", () => {
     const {
       createTurnBudgetCeilingGate,
       formatBudgetCeilingWarning,
-    } = await import("./budget");
+    } = await import("./budget.ts");
     const warnings: BudgetCeilingWarning[] = [];
     const confirm = vi.fn(async (w: BudgetCeilingWarning) => {
       warnings.push(w);
@@ -868,7 +868,7 @@ describe("cross-session daily refresh", () => {
 
   test("the ceiling warning projects the crossed daily scope", async () => {
     const { buildBudgetCeilingWarning, formatBudgetCeilingWarning } =
-      await import("./budget");
+      await import("./budget.ts");
     const message = formatBudgetCeilingWarning(buildBudgetCeilingWarning({
       allowed: false,
       estimatedCost: 0.06,
@@ -901,7 +901,7 @@ describe("resumed sessions spanning days", () => {
 
 describe("scope-aware budget errors", () => {
   test("a daily fail-closed error carries the daily figures and framing", async () => {
-    const { ensureBudgetAllowed } = await import("./budget");
+    const { ensureBudgetAllowed } = await import("./budget.ts");
     let caught: BudgetExceededError | undefined;
     try {
       await ensureBudgetAllowed({
@@ -1023,7 +1023,7 @@ describe("ensureAnomalyAllowed", () => {
   }
 
   test("no halt → no prompt, no error", async () => {
-    const { ensureAnomalyAllowed } = await import("./budget");
+    const { ensureAnomalyAllowed } = await import("./budget.ts");
     const confirm = vi.fn();
     await ensureAnomalyAllowed(makeTracker().checkAnomaly(2, ANOMALY), confirm);
     expect(confirm).not.toHaveBeenCalled();
@@ -1031,7 +1031,7 @@ describe("ensureAnomalyAllowed", () => {
 
   test("fails closed without a confirm handler", async () => {
     const { ensureAnomalyAllowed, RunawayAnomalyHaltError } = await import(
-      "./budget"
+      "./budget.ts"
     );
     await expect(ensureAnomalyAllowed(await trippedCheck())).rejects.toThrow(
       RunawayAnomalyHaltError,
@@ -1039,7 +1039,7 @@ describe("ensureAnomalyAllowed", () => {
   });
 
   test("approval admits the call; the warning carries the halt and approval bases", async () => {
-    const { ensureAnomalyAllowed } = await import("./budget");
+    const { ensureAnomalyAllowed } = await import("./budget.ts");
     const seen: unknown[] = [];
     await ensureAnomalyAllowed(await trippedCheck(), (warning) => {
       seen.push(warning);
@@ -1056,7 +1056,7 @@ describe("ensureAnomalyAllowed", () => {
 
   test("decline throws with the trigger and figures", async () => {
     const { ensureAnomalyAllowed, RunawayAnomalyHaltError } = await import(
-      "./budget"
+      "./budget.ts"
     );
     let caught: InstanceType<typeof RunawayAnomalyHaltError> | undefined;
     try {
@@ -1072,7 +1072,7 @@ describe("ensureAnomalyAllowed", () => {
   });
 
   test("approvals never persist: the same tripped check prompts again", async () => {
-    const { ensureAnomalyAllowed } = await import("./budget");
+    const { ensureAnomalyAllowed } = await import("./budget.ts");
     const check = await trippedCheck();
     const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
     await ensureAnomalyAllowed(check, confirm);
@@ -1084,7 +1084,7 @@ describe("ensureAnomalyAllowed", () => {
 describe("runaway anomaly warning formatting", () => {
   test("format names the trigger, the actuals, and the no-raise semantics", async () => {
     const { buildRunawayAnomalyWarning, formatRunawayAnomalyWarning } =
-      await import("./budget");
+      await import("./budget.ts");
     const t = makeTracker();
     t.record(makeUsage(100_000, 1000, 0.35), 2);
     const text = formatRunawayAnomalyWarning(
@@ -1100,7 +1100,7 @@ describe("runaway anomaly warning formatting", () => {
 
   test("approval-request wire shape carries kind, message, and both bases", async () => {
     const { buildRunawayAnomalyWarning, runawayAnomalyApprovalRequest } =
-      await import("./budget");
+      await import("./budget.ts");
     const t = makeTracker(undefined, {
       sessionSpentUsd: 2.5,
       sessionSpentTodayUsd: 2.5,
@@ -1131,7 +1131,7 @@ describe("createRunawayAnomalyGate", () => {
   }
 
   test("one anomalous state prompts once: the same spend level re-checks silently", async () => {
-    const { createRunawayAnomalyGate } = await import("./budget");
+    const { createRunawayAnomalyGate } = await import("./budget.ts");
     const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
     const gate = createRunawayAnomalyGate(confirm);
     const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
@@ -1141,7 +1141,7 @@ describe("createRunawayAnomalyGate", () => {
   });
 
   test("recorded spend past the approved level re-prompts", async () => {
-    const { createRunawayAnomalyGate } = await import("./budget");
+    const { createRunawayAnomalyGate } = await import("./budget.ts");
     const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
     const gate = createRunawayAnomalyGate(confirm);
     const t = trackerPast(0.35);
@@ -1152,7 +1152,7 @@ describe("createRunawayAnomalyGate", () => {
   });
 
   test("approvals do not survive the gate instance (one turn)", async () => {
-    const { createRunawayAnomalyGate } = await import("./budget");
+    const { createRunawayAnomalyGate } = await import("./budget.ts");
     const confirm = vi.fn(() => Promise.resolve({ decision: "approve" as const }));
     const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
     await createRunawayAnomalyGate(confirm).ensureAllowed(check);
@@ -1162,7 +1162,7 @@ describe("createRunawayAnomalyGate", () => {
 
   test("fails closed without a handler and records no approval level", async () => {
     const { createRunawayAnomalyGate, RunawayAnomalyHaltError } = await import(
-      "./budget"
+      "./budget.ts"
     );
     const gate = createRunawayAnomalyGate();
     const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);

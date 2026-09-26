@@ -27,7 +27,7 @@
  * they can be unit tested without Dolt.
  */
 
-import { doltQuery } from "./utils";
+import { doltQuery } from "./utils.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

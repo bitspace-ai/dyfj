@@ -2,8 +2,8 @@ import {
   createMcpHandler,
   legacyStatelessFallback,
   McpServer,
-} from "npm:@modelcontextprotocol/server@2.0.0";
-import { z } from "npm:zod@4.4.3";
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
 import {
   buildMemorySearch,
   type MemorySearchDiagnostic,

@@ -23,7 +23,7 @@
  *     must never carry the value into a log).
  */
 
-import type { SecretsConfig } from "./config";
+import type { SecretsConfig } from "./config.ts";
 
 export type SecretStatus = "resolved" | "already-set" | "unavailable";
 

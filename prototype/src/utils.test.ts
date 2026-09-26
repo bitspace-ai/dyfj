@@ -10,8 +10,8 @@ import {
   normaliseStopReason,
   parseCsvRow,
   parseCSVRows,
-} from "./utils";
-import type { MessageContent } from "./utils";
+} from "./utils.ts";
+import type { MessageContent } from "./utils.ts";
 
 test("generateULID returns a valid ULID", () => {
   const id = generateULID();

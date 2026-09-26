@@ -290,11 +290,11 @@ export function buildMemorySearch(
     query: string,
     traceContext?: McpTraceContext,
   ): Promise<string> => {
-    // SDK imported lazily: this module must load under the node-based test
-    // runner, which cannot resolve Deno `npm:` specifiers. The SDK is only
-    // needed when a recall actually executes under the Deno runtime.
+    // SDK imported lazily: this module must load under the Vitest runner
+    // without pulling in the SDK. The SDK is only needed when a recall
+    // actually executes under the Deno runtime.
     const { Client, StreamableHTTPClientTransport } = await import(
-      "npm:@modelcontextprotocol/client@2.0.0"
+      "@modelcontextprotocol/client"
     );
     const transport = new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: recallRequestInit(config),

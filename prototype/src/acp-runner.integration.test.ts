@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime";
+import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import {
   buildConversationMessages,
   fetchWorkbenchSessionEvents,
-} from "./sessions";
-import { doltExec } from "./utils";
+} from "./sessions.ts";
+import { doltExec } from "./utils.ts";
 
 describe("external ACP runner persistence (integration)", () => {
   test(

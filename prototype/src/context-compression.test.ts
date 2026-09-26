@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { WorkbenchMessage } from "./provider";
+import type { WorkbenchMessage } from "./provider.ts";
 import {
   buildCompressionMessages,
   compressElderTranscript,
@@ -13,7 +13,7 @@ import {
   renderTranscriptForCompression,
   validateCompressionSummary,
   VERBATIM_TAIL_TURNS,
-} from "./context-compression";
+} from "./context-compression.ts";
 
 function summaryWithAllSections(): string {
   return COMPRESSION_SECTIONS.map((s) => `## ${s}\n(none)`).join("\n\n");

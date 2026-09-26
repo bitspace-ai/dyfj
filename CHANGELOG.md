@@ -11,6 +11,16 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Local imports carry explicit extensions; `--sloppy-imports` is gone**: every
+  local import under `prototype/` now names its file (`./utils.ts`), and the
+  inline `npm:` specifiers for the MCP SDK, `zod`, `ulid` and `mysql2` moved into
+  the `prototype/deno.json` import map. `--sloppy-imports` is no longer passed by
+  any task (`compile-cli` included), by the CLI when it autostarts the server,
+  by the launcher's `deno run` fallback, or by the typecheck, integration and golden
+  lanes. Runtime behavior is unchanged. An extensionless local import now fails
+  the typecheck instead of being guessed, which keeps file moves grep-safe.
+  `prototype/scripts/add-import-extensions.ts` rewrites extensionless imports in
+  bulk.
 - **Vitest test and hook timeouts are sized to the suite**: the suite ran on
   Vitest's defaults of 5 seconds per test and 10 seconds per hook. Neither was
   chosen for a suite whose workers spawn and reap real processes. Measured on an
