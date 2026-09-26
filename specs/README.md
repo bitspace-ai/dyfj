@@ -129,9 +129,9 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 
 ### Backlog decisions (2026-09-25)
 
-| #   | Decision                                                                                                                               | Consequence                                                                                                                       |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| D17 | _(superseded by D20)_ **ACP lane retired to the backlog.** It is removed from the runtime, not kept dormant, and git history keeps it. | WO-00 runs before the golden suite; WO-18 withdrawn; golden scenario 8 retired; `backlog/acp-lane.md` holds the re-entry criteria |
+| #   | Decision                                                                                                                               | Consequence                                                                                                                                  |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| D17 | _(superseded by D20)_ **ACP lane retired to the backlog.** It is removed from the runtime, not kept dormant, and git history keeps it. | WO-00 runs before the golden suite; WO-18 withdrawn; golden scenario 8 retired; a backlog note held the re-entry criteria (removed with D20) |
 
 ### Process decisions (2026-09-26)
 
