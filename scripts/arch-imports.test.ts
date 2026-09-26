@@ -151,7 +151,7 @@ Deno.test("an unresolved local import and an unmapped module fail", () => {
     [`${S}/kernel/a.ts`]: 'import { gone } from "./gone";',
     [`${S}/mystery.ts`]: "export {};",
   });
-  assertSome(result.errors, "unresolved local import");
+  assertSome(result.errors, 'unresolved local import "./gone"');
   assertSome(
     result.errors,
     `unmapped module (add it to scripts/arch-layers.json): ${S}/mystery.ts`,
@@ -328,13 +328,21 @@ Deno.test("a stale allow-list entry fails when its edges no longer occur", () =>
 
 Deno.test("an allow-list entry needs a name, a justification, and a test", () => {
   const result = run(CYCLE, {
-    allowList: [{ name: "", edges: [], justification: " ", test: "" }],
+    allowList: [
+      { name: "", edges: [], justification: " ", test: "" },
+      { name: " ", edges: [], justification: " ", test: "" },
+    ],
   });
+  // Two blank names are each reported as missing, never as duplicates.
+  const missing = [
+    "missing name",
+    "missing justification",
+    "no edges",
+    "missing test path",
+  ];
   assertEquals(result.errors, [
-    "allow-list entry #0: missing name",
-    "allow-list entry #0: missing justification",
-    "allow-list entry #0: no edges",
-    "allow-list entry #0: missing test path",
+    ...missing.map((m) => `allow-list entry #0: ${m}`),
+    ...missing.map((m) => `allow-list entry #1: ${m}`),
   ]);
 });
 

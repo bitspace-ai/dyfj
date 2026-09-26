@@ -1,6 +1,11 @@
 {
   "$comment": "Layer rules for the arch.imports lane (specs/01-architecture.md sections 3-4). Units are target directories under prototype/src. `files` maps modules that have not moved yet to their target unit by name; delete an entry when its file moves into the unit's directory. `outside` units are not part of the runtime graph: they may import runtime units, and runtime units may not import them.",
-  "roots": ["prototype/src", "prototype/mcp", "prototype/scripts"],
+  "roots": [
+    "prototype/src",
+    "prototype/mcp",
+    "prototype/scripts",
+    "prototype/diagnostics"
+  ],
   "sourceRoot": "prototype/src",
   "exclude": [".test.ts", ".fixture.ts"],
   "units": [

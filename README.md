@@ -930,8 +930,9 @@ operator's Dolt database. It requires Deno, Dolt, and the pinned Rust toolchain.
 
 `arch.imports` (`scripts/arch-imports.ts`, with its lexer in
 `scripts/arch-imports-lexer.ts`, reported under `test.aggregate`) parses
-static and dynamic local imports under `prototype/src`, `prototype/mcp`, and
-`prototype/scripts`, maps each module to the target layer in
+static and dynamic local imports under `prototype/src`, `prototype/mcp`,
+`prototype/scripts`, and `prototype/diagnostics` (once it exists), maps each
+module to the target layer in
 `specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
 `scripts/arch-layers.json`), and checks import cycles, upward and non-listed
 same-layer edges, the `cli/` allow-list, and dynamic local imports. It runs in

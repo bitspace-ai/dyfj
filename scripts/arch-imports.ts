@@ -273,7 +273,9 @@ export function validateAllowList(
     } else if (names.has(entry.name)) {
       errors.push(`allow-list entry ${label}: duplicate name`);
     }
-    names.add(entry.name);
+    if (typeof entry.name === "string" && entry.name.trim() !== "") {
+      names.add(entry.name);
+    }
     if (
       typeof entry.justification !== "string" ||
       entry.justification.trim() === ""
@@ -339,7 +341,9 @@ export function analyze(input: AnalysisInput): AnalysisResult {
       }
       const target = resolveSpecifier(path, record.specifier, input.exists);
       if (target === undefined) {
-        errors.push(`unresolved local import at ${path}:${record.line}`);
+        errors.push(
+          `unresolved local import "${record.specifier}" at ${path}:${record.line}`,
+        );
         continue;
       }
       // Imports of files outside the scanned roots (schema, contracts, JSON)
