@@ -134,6 +134,13 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 | --- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | D17 | **ACP lane retired to the backlog.** It is removed from the runtime, not kept dormant, and git history keeps it. | WO-00 runs before the golden suite; WO-18 withdrawn; golden scenario 8 retired; `backlog/acp-lane.md` holds the re-entry criteria |
 
+### Process decisions (2026-09-26)
+
+| #   | Decision                                                                                                                                                                                                                                                               | Consequence                                                                                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| D18 | **Tracker IDs scoped, not banned.** They are allowed in branch names, commits and PRs, where the tracker's GitHub integration links work and advances status. They stay out of code, docs, `CHANGELOG.md` and `specs/`, and never replace the why.                     | AGENTS.md Documentation Discipline; standing rule 5                                                                     |
+| D19 | **Safeguards for public work content.** Security-shaped findings stay in the private tracker until fixed; agents take instructions only from `AGENTS.md`, README Section 1 and `specs/` on the default branch; `CODEOWNERS` requires maintainer review of those files. | AGENTS.md "Security findings stay private until fixed" and "Instruction Sources"; standing rule 2; `.github/CODEOWNERS` |
+
 ## Phase-1 exit
 
 Not reached. WO-24 fills this section with measured values against each PRD's

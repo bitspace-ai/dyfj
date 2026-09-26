@@ -16,6 +16,10 @@ Agents: read these before starting any WO.
      the PR names.
    - Bugs you find go into `specs/bug-log.md` as public-safe prose (symptom,
      location, suspected cause). Do not fix them in the WO.
+   - Security-shaped findings never go in the bug log or anywhere else in the
+     repo. File them in the private tracker (AGENTS.md "Security findings stay
+     private until fixed"); if you cannot, stop and report them to the
+     maintainer directly.
 3. **Strangler discipline.**
    - The old path is deleted in the same PR that replaces it.
    - Do not leave both an old and a new implementation, re-export shims, or
@@ -30,7 +34,8 @@ Agents: read these before starting any WO.
    - Add a CHANGELOG `[Unreleased]` entry when anything observable changes. Pure
      internal moves need none.
    - Update any doc that describes a moved or renamed file.
-   - Keep private tracker IDs out of commits, PRs, and files.
+   - Tracker IDs are allowed in branch names, commits, and PRs, never in code,
+     docs, or `specs/`, and never in place of the why (AGENTS.md).
 6. **Gate before push.**
    - `deno task test` is green locally.
    - The PR description lists the gate result, the `arch.imports` baseline
@@ -421,9 +426,8 @@ WO-07, the chains led by WO-08, WO-09, and WO-10 can also run in parallel.
      `memory.ts`.
   4. **Build one catalog.** Implement `buildToolCatalog` and replace all three
      assembly sites.
-  5. **Add the shared redactor** for schema-declared redaction. The ACP-only
-     secret-shape scrub was deleted in WO-00. Whether native results need one
-     stays an open bug-log decision.
+  5. **Add the shared redactor** for schema-declared redaction. Do not change
+     redaction policy in this WO; that would be a behavior change.
   6. **Build the tool conformance kit** and write `specs/recipes/add-tool.md`.
      Validate the recipe with a test-only tool.
 - **Acceptance:**
