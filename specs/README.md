@@ -57,7 +57,7 @@ README Section 1 (Decisions)          what DYFJ is; Layer 0 stances; non-negotia
 | Term                                                           | What it is                                                                                          | Where                   |
 | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------- |
 | **Decision** (`D1`…)                                           | A maintainer choice and its consequence                                                             | Decision log below      |
-| **Spec** (`00`–`03`)                                           | Normative design for one concern. `00` is observed facts, not decisions                             | `specs/0N-*.md`         |
+| **Spec** (`00`–`03`)                                           | Normative design for one concern. `00` is observed facts, not decisions                             | `0N-*.md`               |
 | **PRD**                                                        | Requirements for one workstream: problem, goals, non-goals, requirements, success metrics, risks    | `prd/PRD-NN-*.md`       |
 | **Requirement** (`R1`…)                                        | A checkable condition a PRD must meet; numbered within its PRD                                      | Inside each PRD         |
 | **Work order** (`WO-NN`)                                       | One PR: scope, steps, acceptance, stop-and-ask triggers                                             | `work-orders.md`        |
