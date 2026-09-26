@@ -13,8 +13,9 @@ README are tracked separately in its Revision history section.
 
 - **`arch.imports` gate lane (ratchet mode)**: `scripts/arch-imports.ts` parses
   static and dynamic local imports under `prototype/src`, `prototype/mcp`,
-  `prototype/scripts`, and `prototype/diagnostics` (once it exists) and checks them against the layer rules in
-  `specs/01-architecture.md` §3–4, kept as data in `scripts/arch-layers.json`.
+  `prototype/scripts`, and `prototype/diagnostics` (once it exists) and checks
+  them against the layer rules in `specs/01-architecture.md` §3–4, kept as data
+  in `scripts/arch-layers.json`.
   It detects import cycles (type-only edges included), upward and non-listed
   same-layer edges, `cli/` imports outside its allow-list, and dynamic local
   imports. Today's violations are committed in

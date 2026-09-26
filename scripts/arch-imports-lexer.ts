@@ -49,14 +49,11 @@ function regexAllowed(tokens: readonly Token[]): boolean {
   if (prev.kind !== "punct" || prev.value === "]") return false;
   if (prev.value === ")" || prev.value === "}") return prev.regexNext === true;
   // A postfix `++`/`--` ends an expression, so the `/` is a division.
-  const [third, second] = [
-    tokens[tokens.length - 3],
-    tokens[tokens.length - 2],
-  ];
-  const postfix = (prev.value === "+" || prev.value === "-") &&
-    second?.value === prev.value && third !== undefined &&
-    (third.kind === "id" || third.kind === "num" || third.value === ")" ||
-      third.value === "]");
+  const before = tokens[tokens.length - 2];
+  const postfix = (prev.value === "++" || prev.value === "--") &&
+    before !== undefined &&
+    (before.kind === "id" || before.kind === "num" || before.value === ")" ||
+      before.value === "]");
   return !postfix;
 }
 
@@ -241,6 +238,11 @@ export function tokenize(source: string): Token[] {
       i += 2;
       continue;
     }
+    if ((ch === "+" || ch === "-") && source[i + 1] === ch) {
+      tokens.push({ kind: "punct", value: ch + ch, line });
+      i += 2;
+      continue;
+    }
     if (ch === "." && source[i + 1] === "." && source[i + 2] === ".") {
       tokens.push({ kind: "punct", value: "...", line });
       i += 3;
@@ -334,6 +336,29 @@ function clauseIsTypeOnly(
   return sawElement;
 }
 
+const MEMBER_MODIFIERS = new Set(
+  "static async get set public private protected override readonly".split(" "),
+);
+
+// An object or class method named `import`, as in `{ import(v) { … } }`: the
+// name sits where a member can start, and its parameter list is followed by a
+// body or a return type.
+function isImportMethod(tokens: Token[], at: number): boolean {
+  const prev = tokens[at - 1];
+  const memberStart = prev === undefined ||
+    (prev.kind === "punct" && ["{", "}", ",", ";", "*"].includes(prev.value)) ||
+    (prev.kind === "id" && MEMBER_MODIFIERS.has(prev.value));
+  if (!memberStart) return false;
+  let depth = 0;
+  for (let j = at + 1; j < tokens.length; j++) {
+    if (isPunct(tokens[j], "(")) depth++;
+    else if (isPunct(tokens[j], ")") && --depth === 0) {
+      return isPunct(tokens[j + 1], "{") || isPunct(tokens[j + 1], ":");
+    }
+  }
+  return false;
+}
+
 export function parseImports(source: string): ImportRecord[] {
   const tokens = tokenize(source);
   const records: ImportRecord[] = [];
@@ -346,14 +371,18 @@ export function parseImports(source: string): ImportRecord[] {
     if (isPunct(prev, ".") || isPunct(prev, "?.")) continue;
     const next = tokens[i + 1];
     if (t.value === "import" && isPunct(next, "(")) {
+      if (isImportMethod(tokens, i)) continue;
       const arg = tokens[i + 2];
       const after = tokens[i + 3];
       const literal = arg?.kind === "str" &&
         (isPunct(after, ")") || isPunct(after, ","));
+      // `typeof import("./x")` is a type query: a type-only static edge.
+      const typeQuery = isId(prev, "typeof");
+      if (typeQuery && !literal) continue;
       records.push({
         specifier: literal ? arg!.value : null,
-        kind: "dynamic",
-        typeOnly: false,
+        kind: typeQuery ? "static" : "dynamic",
+        typeOnly: typeQuery,
         line: t.line,
       });
       continue;

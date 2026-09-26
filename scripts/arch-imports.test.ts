@@ -134,6 +134,11 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     function block() {} /import k from "\.\/after-block"/.test(s);
     if (ok) {} else {} /import("\.\/after-else")/.test(s);
     do {} while (0); import l from "./after-do";
+    const u = n + + /import m from "\.\/after-unary"/.source;
+    type Mod = typeof import("./type-query");
+    const helpers = { import(value) { return value; } };
+    class Loader { static async import(path: string): Promise<void> {} }
+    const pick = ok ? import("./ternary") : null;
     obj.import("./method");
   `);
   assertEquals(records.map((r) => r.specifier), [
@@ -143,7 +148,20 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     "./after-postfix",
     "./after-object-paren",
     "./after-do",
+    "./type-query",
+    "./ternary",
   ]);
+});
+
+Deno.test("a typeof import() type query is a type-only static import", () => {
+  assertEquals(
+    parseImports('type M = typeof import("./m");').map((r) => [
+      r.specifier,
+      r.kind,
+      r.typeOnly,
+    ]),
+    [["./m", "static", true]],
+  );
 });
 
 Deno.test("extensionless and .ts specifiers resolve to the same module", () => {
