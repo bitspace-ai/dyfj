@@ -209,10 +209,20 @@ How the work actually happens, separate from what gets built.
 
 - **Tests land with the code, not after it.** Any commit that adds a function
   adds a test for it. PRs without tests are not "ready except for tests" -
-  they're not yet ready. Integration tests run against real dependencies (a real
-  Dolt instance, real model APIs in CI when relevant), not mocks. Mocks are
-  reserved for things that don't exist yet (failure modes we haven't observed,
-  third-party services we haven't integrated).
+  they're not yet ready.
+- **Fakes live at declared ports only, and are proven against the real
+  thing.** A unit or component test replaces a declared port with its in-repo
+  fake; module mocking is banned, and existing Vitest tests that still mock move
+  to this shape as their modules move. Each fake that stands in for a real adapter
+  passes the same conformance suite as that adapter. Real dependencies (a real
+  Dolt instance, real processes, real sockets) belong to the integration tier;
+  third-party network services are faked at the network boundary with loopback
+  servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
+- **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
+  a black-box golden suite (`prototype/testing/golden/`, gate lane
+  `test.golden`) snapshots the engine server and CLI at process level. A
+  snapshot changes only with a stated reason, as `specs/03-testing.md` §4 sets
+  out.
 - **Model integration tests validate generation, not just service health.**
   Ollama `/api/version`, `/api/tags`, and `/api/ps` only prove the server
   process is answering. Workbench integration checks that depend on local
@@ -856,6 +866,7 @@ deno task check           # strict typecheck of production and test import graph
 deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events
+(cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
 
 `deno task test` runs a set of deterministic policy checks, each reported under
@@ -896,8 +907,16 @@ After the policy checks, the gate runs the retired-surface scan, the
 `arch.imports` module-boundary check, the source and recursive test-file
 typechecks, the prototype unit suite, current and historical
 schema checks, non-ignored Rust tests using offline SQLx metadata and no
-inherited `DATABASE_URL`, and an isolated-Dolt integration lane (including UDS
-and MCP round trips). The task resolves the Deno executable selected for the
+inherited `DATABASE_URL`, an isolated-Dolt integration lane (including UDS
+and MCP round trips), and the golden characterization lane (`test.golden`). The
+golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
+model server and a loopback Linear MCP server, runs the engine server and the
+`dyfj` CLI as child processes, and compares normalized captures (stream frames,
+RPC responses, rendered CLI output, and every `events` and `sessions` row a
+scenario writes) with the snapshots committed under
+`prototype/testing/golden/snapshots/`. Its tests get loopback TCP and the exact
+Unix socket of each engine server they start, and cannot write the snapshot
+directory unless run with `--update`. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
 lane and permission grant. The prototype Vitest lane is exclusive and bounded:
 one operator-scoped lock (`$HOME/.dyfj/run/dyfj-vitest-run.lock`) refuses a
@@ -1432,6 +1451,10 @@ Document revisions only. Code and behavior changes are tracked in
   deferred rather than retired; the log-as-ground-truth PRD and the phase-2
   outline are withdrawn in favor of roadmap work; the contract package is open
   to roadmap contract work; the interactive REPL moves to a separate client.
+- 2026-09-26 - Section 4 testing bullets revised to the doctrine in
+  `specs/03-testing.md` §1 (fakes at declared ports, conformance-proven fakes,
+  loopback fakes for third-party services, golden tests pinning behavior);
+  validation guidance documents the golden characterization lane.
 - 2026-09-26 - Validation guidance now documents the `arch.imports` gate lane:
   the layer mapping, the ratchet baseline that may only shrink, the named-cycle
   allow-list, and the non-failing deep-import and size reports.

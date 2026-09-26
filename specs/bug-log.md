@@ -10,6 +10,49 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-26 — **Piped REPL input runs only its first line.**
+  - **Location:** `prototype/src/cli.ts:4035` (`readLineOrNull`) and
+    `prototype/src/cli.ts:813` (`runRepl`).
+  - **Symptom:** when the REPL's stdin delivers several lines and then EOF in
+    one go (for example `printf 'a\nb\n' | dyfj`), only the first line runs as
+    a turn. The REPL then exits with status 0 without running the remaining
+    lines. Input typed line by line, or written one line per prompt, works.
+  - **Suspected cause:** readline emits the buffered lines and `close` while
+    the first turn is still running. Lines that arrive with no pending
+    `question()` are dropped, and the next `readLineOrNull` sees the stream
+    already closed and returns end of input.
+  - **Found during:** WO-01. The golden suite drives the REPL one line per
+    prompt, so it does not pin this.
+- 2026-09-26 — **Session and event timestamps reach RPC clients as
+  second-precision, time-zone-dependent text.**
+  - **Location:** `prototype/src/utils.ts:92` (`doltQuery` converts every
+    column with `String(value)`), surfacing through
+    `prototype/src/sessions.ts:140-141` (`sessions/inspect`) and
+    `prototype/src/sessions.ts:716` (`events/query`).
+  - **Symptom:** `sessions/inspect` and `events/query` return `createdAt` and
+    `updatedAt` as `Date.prototype.toString()` text, for example
+    `Sat Sep 26 2026 21:51:50 GMT+0000 (Coordinated Universal Time)`. The text
+    depends on the server's time zone and drops the microseconds the columns
+    store. `sessions/list` returns ISO 8601 for the same columns.
+  - **Suspected cause:** mysql2 returns `TIMESTAMP` columns as `Date` objects;
+    `doltQuery` stringifies them without a format, and only some readers
+    re-normalize the result.
+  - **Found during:** WO-01 (golden scenario 10 pins the current format).
+- 2026-09-26 — **`sessions/list` can order a resumed session below older
+  activity.**
+  - **Location:** `prototype/src/sessions.ts:216` (`compareSessionActivity`),
+    fed by the second-precision timestamps above.
+  - **Symptom:** sessions whose last activity falls in the same wall-clock
+    second compare equal and fall back to session-id order, which is creation
+    order. A session resumed in the same second as another session's turn
+    therefore sorts below it, although its activity is later. The result
+    depends on timing, so repeated runs of the same sequence can list sessions
+    in different orders.
+  - **Suspected cause:** the comparison uses timestamps that have already lost
+    their sub-second precision.
+  - **Found during:** WO-01. Golden scenario 5 starts its resume on a fresh
+    wall-clock second so that scenario 10's listing is deterministic.
+
 - 2026-09-25 — **Model-registry load errors are silently dropped on the ACP
   dispatch path.**
   - **Location:** `prototype/src/workbench.ts:1535-1543`.

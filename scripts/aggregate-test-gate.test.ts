@@ -350,6 +350,7 @@ Deno.test("fast lanes keep the scans and exclude the heavyweight suites", () => 
       "Prototype unit Vitest suite",
       "Offline-metadata Rust tests",
       "Isolated Dolt integration lane",
+      "Golden characterization suite (test.golden)",
       "Current-schema apply validation",
       "Historical replay plus forward-migration validation",
     ]
@@ -387,6 +388,41 @@ Deno.test("gate arguments select the fast subset and fail closed otherwise", () 
   assertThrows(
     () => parseGateArguments(["--fast", "extra"]),
     "unknown argument",
+  );
+});
+
+Deno.test("aggregate lanes include the golden characterization suite", async () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lane = lanes.find((candidate) =>
+    candidate.label === "Golden characterization suite (test.golden)"
+  );
+  if (!lane) throw new Error("golden characterization lane is missing");
+  assertEquals(lane.checkId, "test.aggregate");
+  assertEquals(lane.command, "/fixtures/runtime/deno");
+  assertEquals(lane.cwd, "/repo/prototype");
+  assertEquals(lane.env, {
+    TMPDIR: "/tmp",
+    DENO_BIN: "/fixtures/runtime/deno",
+  });
+  assertEquals(lane.args.at(-1), "testing/golden/run.ts");
+  // The runner spawns only the selected Deno and needs no network: the
+  // tests' loopback and exact socket grants are the runner's to issue.
+  assertEquals(
+    lane.args.find((argument) => argument.startsWith("--allow-run=")),
+    "--allow-run=/fixtures/runtime/deno",
+  );
+  if (lane.args.some((argument) => argument.startsWith("--allow-net"))) {
+    throw new Error("golden lane runner must not hold a network grant");
+  }
+  if (FAST_LANE_LABELS.includes(lane.label)) {
+    throw new Error("golden lane must not run in the fast subset");
+  }
+  const runner = await Deno.readTextFile("prototype/testing/golden/run.ts");
+  // The lane can never rewrite its own snapshots: write access to the
+  // snapshot directory is granted only for an explicit update.
+  assertStringIncludes(
+    runner,
+    'Deno.args.includes("--update") ? ",testing/golden/snapshots" : ""',
   );
 });
 
@@ -431,6 +467,7 @@ Deno.test("aggregate lanes use one selected Deno command and grant identity", ()
       "Aggregate gate orchestration tests",
       "Prototype unit Vitest suite",
       "Isolated Dolt integration lane",
+      "Golden characterization suite (test.golden)",
     ]
   ) {
     const lane = denoLanes.find((candidate) => candidate.label === label);

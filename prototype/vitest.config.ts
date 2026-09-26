@@ -53,6 +53,8 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
+      // Deno.test files, run by the golden lane (`deno task test:golden`).
+      "testing/golden/**",
     ],
   },
 });
