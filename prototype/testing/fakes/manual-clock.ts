@@ -41,7 +41,11 @@ export class ManualClock {
     if (!Number.isFinite(ms) || ms < 0) {
       throw new RangeError("ManualClock.advance requires a finite ms >= 0");
     }
-    this.#current += ms;
+    const next = this.#current + ms;
+    if (!Number.isFinite(next)) {
+      throw new RangeError("ManualClock.advance would leave the finite range");
+    }
+    this.#current = next;
   }
 
   set(ms: number): void {

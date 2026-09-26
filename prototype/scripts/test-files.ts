@@ -143,6 +143,10 @@ function skipBraces(source: string, from: number): number {
       i = readString(source, i)[1];
       continue;
     }
+    if (source.startsWith("//", i) || source.startsWith("/*", i)) {
+      i = skipTrivia(source, i);
+      continue;
+    }
     if (char === "{") depth++;
     if (char === "}" && --depth === 0) return i + 1;
     i++;

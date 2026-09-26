@@ -56,3 +56,9 @@ Deno.test("ManualClock rejects non-finite start or readings", () => {
     RangeError,
   );
 });
+
+Deno.test("ManualClock.advance cannot overflow to Infinity", () => {
+  const clock = new ManualClock({ start: Number.MAX_VALUE });
+  assertThrows(() => clock.advance(Number.MAX_VALUE), RangeError);
+  assertEquals(clock.now(), Number.MAX_VALUE);
+});
