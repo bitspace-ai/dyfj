@@ -15,12 +15,7 @@ const typeScriptSourcePattern = /\.[cm]?tsx?$/;
 const declarationPattern = /\.d\.[cm]?ts$/;
 const testSourcePattern = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const integrationTestPattern = /\.integration\.(?:test|spec)\.[cm]?[jt]sx?$/;
-// Anchored to a statement at the start of a line, so import text quoted inside
-// a string (a fixture, a diagnostic) never reclassifies a file. Covers
-// `import … from`, the closing `} from` line of a multi-line import, a
-// re-export, and a bare side-effect import.
-const vitestImportPattern =
-  /^\s*(?:(?:import|export)\b[^\n'"`]*?\bfrom|\}\s*from|import)\s*["'](?:npm:)?vitest(?:@[^"'/]*)?(?:\/[^"']*)?["']/m;
+const vitestSpecifierPattern = /^(?:npm:)?vitest(?:@[^/]*)?(?:\/.*)?$/;
 const goldenDirectory = "testing/golden/";
 
 export function isTestSource(path: string): boolean {
@@ -36,8 +31,114 @@ export function isTypecheckSource(path: string): boolean {
     !declarationPattern.test(path) && !isTestSource(path);
 }
 
+/**
+ * The module specifiers of a file's leading import block: the static
+ * `import … from "x"`, `import "x"` and `export … from "x"` statements before
+ * the first other statement, with comments and whitespace skipped. Scanning
+ * stops at the first statement that is not one of those, so import-shaped text
+ * later in the file (a string, a template literal, a comment in the body) is
+ * never read as an import.
+ */
+export function leadingImportSpecifiers(source: string): string[] {
+  const specifiers: string[] = [];
+  let i = source.startsWith("#!") ? lineEnd(source, 0) : 0;
+  for (;;) {
+    i = skipTrivia(source, i);
+    const keyword = readWord(source, i);
+    if (keyword !== "import" && keyword !== "export") return specifiers;
+    const next = source[skipTrivia(source, i + keyword.length)];
+    // `import(…)`, `import.meta` and `export const …` end the import block.
+    if (keyword === "import" && (next === "(" || next === ".")) {
+      return specifiers;
+    }
+    if (keyword === "export" && next !== "*" && next !== "{") {
+      const word = readWord(source, skipTrivia(source, i + keyword.length));
+      if (word !== "type") return specifiers;
+    }
+    i += keyword.length;
+    // A bare `import "x"` or the first string after `from` is the specifier;
+    // strings in a trailing `with { … }` attribute clause are not.
+    let bare = keyword === "import";
+    let afterFrom = false;
+    let specifier: string | undefined;
+    for (;;) {
+      i = skipTrivia(source, i);
+      const char = source[i];
+      if (char === undefined) break;
+      if (char === ";") {
+        i++;
+        break;
+      }
+      if (char === '"' || char === "'") {
+        const [value, end] = readString(source, i);
+        i = end;
+        if (specifier === undefined && (bare || afterFrom)) {
+          specifier = value;
+          // Without a semicolon the statement ends at the line break, unless
+          // an attribute clause follows.
+          const rest = /^[ \t]*(\S*)/.exec(source.slice(i))?.[1] ?? "";
+          if (!rest.startsWith(";") && !/^(?:with|assert)\b/.test(rest)) {
+            break;
+          }
+        }
+        bare = false;
+        continue;
+      }
+      const word = readWord(source, i);
+      if (word !== undefined) {
+        if (word === "from") afterFrom = true;
+        bare = false;
+        i += word.length;
+        continue;
+      }
+      bare = false;
+      i++;
+    }
+    if (specifier === undefined) return specifiers;
+    specifiers.push(specifier);
+  }
+}
+
+function lineEnd(source: string, from: number): number {
+  const end = source.indexOf("\n", from);
+  return end < 0 ? source.length : end + 1;
+}
+
+function skipTrivia(source: string, from: number): number {
+  let i = from;
+  for (;;) {
+    while (i < source.length && /\s/.test(source[i]!)) i++;
+    if (source.startsWith("//", i)) {
+      i = lineEnd(source, i);
+    } else if (source.startsWith("/*", i)) {
+      const end = source.indexOf("*/", i + 2);
+      i = end < 0 ? source.length : end + 2;
+    } else {
+      return i;
+    }
+  }
+}
+
+function readWord(source: string, from: number): string | undefined {
+  return /^[A-Za-z_$][\w$]*/.exec(source.slice(from, from + 64))?.[0];
+}
+
+function readString(source: string, from: number): [string, number] {
+  const quote = source[from];
+  let value = "";
+  let i = from + 1;
+  while (i < source.length && source[i] !== quote) {
+    if (source[i] === "\\") i++;
+    value += source[i] ?? "";
+    i++;
+  }
+  return [value, i + 1];
+}
+
 export function importsVitest(source: string): boolean {
-  return vitestImportPattern.test(source);
+  return leadingImportSpecifiers(source).some((specifier) =>
+    vitestSpecifierPattern.test(specifier)
+  );
 }
 
 export function testSourcesFromPaths(paths: readonly string[]): string[] {

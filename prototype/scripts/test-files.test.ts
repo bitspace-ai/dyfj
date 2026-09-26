@@ -7,6 +7,7 @@ import {
   importsVitest,
   isTypecheckSource,
   isUnitTest,
+  leadingImportSpecifiers,
 } from "./test-files.ts";
 import { parseTypecheckScope } from "./typecheck.ts";
 import { unitTestArgs } from "./run-unit-tests.ts";
@@ -33,10 +34,51 @@ Deno.test("importsVitest recognises every import shape in use", () => {
       // Import text inside a string literal is data, not an import.
       "const fixture = 'import { test } from \"vitest\";';",
       "  'import { test } from \"vitest\";',",
+      // Nor inside a multi-line template literal after the import block.
+      'import { assert } from "@std/assert";\n' +
+      'const fixture = `\nimport { test } from "vitest";\n`;',
+      // Nor in a comment, a dynamic import, or after the first statement.
+      '// import { test } from "vitest";\nDeno.test("x", () => {});',
+      '/*\nimport { test } from "vitest";\n*/\nDeno.test("x", () => {});',
+      'const { test } = await import("vitest");',
+      'Deno.test("x", () => {});\nimport { test } from "vitest";',
     ]
   ) {
     assertEquals(importsVitest(source), false, source);
   }
+});
+
+Deno.test("leadingImportSpecifiers reads only the leading import block", () => {
+  const source = [
+    "#!/usr/bin/env -S deno run",
+    "/**",
+    ' * import { nope } from "doc-comment";',
+    " */",
+    "// a line comment",
+    'import { a, type B } from "./a.ts";',
+    "import {",
+    "  c,",
+    '} from "npm:c@1";',
+    'import "./side-effect.ts";',
+    'import data from "./data.json" with { type: "json" };',
+    'export * from "./re-export.ts";',
+    'export { d } from "./d.ts"',
+    'import e from "./e.ts"',
+    "",
+    "const x = 1;",
+    'import { late } from "./late.ts";',
+  ].join("\n");
+  assertEquals(leadingImportSpecifiers(source), [
+    "./a.ts",
+    "npm:c@1",
+    "./side-effect.ts",
+    "./data.json",
+    "./re-export.ts",
+    "./d.ts",
+    "./e.ts",
+  ]);
+  assertEquals(leadingImportSpecifiers("export const x = 1;"), []);
+  assertEquals(leadingImportSpecifiers(""), []);
 });
 
 Deno.test("isUnitTest keeps integration, golden and Vitest files out", () => {
