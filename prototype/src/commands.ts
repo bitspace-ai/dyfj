@@ -1,5 +1,5 @@
-import { executeReadMemory } from "./memory";
-import type { PermissionLevel } from "./config";
+import { executeReadMemory } from "./memory.ts";
+import type { PermissionLevel } from "./config.ts";
 import {
   executeEditFile,
   executeGlobFiles,
@@ -7,14 +7,14 @@ import {
   executeListFiles,
   executeReadFile,
   executeWriteFile,
-} from "./file-tools";
-import { executeBash } from "./exec-tools";
-import { executeGit, GIT_SUBCOMMANDS } from "./git-tools";
+} from "./file-tools.ts";
+import { executeBash } from "./exec-tools.ts";
+import { executeGit, GIT_SUBCOMMANDS } from "./git-tools.ts";
 import {
   generateSpanId,
   generateULID,
   writeEvent as writeDoltEvent,
-} from "./utils";
+} from "./utils.ts";
 
 export type PrincipalType = "human" | "agent" | "service";
 export type PolicyDecision = "allow" | "ask" | "deny";

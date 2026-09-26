@@ -1,5 +1,5 @@
-import { memoryClearanceFor, type MemoryVisibility } from "../src/memory";
-import type { SqlParam } from "./dolt-config";
+import { memoryClearanceFor, type MemoryVisibility } from "../src/memory.ts";
+import type { SqlParam } from "./dolt-config.ts";
 
 type MemoryType = "user" | "feedback" | "project" | "reference";
 

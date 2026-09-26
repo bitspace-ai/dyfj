@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   sessionWorkspace: undefined as string | null | undefined,
 }));
 
-vi.mock("./utils", () => ({
+vi.mock("./utils.ts", () => ({
   generateULID: () => `01ACP${String(++state.nextId).padStart(21, "0")}`,
   generateTraceId: () => "trace-acp",
   generateSpanId: () => `span-${++state.nextId}`,
@@ -58,7 +58,7 @@ vi.mock("./utils", () => ({
   },
 }));
 
-vi.mock("./sessions", () => ({
+vi.mock("./sessions.ts", () => ({
   buildWorkbenchSessionSlug: (sessionId: string) => `workbench-${sessionId}`,
   buildWorkbenchSessionContent: (input: Record<string, unknown>) =>
     String(input.receipt ?? "# Workbench Session"),
@@ -101,16 +101,16 @@ import {
   reconstructAcpContinuityPrompt,
   runExternalAgentWorkbenchRuntime,
   verifiedRouteFacts,
-} from "./external-agent-runtime";
-import type { WorkbenchMessage } from "./provider";
+} from "./external-agent-runtime.ts";
+import type { WorkbenchMessage } from "./provider.ts";
 import {
   type AcpExecutionProfile,
   type AcpSessionHandle,
   AcpProtocolMessageLimitError,
   AcpSessionUpdateLimitError,
-} from "./acp-client";
-import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map";
-import { DomainError, summarizeError } from "./turn-contract";
+} from "./acp-client.ts";
+import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map.ts";
+import { DomainError, summarizeError } from "./turn-contract.ts";
 
 async function processIsAlive(pid: number): Promise<boolean> {
   const status = await new Deno.Command("bash", {
@@ -3007,8 +3007,8 @@ describe("reconstructed tool history", () => {
         created_at: `2026-09-02 12:00:00.${String(index).padStart(6, "0")}`,
       }));
       const actualSessions = await vi.importActual<
-        typeof import("./sessions")
-      >("./sessions");
+        typeof import("./sessions.ts")
+      >("./sessions.ts");
       const priorEvents = await actualSessions.fetchWorkbenchSessionEvents({
         sessionId,
         query: () =>

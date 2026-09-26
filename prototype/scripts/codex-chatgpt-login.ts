@@ -1,4 +1,4 @@
-import { codexChatGptProfile } from "../src/external-agent-runtime";
+import { codexChatGptProfile } from "../src/external-agent-runtime.ts";
 
 const profile = await codexChatGptProfile(Deno.cwd(), {
   toolchainPath: "",

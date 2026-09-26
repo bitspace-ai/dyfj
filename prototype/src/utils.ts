@@ -1,5 +1,5 @@
 import { ulid } from "ulid";
-import { resolvePrincipalId } from "./config";
+import { resolvePrincipalId } from "./config.ts";
 import process from "node:process";
 
 export type MessageContent =

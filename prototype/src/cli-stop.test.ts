@@ -5,9 +5,9 @@ import {
   type Io,
   parseArgs,
   runStop,
-} from "./cli";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server";
-import { type UnixClient } from "./uds-client";
+} from "./cli.ts";
+import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
+import { type UnixClient } from "./uds-client.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {

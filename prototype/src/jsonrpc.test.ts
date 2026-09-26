@@ -10,7 +10,7 @@ import {
   RpcError,
   RpcErrorCode,
   success,
-} from "./jsonrpc";
+} from "./jsonrpc.ts";
 
 const dec = new TextDecoder();
 

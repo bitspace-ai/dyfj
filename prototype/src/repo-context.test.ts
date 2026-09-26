@@ -14,7 +14,7 @@ import {
   loadAskRepoContext,
   type LoadedRepoContext,
   packContextSections,
-} from "./repo-context";
+} from "./repo-context.ts";
 
 describe("extractReadmeSection1", () => {
   test("returns only README Section 1", () => {

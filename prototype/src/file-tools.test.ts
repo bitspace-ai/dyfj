@@ -22,7 +22,7 @@ import {
   sanitizeOutputText,
   toPosixPath,
   walkNotes,
-} from "./file-tools";
+} from "./file-tools.ts";
 
 // ── resolveWorkspacePath (pure containment) ───────────────────────────────────
 

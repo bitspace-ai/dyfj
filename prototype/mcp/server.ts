@@ -25,13 +25,13 @@
  * SQL directly in each client.
  */
 
-import { McpServer } from "npm:@modelcontextprotocol/server@2.0.0";
-import { serveStdio } from "npm:@modelcontextprotocol/server@2.0.0/stdio";
-import { z } from "npm:zod@4.4.3";
-import { ulid } from "npm:ulid@3.0.2";
-import mysql from "npm:mysql2@3.24.4/promise";
-import { buildDoltPoolOptions, type SqlParam } from "./dolt-config";
-import { listMcpMemories, readMcpMemory } from "./memory-tools";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { z } from "zod";
+import { ulid } from "ulid";
+import mysql from "mysql2/promise";
+import { buildDoltPoolOptions, type SqlParam } from "./dolt-config.ts";
+import { listMcpMemories, readMcpMemory } from "./memory-tools.ts";
 
 type McpMemoryType = "user" | "feedback" | "project" | "reference";
 type McpSessionStatus = "active" | "completed";

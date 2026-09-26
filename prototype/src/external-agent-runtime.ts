@@ -10,32 +10,32 @@ import {
   type AcpToolEvidence,
   assertAcpPromptWithinLimit,
   runAcpAgent,
-} from "./acp-client";
+} from "./acp-client.ts";
 import type {
   AcpContinuityEvidence,
   AcpSessionHandleMap,
-} from "./acp-session-map";
-import type { WorkbenchMessage } from "./provider";
+} from "./acp-session-map.ts";
+import type { WorkbenchMessage } from "./provider.ts";
 import {
   type ExternalAgentWorkbenchRuntimeResult,
   type WorkbenchAuthContext,
   type WorkbenchRuntimeEvent,
   type WorkbenchRuntimeInput,
   workspaceRootForTransport,
-} from "./workbench";
+} from "./workbench.ts";
 import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
   createWorkbenchSession,
   fetchWorkbenchSessionWorkspaceRecord,
   updateWorkbenchSession,
-} from "./sessions";
+} from "./sessions.ts";
 import {
   generateSpanId,
   generateTraceId,
   generateULID,
   writeEvent,
-} from "./utils";
+} from "./utils.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   DomainError,
@@ -44,8 +44,8 @@ import {
   type HistoryOmissionReceipt,
   prependHistoryOmissionNotice,
   sanitizeBoundaryText,
-} from "./turn-contract";
-import { hasDotPathComponent } from "./lexical-path";
+} from "./turn-contract.ts";
+import { hasDotPathComponent } from "./lexical-path.ts";
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
   const home = Deno.env.get("HOME");

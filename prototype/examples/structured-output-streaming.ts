@@ -1,8 +1,8 @@
 import {
   compareStreamingStructuredOutputModes,
   type StreamingStructuredOutputReport,
-} from "../src/structured-output";
-import { defaultLocalWorkbenchModels } from "../src/provider";
+} from "../src/structured-output.ts";
+import { defaultLocalWorkbenchModels } from "../src/provider.ts";
 
 const modelSlug = getArg(Deno.args, "--model") ??
   Deno.env.get("DYFJ_WORKBENCH_MODEL") ??

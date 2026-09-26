@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   compareResponseModes,
   type ResponseModeReport,
-} from "./model-response-modes";
-import type { WorkbenchModel } from "./provider";
+} from "./model-response-modes.ts";
+import type { WorkbenchModel } from "./provider.ts";
 
 const models: WorkbenchModel[] = [{
   slug: "gemma4:e2b",

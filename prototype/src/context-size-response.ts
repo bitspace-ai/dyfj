@@ -4,7 +4,7 @@ import {
   runWorkbenchTurn,
   type WorkbenchModel,
   type WorkbenchRoutingOptions,
-} from "./provider";
+} from "./provider.ts";
 
 export interface ContextPayload {
   label: string;
