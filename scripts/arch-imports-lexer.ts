@@ -314,9 +314,13 @@ function clauseIsTypeOnly(
       continue;
     }
     if (elementStart) {
+      // `type`, `type as X`: a value import of an export named `type`.
+      const next = tokens[j + 1];
+      const renamedType = isId(next, "as") && tokens[j + 2]?.kind === "id" &&
+        (isPunct(tokens[j + 3], ",") || isPunct(tokens[j + 3], "}"));
       if (
-        !isId(t, "type") || isPunct(tokens[j + 1], ",") ||
-        isPunct(tokens[j + 1], "}")
+        !isId(t, "type") || isPunct(next, ",") || isPunct(next, "}") ||
+        renamedType
       ) {
         return false;
       }

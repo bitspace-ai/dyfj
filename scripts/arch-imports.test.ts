@@ -86,6 +86,8 @@ Deno.test("parser finds static, re-export, type-only, and dynamic imports", () =
     import type { T } from "./t";
     import { type U, type V } from "./u.ts";
     import { type W, x } from "./w";
+    import { type as Renamed } from "./renamed-value";
+    import { type as } from "./type-named-as";
     import "./side-effect";
     export { d } from "./d";
     export type { E } from "./e.ts";
@@ -103,6 +105,8 @@ Deno.test("parser finds static, re-export, type-only, and dynamic imports", () =
       ["./t", "static", true],
       ["./u.ts", "static", true],
       ["./w", "static", false],
+      ["./renamed-value", "static", false],
+      ["./type-named-as", "static", true],
       ["./side-effect", "static", false],
       ["./d", "static", false],
       ["./e.ts", "static", true],
@@ -126,6 +130,7 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     const call = f(x) / 2; import h from "./after-division";
     const obj = {} / 2; import i from "./after-object";
     n++ / 2; import j from "./after-postfix";
+    const n = ({ x: 1 }) / import("./after-object-paren");
     function block() {} /import k from "\.\/after-block"/.test(s);
     obj.import("./method");
   `);
@@ -134,6 +139,7 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     "./after-division",
     "./after-object",
     "./after-postfix",
+    "./after-object-paren",
   ]);
 });
 
