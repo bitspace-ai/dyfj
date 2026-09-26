@@ -6,8 +6,9 @@
  * generated `data:` module that side-effect-imports each file, so modules no
  * entry point reaches are still covered. The call is offline (`--no-remote`,
  * `--no-npm`) and config-free; only local `file:` edges are kept, and package
- * specifiers that do not resolve offline are ignored. `--unstable-sloppy-imports`
- * resolves extensionless local specifiers.
+ * specifiers that do not resolve offline are ignored. Local specifiers must
+ * carry their extension, as everywhere in the prototype; an extensionless one
+ * does not resolve and fails the lane.
  *
  * What deno_graph reports, and how it maps onto edges:
  * - A dependency with a `code` entry is a value edge; one with only a `type`
@@ -145,7 +146,6 @@ export async function loadModuleGraph(
       "--no-lock",
       "--no-remote",
       "--no-npm",
-      "--unstable-sloppy-imports",
       rootModuleUrl(root, modules),
     ],
     cwd: root,

@@ -111,6 +111,9 @@ function scanRegex(source: string, start: number): number {
  * nested `${}` expressions), and regex literals, which is all the import
  * parser and the function-size scan need.
  */
+// Multi-character punctuators the span scan and regex detection rely on.
+const MULTI_PUNCT = ["...", "=>", "?.", "++", "--"];
+
 export function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
   let line = 1;
@@ -229,26 +232,13 @@ export function tokenize(source: string): Token[] {
       i++;
       continue;
     }
-    if (ch === "=" && source[i + 1] === ">") {
-      tokens.push({ kind: "punct", value: "=>", line });
-      i += 2;
-      continue;
-    }
-    if (
-      ch === "?" && source[i + 1] === "." && !/[0-9]/.test(source[i + 2] ?? "")
-    ) {
-      tokens.push({ kind: "punct", value: "?.", line });
-      i += 2;
-      continue;
-    }
-    if ((ch === "+" || ch === "-") && source[i + 1] === ch) {
-      tokens.push({ kind: "punct", value: ch + ch, line });
-      i += 2;
-      continue;
-    }
-    if (ch === "." && source[i + 1] === "." && source[i + 2] === ".") {
-      tokens.push({ kind: "punct", value: "...", line });
-      i += 3;
+    const multi = MULTI_PUNCT.find((p) =>
+      source.startsWith(p, i) &&
+      !(p === "?." && /[0-9]/.test(source[i + 2] ?? "")) // `a?.5:b` ternary
+    );
+    if (multi !== undefined) {
+      tokens.push({ kind: "punct", value: multi, line });
+      i += multi.length;
       continue;
     }
     const token: Token = { kind: "punct", value: ch, line };
