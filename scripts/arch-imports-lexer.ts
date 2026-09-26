@@ -1,19 +1,20 @@
 /**
- * Lexer for the arch.imports lane (`arch-imports.ts`): a tokenizer that is
- * exact about comments, strings, template literals, and regex literals; the
- * local-import parser; and the lexical function-span scan behind the size
- * report. Function detection is best-effort, which is acceptable because the
- * size report never fails the lane.
+ * Lexer for the arch.imports lane: a tokenizer for comments, strings, template
+ * literals, and regex literals (regex vs. division is decided from the previous
+ * token); the local-import parser; and the best-effort function-span scan
+ * behind the non-failing size report.
  */
 
-// ---------------------------------------------------------------------------
-// Tokenizer
+// ---- Tokenizer -------------------------------------------------------------
 
 export interface Token {
   kind: "id" | "str" | "num" | "punct" | "tmpl" | "regex";
   value: string;
   line: number;
+  closesControlHead?: boolean; // `)` of an if/while/for/with head: regex next
 }
+
+const CONTROL_HEADS = new Set(["if", "while", "for", "with"]);
 
 const REGEX_AFTER_KEYWORDS = new Set(
   "return typeof instanceof in of new delete void throw case do else yield await"
@@ -32,7 +33,8 @@ function regexAllowed(prev: Token | undefined): boolean {
   if (prev === undefined) return true;
   if (prev.kind === "id") return REGEX_AFTER_KEYWORDS.has(prev.value);
   if (prev.kind === "punct") {
-    return prev.value !== ")" && prev.value !== "]";
+    if (prev.value === ")") return prev.closesControlHead === true;
+    return prev.value !== "]";
   }
   return false;
 }
@@ -95,6 +97,7 @@ export function tokenize(source: string): Token[] {
   // Brace depths at which a template literal's `${` expression was opened.
   const templateStack: number[] = [];
   let braceDepth = 0;
+  const parenHeads: boolean[] = []; // per open `(`: a control-statement head?
 
   const scanTemplate = (startLine: number) => {
     // Called with `i` just past the opening backtick or a closing `}`.
@@ -215,14 +218,20 @@ export function tokenize(source: string): Token[] {
       i += 3;
       continue;
     }
-    tokens.push({ kind: "punct", value: ch, line });
+    const token: Token = { kind: "punct", value: ch, line };
+    if (ch === "(") {
+      const head = tokens[tokens.length - 1];
+      parenHeads.push(head?.kind === "id" && CONTROL_HEADS.has(head.value));
+    } else if (ch === ")" && parenHeads.pop() === true) {
+      token.closesControlHead = true;
+    }
+    tokens.push(token);
     i++;
   }
   return tokens;
 }
 
-// ---------------------------------------------------------------------------
-// Import parsing
+// ---- Import parsing --------------------------------------------------------
 
 export interface ImportRecord {
   specifier: string | null; // null: a non-literal dynamic import
@@ -342,8 +351,7 @@ export function parseImports(source: string): ImportRecord[] {
   return records;
 }
 
-// ---------------------------------------------------------------------------
-// Size report
+// ---- Size report -----------------------------------------------------------
 
 export const MODULE_LINE_LIMIT = 600;
 export const FUNCTION_LINE_LIMIT = 150;

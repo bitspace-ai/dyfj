@@ -125,9 +125,14 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     const t = \`import d from "./template" \${ "x" } import("./in-template")\`;
     const r = /import e from "\\.\\/regex"/g;
     const ratio = total / count; import f from "./real";
+    if (ok) /import g from "\.\/after-control"/.test(s);
+    const call = f(x) / 2; import h from "./after-division";
     obj.import("./method");
   `);
-  assertEquals(records.map((r) => r.specifier), ["./real"]);
+  assertEquals(records.map((r) => r.specifier), [
+    "./real",
+    "./after-division",
+  ]);
 });
 
 Deno.test("extensionless and .ts specifiers resolve to the same module", () => {
@@ -305,6 +310,21 @@ Deno.test("an allow-listed cycle passes, including its dynamic edge", () => {
   assertEquals(result.errors, []);
   assertEquals(result.current, EMPTY);
   assertEquals(result.added, []);
+});
+
+Deno.test("an allow-listed cycle still fails layer and cli/ rules", () => {
+  const up = `${S}/kernel/k.ts -> ${S}/engine/e.ts`;
+  const down = `${S}/engine/e.ts -> ${S}/kernel/k.ts`;
+  const result = run({
+    [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e";',
+    [`${S}/engine/e.ts`]: 'const { k } = await import("../kernel/k");',
+  }, {
+    allowList: [{ ...ENTRY, edges: [up, down] }],
+  });
+  assertEquals(result.errors, []);
+  assertEquals(result.current.cycles, []);
+  assertEquals(result.current.dynamic, []);
+  assertEquals(result.current.layer, [up]);
 });
 
 Deno.test("an allow-list entry whose cited test file is missing fails", () => {

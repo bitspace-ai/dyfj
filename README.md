@@ -941,7 +941,9 @@ ratchet mode: current violations are recorded in
 that baseline and on any baseline entry that no longer occurs, so the baseline
 can only shrink. An intentional cycle is allowed only by a named entry in
 `scripts/arch-cycles.json` (empty today) that lists its exact edges, a
-justification, and an existing test file. Deep imports that bypass a `mod.ts`,
+justification, and an existing test file; an entry exempts its edges from the
+cycle and dynamic-import rules only, never from layer direction or the `cli/`
+allow-list. Deep imports that bypass a `mod.ts`,
 modules over 600 lines, and functions over 150 lines are reported without
 failing. After an intended reduction, regenerate the baseline with
 `deno run --allow-read=. --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
