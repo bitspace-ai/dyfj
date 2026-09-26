@@ -9,7 +9,35 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Added
+
+- **A `Deno.test` unit lane and shared test fakes**: new tests can now be
+  written with `Deno.test`, `@std/assert` and `@std/testing` (pinned in the
+  prototype import map) and run in a fast lane of their own.
+  `deno task test:unit` in `prototype/` runs every non-integration `Deno.test`
+  file with `deno test
+  --parallel`, sanitizers on, and no run, net, or env
+  permission; the aggregate gate runs it as
+  `Prototype unit Deno.test suite (test.unit)`, including under
+  `deno task test:fast`, and the prototype `deno task test` runs it before
+  Vitest. `prototype/testing/fakes/` provides the first port fakes, each with
+  its own tests: `ManualClock`, `SequentialIds`, `MapEnv`, and `fakeIo`. The
+  three copies each of the `fakeIo` and `buildClock` test helpers now import
+  these instead. During the transition a test file's framework is read from its
+  source: files that import `vitest` stay under Vitest, which now excludes every
+  other `*.test.ts`.
+
 ### Changed
+
+- **Typecheck file lists are derived, not hand-maintained**: the prototype
+  `check` task and the aggregate gate's source typecheck each carried their own
+  hand-written list of entry files, and the two had drifted apart. Both now run
+  `deno task check:sources`, which typechecks every non-test module under
+  `src/`, `mcp/`, `scripts/` and `testing/`, found by walking the tree; the
+  test-file typecheck (`check:tests`) uses the same discovery module
+  (`prototype/scripts/test-files.ts`, replacing `check-test-files.ts`). A new
+  module is covered on arrival, and modules that were outside both lists are now
+  typechecked too.
 
 - **Vitest test and hook timeouts are sized to the suite**: the suite ran on
   Vitest's defaults of 5 seconds per test and 10 seconds per hook. Neither was

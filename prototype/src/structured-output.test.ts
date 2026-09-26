@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import {
   compareStreamingStructuredOutputModes,
   compareStructuredOutputModes,
@@ -26,7 +27,7 @@ describe("compareStructuredOutputModes", () => {
       prompt: "Say ok.",
       routing: { modelId: "gemma4:e2b" },
       models,
-      now: buildClock([0, 10, 50, 0, 10, 40]),
+      now: new ManualClock({ readings: [0, 10, 50, 0, 10, 40] }).now,
       fetchFn: buildFakeStructuredOutputFetch(),
     });
 
@@ -65,7 +66,7 @@ describe("compareStreamingStructuredOutputModes", () => {
       rigidPrompt: 'Return strict JSON: {"answer":"ok","confidence":"high"}.',
       routing: { modelId: "gemma4:e2b" },
       models,
-      now: buildClock([0, 10, 30, 90, 0, 10, 40, 100]),
+      now: new ManualClock({ readings: [0, 10, 30, 90, 0, 10, 40, 100] }).now,
       fetchFn: buildFakeStreamingStructuredOutputFetch(),
     });
 
@@ -120,14 +121,6 @@ function streamingSummary(report: StreamingStructuredOutputReport) {
     generation_ms: report.generation_ms,
     time_per_output_token_ms: report.time_per_output_token_ms,
     output_tokens: report.output_tokens,
-  };
-}
-
-function buildClock(values: number[]): () => number {
-  let last = 0;
-  return () => {
-    last = values.shift() ?? last;
-    return last;
   };
 }
 

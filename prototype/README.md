@@ -213,18 +213,36 @@ export DOLT_DATABASE=dolt
 Useful checks:
 
 ```sh
-deno task check          # production and Vitest source typechecking
-deno task check:tests    # Vitest sources only
-deno task test           # checks first, then runs the prototype unit suite
+deno task check          # check:sources, then check:tests
+deno task check:sources  # every non-test module under src, mcp, scripts, testing
+deno task check:tests    # every test file, both frameworks
+deno task test:unit      # Deno.test unit lane (test.unit)
+deno task test           # checks, test:unit, then the Vitest unit suite
 deno task test:file <path>  # run a single test file without full typecheck
                          # (requires a path or -t pattern; exits 2 otherwise)
 deno task verify-workbench-events
 (cd .. && deno task test) # repository aggregate gate
 ```
 
-Use `test:file` for tight iteration loops while developing a single test — it skips
+Use `test:file` for tight iteration loops while developing a single Vitest test — it skips
 the full typecheck and runs only your named file. Use `test` for the gate before commit,
 which typechecks the entire codebase and runs the full suite excluding integration tests.
+
+Both typecheck file lists and the `test.unit` file list are derived by walking the tree
+(`scripts/test-files.ts`); nothing is hand-listed. While the two frameworks coexist, a
+test file's framework is read from its source: a file that imports `vitest` runs under
+Vitest, any other `*.test.ts` is a `Deno.test` file and Vitest excludes it.
+`*.integration.test.ts` files and `testing/golden/` have their own lanes. `test:unit`
+runs `deno test --parallel` with Deno's sanitizers on, read access to the prototype and
+temp roots, write access to temp roots only, and no run, net, or env grant, so unit and
+component tests stay off Dolt, the network, and child processes. Write fixture output to
+`Deno.makeTempDir()`, never the working tree.
+
+Shared test support lives in `testing/` (never imported by runtime code). Today it holds
+the port fakes in `testing/fakes/`: `ManualClock` (`Clock`), `SequentialIds`
+(`IdSource`, ULID-shaped), `MapEnv` (`Env`), and `fakeIo` (the CLI's terminal `Io`). A
+unit test replaces a port with its fake; module mocking is not allowed
+(`specs/03-testing.md` §1).
 
 The root aggregate gate runs the schema, Rust, and isolated-Dolt integration
 lanes in addition to this prototype unit suite. Prototype Vitest is exclusive

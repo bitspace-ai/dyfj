@@ -434,28 +434,11 @@ export function productionLanes(
       command: denoExecutable,
       checkId: "test.aggregate",
       commandLabel: "deno",
-      args: [
-        "check",
-        "--sloppy-imports",
-        "src/workbench.ts",
-        "src/jsonrpc.ts",
-        "src/jsonrpc-peer.ts",
-        "src/uds-server.ts",
-        "src/uds-path.ts",
-        "src/uds-client.ts",
-        "src/uds-serve.ts",
-        "mcp/server.ts",
-        "src/cli.ts",
-        "scripts/esbuild-binary.ts",
-        "scripts/deno-executable.ts",
-        "scripts/integration-child-environment.ts",
-        "scripts/run-vitest.ts",
-        "scripts/test-process-harness.ts",
-        "scripts/test-process-reaper.ts",
-        "scripts/isolated-dolt-fixture.ts",
-        "scripts/isolated-dolt-integration.ts",
-      ],
+      // The file list is derived by globbing in `scripts/test-files.ts`, the
+      // same source the `check` task uses; nothing is hand-listed here.
+      args: ["task", "check:sources"],
       cwd: prototype,
+      env: { DENO_BIN: denoExecutable },
     },
     {
       label: "Prototype test-file typecheck",
@@ -465,6 +448,15 @@ export function productionLanes(
       args: ["task", "check:tests"],
       cwd: prototype,
       env: { DENO_BIN: denoExecutable },
+    },
+    {
+      label: "Prototype unit Deno.test suite (test.unit)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: ["task", "test:unit"],
+      cwd: prototype,
+      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
     {
       label: "Prototype unit Vitest suite",
@@ -626,6 +618,7 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Contract closure report generation",
   "Contract package tests",
   "Prototype source typecheck",
+  "Prototype unit Deno.test suite (test.unit)",
 ];
 
 export function fastLanes(

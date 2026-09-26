@@ -59,6 +59,7 @@ import {
 import { serveWorkbenchUnix } from "./uds-server";
 import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client";
 import { DomainError } from "./turn-contract";
+import { fakeIo } from "../testing/fakes/fake-io.ts";
 import type {
   SupersedingRetryStartedEvent,
   TurnStreamFrame,
@@ -244,29 +245,6 @@ function unparsedMarkupEvent(): Record<string, unknown> {
     count: 64,
     countIsLowerBound: true,
   } satisfies UnparsedToolCallMarkupDetectedEvent;
-}
-
-function fakeIo(
-  lines: string[] = [],
-  opts: { errIsTerminal?: boolean } = {},
-) {
-  const queue = [...lines];
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  const raw: string[] = [];
-  const prompts: string[] = [];
-  const io: Io = {
-    out: (text) => stdout.push(text),
-    err: (line) => stderr.push(line),
-    errRaw: (text) => raw.push(text),
-    errIsTerminal: opts.errIsTerminal,
-    readLine: (prompt) => {
-      prompts.push(prompt);
-      return Promise.resolve(queue.length ? queue.shift()! : null);
-    },
-    close: () => {},
-  };
-  return { io, stdout, stderr, raw, prompts };
 }
 
 // ── socketTurn (turns over the UDS seam) ─────────────────────────────────────

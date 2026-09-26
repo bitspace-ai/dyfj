@@ -209,10 +209,14 @@ How the work actually happens, separate from what gets built.
 
 - **Tests land with the code, not after it.** Any commit that adds a function
   adds a test for it. PRs without tests are not "ready except for tests" -
-  they're not yet ready. Integration tests run against real dependencies (a real
-  Dolt instance, real model APIs in CI when relevant), not mocks. Mocks are
-  reserved for things that don't exist yet (failure modes we haven't observed,
-  third-party services we haven't integrated).
+  they're not yet ready. The test doctrine is
+  [`specs/03-testing.md`](specs/03-testing.md) §1: a unit or component test
+  replaces only a declared port with its in-repo fake (shared fakes live in
+  `prototype/testing/`); module mocking is banned; real dependencies (Dolt,
+  child processes, sockets) belong to the integration tier, where third-party
+  network services are faked at the network boundary by loopback servers. New
+  tests use `Deno.test` with `@std/assert` and `@std/testing`; Vitest is being
+  retired as tests move with their modules.
 - **Model integration tests validate generation, not just service health.**
   Ollama `/api/version`, `/api/tags`, and `/api/ps` only prove the server
   process is answering. Workbench integration checks that depend on local
@@ -851,7 +855,7 @@ Useful validation tasks:
 
 ```sh
 deno task test            # repository aggregate gate (full green bar)
-deno task test:fast       # policy checks + source typecheck, for local feedback
+deno task test:fast       # policy checks, source typecheck, Deno.test unit lane
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
@@ -893,7 +897,11 @@ private gates (disclosure review, independent model review, operator acceptance)
 remain outside this repository.
 
 After the policy checks, the gate runs the retired-surface scan, the source and
-recursive test-file typechecks, the prototype unit suite, current and historical
+test-file typechecks (both file lists derived by walking the tree in
+`prototype/scripts/test-files.ts`, never hand-listed), the prototype `Deno.test`
+unit lane (`test.unit`: every non-integration `Deno.test` file, run in parallel
+with sanitizers on and no run, net, or env grant), the prototype Vitest unit
+suite (files that import `vitest`; it may only shrink), current and historical
 schema checks, non-ignored Rust tests using offline SQLx metadata and no
 inherited `DATABASE_URL`, and an isolated-Dolt integration lane (including UDS
 and MCP round trips). The task resolves the Deno executable selected for the
@@ -1411,3 +1419,7 @@ Document revisions only. Code and behavior changes are tracked in
   deferred rather than retired; the log-as-ground-truth PRD and the phase-2
   outline are withdrawn in favor of roadmap work; the contract package is open
   to roadmap contract work; the interactive REPL moves to a separate client.
+- 2026-09-26 - Section 4's testing bullet now points at the phase-1 test
+  doctrine (fakes only at declared ports, no module mocking, `Deno.test` for new
+  tests); the validation notes describe the glob-derived typecheck lists and the
+  `test.unit` lane.
