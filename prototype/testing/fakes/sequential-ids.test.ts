@@ -44,3 +44,10 @@ Deno.test("SequentialIds.issued is a copy", () => {
   (ids.issued as string[]).push("tampered");
   assertEquals(ids.issued.length, 1);
 });
+
+Deno.test("SequentialIds fails once the safe-integer range is exhausted", () => {
+  const ids = new SequentialIds({ start: Number.MAX_SAFE_INTEGER });
+  assertEquals(ids.next(), String(Number.MAX_SAFE_INTEGER).padStart(26, "0"));
+  assertThrows(() => ids.next(), RangeError);
+  assertEquals(ids.issued.length, 1);
+});

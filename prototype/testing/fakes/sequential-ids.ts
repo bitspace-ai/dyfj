@@ -25,6 +25,11 @@ export class SequentialIds {
 
   /** The next ID. Bound, so it can be passed as a `() => string`. */
   readonly next = (): string => {
+    // Past the safe-integer range the counter stops being exact and IDs could
+    // repeat or skip; fail instead of issuing a non-deterministic ID.
+    if (!Number.isSafeInteger(this.#nextValue)) {
+      throw new RangeError("SequentialIds exhausted the safe-integer range");
+    }
     const id = String(this.#nextValue).padStart(ULID_LENGTH, "0");
     this.#nextValue += 1;
     this.#issued.push(id);
