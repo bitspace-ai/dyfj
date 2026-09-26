@@ -1,0 +1,8 @@
+# Agent instructions are executable: AGENTS.md, README Section 1, and specs/
+# direct what agents do, so changes to them need maintainer review
+# (AGENTS.md "Instruction Sources"). Takes effect when branch protection
+# requires code-owner review.
+/AGENTS.md          @bitspace
+/README.md          @bitspace
+/specs/             @bitspace
+/.github/CODEOWNERS @bitspace

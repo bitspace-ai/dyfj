@@ -1,7 +1,8 @@
 # Phase-1 bug log
 
 Phase 1 freezes behavior, so bugs found during restructuring are recorded here
-and not fixed inline. Each entry must be public-safe prose.
+and not fixed inline. Each entry must be public-safe prose. Security-shaped
+findings are never recorded here; they go to the private tracker (AGENTS.md).
 
 Entry format: date, symptom, location (`file:line` at the time found), suspected
 cause, and the work order that found it. Fixes land as separate, dedicated
@@ -9,12 +10,6 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
-- 2026-09-25 — **Native tool results get no secret-shape scrub.** The only scrub
-  was the ACP-history one (`prototype/src/external-agent-runtime.ts:530-553`),
-  which is deleted with the lane (WO-00).
-  - **Status:** decision needed. Should native tool results get a secret-shape
-    scrub before they are persisted as events?
-  - **Found during:** baseline analysis.
 - 2026-09-25 — **Ideas and packets are lost on server restart.**
   - **Location:** `prototype/src/idea-packet.ts:809`
     (`defaultIdeaPacketRegistry`, a module-level in-memory singleton).

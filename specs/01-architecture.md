@@ -217,11 +217,9 @@ is its projection and the legacy `ToolDefinition` is deleted.
   `uds-server.ts:796`).
 - **Adding a tool** means one module plus one catalog line, and passing the tool
   conformance kit.
-- **Redaction** goes through one shared redactor in `tools/`. It covers both
-  schema-declared redaction. The secret-shape scrub that existed only for ACP
-  history is deleted with that lane (WO-00). Whether native tool results should
-  get a secret-shape scrub is a behavior change, so it is **logged for decision,
-  not done** in phase 1.
+- **Redaction** goes through one shared redactor in `tools/`, which applies
+  schema-declared redaction. Any change to redaction policy is a behavior change
+  and out of scope for phase 1.
 
 ### 5.5 MCP client
 

@@ -136,9 +136,10 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 
 ### Process decisions (2026-09-26)
 
-| #   | Decision                                                                                                                                                                                                                                           | Consequence                                         |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| D18 | **Tracker IDs scoped, not banned.** They are allowed in branch names, commits and PRs, where the tracker's GitHub integration links work and advances status. They stay out of code, docs, `CHANGELOG.md` and `specs/`, and never replace the why. | AGENTS.md Documentation Discipline; standing rule 5 |
+| #   | Decision                                                                                                                                                                                                                                                               | Consequence                                                                                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| D18 | **Tracker IDs scoped, not banned.** They are allowed in branch names, commits and PRs, where the tracker's GitHub integration links work and advances status. They stay out of code, docs, `CHANGELOG.md` and `specs/`, and never replace the why.                     | AGENTS.md Documentation Discipline; standing rule 5                                                                     |
+| D19 | **Safeguards for public work content.** Security-shaped findings stay in the private tracker until fixed; agents take instructions only from `AGENTS.md`, README Section 1 and `specs/` on the default branch; `CODEOWNERS` requires maintainer review of those files. | AGENTS.md "Security findings stay private until fixed" and "Instruction Sources"; standing rule 2; `.github/CODEOWNERS` |
 
 ## Phase-1 exit
 
