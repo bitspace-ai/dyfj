@@ -25,7 +25,6 @@ export function unitTestArgs(files: readonly string[]): string[] {
     "--sanitize-ops",
     "--sanitize-resources",
     "--no-prompt",
-    "--sloppy-imports",
     `--allow-read=.,${temp}`,
     `--allow-write=${temp}`,
     ...files,

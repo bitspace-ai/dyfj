@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { type BashRunner, buildSafeBashEnv, executeBash } from "./exec-tools";
+import { type BashRunner, buildSafeBashEnv, executeBash } from "./exec-tools.ts";
 
 // A canned runner so these tests never spawn a real process.
 const cannedRunner = (

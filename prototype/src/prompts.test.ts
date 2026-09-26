@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 
-vi.mock("./utils", () => ({
+vi.mock("./utils.ts", () => ({
   doltQuery: (...args: unknown[]) => mockDoltQuery(...args),
 }));
 
@@ -9,7 +9,7 @@ let mockDoltQuery: (
 ) => Promise<Array<Record<string, unknown>>>;
 
 const { loadCompanionBasePrompt, DEFAULT_COMPANION_PROMPT } = await import(
-  "./prompts"
+  "./prompts.ts"
 );
 
 describe("loadCompanionBasePrompt", () => {

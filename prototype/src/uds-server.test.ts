@@ -5,13 +5,13 @@ import {
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
   type WorkbenchUnixServerOptions,
-} from "./uds-server";
-import { JsonRpcPeer } from "./jsonrpc-peer";
-import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
-import type { WorkbenchHttpRuntime } from "./turn-runner";
-import type { TurnStreamFrame } from "./turn-contract";
-import type { CommandDefinition } from "./commands";
-import { installRuntimeSigintHandler } from "./runtime-sigint";
+} from "./uds-server.ts";
+import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc.ts";
+import type { WorkbenchHttpRuntime } from "./turn-runner.ts";
+import type { TurnStreamFrame } from "./turn-contract.ts";
+import type { CommandDefinition } from "./commands.ts";
+import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -490,7 +490,7 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("runtime close shuts down warm ACP sessions", async () => {
-    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const { AcpSessionHandleMap } = await import("./acp-session-map.ts");
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     let closed = false;
     await map.acquire({
@@ -535,7 +535,7 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("foreground SIGINT closes the server and reaps warm ACP sessions", async () => {
-    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const { AcpSessionHandleMap } = await import("./acp-session-map.ts");
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     let closed = false;
     await map.acquire({
@@ -628,7 +628,7 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("runtime/stop reaps warm ACP sessions then returns stopping", async () => {
-    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const { AcpSessionHandleMap } = await import("./acp-session-map.ts");
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     let closed = false;
     await map.acquire({

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { startIsolatedDoltFixture, waitForSql } from "./isolated-dolt-fixture";
+import { startIsolatedDoltFixture, waitForSql } from "./isolated-dolt-fixture.ts";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url)).replace(

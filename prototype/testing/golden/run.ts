@@ -26,7 +26,6 @@ try {
   const child = new Deno.Command(deno, {
     args: [
       "test",
-      "--sloppy-imports",
       `--allow-env=${[...forwarded, "DYFJ_GOLDEN_ROOT"].join(",")}`,
       `--allow-read=..,${tempWrite}`,
       // Only an explicit update may write snapshots; the lane cannot.

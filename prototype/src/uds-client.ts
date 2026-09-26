@@ -2,8 +2,8 @@
 // Engine-free: imports only the protocol core + peer, never the runtime — so the
 // client binary stays small and can migrate to Rust under the same contract.
 
-import { JsonRpcPeer } from "./jsonrpc-peer";
-import type { RpcHandlers } from "./jsonrpc";
+import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+import type { RpcHandlers } from "./jsonrpc.ts";
 
 export interface UnixClient {
   request(

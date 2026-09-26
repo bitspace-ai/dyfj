@@ -1,9 +1,9 @@
-import { doltQuery, closeDoltPool } from "../src/utils";
-import { runWorkbench } from "../src/workbench";
+import { doltQuery, closeDoltPool } from "../src/utils.ts";
+import { runWorkbench } from "../src/workbench.ts";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
-} from "../src/workbench-events";
+} from "../src/workbench-events.ts";
 
 const prompt = "Say ok.";
 const captured: string[] = [];

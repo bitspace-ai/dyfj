@@ -297,7 +297,6 @@ async function startEngineServer(
     args: [
       "run",
       "--no-prompt",
-      "--sloppy-imports",
       `--config=${prototypeRoot}/deno.json`,
       `--allow-env=${launch.server.env.join(",")}`,
       "--allow-read",
@@ -359,7 +358,6 @@ function spawnCli(
     args: [
       "run",
       "--no-prompt",
-      "--sloppy-imports",
       `--config=${prototypeRoot}/deno.json`,
       `--allow-env=${launch.cli.env.join(",")}`,
       "--allow-read",

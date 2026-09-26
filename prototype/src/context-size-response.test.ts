@@ -3,8 +3,8 @@ import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import {
   compareContextPayloads,
   type ContextPayloadReport,
-} from "./context-size-response";
-import type { WorkbenchModel } from "./provider";
+} from "./context-size-response.ts";
+import type { WorkbenchModel } from "./provider.ts";
 
 const models: WorkbenchModel[] = [{
   slug: "gemma4:e2b",

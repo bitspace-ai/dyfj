@@ -7,8 +7,8 @@ import {
   ContextWindowOverflowError,
   isBudgetRefusal,
   LENGTH_CONTINUATION_NUDGE,
-} from "./length-recovery";
-import type { WorkbenchMessage } from "./provider";
+} from "./length-recovery.ts";
+import type { WorkbenchMessage } from "./provider.ts";
 
 describe("classifyLengthStop", () => {
   test("output at the catalog output cap is output-budget exhaustion", () => {

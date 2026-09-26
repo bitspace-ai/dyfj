@@ -1,8 +1,8 @@
 // Idea marking and Work Packet drafting domain model for Workbench.
 // Enriches candidate ideas and draft work packets with supplied session context.
 
-import { generateULID } from "./utils";
-import type { WorkbenchSessionEvent } from "./sessions";
+import { generateULID } from "./utils.ts";
+import type { WorkbenchSessionEvent } from "./sessions.ts";
 
 export interface WorkbenchIdea {
   ideaId: string;

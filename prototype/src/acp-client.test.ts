@@ -19,7 +19,7 @@ import {
   startAcpSession,
   tokenUsageFromPromptResponse,
   usageSnapshotFromUpdate,
-} from "./acp-client";
+} from "./acp-client.ts";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},

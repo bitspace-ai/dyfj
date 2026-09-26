@@ -2,15 +2,15 @@ import {
   Client,
   type FetchLike,
   StreamableHTTPClientTransport,
-} from "npm:@modelcontextprotocol/client@2.0.0";
+} from "@modelcontextprotocol/client";
 import {
   acceptedContent,
   completable,
   createMcpHandler,
   inputRequired,
   McpServer,
-} from "npm:@modelcontextprotocol/server@2.0.0";
-import { z } from "npm:zod@4.4.3";
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
 import { buildMemorySearch } from "./memory-search.ts";
 import { extractMcpTraceContext } from "./mcp-conformance.ts";
 

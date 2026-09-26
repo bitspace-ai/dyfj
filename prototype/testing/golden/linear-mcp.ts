@@ -9,8 +9,8 @@
 import {
   createMcpHandler,
   McpServer,
-} from "npm:@modelcontextprotocol/server@2.0.0";
-import { z } from "npm:zod@4.4.3";
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 export const LINEAR_ISSUE_IDENTIFIER = "GOLD-1";
 export const LINEAR_MCP_TOKEN = "golden-linear-token";

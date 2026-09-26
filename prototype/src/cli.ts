@@ -26,27 +26,27 @@ import {
   takeCodePointPrefix,
   type TurnReceipt,
   type TurnStreamFrame,
-} from "./turn-contract";
+} from "./turn-contract.ts";
 import {
   connectUnixClient,
   type ToolApprovalVerdict,
   type UnixClient,
   type UnixClientOptions,
-} from "./uds-client";
-import { RpcError, RpcErrorCode } from "./jsonrpc";
-import { resolveSocketPath } from "./uds-path";
-import { assertSecureMemoryUrl } from "./memory-search";
+} from "./uds-client.ts";
+import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
+import { resolveSocketPath } from "./uds-path.ts";
+import { assertSecureMemoryUrl } from "./memory-search.ts";
 import {
   loadMcpServersConfig,
   loadSecretsConfig,
   type McpHttpServerConfig,
   type SecretsConfig,
-} from "./config";
-import { mcpServerNetGrants } from "./mcp-net-grants";
-import { secretsRunGrant } from "./secrets";
-import { createStreamingMarkdownRenderer } from "./streaming-markdown";
-import { type BusySpinner, createBusySpinner } from "./busy-spinner";
-import { hasDotPathComponent } from "./lexical-path";
+} from "./config.ts";
+import { mcpServerNetGrants } from "./mcp-net-grants.ts";
+import { secretsRunGrant } from "./secrets.ts";
+import { createStreamingMarkdownRenderer } from "./streaming-markdown.ts";
+import { type BusySpinner, createBusySpinner } from "./busy-spinner.ts";
+import { hasDotPathComponent } from "./lexical-path.ts";
 import {
   defaultIdeaPacketRegistry,
   draftWorkPacketFromContext,
@@ -59,9 +59,9 @@ import {
   stripOuterQuotes,
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
-} from "./idea-packet";
-import type { WorkbenchSessionEvent } from "./sessions";
-import { type FrictionPostResult, normalizeFrictionContext } from "./friction";
+} from "./idea-packet.ts";
+import type { WorkbenchSessionEvent } from "./sessions.ts";
+import { type FrictionPostResult, normalizeFrictionContext } from "./friction.ts";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and stream frame shapes are defined once in turn-contract.ts and
@@ -3316,7 +3316,6 @@ export function buildServeUnixArgs(
     // committed profile — only launch-resolved from the operator's config.
     ...(envGrants != null ? [`--allow-env=${envGrants.join(",")}`] : []),
     "--env-file=.env",
-    "--sloppy-imports",
     "src/uds-serve.ts",
     ...(autostarted ? ["--autostarted"] : []),
   ];

@@ -17,7 +17,7 @@
  * words" as model-generated like the rest of the summary.
  */
 
-import type { WorkbenchMessage } from "./provider";
+import type { WorkbenchMessage } from "./provider.ts";
 
 /**
  * Proactive trigger: compress when the seeded transcript's estimated tokens

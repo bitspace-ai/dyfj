@@ -4,9 +4,9 @@ import {
   formatRuntimeStatus,
   parseArgs,
   runStop,
-} from "./cli";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server";
-import { type UnixClient } from "./uds-client";
+} from "./cli.ts";
+import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
+import { type UnixClient } from "./uds-client.ts";
 import { fakeIo } from "../testing/fakes/fake-io.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];

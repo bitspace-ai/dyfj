@@ -2,20 +2,20 @@ import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
   SpendBaselines,
-} from "./budget";
+} from "./budget.ts";
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
   RunawayAnomalyHaltError,
-} from "./budget";
-import type { WorkbenchRoutingOptions } from "./provider";
-import type { WorkbenchCallTimings } from "./provider";
+} from "./budget.ts";
+import type { WorkbenchRoutingOptions } from "./provider.ts";
+import type { WorkbenchCallTimings } from "./provider.ts";
 import type {
   WorkbenchMessage,
   WorkbenchModel,
   WorkbenchToolCall,
   WorkbenchTurnResult,
-} from "./provider";
+} from "./provider.ts";
 import {
   HostedInferenceRequiresProviderError,
   HostedProviderCredentialMissingError,
@@ -24,16 +24,16 @@ import {
   WorkbenchModelFastSpeedUnsupportedError,
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
-} from "./provider";
-import { RpcError } from "./jsonrpc";
-import type { PackedContextSummary } from "./repo-context";
-import type { AskContextProfile } from "./repo-context";
-import { loadAgentsInstructions } from "./repo-context";
-import type { WorkspaceRootIdentity } from "./repo-context";
-import type { CommandDefinition, ConfirmToolApproval } from "./commands";
-import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
-import type { AcpSessionHandleMap } from "./acp-session-map";
-import type { PermissionLevel } from "./config";
+} from "./provider.ts";
+import { RpcError } from "./jsonrpc.ts";
+import type { PackedContextSummary } from "./repo-context.ts";
+import type { AskContextProfile } from "./repo-context.ts";
+import { loadAgentsInstructions } from "./repo-context.ts";
+import type { WorkspaceRootIdentity } from "./repo-context.ts";
+import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
+import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
+import type { AcpSessionHandleMap } from "./acp-session-map.ts";
+import type { PermissionLevel } from "./config.ts";
 import type {
   ExternalAgentTurnReceipt,
   HistoryOmissionProjection,
@@ -42,7 +42,7 @@ import type {
   SupersedingRetryStartedEvent,
   TurnAbortedEvent,
   UnparsedToolCallMarkupDetectedEvent,
-} from "./turn-contract";
+} from "./turn-contract.ts";
 import {
   buildHistoryOmissionNotice,
   DomainError,
@@ -51,11 +51,11 @@ import {
   MAX_REASON_FIELD_BYTES,
   sanitizeBoundaryText,
   summarizeError,
-} from "./turn-contract";
+} from "./turn-contract.ts";
 import type {
   CompressionCompletion,
   CompressionOutcome,
-} from "./context-compression";
+} from "./context-compression.ts";
 import {
   compressElderTranscript,
   COMPRESSION_SYSTEM_PROMPT,
@@ -64,19 +64,19 @@ import {
   partitionForCompression,
   SUMMARY_TRUST_POLICY,
   VERBATIM_TAIL_TURNS,
-} from "./context-compression";
+} from "./context-compression.ts";
 import type {
   ContextOverflowRecoverer,
   LengthRecoveryOutcome,
   LengthStopClassification,
-} from "./length-recovery";
+} from "./length-recovery.ts";
 import {
   buildContinuationMessages,
   classifyLengthStop,
   CONTEXT_OVERFLOW_WINDOW_FRACTION,
   ContextWindowOverflowError,
   isBudgetRefusal,
-} from "./length-recovery";
+} from "./length-recovery.ts";
 import {
   AGENT_DEFAULTS,
   ANOMALY_DEFAULTS,
@@ -87,8 +87,8 @@ import {
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
   resolveTrustWorkspaceInstructionsFromEnv,
-} from "./config";
-import { resolveSecretsIntoEnv } from "./secrets";
+} from "./config.ts";
+import { resolveSecretsIntoEnv } from "./secrets.ts";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 
@@ -1415,7 +1415,7 @@ export async function runWorkbench(
   // This in-process one-shot path owns the Dolt pool lifecycle: the
   // runtime no longer closes it, so close here after the single turn so the
   // process exits cleanly.
-  const { closeDoltPool } = await import("./utils");
+  const { closeDoltPool } = await import("./utils.ts");
   try {
     return await runWorkbenchRuntime({
       ...runtimeInput,
@@ -1484,7 +1484,7 @@ export async function runWorkbenchRuntime(
       }
     }
     const { runExternalAgentWorkbenchRuntime } = await import(
-      "./external-agent-runtime"
+      "./external-agent-runtime.ts"
     );
     return await runExternalAgentWorkbenchRuntime({
       ...runtimeInput,
@@ -1499,7 +1499,7 @@ export async function runWorkbenchRuntime(
     withDefaultLocalWorkbenchModels,
     WorkbenchModelNotFoundError,
     WorkbenchModelNotRoutableError,
-  } = await import("./provider");
+  } = await import("./provider.ts");
 
   let acpProfile: "codex-chatgpt" | "fixture" | null = null;
   let acpSelectedModelSlug: string | null = null;
@@ -1574,7 +1574,7 @@ export async function runWorkbenchRuntime(
       }
     }
     const { runExternalAgentWorkbenchRuntime } = await import(
-      "./external-agent-runtime"
+      "./external-agent-runtime.ts"
     );
     return await runExternalAgentWorkbenchRuntime({
       ...runtimeInput,
@@ -1601,7 +1601,7 @@ async function runNativeWorkbenchRuntime(
     generateSpanId,
     writeEvent,
     writeModelSelectedEvent,
-  } = await import("./utils");
+  } = await import("./utils.ts");
   const {
     defaultLocalWorkbenchModels,
     estimateTextTokens,
@@ -1613,35 +1613,35 @@ async function runNativeWorkbenchRuntime(
     runWorkbenchTurn,
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
-  } = await import("./provider");
+  } = await import("./provider.ts");
   const {
     BudgetTracker,
     ceilingConfirmationStoreFor,
     createRunawayAnomalyGate,
     createTurnBudgetCeilingGate,
     fetchSpendBaselines,
-  } = await import("./budget");
+  } = await import("./budget.ts");
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
     loadAskRepoContext,
-  } = await import("./repo-context");
-  const { loadCompanionBasePrompt } = await import("./prompts");
+  } = await import("./repo-context.ts");
+  const { loadCompanionBasePrompt } = await import("./prompts.ts");
   const {
     buildMemoryContextSourceLines,
     loadInjectedMemories,
     loadIndexedMemories,
     buildSystemPrompt,
     memoryClearanceFor,
-  } = await import("./memory");
+  } = await import("./memory.ts");
   const {
     createCommandRegistry,
     invokeCommandWithEvent,
     registerCoreCommands,
-  } = await import("./commands");
-  const { externalMcpCommandsForTransport } = await import("./mcp-tools");
+  } = await import("./commands.ts");
+  const { externalMcpCommandsForTransport } = await import("./mcp-tools.ts");
   const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
-    "./memory-search"
+    "./memory-search.ts"
   );
   const {
     buildWorkbenchSessionContent,
@@ -1649,7 +1649,7 @@ async function runNativeWorkbenchRuntime(
     createWorkbenchSession,
     fetchWorkbenchSessionWorkspace,
     updateWorkbenchSession,
-  } = await import("./sessions");
+  } = await import("./sessions.ts");
 
   const {
     mode,

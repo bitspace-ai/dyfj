@@ -5,7 +5,7 @@
 // transport-agnostic — the UDS server peer, the CLI client, and the WS path all
 // build on this. The wire shape and error codes follow the transport-seam contract.
 
-import { DomainError, summarizeError } from "./turn-contract";
+import { DomainError, summarizeError } from "./turn-contract.ts";
 
 export const JSONRPC_VERSION = "2.0";
 

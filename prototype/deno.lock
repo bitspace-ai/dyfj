@@ -1041,9 +1041,12 @@
       "jsr:@std/toml@1.0.11",
       "npm:@agentclientprotocol/codex-acp@1.11.0",
       "npm:@agentclientprotocol/sdk@1.4.0",
+      "npm:@modelcontextprotocol/client@2.0.0",
+      "npm:@modelcontextprotocol/server@2.0.0",
       "npm:mysql2@3.24.4",
       "npm:ulid@3.0.2",
-      "npm:vitest@3.2.6"
+      "npm:vitest@3.2.6",
+      "npm:zod@4.4.3"
     ]
   }
 }

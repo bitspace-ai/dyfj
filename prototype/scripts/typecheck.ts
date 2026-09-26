@@ -34,7 +34,7 @@ if (import.meta.main) {
   const files = typecheckFiles(root, scope);
   if (files.length === 0) throw new Error(`no ${scope} files found`);
   const output = await new Deno.Command(selectedDenoExecutable(), {
-    args: ["check", "--sloppy-imports", ...files],
+    args: ["check", ...files],
     cwd: root,
     clearEnv: true,
     env: Object.fromEntries(

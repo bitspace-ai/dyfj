@@ -5,8 +5,8 @@ import {
   compareStructuredOutputModes,
   type StreamingStructuredOutputReport,
   type StructuredOutputReport,
-} from "./structured-output";
-import type { WorkbenchModel } from "./provider";
+} from "./structured-output.ts";
+import type { WorkbenchModel } from "./provider.ts";
 
 const models: WorkbenchModel[] = [{
   slug: "gemma4:e2b",

@@ -55,16 +55,16 @@ import {
   toolchainReadGrant,
   type TurnInterruptSource,
   type TurnResult,
-} from "./cli";
-import { serveWorkbenchUnix } from "./uds-server";
-import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client";
-import { DomainError } from "./turn-contract";
+} from "./cli.ts";
+import { serveWorkbenchUnix } from "./uds-server.ts";
+import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client.ts";
+import { DomainError } from "./turn-contract.ts";
 import { fakeIo } from "../testing/fakes/fake-io.ts";
 import type {
   SupersedingRetryStartedEvent,
   TurnStreamFrame,
   UnparsedToolCallMarkupDetectedEvent,
-} from "./turn-contract";
+} from "./turn-contract.ts";
 
 // Assembled at runtime so the public-boundary scan never matches these
 // fixtures as home-directory paths in tracked source.
@@ -3003,7 +3003,6 @@ describe("runtime lifecycle commands", () => {
       "-P=serve-unix",
       "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
       "--env-file=.env",
-      "--sloppy-imports",
       "src/uds-serve.ts",
     ]);
   });
