@@ -6,11 +6,8 @@ import {
   type LayerRules,
   stronglyConnected,
 } from "./arch-imports.ts";
-import {
-  functionSpans,
-  parseImports,
-  sizeReport,
-} from "./arch-imports-lexer.ts";
+import { parseImports } from "./arch-imports-lexer.ts";
+import { functionSpans, sizeReport } from "./arch-imports-size.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -127,11 +124,16 @@ Deno.test("parser ignores imports inside comments, strings, templates, and regex
     const ratio = total / count; import f from "./real";
     if (ok) /import g from "\.\/after-control"/.test(s);
     const call = f(x) / 2; import h from "./after-division";
+    const obj = {} / 2; import i from "./after-object";
+    n++ / 2; import j from "./after-postfix";
+    function block() {} /import k from "\.\/after-block"/.test(s);
     obj.import("./method");
   `);
   assertEquals(records.map((r) => r.specifier), [
     "./real",
     "./after-division",
+    "./after-object",
+    "./after-postfix",
   ]);
 });
 
@@ -327,6 +329,17 @@ Deno.test("an allow-listed cycle still fails layer and cli/ rules", () => {
   assertEquals(result.current.layer, [up]);
 });
 
+Deno.test("an allow-list entry naming a non-cycle edge fails", () => {
+  const edge = `${S}/engine/e.ts -> ${S}/kernel/k.ts`;
+  const result = run({
+    [`${S}/engine/e.ts`]: 'const { k } = await import("../kernel/k");',
+    [`${S}/kernel/k.ts`]: "export const k = 1;",
+  }, { allowList: [{ ...ENTRY, edges: [edge] }] });
+  assertEquals(result.errors, [
+    `allow-list entry tool round trip: edge is not part of an import cycle: ${edge}`,
+  ]);
+});
+
 Deno.test("an allow-list entry whose cited test file is missing fails", () => {
   const result = run(CYCLE, {
     allowList: [{ ...ENTRY, test: "prototype/testing/missing.test.ts" }],
@@ -341,7 +354,9 @@ Deno.test("a stale allow-list entry fails when its edges no longer occur", () =>
     [`${S}/tools/a.ts`]: 'import { b } from "./b";',
     [`${S}/tools/b.ts`]: "export const b = 1;",
   }, { allowList: [ENTRY] });
+  // The surviving edge is no longer part of a cycle, so it is flagged too.
   assertEquals(result.errors, [
+    `allow-list entry tool round trip: edge is not part of an import cycle: ${S}/tools/a.ts -> ${S}/tools/b.ts`,
     `allow-list entry tool round trip: edge no longer occurs: ${S}/tools/b.ts -> ${S}/tools/a.ts`,
   ]);
 });

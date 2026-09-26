@@ -23,10 +23,11 @@ README are tracked separately in its Revision history section.
   `idea-packet`) and 32 entries in all. The lane fails on any violation not in
   the baseline and on any baseline entry that no longer occurs, so the count
   can only go down. Intentional cycles need a named entry in
-  `scripts/arch-cycles.json` with exact edges, a justification, and an existing
-  test file; the list starts empty. Deep imports that bypass a `mod.ts` and a
-  size report (modules over 600 lines, functions over 150 lines) are printed
-  without failing. The lane runs in both `deno task test` and
+  `scripts/arch-cycles.json` with exact edges inside an import cycle, a
+  justification, and an existing test file; an entry exempts those edges from
+  the cycle and dynamic-import rules only. The list starts empty. Deep imports
+  that bypass a `mod.ts` and a size report (modules over 600 lines, functions
+  over 150 lines) are printed without failing. The lane runs in both `deno task test` and
   `deno task test:fast` under the existing `test.aggregate` check id.
 
 ### Changed

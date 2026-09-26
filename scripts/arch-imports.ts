@@ -13,14 +13,13 @@
  * - Violations: import cycles (Tarjan SCCs; every edge inside a strongly
  *   connected component, type-only edges included), upward or non-listed
  *   same-layer edges, `cli/` allow-list breaches, and dynamic local imports.
- *   Edges named by an entry in `arch-cycles.json` (the named-cycle allow-list,
- *   AGENTS.md rule 1) are subtracted.
+ *   An entry in `arch-cycles.json` (AGENTS.md rule 1) must name edges inside a
+ *   cycle, and exempts them from the cycle and dynamic-import rules only.
  * - Ratchet: violations are compared with `arch-imports-baseline.json`. A
  *   violation not in the baseline fails, and so does a baseline entry that no
  *   longer occurs, which forces the baseline to shrink as work lands.
  * - Report only, never failing: deep imports that bypass a directory's
- *   `mod.ts`, and a size report of modules over 600 lines and functions over
- *   150 lines. Function detection is lexical and best-effort.
+ *   `mod.ts`, and the size report (`arch-imports-size.ts`).
  *
  * Usage (from the repository root):
  *   deno run --allow-read=. scripts/arch-imports.ts
@@ -28,12 +27,8 @@
  *     scripts/arch-imports.ts --write-baseline
  */
 
-import {
-  FUNCTION_LINE_LIMIT,
-  MODULE_LINE_LIMIT,
-  parseImports,
-  sizeReport,
-} from "./arch-imports-lexer.ts";
+import { parseImports } from "./arch-imports-lexer.ts";
+import { formatSizeReport, sizeReport } from "./arch-imports-size.ts";
 
 // ---------------------------------------------------------------------------
 // Rules
@@ -260,6 +255,7 @@ export function flattenBaseline(baseline: Baseline): string[] {
 export function validateAllowList(
   allowList: readonly CycleAllowEntry[],
   edgeKeys: ReadonlySet<string>,
+  cycleEdgeKeys: ReadonlySet<string>,
   exists: (path: string) => boolean,
 ): string[] {
   const errors: string[] = [];
@@ -290,6 +286,10 @@ export function validateAllowList(
           errors.push(
             `allow-list entry ${label}: edge no longer occurs: ${edge}`,
           );
+        } else if (!cycleEdgeKeys.has(edge)) {
+          errors.push(
+            `allow-list entry ${label}: edge is not part of an import cycle: ${edge}`,
+          );
         }
       }
     }
@@ -302,6 +302,33 @@ export function validateAllowList(
     }
   });
   return errors;
+}
+
+/** Every strongly connected component that forms a cycle, with its edges. */
+export function cycleComponents(
+  modules: readonly string[],
+  edges: readonly Edge[],
+): { members: string[]; edges: string[] }[] {
+  const adjacency = new Map<string, string[]>();
+  for (const e of edges) {
+    const list = adjacency.get(e.from) ?? [];
+    if (!list.includes(e.to)) list.push(e.to);
+    adjacency.set(e.from, list);
+  }
+  for (const list of adjacency.values()) list.sort();
+  const result: { members: string[]; edges: string[] }[] = [];
+  for (const component of stronglyConnected(modules, adjacency)) {
+    const members = new Set(component);
+    const selfLoop = component.length === 1 &&
+      (adjacency.get(component[0]!) ?? []).includes(component[0]!);
+    if (component.length < 2 && !selfLoop) continue;
+    const inside = sortedUnique(
+      edges.filter((e) => members.has(e.from) && members.has(e.to))
+        .map((e) => edgeKey(e.from, e.to)),
+    );
+    result.push({ members: component, edges: inside });
+  }
+  return result;
 }
 
 export function analyze(input: AnalysisInput): AnalysisResult {
@@ -359,32 +386,27 @@ export function analyze(input: AnalysisInput): AnalysisResult {
     }
   }
 
+  // Allow-list entries may name only edges that sit inside an import cycle.
+  const components = cycleComponents(modules, edges);
   const edgeKeys = new Set(edges.map((e) => edgeKey(e.from, e.to)));
-  errors.push(...validateAllowList(input.allowList, edgeKeys, input.exists));
+  const cycleEdgeKeys = new Set(components.flatMap((c) => c.edges));
+  errors.push(
+    ...validateAllowList(
+      input.allowList,
+      edgeKeys,
+      cycleEdgeKeys,
+      input.exists,
+    ),
+  );
   const allowed = new Set(
     input.allowList.flatMap((entry) => entry.edges ?? []),
   );
-
-  // Cycles.
-  const adjacency = new Map<string, string[]>();
-  for (const e of edges) {
-    const list = adjacency.get(e.from) ?? [];
-    if (!list.includes(e.to)) list.push(e.to);
-    adjacency.set(e.from, list);
-  }
-  for (const list of adjacency.values()) list.sort();
-  const cycles: Baseline["cycles"] = [];
-  for (const component of stronglyConnected(modules, adjacency)) {
-    const members = new Set(component);
-    const selfLoop = component.length === 1 &&
-      (adjacency.get(component[0]!) ?? []).includes(component[0]!);
-    if (component.length < 2 && !selfLoop) continue;
-    const inside = sortedUnique(
-      edges.filter((e) => members.has(e.from) && members.has(e.to))
-        .map((e) => edgeKey(e.from, e.to)),
-    ).filter((key) => !allowed.has(key));
-    if (inside.length > 0) cycles.push({ members: component, edges: inside });
-  }
+  const cycles: Baseline["cycles"] = components
+    .map((c) => ({
+      members: c.members,
+      edges: c.edges.filter((key) => !allowed.has(key)),
+    }))
+    .filter((c) => c.edges.length > 0);
 
   // Layer direction and the cli/ allow-list.
   const layer: string[] = [];
@@ -536,18 +558,8 @@ export async function main(
     exists: existsIn(root),
   });
 
-  const sizes = sizeReport(sources);
   console.log(`${LABEL}: size report (non-failing)`);
-  for (const m of sizes.modules) {
-    console.log(
-      `  module over ${MODULE_LINE_LIMIT} lines: ${m.path} (${m.lines})`,
-    );
-  }
-  for (const f of sizes.functions) {
-    console.log(
-      `  function over ${FUNCTION_LINE_LIMIT} lines: ${f.path}:${f.line} ${f.name} (${f.lines})`,
-    );
-  }
+  for (const line of formatSizeReport(sizeReport(sources))) console.log(line);
   if (result.deepImports.length > 0) {
     console.log(`${LABEL}: deep imports bypassing mod.ts (non-failing)`);
     for (const d of result.deepImports) console.log(`  ${d}`);
