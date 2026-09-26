@@ -16,10 +16,14 @@
  *   import whose named bindings all carry an inline `type` modifier still loads
  *   the module under `verbatimModuleSyntax`, so deno_graph reports a value edge.
  * - `isDynamic` is set only when every value import of that specifier is a
- *   dynamic `import()`. A dynamic import of a module that the same file also
- *   imports statically adds no edge, so it is not reported as dynamic.
- * - A dynamic `import()` whose argument is not a string literal has no
- *   resolvable target and does not appear in the graph.
+ *   dynamic `import()`, so deno_graph alone would miss a dynamic import of a
+ *   module the same file also imports statically, and it has no entry for an
+ *   `import()` whose argument is not a string literal.
+ *
+ * Dynamic imports therefore come from a second parser pass: `deno lint` with
+ * the repository-owned plugin `arch-imports-lint-plugin.ts`, which reports
+ * every `import()` expression in the AST, literal or not. Both passes use
+ * Deno's own parser; neither is a hand-written lexer.
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -53,8 +57,17 @@ export interface DenoInfoOutput {
   modules: DenoInfoModule[];
 }
 
+export interface DynamicImport {
+  from: string;
+  /** Scanned target module, or `null` for a non-literal `import()`. */
+  to: string | null;
+  line: number;
+}
+
 export interface ModuleGraph {
   edges: Edge[];
+  /** Every dynamic `import()` of a scanned module, and every non-literal one. */
+  dynamicImports: DynamicImport[];
   /** Scanned modules that failed to load, and local imports that did not
    * resolve to a file. Any entry fails the lane. */
   errors: string[];
@@ -121,7 +134,60 @@ export function graphFromDenoInfo(
   }
   const byKey = (e: Edge) => `${e.from} -> ${e.to} ${e.kind}`;
   edges.sort((a, b) => byKey(a).localeCompare(byKey(b)));
-  return { edges, errors: errors.sort() };
+  return { edges, dynamicImports: [], errors: errors.sort() };
+}
+
+export interface DenoLintOutput {
+  diagnostics: {
+    filename: string;
+    code: string;
+    message: string;
+    range: { start: { line: number } };
+  }[];
+  errors: { file_path?: string; message?: string }[];
+}
+
+const DYNAMIC_IMPORT_RULE = "arch-imports/dynamic-import";
+
+/** Turns the plugin's `deno lint --json` diagnostics into dynamic imports. */
+export function dynamicImportsFromLint(
+  lint: DenoLintOutput,
+  root: string,
+  modules: ReadonlySet<string>,
+): { dynamicImports: DynamicImport[]; errors: string[] } {
+  const dynamicImports: DynamicImport[] = [];
+  const relative = (name: string) => {
+    const file = name.startsWith("file:") ? fileURLToPath(name) : name;
+    return file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
+  };
+  // Same wording as the graph pass, so one broken module is one error.
+  const errors = lint.errors.map((e) =>
+    `module failed to load: ${relative(e.file_path ?? "?")}`
+  );
+  for (const d of lint.diagnostics) {
+    if (d.code !== DYNAMIC_IMPORT_RULE) continue;
+    // Deno reports the file as a `file:` URL.
+    const from = relative(d.filename);
+    const file = `${root}/${from}`;
+    if (!modules.has(from)) continue;
+    const line = d.range.start.line;
+    if (d.message === "non-literal") {
+      dynamicImports.push({ from, to: null, line });
+      continue;
+    }
+    const specifier = d.message.slice("literal:".length);
+    if (!isLocalSpecifier(specifier)) continue;
+    const target = fileURLToPath(new URL(specifier, pathToFileURL(file)));
+    const to = target.startsWith(`${root}/`)
+      ? target.slice(root.length + 1)
+      : undefined;
+    if (to !== undefined && modules.has(to)) {
+      dynamicImports.push({ from, to, line });
+    }
+  }
+  const key = (d: DynamicImport) => `${d.from}:${d.line}`;
+  dynamicImports.sort((a, b) => key(a).localeCompare(key(b)));
+  return { dynamicImports, errors };
 }
 
 /** The `data:` root module that side-effect-imports every scanned module. */
@@ -132,29 +198,70 @@ export function rootModuleUrl(root: string, modules: Iterable<string>): string {
   return `data:application/typescript,${encodeURIComponent(lines.join("\n"))}`;
 }
 
+async function runDeno(
+  denoExecutable: string,
+  args: string[],
+  cwd: string,
+  okCodes: number[],
+): Promise<unknown> {
+  const output = await new Deno.Command(denoExecutable, {
+    args,
+    cwd,
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  if (!okCodes.includes(output.code)) {
+    throw new Error(`deno ${args[0]} exited with code ${output.code}`);
+  }
+  return JSON.parse(new TextDecoder().decode(output.stdout));
+}
+
+/**
+ * Builds the graph with `deno info` and collects dynamic imports with
+ * `deno lint` and the plugin configured in `lintConfig`.
+ */
 export async function loadModuleGraph(
   root: string,
   modules: ReadonlySet<string>,
   denoExecutable: string,
+  lintConfig: string,
 ): Promise<ModuleGraph> {
-  const output = await new Deno.Command(denoExecutable, {
-    args: [
-      "info",
-      "--json",
-      "--quiet",
-      "--no-config",
-      "--no-lock",
-      "--no-remote",
-      "--no-npm",
-      rootModuleUrl(root, modules),
-    ],
-    cwd: root,
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  if (!output.success) {
-    throw new Error(`deno info exited with code ${output.code}`);
-  }
-  const info = JSON.parse(new TextDecoder().decode(output.stdout));
-  return graphFromDenoInfo(info as DenoInfoOutput, root, modules);
+  const [info, lint] = await Promise.all([
+    runDeno(
+      denoExecutable,
+      [
+        "info",
+        "--json",
+        "--quiet",
+        "--no-config",
+        "--no-lock",
+        "--no-remote",
+        "--no-npm",
+        rootModuleUrl(root, modules),
+      ],
+      root,
+      [0],
+    ),
+    // `deno lint` exits 1 when it reports diagnostics, which it always does
+    // for a tree with dynamic imports.
+    runDeno(
+      denoExecutable,
+      [
+        "lint",
+        "--json",
+        "--quiet",
+        `--config=${lintConfig}`,
+        ...[...modules].sort().map((path) => `${root}/${path}`),
+      ],
+      root,
+      [0, 1],
+    ),
+  ]);
+  const graph = graphFromDenoInfo(info as DenoInfoOutput, root, modules);
+  const dynamic = dynamicImportsFromLint(lint as DenoLintOutput, root, modules);
+  return {
+    edges: graph.edges,
+    dynamicImports: dynamic.dynamicImports,
+    errors: [...new Set([...graph.errors, ...dynamic.errors])].sort(),
+  };
 }

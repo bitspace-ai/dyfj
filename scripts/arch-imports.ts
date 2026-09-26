@@ -6,6 +6,8 @@
  * - Builds the module graph of every module under the roots listed in
  *   `arch-layers.json` with `deno info` (`arch-imports-graph.ts`): static
  *   imports, re-exports, and dynamic `import()`, with type-only edges marked.
+ *   Every dynamic `import()`, literal or not, comes from `deno lint` with the
+ *   plugin in `arch-imports-lint-plugin.ts`.
  *   Test files and test fixtures are not part of the graph and are skipped.
  * - Maps every module to a unit (target directory) and layer. Modules that have
  *   not moved yet are mapped by name in `arch-layers.json`; a module the rules
@@ -400,9 +402,11 @@ export function analyze(input: AnalysisInput): AnalysisResult {
 
   // Dynamic local imports.
   const dynamic = sortedUnique(
-    edges.filter((e) => e.kind === "dynamic")
-      .map((e) => edgeKey(e.from, e.to))
-      .filter((key) => !allowed.has(key)),
+    input.graph.dynamicImports.map((d) =>
+      d.to === null
+        ? `${d.from}:${d.line} -> <non-literal>`
+        : edgeKey(d.from, d.to)
+    ).filter((key) => !allowed.has(key)),
   );
 
   const current: Baseline = { cycles, layer, cli, dynamic };
@@ -425,6 +429,7 @@ const LABEL = "arch.imports";
 const RULES_PATH = "scripts/arch-layers.json";
 const CYCLES_PATH = "scripts/arch-cycles.json";
 const BASELINE_PATH = "scripts/arch-imports-baseline.json";
+const LINT_CONFIG_PATH = "scripts/arch-imports-lint.json";
 
 async function collectSources(
   root: string,
@@ -498,6 +503,7 @@ export async function main(
     root,
     new Set(modules),
     denoArg?.slice("--deno=".length) ?? "deno",
+    `${root}/${LINT_CONFIG_PATH}`,
   );
   const result = analyze({
     modules,

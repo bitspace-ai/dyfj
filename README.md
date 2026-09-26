@@ -952,15 +952,17 @@ builds the module graph of every module under `prototype/src`,
 `prototype/mcp`, `prototype/scripts`, and `prototype/diagnostics` (once it
 exists) with `deno info --json` (`scripts/arch-imports-graph.ts`, offline and
 config-free): static imports, re-exports, and dynamic `import()`, with
-type-only edges (`import type`, `export type`, `typeof import()`) marked. It
-maps each module to the target layer in `specs/01-architecture.md` §3 (modules
-not yet moved are mapped by name in `scripts/arch-layers.json`) and checks
-import cycles, upward and non-listed same-layer edges, the `cli/` allow-list,
-and dynamic local imports. A module that fails to load or a local import that
-does not resolve fails the lane. Two limits come from deno's graph: a dynamic
-import of a module the same file also imports statically is reported as a
-static edge, and a dynamic `import()` with a non-literal argument has no edge.
-It runs in ratchet mode: current violations are recorded in
+type-only edges (`import type`, `export type`, `typeof import()`) marked.
+Because deno's graph merges a dynamic import into a static import of the same
+module and has no entry for a non-literal `import()`, every `import()`
+expression is also collected with `deno lint` and a repository-owned plugin
+(`scripts/arch-imports-lint-plugin.ts`, configured by
+`scripts/arch-imports-lint.json`). It maps each module to the target layer in
+`specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
+`scripts/arch-layers.json`) and checks import cycles, upward and non-listed
+same-layer edges, the `cli/` allow-list, and dynamic local imports, literal or
+not. A module that fails to load or a local import that does not resolve fails
+the lane. It runs in ratchet mode: current violations are recorded in
 `scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
 that baseline and on any baseline entry that no longer occurs, so the baseline
 can only shrink. An intentional cycle is allowed only by a named entry in

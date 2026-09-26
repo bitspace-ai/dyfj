@@ -26,6 +26,8 @@ function assertSome(values: readonly string[], needle: string): void {
 }
 
 const S = "prototype/src";
+const LINT_CONFIG = new URL("./arch-imports-lint.json", import.meta.url)
+  .pathname;
 
 const RULES: LayerRules = {
   roots: [S],
@@ -82,6 +84,7 @@ async function run(
       root,
       new Set(modules),
       Deno.execPath(),
+      LINT_CONFIG,
     );
     const extra = new Set(["prototype/testing/cycle.test.ts"]);
     return analyze({
@@ -227,6 +230,11 @@ Deno.test("import-like text outside real imports adds no edges", async () => {
     ["ternary.ts", "dynamic", false],
     ["type-query.ts", "static", true],
   ]);
+  // Only the two real `import()` expressions are dynamic imports.
+  assertEquals(result.current.dynamic, [
+    `${E}/tricky.ts -> ${E}/after-object-paren.ts`,
+    `${E}/tricky.ts -> ${E}/ternary.ts`,
+  ]);
 });
 
 Deno.test("a module that does not parse fails the lane", async () => {
@@ -370,6 +378,34 @@ Deno.test("dynamic local imports are violations; package imports are not", async
   });
   assertEquals(result.current.dynamic, [
     `${S}/engine/e.ts -> ${S}/kernel/k.ts`,
+  ]);
+});
+
+Deno.test("a dynamic import is a violation even beside a static one", async () => {
+  // deno_graph merges these into one static dependency; the lint pass still
+  // sees the dynamic import.
+  const result = await run({
+    [`${S}/engine/e.ts`]: [
+      'import { k } from "../kernel/k.ts";',
+      'const again = await import("../kernel/k.ts");',
+    ].join("\n"),
+    [`${S}/kernel/k.ts`]: "export const k = 1;",
+  });
+  assertEquals(result.current.dynamic, [
+    `${S}/engine/e.ts -> ${S}/kernel/k.ts`,
+  ]);
+});
+
+Deno.test("a non-literal dynamic import is a violation", async () => {
+  const result = await run({
+    [`${S}/engine/e.ts`]: [
+      'const name = "../kernel/k.ts";',
+      "const lazy = await import(name);",
+    ].join("\n"),
+    [`${S}/kernel/k.ts`]: "export const k = 1;",
+  });
+  assertEquals(result.current.dynamic, [
+    `${S}/engine/e.ts:2 -> <non-literal>`,
   ]);
 });
 

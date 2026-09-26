@@ -13,14 +13,15 @@ README are tracked separately in its Revision history section.
 
 - **`arch.imports` gate lane (ratchet mode)**: `scripts/arch-imports.ts` builds
   the module graph of `prototype/src`, `prototype/mcp`, `prototype/scripts`,
-  and `prototype/diagnostics` (once it exists) with `deno info --json`, and
-  checks it against the layer rules in `specs/01-architecture.md` §3–4, kept as
+  and `prototype/diagnostics` (once it exists) with `deno info --json`, plus a
+  `deno lint` plugin that reports every dynamic `import()`, and checks it
+  against the layer rules in `specs/01-architecture.md` §3–4, kept as
   data in `scripts/arch-layers.json`. It detects import cycles (type-only edges
   included), upward and non-listed same-layer edges, `cli/` imports outside its
   allow-list, and dynamic local imports. Today's violations are committed in
   `scripts/arch-imports-baseline.json` — three cycles (`mcp-tools` ⇄
   `web-tools`, `workbench` ⇄ `external-agent-runtime`, `sessions` ⇄
-  `idea-packet`) and 29 entries in all. The lane fails on any violation not in
+  `idea-packet`) and 32 entries in all. The lane fails on any violation not in
   the baseline and on any baseline entry that no longer occurs, so the count
   can only go down. Intentional cycles need a named entry in
   `scripts/arch-cycles.json` with exact edges inside an import cycle, a
