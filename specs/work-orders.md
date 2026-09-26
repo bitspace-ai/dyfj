@@ -37,7 +37,9 @@ Agents: read these before starting any WO.
      delta, and the size report for touched modules.
 7. **Stop and ask** if a WO step would require a behavior change, a DDL change,
    a Rust change, or an edit outside the WO's listed scope beyond mechanical
-   import updates.
+   import updates. Also stop and ask if a WO step would contradict its PRD, a
+   spec, the AGENTS.md doctrine, or README Section 1. The higher document wins;
+   see `specs/README.md` "Authority and precedence".
 
 ## Sequence and dependencies
 
