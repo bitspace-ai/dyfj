@@ -264,9 +264,13 @@ async function waitForLiveness(
   for (;;) {
     try {
       const probe = await RawRpcClient.connect(socket);
-      const { result } = await probe.call("runtime/liveness");
-      await probe.close();
-      if (result !== undefined) return;
+      let answered = false;
+      try {
+        answered = (await probe.call("runtime/liveness")).result !== undefined;
+      } finally {
+        await probe.close();
+      }
+      if (answered) return;
     } catch {
       // Not listening yet.
     }
