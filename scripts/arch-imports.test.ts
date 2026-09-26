@@ -3,12 +3,14 @@ import {
   analyze,
   type Baseline,
   type CycleAllowEntry,
-  functionSpans,
   type LayerRules,
-  parseImports,
-  sizeReport,
   stronglyConnected,
 } from "./arch-imports.ts";
+import {
+  functionSpans,
+  parseImports,
+  sizeReport,
+} from "./arch-imports-lexer.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {

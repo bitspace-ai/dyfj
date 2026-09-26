@@ -928,9 +928,10 @@ The Rust tracer test retains its manual-run `.env` loader, but the fixture's
 explicit `DATABASE_URL` takes precedence, so the lane does not use the
 operator's Dolt database. It requires Deno, Dolt, and the pinned Rust toolchain.
 
-`arch.imports` (`scripts/arch-imports.ts`, reported under `test.aggregate`)
-parses static and dynamic local imports under `prototype/src`, `prototype/mcp`,
-and `prototype/scripts`, maps each module to the target layer in
+`arch.imports` (`scripts/arch-imports.ts`, with its lexer in
+`scripts/arch-imports-lexer.ts`, reported under `test.aggregate`) parses
+static and dynamic local imports under `prototype/src`, `prototype/mcp`, and
+`prototype/scripts`, maps each module to the target layer in
 `specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
 `scripts/arch-layers.json`), and checks import cycles, upward and non-listed
 same-layer edges, the `cli/` allow-list, and dynamic local imports. It runs in
