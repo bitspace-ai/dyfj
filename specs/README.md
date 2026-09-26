@@ -149,6 +149,12 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 | D22 | **Specs are enablers beneath a privately tracked product roadmap.** Each WO states the capability it enables; the mapping to roadmap work lives in the tracker as issue relations. D14's goal stands; its delivery moves to the roadmap's durable-state work. | PRD-15 (WO-25 … WO-28) and PRD-20 withdrawn; `02-data-layer.md` §7 keeps the design direction                                                              |
 | D23 | **The interactive REPL moves to a separate client over the existing UDS protocol.**                                                                                                                                                                           | WO-21 shrinks to the parts of the CLI that stay in TypeScript; WO-20 leaves REPL slash-command logic in place                                              |
 
+### Testing decisions (2026-09-26)
+
+| #   | Decision                                                                                                                         | Consequence                                                                         |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| D24 | **Conformance suites land with their ports.** A shared fake may land before its port; its conformance suite ships with the port. | `03-testing.md` §1; the `Clock`, `IdSource` and `Env` fakes precede their port work |
+
 ## Phase-1 exit
 
 Not reached. WO-24 fills this section with measured values against each PRD's
