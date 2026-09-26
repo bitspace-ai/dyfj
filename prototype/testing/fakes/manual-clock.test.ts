@@ -48,3 +48,11 @@ Deno.test("ManualClock rejects backward or non-finite steps", () => {
   assertThrows(() => clock.set(Number.POSITIVE_INFINITY), RangeError);
   assertEquals(clock.now(), 0);
 });
+
+Deno.test("ManualClock rejects non-finite start or readings", () => {
+  assertThrows(() => new ManualClock({ start: Number.NaN }), RangeError);
+  assertThrows(
+    () => new ManualClock({ readings: [0, Number.POSITIVE_INFINITY] }),
+    RangeError,
+  );
+});

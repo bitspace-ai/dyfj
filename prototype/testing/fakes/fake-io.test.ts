@@ -34,3 +34,12 @@ Deno.test("fakeIo reports terminal state and close calls", () => {
   fake.io.close();
   assertEquals(fake.closed, 1);
 });
+
+Deno.test("fakeIo resolves an aborted read as null without consuming", async () => {
+  const { io, prompts } = fakeIo(["kept"]);
+  const controller = new AbortController();
+  controller.abort();
+  assertEquals(await io.readLine("> ", controller.signal), null);
+  assertEquals(await io.readLine("> "), "kept");
+  assertEquals(prompts, ["> ", "> "]);
+});

@@ -909,9 +909,9 @@ remain outside this repository.
 After the policy checks, the gate runs the retired-surface scan, the source and
 test-file typechecks (both file lists derived by walking the tree in
 `prototype/scripts/test-files.ts`, never hand-listed), the prototype `Deno.test`
-unit lane (`test.unit`: every non-integration `Deno.test` file, run in parallel
-with the op and resource sanitizers enabled and no run, net, or env grant), the
-prototype Vitest unit suite (files that import `vitest`; it may only shrink),
+unit lane (`test.unit`: every non-integration, non-golden `Deno.test` file, run
+in parallel with the op and resource sanitizers enabled and no run, net, or env
+grant), the prototype Vitest unit suite (files that import `vitest`; it may only shrink),
 current and historical schema checks, non-ignored Rust tests using offline SQLx
 metadata and no inherited `DATABASE_URL`, an isolated-Dolt integration lane
 (including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The

@@ -1,5 +1,7 @@
-// The `test.unit` lane: every non-integration `Deno.test` file, discovered by
-// `scripts/test-files.ts`, run with `deno test --parallel`. Unit and component
+// The `test.unit` lane: every `Deno.test` file outside the integration tier
+// (`*.integration.test.ts`) and the golden suite (`testing/golden/`, run by
+// its own lane), discovered by `scripts/test-files.ts` and run with
+// `deno test --parallel`. Unit and component
 // tests may use port fakes and temp directories only, so the child gets read
 // access to the prototype and the temp roots, write access to the temp roots,
 // and no run, net, env, sys, or ffi grant. Sanitizers are on: in the pinned

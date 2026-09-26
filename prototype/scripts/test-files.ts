@@ -86,6 +86,15 @@ export function leadingImportSpecifiers(source: string): string[] {
         continue;
       }
       const word = readWord(source, i);
+      if (specifier !== undefined && (word === "with" || word === "assert")) {
+        // The attribute clause ends the declaration, with or without a
+        // semicolon after it.
+        i = skipTrivia(source, i + word.length);
+        if (source[i] === "{") i = skipBraces(source, i);
+        const next = skipTrivia(source, i);
+        if (source[next] === ";") i = next + 1;
+        break;
+      }
       if (word !== undefined) {
         if (word === "from") afterFrom = true;
         bare = false;
@@ -122,6 +131,23 @@ function skipTrivia(source: string, from: number): number {
 
 function readWord(source: string, from: number): string | undefined {
   return /^[A-Za-z_$][\w$]*/.exec(source.slice(from, from + 64))?.[0];
+}
+
+/** The index just past the `}` that closes the `{` at `from`. */
+function skipBraces(source: string, from: number): number {
+  let depth = 0;
+  let i = from;
+  while (i < source.length) {
+    const char = source[i];
+    if (char === '"' || char === "'") {
+      i = readString(source, i)[1];
+      continue;
+    }
+    if (char === "{") depth++;
+    if (char === "}" && --depth === 0) return i + 1;
+    i++;
+  }
+  return i;
 }
 
 function readString(source: string, from: number): [string, number] {

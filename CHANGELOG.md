@@ -14,18 +14,17 @@ README are tracked separately in its Revision history section.
 - **A `Deno.test` unit lane and shared test fakes**: new tests can now be
   written with `Deno.test`, `@std/assert` and `@std/testing` (pinned in the
   prototype import map) and run in a fast lane of their own.
-  `deno task test:unit` in `prototype/` runs every non-integration `Deno.test`
-  file with `deno test
-  --parallel`, the op and resource sanitizers enabled
-  (opt-in in the pinned Deno), and no run, net, or env permission; the aggregate
-  gate runs it as `Prototype unit Deno.test suite (test.unit)`, including under
-  `deno task test:fast`, and the prototype `deno task test` runs it before
-  Vitest. `prototype/testing/fakes/` provides the first port fakes, each with
-  its own tests: `ManualClock`, `SequentialIds`, `MapEnv`, and `fakeIo`. The
-  three copies each of the `fakeIo` and `buildClock` test helpers now import
-  these instead. During the transition a test file's framework is read from its
-  source: files that import `vitest` stay under Vitest, which now excludes every
-  other `*.test.ts`.
+  `deno task test:unit` in `prototype/` runs every non-integration, non-golden
+  `Deno.test` file with `deno test --parallel`, the op and resource sanitizers
+  enabled (opt-in in the pinned Deno), and no run, net, or env permission; the
+  aggregate gate runs it as `Prototype unit Deno.test suite (test.unit)`,
+  including under `deno task test:fast`, and the prototype `deno task test` runs
+  it before Vitest. `prototype/testing/fakes/` provides the first port fakes,
+  each with its own tests: `ManualClock`, `SequentialIds`, `MapEnv`, and
+  `fakeIo`. The three copies each of the `fakeIo` and `buildClock` test helpers
+  now import these instead. During the transition a test file's framework is
+  read from its source: files that import `vitest` stay under Vitest, which now
+  excludes every other `*.test.ts`.
 
 ### Changed
 

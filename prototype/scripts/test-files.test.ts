@@ -27,6 +27,11 @@ Deno.test("importsVitest recognises every import shape in use", () => {
       'import { test } from "vitest";',
       'import data from "./data.json"\n  with { type: "json" };\n' +
       'import { test } from "vitest";',
+      // After a semicolonless import with an attribute clause.
+      'import data from "./data.json" with { type: "json" }\n' +
+      'import { test } from "vitest";',
+      'import data from "./data.json" with {\n  type: "json",\n}\n' +
+      'import { test } from "vitest"',
     ]
   ) {
     assertEquals(importsVitest(source), true, source);

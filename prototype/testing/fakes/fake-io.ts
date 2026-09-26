@@ -2,7 +2,7 @@
 //
 // Output is captured per stream; `readLine` answers from a scripted queue
 // and records every prompt it was asked, returning null (EOF) once the queue
-// is empty.
+// is empty or when the read's signal is already aborted.
 import type { Io } from "../../src/cli.ts";
 
 export interface FakeIoOptions {
@@ -38,8 +38,11 @@ export function fakeIo(
     err: (line) => stderr.push(line),
     errRaw: (text) => raw.push(text),
     errIsTerminal: options.errIsTerminal,
-    readLine: (prompt) => {
+    readLine: (prompt, signal) => {
       prompts.push(prompt);
+      // Like the real adapter, an aborted read resolves null (and leaves the
+      // scripted answer for the next read).
+      if (signal?.aborted) return Promise.resolve(null);
       return Promise.resolve(queue.length ? queue.shift()! : null);
     },
     close: () => {

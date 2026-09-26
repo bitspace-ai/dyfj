@@ -17,8 +17,13 @@ export class ManualClock {
   readonly #readings: number[];
 
   constructor(options: ManualClockOptions = {}) {
-    this.#current = options.start ?? 0;
-    this.#readings = [...(options.readings ?? [])];
+    const start = options.start ?? 0;
+    const readings = [...(options.readings ?? [])];
+    if (![start, ...readings].every(Number.isFinite)) {
+      throw new RangeError("ManualClock start and readings must be finite ms");
+    }
+    this.#current = start;
+    this.#readings = readings;
   }
 
   /** Milliseconds; consumes the next scripted reading if one is queued. */
