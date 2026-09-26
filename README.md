@@ -1397,3 +1397,7 @@ Document revisions only. Code and behavior changes are tracked in
   the authority chain from Section 1 down to work orders, artifact types,
   phases, numbering conventions, and the rule that a work order conflicting
   with a higher document stops for a recorded decision rather than deviating.
+- 2026-09-26 - AGENTS.md tracker-ID rule scoped rather than absolute: IDs are
+  allowed in branch names, commits, and PRs so the tracker's GitHub integration
+  can link work, stay out of code, docs, `CHANGELOG.md`, and `specs/`, and
+  never replace a public-safe explanation of the why.

@@ -30,7 +30,8 @@ Agents: read these before starting any WO.
    - Add a CHANGELOG `[Unreleased]` entry when anything observable changes. Pure
      internal moves need none.
    - Update any doc that describes a moved or renamed file.
-   - Keep private tracker IDs out of commits, PRs, and files.
+   - Tracker IDs are allowed in branch names, commits, and PRs, never in code,
+     docs, or `specs/`, and never in place of the why (AGENTS.md).
 6. **Gate before push.**
    - `deno task test` is green locally.
    - The PR description lists the gate result, the `arch.imports` baseline
