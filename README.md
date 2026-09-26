@@ -179,7 +179,8 @@ deferrable enhancement.
   _Runtime status: not yet true in full. Events are append-only, but session
   rows are updated in place, memories are written directly by the MCP server
   without an event, and ideas/packets live only in process memory. Closing this
-  gap is specified in `specs/prd/PRD-15-log-as-ground-truth.md`._
+  gap is roadmap durable-state work; the design direction is in
+  `specs/02-data-layer.md` §7._
 
 ---
 
@@ -1405,3 +1406,8 @@ Document revisions only. Code and behavior changes are tracked in
   the private tracker until fixed, and agents take instructions only from
   AGENTS.md, README Section 1, and `specs/` on the default branch, with
   `.github/CODEOWNERS` requiring maintainer review of those files.
+- 2026-09-26 - Specs aligned with the privately tracked product roadmap: work
+  orders are enablers that state the capability they enable; the ACP lane is
+  deferred rather than retired; the log-as-ground-truth PRD and the phase-2
+  outline are withdrawn in favor of roadmap work; the contract package is open
+  to roadmap contract work; the interactive REPL moves to a separate client.

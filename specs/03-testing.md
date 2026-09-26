@@ -114,8 +114,7 @@ internal move.
        path. The WO must verify which predicate decides "paid" before relying on
        it.
   7. Anomaly hard stop at the configured multiple.
-  8. _(Retired with the ACP lane, WO-00. The number is kept so references stay
-     stable.)_
+  8. `--runner fixture` ACP turn against `scripts/acp-fixture-agent.ts`.
   9. `turn/cancel` mid-stream.
   10. Read methods: `runtime/status`, `runtime/liveness`, `surface/snapshot`,
       `models/list`, `sessions/list`, `sessions/inspect`, `events/query`,
@@ -132,9 +131,8 @@ internal move.
   - In phase 1, updating one requires the PR to state the one approved deletion
     that caused the change.
   - Any other snapshot diff is a failed refactor.
-  - In phase 1b (PRD-15), a diff that adds a new event type's rows is allowed
-    when the PR names that event type. Projected-table contents must stay
-    unchanged.
+  - Roadmap work that intentionally changes behavior updates snapshots under its
+    own recorded decision, naming each changed scenario.
 
 ## 5. Conformance kits
 
@@ -183,7 +181,7 @@ internal move.
 | `test.golden` (new)                          | Golden suite.                                                                                                                                                                         |
 | `arch.imports` (new)                         | `01-architecture.md` §4.                                                                                                                                                              |
 | `schema.codegen`, `schema.equivalence` (new) | `02-data-layer.md`.                                                                                                                                                                   |
-| `projections.replay` (new, PRD-15)           | `02-data-layer.md` §7. Added in phase 1b.                                                                                                                                             |
+| `projections.replay` (roadmap)               | `02-data-layer.md` §7. Added by roadmap durable-state work.                                                                                                                           |
 | typecheck lanes                              | One source of truth for the file list: derived by globbing, not hand-listed. This removes the current drift between `prototype/deno.json check` and `aggregate-test-gate.ts:438-456`. |
 | `test:fast`                                  | Adds `test.unit`, so the fast loop exercises product behavior.                                                                                                                        |
 | gate runner                                  | Runs every lane and reports all failures, instead of stopping at the first. The overall exit code is unchanged: any failure fails.                                                    |
