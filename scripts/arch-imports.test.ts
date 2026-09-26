@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import {
   type AnalysisInput,
   analyze,
@@ -26,8 +27,9 @@ function assertSome(values: readonly string[], needle: string): void {
 }
 
 const S = "prototype/src";
-const LINT_CONFIG = new URL("./arch-imports-lint.json", import.meta.url)
-  .pathname;
+const LINT_CONFIG = fileURLToPath(
+  new URL("./arch-imports-lint.json", import.meta.url),
+);
 
 const RULES: LayerRules = {
   roots: [S],
