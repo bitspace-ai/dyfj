@@ -1393,3 +1393,7 @@ Document revisions only. Code and behavior changes are tracked in
   log-as-ground-truth decision with its current runtime status; specs updated
   to match, including an event-first data layer and the Rust boundary at the
   JSON-RPC seam.
+- 2026-09-26 - `specs/README.md` gains a structure-and-terminology section:
+  the authority chain from Section 1 down to work orders, artifact types,
+  phases, numbering conventions, and the rule that a work order conflicting
+  with a higher document stops for a recorded decision rather than deviating.

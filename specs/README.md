@@ -21,9 +21,86 @@ do not amend Section 1.
 | `bug-log.md`              | Bugs found during phase 1: logged, not fixed inline                               |
 | `backlog/`                | Retired or deferred capabilities, with re-entry criteria                          |
 
+The structure, terminology and precedence rules are in _Structure and
+terminology_ below.
+
 An agent executing work should read `AGENTS.md`, README Section 1, this file,
 and then the single work order it was handed, plus the specs that work order
 cites.
+
+## Structure and terminology
+
+### Authority and precedence
+
+```
+README Section 1 (Decisions)          what DYFJ is; Layer 0 stances; non-negotiables
+  └─ AGENTS.md Engineering Doctrine    how code must be shaped (four rules)
+      └─ Specs  specs/00–03            the target design: what "good" looks like
+          └─ PRDs  specs/prd/          scoped workstreams: why, goals, requirements, metrics
+              └─ Work orders           one-PR executable instructions (work-orders.md)
+                  └─ PR                the change itself, gate-green
+```
+
+- **Higher wins.** Each layer narrows the one above it and never overrides it.
+  When two layers conflict, the higher one wins.
+- **A work order never resolves a conflict itself.** If executing it would
+  contradict its PRD, a spec, the doctrine, or Section 1, the agent stops and
+  asks (standing rule 7). The fix is to amend the higher document through a
+  recorded decision, or to correct the work order. The agent does not quietly
+  deviate.
+- **Side logs** sit outside the chain of authority:
+  - `bug-log.md`: problems found and deferred.
+  - `backlog/`: capabilities retired with re-entry criteria.
+
+### Artifact types
+
+| Term                                                           | What it is                                                                                          | Where                   |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------- |
+| **Decision** (`D1`…)                                           | A maintainer choice and its consequence                                                             | Decision log below      |
+| **Spec** (`00`–`03`)                                           | Normative design for one concern. `00` is observed facts, not decisions                             | `specs/0N-*.md`         |
+| **PRD**                                                        | Requirements for one workstream: problem, goals, non-goals, requirements, success metrics, risks    | `prd/PRD-NN-*.md`       |
+| **Requirement** (`R1`…)                                        | A checkable condition a PRD must meet; numbered within its PRD                                      | Inside each PRD         |
+| **Work order** (`WO-NN`)                                       | One PR: scope, steps, acceptance, stop-and-ask triggers                                             | `work-orders.md`        |
+| **Standing rules**                                             | Rules every work order inherits (behavior freeze, strangler discipline, tests move with code, etc.) | Top of `work-orders.md` |
+| **Golden scenario** (`1`–`12`)                                 | A black-box behavior snapshot that restructuring must not change                                    | `03-testing.md` §4      |
+| **Gate lane** (`arch.imports`, `test.unit`, `schema.codegen`…) | One named, machine-enforced check in the CI gate                                                    | `03-testing.md` §6      |
+| **Bug-log entry**                                              | A defect found during the work: logged, not fixed inline                                            | `bug-log.md`            |
+| **Backlog entry**                                              | A retired or deferred capability, with history and re-entry criteria                                | `backlog/*.md`          |
+
+### Phases
+
+| Phase  | PRDs                                                                                                              | Behavior                                                  | Theme                                |
+| ------ | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------ |
+| **1**  | PRD-10 guardrails, PRD-11 runtime decomposition, PRD-12 extensibility, PRD-13 typed data layer, PRD-14 test suite | Frozen                                                    | Restructure how it's built           |
+| **1b** | PRD-15 log as ground truth                                                                                        | Relaxed only for new event rows and durable ideas/packets | Make the event log true ground truth |
+| **2**  | PRD-20 domain adoption (outline)                                                                                  | Changes                                                   | Rooms, Tasks, Runs, Grants, Receipts |
+
+### Numbering conventions
+
+- **Specs:** `00`–`03`, in reading order.
+- **PRDs:** numbered by phase band, with `1x` for phase 1 and `2x` for phase 2.
+  PRD-15 sits in the `1x` band but belongs to phase 1b, because it finishes the
+  phase-1 data work.
+- **Work orders:** one global sequence (`WO-00`…) in execution order, not
+  grouped by PRD. For example, WO-12 and WO-13 belong to PRD-13, while WO-14
+  belongs to PRD-12. Each PRD header lists its work orders, and the dependency
+  graph at the top of `work-orders.md` is the authority on order.
+- **Withdrawn items keep their numbers** so references stay stable (WO-18 and
+  golden scenario 8).
+- **Decisions are append-only.** A revised decision is marked superseded in its
+  row and replaced by a new decision; it is never edited or renumbered in place.
+
+### How a change flows
+
+```
+Decision → spec amended → PRD scopes it → work order written → agent executes
+  → PR (gate + golden suite) → merge → CHANGELOG and/or README revision history
+  → anything out of scope → bug-log or backlog
+```
+
+- **`CHANGELOG.md`** records code and behavior changes.
+- **The root README's revision history** records revisions to the operating
+  context, including this directory.
 
 ## Decision log (maintainer interview, 2026-09-25)
 
