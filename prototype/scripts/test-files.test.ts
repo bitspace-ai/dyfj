@@ -119,7 +119,7 @@ Deno.test("parseTypecheckScope accepts exactly one known scope", () => {
   assertThrows(() => parseTypecheckScope(["sources", "tests"]));
 });
 
-Deno.test("the unit lane runs in parallel with no run, net or env grant", () => {
+Deno.test("the unit lane runs in parallel, sanitized, with no run, net or env grant", () => {
   const args = unitTestArgs(["testing/fakes/map-env.test.ts"]);
   assertEquals(args.slice(0, 2), ["test", "--parallel"]);
   assertEquals(args.at(-1), "testing/fakes/map-env.test.ts");
@@ -130,6 +130,8 @@ Deno.test("the unit lane runs in parallel with no run, net or env grant", () => 
       banned,
     );
   }
-  // Sanitizers are Deno's default; nothing may switch them off lane-wide.
-  assertEquals(args.some((argument) => argument.includes("sanitize")), false);
+  // The pinned Deno makes the op and resource sanitizers opt-in; the lane
+  // opts in.
+  assertEquals(args.includes("--sanitize-ops"), true);
+  assertEquals(args.includes("--sanitize-resources"), true);
 });

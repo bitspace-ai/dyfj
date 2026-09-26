@@ -900,7 +900,7 @@ After the policy checks, the gate runs the retired-surface scan, the source and
 test-file typechecks (both file lists derived by walking the tree in
 `prototype/scripts/test-files.ts`, never hand-listed), the prototype `Deno.test`
 unit lane (`test.unit`: every non-integration `Deno.test` file, run in parallel
-with sanitizers on and no run, net, or env grant), the prototype Vitest unit
+with the op and resource sanitizers enabled and no run, net, or env grant), the prototype Vitest unit
 suite (files that import `vitest`; it may only shrink), current and historical
 schema checks, non-ignored Rust tests using offline SQLx metadata and no
 inherited `DATABASE_URL`, and an isolated-Dolt integration lane (including UDS

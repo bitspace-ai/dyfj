@@ -16,9 +16,9 @@ README are tracked separately in its Revision history section.
   prototype import map) and run in a fast lane of their own.
   `deno task test:unit` in `prototype/` runs every non-integration `Deno.test`
   file with `deno test
-  --parallel`, sanitizers on, and no run, net, or env
-  permission; the aggregate gate runs it as
-  `Prototype unit Deno.test suite (test.unit)`, including under
+  --parallel`, the op and resource sanitizers enabled
+  (opt-in in the pinned Deno), and no run, net, or env permission; the aggregate
+  gate runs it as `Prototype unit Deno.test suite (test.unit)`, including under
   `deno task test:fast`, and the prototype `deno task test` runs it before
   Vitest. `prototype/testing/fakes/` provides the first port fakes, each with
   its own tests: `ManualClock`, `SequentialIds`, `MapEnv`, and `fakeIo`. The

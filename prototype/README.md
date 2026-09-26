@@ -233,7 +233,8 @@ Both typecheck file lists and the `test.unit` file list are derived by walking t
 test file's framework is read from its source: a file that imports `vitest` runs under
 Vitest, any other `*.test.ts` is a `Deno.test` file and Vitest excludes it.
 `*.integration.test.ts` files and `testing/golden/` have their own lanes. `test:unit`
-runs `deno test --parallel` with Deno's sanitizers on, read access to the prototype and
+runs `deno test --parallel --sanitize-ops --sanitize-resources` (both sanitizers are
+opt-in in the pinned Deno), with read access to the prototype and
 temp roots, write access to temp roots only, and no run, net, or env grant, so unit and
 component tests stay off Dolt, the network, and child processes. Write fixture output to
 `Deno.makeTempDir()`, never the working tree.
