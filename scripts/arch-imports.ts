@@ -3,10 +3,10 @@
  *
  * Implements `specs/01-architecture.md` sections 3-4 in ratchet mode:
  *
- * - Parses static imports, re-exports, and dynamic `import()` of local modules
- *   under the roots listed in `arch-layers.json`. Test files and test fixtures
- *   are not part of the module graph and are skipped. Local specifiers resolve
- *   with or without an explicit `.ts` extension.
+ * - Builds the module graph of every module under the roots listed in
+ *   `arch-layers.json` with `deno info` (`arch-imports-graph.ts`): static
+ *   imports, re-exports, and dynamic `import()`, with type-only edges marked.
+ *   Test files and test fixtures are not part of the graph and are skipped.
  * - Maps every module to a unit (target directory) and layer. Modules that have
  *   not moved yet are mapped by name in `arch-layers.json`; a module the rules
  *   do not map fails the lane, so a new file cannot escape the rules.
@@ -21,13 +21,19 @@
  * - Report only, never failing: deep imports that bypass a directory's
  *   `mod.ts`, and the size report (`arch-imports-size.ts`).
  *
- * Usage (from the repository root):
- *   deno run --allow-read=. scripts/arch-imports.ts
- *   deno run --allow-read=. --allow-write=scripts/arch-imports-baseline.json \
+ * Usage (from the repository root; `--deno=<path>` selects the Deno binary
+ * that runs `deno info`, default `deno` on PATH):
+ *   deno run --allow-read=. --allow-run=deno scripts/arch-imports.ts
+ *   deno run --allow-read=. --allow-run=deno \
+ *     --allow-write=scripts/arch-imports-baseline.json \
  *     scripts/arch-imports.ts --write-baseline
  */
 
-import { parseImports } from "./arch-imports-lexer.ts";
+import {
+  type Edge,
+  loadModuleGraph,
+  type ModuleGraph,
+} from "./arch-imports-graph.ts";
 import { repoRootFromMeta } from "./scan-lib.ts";
 import { formatSizeReport, sizeReport } from "./arch-imports-size.ts";
 
@@ -133,46 +139,8 @@ export function unitFor(rules: LayerRules, path: string): Unit | undefined {
 // ---------------------------------------------------------------------------
 // Graph analysis
 
-export interface Edge {
-  from: string;
-  to: string;
-  kind: "static" | "dynamic";
-  typeOnly: boolean;
-  line: number;
-}
-
 export function edgeKey(from: string, to: string): string {
   return `${from} -> ${to}`;
-}
-
-function normalizePath(path: string): string {
-  const out: string[] = [];
-  for (const segment of path.split("/")) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") out.pop();
-    else out.push(segment);
-  }
-  return out.join("/");
-}
-
-export function resolveSpecifier(
-  importer: string,
-  specifier: string,
-  exists: (path: string) => boolean,
-): string | undefined {
-  const dir = importer.split("/").slice(0, -1).join("/");
-  const base = normalizePath(`${dir}/${specifier}`);
-  for (
-    const candidate of [
-      base,
-      `${base}.ts`,
-      `${base}/mod.ts`,
-      `${base}/index.ts`,
-    ]
-  ) {
-    if (exists(candidate)) return candidate;
-  }
-  return undefined;
 }
 
 /** Tarjan's strongly connected components, members sorted, SCCs sorted. */
@@ -218,8 +186,10 @@ export function stronglyConnected(
 }
 
 export interface AnalysisInput {
-  /** Repo-relative module path -> source text, for every scanned module. */
-  sources: ReadonlyMap<string, string>;
+  /** Repo-relative path of every scanned module. */
+  modules: readonly string[];
+  /** Edges between scanned modules, plus load and resolution errors. */
+  graph: ModuleGraph;
   rules: LayerRules;
   allowList: readonly CycleAllowEntry[];
   baseline: Baseline;
@@ -332,10 +302,13 @@ export function cycleComponents(
   return result;
 }
 
+export type { Edge };
+
 export function analyze(input: AnalysisInput): AnalysisResult {
-  const { sources, rules } = input;
+  const { rules } = input;
   const errors: string[] = [];
-  const modules = [...sources.keys()].sort();
+  const modules = [...input.modules].sort();
+  const known = new Set(modules);
   const units = new Map<string, Unit>();
   for (const path of modules) {
     const unit = unitFor(rules, path);
@@ -348,44 +321,13 @@ export function analyze(input: AnalysisInput): AnalysisResult {
     }
   }
   for (const path of Object.keys(rules.files)) {
-    if (!sources.has(path)) {
+    if (!known.has(path)) {
       errors.push(`mapped module no longer exists: ${path}`);
     }
   }
 
-  const edges: Edge[] = [];
-  const nonLiteral: string[] = [];
-  for (const path of modules) {
-    for (const record of parseImports(sources.get(path)!)) {
-      if (record.specifier === null) {
-        nonLiteral.push(`${path}:${record.line}`);
-        continue;
-      }
-      if (
-        !record.specifier.startsWith("./") &&
-        !record.specifier.startsWith("../")
-      ) {
-        continue;
-      }
-      const target = resolveSpecifier(path, record.specifier, input.exists);
-      if (target === undefined) {
-        errors.push(
-          `unresolved local import "${record.specifier}" at ${path}:${record.line}`,
-        );
-        continue;
-      }
-      // Imports of files outside the scanned roots (schema, contracts, JSON)
-      // are not module-graph edges.
-      if (!sources.has(target)) continue;
-      edges.push({
-        from: path,
-        to: target,
-        kind: record.kind,
-        typeOnly: record.typeOnly,
-        line: record.line,
-      });
-    }
-  }
+  const edges = input.graph.edges;
+  errors.push(...input.graph.errors);
 
   // Allow-list entries may name only edges that sit inside an import cycle.
   const components = cycleComponents(modules, edges);
@@ -457,12 +399,11 @@ export function analyze(input: AnalysisInput): AnalysisResult {
   }
 
   // Dynamic local imports.
-  const dynamic = sortedUnique([
-    ...edges.filter((e) => e.kind === "dynamic")
+  const dynamic = sortedUnique(
+    edges.filter((e) => e.kind === "dynamic")
       .map((e) => edgeKey(e.from, e.to))
       .filter((key) => !allowed.has(key)),
-    ...nonLiteral.map((at) => `${at} -> <non-literal>`),
-  ]);
+  );
 
   const current: Baseline = { cycles, layer, cli, dynamic };
   const now = new Set(flattenBaseline(current));
@@ -537,8 +478,9 @@ export async function main(
   root: string,
 ): Promise<number> {
   const write = args.includes("--write-baseline");
-  if (args.some((a) => a !== "--write-baseline")) {
-    console.error(`${LABEL}: usage: [--write-baseline]`);
+  const denoArg = args.find((a) => a.startsWith("--deno="));
+  if (args.some((a) => a !== "--write-baseline" && a !== denoArg)) {
+    console.error(`${LABEL}: usage: [--deno=<path>] [--write-baseline]`);
     return 64;
   }
   const rules = JSON.parse(
@@ -551,8 +493,15 @@ export async function main(
     await Deno.readTextFile(`${root}/${BASELINE_PATH}`),
   ) as Baseline;
   const sources = await collectSources(root, rules);
+  const modules = [...sources.keys()];
+  const graph = await loadModuleGraph(
+    root,
+    new Set(modules),
+    denoArg?.slice("--deno=".length) ?? "deno",
+  );
   const result = analyze({
-    sources,
+    modules,
+    graph,
     rules,
     allowList,
     baseline,

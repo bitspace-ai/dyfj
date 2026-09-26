@@ -947,15 +947,20 @@ The Rust tracer test retains its manual-run `.env` loader, but the fixture's
 explicit `DATABASE_URL` takes precedence, so the lane does not use the
 operator's Dolt database. It requires Deno, Dolt, and the pinned Rust toolchain.
 
-`arch.imports` (`scripts/arch-imports.ts`, with its lexer and size report in
-`scripts/arch-imports-lexer.ts` and `scripts/arch-imports-size.ts`, reported
-under `test.aggregate`) parses static and dynamic local imports under
-`prototype/src`, `prototype/mcp`, `prototype/scripts`, and
-`prototype/diagnostics` (once it exists), maps each module to the target layer
-in `specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
-`scripts/arch-layers.json`), and checks import cycles, upward and non-listed
-same-layer edges, the `cli/` allow-list, and dynamic local imports. It runs in
-ratchet mode: current violations are recorded in
+`arch.imports` (`scripts/arch-imports.ts`, reported under `test.aggregate`)
+builds the module graph of every module under `prototype/src`,
+`prototype/mcp`, `prototype/scripts`, and `prototype/diagnostics` (once it
+exists) with `deno info --json` (`scripts/arch-imports-graph.ts`, offline and
+config-free): static imports, re-exports, and dynamic `import()`, with
+type-only edges (`import type`, `export type`, `typeof import()`) marked. It
+maps each module to the target layer in `specs/01-architecture.md` §3 (modules
+not yet moved are mapped by name in `scripts/arch-layers.json`) and checks
+import cycles, upward and non-listed same-layer edges, the `cli/` allow-list,
+and dynamic local imports. A module that fails to load or a local import that
+does not resolve fails the lane. Two limits come from deno's graph: a dynamic
+import of a module the same file also imports statically is reported as a
+static edge, and a dynamic `import()` with a non-literal argument has no edge.
+It runs in ratchet mode: current violations are recorded in
 `scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
 that baseline and on any baseline entry that no longer occurs, so the baseline
 can only shrink. An intentional cycle is allowed only by a named entry in
@@ -964,8 +969,10 @@ which must lie inside an import cycle, a justification, and an existing test
 file; an entry exempts its edges from the cycle and dynamic-import rules only,
 never from layer direction or the `cli/` allow-list. Deep imports that bypass a
 `mod.ts`, modules over 600 lines, and functions over 150 lines are reported
-without failing. After an intended reduction, regenerate the baseline with
-`deno run --allow-read=. --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
+without failing (`scripts/arch-imports-size.ts`; its function spans come from a
+small best-effort tokenizer). After an intended reduction, regenerate the
+baseline with
+`deno run --allow-read=. --allow-run=deno --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout

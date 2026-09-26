@@ -6,7 +6,7 @@ import {
   type LayerRules,
   stronglyConnected,
 } from "./arch-imports.ts";
-import { parseImports } from "./arch-imports-lexer.ts";
+import { loadModuleGraph } from "./arch-imports-graph.ts";
 import { functionSpans, sizeReport } from "./arch-imports-size.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
@@ -58,114 +58,184 @@ const RULES: LayerRules = {
 
 const EMPTY: Baseline = { cycles: [], layer: [], cli: [], dynamic: [] };
 
-function run(
+// Writes the fixture modules into a temporary tree and builds the graph with
+// the real `deno info`, so every rule test runs through the same parser as the
+// lane.
+async function run(
   files: Record<string, string>,
   overrides: Partial<AnalysisInput> = {},
 ) {
-  const sources = new Map(
-    Object.entries({ [`${S}/legacy-utils.ts`]: "export {};", ...files }),
-  );
-  const extra = new Set(["prototype/testing/cycle.test.ts"]);
-  return analyze({
-    sources,
-    rules: RULES,
-    allowList: [],
-    baseline: EMPTY,
-    exists: (path) => sources.has(path) || extra.has(path),
-    ...overrides,
-  });
+  const all: Record<string, string> = {
+    [`${S}/legacy-utils.ts`]: "export {};",
+    ...files,
+  };
+  const root = Deno.realPathSync(await Deno.makeTempDir());
+  try {
+    for (const [path, source] of Object.entries(all)) {
+      await Deno.mkdir(`${root}/${path.split("/").slice(0, -1).join("/")}`, {
+        recursive: true,
+      });
+      await Deno.writeTextFile(`${root}/${path}`, source);
+    }
+    const modules = Object.keys(all);
+    const graph = await loadModuleGraph(
+      root,
+      new Set(modules),
+      Deno.execPath(),
+    );
+    const extra = new Set(["prototype/testing/cycle.test.ts"]);
+    return analyze({
+      modules,
+      graph,
+      rules: RULES,
+      allowList: [],
+      baseline: EMPTY,
+      exists: (path) => path in all || extra.has(path),
+      ...overrides,
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Parsing
+// Graph
 
-Deno.test("parser finds static, re-export, type-only, and dynamic imports", () => {
-  const records = parseImports(`
-    import a from "./a";
-    import { b, c } from "./b.ts";
-    import type { T } from "./t";
-    import { type U, type V } from "./u.ts";
-    import { type W, x } from "./w";
-    import { type as Renamed } from "./renamed-value";
-    import { type as } from "./type-named-as";
-    import "./side-effect";
-    export { d } from "./d";
-    export type { E } from "./e.ts";
-    export * as ns from "./ns";
-    export * from "npm:zod@4.4.3";
-    const lazy = await import("./lazy");
-    const computed = await import(name);
-    const meta = import.meta.url;
-  `);
-  assertEquals(
-    records.map((r) => [r.specifier, r.kind, r.typeOnly]),
-    [
-      ["./a", "static", false],
-      ["./b.ts", "static", false],
-      ["./t", "static", true],
-      ["./u.ts", "static", true],
-      ["./w", "static", false],
-      ["./renamed-value", "static", false],
-      ["./type-named-as", "static", true],
-      ["./side-effect", "static", false],
-      ["./d", "static", false],
-      ["./e.ts", "static", true],
-      ["./ns", "static", false],
-      ["npm:zod@4.4.3", "static", false],
-      ["./lazy", "dynamic", false],
-      [null, "dynamic", false],
-    ],
+const E = `${S}/engine`;
+
+function edgesFrom(
+  result: Awaited<ReturnType<typeof run>>,
+  from: string,
+): [string, string, boolean][] {
+  return result.edges.filter((e) => e.from === from).map((e) => [
+    e.to.slice(E.length + 1),
+    e.kind,
+    e.typeOnly,
+  ]);
+}
+
+function targets(names: string[]): Record<string, string> {
+  return Object.fromEntries(
+    names.map((
+      n,
+    ) => [`${E}/${n}.ts`, "export const x = 1; export type T = 1;"]),
   );
-});
+}
 
-Deno.test("parser ignores imports inside comments, strings, templates, and regexes", () => {
-  const records = parseImports(`
-    // import a from "./comment";
-    /* import b from "./block"; */
-    const s = 'import c from "./string"';
-    const t = \`import d from "./template" \${ "x" } import("./in-template")\`;
-    const r = /import e from "\\.\\/regex"/g;
-    const ratio = total / count; import f from "./real";
-    if (ok) /import g from "\.\/after-control"/.test(s);
-    const call = f(x) / 2; import h from "./after-division";
-    const obj = {} / 2; import i from "./after-object";
-    n++ / 2; import j from "./after-postfix";
-    const n = ({ x: 1 }) / import("./after-object-paren");
-    function block() {} /import k from "\.\/after-block"/.test(s);
-    if (ok) {} else {} /import("\.\/after-else")/.test(s);
-    do {} while (0); import l from "./after-do";
-    const u = n + + /import m from "\.\/after-unary"/.source;
-    type Mod = typeof import("./type-query");
-    const helpers = { import(value) { return value; } };
-    class Loader { static async import(path: string): Promise<void> {} }
-    const pick = ok ? import("./ternary") : null;
-    obj.import("./method");
-  `);
-  assertEquals(records.map((r) => r.specifier), [
-    "./real",
-    "./after-division",
-    "./after-object",
-    "./after-postfix",
-    "./after-object-paren",
-    "./after-do",
-    "./type-query",
-    "./ternary",
+Deno.test("the graph has static, re-export, type-only, and dynamic edges", async () => {
+  const result = await run({
+    ...targets([
+      "a",
+      "t",
+      "u",
+      "d",
+      "e",
+      "ns",
+      "side",
+      "lazy",
+      "q",
+      "both",
+    ]),
+    [`${E}/main.ts`]: [
+      'import { x } from "./a";',
+      'import type { T } from "./t.ts";',
+      // All-inline-type bindings still load the module (verbatimModuleSyntax).
+      'import { type T as U } from "./u";',
+      'export { x as d } from "./d";',
+      'export type { T as E } from "./e";',
+      'export * as ns from "./ns";',
+      'import "./side";',
+      'const lazy = await import("./lazy");',
+      'type Q = typeof import("./q");',
+      // Imported statically and dynamically: the dynamic import adds no edge.
+      'import { x as b } from "./both";',
+      'const both = await import("./both");',
+    ].join("\n"),
+  });
+  assertEquals(result.errors, []);
+  assertEquals(edgesFrom(result, `${E}/main.ts`), [
+    ["a.ts", "static", false],
+    ["both.ts", "static", false],
+    ["d.ts", "static", false],
+    ["e.ts", "static", true],
+    ["lazy.ts", "dynamic", false],
+    ["ns.ts", "static", false],
+    ["q.ts", "static", true],
+    ["side.ts", "static", false],
+    ["t.ts", "static", true],
+    ["u.ts", "static", false],
   ]);
 });
 
-Deno.test("a typeof import() type query is a type-only static import", () => {
-  assertEquals(
-    parseImports('type M = typeof import("./m");').map((r) => [
-      r.specifier,
-      r.kind,
-      r.typeOnly,
-    ]),
-    [["./m", "static", true]],
-  );
+Deno.test("import-like text outside real imports adds no edges", async () => {
+  // Each case once misled the hand-written lexer this lane used before.
+  const names = [
+    "comment",
+    "block",
+    "string",
+    "template",
+    "in-template",
+    "regex",
+    "real",
+    "after-control",
+    "after-division",
+    "after-object",
+    "after-postfix",
+    "after-object-paren",
+    "after-block",
+    "after-else",
+    "after-do",
+    "after-unary",
+    "type-query",
+    "ternary",
+    "method",
+  ];
+  const result = await run({
+    ...targets(names),
+    [`${E}/tricky.ts`]: [
+      '// import a from "./comment";',
+      '/* import b from "./block"; */',
+      "const s = 'import c from \"./string\"';",
+      'const t = `import d from "./template" ${"x"} import("./in-template")`;',
+      'const r = /import e from "\\.\\/regex"/g;',
+      "const total = 4, count = 2, ok = true, n = 1;",
+      'const ratio = total / count; import f from "./real";',
+      'if (ok) /import g from "\\.\\/after-control"/.test(s);',
+      'const call = Math.abs(n) / 2; import h from "./after-division";',
+      'const obj = ({} as unknown as number) / 2; import i from "./after-object";',
+      'let m = 1; m++ / 2; import j from "./after-postfix";',
+      'const o = ({ x: 1 } as unknown as number) / (await import("./after-object-paren")).x;',
+      'function block() {} /import k from "\\.\\/after-block"/.test(s);',
+      'if (ok) {} else {} /import("\\.\\/after-else")/.test(s);',
+      'do {} while (!ok); import l from "./after-do";',
+      'const u = n + + /import m from "\\.\\/after-unary"/.source;',
+      'type Mod = typeof import("./type-query");',
+      "const helpers = { import(value: string) { return value; } };",
+      "class Loader { static async import(path: string): Promise<void> {} }",
+      'const pick = ok ? import("./ternary") : null;',
+      'helpers.import("./method");',
+    ].join("\n"),
+  });
+  assertEquals(result.errors, []);
+  assertEquals(edgesFrom(result, `${E}/tricky.ts`), [
+    ["after-division.ts", "static", false],
+    ["after-do.ts", "static", false],
+    ["after-object-paren.ts", "dynamic", false],
+    ["after-object.ts", "static", false],
+    ["after-postfix.ts", "static", false],
+    ["real.ts", "static", false],
+    ["ternary.ts", "dynamic", false],
+    ["type-query.ts", "static", true],
+  ]);
 });
 
-Deno.test("extensionless and .ts specifiers resolve to the same module", () => {
-  const result = run({
+Deno.test("a module that does not parse fails the lane", async () => {
+  const result = await run({ [`${E}/broken.ts`]: "export const = ;" });
+  assertEquals(result.errors, [`module failed to load: ${E}/broken.ts`]);
+});
+
+Deno.test("extensionless and .ts specifiers resolve to the same module", async () => {
+  const result = await run({
     [`${S}/kernel/a.ts`]: "export const a = 1;",
     [`${S}/engine/x.ts`]: 'import { a } from "../kernel/a";',
     [`${S}/engine/y.ts`]: 'import { a } from "../kernel/a.ts";',
@@ -180,8 +250,8 @@ Deno.test("extensionless and .ts specifiers resolve to the same module", () => {
   );
 });
 
-Deno.test("an unresolved local import and an unmapped module fail", () => {
-  const result = run({
+Deno.test("an unresolved local import and an unmapped module fail", async () => {
+  const result = await run({
     [`${S}/kernel/a.ts`]: 'import { gone } from "./gone";',
     [`${S}/mystery.ts`]: "export {};",
   });
@@ -192,8 +262,8 @@ Deno.test("an unresolved local import and an unmapped module fail", () => {
   );
 });
 
-Deno.test("a name mapping for a module that no longer exists fails", () => {
-  const result = run({}, {
+Deno.test("a name mapping for a module that no longer exists fails", async () => {
+  const result = await run({}, {
     rules: {
       ...RULES,
       files: { ...RULES.files, [`${S}/moved-away.ts`]: "store" },
@@ -220,8 +290,8 @@ Deno.test("Tarjan groups mutually reachable modules", () => {
   ]);
 });
 
-Deno.test("an import cycle is a violation, type-only edges included", () => {
-  const result = run({
+Deno.test("an import cycle is a violation, type-only edges included", async () => {
+  const result = await run({
     [`${S}/tools/a.ts`]: 'import { b } from "./b";',
     [`${S}/tools/b.ts`]: 'import type { A } from "./a.ts";',
   });
@@ -238,8 +308,8 @@ Deno.test("an import cycle is a violation, type-only edges included", () => {
   ]);
 });
 
-Deno.test("upward and non-listed same-layer edges are layer violations", () => {
-  const result = run({
+Deno.test("upward and non-listed same-layer edges are layer violations", async () => {
+  const result = await run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e";',
     [`${S}/engine/e.ts`]: "export const e = 1;",
     [`${S}/providers/p.ts`]: 'import { s } from "../legacy-utils";',
@@ -259,8 +329,8 @@ Deno.test("upward and non-listed same-layer edges are layer violations", () => {
   ]);
 });
 
-Deno.test("a types-only same-layer edge fails when it imports values", () => {
-  const result = run({
+Deno.test("a types-only same-layer edge fails when it imports values", async () => {
+  const result = await run({
     [`${S}/providers/p.ts`]: "export type P = 1; export const p = 1;",
     [`${S}/context/types.ts`]: 'import type { P } from "../providers/p";',
     [`${S}/context/values.ts`]: 'import { p } from "../providers/p";',
@@ -270,8 +340,8 @@ Deno.test("a types-only same-layer edge fails when it imports values", () => {
   ]);
 });
 
-Deno.test("cli/ may import only its allow-list", () => {
-  const result = run({
+Deno.test("cli/ may import only its allow-list", async () => {
+  const result = await run({
     [`${S}/cli/main.ts`]: [
       'import { k } from "../kernel/k";',
       'import { c } from "../extensions/ideas/client";',
@@ -290,8 +360,8 @@ Deno.test("cli/ may import only its allow-list", () => {
   assertEquals(result.current.layer, []);
 });
 
-Deno.test("dynamic local imports are violations; package imports are not", () => {
-  const result = run({
+Deno.test("dynamic local imports are violations; package imports are not", async () => {
+  const result = await run({
     [`${S}/engine/e.ts`]: [
       'const { k } = await import("../kernel/k");',
       'const { k: again } = await import("../kernel/k.ts");',
@@ -304,9 +374,9 @@ Deno.test("dynamic local imports are violations; package imports are not", () =>
   ]);
 });
 
-Deno.test("deep imports past a mod.ts are reported, never failed", () => {
+Deno.test("deep imports past a mod.ts are reported, never failed", async () => {
   const baseline: Baseline = EMPTY;
-  const result = run({
+  const result = await run({
     [`${S}/tools/mod.ts`]: 'export { t } from "./t";',
     [`${S}/tools/t.ts`]: "export const t = 1;",
     [`${S}/engine/e.ts`]: 'import { t } from "../tools/t";',
@@ -334,17 +404,17 @@ const ENTRY: CycleAllowEntry = {
   test: "prototype/testing/cycle.test.ts",
 };
 
-Deno.test("an allow-listed cycle passes, including its dynamic edge", () => {
-  const result = run(CYCLE, { allowList: [ENTRY] });
+Deno.test("an allow-listed cycle passes, including its dynamic edge", async () => {
+  const result = await run(CYCLE, { allowList: [ENTRY] });
   assertEquals(result.errors, []);
   assertEquals(result.current, EMPTY);
   assertEquals(result.added, []);
 });
 
-Deno.test("an allow-listed cycle still fails layer and cli/ rules", () => {
+Deno.test("an allow-listed cycle still fails layer and cli/ rules", async () => {
   const up = `${S}/kernel/k.ts -> ${S}/engine/e.ts`;
   const down = `${S}/engine/e.ts -> ${S}/kernel/k.ts`;
-  const result = run({
+  const result = await run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e";',
     [`${S}/engine/e.ts`]: 'const { k } = await import("../kernel/k");',
   }, {
@@ -356,9 +426,9 @@ Deno.test("an allow-listed cycle still fails layer and cli/ rules", () => {
   assertEquals(result.current.layer, [up]);
 });
 
-Deno.test("an allow-list entry naming a non-cycle edge fails", () => {
+Deno.test("an allow-list entry naming a non-cycle edge fails", async () => {
   const edge = `${S}/engine/e.ts -> ${S}/kernel/k.ts`;
-  const result = run({
+  const result = await run({
     [`${S}/engine/e.ts`]: 'const { k } = await import("../kernel/k");',
     [`${S}/kernel/k.ts`]: "export const k = 1;",
   }, { allowList: [{ ...ENTRY, edges: [edge] }] });
@@ -367,8 +437,8 @@ Deno.test("an allow-list entry naming a non-cycle edge fails", () => {
   ]);
 });
 
-Deno.test("an allow-list entry whose cited test file is missing fails", () => {
-  const result = run(CYCLE, {
+Deno.test("an allow-list entry whose cited test file is missing fails", async () => {
+  const result = await run(CYCLE, {
     allowList: [{ ...ENTRY, test: "prototype/testing/missing.test.ts" }],
   });
   assertEquals(result.errors, [
@@ -376,8 +446,8 @@ Deno.test("an allow-list entry whose cited test file is missing fails", () => {
   ]);
 });
 
-Deno.test("a stale allow-list entry fails when its edges no longer occur", () => {
-  const result = run({
+Deno.test("a stale allow-list entry fails when its edges no longer occur", async () => {
+  const result = await run({
     [`${S}/tools/a.ts`]: 'import { b } from "./b";',
     [`${S}/tools/b.ts`]: "export const b = 1;",
   }, { allowList: [ENTRY] });
@@ -388,8 +458,8 @@ Deno.test("a stale allow-list entry fails when its edges no longer occur", () =>
   ]);
 });
 
-Deno.test("an allow-list entry needs a name, a justification, and a test", () => {
-  const result = run(CYCLE, {
+Deno.test("an allow-list entry needs a name, a justification, and a test", async () => {
+  const result = await run(CYCLE, {
     allowList: [
       { name: "", edges: [], justification: " ", test: "" },
       { name: " ", edges: [], justification: " ", test: "" },
@@ -411,14 +481,14 @@ Deno.test("an allow-list entry needs a name, a justification, and a test", () =>
 // ---------------------------------------------------------------------------
 // Ratchet
 
-Deno.test("the ratchet fails on a new violation and on a stale baseline entry", () => {
+Deno.test("the ratchet fails on a new violation and on a stale baseline entry", async () => {
   const baseline: Baseline = {
     cycles: [],
     layer: [`${S}/kernel/k.ts -> ${S}/engine/gone.ts`],
     cli: [],
     dynamic: [],
   };
-  const result = run({
+  const result = await run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e";',
     [`${S}/engine/e.ts`]: "export const e = 1;",
   }, { baseline });
@@ -428,13 +498,13 @@ Deno.test("the ratchet fails on a new violation and on a stale baseline entry", 
   ]);
 });
 
-Deno.test("the ratchet passes when the tree matches the baseline", () => {
+Deno.test("the ratchet passes when the tree matches the baseline", async () => {
   const files = {
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e";',
     [`${S}/engine/e.ts`]: "export const e = 1;",
   };
-  const first = run(files);
-  const second = run(files, { baseline: first.current });
+  const first = await run(files);
+  const second = await run(files, { baseline: first.current });
   assertEquals(second.added, []);
   assertEquals(second.stale, []);
 });

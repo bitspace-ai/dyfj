@@ -400,7 +400,8 @@ export function productionLanes(
     {
       // Module-boundary ratchet (specs/01-architecture.md section 4): runs
       // under the aggregate check id rather than a new required id, so the
-      // receipt check-id vocabulary is unchanged.
+      // receipt check-id vocabulary is unchanged. It builds the module graph
+      // with `deno info`, run through the same selected Deno binary.
       label: "Architecture import rules (arch.imports)",
       checkId: "test.aggregate",
       command: denoExecutable,
@@ -409,7 +410,9 @@ export function productionLanes(
         "run",
         "--no-prompt",
         `--allow-read=${root}`,
+        `--allow-run=${denoExecutable}`,
         "scripts/arch-imports.ts",
+        `--deno=${denoExecutable}`,
       ],
       cwd: root,
     },
