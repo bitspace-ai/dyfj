@@ -13,7 +13,7 @@ import {
   invokeCommandWithEvent,
   registerCoreCommands,
   truncateForEventColumn,
-} from "./commands";
+} from "./commands.ts";
 
 function readCommand(
   overrides: Partial<CommandDefinition<string>> = {},

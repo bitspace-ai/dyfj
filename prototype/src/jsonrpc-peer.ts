@@ -19,12 +19,12 @@ import {
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
-} from "./jsonrpc";
+} from "./jsonrpc.ts";
 import {
   MAX_ERROR_SUMMARY_BYTES,
   sanitizeBoundaryText,
   summarizeError,
-} from "./turn-contract";
+} from "./turn-contract.ts";
 
 export interface JsonRpcPeerOptions {
   /** Incoming requests (and matching notifications) are dispatched here. */

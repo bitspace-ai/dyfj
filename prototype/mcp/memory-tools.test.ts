@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import type { SqlParam } from "./dolt-config";
+import type { SqlParam } from "./dolt-config.ts";
 import {
   listMcpMemories,
   type McpMemoryQuery,
   readMcpMemory,
-} from "./memory-tools";
+} from "./memory-tools.ts";
 
 type Visibility = "private" | "shareable" | "client_safe" | "public";
 

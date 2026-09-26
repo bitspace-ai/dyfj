@@ -5,7 +5,7 @@ import {
   formatSummaryMessage,
   partitionForCompression,
   VERBATIM_TAIL_TURNS,
-} from "./context-compression";
+} from "./context-compression.ts";
 import {
   assertRepresentableToolHistory,
   buildConversationMessages,
@@ -18,8 +18,8 @@ import {
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
   updateWorkbenchSession,
-} from "./sessions";
-import type { HistoryOmissionProjection } from "./turn-contract";
+} from "./sessions.ts";
+import type { HistoryOmissionProjection } from "./turn-contract.ts";
 
 describe("buildWorkbenchSessionSlug", () => {
   test("derives a stable workbench slug from the session id", () => {

@@ -21,7 +21,7 @@ import {
   memoryClearanceFor,
   type MemoryIndexEntry,
   UNTRUSTED_MEMORY_INSTRUCTIONS,
-} from "./memory";
+} from "./memory.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

@@ -4,8 +4,8 @@ import {
   formatWorkPacketMarkdown,
   IdeaPacketRegistry,
   markWorkbenchIdea,
-} from "./idea-packet";
-import type { WorkbenchSessionEvent } from "./sessions";
+} from "./idea-packet.ts";
+import type { WorkbenchSessionEvent } from "./sessions.ts";
 
 describe("IdeaPacketRegistry", () => {
   test("registers, retrieves, and lists ideas and packets with session filtering", () => {

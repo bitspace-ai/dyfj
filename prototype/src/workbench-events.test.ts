@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
-} from "./workbench-events";
+} from "./workbench-events.ts";
 
 const SESSION_ID = "01TESTSESSION00000000000000";
 const TRACE_ID = "0123456789abcdef0123456789abcdef";

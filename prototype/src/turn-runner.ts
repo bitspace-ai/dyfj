@@ -12,16 +12,16 @@ import {
   type WorkbenchRuntimeEvent,
   type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
-} from "./workbench";
-import { type WorkbenchRoutingOptions } from "./provider";
+} from "./workbench.ts";
+import { type WorkbenchRoutingOptions } from "./provider.ts";
 import {
   buildConversationMessages,
   type WorkbenchSessionEvent,
-} from "./sessions";
-import type { CommandDefinition, ConfirmToolApproval } from "./commands";
-import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget";
-import type { PermissionLevel, WorkbenchConfig } from "./config";
-import type { HistoryOmissionProjection } from "./turn-contract";
+} from "./sessions.ts";
+import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
+import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget.ts";
+import type { PermissionLevel, WorkbenchConfig } from "./config.ts";
+import type { HistoryOmissionProjection } from "./turn-contract.ts";
 
 export type WorkbenchHttpRuntime = (
   input: WorkbenchRuntimeInput,
@@ -46,7 +46,7 @@ export interface TurnRequestBody {
   budget?: unknown;
 }
 
-import { SESSION_ID_SHAPE } from "./turn-contract";
+import { SESSION_ID_SHAPE } from "./turn-contract.ts";
 
 const TURN_ID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

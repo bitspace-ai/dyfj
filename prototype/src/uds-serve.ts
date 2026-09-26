@@ -3,12 +3,12 @@
 // and intentionally NOT imported by the thin CLI client.
 //   deno task serve-unix
 
-import { serveWorkbenchUnix } from "./uds-server";
-import { ensureSocketDir, resolveSocketPath } from "./uds-path";
-import { loadConfig, loadMcpServersConfig, loadSecretsConfig } from "./config";
-import { resolveSecrets } from "./secrets";
-import { buildExternalMcpCommands } from "./mcp-tools";
-import { installRuntimeSigintHandler } from "./runtime-sigint";
+import { serveWorkbenchUnix } from "./uds-server.ts";
+import { ensureSocketDir, resolveSocketPath } from "./uds-path.ts";
+import { loadConfig, loadMcpServersConfig, loadSecretsConfig } from "./config.ts";
+import { resolveSecrets } from "./secrets.ts";
+import { buildExternalMcpCommands } from "./mcp-tools.ts";
+import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
 
 const socketPath = resolveSocketPath();
 const autostarted = Deno.args.includes("--autostarted");

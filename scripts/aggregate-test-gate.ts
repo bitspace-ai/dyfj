@@ -456,7 +456,6 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "check",
-        "--sloppy-imports",
         "src/workbench.ts",
         "src/jsonrpc.ts",
         "src/jsonrpc-peer.ts",

@@ -170,7 +170,7 @@ async function withClient<T>(
   }, revision: string) => Promise<T>,
 ): Promise<T> {
   const { Client, StreamableHTTPClientTransport } = await import(
-    "npm:@modelcontextprotocol/client@2.0.0"
+    "@modelcontextprotocol/client"
   );
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
     requestInit: requestInit(token),

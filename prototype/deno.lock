@@ -460,7 +460,7 @@
         "tinyrainbow"
       ]
     },
-    "@vitest/mocker@3.2.6_vite@7.3.5__@types+node@26.5.1_@types+node@26.5.1": {
+    "@vitest/mocker@3.2.6_vite@7.3.5_@types+node@26.5.1": {
       "integrity": "sha512-EZOrpDbkKotFAP7wPAQV1UIyoGOk4oX7ynWhBhLB7v+meMHbQhU16oPpIYGTTe4oFlhpryGpgpcZP/sin3hYuw==",
       "dependencies": [
         "@vitest/spy",
@@ -998,9 +998,12 @@
       "jsr:@std/toml@1.0.11",
       "npm:@agentclientprotocol/codex-acp@1.11.0",
       "npm:@agentclientprotocol/sdk@1.4.0",
+      "npm:@modelcontextprotocol/client@2.0.0",
+      "npm:@modelcontextprotocol/server@2.0.0",
       "npm:mysql2@3.24.4",
       "npm:ulid@3.0.2",
-      "npm:vitest@3.2.6"
+      "npm:vitest@3.2.6",
+      "npm:zod@4.4.3"
     ]
   }
 }

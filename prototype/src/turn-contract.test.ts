@@ -9,7 +9,7 @@ import {
   sanitizeBoundaryText,
   summarizeError,
   takeCodePointPrefix,
-} from "./turn-contract";
+} from "./turn-contract.ts";
 
 describe("persisted history omission notice", () => {
   test("[case 25] renders the exact code-owned notice without event values", () => {

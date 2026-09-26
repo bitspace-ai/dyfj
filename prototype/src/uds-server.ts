@@ -15,7 +15,7 @@ import {
   selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
-} from "./provider";
+} from "./provider.ts";
 import {
   defaultIdeaPacketRegistry,
   draftWorkPacketFromContext,
@@ -24,7 +24,7 @@ import {
   markWorkbenchIdea,
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
-} from "./idea-packet";
+} from "./idea-packet.ts";
 import {
   compareSessionActivity,
   countWorkbenchSessionEvents,
@@ -36,27 +36,27 @@ import {
   type WorkbenchProjectSessions,
   type WorkbenchSessionEvent,
   type WorkbenchSessionSummary,
-} from "./sessions";
+} from "./sessions.ts";
 import {
   type RpcContext,
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
-} from "./jsonrpc";
-import { JsonRpcPeer } from "./jsonrpc-peer";
-import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench";
+} from "./jsonrpc.ts";
+import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench.ts";
 import {
   AGENT_DEFAULTS,
   type PermissionLevel,
   type WorkbenchConfig,
-} from "./config";
+} from "./config.ts";
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
   runawayAnomalyApprovalRequest,
-} from "./budget";
-import type { TurnStreamFrame } from "./turn-contract";
-import { isSupersedingRetryStarted, summarizeError } from "./turn-contract";
+} from "./budget.ts";
+import type { TurnStreamFrame } from "./turn-contract.ts";
+import { isSupersedingRetryStarted, summarizeError } from "./turn-contract.ts";
 import {
   engineConfigToTurnDeps,
   executeTurn,
@@ -64,7 +64,7 @@ import {
   resolveTurnFromBody,
   type TurnRequestBody,
   type WorkbenchHttpRuntime,
-} from "./turn-runner";
+} from "./turn-runner.ts";
 import {
   type CommandDefinition,
   type ConfirmToolApproval,
@@ -72,9 +72,9 @@ import {
   invokeCommandWithEvent,
   registerCoreCommands,
   type ToolApprovalVerdict,
-} from "./commands";
-import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
-import { AcpSessionHandleMap } from "./acp-session-map";
+} from "./commands.ts";
+import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
+import { AcpSessionHandleMap } from "./acp-session-map.ts";
 import {
   FRICTION_SEVERITIES,
   type FrictionContext,
@@ -83,8 +83,8 @@ import {
   isLinearCommentCommandId,
   postFriction,
   requireFrictionIssueIdentifier,
-} from "./friction";
-import { generateTraceId, writeEvent as writeDoltEvent } from "./utils";
+} from "./friction.ts";
+import { generateTraceId, writeEvent as writeDoltEvent } from "./utils.ts";
 
 export interface WorkbenchToolSummary {
   id: string;

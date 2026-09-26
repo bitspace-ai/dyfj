@@ -28,7 +28,7 @@ import {
   type WorkbenchModel,
   WorkbenchModelFastSpeedUnsupportedError,
   WorkbenchModelNotFoundError,
-} from "./provider";
+} from "./provider.ts";
 
 const models: WorkbenchModel[] = [
   {
@@ -6458,7 +6458,7 @@ describe("unpriced models are unroutable", () => {
   };
 
   test("modelHasCatalogPricing: tier 0 zero-cost is priced (free by declaration)", async () => {
-    const { modelHasCatalogPricing } = await import("./provider");
+    const { modelHasCatalogPricing } = await import("./provider.ts");
     expect(modelHasCatalogPricing(models[0])).toBe(true); // tier 0, $0
     expect(modelHasCatalogPricing(models[2])).toBe(true); // tier 1, priced
     expect(modelHasCatalogPricing(unpriced)).toBe(false); // tier 2, $0
@@ -6477,7 +6477,7 @@ describe("unpriced models are unroutable", () => {
   });
 
   test("explicit modelId selection of an unpriced paid model throws the named error", async () => {
-    const { WorkbenchModelNotRoutableError } = await import("./provider");
+    const { WorkbenchModelNotRoutableError } = await import("./provider.ts");
     expect(() =>
       selectWorkbenchModel([...models, unpriced], { modelId: "gpt-6-preview" })
     ).toThrow(WorkbenchModelNotRoutableError);
@@ -6511,7 +6511,7 @@ describe("unpriced models are unroutable", () => {
   });
 
   test("a tier whose only candidates are unpriced names the catalog problem", async () => {
-    const { WorkbenchModelNotRoutableError } = await import("./provider");
+    const { WorkbenchModelNotRoutableError } = await import("./provider.ts");
     expect(() => selectWorkbenchModel([...models, unpriced], { tier: 2 }))
       .toThrow(WorkbenchModelNotRoutableError);
     expect(() => selectWorkbenchModel([...models, unpriced], { tier: 2 }))

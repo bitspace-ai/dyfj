@@ -14,9 +14,9 @@
  */
 
 import { afterAll, describe, expect, test } from "vitest";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server";
-import { connectUnixClient } from "./uds-client";
-import { isValidAsOfTimestamp } from "./sessions";
+import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
+import { connectUnixClient } from "./uds-client.ts";
+import { isValidAsOfTimestamp } from "./sessions.ts";
 import {
   doltExec,
   doltQuery,
@@ -24,7 +24,7 @@ import {
   generateTraceId,
   generateULID,
   writeEvent,
-} from "./utils";
+} from "./utils.ts";
 
 const HISTORICAL = "ASOF_HISTORICAL_batch";
 const HEAD = "ASOF_HEAD_batch";

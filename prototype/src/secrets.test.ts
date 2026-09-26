@@ -8,8 +8,8 @@ import {
   type SecretCommandResult,
   type SecretsEnv,
   secretsRunGrant,
-} from "./secrets";
-import type { SecretsConfig } from "./config";
+} from "./secrets.ts";
+import type { SecretsConfig } from "./config.ts";
 
 /** A mutable in-memory env matching the resolver's read/write surface. */
 function fakeEnv(initial: Record<string, string> = {}): SecretsEnv & {

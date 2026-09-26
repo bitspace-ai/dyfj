@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { resolveSocketPath } from "./uds-path";
+import { resolveSocketPath } from "./uds-path.ts";
 
 function env(map: Record<string, string>) {
   return { get: (k: string) => map[k] };

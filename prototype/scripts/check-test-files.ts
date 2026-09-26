@@ -39,7 +39,7 @@ if (import.meta.main) {
   if (files.length === 0) throw new Error("no test files found");
   assertIntegrationTestAssignments(files.map((file) => relativeTo(root, file)));
   const output = await new Deno.Command(selectedDenoExecutable(), {
-    args: ["check", "--sloppy-imports", ...files],
+    args: ["check", ...files],
     cwd: root,
     clearEnv: true,
     env: Object.fromEntries(

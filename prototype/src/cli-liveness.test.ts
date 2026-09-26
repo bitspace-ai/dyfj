@@ -6,10 +6,10 @@ import {
   probeRuntimeLiveness,
   runStatus,
   socketError,
-} from "./cli";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server";
-import { connectUnixClient, type UnixClient } from "./uds-client";
-import { RpcError, RpcErrorCode } from "./jsonrpc";
+} from "./cli.ts";
+import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
+import { connectUnixClient, type UnixClient } from "./uds-client.ts";
+import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {

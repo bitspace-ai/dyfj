@@ -1,11 +1,11 @@
-import { doltExec, doltQuery, generateULID, type SqlParam } from "./utils";
-import type { WorkbenchMessage } from "./provider";
-import { formatSummaryMessage } from "./context-compression";
+import { doltExec, doltQuery, generateULID, type SqlParam } from "./utils.ts";
+import type { WorkbenchMessage } from "./provider.ts";
+import { formatSummaryMessage } from "./context-compression.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   DomainError,
   type HistoryOmissionProjection,
-} from "./turn-contract";
+} from "./turn-contract.ts";
 
 export type SessionExec = (sql: string, params: SqlParam[]) => Promise<void>;
 export type SessionQuery = (
@@ -156,7 +156,7 @@ export async function countWorkbenchSessionEvents(input: {
   return Number.isNaN(count) ? 0 : count;
 }
 
-export * from "./idea-packet";
+export * from "./idea-packet.ts";
 
 export async function updateWorkbenchSession(
   input: UpdateWorkbenchSessionInput,

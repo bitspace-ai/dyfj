@@ -1,9 +1,9 @@
 import {
   createMcpHandler,
   McpServer,
-} from "npm:@modelcontextprotocol/server@2.0.0";
+} from "@modelcontextprotocol/server";
 import { parse as parseToml } from "@std/toml";
-import { z } from "npm:zod@4.4.3";
+import { z } from "zod";
 import {
   type McpHttpServerConfig,
   parseMcpServersConfig,
