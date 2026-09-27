@@ -4,20 +4,22 @@
  * responsibility.
  */
 
-import type { MemoryType, MemoryVisibility } from "./memories.ts";
+import type {
+  EventColumn,
+  EventInsert,
+  MemoryType,
+  MemoryVisibility,
+} from "./generated/rows.ts";
 import type { UnjournaledMutation } from "./unjournaled.ts";
 
 /** A row as the driver renders it to text; SQL NULL reads as "". */
 export type TextRow = Record<string, string>;
 
-/**
- * One `events` row to append: column name to value. `null` columns are
- * omitted (the DDL default applies) and booleans are stored as 0/1. Typed
- * per-event builders replace this shape once row types are generated.
- */
-export type EventInsert = Readonly<Record<string, unknown>>;
-
 export interface CommitBatch {
+  /**
+   * Events to append, built with `events/builders.ts`. A null column is
+   * omitted, so its DDL default applies; booleans are stored as 0/1.
+   */
   events: readonly EventInsert[];
   mutations?: readonly UnjournaledMutation[];
 }
@@ -63,6 +65,59 @@ export interface SessionEventsQuery {
   limit: number;
   order: "asc" | "desc";
 }
+
+/** The columns `EventReader.bySession` returns, in order. */
+export const SESSION_EVENT_COLUMNS = [
+  "event_id",
+  "event_type",
+  "trace_id",
+  "span_id",
+  "parent_span_id",
+  "trace_flags",
+  "trace_state",
+  "span_kind",
+  "parent_is_remote",
+  "principal_id",
+  "model_id",
+  "provider",
+  "api",
+  "content",
+  "stop_reason",
+  "tokens_input",
+  "tokens_output",
+  "tokens_cache_read",
+  "tokens_cache_write",
+  "cost_total",
+  "duration_ms",
+  "provider_call_order",
+  "provider_call_purpose",
+  "provider_error_class",
+  "unparsed_tool_call_count",
+  "unparsed_tool_call_count_is_lower_bound",
+  "runner_kind",
+  "runner_profile",
+  "runner_protocol",
+  "runner_protocol_version",
+  "runner_stop_reason",
+  "runner_external_session_id",
+  "runner_agent_name",
+  "runner_agent_version",
+  "runner_transport",
+  "runner_access_route",
+  "runner_cost_basis",
+  "runner_workspace",
+  "runner_capabilities",
+  "runner_evidence_scope",
+  "runner_route_source",
+  "runner_auth_type",
+  "permission_verdict",
+  "tool_name",
+  "tool_call_id",
+  "tool_arguments",
+  "tool_result",
+  "tool_is_error",
+  "created_at",
+] as const satisfies readonly EventColumn[];
 
 export interface EventReader {
   exists(eventId: string): Promise<boolean>;

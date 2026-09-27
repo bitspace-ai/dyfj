@@ -13,7 +13,7 @@
  * empties it by adding event types (DDL first) and projectors.
  */
 
-import type { MemoryType } from "./memories.ts";
+import type { MemoryType } from "./generated/rows.ts";
 
 export const UNJOURNALED_MUTATION_KINDS = {
   session_insert:

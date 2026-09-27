@@ -5,9 +5,16 @@ import {
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
 import {
+  contextCompressedEvent,
+  errorEvent,
   type EventInsert,
   memoryClearanceFor,
+  modelResponseEvent,
+  providerCallEvent,
+  sessionEndEvent,
+  sessionStartEvent,
   type Store,
+  toolCallEvent,
 } from "./store/mod.ts";
 import type {
   ConfirmBudgetCeiling,
@@ -52,7 +59,10 @@ import type { AskContextProfile } from "./repo-context.ts";
 import { loadAgentsInstructions } from "./repo-context.ts";
 import type { WorkspaceRootIdentity } from "./repo-context.ts";
 import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
-import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
+import type {
+  AcpPermissionPrompt,
+  AcpPermissionSelection,
+} from "./acp-client.ts";
 import type { BudgetTallyMode, PermissionLevel } from "./config/mod.ts";
 import type {
   AcpRunnerSelection,
@@ -99,7 +109,11 @@ import {
   ContextWindowOverflowError,
   isBudgetRefusal,
 } from "./length-recovery.ts";
-import { AGENT_DEFAULTS, ANOMALY_DEFAULTS, BUDGET_DEFAULTS } from "./config/mod.ts";
+import {
+  AGENT_DEFAULTS,
+  ANOMALY_DEFAULTS,
+  BUDGET_DEFAULTS,
+} from "./config/mod.ts";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;
@@ -324,7 +338,6 @@ export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
 export type WorkbenchRuntimeResult =
   | NativeWorkbenchRuntimeResult
   | ExternalAgentWorkbenchRuntimeResult;
-
 
 export interface WorkbenchValidationSummary {
   ok: boolean;
@@ -1432,10 +1445,9 @@ async function runNativeWorkbenchRuntime(
   });
 
   await writeMaybe(() =>
-    writeEvent({
+    writeEvent(sessionStartEvent({
       event_id: generateULID(),
       session_id: sessionId,
-      event_type: "session_start",
       trace_id: traceId,
       span_id: turnRootSpanId,
       principal_id: principalId,
@@ -1447,9 +1459,8 @@ async function runNativeWorkbenchRuntime(
       // The operator's prompt rides on session_start so a conversation
       // transcript can be rebuilt from events alone (resume, inspector).
       content: cliPrompt,
-    }), INTEGRITY);
+    })), INTEGRITY);
 
-  let spanId: string | null = null;
   let selectedForReceipt:
     | {
       displayName: string;
@@ -1565,10 +1576,9 @@ async function runNativeWorkbenchRuntime(
 
       await writeMaybe(
         () =>
-          writeEvent({
+          writeEvent(toolCallEvent({
             event_id: generateULID(),
             session_id: sessionId,
-            event_type: "tool_call",
             trace_id: traceId,
             span_id: generateSpanId(),
             parent_span_id: turnRootSpanId,
@@ -1590,7 +1600,7 @@ async function runNativeWorkbenchRuntime(
             tool_is_error: false,
             content: JSON.stringify({ sources: contextSourceLines }),
             duration_ms: Date.now() - sessionStart,
-          }),
+          })),
         BEST_EFFORT,
         noteSkippedEventWrite,
       );
@@ -1985,10 +1995,9 @@ async function runNativeWorkbenchRuntime(
         } catch (err) {
           await writeMaybe(
             () =>
-              writeEvent({
+              writeEvent(providerCallEvent({
                 event_id: generateULID(),
                 session_id: sessionId,
-                event_type: "provider_call",
                 trace_id: traceId,
                 span_id: providerSpanId,
                 parent_span_id: turnRootSpanId,
@@ -2008,7 +2017,7 @@ async function runNativeWorkbenchRuntime(
                 stop_reason: "error",
                 duration_ms: Date.now() - startedAt,
                 ...authnEventFields,
-              }),
+              })),
             BEST_EFFORT,
             noteSkippedEventWrite,
           );
@@ -2016,10 +2025,9 @@ async function runNativeWorkbenchRuntime(
         }
         await writeMaybe(
           () =>
-            writeEvent({
+            writeEvent(providerCallEvent({
               event_id: generateULID(),
               session_id: sessionId,
-              event_type: "provider_call",
               trace_id: traceId,
               span_id: providerSpanId,
               parent_span_id: turnRootSpanId,
@@ -2043,7 +2051,7 @@ async function runNativeWorkbenchRuntime(
               thinking: null,
               duration_ms: Date.now() - startedAt,
               ...authnEventFields,
-            }),
+            })),
           BEST_EFFORT,
           noteSkippedEventWrite,
         );
@@ -2074,10 +2082,9 @@ async function runNativeWorkbenchRuntime(
       // be probed for by id — see the ambiguity handling below.
       const compressionEventId = generateULID();
       try {
-        await writeEvent({
+        await writeEvent(contextCompressedEvent({
           event_id: compressionEventId,
           session_id: sessionId,
-          event_type: "context_compressed",
           trace_id: traceId,
           span_id: generateSpanId(),
           parent_span_id: turnRootSpanId,
@@ -2103,7 +2110,7 @@ async function runNativeWorkbenchRuntime(
             tokensBeforeEstimate: outcome.tokensBeforeEstimate,
             tokensAfterEstimate: outcome.tokensAfterEstimate,
           }),
-        });
+        }));
       } catch (err) {
         // Log the error CLASS, not its message: the failing write carries the
         // conversation summary, and a DB/serialization error can quote it —
@@ -2247,10 +2254,9 @@ async function runNativeWorkbenchRuntime(
         const safeError = onProviderError?.(err) ?? err;
         await writeMaybe(
           () =>
-            writeEvent({
+            writeEvent(providerCallEvent({
               event_id: generateULID(),
               session_id: sessionId,
-              event_type: "provider_call",
               trace_id: traceId,
               span_id: providerSpanId,
               parent_span_id: turnRootSpanId,
@@ -2270,7 +2276,7 @@ async function runNativeWorkbenchRuntime(
               stop_reason: "error",
               duration_ms: Date.now() - startedAt,
               ...authnEventFields,
-            }),
+            })),
           BEST_EFFORT,
           noteSkippedEventWrite,
         );
@@ -2279,10 +2285,9 @@ async function runNativeWorkbenchRuntime(
       let providerCallPersisted = true;
       await writeMaybe(
         () =>
-          writeEvent({
+          writeEvent(providerCallEvent({
             event_id: generateULID(),
             session_id: sessionId,
-            event_type: "provider_call",
             trace_id: traceId,
             span_id: providerSpanId,
             parent_span_id: turnRootSpanId,
@@ -2313,7 +2318,7 @@ async function runNativeWorkbenchRuntime(
             thinking: null,
             duration_ms: Date.now() - startedAt,
             ...authnEventFields,
-          }),
+          })),
         BEST_EFFORT,
         () => {
           providerCallPersisted = false;
@@ -2972,7 +2977,7 @@ async function runNativeWorkbenchRuntime(
     );
     callTimings = turn.timings;
 
-    spanId = generateSpanId();
+    const responseSpanId = generateSpanId();
     // Per-call budget.record() now happens inside runObservedTurn, so the
     // session summary already aggregates every call in this (and prior) turns.
     const summary = budget.getSummary();
@@ -3007,12 +3012,11 @@ async function runNativeWorkbenchRuntime(
     }
 
     await writeIntegrity(() =>
-      writeEvent({
+      writeEvent(modelResponseEvent({
         event_id: generateULID(),
         session_id: sessionId,
-        event_type: "model_response",
         trace_id: traceId,
-        span_id: spanId,
+        span_id: responseSpanId,
         parent_span_id: turnRootSpanId,
         principal_id: principalId,
         principal_type: "agent",
@@ -3040,7 +3044,7 @@ async function runNativeWorkbenchRuntime(
           : turn.text,
         stop_reason: turn.stopReason,
         duration_ms: turn.timings.totalMs,
-      })
+      }))
     );
     await emitRuntimeEvent(
       runtimeInput.onRuntimeEvent,
@@ -3088,14 +3092,13 @@ async function runNativeWorkbenchRuntime(
     // chain instead.
     if (cancelledAtApproval) {
       finalStopReason = "aborted";
-      spanId = generateSpanId();
+      const cancelledSpanId = generateSpanId();
       await writeIntegrity(() =>
-        writeEvent({
+        writeEvent(modelResponseEvent({
           event_id: generateULID(),
           session_id: sessionId,
-          event_type: "model_response",
           trace_id: traceId,
-          span_id: spanId,
+          span_id: cancelledSpanId,
           parent_span_id: turnRootSpanId,
           principal_id: principalId,
           principal_type: "agent",
@@ -3114,7 +3117,7 @@ async function runNativeWorkbenchRuntime(
           content: finalText,
           stop_reason: "aborted",
           duration_ms: Date.now() - sessionStart,
-        })
+        }))
       );
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "turnAborted",
@@ -3136,10 +3139,9 @@ async function runNativeWorkbenchRuntime(
     } else if (err instanceof BudgetExceededError) {
       await writeMaybe(
         () =>
-          writeEvent({
+          writeEvent(errorEvent({
             event_id: generateULID(),
             session_id: sessionId,
-            event_type: "error",
             trace_id: traceId,
             span_id: generateSpanId(),
             parent_span_id: turnRootSpanId,
@@ -3157,7 +3159,7 @@ async function runNativeWorkbenchRuntime(
             content: summarizeError(err),
             stop_reason: "error",
             duration_ms: Date.now() - sessionStart,
-          }),
+          })),
         BEST_EFFORT,
         noteSkippedEventWrite,
       );
@@ -3165,10 +3167,9 @@ async function runNativeWorkbenchRuntime(
     } else if (err instanceof WorkspaceContextUnavailableError) {
       await writeMaybe(
         () =>
-          writeEvent({
+          writeEvent(errorEvent({
             event_id: generateULID(),
             session_id: sessionId,
-            event_type: "error",
             trace_id: traceId,
             span_id: generateSpanId(),
             parent_span_id: turnRootSpanId,
@@ -3184,7 +3185,7 @@ async function runNativeWorkbenchRuntime(
             content: summarizeError(err),
             stop_reason: "error",
             duration_ms: Date.now() - sessionStart,
-          }),
+          })),
         BEST_EFFORT,
         noteSkippedEventWrite,
       );
@@ -3198,10 +3199,9 @@ async function runNativeWorkbenchRuntime(
       // transcript carries no half-turn from this failure.
       await writeMaybe(
         () =>
-          writeEvent({
+          writeEvent(errorEvent({
             event_id: generateULID(),
             session_id: sessionId,
-            event_type: "error",
             trace_id: traceId,
             span_id: generateSpanId(),
             parent_span_id: turnRootSpanId,
@@ -3217,7 +3217,7 @@ async function runNativeWorkbenchRuntime(
             content: summarizeError(err),
             stop_reason: "length",
             duration_ms: Date.now() - sessionStart,
-          }),
+          })),
         BEST_EFFORT,
         noteSkippedEventWrite,
       );
@@ -3235,10 +3235,9 @@ async function runNativeWorkbenchRuntime(
     } else {
       await writeMaybe(
         () =>
-          writeEvent({
+          writeEvent(errorEvent({
             event_id: generateULID(),
             session_id: sessionId,
-            event_type: "error",
             trace_id: traceId,
             span_id: generateSpanId(),
             parent_span_id: turnRootSpanId,
@@ -3260,7 +3259,7 @@ async function runNativeWorkbenchRuntime(
             content: summarizeError(err),
             stop_reason: "error",
             duration_ms: Date.now() - sessionStart,
-          }),
+          })),
         BEST_EFFORT,
         noteSkippedEventWrite,
       );
@@ -3276,10 +3275,9 @@ async function runNativeWorkbenchRuntime(
     }
   } finally {
     await writeMaybe(() =>
-      writeEvent({
+      writeEvent(sessionEndEvent({
         event_id: generateULID(),
         session_id: sessionId,
-        event_type: "session_end",
         trace_id: traceId,
         span_id: generateSpanId(),
         parent_span_id: turnRootSpanId,
@@ -3290,7 +3288,7 @@ async function runNativeWorkbenchRuntime(
         authz_basis: authContext.authzBasis,
         ...authnEventFields,
         duration_ms: Date.now() - sessionStart,
-      }), INTEGRITY);
+      })), INTEGRITY);
 
     // The count captured here reflects skips up to this point. If this
     // summary write itself fails, its skip fires before the receipt is built

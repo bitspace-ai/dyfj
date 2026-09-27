@@ -389,6 +389,8 @@ Deno.test("fast lanes keep the scans and exclude the heavyweight suites", () => 
       "Golden characterization suite (test.golden)",
       "Current-schema apply validation",
       "Historical replay plus forward-migration validation",
+      "Schema codegen freshness (schema.codegen)",
+      "Schema equivalence (schema.equivalence)",
     ]
   ) {
     if (labels.includes(heavy)) {
@@ -460,6 +462,37 @@ Deno.test("aggregate lanes include the golden characterization suite", async () 
     runner,
     'Deno.args.includes("--update") ? ",testing/golden/snapshots" : ""',
   );
+});
+
+Deno.test("aggregate lanes include the schema codegen and equivalence checks", () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const codegen = lanes.find((candidate) =>
+    candidate.label === "Schema codegen freshness (schema.codegen)"
+  );
+  if (!codegen) throw new Error("schema.codegen lane is missing");
+  assertEquals(codegen.args.slice(-2), ["schema/codegen.ts", "--check"]);
+  // The lane compares against the committed file and can never rewrite it.
+  if (
+    codegen.args.some((argument) =>
+      argument.includes("src/store/generated") &&
+      argument.startsWith("--allow-write")
+    )
+  ) {
+    throw new Error("schema.codegen lane must not write the generated file");
+  }
+  const equivalence = lanes.find((candidate) =>
+    candidate.label === "Schema equivalence (schema.equivalence)"
+  );
+  if (!equivalence) throw new Error("schema.equivalence lane is missing");
+  assertEquals(equivalence.args.at(-1), "schema/equivalence.ts");
+  for (const lane of [codegen, equivalence]) {
+    assertEquals(lane.checkId, "test.aggregate");
+    assertEquals(lane.cwd, "/repo");
+    assertEquals(
+      lane.args.find((argument) => argument.startsWith("--allow-run=")),
+      "--allow-run=dolt",
+    );
+  }
 });
 
 Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", () => {
