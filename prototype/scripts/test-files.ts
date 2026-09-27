@@ -3,10 +3,16 @@
 // never hand-maintained, so a new module or test is covered on arrival.
 //
 // During the Vitest-to-`Deno.test` transition both frameworks share the
-// `*.test.ts` naming, so a test file's framework is read from its source: a
-// file that imports `vitest` belongs to the Vitest lane, anything else is a
-// `Deno.test` file. Integration files (`*.integration.test.ts`) and the golden
-// suite (`testing/golden/`) have their own lanes and are never unit tests.
+// `*.test.ts` naming, so a test file's framework is read from its imports: a
+// file that statically imports `vitest` belongs to the Vitest lane, anything
+// else is a `Deno.test` file. The imports come from `deno info --json` (the
+// deno_graph parser Deno itself uses), not from scanning the source text, so
+// import-shaped text in strings, template literals or comments never counts.
+// Integration files (`*.integration.test.ts`) and the golden suite
+// (`testing/golden/`) have their own lanes and are never unit tests.
+
+import { pathToFileURL } from "node:url";
+import { selectedDenoExecutable } from "./deno-executable.ts";
 
 export const SOURCE_ROOTS = ["src", "mcp", "scripts", "testing"] as const;
 
@@ -31,145 +37,101 @@ export function isTypecheckSource(path: string): boolean {
     !declarationPattern.test(path) && !isTestSource(path);
 }
 
+export function isVitestSpecifier(specifier: string): boolean {
+  return vitestSpecifierPattern.test(specifier);
+}
+
+/** The subset of `deno info --json` output that classification reads. */
+export interface DenoInfoOutput {
+  modules: {
+    specifier: string;
+    error?: string;
+    dependencies?: { specifier: string; isDynamic?: boolean }[];
+  }[];
+}
+
 /**
- * The module specifiers of a file's leading import block: the static
- * `import … from "x"`, `import "x"` and `export … from "x"` statements before
- * the first other statement, with comments and whitespace skipped. Scanning
- * stops at the first statement that is not one of those, so import-shaped text
- * later in the file (a string, a template literal, a comment in the body) is
- * never read as an import.
+ * The module URLs among `urls` that statically import `vitest` (value or
+ * type import, bare or `npm:` specifier). A dynamic `import()` does not
+ * count. Fails closed: a module missing from the graph, or one that did not
+ * parse, cannot be classified and throws.
  */
-export function leadingImportSpecifiers(source: string): string[] {
-  const specifiers: string[] = [];
-  let i = source.startsWith("#!") ? lineEnd(source, 0) : 0;
-  for (;;) {
-    i = skipTrivia(source, i);
-    const keyword = readWord(source, i);
-    if (keyword !== "import" && keyword !== "export") return specifiers;
-    const next = source[skipTrivia(source, i + keyword.length)];
-    // `import(…)`, `import.meta` and `export const …` end the import block.
-    if (keyword === "import" && (next === "(" || next === ".")) {
-      return specifiers;
-    }
-    if (keyword === "export" && next !== "*" && next !== "{") {
-      const word = readWord(source, skipTrivia(source, i + keyword.length));
-      if (word !== "type") return specifiers;
-    }
-    i += keyword.length;
-    // A bare `import "x"` or the first string after `from` is the specifier;
-    // strings in a trailing `with { … }` attribute clause are not.
-    let bare = keyword === "import";
-    let afterFrom = false;
-    let specifier: string | undefined;
-    for (;;) {
-      i = skipTrivia(source, i);
-      const char = source[i];
-      if (char === undefined) break;
-      if (char === ";") {
-        i++;
-        break;
-      }
-      if (char === '"' || char === "'") {
-        const [value, end] = readString(source, i);
-        i = end;
-        if (specifier === undefined && (bare || afterFrom)) {
-          specifier = value;
-          // Without a semicolon the statement ends here, unless an
-          // attribute clause follows (possibly on the next line).
-          const next = skipTrivia(source, i);
-          const word = readWord(source, next);
-          if (source[next] !== ";" && word !== "with" && word !== "assert") {
-            break;
-          }
-        }
-        bare = false;
-        continue;
-      }
-      const word = readWord(source, i);
-      if (specifier !== undefined && (word === "with" || word === "assert")) {
-        // The attribute clause ends the declaration, with or without a
-        // semicolon after it.
-        i = skipTrivia(source, i + word.length);
-        if (source[i] === "{") i = skipBraces(source, i);
-        const next = skipTrivia(source, i);
-        if (source[next] === ";") i = next + 1;
-        break;
-      }
-      if (word !== undefined) {
-        if (word === "from") afterFrom = true;
-        bare = false;
-        i += word.length;
-        continue;
-      }
-      bare = false;
-      i++;
-    }
-    if (specifier === undefined) return specifiers;
-    specifiers.push(specifier);
-  }
-}
-
-function lineEnd(source: string, from: number): number {
-  const end = source.indexOf("\n", from);
-  return end < 0 ? source.length : end + 1;
-}
-
-function skipTrivia(source: string, from: number): number {
-  let i = from;
-  for (;;) {
-    while (i < source.length && /\s/.test(source[i]!)) i++;
-    if (source.startsWith("//", i)) {
-      i = lineEnd(source, i);
-    } else if (source.startsWith("/*", i)) {
-      const end = source.indexOf("*/", i + 2);
-      i = end < 0 ? source.length : end + 2;
-    } else {
-      return i;
-    }
-  }
-}
-
-function readWord(source: string, from: number): string | undefined {
-  return /^[A-Za-z_$][\w$]*/.exec(source.slice(from, from + 64))?.[0];
-}
-
-/** The index just past the `}` that closes the `{` at `from`. */
-function skipBraces(source: string, from: number): number {
-  let depth = 0;
-  let i = from;
-  while (i < source.length) {
-    const char = source[i];
-    if (char === '"' || char === "'") {
-      i = readString(source, i)[1];
-      continue;
-    }
-    if (source.startsWith("//", i) || source.startsWith("/*", i)) {
-      i = skipTrivia(source, i);
-      continue;
-    }
-    if (char === "{") depth++;
-    if (char === "}" && --depth === 0) return i + 1;
-    i++;
-  }
-  return i;
-}
-
-function readString(source: string, from: number): [string, number] {
-  const quote = source[from];
-  let value = "";
-  let i = from + 1;
-  while (i < source.length && source[i] !== quote) {
-    if (source[i] === "\\") i++;
-    value += source[i] ?? "";
-    i++;
-  }
-  return [value, i + 1];
-}
-
-export function importsVitest(source: string): boolean {
-  return leadingImportSpecifiers(source).some((specifier) =>
-    vitestSpecifierPattern.test(specifier)
+export function vitestModulesFromDenoInfo(
+  info: DenoInfoOutput,
+  urls: readonly string[],
+): Set<string> {
+  const byUrl = new Map(
+    info.modules.map((module) => [module.specifier, module]),
   );
+  const vitest = new Set<string>();
+  for (const url of urls) {
+    const module = byUrl.get(url);
+    if (module === undefined) {
+      throw new Error(`cannot classify test file (not in graph): ${url}`);
+    }
+    if (module.error !== undefined) {
+      throw new Error(`cannot classify test file: ${module.error}`);
+    }
+    const importsVitest = (module.dependencies ?? []).some((dependency) =>
+      dependency.isDynamic !== true && isVitestSpecifier(dependency.specifier)
+    );
+    if (importsVitest) vitest.add(url);
+  }
+  return vitest;
+}
+
+/**
+ * A `data:` module that side-effect-imports each URL, so one `deno info` call
+ * covers every file.
+ */
+export function rootModule(urls: readonly string[]): string {
+  const source = urls.map((url) => `import ${JSON.stringify(url)};\n`).join("");
+  return `data:application/typescript,${encodeURIComponent(source)}`;
+}
+
+/**
+ * Runs `deno info --json` over the given module URLs. Offline and
+ * config-free: packages are not resolved, and a bare or `npm:` specifier is
+ * still reported by name, which is all classification needs.
+ */
+export function denoInfo(
+  urls: readonly string[],
+  deno: string = selectedDenoExecutable(),
+): DenoInfoOutput {
+  const output = new Deno.Command(deno, {
+    args: [
+      "info",
+      "--json",
+      "--no-remote",
+      "--no-npm",
+      "--no-config",
+      "--no-lock",
+      rootModule(urls),
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  }).outputSync();
+  if (!output.success) {
+    throw new Error(
+      `deno info failed: ${new TextDecoder().decode(output.stderr).trim()}`,
+    );
+  }
+  return JSON.parse(new TextDecoder().decode(output.stdout));
+}
+
+/** The repository-relative test files among `files` that import `vitest`. */
+export function vitestTestFiles(
+  root: string,
+  files: readonly string[],
+): Set<string> {
+  if (files.length === 0) return new Set();
+  const absoluteRoot = root.startsWith("/") ? root : `${Deno.cwd()}/${root}`;
+  const urlOf = new Map(
+    files.map((file) => [pathToFileURL(`${absoluteRoot}/${file}`).href, file]),
+  );
+  const urls = [...urlOf.keys()];
+  const vitest = vitestModulesFromDenoInfo(denoInfo(urls), urls);
+  return new Set([...vitest].map((url) => urlOf.get(url)!));
 }
 
 export function testSourcesFromPaths(paths: readonly string[]): string[] {
@@ -182,9 +144,9 @@ function isGoldenPath(path: string): boolean {
 }
 
 /** A `Deno.test` file that belongs in the `test.unit` lane. */
-export function isUnitTest(path: string, source: string): boolean {
+export function isUnitTest(path: string, importsVitest: boolean): boolean {
   return isTestSource(path) && !isIntegrationTest(path) &&
-    !isGoldenPath(path) && !importsVitest(source);
+    !isGoldenPath(path) && !importsVitest;
 }
 
 function walkSync(
@@ -232,12 +194,9 @@ export function discoverTestSources(root: string): string[] {
 }
 
 export function discoverUnitTests(root: string): string[] {
-  return discoverSync(
-    root,
-    (path) =>
-      isTestSource(path) &&
-      isUnitTest(path, Deno.readTextFileSync(`${root}/${path}`)),
-  );
+  const tests = discoverTestSources(root);
+  const vitest = vitestTestFiles(root, tests);
+  return tests.filter((path) => isUnitTest(path, vitest.has(path)));
 }
 
 /**
@@ -246,10 +205,7 @@ export function discoverUnitTests(root: string): string[] {
  * too, so this is every `*.test.ts` that does not import `vitest`.
  */
 export function discoverDenoTestSources(root: string): string[] {
-  return discoverSync(
-    root,
-    (path) =>
-      isTestSource(path) &&
-      !importsVitest(Deno.readTextFileSync(`${root}/${path}`)),
-  );
+  const tests = discoverTestSources(root);
+  const vitest = vitestTestFiles(root, tests);
+  return tests.filter((path) => !vitest.has(path));
 }

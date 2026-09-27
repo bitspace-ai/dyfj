@@ -1,118 +1,109 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import {
-  discoverDenoTestSources,
+  type DenoInfoOutput,
   discoverTestSources,
   discoverTypecheckSources,
-  discoverUnitTests,
-  importsVitest,
   isTypecheckSource,
   isUnitTest,
-  leadingImportSpecifiers,
+  isVitestSpecifier,
+  rootModule,
+  vitestModulesFromDenoInfo,
 } from "./test-files.ts";
 import { parseTypecheckScope } from "./typecheck.ts";
 import { unitTestArgs } from "./run-unit-tests.ts";
 
-Deno.test("importsVitest recognises every import shape in use", () => {
+// These tests run in the unit lane, which may not spawn processes, so they
+// exercise classification over recorded `deno info --json` output. The real
+// parser is exercised in `test-files.integration.test.ts`.
+
+Deno.test("isVitestSpecifier matches bare, npm: and subpath specifiers", () => {
   for (
-    const source of [
-      'import { describe, expect, test } from "vitest";',
-      "import { vi } from 'vitest';",
-      'import { defineConfig } from "vitest/config";',
-      'import { test } from "npm:vitest@3.2.6";',
-      'import type { Mock } from "vitest";',
-      'import {\n  describe,\n  test,\n} from "vitest";',
-      'import "vitest";',
-      // After an import whose attribute clause starts on the next line.
-      'import data from "./data.json" with {\n  type: "json"\n};\n' +
-      'import { test } from "vitest";',
-      'import data from "./data.json"\n  with { type: "json" };\n' +
-      'import { test } from "vitest";',
-      // After a semicolonless import with an attribute clause.
-      'import data from "./data.json" with { type: "json" }\n' +
-      'import { test } from "vitest";',
-      'import data from "./data.json" with {\n  type: "json",\n}\n' +
-      'import { test } from "vitest"',
-      // Braces inside comments in the attribute clause do not close it.
-      'import data from "./data.json" with { /* } */ type: "json" };\n' +
-      'import { test } from "vitest";',
-      'import data from "./data.json" with {\n  // }\n  type: "json",\n};\n' +
-      'import { test } from "vitest";',
+    const specifier of [
+      "vitest",
+      "vitest/config",
+      "npm:vitest",
+      "npm:vitest@3.2.6",
+      "npm:vitest@3.2.6/config",
     ]
   ) {
-    assertEquals(importsVitest(source), true, source);
+    assertEquals(isVitestSpecifier(specifier), true, specifier);
   }
   for (
-    const source of [
-      'import { assertEquals } from "@std/assert";',
-      "// vitest is retired at phase-1 exit",
-      'const label = "vitest";',
-      // Import text inside a string literal is data, not an import.
-      "const fixture = 'import { test } from \"vitest\";';",
-      "  'import { test } from \"vitest\";',",
-      // Nor inside a multi-line template literal after the import block.
-      'import { assert } from "@std/assert";\n' +
-      'const fixture = `\nimport { test } from "vitest";\n`;',
-      // Nor in a comment, a dynamic import, or after the first statement.
-      '// import { test } from "vitest";\nDeno.test("x", () => {});',
-      '/*\nimport { test } from "vitest";\n*/\nDeno.test("x", () => {});',
-      'const { test } = await import("vitest");',
-      'Deno.test("x", () => {});\nimport { test } from "vitest";',
+    const specifier of [
+      "@std/assert",
+      "vitest-extra",
+      "./vitest.ts",
+      "npm:vite",
     ]
   ) {
-    assertEquals(importsVitest(source), false, source);
+    assertEquals(isVitestSpecifier(specifier), false, specifier);
   }
 });
 
-Deno.test("leadingImportSpecifiers reads only the leading import block", () => {
-  const source = [
-    "#!/usr/bin/env -S deno run",
-    "/**",
-    ' * import { nope } from "doc-comment";',
-    " */",
-    "// a line comment",
-    'import { a, type B } from "./a.ts";',
-    "import {",
-    "  c,",
-    '} from "npm:c@1";',
-    'import "./side-effect.ts";',
-    'import data from "./data.json" with { type: "json" };',
-    'export * from "./re-export.ts";',
-    'export { d } from "./d.ts"',
-    'import e from "./e.ts"',
-    'import f from "./f.json"',
-    "  with {",
-    '    type: "json",',
-    "  };",
-    'import g from "./g.ts"',
-    "",
-    "const x = 1;",
-    'import { late } from "./late.ts";',
-  ].join("\n");
-  assertEquals(leadingImportSpecifiers(source), [
-    "./a.ts",
-    "npm:c@1",
-    "./side-effect.ts",
-    "./data.json",
-    "./re-export.ts",
-    "./d.ts",
-    "./e.ts",
-    "./f.json",
-    "./g.ts",
-  ]);
-  assertEquals(leadingImportSpecifiers("export const x = 1;"), []);
-  assertEquals(leadingImportSpecifiers(""), []);
+Deno.test("vitestModulesFromDenoInfo reads static imports only", () => {
+  const info: DenoInfoOutput = {
+    modules: [
+      {
+        specifier: "file:///p/a.test.ts",
+        dependencies: [{ specifier: "vitest" }, { specifier: "./cli.ts" }],
+      },
+      {
+        specifier: "file:///p/b.test.ts",
+        dependencies: [{ specifier: "@std/assert" }],
+      },
+      {
+        specifier: "file:///p/c.test.ts",
+        dependencies: [{ specifier: "vitest", isDynamic: true }],
+      },
+      {
+        specifier: "file:///p/d.test.ts",
+        dependencies: [{ specifier: "npm:vitest@3.2.6/config" }],
+      },
+      { specifier: "file:///p/e.test.ts" },
+    ],
+  };
+  const urls = ["a", "b", "c", "d", "e"].map((n) => `file:///p/${n}.test.ts`);
+  assertEquals(
+    [...vitestModulesFromDenoInfo(info, urls)].sort(),
+    ["file:///p/a.test.ts", "file:///p/d.test.ts"],
+  );
+});
+
+Deno.test("vitestModulesFromDenoInfo fails closed on a missing or broken module", () => {
+  const info: DenoInfoOutput = {
+    modules: [{ specifier: "file:///p/broken.test.ts", error: "parse error" }],
+  };
+  assertThrows(
+    () => vitestModulesFromDenoInfo(info, ["file:///p/broken.test.ts"]),
+    Error,
+    "cannot classify",
+  );
+  assertThrows(
+    () => vitestModulesFromDenoInfo(info, ["file:///p/absent.test.ts"]),
+    Error,
+    "not in graph",
+  );
+});
+
+Deno.test("rootModule imports each URL once, in order", () => {
+  const urls = ["file:///p/a b.test.ts", "file:///p/c.test.ts"];
+  const url = rootModule(urls);
+  const prefix = "data:application/typescript,";
+  assertEquals(url.startsWith(prefix), true);
+  assertEquals(
+    decodeURIComponent(url.slice(prefix.length)),
+    'import "file:///p/a b.test.ts";\nimport "file:///p/c.test.ts";\n',
+  );
 });
 
 Deno.test("isUnitTest keeps integration, golden and Vitest files out", () => {
-  const deno = 'import { assertEquals } from "@std/assert";';
-  const vitest = 'import { test } from "vitest";';
-  assertEquals(isUnitTest("src/a.test.ts", deno), true);
-  assertEquals(isUnitTest("src/a.component.test.ts", deno), true);
-  assertEquals(isUnitTest("testing/fakes/a.test.ts", deno), true);
-  assertEquals(isUnitTest("src/a.test.ts", vitest), false);
-  assertEquals(isUnitTest("src/a.integration.test.ts", deno), false);
-  assertEquals(isUnitTest("testing/golden/scenarios.test.ts", deno), false);
-  assertEquals(isUnitTest("src/a.ts", deno), false);
+  assertEquals(isUnitTest("src/a.test.ts", false), true);
+  assertEquals(isUnitTest("src/a.component.test.ts", false), true);
+  assertEquals(isUnitTest("testing/fakes/a.test.ts", false), true);
+  assertEquals(isUnitTest("src/a.test.ts", true), false);
+  assertEquals(isUnitTest("src/a.integration.test.ts", false), false);
+  assertEquals(isUnitTest("testing/golden/scenarios.test.ts", false), false);
+  assertEquals(isUnitTest("src/a.ts", false), false);
 });
 
 Deno.test("isTypecheckSource takes modules, not tests or declarations", () => {
@@ -127,25 +118,27 @@ Deno.test("isTypecheckSource takes modules, not tests or declarations", () => {
 Deno.test("discovery walks every source root and nothing else", async () => {
   const root = await Deno.makeTempDir({ prefix: "dyfj-test-files-" });
   try {
-    const files: Record<string, string> = {
-      "src/cli.ts": "",
-      "src/nested/deep.ts": "",
-      "src/cli.test.ts": 'import { test } from "vitest";',
-      "src/clock.test.ts": 'import { assert } from "@std/assert";',
-      "src/memory.integration.test.ts": 'import { test } from "vitest";',
-      "src/node_modules/pkg/index.ts": "",
-      "mcp/server.ts": "",
-      "scripts/tool.ts": "",
-      "testing/fakes/map-env.ts": "",
-      "testing/fakes/map-env.test.ts": "Deno.test('x', () => {});",
-      "testing/golden/run.test.ts": "Deno.test('x', () => {});",
-      "examples/outside.ts": "",
-      "vitest.config.ts": "",
-    };
-    for (const [path, text] of Object.entries(files)) {
+    for (
+      const path of [
+        "src/cli.ts",
+        "src/nested/deep.ts",
+        "src/cli.test.ts",
+        "src/memory.integration.test.ts",
+        "src/node_modules/pkg/index.ts",
+        "mcp/server.ts",
+        "scripts/tool.ts",
+        "testing/fakes/map-env.ts",
+        "testing/fakes/map-env.test.ts",
+        "testing/golden/run.test.ts",
+        "examples/outside.ts",
+        "vitest.config.ts",
+      ]
+    ) {
       const directory = path.slice(0, path.lastIndexOf("/"));
-      await Deno.mkdir(`${root}/${directory}`, { recursive: true });
-      await Deno.writeTextFile(`${root}/${path}`, text);
+      if (directory) {
+        await Deno.mkdir(`${root}/${directory}`, { recursive: true });
+      }
+      await Deno.writeTextFile(`${root}/${path}`, "");
     }
     assertEquals(discoverTypecheckSources(root), [
       "mcp/server.ts",
@@ -156,17 +149,7 @@ Deno.test("discovery walks every source root and nothing else", async () => {
     ]);
     assertEquals(discoverTestSources(root), [
       "src/cli.test.ts",
-      "src/clock.test.ts",
       "src/memory.integration.test.ts",
-      "testing/fakes/map-env.test.ts",
-      "testing/golden/run.test.ts",
-    ]);
-    assertEquals(discoverUnitTests(root), [
-      "src/clock.test.ts",
-      "testing/fakes/map-env.test.ts",
-    ]);
-    assertEquals(discoverDenoTestSources(root), [
-      "src/clock.test.ts",
       "testing/fakes/map-env.test.ts",
       "testing/golden/run.test.ts",
     ]);
