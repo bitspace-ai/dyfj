@@ -210,7 +210,7 @@ async fn run_turn(
                         if !wrote_any {
                             if let Some(text) = result.get("text").and_then(Value::as_str) {
                                 if !text.is_empty() {
-                                    println!("{}", approval::visible(text));
+                                    println!("{}", approval::visible_text(text));
                                     wrote_any = true;
                                 }
                             }
@@ -562,8 +562,9 @@ fn render(frame: StreamFrame, wrote_any: &mut bool) {
             // reaches the terminal verbatim otherwise, and an escape sequence
             // in a streamed answer could change terminal state before a later
             // approval is displayed — sanitising only the approval would be
-            // guarding the door after the wall.
-            print!("{}", approval::visible(&text));
+            // guarding the door after the wall. Newlines and tabs are kept:
+            // they are the answer's formatting, not terminal control.
+            print!("{}", approval::visible_text(&text));
             let _ = std::io::stdout().flush();
             *wrote_any = true;
         }

@@ -52,6 +52,26 @@ pub fn visible(text: &str) -> String {
         .collect()
 }
 
+/// Sanitise answer text for display: streamed deltas and receipt text.
+///
+/// Newlines and tabs are kept, because an answer's paragraphs and code blocks
+/// are its content, where `visible` would flatten them onto one line. Every
+/// other control character is still replaced, and a carriage return is
+/// dropped rather than kept: it returns the cursor to the start of the line,
+/// so what follows it could overwrite what came before.
+pub fn visible_text(text: &str) -> String {
+    text.chars()
+        .filter(|&c| c != '\r')
+        .map(|c| {
+            if c == '\n' || c == '\t' || !c.is_control() {
+                c
+            } else {
+                '\u{fffd}'
+            }
+        })
+        .collect()
+}
+
 fn describe(params: &Value) -> String {
     let title = params
         .get("title")
@@ -343,6 +363,15 @@ mod tests {
         let rendered = describe(&params);
         assert!(!rendered.contains('\u{1b}'), "escape survived: {rendered:?}");
         assert!(rendered.contains("rm -rf /important"), "arguments must still show");
+    }
+
+    #[test]
+    fn answer_text_keeps_its_lines_but_not_its_escapes() {
+        assert_eq!(visible_text("one\n\ttwo\r\nthree"), "one\n\ttwo\nthree");
+        let rendered = visible_text("ok\u{1b}[2J\u{7}done");
+        assert!(!rendered.contains('\u{1b}'), "escape survived: {rendered:?}");
+        assert!(!rendered.contains('\u{7}'), "bell survived: {rendered:?}");
+        assert!(visible_text("hidden\rshown").contains("hidden"), "carriage return must not overwrite");
     }
 
     #[test]

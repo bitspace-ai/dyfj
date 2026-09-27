@@ -41,7 +41,9 @@ README are tracked separately in its Revision history section.
   receipt text, tool names, error messages and the posture line — so neither
   truncation nor an escape sequence can hide what is being approved. Sanitising
   only the approval would leave a streamed answer, or an error, able to change
-  terminal state before the prompt appears.
+  terminal state before the prompt appears. Answer text keeps its newlines and
+  tabs so paragraphs and code blocks render; carriage returns are dropped from
+  it, and everywhere else newlines and tabs become spaces.
 
   A budget request is not a tool call and is not rendered as one. Its amounts,
   limits and crossed scopes arrive in named fields with a preformatted warning
