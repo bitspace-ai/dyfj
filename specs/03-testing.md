@@ -17,7 +17,10 @@ in the same change that lands this spec's first work order.
 - **Fakes are proven against the real thing.**
   - Each fake that stands in for a real adapter (`MemoryStore`, the scripted
     `HttpTransport`) passes the same conformance suite as the real adapter.
-  - A fake without a conformance suite is not allowed.
+  - A fake without a conformance suite is not allowed once its port exists. A
+    fake may land before its port (shared fakes arrive ahead of the seams that
+    will use them); its conformance suite then lands in the same change that
+    declares the port and its real adapter.
 - **Real dependencies live in the integration tier.** This tier covers real
   Dolt, real child processes and real sockets.
   - Third-party network services are faked at the network boundary, using
@@ -34,7 +37,11 @@ in the same change that lands this spec's first work order.
   - Vitest is retired at phase-1 exit.
   - This removes `npm:vitest` and `esbuild` resolution, and the Vitest-specific
     permission plumbing in `scripts/run-vitest.ts`.
-- **Sanitizers stay on (Deno default).**
+- **Sanitizers stay on.**
+  - The pinned Deno (2.9.6) runs the op and resource sanitizers only when asked,
+    so a `Deno.test` lane must pass `--sanitize-ops --sanitize-resources`.
+    `test.unit` does. The golden and `Deno.test` integration lanes do not yet;
+    they adopt the flags as their tests are brought under this rule.
   - A test that leaks an op, resource or child process fails at the test that
     leaked it.
   - A test may disable a sanitizer only with a comment naming the leak and why

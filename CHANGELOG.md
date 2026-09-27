@@ -11,6 +11,21 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A `Deno.test` unit lane and shared test fakes**: new tests can now be
+  written with `Deno.test`, `@std/assert` and `@std/testing` (pinned in the
+  prototype import map) and run in a fast lane of their own.
+  `deno task test:unit` in `prototype/` runs every non-integration, non-golden
+  `Deno.test` file with `deno test --parallel`, the op and resource sanitizers
+  enabled (opt-in in the pinned Deno), and no run, net, or env permission; the
+  aggregate gate runs it as `Prototype unit Deno.test suite (test.unit)`,
+  including under `deno task test:fast`, and the prototype `deno task test` runs
+  it before Vitest. `prototype/testing/fakes/` provides the first port fakes,
+  each with its own tests: `ManualClock`, `SequentialIds`, `MapEnv`, and
+  `fakeIo`. The three copies each of the `fakeIo` and `buildClock` test helpers
+  now import these instead. During the transition a test file's framework is
+  read from its imports as `deno info --json` reports them: files whose static
+  imports reach `vitest`, directly or through a helper module, stay under
+  Vitest, which now excludes every other `*.test.ts`.
 - **`arch.imports` gate lane (ratchet mode)**: `scripts/arch-imports.ts` builds
   the module graph of `prototype/src`, `prototype/mcp`, `prototype/scripts`,
   and `prototype/diagnostics` (once it exists) with `deno info --json`, plus a
@@ -33,6 +48,16 @@ README are tracked separately in its Revision history section.
   `test.aggregate` check id.
 
 ### Changed
+
+- **Typecheck file lists are derived, not hand-maintained**: the prototype
+  `check` task and the aggregate gate's source typecheck each carried their own
+  hand-written list of entry files, and the two had drifted apart. Both now run
+  `deno task check:sources`, which typechecks every non-test module under
+  `src/`, `mcp/`, `scripts/` and `testing/`, found by walking the tree; the
+  test-file typecheck (`check:tests`) uses the same discovery module
+  (`prototype/scripts/test-files.ts`, replacing `check-test-files.ts`). A new
+  module is covered on arrival, and modules that were outside both lists are now
+  typechecked too.
 
 - **Local imports carry explicit extensions; `--sloppy-imports` is gone**: every
   local import under `prototype/` now names its file (`./utils.ts`), and the

@@ -218,6 +218,9 @@ How the work actually happens, separate from what gets built.
   Dolt instance, real processes, real sockets) belong to the integration tier;
   third-party network services are faked at the network boundary with loopback
   servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
+  Shared fakes live in `prototype/testing/fakes/`. New tests use `Deno.test`
+  with `@std/assert` and `@std/testing`; Vitest is being retired as tests move
+  with their modules.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -861,7 +864,7 @@ Useful validation tasks:
 
 ```sh
 deno task test            # repository aggregate gate (full green bar)
-deno task test:fast       # policy checks + source typecheck, for local feedback
+deno task test:fast       # policy checks, source typecheck, Deno.test unit lane
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
@@ -904,10 +907,14 @@ private gates (disclosure review, independent model review, operator acceptance)
 remain outside this repository.
 
 After the policy checks, the gate runs the retired-surface scan, the
-`arch.imports` module-boundary check, the source and recursive test-file
-typechecks, the prototype unit suite, current and historical
-schema checks, non-ignored Rust tests using offline SQLx metadata and no
-inherited `DATABASE_URL`, an isolated-Dolt integration lane (including UDS
+`arch.imports` module-boundary check, the source and test-file typechecks (both
+file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
+never hand-listed), the prototype `Deno.test` unit lane (`test.unit`: every
+non-integration, non-golden `Deno.test` file, run in parallel with the op and
+resource sanitizers enabled and no run, net, or env grant), the prototype Vitest
+unit suite (files that import `vitest`; it may only shrink), current and
+historical schema checks, non-ignored Rust tests using offline SQLx metadata and
+no inherited `DATABASE_URL`, an isolated-Dolt integration lane (including UDS
 and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
@@ -994,8 +1001,9 @@ toolchain is installed from the exact pin in `core/rust-toolchain.toml`.
 Workflow-hygiene tests inside the gate assert those properties — including that
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
-`deno task test:fast` runs every deterministic policy check plus the source
-typecheck, reusing the production lane definitions verbatim for quick local
+`deno task test:fast` runs every deterministic policy check (including
+`arch.imports`) plus the contract package checks, the source typecheck, and the
+`test.unit` lane, reusing the production lane definitions verbatim for quick local
 feedback; it is a convenience, not the green bar — `deno task test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
 public deterministic checks it runs.
@@ -1464,6 +1472,12 @@ Document revisions only. Code and behavior changes are tracked in
   `specs/03-testing.md` §1 (fakes at declared ports, conformance-proven fakes,
   loopback fakes for third-party services, golden tests pinning behavior);
   validation guidance documents the golden characterization lane.
+- 2026-09-26 - Section 4 notes where shared fakes live and that new tests use
+  `Deno.test`; the validation notes describe the glob-derived typecheck lists
+  and the `test.unit` lane.
+- 2026-09-26 - Test spec freshened: conformance suites land with their ports
+  (decision D24), and the sanitizer rule names the explicit flags the pinned
+  Deno requires instead of calling them the default.
 - 2026-09-26 - Validation guidance now documents the `arch.imports` gate lane:
   the layer mapping, the ratchet baseline that may only shrink, the named-cycle
   allow-list, and the non-failing deep-import and size reports.

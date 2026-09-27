@@ -1,4 +1,4 @@
-import { testSourcesFromPaths } from "../prototype/scripts/check-test-files.ts";
+import { testSourcesFromPaths } from "../prototype/scripts/test-files.ts";
 import { assertIntegrationTestAssignments } from "../prototype/scripts/integration-test-assignment.ts";
 import { integrationChildEnvironment } from "../prototype/scripts/integration-child-environment.ts";
 import { DENO_EXECUTABLE_DIAGNOSTIC } from "../prototype/scripts/deno-executable.ts";
@@ -95,6 +95,36 @@ Deno.test("aggregate lanes include the retired-surface scan", () => {
   if (!lane) throw new Error("retired-surface scan lane is missing");
   assertEquals(lane.command, "/fixtures/runtime/deno");
   assertStringIncludes(lane.args.join(" "), "scripts/retired-surface-scan.ts");
+});
+
+Deno.test("typecheck lanes derive their file lists instead of hand-listing", () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  for (
+    const [label, task] of [
+      ["Prototype source typecheck", "check:sources"],
+      ["Prototype test-file typecheck", "check:tests"],
+    ]
+  ) {
+    const lane = lanes.find((candidate) => candidate.label === label);
+    if (!lane) throw new Error(`${label} lane is missing`);
+    assertEquals(lane.args, ["task", task]);
+    assertEquals(lane.cwd, "/repo/prototype");
+    assertEquals(lane.env?.DENO_BIN, "/fixtures/runtime/deno");
+  }
+});
+
+Deno.test("aggregate lanes include the test.unit Deno.test suite", () => {
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "Prototype unit Deno.test suite (test.unit)");
+  if (!lane) throw new Error("test.unit lane is missing");
+  assertEquals(lane.checkId, "test.aggregate");
+  assertEquals(lane.args, ["task", "test:unit"]);
+  assertEquals(lane.cwd, "/repo/prototype");
+  assertEquals(lane.env?.TMPDIR, "/tmp");
+  if (!FAST_LANE_LABELS.includes(lane.label)) {
+    throw new Error("test.unit must also run in the fast subset");
+  }
 });
 
 Deno.test("aggregate lanes include the contract package tests", () => {
