@@ -11,6 +11,28 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Row types generated from the DDL, with two schema gate lanes**:
+  `schema/codegen.ts` applies `schema/current/` then `schema/catalog/` to a
+  disposable Dolt repository, reads `information_schema`, and writes
+  `prototype/src/store/generated/rows.ts`: per table a `<Table>Row` (as the
+  driver decodes it) and `<Table>Insert` (NOT NULL columns without a default
+  required), the column-name tuple, each column's declaration, and the SQL
+  enum unions (`EventType`, `MemoryVisibility`, `MemoryInject`, ...). The
+  `schema.codegen` lane regenerates it and fails when the committed file
+  differs, so a DDL change without `deno task schema:codegen` fails the gate.
+  The `schema.equivalence` lane (`deno task schema:equivalence`) applies
+  `current/` + `catalog/` and `history/` + `migrations/` to two repositories
+  and fails on any difference in tables, columns, types, nullability,
+  defaults, ON UPDATE clauses, indexes, enums, constraints or check
+  constraints. Catalog data is not compared.
+- **Typed event writes**: `journal.commit` takes the generated `EventInsert`,
+  and every event the runtime appends is built by its per-type constructor in
+  `prototype/src/store/events/builders.ts` (`sessionStartEvent`,
+  `toolCallEvent`, `providerCallEvent`, ...), which requires the fields that
+  type always carries. A misspelled column, a wrong value type or a missing
+  NOT NULL field is now a compile error instead of a rejected INSERT. The
+  builders only set `event_type`; the rows written are unchanged.
+
 - **Rust REPL front-end (`core/dyfj-repl`)**: an interactive client that owns
   the terminal and speaks the existing Workbench UDS protocol. The agent loop
   is untouched — it stays server-side in `prototype/`, and this is a second
@@ -130,6 +152,20 @@ README are tracked separately in its Revision history section.
   `test.aggregate` check id.
 
 ### Changed
+
+- **The engine refuses to start against an un-migrated database**: at boot,
+  `serve-unix` compares the Dolt database's columns for the canonical tables
+  (`events`, `memories`, `models`, `prompts`, `sessions`) with the generated
+  column tuples. When the database is reachable and any are missing, the boot
+  fails with a message naming the missing columns and pointing at
+  `schema/migrations/`. Before, the event and model readers fell back to older
+  column sets instead. A database that is not reachable at boot is left to fail
+  on first use, as before; extra columns are not reported.
+- **One schema apply-order rule in the docs**: a fresh install applies
+  `schema/current/` then `schema/catalog/`; an existing database replays
+  forward through `schema/migrations/` on top of the structure `schema/history/`
+  ends with. `schema/README.md`, `schema/migrations/README.md` and the README's
+  "Initialize Dolt" section now all state it.
 
 - **Every database read and write goes through one store port
   (`prototype/src/store/`), and every write through `journal.commit`**: the
@@ -312,6 +348,15 @@ README are tracked separately in its Revision history section.
   which the source states rather than hides.
 
 ### Removed
+
+- **Schema-drift fallbacks removed**: `events.bySession` (behind
+  `events/query` and session history) no longer retries with NULL placeholders
+  when a column from migrations 003-007 is missing, and the model catalog
+  reader no longer falls back to the query without the hardware-profile
+  columns. A live database is covered by the boot-time column check; an
+  `events/query` read `AS OF` a snapshot that predates one of those migrations
+  now fails with the driver's unknown-column error instead of returning NULLs
+  for the missing columns.
 
 - **Standalone in-process workbench CLI removed**: `deno task workbench` (root
   and `prototype/`), `deno task start` (`prototype/`), the `workbench`

@@ -12,7 +12,11 @@ import {
   processEnv,
   resolveDoltConnection,
 } from "./config/mod.ts";
-import { createDoltPool, DoltStore } from "./store/mod.ts";
+import {
+  createDoltPool,
+  DoltStore,
+  MissingSchemaColumnsError,
+} from "./store/mod.ts";
 import { resolveSecrets } from "./secrets.ts";
 import { buildExternalMcpCommands } from "./mcp-tools.ts";
 import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
@@ -50,6 +54,18 @@ for (const diagnostic of externalMcp.diagnostics) {
 // The runtime's one store over one Dolt pool. Connections open on first use,
 // so the boot does not wait for (or require) a running sql-server.
 const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
+
+// Boot-time column check: a reachable database that predates a migration in
+// schema/migrations/ fails the boot loudly, naming the missing columns. A
+// database that is not reachable yet is left to fail on first use, as before.
+try {
+  await store.assertCanonicalColumns();
+} catch (error) {
+  if (error instanceof MissingSchemaColumnsError) {
+    await store.close().catch(() => {});
+    throw error;
+  }
+}
 
 let resolveCloseServer!: (close: () => Promise<void>) => void;
 const closeServerReady = new Promise<() => Promise<void>>((resolve) => {

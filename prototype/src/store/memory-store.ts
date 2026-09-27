@@ -21,15 +21,23 @@ import {
   type MemoryReader,
   type ModelReader,
   type PromptReader,
+  SESSION_EVENT_COLUMNS,
   type SessionReader,
   type SpendReader,
   type Store,
   type TextRow,
 } from "./port.ts";
-import type {
-  EventInsert,
-  MemoryType,
-  MemoryVisibility,
+import {
+  type ColumnSpec,
+  EVENT_COLUMN_SPECS,
+  EVENT_COLUMNS,
+  EVENT_TYPE_VALUES,
+  type EventInsert,
+  MEMORY_COLUMN_SPECS,
+  MEMORY_TYPE_VALUES,
+  type MemoryType,
+  type MemoryVisibility,
+  SESSION_COLUMN_SPECS,
 } from "./generated/rows.ts";
 import {
   assertProjectableRow,
@@ -47,182 +55,34 @@ type Value = string | number | Date | null;
 type Row = Record<string, Value>;
 
 // ─── column rendering (what the Dolt driver hands back, as text) ─────────────
+//
+// Column names, kinds, nullability, defaults and enum orders come from the
+// DDL through `generated/rows.ts`; only query shapes are written here.
 
-const EVENT_TYPES = [
-  "model_response",
-  "tool_call",
-  "error",
-  "session_start",
-  "session_end",
-  "model_selected",
-  "budget_summary",
-  "context_compressed",
-  "provider_call",
-  "runner_selected",
-  "agent_permission",
-  "agent_response",
-] as const;
+type StoredKind = "int" | "decimal" | "json" | "timestamp" | "text";
 
-const EVENT_COLUMNS = [
-  "event_id",
-  "session_id",
-  "event_type",
-  "created_at",
-  "trace_id",
-  "span_id",
-  "parent_span_id",
-  "trace_flags",
-  "trace_state",
-  "span_kind",
-  "parent_is_remote",
-  "principal_id",
-  "principal_type",
-  "action",
-  "resource",
-  "authz_basis",
-  "authn_status",
-  "authn_mechanism",
-  "authn_issuer_ref",
-  "authn_session_ref",
-  "authn_authenticated_at",
-  "authn_expires_at",
-  "authn_evidence_ref",
-  "model_id",
-  "provider",
-  "api",
-  "runner_kind",
-  "runner_profile",
-  "runner_protocol",
-  "runner_protocol_version",
-  "runner_stop_reason",
-  "runner_external_session_id",
-  "runner_agent_name",
-  "runner_agent_version",
-  "runner_transport",
-  "runner_access_route",
-  "runner_cost_basis",
-  "runner_workspace",
-  "runner_capabilities",
-  "runner_evidence_scope",
-  "runner_route_source",
-  "runner_auth_type",
-  "permission_verdict",
-  "tokens_input",
-  "tokens_output",
-  "tokens_cache_read",
-  "tokens_cache_write",
-  "cost_total",
-  "content",
-  "stop_reason",
-  "provider_call_order",
-  "provider_call_purpose",
-  "provider_error_class",
-  "unparsed_tool_call_count",
-  "unparsed_tool_call_count_is_lower_bound",
-  "tool_name",
-  "tool_call_id",
-  "tool_arguments",
-  "tool_result",
-  "tool_is_error",
-  "thinking",
-  "duration_ms",
-] as const;
+function storedKind(spec: ColumnSpec): StoredKind {
+  switch (spec.kind) {
+    case "int":
+    case "boolean":
+      return "int";
+    case "decimal":
+    case "json":
+    case "timestamp":
+      return spec.kind;
+    case "text":
+    case "enum":
+      return "text";
+  }
+}
 
-const EVENT_REQUIRED = [
-  "event_id",
-  "session_id",
-  "event_type",
-  "trace_id",
-  "span_id",
-  "principal_id",
-  "principal_type",
-  "action",
-  "resource",
-  "authz_basis",
-];
+const EVENT_SPECS: Readonly<Record<string, ColumnSpec>> = EVENT_COLUMN_SPECS;
 
-type ColumnKind = "int" | "decimal6" | "json" | "timestamp" | "text";
-
-const EVENT_COLUMN_KINDS: Record<string, ColumnKind> = {
-  created_at: "timestamp",
-  authn_authenticated_at: "timestamp",
-  authn_expires_at: "timestamp",
-  trace_flags: "int",
-  parent_is_remote: "int",
-  tokens_input: "int",
-  tokens_output: "int",
-  tokens_cache_read: "int",
-  tokens_cache_write: "int",
-  cost_total: "decimal6",
-  provider_call_order: "int",
-  unparsed_tool_call_count: "int",
-  unparsed_tool_call_count_is_lower_bound: "int",
-  tool_is_error: "int",
-  duration_ms: "int",
-  runner_capabilities: "json",
-  tool_arguments: "json",
-};
-
-/** The columns `bySession` selects, in order. */
-const SESSION_EVENT_COLUMNS = [
-  "event_id",
-  "event_type",
-  "trace_id",
-  "span_id",
-  "parent_span_id",
-  "trace_flags",
-  "trace_state",
-  "span_kind",
-  "parent_is_remote",
-  "principal_id",
-  "model_id",
-  "provider",
-  "api",
-  "content",
-  "stop_reason",
-  "tokens_input",
-  "tokens_output",
-  "tokens_cache_read",
-  "tokens_cache_write",
-  "cost_total",
-  "duration_ms",
-  "provider_call_order",
-  "provider_call_purpose",
-  "provider_error_class",
-  "unparsed_tool_call_count",
-  "unparsed_tool_call_count_is_lower_bound",
-  "runner_kind",
-  "runner_profile",
-  "runner_protocol",
-  "runner_protocol_version",
-  "runner_stop_reason",
-  "runner_external_session_id",
-  "runner_agent_name",
-  "runner_agent_version",
-  "runner_transport",
-  "runner_access_route",
-  "runner_cost_basis",
-  "runner_workspace",
-  "runner_capabilities",
-  "runner_evidence_scope",
-  "runner_route_source",
-  "runner_auth_type",
-  "permission_verdict",
-  "tool_name",
-  "tool_call_id",
-  "tool_arguments",
-  "tool_result",
-  "tool_is_error",
-  "created_at",
-];
-
-const MEMORY_TYPE_ORDER = [
-  "user",
-  "feedback",
-  "environment",
-  "project",
-  "reference",
-];
+/** NOT NULL columns without a default, which an insert must supply. */
+const EVENT_REQUIRED = EVENT_COLUMNS.filter((column) => {
+  const spec = EVENT_COLUMN_SPECS[column];
+  return !spec.nullable && spec.default === undefined;
+});
 
 /** MySQL's canonical JSON text: keys by length then bytes, ", " and ": ". */
 function canonicalJson(value: unknown): string {
@@ -251,11 +111,11 @@ function sqlError(code: string, message: string): Error {
 function storeEventValue(column: string, raw: unknown): Value {
   // The caller skips null columns; a present-but-undefined one binds NULL.
   if (raw === undefined) return null;
-  const kind = EVENT_COLUMN_KINDS[column] ?? "text";
-  switch (kind) {
+  const spec = EVENT_SPECS[column];
+  switch (spec === undefined ? "text" : storedKind(spec)) {
     case "int":
       return typeof raw === "boolean" ? (raw ? 1 : 0) : Number(raw);
-    case "decimal6":
+    case "decimal":
       return Number(raw);
     case "json": {
       let parsed: unknown;
@@ -278,9 +138,8 @@ function storeEventValue(column: string, raw: unknown): Value {
 
 function renderEventValue(column: string, value: Value): string {
   if (value === null) return "";
-  if (EVENT_COLUMN_KINDS[column] === "decimal6") {
-    return (value as number).toFixed(6);
-  }
+  const scale = EVENT_SPECS[column]?.scale;
+  if (scale !== undefined) return (value as number).toFixed(scale);
   return String(value);
 }
 
@@ -388,21 +247,29 @@ function copyTables(tables: Tables): Tables {
   };
 }
 
-const SESSION_DEFAULTS: Row = {
-  session_name: null,
-  external_id: null,
-  project: null,
-  workspace: null,
-  effort_level: null,
-  status: "active",
-  progress_done: 0,
-  progress_total: 0,
-  mode: "interactive",
-  iteration: null,
-  content: null,
-};
+/**
+ * The values a new row takes for the columns an insert may leave out: the
+ * literal DDL default, or NULL. Columns defaulted at insert time
+ * (`CURRENT_TIMESTAMP`) are stamped by the caller.
+ */
+function rowDefaults(specs: Readonly<Record<string, ColumnSpec>>): Row {
+  const defaults: Row = {};
+  for (const [column, spec] of Object.entries(specs)) {
+    if (spec.generated) continue;
+    if (spec.default !== undefined) {
+      defaults[column] = storedKind(spec) === "int"
+        ? Number(spec.default)
+        : spec.default;
+    } else if (spec.nullable) {
+      defaults[column] = null;
+    }
+  }
+  return defaults;
+}
 
-const MEMORY_DEFAULTS: Row = { visibility: "private", inject: "index" };
+const SESSION_DEFAULTS = rowDefaults(SESSION_COLUMN_SPECS);
+const MEMORY_DEFAULTS = rowDefaults(MEMORY_COLUMN_SPECS);
+const EVENT_DEFAULTS = rowDefaults(EVENT_COLUMN_SPECS);
 
 function abortError(): DOMException {
   return new DOMException("Event write aborted", "AbortError");
@@ -625,7 +492,7 @@ export class MemoryStore implements Store {
         );
       }
     }
-    if (!(EVENT_TYPES as readonly Value[]).includes(row.event_type)) {
+    if (!(EVENT_TYPE_VALUES as readonly Value[]).includes(row.event_type)) {
       throw sqlError(
         "ER_UNKNOWN_ERROR",
         `invalid enum value for event_type: ${String(row.event_type)}`,
@@ -634,8 +501,11 @@ export class MemoryStore implements Store {
     for (const column of EVENT_COLUMNS) {
       if (!(column in row)) row[column] = null;
     }
-    if (row.created_at === null) row.created_at = now;
-    if (row.authn_status === null) row.authn_status = "unknown";
+    for (const column of EVENT_COLUMNS) {
+      if (row[column] !== null) continue;
+      if (EVENT_COLUMN_SPECS[column].generated) row[column] = now;
+      else if (column in EVENT_DEFAULTS) row[column] = EVENT_DEFAULTS[column]!;
+    }
     return row;
   }
 
@@ -923,8 +793,8 @@ export class MemoryStore implements Store {
           (clearance as readonly Value[]).includes(row.visibility)
         )
         .sort((a, b) =>
-          MEMORY_TYPE_ORDER.indexOf(a.type as string) -
-            MEMORY_TYPE_ORDER.indexOf(b.type as string) ||
+          MEMORY_TYPE_VALUES.indexOf(a.type as MemoryType) -
+            MEMORY_TYPE_VALUES.indexOf(b.type as MemoryType) ||
           compareText(a.slug as string, b.slug as string)
         );
     const full = [

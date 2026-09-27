@@ -44,6 +44,11 @@ export {
 export { createDoltPool, type DoltPool } from "./dolt-pool.ts";
 export { DoltStore } from "./dolt.ts";
 export {
+  missingCanonicalColumns,
+  type MissingColumn,
+  MissingSchemaColumnsError,
+} from "./schema-check.ts";
+export {
   type MemorySeed,
   MemoryStore,
   type MemoryStoreSeed,

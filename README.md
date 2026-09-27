@@ -620,10 +620,22 @@ dolt sql-server --host 127.0.0.1 --port 3306 &
 cd ../..
 ```
 
-The `data/` directory is gitignored. A fresh database takes the current baseline
-and the catalogs only; `schema/migrations/` upgrades a database created before
-the baseline cut and is not applied on top of it (see
-[`schema/README.md`](schema/README.md)).
+The `data/` directory is gitignored. One rule decides what to apply (see
+[`schema/README.md`](schema/README.md)):
+
+- **Fresh install:** `schema/current/` then `schema/catalog/`, as above. The
+  forward migrations are already folded into that baseline and are never
+  applied on top of it.
+- **Existing database:** replay forward. A database created before the baseline
+  cut has the structure `schema/history/` ends with; apply the files in
+  `schema/migrations/` it has not yet applied, in order.
+
+The gate's `schema.equivalence` lane proves both paths end at the same
+structure. The engine checks its database at boot: when Dolt is reachable and a
+canonical table lacks a column, `serve-unix` refuses to start, names the missing
+columns and points at `schema/migrations/`. It has no fallback for an
+un-migrated database, including for `events/query` reads `AS OF` a snapshot that
+predates a migration.
 
 ### Run Workbench
 
@@ -918,6 +930,8 @@ deno task test:fast       # policy checks, source typecheck, Deno.test unit lane
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
+deno task schema:equivalence  # fresh-install and upgrade paths match
+deno task schema:codegen      # regenerate the DDL-derived row types
 deno task verify-workbench-events
 (cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
@@ -963,7 +977,11 @@ never hand-listed), the prototype `Deno.test` unit lane (`test.unit`: every
 non-integration, non-golden `Deno.test` file, run in parallel with the op and
 resource sanitizers enabled and no run, net, or env grant), the prototype Vitest
 unit suite (files that import `vitest`; it may only shrink), current and
-historical schema checks, non-ignored Rust tests using offline SQLx metadata and
+historical schema checks, `schema.codegen` (the row types in
+`prototype/src/store/generated/rows.ts` regenerated from the DDL must match the
+committed file) and `schema.equivalence` (`current/` + `catalog/` and
+`history/` + `migrations/` must produce the same structure), non-ignored Rust
+tests using offline SQLx metadata and
 no inherited `DATABASE_URL`, an isolated-Dolt integration lane (including UDS
 and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
@@ -1603,3 +1621,8 @@ Document revisions only. Code and behavior changes are tracked in
   confine `mysql2` to `prototype/src/store/` and SQL write statements to the
   store's journal, and the existing environment rules: direct environment
   access only in `config/` and the tooling, and every `DYFJ_*` key declared.
+- 2026-09-27 - Schema apply order stated as one rule in §5 and the schema
+  READMEs: a fresh install applies `current/` then `catalog/`; an existing
+  database replays forward through `migrations/` on top of `history/`. The
+  validation guidance documents the `schema.codegen` and `schema.equivalence`
+  gate lanes, and §5 the engine's boot-time column check.
