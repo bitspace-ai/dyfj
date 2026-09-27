@@ -5,20 +5,30 @@ import {
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
 import {
+  buildWorkbenchSessionContent,
+  buildWorkbenchSessionSlug,
+  createWorkbenchSession,
   type EventInsert,
+  fetchWorkbenchSessionWorkspace,
   memoryClearanceFor,
   type Store,
+  updateWorkbenchSession,
 } from "./store/mod.ts";
 import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
   SpendBaselines,
-} from "./budget.ts";
+} from "./budget/mod.ts";
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
+  BudgetTracker,
+  ceilingConfirmationStoreFor,
+  createRunawayAnomalyGate,
+  createTurnBudgetCeilingGate,
+  fetchSpendBaselines,
   RunawayAnomalyHaltError,
-} from "./budget.ts";
+} from "./budget/mod.ts";
 import type { WorkbenchRoutingOptions } from "./provider.ts";
 import type { WorkbenchCallTimings } from "./provider.ts";
 import type {
@@ -37,10 +47,18 @@ import {
   WorkbenchModelNotRoutableError,
 } from "./provider.ts";
 import { RpcError } from "./transport/mod.ts";
-import type { PackedContextSummary } from "./repo-context.ts";
-import type { AskContextProfile } from "./repo-context.ts";
-import { loadAgentsInstructions } from "./repo-context.ts";
-import type { WorkspaceRootIdentity } from "./repo-context.ts";
+import type {
+  AskContextProfile,
+  PackedContextSummary,
+  WorkspaceRootIdentity,
+} from "./context/mod.ts";
+import {
+  buildAskSystemPrompt,
+  buildContextSourceLines,
+  loadAgentsInstructions,
+  loadAskRepoContext,
+  loadCompanionBasePrompt,
+} from "./context/mod.ts";
 import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
 import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
 import type { BudgetTallyMode, PermissionLevel } from "./config/mod.ts";
@@ -71,7 +89,7 @@ import {
 import type {
   CompressionCompletion,
   CompressionOutcome,
-} from "./context-compression.ts";
+} from "./context/mod.ts";
 import {
   compressElderTranscript,
   COMPRESSION_SYSTEM_PROMPT,
@@ -80,16 +98,20 @@ import {
   partitionForCompression,
   SUMMARY_TRUST_POLICY,
   VERBATIM_TAIL_TURNS,
-} from "./context-compression.ts";
-import type { ContextOverflowRecoverer } from "./length-recovery.ts";
+} from "./context/mod.ts";
+import type { ContextOverflowRecoverer } from "./context/mod.ts";
 import {
   buildContinuationMessages,
   classifyLengthStop,
   CONTEXT_OVERFLOW_WINDOW_FRACTION,
   ContextWindowOverflowError,
   isBudgetRefusal,
-} from "./length-recovery.ts";
-import { AGENT_DEFAULTS, ANOMALY_DEFAULTS, BUDGET_DEFAULTS } from "./config/mod.ts";
+} from "./context/mod.ts";
+import {
+  AGENT_DEFAULTS,
+  ANOMALY_DEFAULTS,
+  BUDGET_DEFAULTS,
+} from "./config/mod.ts";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;
@@ -1238,19 +1260,6 @@ async function runNativeWorkbenchRuntime(
     withDefaultLocalWorkbenchModels,
   } = await import("./provider.ts");
   const {
-    BudgetTracker,
-    ceilingConfirmationStoreFor,
-    createRunawayAnomalyGate,
-    createTurnBudgetCeilingGate,
-    fetchSpendBaselines,
-  } = await import("./budget.ts");
-  const {
-    buildAskSystemPrompt,
-    buildContextSourceLines,
-    loadAskRepoContext,
-  } = await import("./repo-context.ts");
-  const { loadCompanionBasePrompt } = await import("./prompts.ts");
-  const {
     buildMemoryContextSourceLines,
     loadInjectedMemories,
     loadIndexedMemories,
@@ -1266,13 +1275,6 @@ async function runNativeWorkbenchRuntime(
   const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
     "./memory-search.ts"
   );
-  const {
-    buildWorkbenchSessionContent,
-    buildWorkbenchSessionSlug,
-    createWorkbenchSession,
-    fetchWorkbenchSessionWorkspace,
-    updateWorkbenchSession,
-  } = await import("./sessions.ts");
 
   const {
     mode,

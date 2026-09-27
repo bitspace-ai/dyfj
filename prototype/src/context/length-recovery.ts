@@ -8,9 +8,9 @@
 // The agent loop (workbench.ts) owns the retry/failure mechanics; everything
 // here is pure and unit-testable.
 
-import { sanitizeBoundaryText } from "./kernel/mod.ts";
-import type { WorkbenchMessage, WorkbenchModel } from "./provider.ts";
-import { DomainError, type LengthStopClassification } from "./contract/mod.ts";
+import { sanitizeBoundaryText } from "../kernel/mod.ts";
+import type { WorkbenchMessage, WorkbenchModel } from "../provider.ts";
+import { DomainError, type LengthStopClassification } from "../contract/mod.ts";
 
 /**
  * Overflow evidence threshold: input + output at or past this fraction of the

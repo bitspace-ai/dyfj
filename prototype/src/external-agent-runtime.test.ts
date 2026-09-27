@@ -22,7 +22,7 @@ vi.mock("./kernel/ids.ts", () => ({
   generateSpanId: () => `span-${++state.nextId}`,
 }));
 
-vi.mock("./sessions.ts", () => ({
+vi.mock("./store/sessions.ts", () => ({
   buildWorkbenchSessionSlug: (sessionId: string) => `workbench-${sessionId}`,
   buildWorkbenchSessionContent: (input: Record<string, unknown>) =>
     String(input.receipt ?? "# Workbench Session"),
@@ -76,6 +76,7 @@ import {
 } from "./acp-client.ts";
 import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map.ts";
 import { DomainError, summarizeError } from "./contract/mod.ts";
+import { buildConversationMessages } from "./context/conversation.ts";
 
 /**
  * The journal these tests record through: it keeps each committed event in
@@ -3053,8 +3054,8 @@ describe("reconstructed tool history", () => {
         created_at: `2026-09-02 12:00:00.${String(index).padStart(6, "0")}`,
       }));
       const actualSessions = await vi.importActual<
-        typeof import("./sessions.ts")
-      >("./sessions.ts");
+        typeof import("./store/sessions.ts")
+      >("./store/sessions.ts");
       const priorEvents = await actualSessions.fetchWorkbenchSessionEvents({
         sessionId,
         events: {
@@ -3066,9 +3067,7 @@ describe("reconstructed tool history", () => {
             ),
         },
       });
-      const priorMessages = actualSessions.buildConversationMessages(
-        priorEvents,
-      );
+      const priorMessages = buildConversationMessages(priorEvents);
 
       idleTimers.fire();
       await waitForRetiredHandles(map);

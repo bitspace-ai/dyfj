@@ -34,9 +34,8 @@ import {
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
   type WorkbenchProjectSessions,
-  type WorkbenchSessionEvent,
   type WorkbenchSessionSummary,
-} from "./sessions.ts";
+} from "./store/mod.ts";
 import {
   type RpcContext,
   RpcError,
@@ -55,8 +54,12 @@ import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
   runawayAnomalyApprovalRequest,
-} from "./budget.ts";
-import type { TurnStreamFrame, WorkbenchAuthContext } from "./contract/mod.ts";
+} from "./budget/mod.ts";
+import type {
+  TurnStreamFrame,
+  WorkbenchAuthContext,
+  WorkbenchSessionEvent,
+} from "./contract/mod.ts";
 import { isSupersedingRetryStarted, summarizeError } from "./contract/mod.ts";
 import {
   engineConfigToTurnDeps,

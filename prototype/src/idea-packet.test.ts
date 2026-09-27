@@ -5,7 +5,7 @@ import {
   IdeaPacketRegistry,
   markWorkbenchIdea,
 } from "./idea-packet.ts";
-import type { WorkbenchSessionEvent } from "./sessions.ts";
+import type { WorkbenchSessionEvent } from "./contract/mod.ts";
 
 describe("IdeaPacketRegistry", () => {
   test("registers, retrieves, and lists ideas and packets with session filtering", () => {

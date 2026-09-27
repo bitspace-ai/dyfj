@@ -148,8 +148,8 @@ changes with a CHANGELOG `Fixed` entry.
   - **Location:** `prototype/src/store/dolt-readers.ts:35` (`textRow`
     converts every column with `String(value)`; before the store port this
     was `doltQuery` in `utils.ts`, and `MemoryStore` reproduces it), surfacing
-    through `prototype/src/sessions.ts:128-129` (`sessions/inspect`) and
-    `prototype/src/sessions.ts:433` (`events/query`).
+    through `prototype/src/store/sessions.ts:118-119` (`sessions/inspect`) and
+    `prototype/src/store/sessions.ts:365` (`events/query`).
   - **Symptom:** `sessions/inspect` and `events/query` return `createdAt` and
     `updatedAt` as `Date.prototype.toString()` text, for example
     `Sat Sep 26 2026 21:51:50 GMT+0000 (Coordinated Universal Time)`. The text
@@ -161,7 +161,8 @@ changes with a CHANGELOG `Fixed` entry.
   - **Found during:** WO-01 (golden scenario 10 pins the current format).
 - 2026-09-26 — **`sessions/list` can order a resumed session below older
   activity.**
-  - **Location:** `prototype/src/sessions.ts:216` (`compareSessionActivity`),
+  - **Location:** `prototype/src/store/sessions.ts:184`
+    (`compareSessionActivity`),
     fed by the second-precision timestamps above.
   - **Symptom:** sessions whose last activity falls in the same wall-clock
     second compare equal and fall back to session-id order, which is creation

@@ -1,6 +1,6 @@
-import { processEnv } from "./config/mod.ts";
+import { processEnv } from "../config/mod.ts";
 import path from "node:path";
-import { summarizeError } from "./contract/mod.ts";
+import { summarizeError } from "../contract/mod.ts";
 
 export interface ContextSource {
   kind: "file" | "command";

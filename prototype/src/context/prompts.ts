@@ -1,4 +1,4 @@
-import type { PromptReader } from "./store/mod.ts";
+import type { PromptReader } from "../store/mod.ts";
 
 // The companion base prompt is the trust anchor of a turn. It is loaded from
 // the Dolt `prompts` table (authored, versioned config — see

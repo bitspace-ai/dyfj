@@ -31,10 +31,12 @@ import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
   createWorkbenchSession,
+  type EventInsert,
   fetchWorkbenchSessionWorkspaceRecord,
+  type SessionReader,
+  type Store,
   updateWorkbenchSession,
-} from "./sessions.ts";
-import type { EventInsert, SessionReader, Store } from "./store/mod.ts";
+} from "./store/mod.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   type AcpRunnerSelection,

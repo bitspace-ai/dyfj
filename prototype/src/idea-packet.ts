@@ -2,7 +2,7 @@
 // Enriches candidate ideas and draft work packets with supplied session context.
 
 import { generateULID, stripAnsiEscapes } from "./kernel/mod.ts";
-import type { WorkbenchSessionEvent } from "./sessions.ts";
+import type { WorkbenchSessionEvent } from "./contract/mod.ts";
 
 export interface WorkbenchIdea {
   ideaId: string;

@@ -10,12 +10,13 @@ import type {
   WorkbenchRuntimeResult,
 } from "./workbench.ts";
 import { type WorkbenchRoutingOptions } from "./provider.ts";
-import {
-  buildConversationMessages,
-  type WorkbenchSessionEvent,
-} from "./sessions.ts";
+import { buildConversationMessages } from "./context/mod.ts";
+import type { WorkbenchSessionEvent } from "./contract/mod.ts";
 import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
-import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget.ts";
+import type {
+  ConfirmBudgetCeiling,
+  ConfirmRunawayAnomaly,
+} from "./budget/mod.ts";
 import {
   type PermissionLevel,
   resolveRuntimeEnvDefaults,

@@ -2,7 +2,7 @@
 
 Status: design note, partially implemented.
 Tracks: README §10 near-term commitment for extending the cost-visibility surface beyond the shipped preflight/receipt path.
-Implementation home: `prototype/src/budget.ts` and the consent flow it feeds.
+Implementation home: `prototype/src/budget/` and the consent flow it feeds.
 
 ## Why a surface, not just a tracker
 
@@ -184,6 +184,6 @@ Approximate total: ~10h. No piece is required for the next; ship in any order dr
 - README §1 — Layer 0 stance #5 (cost visibility as a default, not an add-on).
 - README §2 — Goal 1 done-line.
 - README §6.3 — Cost & budget machinery as cross-cutting concern.
-- `prototype/src/budget.ts` - the tracker this surface drives.
+- `prototype/src/budget/tracker.ts` - the tracker this surface drives.
 - `schema/catalog/001_models.sql` - pricing source of truth.
 - `schema/current/001_structure.sql` - summary and model-selection events are part of the live event enum.

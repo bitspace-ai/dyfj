@@ -8,8 +8,12 @@
  * and passes in, and `MemoryStore` for unit and component tests. Both pass the
  * conformance suite in `testing/conformance/store.ts`.
  *
- * Allowed dependencies: `kernel/`, `config/` (types), and `mysql2`, which no
- * other directory may import.
+ * Also here: the session-record helpers over the port (`sessions.ts`: session
+ * create/update through the journal, session reads, and the typed read-back of
+ * a session's events).
+ *
+ * Allowed dependencies: `kernel/`, `config/` (types), `contract/` (types), and
+ * `mysql2`, which no other directory may import.
  *
  * Readers return rows as the Dolt driver renders them to text, NULL as the
  * empty string: the contract every caller parsed before the port existed.
@@ -34,6 +38,25 @@ export {
   type UnjournaledMutation,
   type UnjournaledMutationKind,
 } from "./unjournaled.ts";
+export {
+  buildWorkbenchSessionContent,
+  buildWorkbenchSessionSlug,
+  compareSessionActivity,
+  countWorkbenchSessionEvents,
+  createWorkbenchSession,
+  type CreateWorkbenchSessionInput,
+  fetchWorkbenchSessionEvents,
+  fetchWorkbenchSessionRecord,
+  fetchWorkbenchSessionWorkspace,
+  fetchWorkbenchSessionWorkspaceRecord,
+  listWorkbenchSessions,
+  normalizeSessionTimestamp,
+  updateWorkbenchSession,
+  type UpdateWorkbenchSessionInput,
+  type WorkbenchProjectSessions,
+  type WorkbenchSessionContentInput,
+  type WorkbenchSessionSummary,
+} from "./sessions.ts";
 export {
   PHASE1_PROJECTORS,
   type ProjectedTable,
