@@ -189,10 +189,17 @@ Deno.test("clears a genuinely stale socket and binds", async () => {
     stderr: "inherit",
   }).spawn();
   try {
+    // A pipe may split the line across reads: collect until the newline.
     const reader = child.stdout.getReader();
-    const { value } = await reader.read();
-    assertEquals(new TextDecoder().decode(value).trim(), "listening");
+    const decoder = new TextDecoder();
+    let out = "";
+    while (!out.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
     reader.releaseLock();
+    assertEquals(out.trim(), "listening");
   } finally {
     child.kill("SIGKILL");
     await child.status;

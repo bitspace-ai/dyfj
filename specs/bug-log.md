@@ -24,24 +24,6 @@ changes with a CHANGELOG `Fixed` entry.
     instead of copying the `"."` fallback, and nothing checks that the two stay
     in step.
   - **Found during:** WO-10 (present before it; neither side changed).
-- 2026-09-27 — **The TypeScript peer and the Rust REPL client apply the 16 MiB
-  frame limit differently.**
-  - **Location:** `prototype/src/transport/jsonrpc.ts:125` (`FrameDecoder.push`,
-    with the 16 MiB default from `prototype/src/transport/jsonrpc-peer.ts:44`)
-    against `core/dyfj-repl/src/client.rs:218` (`next_frame`).
-  - **Symptom:** the TypeScript side measures the limit in UTF-16 code units of
-    the still-unterminated line and, when it is passed, reports a parse error,
-    drops the buffered text and keeps reading the connection. The Rust client
-    measures bytes and closes the connection. A response line of mostly
-    multibyte text between 16 MiB and about 48 MiB is delivered to the
-    TypeScript client but ends the Rust client's connection, and after an
-    oversized line the two clients also disagree on whether the connection
-    survives. Whether the engine can emit a line that large today is not
-    established.
-  - **Suspected cause:** the Rust client copied the constant but not the unit
-    or the recovery behavior, and no shared test pins either.
-  - **Found during:** WO-11 (present on `main` before it; the move kept the
-    decoder unchanged).
 - 2026-09-27 — **`deno task verify-workbench-events` cannot read `DYFJ_ROOT`.**
   - **Location:** `prototype/src/config/defaults.ts:198`
     (`resolveRuntimeEnvDefaults` reads `DYFJ_ROOT`) against the
