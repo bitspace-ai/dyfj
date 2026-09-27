@@ -7,6 +7,7 @@ import {
 } from "../src/config/mod.ts";
 import { createDoltPool, DoltStore } from "../src/store/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../src/external-agent-runtime.ts";
+import { CeilingConfirmationStore } from "../src/budget/mod.ts";
 import { runWorkbenchRuntime } from "../src/workbench.ts";
 import {
   verifyWorkbenchEventSequence,
@@ -45,6 +46,7 @@ try {
     },
   }, {
     store,
+    ceilingConfirmations: new CeilingConfirmationStore(),
     // ...and binds the ACP runner the same way the UDS server does.
     externalAgentRunner: {
       run: (input) => runExternalAgentWorkbenchRuntime(input, { store }),
