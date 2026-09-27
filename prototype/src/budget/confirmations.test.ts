@@ -2,16 +2,13 @@
  * Unit tests for budget/confirmations.ts: scope-persistent ceiling
  * confirmations keyed by session id and by the local day from the `Clock`.
  *
- * The confirmation maps are module-level, so every test resets them first and
- * uses its own session ids.
+ * Each test builds its own `CeilingConfirmationStore`, so no state is shared
+ * between tests.
  */
 
 import { assertSpyCalls, spy } from "@std/testing/mock";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
-import {
-  ceilingConfirmationStoreFor,
-  resetCeilingConfirmations,
-} from "./confirmations.ts";
+import { CeilingConfirmationStore } from "./confirmations.ts";
 import {
   type BudgetCeilingVerdict,
   type BudgetCeilingWarning,
@@ -32,9 +29,8 @@ function approving() {
 }
 
 Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope across turns", async () => {
-  resetCeilingConfirmations();
-  const july6 = clockOn(2026, 6, 6);
-  const july7 = clockOn(2026, 6, 7);
+  const clock = clockOn(2026, 6, 6);
+  const store = new CeilingConfirmationStore(clock);
   const confirm = approving();
   const overDaily: PreCallCheck = {
     allowed: false,
@@ -49,7 +45,7 @@ Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope
   // Turn 1, session A: confirm once.
   const gateA = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-DAILY-A", july6),
+    store.for("CONF-DAILY-A"),
   );
   await gateA.ensureAllowed(overDaily);
   assertSpyCalls(confirm, 1);
@@ -57,23 +53,22 @@ Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope
   // daily raise holds, no re-prompt.
   const gateB = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-DAILY-B", july6),
+    store.for("CONF-DAILY-B"),
   );
   await gateB.ensureAllowed({ ...overDaily });
   assertSpyCalls(confirm, 1);
   // A new day forgets the raise.
+  clock.set(new Date(2026, 6, 7, 12).getTime());
   const gateC = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-DAILY-B", july7),
+    store.for("CONF-DAILY-B"),
   );
   await gateC.ensureAllowed({ ...overDaily });
   assertSpyCalls(confirm, 2);
-  resetCeilingConfirmations();
 });
 
 Deno.test("daily envelope: session-scope raises persist per session id, not globally", async () => {
-  resetCeilingConfirmations();
-  const july6 = clockOn(2026, 6, 6);
+  const store = new CeilingConfirmationStore(clockOn(2026, 6, 6));
   const confirm = approving();
   const overSession: PreCallCheck = {
     allowed: false,
@@ -87,35 +82,33 @@ Deno.test("daily envelope: session-scope raises persist per session id, not glob
   };
   const gate1 = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-SESSION-A", july6),
+    store.for("CONF-SESSION-A"),
   );
   await gate1.ensureAllowed(overSession);
   // Next turn, same session: raise holds.
   const gate2 = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-SESSION-A", july6),
+    store.for("CONF-SESSION-A"),
   );
   await gate2.ensureAllowed({ ...overSession });
   assertSpyCalls(confirm, 1);
   // Different session: its own envelope, re-prompts.
   const gate3 = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-SESSION-B", july6),
+    store.for("CONF-SESSION-B"),
   );
   await gate3.ensureAllowed({ ...overSession });
   assertSpyCalls(confirm, 2);
-  resetCeilingConfirmations();
 });
 
 Deno.test("scope-period ceiling confirmations: one daily confirm covers later larger projections in the same period", async () => {
   // An agent-loop turn's later calls project past the level recorded at
   // confirmation time; the confirmation must hold for the scope period.
-  resetCeilingConfirmations();
-  const july7 = clockOn(2026, 6, 7);
+  const store = new CeilingConfirmationStore(clockOn(2026, 6, 7));
   const confirm = approving();
   const gate = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-PERIOD-A", july7),
+    store.for("CONF-PERIOD-A"),
   );
   const overDaily = (
     estimatedCost: number,
@@ -137,20 +130,18 @@ Deno.test("scope-period ceiling confirmations: one daily confirm covers later la
   // Next turn, same day, even bigger: still covered.
   const nextTurnGate = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-PERIOD-A", july7),
+    store.for("CONF-PERIOD-A"),
   );
   await nextTurnGate.ensureAllowed(overDaily(0.9, 3.0));
   assertSpyCalls(confirm, 1);
-  resetCeilingConfirmations();
 });
 
 Deno.test("scope-period ceiling confirmations: per-call stays a per-event high-water: a bigger single call re-prompts", async () => {
-  resetCeilingConfirmations();
-  const july7 = clockOn(2026, 6, 7);
+  const store = new CeilingConfirmationStore(clockOn(2026, 6, 7));
   const confirm = approving();
   const gate = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("CONF-PERCALL-A", july7),
+    store.for("CONF-PERCALL-A"),
   );
   const overPerCall = (estimatedCost: number): PreCallCheck => ({
     allowed: false,
@@ -167,5 +158,28 @@ Deno.test("scope-period ceiling confirmations: per-call stays a per-event high-w
   assertSpyCalls(confirm, 1);
   await gate.ensureAllowed(overPerCall(2.5)); // bigger single call: fresh check
   assertSpyCalls(confirm, 2);
-  resetCeilingConfirmations();
+});
+
+Deno.test("CeilingConfirmationStore: separate stores share no confirmations", async () => {
+  const clock = clockOn(2026, 6, 6);
+  const confirm = approving();
+  const overSession: PreCallCheck = {
+    allowed: false,
+    estimatedCost: 0.2,
+    sessionCostSoFar: 4.9,
+    sessionLimitUsd: 5,
+    perCallLimitUsd: 1,
+    dailyCostSoFar: 5,
+    dailyLimitUsd: 25,
+    reason: "session_limit",
+  };
+  await createTurnBudgetCeilingGate(
+    confirm,
+    new CeilingConfirmationStore(clock).for("CONF-ISOLATED"),
+  ).ensureAllowed(overSession);
+  await createTurnBudgetCeilingGate(
+    confirm,
+    new CeilingConfirmationStore(clock).for("CONF-ISOLATED"),
+  ).ensureAllowed({ ...overSession });
+  assertSpyCalls(confirm, 2);
 });

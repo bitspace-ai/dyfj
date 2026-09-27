@@ -4,7 +4,10 @@
 // conformance suite in prototype/testing/conformance/clock.ts.
 
 export interface Clock {
-  /** Wall-clock milliseconds since the Unix epoch. */
+  /**
+   * Wall-clock milliseconds since the Unix epoch. Not monotonic: the reading
+   * can step backwards when the system clock is adjusted.
+   */
   now(): number;
 }
 

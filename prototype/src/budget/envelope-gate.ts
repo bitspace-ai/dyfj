@@ -291,13 +291,13 @@ export interface TurnBudgetCeilingGate {
  * Wrap budget-ceiling confirmation over the per-call, session, and daily
  * scopes. One prompt names every newly-crossed scope and the approval covers
  * exactly those scopes. With the default fresh store, coverage lasts the
- * turn; pass `ceilingConfirmationStoreFor(sessionId, dayKey)` to persist
- * confirmations for their scope periods — the rest of the session for
+ * turn; pass `confirmationStore.for(sessionId)` (a `CeilingConfirmationStore`)
+ * to persist confirmations for their scope periods — the rest of the session for
  * per-call/session marks, the rest of the local day for the daily mark.
  */
 export function createTurnBudgetCeilingGate(
   confirm?: ConfirmBudgetCeiling,
-  // Scope-persistent store (ceilingConfirmationStoreFor) makes a confirmation
+  // Scope-persistent marks (CeilingConfirmationStore.for) make a confirmation
   // cover its scope for the scope period; the default fresh object scopes
   // coverage to this gate instance (one turn) for callers and tests.
   confirmed: BudgetCeilingConfirmations = {},

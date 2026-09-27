@@ -5,8 +5,7 @@
  * `model_response` events; the store stamps them with the clock's time, and
  * the spend reader rolls them up against the clock's local day.
  *
- * The confirmation maps are module-level, so every test resets them first and
- * uses its own session ids.
+ * Each test builds its own `CeilingConfirmationStore` on the test's clock.
  */
 
 import {
@@ -27,12 +26,11 @@ import {
   type BudgetConfig,
   BudgetExceededError,
   BudgetTracker,
-  ceilingConfirmationStoreFor,
+  CeilingConfirmationStore,
   createRunawayAnomalyGate,
   createTurnBudgetCeilingGate,
   fetchSpendBaselines,
   localDayKey,
-  resetCeilingConfirmations,
   RunawayAnomalyHaltError,
   type RunawayAnomalyWarning,
 } from "./mod.ts";
@@ -118,8 +116,8 @@ async function nearLimit(sessionId: string) {
 }
 
 Deno.test("envelope: store-seeded spend crosses session and daily; one confirm covers the turn", async () => {
-  resetCeilingConfirmations();
   const { clock, tracker } = await nearLimit("COMP-A-APPROVE");
+  const confirmations = new CeilingConfirmationStore(clock);
   const preCall = tracker.checkPreCall(2, 3.0, 20_000);
   assertStrictEquals(preCall.allowed, false);
   assertStrictEquals(preCall.reason, "daily_limit");
@@ -130,7 +128,7 @@ Deno.test("envelope: store-seeded spend crosses session and daily; one confirm c
   const confirm = ceilingConfirm({ decision: "approve" });
   const gate = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("COMP-A-APPROVE", clock),
+    confirmations.for("COMP-A-APPROVE"),
   );
   await gate.ensureAllowed(preCall);
   assertSpyCalls(confirm, 1);
@@ -149,18 +147,17 @@ Deno.test("envelope: store-seeded spend crosses session and daily; one confirm c
   // A later turn in the same session and day reuses the persistent store.
   await createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("COMP-A-APPROVE", clock),
+    confirmations.for("COMP-A-APPROVE"),
   ).ensureAllowed(next);
   assertSpyCalls(confirm, 1);
-  resetCeilingConfirmations();
 });
 
 Deno.test("envelope: without a confirm handler the crossing fails closed", async () => {
-  resetCeilingConfirmations();
   const { clock, tracker } = await nearLimit("COMP-A-CLOSED");
+  const confirmations = new CeilingConfirmationStore(clock);
   const gate = createTurnBudgetCeilingGate(
     undefined,
-    ceilingConfirmationStoreFor("COMP-A-CLOSED", clock),
+    confirmations.for("COMP-A-CLOSED"),
   );
   const error = await assertRejects(
     () => gate.ensureAllowed(tracker.checkPreCall(2, 3.0, 20_000)),
@@ -169,16 +166,15 @@ Deno.test("envelope: without a confirm handler the crossing fails closed", async
   assertStrictEquals(error.reason, "daily_limit");
   assertStrictEquals(error.limitUsd, 5);
   assertAlmostEquals(error.scopeCostSoFar, 4.95);
-  resetCeilingConfirmations();
 });
 
 Deno.test("envelope: a declined crossing throws and records no confirmation", async () => {
-  resetCeilingConfirmations();
   const { clock, tracker } = await nearLimit("COMP-A-DECLINE");
+  const confirmations = new CeilingConfirmationStore(clock);
   const confirm = ceilingConfirm({ decision: "deny", reason: "over budget" });
   const gate = createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("COMP-A-DECLINE", clock),
+    confirmations.for("COMP-A-DECLINE"),
   );
   const preCall = tracker.checkPreCall(2, 3.0, 20_000);
   const error = await assertRejects(
@@ -191,14 +187,13 @@ Deno.test("envelope: a declined crossing throws and records no confirmation", as
     BudgetCeilingDeclinedError,
   );
   assertSpyCalls(confirm, 2);
-  resetCeilingConfirmations();
 });
 
 // ── (b) the daily confirmation follows the clock's local day ──────────────────
 
 Deno.test("envelope: the daily confirmation and spend window roll over with the local day", async () => {
-  resetCeilingConfirmations();
   const { clock, store } = setup();
+  const confirmations = new CeilingConfirmationStore(clock);
   const config = { ...CONFIG, perCallLimitUsd: 0.50 };
   await store.journal.commit({
     events: [
@@ -215,7 +210,7 @@ Deno.test("envelope: the daily confirmation and spend window roll over with the 
   assertStrictEquals(day1Call.reason, "daily_limit");
   await createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("COMP-B-MAIN", clock),
+    confirmations.for("COMP-B-MAIN"),
   ).ensureAllowed(day1Call);
   assertSpyCalls(confirm, 1);
   assertEquals(confirm.calls[0].args[0].crossedScopes, ["daily_limit"]);
@@ -223,7 +218,7 @@ Deno.test("envelope: the daily confirmation and spend window roll over with the 
   const sibling = await trackerFor(store, clock, "COMP-B-SIBLING", config);
   await createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("COMP-B-SIBLING", clock),
+    confirmations.for("COMP-B-SIBLING"),
   ).ensureAllowed(sibling.checkPreCall(2, 3.0, 20_000));
   assertSpyCalls(confirm, 1);
 
@@ -247,10 +242,9 @@ Deno.test("envelope: the daily confirmation and spend window roll over with the 
   assertAlmostEquals(day2Call.dailyCostSoFar, 4.97);
   await createTurnBudgetCeilingGate(
     confirm,
-    ceilingConfirmationStoreFor("COMP-B-MAIN", clock),
+    confirmations.for("COMP-B-MAIN"),
   ).ensureAllowed(day2Call);
   assertSpyCalls(confirm, 2);
-  resetCeilingConfirmations();
 });
 
 // ── (c) runaway anomaly hard stop ─────────────────────────────────────────────

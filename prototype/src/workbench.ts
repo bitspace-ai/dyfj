@@ -23,7 +23,7 @@ import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
   BudgetTracker,
-  ceilingConfirmationStoreFor,
+  type CeilingConfirmationStore,
   createRunawayAnomalyGate,
   createTurnBudgetCeilingGate,
   fetchSpendBaselines,
@@ -1072,6 +1072,11 @@ export type ExternalAgentRunner = Runner<
 export interface WorkbenchRuntimeServices {
   /** The store every native-turn read and write goes through. */
   store: Store;
+  /**
+   * The engine's budget-ceiling confirmation store, built once at the
+   * composition root so confirmations persist for their scope periods.
+   */
+  ceilingConfirmations: CeilingConfirmationStore;
   externalAgentRunner?: ExternalAgentRunner;
 }
 
@@ -1232,12 +1237,17 @@ export async function runWorkbenchRuntime(
     });
   }
 
-  return await runNativeWorkbenchRuntime(runtimeInput, services.store);
+  return await runNativeWorkbenchRuntime(
+    runtimeInput,
+    services.store,
+    services.ceilingConfirmations,
+  );
 }
 
 async function runNativeWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
   store: Store,
+  ceilingConfirmations: CeilingConfirmationStore,
 ): Promise<NativeWorkbenchRuntimeResult> {
   const { writeModelSelectedEvent } = await import("./utils.ts");
   const writeEvent = async (
@@ -1840,7 +1850,7 @@ async function runNativeWorkbenchRuntime(
     // instead of re-prompting next turn.
     const budgetCeilingGate = createTurnBudgetCeilingGate(
       runtimeInput.confirmBudgetCeiling,
-      ceilingConfirmationStoreFor(sessionId),
+      ceilingConfirmations.for(sessionId),
     );
     // Turn-scoped: an approval covers the spend level it was shown (the entry
     // check and the first call's check see identical actuals); any recorded

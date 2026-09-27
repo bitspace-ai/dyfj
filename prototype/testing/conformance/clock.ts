@@ -3,7 +3,9 @@
 // The real `systemClock` and the `ManualClock` fake both run it in the unit
 // lane: reading the platform clock needs no grant. Both must agree on what
 // callers rely on: a reading is a finite whole number of epoch milliseconds
-// that a `Date` can hold, and successive readings never go backwards.
+// that a `Date` can hold. It is a wall clock, so monotonicity is not part of
+// the contract: the system clock can step backwards when it is adjusted, and a
+// `ManualClock` can be set or scripted to any reading.
 
 import { assert, assertEquals } from "@std/assert";
 import type { Clock } from "../../src/kernel/clock.ts";
@@ -32,17 +34,5 @@ export function clockConformance(subject: ClockConformanceSubject): void {
     const date = new Date(ms);
     assert(!Number.isNaN(date.getTime()), `reading ${ms} is not a valid Date`);
     assertEquals(date.getTime(), ms);
-  });
-
-  run("successive readings never go backwards", (clock) => {
-    let previous = clock.now();
-    for (let i = 0; i < 100; i++) {
-      const next = clock.now();
-      assert(
-        next >= previous,
-        `reading went backwards: ${previous} -> ${next}`,
-      );
-      previous = next;
-    }
   });
 }

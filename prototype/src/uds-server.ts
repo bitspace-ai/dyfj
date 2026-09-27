@@ -53,6 +53,7 @@ import {
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
+  CeilingConfirmationStore,
   runawayAnomalyApprovalRequest,
 } from "./budget/mod.ts";
 import type {
@@ -1269,6 +1270,9 @@ function composeTurnRuntime(
   store: () => Store,
   acpSessions?: AcpSessionHandleMap,
 ): TurnRuntime {
+  // One confirmation store per engine: ceiling confirmations persist for
+  // their scope periods across this engine's turns.
+  const ceilingConfirmations = new CeilingConfirmationStore();
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
       runExternalAgentWorkbenchRuntime(input, {
@@ -1277,7 +1281,11 @@ function composeTurnRuntime(
       }),
   };
   return (input) =>
-    runWorkbenchRuntime(input, { store: store(), externalAgentRunner });
+    runWorkbenchRuntime(input, {
+      store: store(),
+      ceilingConfirmations,
+      externalAgentRunner,
+    });
 }
 
 // The `turn` method: run an agentic turn over the shared turn-runner core —

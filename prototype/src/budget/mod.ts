@@ -28,8 +28,7 @@ export {
 export { fetchSpendBaselines, localDayKey, localDayStart } from "./spend.ts";
 export {
   type BudgetCeilingConfirmations,
-  ceilingConfirmationStoreFor,
-  resetCeilingConfirmations,
+  CeilingConfirmationStore,
 } from "./confirmations.ts";
 export {
   budgetCeilingApprovalRequest,

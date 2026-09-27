@@ -136,7 +136,10 @@ README are tracked separately in its Revision history section.
   into the tracker (`tracker.ts`), spend baselines and the local-day boundary
   (`spend.ts`), the envelope gates (`envelope-gate.ts`), the ceiling
   confirmation store (`confirmations.ts`) and the runaway anomaly gate
-  (`anomaly-gate.ts`). `context/` gathers repo-context packing, companion
+  (`anomaly-gate.ts`). The confirmation store is no longer a pair of
+  module-level maps: the composition root builds one `CeilingConfirmationStore`
+  per engine and passes it to the runtime with its services, so confirmations
+  still last for their scope periods across the engine's turns. `context/` gathers repo-context packing, companion
   prompt loading, transcript compression (`context-compression.ts` is now
   `compression.ts`), length recovery, and the conversation projection that
   rebuilds prior turns from session events (`conversation.ts`). `sessions.ts`

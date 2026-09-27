@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   BudgetExceededError,
-  resetCeilingConfirmations,
+  CeilingConfirmationStore,
   type RunawayAnomalyWarning,
 } from "./budget/mod.ts";
 import { AGENT_DEFAULTS } from "./config/mod.ts";
@@ -488,6 +488,8 @@ function recordEvent(event: Record<string, unknown>): void {
 }
 
 const baseStore = new MemoryStore();
+let testConfirmations = new CeilingConfirmationStore();
+
 const testStore: Store = {
   journal: {
     commit: (batch) => {
@@ -538,7 +540,11 @@ function runWorkbenchRuntime(
   input: WorkbenchRuntimeInput,
   services: Partial<WorkbenchRuntimeServices> = {},
 ): Promise<WorkbenchRuntimeResult> {
-  return runtimeUnderTest(input, { store: testStore, ...services });
+  return runtimeUnderTest(input, {
+    store: testStore,
+    ceilingConfirmations: testConfirmations,
+    ...services,
+  });
 }
 
 const runWithExternalAgentRunner = (
@@ -547,7 +553,7 @@ const runWithExternalAgentRunner = (
 
 beforeEach(() => {
   // Ceiling confirmations persist per scope by design; tests need isolation.
-  resetCeilingConfirmations();
+  testConfirmations = new CeilingConfirmationStore();
   runtimeMocks.supportsTranscriptRetry = true;
   runtimeMocks.commandResult = null;
   runtimeMocks.commandThrows = null;
