@@ -38,5 +38,7 @@
     "prototype/src/workbench.ts -> prototype/src/repo-context.ts",
     "prototype/src/workbench.ts -> prototype/src/sessions.ts",
     "prototype/src/workbench.ts -> prototype/src/utils.ts"
-  ]
+  ],
+  "env": [],
+  "envKeys": []
 }

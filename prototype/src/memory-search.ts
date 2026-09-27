@@ -25,7 +25,7 @@
  * flows should use separate capability contracts.
  */
 
-import process from "node:process";
+import { type Env, processEnv } from "./config/mod.ts";
 import {
   injectMcpTraceContext,
   type McpTraceContext,
@@ -236,16 +236,16 @@ export function assertSecureMemoryUrl(url: string): void {
  * A configured-but-insecure endpoint throws instead of resolving.
  */
 export function memorySearchConfigFromEnv(
-  env: Record<string, string | undefined> = process.env,
+  env: Env = processEnv,
 ): MemorySearchConfig | null {
-  const url = env.DYFJ_MEMORY_MCP_URL;
+  const url = env.get("DYFJ_MEMORY_MCP_URL");
   if (url === undefined || url === "") return null;
   assertSecureMemoryUrl(url);
-  const tokenHeader = env.DYFJ_MEMORY_MCP_TOKEN_HEADER;
+  const tokenHeader = env.get("DYFJ_MEMORY_MCP_TOKEN_HEADER");
   return {
     url,
-    tool: env.DYFJ_MEMORY_MCP_TOOL ?? "search",
-    token: env.DYFJ_MEMORY_MCP_TOKEN,
+    tool: env.get("DYFJ_MEMORY_MCP_TOOL") ?? "search",
+    token: env.get("DYFJ_MEMORY_MCP_TOKEN"),
     tokenHeader: tokenHeader === "" ? undefined : tokenHeader,
   };
 }

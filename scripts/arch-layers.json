@@ -49,8 +49,17 @@
     "allowedUnits": ["kernel", "contract", "config", "transport"],
     "allowedPaths": ["prototype/src/extensions/*/client.ts"]
   },
+  "env": {
+    "$comment": "Direct Deno.env/process.env access (specs/01-architecture.md section 4). The config unit owns the Env port and its process adapter (prototype/src/config/env.ts); every runtime module, the engine (src/uds-serve.ts), client (src/cli.ts) and memory MCP (mcp/server.ts) entrypoints included, reads the environment through that port. Only the entrypoints listed here may read it directly, each with its justification.",
+    "allowedUnits": ["config"],
+    "entrypoints": [
+      {
+        "unit": "tooling",
+        "justification": "prototype/scripts holds the test runners, gate helpers and test fixtures that deno.json tasks and the aggregate gate run as their own processes (run-unit-tests, run-vitest, typecheck, deno-executable, the isolated Dolt fixture, the ACP fixture agent). They sit outside the runtime graph, no runtime module may import them, and each configures itself and its child processes from its environment."
+      }
+    ]
+  },
   "files": {
-    "prototype/src/config.ts": "config",
     "prototype/src/secrets.ts": "config",
     "prototype/src/utils.ts": "store",
     "prototype/src/sessions.ts": "store",

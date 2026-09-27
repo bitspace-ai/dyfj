@@ -4,7 +4,7 @@ import type {
   JsonSchemaObject,
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
-import type { McpConfiguredTool, McpHttpServerConfig } from "./config.ts";
+import type { McpConfiguredTool, McpHttpServerConfig } from "./config/mod.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
 import {
   boundedMcpFetch,

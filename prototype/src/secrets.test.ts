@@ -6,13 +6,12 @@ import {
   type RunSecretCommand,
   runSecretCommand,
   type SecretCommandResult,
-  type SecretsEnv,
   secretsRunGrant,
 } from "./secrets.ts";
-import type { SecretsConfig } from "./config.ts";
+import type { MutableEnv, SecretsConfig } from "./config/mod.ts";
 
 /** A mutable in-memory env matching the resolver's read/write surface. */
-function fakeEnv(initial: Record<string, string> = {}): SecretsEnv & {
+function fakeEnv(initial: Record<string, string> = {}): MutableEnv & {
   store: Record<string, string>;
 } {
   const store: Record<string, string> = { ...initial };

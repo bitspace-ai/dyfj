@@ -5,6 +5,7 @@ import {
   MAX_CANONICAL_JSON_ENTRIES,
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
+import { processEnv } from "./config/mod.ts";
 import { doltQuery } from "./utils.ts";
 import { DomainError } from "./contract/mod.ts";
 
@@ -1192,7 +1193,7 @@ export async function runWorkbenchTurn(
     if (!isAllowedHostedProviderBaseUrl(model.baseUrl, hostedContract.host)) {
       throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
     }
-    const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
+    const getEnv = params.getEnv ?? ((name: string) => processEnv.get(name));
     const apiKey = getEnv(hostedContract.keyEnvVar);
     if (!apiKey) {
       throw new HostedProviderCredentialMissingError(
@@ -1945,7 +1946,7 @@ async function runAnthropicMessagesTurn(
   if (!isAllowedHostedProviderBaseUrl(model.baseUrl)) {
     throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
   }
-  const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
+  const getEnv = params.getEnv ?? ((name: string) => processEnv.get(name));
   const apiKey = getEnv(ANTHROPIC_API_KEY_ENV_VAR);
   if (!apiKey) {
     throw new HostedProviderCredentialMissingError(
@@ -2358,7 +2359,7 @@ async function runGoogleGenerativeAITurn(
   if (!isAllowedHostedProviderBaseUrl(model.baseUrl)) {
     throw new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl);
   }
-  const getEnv = params.getEnv ?? ((name: string) => Deno.env.get(name));
+  const getEnv = params.getEnv ?? ((name: string) => processEnv.get(name));
   const apiKey = getEnv(GEMINI_API_KEY_ENV_VAR);
   if (!apiKey) {
     throw new HostedProviderCredentialMissingError(

@@ -5,7 +5,7 @@ import {
   type McpHttpServerConfig,
   parseMcpServersConfig,
   parseSecretsConfig,
-} from "./config.ts";
+} from "./config/mod.ts";
 import { buildExternalMcpCommands } from "./mcp-tools.ts";
 import { startLoopbackMcpServer } from "../testing/servers/mcp-server.ts";
 

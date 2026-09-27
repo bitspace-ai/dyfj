@@ -38,6 +38,7 @@ const RULES: LayerRules = {
   units: [
     { dir: "kernel", layer: 0 },
     { dir: "contract", layer: 1 },
+    { dir: "config", layer: 1 },
     { dir: "store", layer: 2 },
     { dir: "providers", layer: 2 },
     { dir: "context", layer: 2 },
@@ -57,10 +58,23 @@ const RULES: LayerRules = {
     allowedUnits: ["kernel", "contract"],
     allowedPaths: [`${S}/extensions/*/client.ts`],
   },
+  env: {
+    allowedUnits: ["config"],
+    entrypoints: [
+      { unit: "tooling", justification: "Separate processes." },
+    ],
+  },
   files: { [`${S}/legacy-utils.ts`]: "store" },
 };
 
-const EMPTY: Baseline = { cycles: [], layer: [], cli: [], dynamic: [] };
+const EMPTY: Baseline = {
+  cycles: [],
+  layer: [],
+  cli: [],
+  dynamic: [],
+  env: [],
+  envKeys: [],
+};
 
 // Writes the fixture modules into a temporary tree and builds the graph with
 // the real `deno info`, so every rule test runs through the same parser as the
@@ -95,6 +109,7 @@ async function run(
       rules: RULES,
       allowList: [],
       baseline: EMPTY,
+      declaredEnvKeys: new Set(["DYFJ_DECLARED"]),
       exists: (path) => path in all || extra.has(path),
       ...overrides,
     });
@@ -524,6 +539,8 @@ Deno.test("the ratchet fails on a new violation and on a stale baseline entry", 
     layer: [`${S}/kernel/k.ts -> ${S}/engine/gone.ts`],
     cli: [],
     dynamic: [],
+    env: [],
+    envKeys: [],
   };
   const result = await run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e.ts";',
@@ -586,4 +603,124 @@ Deno.test("the size report lists long modules and long functions", () => {
   assertEquals(report.functions, [
     { path: "m/big.ts", name: "big", line: 1, lines: 152 },
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// Environment access
+
+Deno.test("direct env access is a violation outside config/ and named entrypoints", async () => {
+  const result = await run({
+    [`${S}/config/env.ts`]: "export const e = Deno.env;",
+    [`${S}/legacy-config.ts`]: 'Deno.env.get("HOME");',
+    [`${S}/server/main.ts`]: 'Deno.env.get("HOME");',
+    ["prototype/scripts/tool.ts"]: 'Deno.env.get("HOME");',
+    [`${S}/engine/deno.ts`]: 'Deno.env.get("HOME");',
+    [`${S}/engine/global.ts`]: 'globalThis.Deno.env.get("HOME");',
+    [`${S}/engine/computed.ts`]: 'Deno["env"].get("HOME");',
+    [`${S}/engine/computed-template.ts`]: "process[`env`].HOME;",
+    [`${S}/engine/destructure.ts`]: "const { env } = Deno; env.get('HOME');",
+    [`${S}/engine/node.ts`]:
+      'import process from "node:process"; process.env.HOME;',
+    [`${S}/engine/named.ts`]: 'import { env } from "node:process"; env.HOME;',
+    [`${S}/engine/other.ts`]:
+      'import process from "node:process"; process.stdin; Deno.args;',
+    [`${S}/engine/namespace.ts`]:
+      'import * as p from "node:process"; p.env.HOME;',
+    [`${S}/engine/default-alias.ts`]:
+      'import nodeProcess from "node:process"; nodeProcess.env.HOME;',
+    [`${S}/engine/default-named.ts`]:
+      'import { default as q } from "process"; q["env"].HOME;',
+    [`${S}/engine/const-alias.ts`]: "const d = Deno; d.env.get('HOME');",
+    [`${S}/engine/global-alias.ts`]:
+      "const d = globalThis.Deno; const e = d; e.env.get('HOME');",
+    [`${S}/engine/global-object-alias.ts`]:
+      "const g = globalThis; g.process.env.HOME;",
+    [`${S}/engine/global-destructure.ts`]:
+      "const { Deno: D } = globalThis; D.env.get('HOME');",
+    [`${S}/engine/alias-destructure.ts`]:
+      'import * as p from "node:process"; const { env } = p; env.HOME;',
+    [`${S}/engine/reexport.ts`]: 'export { env } from "node:process";',
+    [`${S}/engine/other-alias.ts`]:
+      'import * as p from "node:process"; p.stdin; const d = Deno; d.args;',
+  }, {
+    rules: {
+      ...RULES,
+      files: { ...RULES.files, [`${S}/legacy-config.ts`]: "config" },
+      env: {
+        allowedUnits: ["config"],
+        entrypoints: [
+          ...RULES.env.entrypoints,
+          { path: `${S}/server/main.ts`, justification: "Composition root." },
+        ],
+      },
+    },
+  });
+  assertEquals(result.current.env, [
+    `${S}/engine/alias-destructure.ts: process.env`,
+    `${S}/engine/computed-template.ts: process.env`,
+    `${S}/engine/computed.ts: Deno.env`,
+    `${S}/engine/const-alias.ts: Deno.env`,
+    `${S}/engine/default-alias.ts: process.env`,
+    `${S}/engine/default-named.ts: process.env`,
+    `${S}/engine/deno.ts: Deno.env`,
+    `${S}/engine/destructure.ts: Deno.env`,
+    `${S}/engine/global-alias.ts: Deno.env`,
+    `${S}/engine/global-destructure.ts: Deno.env`,
+    `${S}/engine/global-object-alias.ts: process.env`,
+    `${S}/engine/global.ts: Deno.env`,
+    `${S}/engine/named.ts: process.env`,
+    `${S}/engine/namespace.ts: process.env`,
+    `${S}/engine/node.ts: process.env`,
+    `${S}/engine/reexport.ts: process.env`,
+    `${S}/legacy-config.ts: Deno.env`,
+  ]);
+  assertSome(result.added, `env: ${S}/engine/deno.ts: Deno.env`);
+});
+
+Deno.test("an undeclared DYFJ_* key in any scanned module is a violation", async () => {
+  const result = await run({
+    [`${S}/engine/keys.ts`]: [
+      'export const a = "DYFJ_DECLARED";',
+      'export const b = "DYFJ_UNDECLARED";',
+      "export const c = `DYFJ_TEMPLATE`;",
+      'export const e = "DYFJ_lower_case";',
+      "export const f = { DYFJ_OBJECT_KEY: 1, DYFJ_DECLARED: 2 };",
+      "export const g = (env: Record<string, string>) => env.DYFJ_MEMBER;",
+      'export const d = "DYFJ_UNDECLARED must be set";',
+    ].join("\n"),
+    ["prototype/scripts/tool.ts"]: [
+      'export const t = "DYFJ_TOOLING_ONLY";',
+      'export const u = "DYFJ_DECLARED";',
+    ].join("\n"),
+  });
+  assertEquals(result.current.envKeys, [
+    "prototype/scripts/tool.ts: DYFJ_TOOLING_ONLY",
+    `${S}/engine/keys.ts: DYFJ_MEMBER`,
+    `${S}/engine/keys.ts: DYFJ_OBJECT_KEY`,
+    `${S}/engine/keys.ts: DYFJ_TEMPLATE`,
+    `${S}/engine/keys.ts: DYFJ_UNDECLARED`,
+    `${S}/engine/keys.ts: DYFJ_lower_case`,
+  ]);
+});
+
+Deno.test("env entrypoints must name one existing unit or module and justify it", async () => {
+  const result = await run({}, {
+    rules: {
+      ...RULES,
+      env: {
+        allowedUnits: ["config", "nowhere"],
+        entrypoints: [
+          { path: `${S}/missing.ts`, justification: "x" },
+          { unit: "ghost", justification: "x" },
+          { unit: "tooling", path: `${S}/legacy-utils.ts`, justification: "x" },
+          { unit: "tooling", justification: " " },
+        ],
+      },
+    },
+  });
+  assertSome(result.errors, "allowed unit is not declared: nowhere");
+  assertSome(result.errors, `${S}/missing.ts: module does not exist`);
+  assertSome(result.errors, "ghost: unit is not declared");
+  assertSome(result.errors, "name exactly one of unit or path");
+  assertSome(result.errors, "tooling: missing justification");
 });

@@ -6,6 +6,7 @@
  * vendor-neutral config surface.
  */
 
+import { MapEnv } from "../testing/fakes/map-env.ts";
 import { describe, expect, test } from "vitest";
 import {
   memoryAuthHeaders,
@@ -15,15 +16,15 @@ import {
 
 describe("memorySearchConfigFromEnv", () => {
   test("returns null when no endpoint is configured (capability disabled)", () => {
-    expect(memorySearchConfigFromEnv({})).toBeNull();
-    expect(memorySearchConfigFromEnv({ DYFJ_MEMORY_MCP_URL: "" })).toBeNull();
+    expect(memorySearchConfigFromEnv(new MapEnv({}))).toBeNull();
+    expect(memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: "" }))).toBeNull();
   });
 
   test("defaults the tool to 'search' and omits the token when only URL is set", () => {
     expect(
-      memorySearchConfigFromEnv({
+      memorySearchConfigFromEnv(new MapEnv({
         DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
-      }),
+      })),
     ).toEqual({
       url: "https://memory.example/mcp",
       tool: "search",
@@ -33,11 +34,11 @@ describe("memorySearchConfigFromEnv", () => {
   });
 
   test("honors tool + token overrides — backend vocabulary stays config", () => {
-    const cfg = memorySearchConfigFromEnv({
+    const cfg = memorySearchConfigFromEnv(new MapEnv({
       DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
       DYFJ_MEMORY_MCP_TOOL: "search_thoughts",
       DYFJ_MEMORY_MCP_TOKEN: "fixture-token",
-    });
+    }));
     expect(cfg?.url).toBe("https://memory.example/mcp");
     expect(cfg?.tool).toBe("search_thoughts");
     expect(cfg?.token).toBe("fixture-token");
@@ -47,19 +48,19 @@ describe("memorySearchConfigFromEnv", () => {
     // https anywhere; plain http only to loopback. Fail-closed at config
     // resolution, before any request could ship the token.
     expect(() =>
-      memorySearchConfigFromEnv({
+      memorySearchConfigFromEnv(new MapEnv({
         DYFJ_MEMORY_MCP_URL: "http://memory.example/mcp",
-      })
+      }))
     ).toThrow("https");
     expect(
-      memorySearchConfigFromEnv({
+      memorySearchConfigFromEnv(new MapEnv({
         DYFJ_MEMORY_MCP_URL: "http://127.0.0.1:8080/mcp",
-      })?.url,
+      }))?.url,
     ).toBe("http://127.0.0.1:8080/mcp");
     expect(
-      memorySearchConfigFromEnv({
+      memorySearchConfigFromEnv(new MapEnv({
         DYFJ_MEMORY_MCP_URL: "http://localhost:8080/mcp",
-      })?.url,
+      }))?.url,
     ).toBe("http://localhost:8080/mcp");
   });
 
@@ -71,7 +72,7 @@ describe("memorySearchConfigFromEnv", () => {
         "https://fixture-user@memory.example/mcp",
       ]
     ) {
-      expect(() => memorySearchConfigFromEnv({ DYFJ_MEMORY_MCP_URL: url }))
+      expect(() => memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: url })))
         .toThrow("DYFJ_MEMORY_MCP_URL must not include credentials");
     }
   });
@@ -83,7 +84,7 @@ describe("memorySearchConfigFromEnv", () => {
 
     let message = "";
     try {
-      memorySearchConfigFromEnv({ DYFJ_MEMORY_MCP_URL: url });
+      memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: url }));
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -105,29 +106,29 @@ describe("memorySearchConfigFromEnv", () => {
       ]
     ) {
       expect(() =>
-        memorySearchConfigFromEnv({
+        memorySearchConfigFromEnv(new MapEnv({
           DYFJ_MEMORY_MCP_URL: `http://${host}/mcp`,
-        })
+        }))
       ).toThrow("https");
     }
     expect(
-      memorySearchConfigFromEnv({
+      memorySearchConfigFromEnv(new MapEnv({
         DYFJ_MEMORY_MCP_URL: "http://127.1.2.3:9/mcp",
-      })?.url,
+      }))?.url,
     ).toBe("http://127.1.2.3:9/mcp");
   });
 
   test("resolves the token header name; empty means unset", () => {
-    const named = memorySearchConfigFromEnv({
+    const named = memorySearchConfigFromEnv(new MapEnv({
       DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
       DYFJ_MEMORY_MCP_TOKEN: "fixture-token",
       DYFJ_MEMORY_MCP_TOKEN_HEADER: "x-fixture-key",
-    });
+    }));
     expect(named?.tokenHeader).toBe("x-fixture-key");
-    const empty = memorySearchConfigFromEnv({
+    const empty = memorySearchConfigFromEnv(new MapEnv({
       DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
       DYFJ_MEMORY_MCP_TOKEN_HEADER: "",
-    });
+    }));
     expect(empty?.tokenHeader).toBeUndefined();
   });
 });

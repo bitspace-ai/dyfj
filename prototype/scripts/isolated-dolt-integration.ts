@@ -142,7 +142,7 @@ try {
   ], { cwd: prototypeRoot, env, signal: abortController.signal });
   await runChecked(denoExecutable, [
     "test",
-    "--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR",
+    "--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,ENV_CONFORMANCE_PROBE",
     `--allow-read=.,${mcpTestTempDir}`,
     `--allow-write=${mcpTestTempDir}`,
     `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill`,

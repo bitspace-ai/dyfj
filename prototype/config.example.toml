@@ -100,7 +100,7 @@ level = "strict"
 # timeout_ms = 10000
 
 # Pointers keyed by the declared secret env var. Only keys declared as
-# secret-pointer in src/config.ts (CONFIG_SCHEMA) are accepted; anything else
+# secret-pointer in src/config/schema.ts (CONFIG_SCHEMA) are accepted; anything else
 # fails the boot loudly. env WINS — an already-set var is left alone and its
 # pointer is not consulted, so `op run` / ambient projection still overrides.
 # SESSION-FIRST (best-effort, not a guarantee): the FIRST pointer declared here
@@ -147,7 +147,7 @@ level = "strict"
 # capabilities.fetch_tool). Their shapes, trust rules, and limits are in the
 # root README under "Configured external MCP tools".
 
-# The full configuration surface is declared in src/config.ts (CONFIG_SCHEMA),
+# The full configuration surface is declared in src/config/schema.ts (CONFIG_SCHEMA),
 # split into engine vs client domains, with secret keys held as POINTERS (op:// /
 # keychain / env-var name), never plaintext. Keys above have a config-FILE layer;
 # the rest resolve against the same declared surface at the runtime boundary.

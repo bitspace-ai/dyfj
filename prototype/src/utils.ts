@@ -1,6 +1,5 @@
 import { generateSpanId, generateULID } from "./kernel/mod.ts";
-import { resolvePrincipalId } from "./config.ts";
-import process from "node:process";
+import { type Env, processEnv, resolvePrincipalId } from "./config/mod.ts";
 
 // ─── Dolt infrastructure (TCP → sql-server) ─────────────────────────────────
 // Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.
@@ -14,7 +13,7 @@ let _pool: any | null = null;
 export type SqlParam = string | number | boolean | null;
 
 export function buildDoltPoolOptions(
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = readDoltEnv(processEnv),
 ): mysql.PoolOptions {
   return {
     host: env.DOLT_HOST ?? "127.0.0.1",
@@ -24,6 +23,16 @@ export function buildDoltPoolOptions(
     database: env.DOLT_DATABASE ?? "dolt",
     waitForConnections: true,
     connectionLimit: 5,
+  };
+}
+
+function readDoltEnv(env: Env): Record<string, string | undefined> {
+  return {
+    DOLT_HOST: env.get("DOLT_HOST"),
+    DOLT_PORT: env.get("DOLT_PORT"),
+    DOLT_USER: env.get("DOLT_USER"),
+    DOLT_PASSWORD: env.get("DOLT_PASSWORD"),
+    DOLT_DATABASE: env.get("DOLT_DATABASE"),
   };
 }
 
@@ -174,7 +183,7 @@ function buildModelSelectedEventPayload(params: {
     span_id: params.spanId ?? generateSpanId(),
     parent_span_id: params.parentSpanId ?? null,
     principal_id: params.principalId ??
-      resolvePrincipalId({ get: (key) => process.env[key] }),
+      resolvePrincipalId(processEnv),
     principal_type: "human",
     action: "select",
     resource: params.selected,

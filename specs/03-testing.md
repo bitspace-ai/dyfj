@@ -81,7 +81,8 @@ in the same change that lands this spec's first work order.
     peer.
   - `builders/`: event, session, model-row and turn-request builders, typed
     against generated rows.
-  - `conformance/`: store, provider-adapter and tool suites.
+  - `conformance/`: store, provider-adapter and tool suites, and the `Env` port
+    suite (`env.ts`).
   - `golden/`: the harness and scenarios.
 - **Integration assignment.** The hand-maintained
   `integration-test-assignment.ts` is deleted. The tier is decided by file name,

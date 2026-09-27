@@ -1,7 +1,7 @@
 import type {
   LinearIssueCreationBinding,
   McpHttpServerConfig,
-} from "./config.ts";
+} from "./config/mod.ts";
 import {
   type CommandDefinition,
   CommandExecutionError,

@@ -5,7 +5,12 @@
 
 import { serveWorkbenchUnix } from "./uds-server.ts";
 import { ensureSocketDir, resolveSocketPath } from "./uds-path.ts";
-import { loadConfig, loadMcpServersConfig, loadSecretsConfig } from "./config.ts";
+import {
+  loadConfig,
+  loadMcpServersConfig,
+  loadSecretsConfig,
+  processEnv,
+} from "./config/mod.ts";
 import { resolveSecrets } from "./secrets.ts";
 import { buildExternalMcpCommands } from "./mcp-tools.ts";
 import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
@@ -77,7 +82,7 @@ try {
     onParseError: (detail) => console.error(`[uds] ${detail}`),
     engineConfig: config,
     externalMcpCommands: externalMcp.commands,
-    frictionIssueId: Deno.env.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||
+    frictionIssueId: processEnv.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||
       undefined,
     autostarted,
     onShutdown: () => shutdown({ disconnectPeers: false }),

@@ -7,6 +7,7 @@ export const integrationTestAssignments = {
     "src/uds-events-asof.integration.test.ts",
   ],
   deno: [
+    "src/config/env.integration.test.ts",
     "src/mcp-conformance.integration.test.ts",
     "src/mcp-tools.integration.test.ts",
     "src/memory-search.integration.test.ts",

@@ -1,6 +1,8 @@
+import { type Env, processEnv } from "../src/config/mod.ts";
+
 export type SqlParam = string | number | boolean | null;
 
-export function buildDoltPoolOptions(env: Record<string, string | undefined> = readDenoEnv()) {
+export function buildDoltPoolOptions(env: Record<string, string | undefined> = readDoltEnv(processEnv)) {
   return {
     host: env.DOLT_HOST ?? "127.0.0.1",
     port: Number(env.DOLT_PORT ?? "3306"),
@@ -12,12 +14,12 @@ export function buildDoltPoolOptions(env: Record<string, string | undefined> = r
   };
 }
 
-function readDenoEnv(): Record<string, string | undefined> {
+function readDoltEnv(env: Env): Record<string, string | undefined> {
   return {
-    DOLT_HOST: Deno.env.get("DOLT_HOST"),
-    DOLT_PORT: Deno.env.get("DOLT_PORT"),
-    DOLT_USER: Deno.env.get("DOLT_USER"),
-    DOLT_PASSWORD: Deno.env.get("DOLT_PASSWORD"),
-    DOLT_DATABASE: Deno.env.get("DOLT_DATABASE"),
+    DOLT_HOST: env.get("DOLT_HOST"),
+    DOLT_PORT: env.get("DOLT_PORT"),
+    DOLT_USER: env.get("DOLT_USER"),
+    DOLT_PASSWORD: env.get("DOLT_PASSWORD"),
+    DOLT_DATABASE: env.get("DOLT_DATABASE"),
   };
 }

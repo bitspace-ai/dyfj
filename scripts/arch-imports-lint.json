@@ -3,7 +3,11 @@
     "plugins": ["./arch-imports-lint-plugin.ts"],
     "rules": {
       "tags": [],
-      "include": ["arch-imports/dynamic-import"]
+      "include": [
+        "arch-imports/dynamic-import",
+        "arch-imports/env-access",
+        "arch-imports/dyfj-key"
+      ]
     }
   }
 }

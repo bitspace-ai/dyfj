@@ -1,5 +1,5 @@
 import { executeReadMemory } from "./memory.ts";
-import type { PermissionLevel } from "./config.ts";
+import type { PermissionLevel } from "./config/mod.ts";
 import {
   executeEditFile,
   executeGlobFiles,

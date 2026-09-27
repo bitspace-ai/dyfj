@@ -22,8 +22,9 @@
  *
  * Dynamic imports therefore come from a second parser pass: `deno lint` with
  * the repository-owned plugin `arch-imports-lint-plugin.ts`, which reports
- * every `import()` expression in the AST, literal or not. Both passes use
- * Deno's own parser; neither is a hand-written lexer.
+ * every `import()` expression in the AST, literal or not. The same pass
+ * reports direct process-environment access and `DYFJ_*` key literals. Both
+ * passes use Deno's own parser; neither is a hand-written lexer.
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -64,10 +65,27 @@ export interface DynamicImport {
   line: number;
 }
 
+export interface EnvAccess {
+  from: string;
+  line: number;
+  /** `Deno.env` or `process.env`. */
+  via: string;
+}
+
+export interface DyfjKey {
+  from: string;
+  line: number;
+  key: string;
+}
+
 export interface ModuleGraph {
   edges: Edge[];
   /** Every dynamic `import()` of a scanned module, and every non-literal one. */
   dynamicImports: DynamicImport[];
+  /** Every direct process-environment access in a scanned module. */
+  envAccesses: EnvAccess[];
+  /** Every string literal that is exactly a `DYFJ_*` key. */
+  dyfjKeys: DyfjKey[];
   /** Scanned modules that failed to load, and local imports that did not
    * resolve to a file. Any entry fails the lane. */
   errors: string[];
@@ -134,7 +152,13 @@ export function graphFromDenoInfo(
   }
   const byKey = (e: Edge) => `${e.from} -> ${e.to} ${e.kind}`;
   edges.sort((a, b) => byKey(a).localeCompare(byKey(b)));
-  return { edges, dynamicImports: [], errors: errors.sort() };
+  return {
+    edges,
+    dynamicImports: [],
+    envAccesses: [],
+    dyfjKeys: [],
+    errors: errors.sort(),
+  };
 }
 
 export interface DenoLintOutput {
@@ -188,6 +212,38 @@ export function dynamicImportsFromLint(
   const key = (d: DynamicImport) => `${d.from}:${d.line}`;
   dynamicImports.sort((a, b) => key(a).localeCompare(key(b)));
   return { dynamicImports, errors };
+}
+
+const ENV_ACCESS_RULE = "arch-imports/env-access";
+const DYFJ_KEY_RULE = "arch-imports/dyfj-key";
+
+/** Turns the plugin's env diagnostics into env accesses and `DYFJ_*` keys. */
+export function envFromLint(
+  lint: DenoLintOutput,
+  root: string,
+  modules: ReadonlySet<string>,
+): { envAccesses: EnvAccess[]; dyfjKeys: DyfjKey[] } {
+  const relative = (name: string) => {
+    const file = name.startsWith("file:") ? fileURLToPath(name) : name;
+    return file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
+  };
+  const envAccesses: EnvAccess[] = [];
+  const dyfjKeys: DyfjKey[] = [];
+  for (const d of lint.diagnostics) {
+    const from = relative(d.filename);
+    if (!modules.has(from)) continue;
+    const line = d.range.start.line;
+    if (d.code === ENV_ACCESS_RULE) {
+      envAccesses.push({ from, line, via: d.message });
+    } else if (d.code === DYFJ_KEY_RULE) {
+      dyfjKeys.push({ from, line, key: d.message });
+    }
+  }
+  const key = (d: { from: string; line: number }) =>
+    `${d.from}:${String(d.line).padStart(8, "0")}`;
+  envAccesses.sort((a, b) => key(a).localeCompare(key(b)));
+  dyfjKeys.sort((a, b) => key(a).localeCompare(key(b)));
+  return { envAccesses, dyfjKeys };
 }
 
 /** The `data:` root module that side-effect-imports every scanned module. */
@@ -259,9 +315,12 @@ export async function loadModuleGraph(
   ]);
   const graph = graphFromDenoInfo(info as DenoInfoOutput, root, modules);
   const dynamic = dynamicImportsFromLint(lint as DenoLintOutput, root, modules);
+  const env = envFromLint(lint as DenoLintOutput, root, modules);
   return {
     edges: graph.edges,
     dynamicImports: dynamic.dynamicImports,
+    envAccesses: env.envAccesses,
+    dyfjKeys: env.dyfjKeys,
     errors: [...new Set([...graph.errors, ...dynamic.errors])].sort(),
   };
 }

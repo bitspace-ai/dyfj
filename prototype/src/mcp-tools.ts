@@ -1,4 +1,4 @@
-import type { McpHttpServerConfig } from "./config.ts";
+import type { McpHttpServerConfig } from "./config/mod.ts";
 import type {
   CommandDefinition,
   CommandTraceContext,

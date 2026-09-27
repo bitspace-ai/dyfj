@@ -4,7 +4,7 @@ import {
   resetCeilingConfirmations,
   type RunawayAnomalyWarning,
 } from "./budget.ts";
-import { AGENT_DEFAULTS } from "./config.ts";
+import { AGENT_DEFAULTS } from "./config/mod.ts";
 import { LENGTH_CONTINUATION_NUDGE } from "./length-recovery.ts";
 import {
   COMPRESSION_SECTIONS,

@@ -51,7 +51,7 @@ import {
   AGENT_DEFAULTS,
   type PermissionLevel,
   type WorkbenchConfig,
-} from "./config.ts";
+} from "./config/mod.ts";
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,

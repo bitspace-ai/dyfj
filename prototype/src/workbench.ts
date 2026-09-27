@@ -38,7 +38,7 @@ import { loadAgentsInstructions } from "./repo-context.ts";
 import type { WorkspaceRootIdentity } from "./repo-context.ts";
 import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
 import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
-import type { BudgetTallyMode, PermissionLevel } from "./config.ts";
+import type { BudgetTallyMode, PermissionLevel } from "./config/mod.ts";
 import type {
   AcpRunnerSelection,
   ExternalAgentWorkbenchRuntimeResult,
@@ -84,7 +84,7 @@ import {
   ContextWindowOverflowError,
   isBudgetRefusal,
 } from "./length-recovery.ts";
-import { AGENT_DEFAULTS, ANOMALY_DEFAULTS, BUDGET_DEFAULTS } from "./config.ts";
+import { AGENT_DEFAULTS, ANOMALY_DEFAULTS, BUDGET_DEFAULTS } from "./config/mod.ts";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;

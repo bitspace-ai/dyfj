@@ -3,7 +3,7 @@ import saveIssueSchema from "./linear-save-issue-schema.fixture.ts";
 import type {
   LinearIssueCreationBinding,
   McpHttpServerConfig,
-} from "./config.ts";
+} from "./config/mod.ts";
 import {
   type ConfirmToolApproval,
   createCommandRegistry,
