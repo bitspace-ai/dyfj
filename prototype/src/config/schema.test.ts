@@ -68,12 +68,14 @@ import {
     );
   });
 
-  // Test-harness keys are declared but never granted to a runtime profile.
-  Deno.test("config surface ⇄ deno.json permission allowlist: no runtime profile grants a test-domain key", () => {
-    const testKeys = CONFIG_SCHEMA.filter((s) => s.domain === "test").map((
-      s,
-    ) => s.envVar);
-    assert(testKeys.length > 0);
+  // Test-harness and tooling keys are declared but never granted to a
+  // runtime profile.
+  Deno.test("config surface ⇄ deno.json permission allowlist: no runtime profile grants a test- or tooling-domain key", () => {
+    const testKeys = CONFIG_SCHEMA.filter((s) =>
+      s.domain === "test" || s.domain === "tooling"
+    ).map((s) => s.envVar);
+    assert(testKeys.some((key) => key === "DYFJ_TEST_RUN_DIR"));
+    assert(testKeys.some((key) => key === "DYFJ_LOCK_TMP"));
     for (const [name, profile] of Object.entries(denoJson.permissions)) {
       if (name === "test") continue;
       const granted = new Set(profile.env ?? []);

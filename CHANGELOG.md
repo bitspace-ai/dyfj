@@ -144,12 +144,15 @@ README are tracked separately in its Revision history section.
   into `config/env-file.ts`, together with the ambient-before-`.env` rule the
   launcher shares with the spawned runtime. `CONFIG_SCHEMA` now also declares
   `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH`, `DYFJ_CODEX_RUSTUP_HOME` (engine
-  and client), `DYFJ_PROTOTYPE_ROOT` (client) and `DYFJ_TEST_RUN_DIR` (a new
-  `test` domain that no runtime permission profile grants); no permission
-  profile changed. The `arch.imports` lane gains two rules: direct
+  and client), `DYFJ_PROTOTYPE_ROOT` (client), `DYFJ_TEST_RUN_DIR` (a new
+  `test` domain) and the test harness's `DYFJ_TEST_BOUND_SEC`, `DYFJ_LOCK_TMP`,
+  `DYFJ_LOCK_FILE` and `DYFJ_LOCK_RESULT` (a new `tooling` domain); no runtime
+  permission profile grants a `test` or `tooling` key, and none changed. The `arch.imports` lane gains two rules: direct
   environment access outside `config/` and the entrypoints named in
   `scripts/arch-layers.json` (today only the `prototype/scripts` tooling), and
-  a `DYFJ_*` key literal in a runtime module that the schema does not declare.
+  a `DYFJ_*` key literal anywhere under the lane's `prototype/` roots
+  (runtime, `mcp/` and `scripts/`) that the schema does not declare. The root
+  gate's own `DYFJ_GATE_*` keys are outside `prototype/` and out of scope.
   Both start with no baselined violations. The config tests moved to
   `Deno.test` next to the modules they cover, and an `Env` conformance suite
   (`prototype/testing/conformance/env.ts`) runs against the `MapEnv` fake in

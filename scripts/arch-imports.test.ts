@@ -663,7 +663,7 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
   assertSome(result.added, `env: ${S}/engine/deno.ts: Deno.env`);
 });
 
-Deno.test("an undeclared DYFJ_* key in a runtime module is a violation", async () => {
+Deno.test("an undeclared DYFJ_* key in any scanned module is a violation", async () => {
   const result = await run({
     [`${S}/engine/keys.ts`]: [
       'export const a = "DYFJ_DECLARED";',
@@ -672,9 +672,13 @@ Deno.test("an undeclared DYFJ_* key in a runtime module is a violation", async (
       'export const e = "DYFJ_lower_case";',
       'export const d = "DYFJ_UNDECLARED must be set";',
     ].join("\n"),
-    ["prototype/scripts/tool.ts"]: 'export const t = "DYFJ_TOOLING_ONLY";',
+    ["prototype/scripts/tool.ts"]: [
+      'export const t = "DYFJ_TOOLING_ONLY";',
+      'export const u = "DYFJ_DECLARED";',
+    ].join("\n"),
   });
   assertEquals(result.current.envKeys, [
+    "prototype/scripts/tool.ts: DYFJ_TOOLING_ONLY",
     `${S}/engine/keys.ts: DYFJ_TEMPLATE`,
     `${S}/engine/keys.ts: DYFJ_UNDECLARED`,
     `${S}/engine/keys.ts: DYFJ_lower_case`,

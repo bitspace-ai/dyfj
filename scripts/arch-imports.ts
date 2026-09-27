@@ -17,7 +17,8 @@
  *   same-layer edges, `cli/` allow-list breaches, dynamic local imports,
  *   direct `Deno.env`/`process.env` access outside `config/` and the
  *   entrypoints named in `arch-layers.json`, and `DYFJ_*` key literals in
- *   runtime modules that `CONFIG_SCHEMA` does not declare.
+ *   any scanned module (runtime, `mcp/` and the `scripts/` tooling) that
+ *   `CONFIG_SCHEMA` does not declare.
  *   An entry in `arch-cycles.json` (AGENTS.md rule 1) must name edges inside a
  *   cycle, and exempts them from the cycle and dynamic-import rules only.
  * - Ratchet: violations are compared with `arch-imports-baseline.json`. A
@@ -95,7 +96,7 @@ export interface Baseline {
   dynamic: string[];
   /** `<module>: Deno.env|process.env` read outside config/ and entrypoints. */
   env: string[];
-  /** `<module>: DYFJ_*` key in a runtime module that the schema lacks. */
+  /** `<module>: DYFJ_*` key in a scanned module that the schema lacks. */
   envKeys: string[];
 }
 
@@ -487,12 +488,11 @@ export function analyze(input: AnalysisInput): AnalysisResult {
       `${a.from}: ${a.via}`
     ),
   );
+  // Every scanned module, runtime and tooling alike, names only declared keys.
   const envKeys = sortedUnique(
-    input.graph.dyfjKeys.filter((k) => {
-      const unit = units.get(k.from);
-      return unit !== undefined && !unit.outside &&
-        !input.declaredEnvKeys.has(k.key);
-    }).map((k) => `${k.from}: ${k.key}`),
+    input.graph.dyfjKeys.filter((k) =>
+      units.has(k.from) && !input.declaredEnvKeys.has(k.key)
+    ).map((k) => `${k.from}: ${k.key}`),
   );
 
   const current: Baseline = { cycles, layer, cli, dynamic, env, envKeys };

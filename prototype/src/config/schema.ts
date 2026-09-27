@@ -14,8 +14,9 @@
  *     asserts the `deno.json` permission `env` profiles against it, so the
  *     allowlist-drift class of bug (a runtime env var present in one profile and
  *     missing from another) is caught structurally, not band-aided.
- *   - Every `DYFJ_*` key the runtime names is declared here; the `arch.imports`
- *     lane fails on an undeclared one.
+ *   - Every `DYFJ_*` key named anywhere under `prototype/` (runtime, `mcp/` and
+ *     the `scripts/` tooling) is declared here; the `arch.imports` lane fails
+ *     on an undeclared one.
  */
 
 export type PermissionLevel = "strict" | "operator";
@@ -32,8 +33,10 @@ export const PERMISSION_LEVELS: readonly PermissionLevel[] = [
  * domains — so the thin client never has to load the engine's schema. `test`
  * keys are set only by test harnesses; no runtime permission profile grants
  * them, and a read of one outside a test treats the ungranted key as absent.
+ * `tooling` keys are read only by the test and gate programs under
+ * `prototype/scripts`; no runtime permission profile grants them either.
  */
-export type ConfigDomain = "engine" | "client" | "test";
+export type ConfigDomain = "engine" | "client" | "test" | "tooling";
 
 /**
  * `value` is an ordinary config value. `secret-pointer` holds a POINTER to a
@@ -419,6 +422,37 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     key: "testRunDir",
     envVar: "DYFJ_TEST_RUN_DIR",
     domain: "test",
+    type: "string",
+    kind: "value",
+  },
+  // ── tooling: read only by prototype/scripts (test-process-harness.ts) ──
+  // Wall-clock bound, in seconds, for a supervised Vitest run.
+  {
+    key: "testBoundSec",
+    envVar: "DYFJ_TEST_BOUND_SEC",
+    domain: "tooling",
+    type: "number",
+    kind: "value",
+  },
+  // The acquire-hold helper's temp directory, lock file and result path.
+  {
+    key: "lockTmp",
+    envVar: "DYFJ_LOCK_TMP",
+    domain: "tooling",
+    type: "string",
+    kind: "value",
+  },
+  {
+    key: "lockFile",
+    envVar: "DYFJ_LOCK_FILE",
+    domain: "tooling",
+    type: "string",
+    kind: "value",
+  },
+  {
+    key: "lockResult",
+    envVar: "DYFJ_LOCK_RESULT",
+    domain: "tooling",
     type: "string",
     kind: "value",
   },

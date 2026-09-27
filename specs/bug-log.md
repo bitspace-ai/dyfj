@@ -10,6 +10,20 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **The two UDS clients resolve the socket path differently when
+  `HOME` is unset.**
+  - **Location:** `prototype/src/uds-path.ts:14` (`resolveSocketPath`) against
+    `core/dyfj-repl/src/main.rs:75` (`resolve_socket_path`).
+  - **Symptom:** with `DYFJ_SOCKET` and `XDG_RUNTIME_DIR` unset or empty and
+    `HOME` unset, the TypeScript CLI and engine fall back to the relative path
+    `./.dyfj/run/workbench.sock`, while the Rust REPL client exits with an
+    error. Launched from different working directories, the TypeScript side can
+    also bind or dial different sockets.
+  - **Suspected cause:** the Rust client mirrors the TypeScript precedence
+    (`DYFJ_SOCKET`, then `XDG_RUNTIME_DIR`, then `HOME`) but chose to fail
+    instead of copying the `"."` fallback, and nothing checks that the two stay
+    in step.
+  - **Found during:** WO-10 (present before it; neither side changed).
 - 2026-09-27 — **`deno task verify-workbench-events` cannot read `DYFJ_ROOT`.**
   - **Location:** `prototype/src/config/defaults.ts:198`
     (`resolveRuntimeEnvDefaults` reads `DYFJ_ROOT`) against the
