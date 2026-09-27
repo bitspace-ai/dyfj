@@ -8,8 +8,10 @@
  *   static dependency).
  * - `env-access` reports every direct read of the process environment:
  *   `Deno.env`, `process.env` (including `globalThis.` forms and computed
- *   `["env"]`), destructuring `env` out of `Deno` or `process`, and importing
- *   `env` from `node:process`.
+ *   `["env"]`), `.env` on any default, namespace or `default` import of
+ *   `node:process` and on a `const` alias of `Deno` or `process`, destructuring
+ *   `env` out of any of those, importing `env` from `node:process`, and
+ *   re-exporting from `node:process`.
  * - `dyfj-key` reports every string literal that is exactly a `DYFJ_*`
  *   environment key, so the lane can require each one to be declared.
  */
@@ -30,10 +32,20 @@ function propertyName(node: Node): string | undefined {
   return node.property?.type === "Identifier" ? node.property.name : undefined;
 }
 
-/** `Deno` / `process`, bare or as `globalThis.Deno` / `globalThis.process`. */
-function envOwner(node: Node): string | undefined {
-  if (node?.type === "Identifier" && ENV_OWNERS.has(node.name)) {
-    return node.name;
+const PROCESS_MODULES = new Set(["node:process", "process"]);
+
+/**
+ * `Deno` / `process`, bare, as `globalThis.Deno` / `globalThis.process`, or
+ * through a local alias (`aliases`: binding name → owner).
+ */
+function envOwner(
+  node: Node,
+  aliases: ReadonlyMap<string, string>,
+): string | undefined {
+  if (node?.type === "Identifier") {
+    if (aliases.has(node.name)) return aliases.get(node.name);
+    if (ENV_OWNERS.has(node.name)) return node.name;
+    return undefined;
   }
   if (
     node?.type === "MemberExpression" &&
@@ -66,18 +78,47 @@ const plugin: Deno.lint.Plugin = {
     },
     "env-access": {
       create(context) {
+        // Local bindings that stand for `Deno` or the process module: every
+        // default, namespace or `default` import of `node:process`, and any
+        // `const x = Deno` / `const x = process` alias.
+        const aliases = new Map<string, string>();
         return {
+          Program(node: Node) {
+            for (const statement of node.body ?? []) {
+              if (
+                statement.type !== "ImportDeclaration" ||
+                !PROCESS_MODULES.has(statement.source?.value)
+              ) continue;
+              for (const specifier of statement.specifiers ?? []) {
+                const imported = specifier.imported;
+                const importedName = imported?.type === "Identifier"
+                  ? imported.name
+                  : imported?.value;
+                if (
+                  specifier.type === "ImportDefaultSpecifier" ||
+                  specifier.type === "ImportNamespaceSpecifier" ||
+                  (specifier.type === "ImportSpecifier" &&
+                    importedName === "default")
+                ) {
+                  aliases.set(specifier.local.name, "process");
+                }
+              }
+            }
+          },
           MemberExpression(node: Node) {
-            const owner = envOwner(node.object);
+            const owner = envOwner(node.object, aliases);
             if (owner !== undefined && propertyName(node) === "env") {
               context.report({ node, message: `${owner}.env` });
             }
           },
           VariableDeclarator(node: Node) {
-            const owner = envOwner(node.init);
-            if (owner === undefined || node.id?.type !== "ObjectPattern") {
+            const owner = envOwner(node.init, aliases);
+            if (owner === undefined) return;
+            if (node.id?.type === "Identifier") {
+              aliases.set(node.id.name, owner);
               return;
             }
+            if (node.id?.type !== "ObjectPattern") return;
             for (const property of node.id.properties ?? []) {
               const key = property.key;
               const name = key?.type === "Identifier"
@@ -90,11 +131,18 @@ const plugin: Deno.lint.Plugin = {
               }
             }
           },
+          ExportNamedDeclaration(node: Node) {
+            if (PROCESS_MODULES.has(node.source?.value)) {
+              context.report({ node, message: "process.env" });
+            }
+          },
+          ExportAllDeclaration(node: Node) {
+            if (PROCESS_MODULES.has(node.source?.value)) {
+              context.report({ node, message: "process.env" });
+            }
+          },
           ImportDeclaration(node: Node) {
-            if (
-              node.source?.value !== "node:process" &&
-              node.source?.value !== "process"
-            ) return;
+            if (!PROCESS_MODULES.has(node.source?.value)) return;
             for (const specifier of node.specifiers ?? []) {
               const imported = specifier.imported;
               const name = imported?.type === "Identifier"

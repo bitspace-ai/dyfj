@@ -622,6 +622,18 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
     [`${S}/engine/named.ts`]: 'import { env } from "node:process"; env.HOME;',
     [`${S}/engine/other.ts`]:
       'import process from "node:process"; process.stdin; Deno.args;',
+    [`${S}/engine/namespace.ts`]:
+      'import * as p from "node:process"; p.env.HOME;',
+    [`${S}/engine/default-alias.ts`]:
+      'import nodeProcess from "node:process"; nodeProcess.env.HOME;',
+    [`${S}/engine/default-named.ts`]:
+      'import { default as q } from "process"; q["env"].HOME;',
+    [`${S}/engine/const-alias.ts`]: "const d = Deno; d.env.get('HOME');",
+    [`${S}/engine/alias-destructure.ts`]:
+      'import * as p from "node:process"; const { env } = p; env.HOME;',
+    [`${S}/engine/reexport.ts`]: 'export { env } from "node:process";',
+    [`${S}/engine/other-alias.ts`]:
+      'import * as p from "node:process"; p.stdin; const d = Deno; d.args;',
   }, {
     rules: {
       ...RULES,
@@ -635,12 +647,18 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
     },
   });
   assertEquals(result.current.env, [
+    `${S}/engine/alias-destructure.ts: process.env`,
     `${S}/engine/computed.ts: Deno.env`,
+    `${S}/engine/const-alias.ts: Deno.env`,
+    `${S}/engine/default-alias.ts: process.env`,
+    `${S}/engine/default-named.ts: process.env`,
     `${S}/engine/deno.ts: Deno.env`,
     `${S}/engine/destructure.ts: Deno.env`,
     `${S}/engine/global.ts: Deno.env`,
     `${S}/engine/named.ts: process.env`,
+    `${S}/engine/namespace.ts: process.env`,
     `${S}/engine/node.ts: process.env`,
+    `${S}/engine/reexport.ts: process.env`,
   ]);
   assertSome(result.added, `env: ${S}/engine/deno.ts: Deno.env`);
 });
