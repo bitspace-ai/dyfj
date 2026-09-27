@@ -17,7 +17,7 @@
  */
 
 const ENV_OWNERS = new Set(["Deno", "process"]);
-const DYFJ_KEY = /^DYFJ_[A-Z0-9_]+$/;
+const DYFJ_KEY = /^DYFJ_[A-Za-z0-9_]+$/;
 
 // deno-lint-ignore no-explicit-any
 type Node = any;

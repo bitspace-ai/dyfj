@@ -669,6 +669,7 @@ Deno.test("an undeclared DYFJ_* key in a runtime module is a violation", async (
       'export const a = "DYFJ_DECLARED";',
       'export const b = "DYFJ_UNDECLARED";',
       "export const c = `DYFJ_TEMPLATE`;",
+      'export const e = "DYFJ_lower_case";',
       'export const d = "DYFJ_UNDECLARED must be set";',
     ].join("\n"),
     ["prototype/scripts/tool.ts"]: 'export const t = "DYFJ_TOOLING_ONLY";',
@@ -676,6 +677,7 @@ Deno.test("an undeclared DYFJ_* key in a runtime module is a violation", async (
   assertEquals(result.current.envKeys, [
     `${S}/engine/keys.ts: DYFJ_TEMPLATE`,
     `${S}/engine/keys.ts: DYFJ_UNDECLARED`,
+    `${S}/engine/keys.ts: DYFJ_lower_case`,
   ]);
 });
 
