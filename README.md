@@ -1023,8 +1023,9 @@ not. It also confines the Dolt driver and SQL writes to the store port
 `prototype/src/store/`, and a string literal that begins with an SQL write
 statement may appear only in the store's journal; the isolated-Dolt test
 fixture under `prototype/scripts/` is the one justified exemption from each.
-The write rule sees statements written as literals, and the `mysql2`
-confinement keeps any other SQL inside `store/`. A module that fails to load
+The write rule sees statements written as literals. The `mysql2`
+confinement keeps any other SQL inside `store/`, and inside it the readers
+get only a handle that runs a single `SELECT`, so only the journal can write. A module that fails to load
 or a local import that does not resolve fails the lane. It runs in ratchet mode: current violations are recorded in
 `scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
 that baseline and on any baseline entry that no longer occurs, so the baseline

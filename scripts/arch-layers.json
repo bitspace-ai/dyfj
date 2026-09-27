@@ -73,7 +73,7 @@
     }
   ],
   "sqlWrites": {
-    "$comment": "SQL write statements (a string literal beginning INSERT INTO, REPLACE INTO, UPDATE, DELETE FROM, TRUNCATE, table or database DDL, or CALL DOLT_) may appear only in the store's journal, the one mutation path (specs/02-data-layer.md section 2), and in the named entrypoints. The rule sees statements written as literals; SQL assembled from non-literal pieces is out of its reach, and the mysql2 confinement above is what keeps any SQL inside store/.",
+    "$comment": "SQL write statements (a string literal beginning INSERT INTO, REPLACE INTO, UPDATE, DELETE FROM, TRUNCATE, table or database DDL, or CALL DOLT_) may appear only in the store's journal, the one mutation path (specs/02-data-layer.md section 2), and in the named entrypoints. The rule sees statements written as literals; SQL assembled from non-literal pieces is out of its reach. The mysql2 confinement above keeps any SQL inside store/, and inside store/ the readers receive only a handle that runs a single SELECT (store/dolt-pool.ts selectOnly), so only the journal holds a write-capable connection.",
     "allowedPaths": ["prototype/src/store/dolt-journal.ts"],
     "entrypoints": [
       {

@@ -5,7 +5,7 @@
  */
 
 import { DoltJournal } from "./dolt-journal.ts";
-import type { DoltPool } from "./dolt-pool.ts";
+import { type DoltPool, selectOnly } from "./dolt-pool.ts";
 import {
   doltEventReader,
   doltMemoryReader,
@@ -45,12 +45,15 @@ export class DoltStore implements Store {
       pool,
       options.projectors ?? PHASE1_PROJECTORS,
     );
-    this.events = doltEventReader(pool);
-    this.sessions = doltSessionReader(pool);
-    this.memories = doltMemoryReader(pool);
-    this.models = doltModelReader(pool);
-    this.prompts = doltPromptReader(pool);
-    this.spend = doltSpendReader(pool);
+    // Readers get a handle that runs only a single SELECT; the write-capable
+    // pool stays with the journal.
+    const reads = selectOnly(pool);
+    this.events = doltEventReader(reads);
+    this.sessions = doltSessionReader(reads);
+    this.memories = doltMemoryReader(reads);
+    this.models = doltModelReader(reads);
+    this.prompts = doltPromptReader(reads);
+    this.spend = doltSpendReader(reads);
   }
 
   close(): Promise<void> {

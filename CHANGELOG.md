@@ -166,8 +166,10 @@ README are tracked separately in its Revision history section.
   violations: `mysql2` may be imported only from `store/` (and the
   isolated-Dolt test fixture), and a string literal that begins with an SQL
   write statement may appear only in the store's journal (and that fixture).
-  The second rule sees SQL written as literals; the `mysql2` confinement is
-  what keeps any other SQL inside `store/`.
+  The second rule sees SQL written as literals. The `mysql2` confinement keeps
+  any other SQL inside `store/`, and inside it the readers get only a handle
+  that runs a single `SELECT` (checked on every call), so only the journal
+  holds a write-capable connection.
 
 - **Configuration lives in `prototype/src/config/`, and runtime code reads the
   environment only through an `Env` port**: `config.ts` is split into the env-key

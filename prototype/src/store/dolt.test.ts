@@ -11,7 +11,12 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import type { DoltConnection, DoltPool } from "./dolt-pool.ts";
+import {
+  type DoltConnection,
+  type DoltPool,
+  isReadOnlySelect,
+  selectOnly,
+} from "./dolt-pool.ts";
 import { DoltStore } from "./dolt.ts";
 
 interface Call {
@@ -332,6 +337,76 @@ Deno.test("spend.baselines scopes by session and day and maps the rollup row", a
   assertStringIncludes(calls[0]!.sql, "session_id <> ?");
   // budget_summary rows aggregate the session and would double count.
   assertStringIncludes(calls[0]!.sql, "event_type = 'model_response'");
+});
+
+// ─── the read-only handle ────────────────────────────────────────────────────
+
+Deno.test("readers get a handle that runs only a single SELECT", async () => {
+  const table = "events";
+  for (
+    const write of [
+      `INSERT INTO ${table} (event_id) VALUES (?)`,
+      "insert into events (event_id) values (?)",
+      "  update sessions set status = ?",
+      "DELETE FROM memories",
+      "REPLACE INTO prompts VALUES (?)",
+      "CALL DOLT_COMMIT('-Am', 'x')",
+      "SELECT DOLT_COMMIT('-Am', 'x')",
+      "select dolt_reset('--hard')",
+      "SELECT 1; DELETE FROM events",
+      "SELECT * FROM events INTO OUTFILE '/tmp/x'",
+      "SELECT 1 INTO @v",
+      "WITH x AS (SELECT 1) DELETE FROM events",
+    ]
+  ) {
+    assertFalse(isReadOnlySelect(write), write);
+  }
+  for (
+    const read of [
+      "SELECT event_id FROM events WHERE event_id = ? LIMIT 1",
+      "  select slug from memories;",
+      "SELECT COALESCE(SUM(cost_total), 0) AS s FROM events",
+    ]
+  ) {
+    assert(isReadOnlySelect(read), read);
+  }
+  const { pool, calls } = scriptedPool();
+  await assertRejects(
+    () => selectOnly(pool).select(`INSERT INTO ${table} VALUES (?)`, [1]),
+    Error,
+    "store readers may run only a single SELECT",
+  );
+  assertEquals(calls, []);
+});
+
+Deno.test("every reader query passes the read-only guard", async () => {
+  const { pool, calls } = scriptedPool((sql) =>
+    sql.includes("COUNT(*)") ? [{ count: 0 }] : []
+  );
+  const store = new DoltStore(pool);
+  await store.events.exists("e");
+  await store.events.countBySession(SESSION);
+  await store.events.bySession({
+    sessionId: SESSION,
+    eventId: "e",
+    asOf: "2026-06-12 10:00:00",
+    limit: 10,
+    order: "desc",
+  });
+  await store.sessions.workspace(SESSION);
+  await store.sessions.summary(SESSION);
+  await store.sessions.list({ project: "p", limit: 5 });
+  await store.sessions.recent({ status: "active", limit: 5 });
+  await store.sessions.detail({ slug: "s" });
+  await store.memories.injected(["public"]);
+  await store.memories.indexed(["public"]);
+  await store.memories.bySlug("s", ["public"]);
+  await store.memories.list(["public"], { type: "user" });
+  await store.models.listActive();
+  await store.prompts.active("companion-base");
+  await store.spend.baselines(SESSION, "2026-07-06 00:00:00");
+  assertEquals(calls.length, 15);
+  for (const call of calls) assert(isReadOnlySelect(call.sql), call.sql);
 });
 
 // ─── journal ─────────────────────────────────────────────────────────────────

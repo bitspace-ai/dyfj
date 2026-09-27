@@ -2,10 +2,11 @@
  * `DoltStore` readers: read-only SQL over the projected tables, the event log
  * and reference data. Each method is one query the runtime or the memory MCP
  * server issued before the store port existed, with the same SQL semantics.
- * Nothing here writes; writes live in `dolt-journal.ts`.
+ * Nothing here writes: every reader gets a `DoltSelect` handle, which runs
+ * only a single SELECT, and writes live in `dolt-journal.ts`.
  */
 
-import type { DoltQueryable } from "./dolt-pool.ts";
+import type { DoltSelect } from "./dolt-pool.ts";
 import type {
   EventReader,
   MemoryReader,
@@ -24,12 +25,11 @@ export type SqlParam = string | number | boolean | null;
 
 /** Run a SELECT; render every value as text, NULL as "". */
 export async function queryText(
-  pool: DoltQueryable,
+  pool: DoltSelect,
   sql: string,
   params: SqlParam[] = [],
 ): Promise<TextRow[]> {
-  const [rows] = await pool.execute(sql, params);
-  return (rows as Record<string, unknown>[]).map(textRow);
+  return (await pool.select(sql, params)).map(textRow);
 }
 
 export function textRow(row: Record<string, unknown>): TextRow {
@@ -197,7 +197,7 @@ function isMissingUnparsedToolCallColumn(error: unknown): boolean {
  * migrations still reads.
  */
 async function eventsBySession(
-  pool: DoltQueryable,
+  pool: DoltSelect,
   input: SessionEventsQuery,
 ): Promise<TextRow[]> {
   // AS OF cannot be parameterized; the timestamp is validated against a
@@ -262,7 +262,7 @@ async function eventsBySession(
   throw new Error("historical event schema did not converge");
 }
 
-export function doltEventReader(pool: DoltQueryable): EventReader {
+export function doltEventReader(pool: DoltSelect): EventReader {
   return {
     async exists(eventId) {
       const rows = await queryText(
@@ -292,7 +292,7 @@ const SESSION_SUMMARY_COLUMNS =
   "SELECT session_id, slug, session_name, task_description, project, " +
   "status, created_at, updated_at FROM sessions ";
 
-export function doltSessionReader(pool: DoltQueryable): SessionReader {
+export function doltSessionReader(pool: DoltSelect): SessionReader {
   return {
     async workspace(sessionId) {
       const rows = await queryText(
@@ -353,7 +353,7 @@ export function doltSessionReader(pool: DoltQueryable): SessionReader {
 
 // ─── memories ────────────────────────────────────────────────────────────────
 
-export function doltMemoryReader(pool: DoltQueryable): MemoryReader {
+export function doltMemoryReader(pool: DoltSelect): MemoryReader {
   return {
     injected(clearance) {
       if (clearance.length === 0) return Promise.resolve([]);
@@ -406,7 +406,7 @@ export function doltMemoryReader(pool: DoltQueryable): MemoryReader {
 
 // ─── reference data ──────────────────────────────────────────────────────────
 
-export function doltModelReader(pool: DoltQueryable): ModelReader {
+export function doltModelReader(pool: DoltSelect): ModelReader {
   return {
     async listActive() {
       try {
@@ -439,7 +439,7 @@ export function doltModelReader(pool: DoltQueryable): ModelReader {
   };
 }
 
-export function doltPromptReader(pool: DoltQueryable): PromptReader {
+export function doltPromptReader(pool: DoltSelect): PromptReader {
   return {
     async active(slug) {
       const rows = await queryText(
@@ -455,7 +455,7 @@ export function doltPromptReader(pool: DoltQueryable): PromptReader {
 
 // ─── spend ───────────────────────────────────────────────────────────────────
 
-export function doltSpendReader(pool: DoltQueryable): SpendReader {
+export function doltSpendReader(pool: DoltSelect): SpendReader {
   return {
     async baselines(sessionId, dayStart): Promise<SpendBaselineSums> {
       const rows = await queryText(

@@ -30,6 +30,40 @@ export interface DoltPool extends DoltQueryable {
 }
 
 /**
+ * A handle that can only read. The readers get this, never the pool: only
+ * the journal holds the write-capable handle (`dolt-journal.ts`).
+ */
+export interface DoltSelect {
+  select(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]>;
+}
+
+/**
+ * One statement, and a plain SELECT: no second statement, no `INTO` target,
+ * and no Dolt stored procedure called as a function (`SELECT DOLT_COMMIT()`
+ * writes). Checked on every call, so a reader cannot write whatever SQL it
+ * assembles.
+ */
+export function isReadOnlySelect(sql: string): boolean {
+  return /^\s*SELECT\s/i.test(sql) &&
+    !/;\s*\S/.test(sql) &&
+    !/\bINTO\s+(?:OUTFILE|DUMPFILE|@)/i.test(sql) &&
+    !/\bDOLT_[A-Z_]+\s*\(/i.test(sql);
+}
+
+/** Wrap a pool or connection so it can only run `isReadOnlySelect` SQL. */
+export function selectOnly(target: DoltQueryable): DoltSelect {
+  return {
+    async select(sql, params = []) {
+      if (!isReadOnlySelect(sql)) {
+        throw new Error("store readers may run only a single SELECT");
+      }
+      const [rows] = await target.execute(sql, params);
+      return rows as Record<string, unknown>[];
+    },
+  };
+}
+
+/**
  * Build the pool. Connections open lazily, on the first query, so building it
  * at boot needs no running server.
  */

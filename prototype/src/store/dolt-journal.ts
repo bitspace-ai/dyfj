@@ -9,7 +9,12 @@
  * `BEGIN` / `COMMIT`.
  */
 
-import type { DoltConnection, DoltPool, DoltQueryable } from "./dolt-pool.ts";
+import {
+  type DoltConnection,
+  type DoltPool,
+  type DoltQueryable,
+  selectOnly,
+} from "./dolt-pool.ts";
 import { queryText } from "./dolt-readers.ts";
 import type {
   CommitBatch,
@@ -145,7 +150,7 @@ async function applyProjections(
     if (key === null) continue;
     const spec = PROJECTED_TABLES[projector.table];
     const rows = await queryText(
-      connection,
+      selectOnly(connection),
       `SELECT * FROM ${projector.table} WHERE ${spec.key} = ? LIMIT 1`,
       [key],
     );
