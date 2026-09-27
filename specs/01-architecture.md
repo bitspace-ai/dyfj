@@ -11,7 +11,7 @@ it does.
   - event rows, config/env keys, receipts
 
   The only exceptions are the approved deletions in §8.
-- **TypeScript tier only, and temporary** (D25). Phase 1 restructures the
+- **TypeScript tier only, and temporary** (D25, D26). Phase 1 restructures the
   TypeScript prototype. In `core/` (Rust), the existing `dyfj-core` source is
   untouched during phase 1; the one addition is the D23 REPL client,
   `core/dyfj-repl`, a new workspace member (its only effect on `dyfj-core` is

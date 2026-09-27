@@ -1581,6 +1581,7 @@ Document revisions only. Code and behavior changes are tracked in
   wire as trusted is trust-boundary policy, not a policy-free helper.
 - 2026-09-27 - Repo layout and Build the core describe `core/` as a Cargo
   workspace with the `dyfj-repl` front-end, and how to run it.
-- 2026-09-27 - Specs decision D25 and architecture §1 narrow "`core/` is
-  untouched during phase 1" to the existing `dyfj-core` source, naming the D23
-  REPL client `core/dyfj-repl` as the one phase-1 addition to `core/`.
+- 2026-09-27 - Specs decision D26 records the REPL-client exception to D25:
+  the existing `dyfj-core` source stays untouched in phase 1, and the D23 REPL
+  client `core/dyfj-repl` is the one phase-1 addition to `core/`. D25 is marked
+  superseded in part; architecture §1 cites both.
