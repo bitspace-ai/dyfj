@@ -12,6 +12,7 @@ import {
   parseSecretsConfig,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
+  resolveRuntimeEnvDefaults,
   resolveTrustWorkspaceInstructionsFromEnv,
 } from "./config.ts";
 
@@ -807,4 +808,26 @@ describe("loadConfig agent tool-step limit", () => {
       })).rejects.toThrow(/max tool steps|integer from 1 through 64/);
     },
   );
+});
+
+describe("resolveRuntimeEnvDefaults trust posture boundary", () => {
+  test("the standalone entrypoint resolves the standing trust posture from its env binding", () => {
+    const prev = process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
+    try {
+      delete process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
+      expect(resolveRuntimeEnvDefaults().trustWorkspaceInstructions).toBe(
+        false,
+      );
+      process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS = "true";
+      expect(resolveRuntimeEnvDefaults().trustWorkspaceInstructions).toBe(
+        true,
+      );
+    } finally {
+      if (prev === undefined) {
+        delete process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
+      } else {
+        process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS = prev;
+      }
+    }
+  });
 });

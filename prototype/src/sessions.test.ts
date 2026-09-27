@@ -18,7 +18,7 @@ import {
   listWorkbenchSessions,
   updateWorkbenchSession,
 } from "./sessions.ts";
-import type { HistoryOmissionProjection } from "./turn-contract.ts";
+import type { HistoryOmissionProjection } from "./contract/mod.ts";
 
 describe("buildWorkbenchSessionSlug", () => {
   test("derives a stable workbench slug from the session id", () => {

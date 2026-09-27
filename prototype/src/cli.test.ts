@@ -58,13 +58,13 @@ import {
 } from "./cli.ts";
 import { serveWorkbenchUnix } from "./uds-server.ts";
 import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client.ts";
-import { DomainError } from "./turn-contract.ts";
+import { DomainError } from "./contract/mod.ts";
 import { fakeIo } from "../testing/fakes/fake-io.ts";
 import type {
   SupersedingRetryStartedEvent,
   TurnStreamFrame,
   UnparsedToolCallMarkupDetectedEvent,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 
 // Assembled at runtime so the public-boundary scan never matches these
 // fixtures as home-directory paths in tracked source.
