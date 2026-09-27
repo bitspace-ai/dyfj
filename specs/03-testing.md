@@ -98,8 +98,8 @@ internal move.
   - Starts the isolated Dolt fixture.
   - Seeds a catalog row for a local OpenAI-compatible model whose `base_url` is
     a loopback fake model server. Local-provider base URLs accept any loopback
-    host (`provider.ts:1569`); the seeded port must also be inside the harness's
-    net grant.
+    host (`providers/shared/base-url.ts`); the seeded port must also be inside
+    the harness's net grant.
   - Starts the engine server on a temp socket.
   - Drives it two ways: (a) the `dyfj` CLI (`exec --json` and scripted REPL
     stdin), and (b) a raw JSON-RPC client.

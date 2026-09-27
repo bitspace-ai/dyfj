@@ -1,4 +1,4 @@
-import type { WorkbenchMessage } from "../provider.ts";
+import type { WorkbenchMessage } from "../providers/mod.ts";
 import { formatSummaryMessage } from "./compression.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,

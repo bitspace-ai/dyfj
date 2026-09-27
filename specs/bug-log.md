@@ -10,6 +10,23 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **An Anthropic forced-conclusion turn sends historical tool
+  calls under their registry names, not their wire names.**
+  - **Location:** `prototype/src/providers/anthropic/adapter.ts` (the
+    `buildAnthropicMessagesRequest` call) and `anthropic/request.ts`
+    (`toAnthropicWireMessages`); the call site is `workbench.ts`, which sets
+    `historyTools` when a forced conclusion drops `tools`.
+  - **Symptom:** when the agent loop forces a no-tools conclusion, the
+    Anthropic request's history maps prior `tool_use` names through `tools`,
+    which is now empty, so dotted command ids (`memory.read`) go out unmapped
+    instead of as the wire names (`memory_read`) the earlier requests used.
+    The provider may reject the replay before it produces the conclusion. The
+    OpenAI-compatible builder takes `historyTools ?? tools` for this mapping;
+    the Anthropic builder has no `historyTools` input.
+  - **Suspected cause:** `historyTools` was added to the OpenAI-compatible
+    path only; the Anthropic adapter never received it (identical before the
+    provider split, which moved the code without change).
+  - **Found during:** WO-14 (from review of the moved adapter).
 - 2026-09-27 — **The memory MCP server accepts four of the five memory types
   the DDL allows.**
   - **Location:** `prototype/mcp/server.ts:80` and `:99` (the `write_memory`

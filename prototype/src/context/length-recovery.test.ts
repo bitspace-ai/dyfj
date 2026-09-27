@@ -12,7 +12,7 @@ import {
   isBudgetRefusal,
   LENGTH_CONTINUATION_NUDGE,
 } from "./length-recovery.ts";
-import type { WorkbenchMessage } from "../provider.ts";
+import type { WorkbenchMessage } from "../providers/mod.ts";
 
 // --- classifyLengthStop ---
 

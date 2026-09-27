@@ -1626,3 +1626,8 @@ Document revisions only. Code and behavior changes are tracked in
   database replays forward through `migrations/` on top of `history/`. The
   validation guidance documents the `schema.codegen` and `schema.equivalence`
   gate lanes, and §5 the engine's boot-time column check.
+- 2026-09-27 - `specs/recipes/add-provider.md` added: adding a provider on an
+  existing API family is a catalog/pricing migration plus, for a hosted one, a
+  host pin; a new API family is one adapter directory, one registry line, and
+  the provider conformance kit. `specs/03-testing.md` §4 points the loopback
+  base-URL rule at its new home in `prototype/src/providers/`.

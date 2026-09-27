@@ -154,6 +154,35 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Model providers live in `prototype/src/providers/`, one adapter per API
+  family behind a `ProviderAdapter` interface**: the 3,797-line
+  `provider.ts` is split into `registry/` (catalog parsing from the store's
+  model reader, routing, the built-in local defaults, and dispatch),
+  `http.ts` (the `HttpTransport` port and the header deadline), `shared/`
+  (SSE line reading, text tool-call extraction, token estimates, wire-safe
+  tool names, base-URL rules) and the `openai-compatible/`, `anthropic/` and
+  `gemini/` adapters, each with its request, stream, usage and stop-reason
+  code. `runWorkbenchTurn` selects the model and dispatches to the adapter
+  serving its provider; a provider no adapter serves still fails closed
+  before any request. Text tool-call extraction moved verbatim. Request
+  bodies, headers, streams, results, errors and receipts are unchanged, and
+  the golden suite passes with no snapshot change. The engine now imports the
+  provider API statically. A provider conformance kit
+  (`prototype/testing/conformance/provider-adapter.ts`) runs every adapter
+  through recorded request/response fixtures (plain text, native and
+  text-markup tool calls, usage and cost, a length stop, a mid-stream error,
+  an abort, a base-URL rejection, plus the header deadline in both request
+  modes and an abort before dispatch), replayed by a scripted `HttpTransport`
+  fake. That fake passes the port's conformance suite
+  (`prototype/testing/conformance/http-transport.ts`) in the unit lane, and
+  real `fetch` passes the same suite against a loopback server in the
+  isolated-Dolt integration lane. `provider.test.ts` (Vitest) is gone: its
+  cases are kit fixtures or `Deno.test` unit tests beside the modules they
+  cover, using the scripted transport and the `MapEnv` and `ManualClock`
+  fakes. `specs/recipes/add-provider.md` describes adding a provider, and a
+  test-only synthetic adapter under `prototype/testing/providers/synthetic/`,
+  written from it, passes the kit.
+
 - **Budget and context code live in `prototype/src/budget/` and
   `prototype/src/context/`**, with no change in behavior. `budget.ts` is split
   into the tracker (`tracker.ts`), spend baselines and the local-day boundary

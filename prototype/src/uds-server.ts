@@ -16,7 +16,7 @@ import {
   selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
-} from "./provider.ts";
+} from "./providers/mod.ts";
 import {
   defaultIdeaPacketRegistry,
   draftWorkPacketFromContext,

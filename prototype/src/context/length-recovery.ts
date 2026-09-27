@@ -9,7 +9,7 @@
 // here is pure and unit-testable.
 
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
-import type { WorkbenchMessage, WorkbenchModel } from "../provider.ts";
+import type { WorkbenchMessage, WorkbenchModel } from "../providers/mod.ts";
 import { DomainError, type LengthStopClassification } from "../contract/mod.ts";
 
 /**

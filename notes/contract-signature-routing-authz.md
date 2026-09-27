@@ -160,6 +160,7 @@ explicit policy path allows that.
 - `notes/cost-visibility-surface.md` - cost as a design primitive.
 - `notes/events-as-substrate.md` - events as the shared substrate for
   observability, authz, discovery, and cost.
-- `prototype/src/provider.ts` - provider timing, usage, and cost calculation.
+- `prototype/src/providers/` - provider timing, usage, and cost calculation
+  (each adapter's `usage.ts`).
 - `prototype/examples/structured-output-streaming.ts` - current local diagnostic
   for structured output, validation, token counts, and TPOT.

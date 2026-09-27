@@ -26,7 +26,7 @@ import type {
   AcpContinuityEvidence,
   AcpSessionHandleMap,
 } from "./acp-session-map.ts";
-import type { WorkbenchMessage, WorkbenchRoutingOptions } from "./provider.ts";
+import type { WorkbenchMessage, WorkbenchRoutingOptions } from "./providers/mod.ts";
 import {
   agentPermissionEvent,
   agentResponseEvent,

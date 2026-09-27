@@ -1,0 +1,221 @@
+// runWorkbenchTurn against the Anthropic adapter: cancellation, usage, and
+// fail-closed cases beyond the conformance kit.
+
+import { describe, it } from "@std/testing/bdd";
+import {
+  assertEquals,
+  assertMatch,
+  assertObjectMatch,
+  assertRejects,
+} from "@std/assert";
+import { MapEnv } from "../../../testing/fakes/map-env.ts";
+import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
+import {
+  HostedProviderCredentialMissingError,
+  runWorkbenchTurn,
+  type WorkbenchModel,
+} from "../mod.ts";
+
+const anthropicModel: WorkbenchModel = {
+  slug: "claude-haiku-4-5",
+  displayName: "Claude Haiku 4.5",
+  provider: "anthropic",
+  api: "anthropic-messages",
+  baseUrl: "https://api.anthropic.com",
+  tier: 1,
+  costInput: 1,
+  costOutput: 5,
+  capabilities: ["text", "code"],
+};
+// The old suite's shared catalog: two local models plus the Anthropic one.
+const models: WorkbenchModel[] = [
+  {
+    slug: "laguna-xs-2.1",
+    displayName: "Laguna XS 2.1",
+    provider: "ollama",
+    api: "openai-completions",
+    baseUrl: "http://localhost:11434/v1",
+    tier: 0,
+    costInput: 0,
+    costOutput: 0,
+    capabilities: ["text", "code", "reasoning"],
+  },
+  {
+    slug: "gemma4:e2b",
+    displayName: "Gemma 4 E2B",
+    provider: "ollama",
+    api: "openai-completions",
+    baseUrl: "http://localhost:11434/v1",
+    tier: 0,
+    costInput: 0,
+    costOutput: 0,
+    capabilities: ["text", "reasoning"],
+  },
+  anthropicModel,
+];
+const env = new MapEnv({ ANTHROPIC_API_KEY: "test-key-not-real" });
+const getEnv = (name: string) => env.get(name);
+
+describe("anthropic provider adapter", () => {
+  it("Anthropic clean EOF honors a concurrent abort signal", async () => {
+    const abortController = new AbortController();
+    // The responder aborts the turn while the request is in flight, which the
+    // scripted vocabulary cannot express.
+    const transport = new ScriptedHttpTransport([{
+      respond: () => {
+        abortController.abort();
+        return new Response([
+          'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+          'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+          "",
+        ].join("\n"));
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv,
+      fetchFn: transport.fetch,
+    });
+
+    assertObjectMatch(result, {
+      text: "partial",
+      stopReason: "aborted",
+      usage: { input: 10, output: 2 },
+    });
+    transport.assertDone();
+  });
+
+  it("Anthropic clean EOF preserves a concurrent trailing-frame error", async () => {
+    const abortController = new AbortController();
+    // The responder aborts the turn while the request is in flight.
+    const transport = new ScriptedHttpTransport([{
+      respond: () => {
+        abortController.abort();
+        return new Response('data: {"type":"content_block_delta"');
+      },
+    }]);
+    await assertRejects(
+      () =>
+        runWorkbenchTurn({
+          systemPrompt: "sys",
+          prompt: "hi",
+          routing: { modelId: anthropicModel.slug },
+          models,
+          abortSignal: abortController.signal,
+          onTextDelta: () => {},
+          getEnv,
+          fetchFn: transport.fetch,
+        }),
+      SyntaxError,
+    );
+    transport.assertDone();
+  });
+
+  it("Anthropic error envelopes outrank a concurrent cancellation", async () => {
+    const abortController = new AbortController();
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: 'data: {"type":"error","error":{"type":"overloaded_error"}}\n',
+        holdOpen: true,
+      },
+    }]);
+    const pending = runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      abortSignal: abortController.signal,
+      onTextDelta: () => {},
+      getEnv,
+      fetchFn: transport.fetch,
+    });
+    const rejection = assertRejects(
+      () => pending,
+      Error,
+      "Anthropic stream returned an error envelope",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    abortController.abort();
+
+    await rejection;
+    transport.assertDone();
+  });
+
+  it("Anthropic keeps the highest streamed usage totals", async () => {
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: [
+          'data: {"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+          'data: {"type":"message_delta","usage":{"output_tokens":100}}',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+          'data: {"type":"message_stop"}',
+          "",
+        ].join("\n"),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models,
+      onTextDelta: () => {},
+      getEnv,
+      fetchFn: transport.fetch,
+    });
+
+    assertObjectMatch(result.usage, { input: 10, output: 100 });
+    transport.assertDone();
+  });
+
+  it("fails closed when the credential is not projected", async () => {
+    // The old test passed no fetchFn; an empty script also proves no request
+    // is attempted.
+    const transport = new ScriptedHttpTransport();
+    const emptyEnv = new MapEnv();
+    await assertRejects(
+      () =>
+        runWorkbenchTurn({
+          systemPrompt: "sys",
+          prompt: "hi",
+          routing: { modelId: anthropicModel.slug },
+          models,
+          getEnv: (name) => emptyEnv.get(name),
+          fetchFn: transport.fetch,
+        }),
+      HostedProviderCredentialMissingError,
+    );
+    assertEquals(transport.requests.length, 0);
+  });
+});
+
+describe("tool wire names", () => {
+  it("error surfaces the provider response body", async () => {
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        status: 400,
+        body: JSON.stringify({
+          error: { message: "tools.0.name: should match pattern" },
+        }),
+      },
+    }]);
+    const error = await assertRejects(() =>
+      runWorkbenchTurn({
+        systemPrompt: "sys",
+        prompt: "hi",
+        routing: { modelId: anthropicModel.slug },
+        models,
+        fetchFn: transport.fetch,
+        getEnv,
+      })
+    );
+    assertMatch((error as Error).message, /HTTP 400.*should match pattern/);
+    transport.assertDone();
+  });
+});

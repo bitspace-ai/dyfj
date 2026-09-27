@@ -1,5 +1,5 @@
 import process from "node:process";
-import type { WorkbenchRoutingOptions } from "../src/provider.ts";
+import type { WorkbenchRoutingOptions } from "../src/providers/mod.ts";
 import {
   processEnv,
   resolveDoltConnection,

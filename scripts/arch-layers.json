@@ -85,7 +85,6 @@
   "files": {
     "prototype/src/secrets.ts": "config",
     "prototype/src/utils.ts": "store",
-    "prototype/src/provider.ts": "providers",
     "prototype/src/commands.ts": "tools",
     "prototype/src/file-tools.ts": "tools",
     "prototype/src/exec-tools.ts": "tools",

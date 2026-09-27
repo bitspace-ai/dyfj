@@ -36,23 +36,33 @@ import {
   fetchSpendBaselines,
   RunawayAnomalyHaltError,
 } from "./budget/mod.ts";
-import type { WorkbenchRoutingOptions } from "./provider.ts";
-import type { WorkbenchCallTimings } from "./provider.ts";
+import type { WorkbenchRoutingOptions } from "./providers/mod.ts";
+import type { WorkbenchCallTimings } from "./providers/mod.ts";
 import type {
   WorkbenchMessage,
   WorkbenchModel,
   WorkbenchToolCall,
   WorkbenchTurnResult,
-} from "./provider.ts";
+} from "./providers/mod.ts";
 import {
+  defaultLocalWorkbenchModels,
+  estimateTextTokens,
   HostedInferenceRequiresProviderError,
   HostedProviderCredentialMissingError,
+  isLocalWorkbenchModel,
+  loadWorkbenchModels,
+  modelRequestedOutputCap,
+  modelStreamsToolCalls,
+  modelSupportsTranscriptRetry,
+  runWorkbenchTurn,
+  selectWorkbenchModel,
+  withDefaultLocalWorkbenchModels,
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   WorkbenchModelFastSpeedUnsupportedError,
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
-} from "./provider.ts";
+} from "./providers/mod.ts";
 import { RpcError } from "./transport/mod.ts";
 import type {
   AskContextProfile,
@@ -1153,15 +1163,6 @@ export async function runWorkbenchRuntime(
     });
   }
 
-  const {
-    defaultLocalWorkbenchModels,
-    loadWorkbenchModels,
-    selectWorkbenchModel,
-    withDefaultLocalWorkbenchModels,
-    WorkbenchModelNotFoundError,
-    WorkbenchModelNotRoutableError,
-  } = await import("./provider.ts");
-
   let acpProfile: "codex-chatgpt" | "fixture" | null = null;
   let acpSelectedModelSlug: string | null = null;
   let acpSelectedModel: {
@@ -1266,18 +1267,6 @@ async function runNativeWorkbenchRuntime(
     await store.journal.commit({ events: [event] }, options);
   };
   const eventExists = (eventId: string) => store.events.exists(eventId);
-  const {
-    defaultLocalWorkbenchModels,
-    estimateTextTokens,
-    isLocalWorkbenchModel,
-    loadWorkbenchModels,
-    modelRequestedOutputCap,
-    modelStreamsToolCalls,
-    modelSupportsTranscriptRetry,
-    runWorkbenchTurn,
-    selectWorkbenchModel,
-    withDefaultLocalWorkbenchModels,
-  } = await import("./provider.ts");
   const {
     buildMemoryContextSourceLines,
     loadInjectedMemories,

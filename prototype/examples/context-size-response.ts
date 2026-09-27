@@ -2,7 +2,7 @@ import {
   compareContextPayloads,
   type ContextPayloadReport,
 } from "../src/context-size-response.ts";
-import { defaultLocalWorkbenchModels } from "../src/provider.ts";
+import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 
 const prompt = firstPrompt(Deno.args) ??
   "Return exactly this text and nothing else: context changes model work.";

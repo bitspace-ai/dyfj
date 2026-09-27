@@ -16,7 +16,6 @@
     "prototype/src/workbench.ts -> prototype/src/mcp-tools.ts",
     "prototype/src/workbench.ts -> prototype/src/memory-search.ts",
     "prototype/src/workbench.ts -> prototype/src/memory.ts",
-    "prototype/src/workbench.ts -> prototype/src/provider.ts",
     "prototype/src/workbench.ts -> prototype/src/utils.ts"
   ],
   "env": [],
