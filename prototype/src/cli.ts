@@ -13,11 +13,7 @@
  * `dyfj start` to foreground the local UDS runtime.
  */
 
-import {
-  hasDotPathComponent,
-  sanitizeBoundaryText,
-  takeCodePointPrefix,
-} from "./kernel/mod.ts";
+import { hasDotPathComponent, takeCodePointPrefix } from "./kernel/mod.ts";
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import {
