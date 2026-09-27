@@ -246,7 +246,8 @@ function sqlError(code: string, message: string): Error {
 }
 
 function storeEventValue(column: string, raw: unknown): Value {
-  if (raw === null || raw === undefined) return null;
+  // The caller skips null columns; a present-but-undefined one binds NULL.
+  if (raw === undefined) return null;
   const kind = EVENT_COLUMN_KINDS[column] ?? "text";
   switch (kind) {
     case "int":
