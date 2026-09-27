@@ -4,7 +4,12 @@
 // the suite never touches the rows other integration tests read.
 
 import mysql from "mysql2/promise";
-import { storeConformance } from "../../testing/conformance/store.ts";
+import { assert, assertEquals, assertFalse } from "@std/assert";
+import {
+  event,
+  storeConformance,
+  type StoreConformanceSubject,
+} from "../../testing/conformance/store.ts";
 import { resolveDoltConnection } from "../config/mod.ts";
 import { processEnv } from "../config/mod.ts";
 import {
@@ -96,7 +101,7 @@ async function seedRows(pool: AdminPool, seed: MemoryStoreSeed): Promise<void> {
 const databases = new WeakMap<Store, string>();
 let next = 0;
 
-storeConformance({
+const subject: StoreConformanceSubject = {
   name: "DoltStore",
   async make(seed, options) {
     next += 1;
@@ -136,4 +141,50 @@ storeConformance({
   },
   // TIMESTAMP(6): a few milliseconds put the next write strictly later.
   tick: () => new Promise((resolve) => setTimeout(resolve, 5)),
+};
+
+storeConformance(subject);
+
+// An aborted commit destroys its connection rather than returning it to the
+// pool; the pool must replace it and serve the next commit and read normally.
+Deno.test("DoltStore: the pool serves the next commit after an aborted commit", async () => {
+  const store = await subject.make({});
+  try {
+    const aborted = new AbortController();
+    const first = store.journal.commit(
+      { events: [event({ event_id: "EV_ABORTED" })] },
+      { signal: aborted.signal },
+    );
+    aborted.abort();
+    const error = await first.then(() => undefined, (e) => e as Error);
+    assertEquals(error?.name, "AbortError");
+    assertFalse(await store.events.exists("EV_ABORTED"));
+
+    // Aborting after the INSERT but before COMMIT: nothing lands either.
+    const midway = new AbortController();
+    const second = store.journal.commit(
+      {
+        events: [event({ event_id: "EV_MIDWAY" })],
+        mutations: [],
+      },
+      { signal: midway.signal },
+    );
+    queueMicrotask(() => midway.abort());
+    await second.then(() => undefined, () => undefined);
+
+    // Every later commit and read runs on a healthy pooled connection.
+    for (let i = 0; i < 8; i++) {
+      await store.journal.commit({ events: [event({ event_id: `EV_NEXT_${i}` })] });
+      await store.journal.commit(
+        { events: [event({ event_id: `EV_SIGNAL_${i}` })] },
+        { signal: new AbortController().signal },
+      );
+    }
+    for (let i = 0; i < 8; i++) {
+      assert(await store.events.exists(`EV_NEXT_${i}`));
+      assert(await store.events.exists(`EV_SIGNAL_${i}`));
+    }
+  } finally {
+    await subject.dispose(store);
+  }
 });

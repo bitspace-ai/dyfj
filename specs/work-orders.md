@@ -352,8 +352,8 @@ The number is kept so references stay stable.
   1. **Generate row types.** Write `schema/codegen.ts` and commit
      `store/generated/rows.ts`. Add the `schema.codegen` lane.
   2. **Type the event writes.** Add typed builders per event type and migrate
-     all `writeEvent` call sites to `journal.commit` with typed `EventInsert`
-     values.
+     all `journal.commit` call sites from the untyped `EventInsert` to typed
+     `EventInsert` values.
   3. **Check schema equivalence.** Add the `schema.equivalence` lane. For both
      lanes, demonstrate in the PR that a deliberately broken branch fails.
   4. **Remove the drift shims.** Delete the five drift shims and the legacy

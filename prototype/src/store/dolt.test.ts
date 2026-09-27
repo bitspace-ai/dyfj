@@ -554,6 +554,38 @@ Deno.test("a connection lost mid-COMMIT rejects with the driver's error", async 
   assertEquals(error, lost);
 });
 
+Deno.test("after an abort destroys its connection, the pool serves the next commit", async () => {
+  const controller = new AbortController();
+  // Abort while the transaction's INSERT runs on the pooled connection.
+  const { pool, calls, log } = scriptedPool((sql) => {
+    if (sql.startsWith("SELECT")) return [{ event_id: "01PLAIN" }];
+    if (!controller.signal.aborted) controller.abort();
+    return [];
+  });
+  const store = new DoltStore(pool);
+  const error = await assertRejects(() =>
+    store.journal.commit(
+      { events: [event({ event_id: "01ABORTED" })] },
+      { signal: controller.signal },
+    )
+  );
+  assertEquals((error as Error).name, "AbortError");
+  // The aborted transaction rolled back, and its connection was destroyed,
+  // not returned to the pool.
+  assertEquals(log, ["acquire", "begin", "destroy", "rollback"]);
+
+  log.length = 0;
+  calls.length = 0;
+  await store.journal.commit(
+    { events: [event({ event_id: "01NEXT" })] },
+    { signal: new AbortController().signal },
+  );
+  assertEquals(log, ["acquire", "begin", "commit", "release"]);
+  await store.journal.commit({ events: [event({ event_id: "01PLAIN" })] });
+  assert(await store.events.exists("01PLAIN"));
+  assertEquals(calls.map((c) => c.on), ["connection", "pool", "pool"]);
+});
+
 Deno.test("journal.commit rejects an undeclared mutation before touching SQL", async () => {
   const { pool, calls } = scriptedPool();
   await assertRejects(() =>
