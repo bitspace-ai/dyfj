@@ -1,8 +1,9 @@
 import { assertStrictEquals } from "@std/assert";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
-const env = (map: Record<string, string> = {}) => new MapEnv(map);
 import { configFilePath } from "./toml.ts";
+
+const env = (map: Record<string, string> = {}) => new MapEnv(map);
 
 // Assembled at runtime so the public-boundary scan never matches these
 // fixtures as home-directory paths in tracked source.

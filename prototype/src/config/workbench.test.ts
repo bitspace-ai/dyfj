@@ -7,13 +7,14 @@ import {
 } from "@std/assert";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
-const env = (map: Record<string, string> = {}) => new MapEnv(map);
 import {
   ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
   resolveAnomalyDefaultsFromEnv,
 } from "./defaults.ts";
 import { CONFIG_DEFAULTS, loadConfig } from "./workbench.ts";
+
+const env = (map: Record<string, string> = {}) => new MapEnv(map);
 
 const HOME = { HOME: "/h" };
 // Assembled at runtime so the public-boundary scan never matches these

@@ -6,23 +6,15 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { MapEnv } from "../../testing/fakes/map-env.ts";
-
-const env = (map: Record<string, string> = {}) => new MapEnv(map);
 import {
   DEFAULT_SECRET_TIMEOUT_MS,
   loadSecretsConfig,
   parseSecretsConfig,
 } from "./secrets-config.ts";
 
-const HOME = { HOME: "/h" };
 // Assembled at runtime so the public-boundary scan never matches these
 // fixtures as home-directory paths in tracked source.
 const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
-const notFound = () => Promise.reject(new Deno.errors.NotFound());
-const present = () =>
-  Promise.resolve("(toml text — parsed by the injected parser)");
-const table = (t: Record<string, unknown>) => () => t;
 
 { // "parseSecretsConfig"
   const PATH = "/h/.dyfj/config.toml";

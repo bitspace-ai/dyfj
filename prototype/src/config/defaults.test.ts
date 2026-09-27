@@ -7,7 +7,6 @@ import {
 } from "@std/assert";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
-const env = (map: Record<string, string> = {}) => new MapEnv(map);
 import { CONFIG_SCHEMA } from "./schema.ts";
 import {
   BUDGET_DEFAULTS,
@@ -17,6 +16,8 @@ import {
   resolveRuntimeEnvDefaults,
   resolveTrustWorkspaceInstructionsFromEnv,
 } from "./defaults.ts";
+
+const env = (map: Record<string, string> = {}) => new MapEnv(map);
 
 { // "resolveTrustWorkspaceInstructionsFromEnv"
   const envOf = (v?: string) => ({
