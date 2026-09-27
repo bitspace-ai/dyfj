@@ -22,7 +22,7 @@ cargo build
 cargo run
 ```
 
-`cargo build` builds both members. `cargo run -p dyfj-repl` starts the REPL against a running Workbench runtime, taking the socket from `DYFJ_SOCKET` or defaulting to `~/.dyfj/run/workbench.sock`.
+`cargo build` builds both members. `cargo run -p dyfj-repl` starts the REPL against a running Workbench runtime, resolving the socket the way the runtime does: `DYFJ_SOCKET`, else `$XDG_RUNTIME_DIR/dyfj/workbench.sock`, else `~/.dyfj/run/workbench.sock`.
 
 `cargo run` requires `DATABASE_URL` and a running Dolt SQL server. It inserts one `session_start` event, reads it back, and prints a match result. The ignored integration tests exercise the same live-Dolt path:
 

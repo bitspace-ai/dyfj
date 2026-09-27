@@ -55,11 +55,26 @@ fn classify(input: &str) -> Submission {
 }
 
 fn socket_path() -> Result<String> {
-    if let Ok(explicit) = std::env::var("DYFJ_SOCKET") {
+    resolve_socket_path(|key| std::env::var(key).ok())
+}
+
+/// Mirrors resolveSocketPath in the runtime's uds-path: `DYFJ_SOCKET`, then
+/// `$XDG_RUNTIME_DIR/dyfj`, then `~/.dyfj/run`. An empty value counts as unset,
+/// as it does there, so the client finds the socket the runtime is serving.
+fn resolve_socket_path(env: impl Fn(&str) -> Option<String>) -> Result<String> {
+    let set = |key: &str| env(key).filter(|value| !value.is_empty());
+    if let Some(explicit) = set("DYFJ_SOCKET") {
         return Ok(explicit);
     }
-    let home = std::env::var("HOME").context("HOME is unset and DYFJ_SOCKET was not given")?;
-    Ok(format!("{home}/.dyfj/run/workbench.sock"))
+    let base = match set("XDG_RUNTIME_DIR") {
+        Some(runtime_dir) => format!("{runtime_dir}/dyfj"),
+        None => {
+            let home = env("HOME")
+                .context("HOME is unset and neither DYFJ_SOCKET nor XDG_RUNTIME_DIR was given")?;
+            format!("{home}/.dyfj/run")
+        }
+    };
+    Ok(format!("{base}/workbench.sock"))
 }
 
 #[tokio::main]
@@ -323,7 +338,7 @@ fn new_turn_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_INPUT_CHARACTERS, Submission, classify, new_turn_id};
+    use super::{MAX_INPUT_CHARACTERS, Submission, classify, new_turn_id, resolve_socket_path};
 
     /// Sequence tests for supersession. Single-event tests cannot catch this:
     /// the defect is what `wrote_any` carries ACROSS events, and it decides
@@ -476,6 +491,44 @@ mod tests {
             "non-hex character in {id}"
         );
         assert_ne!(new_turn_id(), new_turn_id(), "ids must not repeat");
+    }
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |key| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    /// The precedence the runtime serves on; a client that skips a step
+    /// connects to a socket nobody is listening on.
+    #[test]
+    fn socket_resolution_matches_the_runtime() {
+        let all = [
+            ("DYFJ_SOCKET", "/x/explicit.sock"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("HOME", "/home/op"),
+        ];
+        assert_eq!(resolve_socket_path(env(&all)).unwrap(), "/x/explicit.sock");
+        assert_eq!(
+            resolve_socket_path(env(&all[1..])).unwrap(),
+            "/run/user/1000/dyfj/workbench.sock"
+        );
+        assert_eq!(
+            resolve_socket_path(env(&all[2..])).unwrap(),
+            "/home/op/.dyfj/run/workbench.sock"
+        );
+    }
+
+    #[test]
+    fn an_empty_socket_variable_counts_as_unset() {
+        let empty = [("DYFJ_SOCKET", ""), ("XDG_RUNTIME_DIR", ""), ("HOME", "/home/op")];
+        assert_eq!(
+            resolve_socket_path(env(&empty)).unwrap(),
+            "/home/op/.dyfj/run/workbench.sock"
+        );
     }
 }
 
