@@ -17,8 +17,12 @@ import type {
   WorkbenchTurnResult,
 } from "./types.ts";
 
-/** A source of monotonic milliseconds. */
-export interface Clock {
+/**
+ * A source of monotonic milliseconds for request timings (the runtime passes
+ * `performance.now`). Distinct from the wall-clock `Clock` port in `kernel/`:
+ * only differences between readings mean anything.
+ */
+export interface MonotonicClock {
   now(): number;
 }
 
@@ -34,7 +38,7 @@ export interface ProviderFrame {
  */
 export interface ProviderIO {
   fetch: HttpTransport;
-  clock: Clock;
+  clock: MonotonicClock;
   /** Where hosted adapters read their credential. */
   env: Env;
   onFrame?: (frame: ProviderFrame) => void;

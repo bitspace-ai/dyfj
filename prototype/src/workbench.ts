@@ -5,9 +5,13 @@ import {
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
 import {
+  buildWorkbenchSessionContent,
+  buildWorkbenchSessionSlug,
   contextCompressedEvent,
+  createWorkbenchSession,
   errorEvent,
   type EventInsert,
+  fetchWorkbenchSessionWorkspace,
   memoryClearanceFor,
   modelResponseEvent,
   providerCallEvent,
@@ -15,17 +19,23 @@ import {
   sessionStartEvent,
   type Store,
   toolCallEvent,
+  updateWorkbenchSession,
 } from "./store/mod.ts";
 import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
   SpendBaselines,
-} from "./budget.ts";
+} from "./budget/mod.ts";
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
+  BudgetTracker,
+  type CeilingConfirmationStore,
+  createRunawayAnomalyGate,
+  createTurnBudgetCeilingGate,
+  fetchSpendBaselines,
   RunawayAnomalyHaltError,
-} from "./budget.ts";
+} from "./budget/mod.ts";
 import type { WorkbenchRoutingOptions } from "./providers/mod.ts";
 import type { WorkbenchCallTimings } from "./providers/mod.ts";
 import type {
@@ -54,10 +64,18 @@ import {
   WorkbenchModelNotRoutableError,
 } from "./providers/mod.ts";
 import { RpcError } from "./transport/mod.ts";
-import type { PackedContextSummary } from "./repo-context.ts";
-import type { AskContextProfile } from "./repo-context.ts";
-import { loadAgentsInstructions } from "./repo-context.ts";
-import type { WorkspaceRootIdentity } from "./repo-context.ts";
+import type {
+  AskContextProfile,
+  PackedContextSummary,
+  WorkspaceRootIdentity,
+} from "./context/mod.ts";
+import {
+  buildAskSystemPrompt,
+  buildContextSourceLines,
+  loadAgentsInstructions,
+  loadAskRepoContext,
+  loadCompanionBasePrompt,
+} from "./context/mod.ts";
 import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
 import type {
   AcpPermissionPrompt,
@@ -91,7 +109,7 @@ import {
 import type {
   CompressionCompletion,
   CompressionOutcome,
-} from "./context-compression.ts";
+} from "./context/mod.ts";
 import {
   compressElderTranscript,
   COMPRESSION_SYSTEM_PROMPT,
@@ -100,15 +118,15 @@ import {
   partitionForCompression,
   SUMMARY_TRUST_POLICY,
   VERBATIM_TAIL_TURNS,
-} from "./context-compression.ts";
-import type { ContextOverflowRecoverer } from "./length-recovery.ts";
+} from "./context/mod.ts";
+import type { ContextOverflowRecoverer } from "./context/mod.ts";
 import {
   buildContinuationMessages,
   classifyLengthStop,
   CONTEXT_OVERFLOW_WINDOW_FRACTION,
   ContextWindowOverflowError,
   isBudgetRefusal,
-} from "./length-recovery.ts";
+} from "./context/mod.ts";
 import {
   AGENT_DEFAULTS,
   ANOMALY_DEFAULTS,
@@ -1073,6 +1091,11 @@ export type ExternalAgentRunner = Runner<
 export interface WorkbenchRuntimeServices {
   /** The store every native-turn read and write goes through. */
   store: Store;
+  /**
+   * The engine's budget-ceiling confirmation store, built once at the
+   * composition root so confirmations persist for their scope periods.
+   */
+  ceilingConfirmations: CeilingConfirmationStore;
   externalAgentRunner?: ExternalAgentRunner;
 }
 
@@ -1224,12 +1247,17 @@ export async function runWorkbenchRuntime(
     });
   }
 
-  return await runNativeWorkbenchRuntime(runtimeInput, services.store);
+  return await runNativeWorkbenchRuntime(
+    runtimeInput,
+    services.store,
+    services.ceilingConfirmations,
+  );
 }
 
 async function runNativeWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
   store: Store,
+  ceilingConfirmations: CeilingConfirmationStore,
 ): Promise<NativeWorkbenchRuntimeResult> {
   const { writeModelSelectedEvent } = await import("./utils.ts");
   const writeEvent = async (
@@ -1239,19 +1267,6 @@ async function runNativeWorkbenchRuntime(
     await store.journal.commit({ events: [event] }, options);
   };
   const eventExists = (eventId: string) => store.events.exists(eventId);
-  const {
-    BudgetTracker,
-    ceilingConfirmationStoreFor,
-    createRunawayAnomalyGate,
-    createTurnBudgetCeilingGate,
-    fetchSpendBaselines,
-  } = await import("./budget.ts");
-  const {
-    buildAskSystemPrompt,
-    buildContextSourceLines,
-    loadAskRepoContext,
-  } = await import("./repo-context.ts");
-  const { loadCompanionBasePrompt } = await import("./prompts.ts");
   const {
     buildMemoryContextSourceLines,
     loadInjectedMemories,
@@ -1268,13 +1283,6 @@ async function runNativeWorkbenchRuntime(
   const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
     "./memory-search.ts"
   );
-  const {
-    buildWorkbenchSessionContent,
-    buildWorkbenchSessionSlug,
-    createWorkbenchSession,
-    fetchWorkbenchSessionWorkspace,
-    updateWorkbenchSession,
-  } = await import("./sessions.ts");
 
   const {
     mode,
@@ -1837,7 +1845,7 @@ async function runNativeWorkbenchRuntime(
     // instead of re-prompting next turn.
     const budgetCeilingGate = createTurnBudgetCeilingGate(
       runtimeInput.confirmBudgetCeiling,
-      ceilingConfirmationStoreFor(sessionId),
+      ceilingConfirmations.for(sessionId),
     );
     // Turn-scoped: an approval covers the spend level it was shown (the entry
     // check and the first call's check see identical actuals); any recorded

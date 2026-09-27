@@ -3,9 +3,10 @@
  * runners, the server, and every client.
  *
  * Responsibility: turn request and result types, the stream-frame union,
- * receipt types, history-omission notices, runtime input/event/auth types,
- * `DomainError`, the `Runner` interface, and the trust-boundary policy that
- * decides what crosses the wire (`summarizeError`, `workspaceRootForTransport`).
+ * receipt types, history-omission notices, runtime input/event/auth types, the
+ * persisted session-event read shape, `DomainError`, the `Runner` interface,
+ * and the trust-boundary policy that decides what crosses the wire
+ * (`summarizeError`, `workspaceRootForTransport`).
  * No I/O. Wire types stay plain data (JSON-serializable, no functions or class
  * instances), so a client in any language can speak them.
  *
@@ -15,4 +16,5 @@
  */
 export type { Runner } from "./runner.ts";
 export * from "./runtime.ts";
+export type { WorkbenchSessionEvent } from "./session-event.ts";
 export * from "./turn.ts";

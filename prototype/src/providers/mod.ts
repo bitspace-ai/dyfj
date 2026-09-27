@@ -41,7 +41,7 @@ export {
 } from "./errors.ts";
 export type {
   BaseUrlCheck,
-  Clock,
+  MonotonicClock,
   ProviderAdapter,
   ProviderFrame,
   ProviderIO,

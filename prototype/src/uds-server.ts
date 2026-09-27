@@ -34,9 +34,8 @@ import {
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
   type WorkbenchProjectSessions,
-  type WorkbenchSessionEvent,
   type WorkbenchSessionSummary,
-} from "./sessions.ts";
+} from "./store/mod.ts";
 import {
   type RpcContext,
   RpcError,
@@ -54,9 +53,14 @@ import {
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
+  CeilingConfirmationStore,
   runawayAnomalyApprovalRequest,
-} from "./budget.ts";
-import type { TurnStreamFrame, WorkbenchAuthContext } from "./contract/mod.ts";
+} from "./budget/mod.ts";
+import type {
+  TurnStreamFrame,
+  WorkbenchAuthContext,
+  WorkbenchSessionEvent,
+} from "./contract/mod.ts";
 import { isSupersedingRetryStarted, summarizeError } from "./contract/mod.ts";
 import {
   engineConfigToTurnDeps,
@@ -1271,6 +1275,9 @@ function composeTurnRuntime(
   store: () => Store,
   acpSessions?: AcpSessionHandleMap,
 ): TurnRuntime {
+  // One confirmation store per engine: ceiling confirmations persist for
+  // their scope periods across this engine's turns.
+  const ceilingConfirmations = new CeilingConfirmationStore();
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
       runExternalAgentWorkbenchRuntime(input, {
@@ -1279,7 +1286,11 @@ function composeTurnRuntime(
       }),
   };
   return (input) =>
-    runWorkbenchRuntime(input, { store: store(), externalAgentRunner });
+    runWorkbenchRuntime(input, {
+      store: store(),
+      ceilingConfirmations,
+      externalAgentRunner,
+    });
 }
 
 // The `turn` method: run an agentic turn over the shared turn-runner core —

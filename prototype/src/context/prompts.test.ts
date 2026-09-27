@@ -3,7 +3,7 @@ import {
   DEFAULT_COMPANION_PROMPT,
   loadCompanionBasePrompt,
 } from "./prompts.ts";
-import { MemoryStore, type PromptReader } from "./store/mod.ts";
+import { MemoryStore, type PromptReader } from "../store/mod.ts";
 
 const storeWith = (content: string, active = true) =>
   new MemoryStore({

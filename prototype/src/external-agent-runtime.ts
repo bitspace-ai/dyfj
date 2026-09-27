@@ -28,23 +28,21 @@ import type {
 } from "./acp-session-map.ts";
 import type { WorkbenchMessage, WorkbenchRoutingOptions } from "./providers/mod.ts";
 import {
+  agentPermissionEvent,
+  agentResponseEvent,
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
   createWorkbenchSession,
-  fetchWorkbenchSessionWorkspaceRecord,
-  updateWorkbenchSession,
-} from "./sessions.ts";
-import {
-  agentPermissionEvent,
-  agentResponseEvent,
   errorEvent,
   type EventInsert,
+  fetchWorkbenchSessionWorkspaceRecord,
   runnerSelectedEvent,
   sessionEndEvent,
   type SessionReader,
   sessionStartEvent,
   type Store,
   toolCallEvent,
+  updateWorkbenchSession,
 } from "./store/mod.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,

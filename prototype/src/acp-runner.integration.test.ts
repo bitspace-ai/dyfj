@@ -1,9 +1,7 @@
 import { afterAll, describe, expect, test } from "vitest";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
-import {
-  buildConversationMessages,
-  fetchWorkbenchSessionEvents,
-} from "./sessions.ts";
+import { buildConversationMessages } from "./context/mod.ts";
+import { fetchWorkbenchSessionEvents } from "./store/mod.ts";
 import {
   openFixtureSql,
   openFixtureStore,
