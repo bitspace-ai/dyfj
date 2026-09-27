@@ -356,8 +356,19 @@ interface Stamped {
   seq: number;
 }
 
+interface StampedEvent {
+  row: Row;
+  /**
+   * Insertion order, for an event whose created_at the store assigned: it
+   * breaks ties the way Dolt's microseconds do (`Date` holds only
+   * milliseconds). An event whose caller supplied created_at has none, so
+   * equal timestamps fall through to event_id, as they do in Dolt.
+   */
+  seq: number | null;
+}
+
 interface Tables {
-  events: Stamped[];
+  events: StampedEvent[];
   sessions: Map<string, Stamped>;
   memories: Map<string, Stamped>;
 }
@@ -550,7 +561,11 @@ export class MemoryStore implements Store {
       let seq = this.#seq;
       const now = this.#now();
       for (const event of batch.events) {
-        next.events.push({ row: this.#eventRow(event, now), seq: seq++ });
+        const stampedByStore = event.created_at == null;
+        next.events.push({
+          row: this.#eventRow(event, now),
+          seq: stampedByStore ? seq++ : null,
+        });
         for (const projector of this.#projectors) {
           seq = this.#project(next, projector, event, now, seq);
         }
@@ -778,7 +793,7 @@ export class MemoryStore implements Store {
               direction * (
                 (a.row.created_at as Date).getTime() -
                   (b.row.created_at as Date).getTime() ||
-                a.seq - b.seq ||
+                (a.seq !== null && b.seq !== null ? a.seq - b.seq : 0) ||
                 compareText(String(a.row.event_id), String(b.row.event_id))
               )
             )

@@ -377,6 +377,20 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     },
   );
 
+  run("events with the same explicit created_at order by event_id", async (store) => {
+    const at = "2026-01-01 00:00:00.000000";
+    const later = event({ event_id: "EV_TIE_B", created_at: at });
+    const earlier = event({ event_id: "EV_TIE_A", created_at: at });
+    // Written in the opposite order to their ids.
+    await commitEvents(store, later);
+    await commitEvents(store, earlier);
+    const ids = async (order: "asc" | "desc") =>
+      (await store.events.bySession({ sessionId: "S1", limit: 10, order }))
+        .map((r) => r.event_id);
+    assertEquals(await ids("asc"), ["EV_TIE_A", "EV_TIE_B"]);
+    assertEquals(await ids("desc"), ["EV_TIE_B", "EV_TIE_A"]);
+  });
+
   run(
     "bySession rejects a malformed asOf and a non-positive limit",
     async (store) => {
@@ -540,6 +554,15 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       assertFalse(await store.events.exists(String(e.event_id)));
     },
   );
+
+  run("an aborted commit rejects even when the batch is empty", async (store) => {
+    const controller = new AbortController();
+    controller.abort();
+    const error = await assertRejects(() =>
+      store.journal.commit({ events: [] }, { signal: controller.signal })
+    );
+    assertEquals((error as Error).name, "AbortError");
+  });
 
   run("an aborted commit writes nothing", async (store) => {
     const controller = new AbortController();

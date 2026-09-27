@@ -179,6 +179,8 @@ export class DoltJournal implements Journal {
     batch: CommitBatch,
     options: CommitOptions = {},
   ): Promise<CommitReceipt> {
+    // An aborted commit rejects whatever the batch holds, empty included.
+    if (options.signal?.aborted) throw abortError();
     const mutations = batch.mutations ?? [];
     assertDeclaredMutations(mutations);
     const receipt: CommitReceipt = {

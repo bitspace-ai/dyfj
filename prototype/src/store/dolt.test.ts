@@ -426,6 +426,21 @@ Deno.test("journal.commit aborted while acquiring a connection writes nothing an
   assertEquals(scripted.log, ["acquire", "destroy"]);
 });
 
+Deno.test("journal.commit rejects an already-aborted empty batch", async () => {
+  const { pool, calls, log } = scriptedPool();
+  const controller = new AbortController();
+  controller.abort();
+  const error = await assertRejects(() =>
+    new DoltStore(pool).journal.commit(
+      { events: [] },
+      { signal: controller.signal },
+    )
+  );
+  assertEquals((error as Error).name, "AbortError");
+  assertEquals(calls, []);
+  assertEquals(log, []);
+});
+
 Deno.test("journal.commit rejects an undeclared mutation before touching SQL", async () => {
   const { pool, calls } = scriptedPool();
   await assertRejects(() =>
