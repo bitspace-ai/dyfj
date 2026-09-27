@@ -33,8 +33,18 @@ export class ManualClock {
     return this.#current;
   };
 
-  /** `now()` as a `Date`, for code that takes a `() => Date` clock. */
-  readonly date = (): Date => new Date(this.now());
+  /**
+   * `now()` as a `Date`, for code that takes a `() => Date` clock. A reading
+   * outside the range a `Date` can hold throws rather than returning an
+   * Invalid Date.
+   */
+  readonly date = (): Date => {
+    const date = new Date(this.now());
+    if (Number.isNaN(date.getTime())) {
+      throw new RangeError("ManualClock reading is outside the Date range");
+    }
+    return date;
+  };
 
   /** Moves the clock forward. Negative steps are rejected. */
   advance(ms: number): void {

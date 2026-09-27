@@ -1001,8 +1001,9 @@ toolchain is installed from the exact pin in `core/rust-toolchain.toml`.
 Workflow-hygiene tests inside the gate assert those properties — including that
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
-`deno task test:fast` runs every deterministic policy check plus the source
-typecheck, reusing the production lane definitions verbatim for quick local
+`deno task test:fast` runs every deterministic policy check (including
+`arch.imports`) plus the contract package checks, the source typecheck, and the
+`test.unit` lane, reusing the production lane definitions verbatim for quick local
 feedback; it is a convenience, not the green bar — `deno task test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
 public deterministic checks it runs.

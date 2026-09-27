@@ -5,12 +5,14 @@
 // During the Vitest-to-`Deno.test` transition both frameworks share the
 // `*.test.ts` naming, so a test file's framework is read from its imports: a
 // file whose static imports reach `vitest`, directly or through a helper
-// module, belongs to the Vitest lane, anything else is a `Deno.test` file. The imports come from `deno info --json` (the
-// deno_graph parser Deno itself uses), not from scanning the source text, so
-// import-shaped text in strings, template literals or comments never counts.
+// module, belongs to the Vitest lane, anything else is a `Deno.test` file. The
+// imports come from `deno info --json` (the deno_graph parser Deno itself
+// uses), not from scanning the source text, so import-shaped text in strings,
+// template literals or comments never counts.
 // Integration files (`*.integration.test.ts`) and the golden suite
 // (`testing/golden/`) have their own lanes and are never unit tests.
 
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { selectedDenoExecutable } from "./deno-executable.ts";
 
@@ -157,9 +159,9 @@ export function vitestTestFiles(
   files: readonly string[],
 ): Set<string> {
   if (files.length === 0) return new Set();
-  const absoluteRoot = root.startsWith("/") ? root : `${Deno.cwd()}/${root}`;
+  // Platform-aware: `root` may be relative, or a Windows path like `C:\\repo`.
   const urlOf = new Map(
-    files.map((file) => [pathToFileURL(`${absoluteRoot}/${file}`).href, file]),
+    files.map((file) => [pathToFileURL(resolve(root, file)).href, file]),
   );
   const urls = [...urlOf.keys()];
   const vitest = vitestModulesFromDenoInfo(denoInfo(urls), urls);
