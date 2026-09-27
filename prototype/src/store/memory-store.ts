@@ -856,8 +856,13 @@ export class MemoryStore implements Store {
           return Promise.reject(error);
         }
       },
-      recent: ({ status, limit }) =>
-        Promise.resolve(
+      recent: ({ status, limit }) => {
+        try {
+          positive(limit);
+        } catch (error) {
+          return Promise.reject(error);
+        }
+        return Promise.resolve(
           [...this.#tables.sessions.values()]
             .filter((s) => !status || s.row.status === status)
             .sort((a, b) =>
@@ -877,7 +882,8 @@ export class MemoryStore implements Store {
                 "created_at",
               ])
             ),
-        ),
+        );
+      },
       detail: (key) => {
         const s = [...this.#tables.sessions.values()].find((s) =>
           "sessionId" in key

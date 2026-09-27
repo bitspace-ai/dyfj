@@ -325,9 +325,10 @@ export function doltSessionReader(pool: DoltSelect): SessionReader {
         params,
       );
     },
-    recent({ status, limit }) {
+    async recent({ status, limit }) {
+      const bounded = positiveInteger(limit, "limit");
       const where = status ? "WHERE status = ?" : "";
-      const params: SqlParam[] = status ? [status, limit] : [limit];
+      const params: SqlParam[] = status ? [status, bounded] : [bounded];
       return queryText(
         pool,
         `SELECT session_id, slug, session_name, task_description, status, ` +

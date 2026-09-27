@@ -658,6 +658,18 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         ["B", "2", "3"],
       ],
     );
+    for (const limit of [0, -1, 1.5]) {
+      await assertRejects(
+        () => store.sessions.list({ limit }),
+        Error,
+        "limit must be a positive integer",
+      );
+      await assertRejects(
+        () => store.sessions.recent({ limit }),
+        Error,
+        "limit must be a positive integer",
+      );
+    }
     const bySlug = await store.sessions.detail({ slug: "slug-A" });
     assertEquals(bySlug?.session_id, "A");
     assertEquals(bySlug?.mode, "interactive");

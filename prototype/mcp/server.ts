@@ -26,7 +26,10 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/server";
-import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import {
+  serveStdio,
+  StdioServerTransport,
+} from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { listMcpMemories, readMcpMemory } from "./memory-tools.ts";
 import { generateULID } from "../src/kernel/mod.ts";
@@ -371,7 +374,24 @@ function createServer(store: Store): McpServer {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-// The server's one store over one Dolt pool, shared by every connection.
+// The server's one store over one Dolt pool, shared by every connection. This
+// composition root owns it and closes it, once, when the stdio transport
+// closes or the server fails to start.
 const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
+let storeClosed: Promise<void> | undefined;
+const closeStore = () => (storeClosed ??= store.close().catch(() => {}));
 
-serveStdio(() => createServer(store), { legacy: "serve" });
+const transport = new StdioServerTransport();
+try {
+  serveStdio(() => createServer(store), { legacy: "serve", transport });
+} catch (error) {
+  await closeStore();
+  throw error;
+}
+// serveStdio binds the transport's close to tearing the server down; chain
+// the store's close after it.
+const closeServer = transport.onclose;
+transport.onclose = () => {
+  closeServer?.();
+  void closeStore();
+};

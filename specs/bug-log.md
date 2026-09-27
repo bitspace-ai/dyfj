@@ -10,6 +10,21 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **The memory MCP server does not exit when its client closes
+  stdin after a database call.**
+  - **Location:** `prototype/mcp/server.ts` (the `serveStdio` start at the end
+    of the file) with `StdioServerTransport` from
+    `@modelcontextprotocol/server/stdio`.
+  - **Symptom:** after any tool call that reaches Dolt, closing the server's
+    stdin leaves the process running until it is killed. Reproduced by piping
+    an initialize request and a few tool calls into the server and then ending
+    input: the process was still alive 20 seconds later, identically before and
+    after the store port.
+  - **Suspected cause:** the SDK transport stops reading on end of input but
+    does not close, so its close handler never runs, and the Dolt pool's open
+    connection keeps the process alive. The server now closes its store when
+    the transport closes, which does not happen on end of input.
+  - **Found during:** WO-12 (present before it; it did not change).
 - 2026-09-27 — **The two UDS clients resolve the socket path differently when
   `HOME` is unset.**
   - **Location:** `prototype/src/uds-path.ts:14` (`resolveSocketPath`) against
