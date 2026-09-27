@@ -140,13 +140,17 @@ README are tracked separately in its Revision history section.
 
 ### Removed
 
-- **Standalone in-process workbench entrypoint removed**: `deno task workbench`
-  (root and `prototype/`), `deno task start` (`prototype/`), the `workbench`
-  permission profile they ran under, and the `import.meta.main` entrypoint of
-  `src/workbench.ts` are gone. Run turns through the `dyfj` launcher over the
-  UDS JSON-RPC seam (`dyfj exec`, or `deno task serve-unix` for the engine
-  alone). `deno task verify-workbench-events` still drives its one-shot check
-  turn in-process.
+- **Standalone in-process workbench CLI removed**: `deno task workbench` (root
+  and `prototype/`), `deno task start` (`prototype/`), the `workbench`
+  permission profile they ran under, and the argv CLI in `src/workbench.ts`
+  (its entrypoint, `runWorkbench`, `resolveWorkbenchInvocation`,
+  `buildWorkbenchRuntimeInput`, and the TTY consent prompt
+  `promptPaidEscalationTty`) are gone. Run turns through the `dyfj` launcher
+  over the UDS JSON-RPC seam (`dyfj exec`, or `deno task serve-unix` for the
+  engine alone). `deno task verify-workbench-events` now calls the runtime
+  directly with its routing read from `DYFJ_WORKBENCH_MODEL`, `_HINT` and
+  `_TIER` as before; it no longer prompts for paid-inference consent, so a
+  turn routed to a paid model is declined rather than asked about.
 - **Unused helpers removed**: the CSV parsers (`parseCSVRows`, `parseCsvRow`),
   `extractText`, `extractThinking` and their `MessageContent` type, and
   `normaliseStopReason` (`utils.ts`); the `read_memory` definition and result

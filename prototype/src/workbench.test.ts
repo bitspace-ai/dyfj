@@ -22,7 +22,6 @@ import {
   buildNextWorkBrief,
   buildPaidEscalationPreflightBanner,
   buildWorkbenchReceipt,
-  buildWorkbenchRuntimeInput,
   buildWorkspaceGrounding,
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
@@ -31,8 +30,6 @@ import {
   maybeBuildPaidEscalationPreflightBanner,
   PaidEscalationDeclinedError,
   type PaidEscalationPreflightInput,
-  promptPaidEscalationTty,
-  resolveWorkbenchInvocation,
   runWorkbenchRuntime,
   shouldPrintBudgetTally,
   toolStepToMessages,
@@ -1168,104 +1165,10 @@ describe("paid escalation preflight", () => {
   });
 });
 
-describe("promptPaidEscalationTty (consent verdict)", () => {
-  test("escalates instead of prompting in a non-interactive session", async () => {
-    const stdin = process.stdin as typeof process.stdin & { isTTY?: boolean };
-    const originalIsTTY = Object.getOwnPropertyDescriptor(stdin, "isTTY");
-    Object.defineProperty(stdin, "isTTY", {
-      configurable: true,
-      value: false,
-    });
-    try {
-      const verdict = await promptPaidEscalationTty("paid model selected");
-      expect(verdict).toEqual({
-        decision: "escalate",
-        reason: expect.any(String),
-      });
-    } finally {
-      if (originalIsTTY) {
-        Object.defineProperty(stdin, "isTTY", originalIsTTY);
-      } else {
-        Reflect.deleteProperty(stdin, "isTTY");
-      }
-    }
-  });
-});
-
-describe("resolveWorkbenchInvocation", () => {
+describe("isNextWorkMode", () => {
   test("keeps generic ask separate from the measured next-work worklet", () => {
     expect(isNextWorkMode("ask")).toBe(false);
     expect(isNextWorkMode("next-work")).toBe(true);
-  });
-
-  test("treats next-work as the measured local-first worklet path", () => {
-    const invocation = resolveWorkbenchInvocation(["next-work"], {});
-
-    expect(invocation).toEqual({
-      mode: "next-work",
-      prompt: "what should I work on next here?",
-      routingOptions: {},
-    });
-  });
-
-  test("loads routing defaults from environment", () => {
-    const invocation = resolveWorkbenchInvocation(["ask", "next?"], {
-      DYFJ_WORKBENCH_MODEL: "qwen3:32b",
-      DYFJ_WORKBENCH_HINT: "code",
-      DYFJ_WORKBENCH_TIER: "0",
-    });
-
-    expect(invocation).toEqual({
-      mode: "ask",
-      prompt: "next?",
-      routingOptions: {
-        modelId: "qwen3:32b",
-        hint: "code",
-        tier: 0,
-      },
-    });
-  });
-
-  test("CLI routing flags override environment defaults", () => {
-    const invocation = resolveWorkbenchInvocation(
-      [
-        "ask",
-        "--model",
-        "gemma4:e2b",
-        "--tier",
-        "0",
-        "--hint",
-        "reasoning",
-        "next?",
-      ],
-      {
-        DYFJ_WORKBENCH_MODEL: "qwen3:32b",
-        DYFJ_WORKBENCH_HINT: "code",
-        DYFJ_WORKBENCH_TIER: "1",
-      },
-    );
-
-    expect(invocation.routingOptions).toEqual({
-      modelId: "gemma4:e2b",
-      hint: "reasoning",
-      tier: 0,
-    });
-  });
-});
-
-describe("buildWorkbenchRuntimeInput", () => {
-  test("maps non-shell invocations into a shared runtime input", () => {
-    const input = buildWorkbenchRuntimeInput({
-      mode: "turn",
-      prompt: "summarize the repo",
-      routingOptions: { modelId: "gemma4:e2b", tier: 0 },
-    });
-
-    expect(input).toEqual({
-      mode: "turn",
-      prompt: "summarize the repo",
-      routingOptions: { modelId: "gemma4:e2b", tier: 0 },
-    });
   });
 });
 
