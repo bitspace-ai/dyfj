@@ -64,7 +64,7 @@ import {
   isValidTurnId,
   resolveTurnFromBody,
   type TurnRequestBody,
-  type WorkbenchHttpRuntime,
+  type TurnRuntime,
 } from "./turn-runner.ts";
 import {
   type CommandDefinition,
@@ -145,7 +145,7 @@ export interface WorkbenchSurfaceSnapshot {
 }
 
 export interface WorkbenchUnixServerOptions {
-  runRuntime?: WorkbenchHttpRuntime;
+  runRuntime?: TurnRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
   listSessions?: (
     options: { project?: string; limit?: number },

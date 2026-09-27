@@ -1,5 +1,10 @@
+import process from "node:process";
+import type { WorkbenchRoutingOptions } from "../src/provider.ts";
 import { doltQuery, closeDoltPool } from "../src/utils.ts";
-import { runWorkbench } from "../src/workbench.ts";
+import {
+  resolveRuntimeEnvDefaults,
+  runWorkbenchRuntime,
+} from "../src/workbench.ts";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
@@ -23,7 +28,16 @@ console.error = (...args: unknown[]) => {
 };
 
 try {
-  await runWorkbench(["--prompt", prompt]);
+  await runWorkbenchRuntime({
+    mode: "turn",
+    prompt,
+    routingOptions: routingOptionsFromEnv(),
+    ...resolveRuntimeEnvDefaults(),
+    log: console.log,
+    onTextDelta: (delta) => {
+      process.stdout.write(delta);
+    },
+  });
 
   const output = captured.join("\n");
   const sessionId = matchRequired(output, /^Session:\s+([0-9A-Z]{26})$/m, "session id");
@@ -71,4 +85,20 @@ function matchRequired(text: string, pattern: RegExp, label: string): string {
   const match = text.match(pattern);
   if (!match) throw new Error(`Could not parse ${label} from Workbench output`);
   return match[1];
+}
+
+// Routing defaults from the same env vars the dyfj CLI reads; unknown hint or
+// tier values are ignored rather than guessed.
+function routingOptionsFromEnv(): WorkbenchRoutingOptions {
+  const hint = process.env.DYFJ_WORKBENCH_HINT;
+  const tier = process.env.DYFJ_WORKBENCH_TIER;
+  return {
+    modelId: process.env.DYFJ_WORKBENCH_MODEL,
+    hint: hint === "code" || hint === "chat" || hint === "reasoning"
+      ? hint
+      : undefined,
+    tier: tier === "0" || tier === "1" || tier === "2"
+      ? Number(tier) as 0 | 1 | 2
+      : undefined,
+  };
 }
