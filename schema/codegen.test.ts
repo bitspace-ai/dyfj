@@ -41,18 +41,29 @@ function column(
   };
 }
 
+function table(name: string, columns: ColumnDescription[]) {
+  return {
+    name,
+    type: "BASE TABLE",
+    engine: "InnoDB",
+    collation: "utf8mb4_0900_bin",
+    columns,
+    indexes: [],
+    constraints: [],
+    checks: [],
+  };
+}
+
+/** Every canonical table: `sessions` with `columns`, the rest a key only. */
 function schema(columns: ColumnDescription[]): SchemaDescription {
   return {
-    tables: [{
-      name: "sessions",
-      type: "BASE TABLE",
-      engine: "InnoDB",
-      collation: "utf8mb4_0900_bin",
-      columns,
-      indexes: [],
-      constraints: [],
-      checks: [],
-    }],
+    tables: [
+      table("events", [column("event_id", 1, "varchar(64)")]),
+      table("memories", [column("memory_id", 1, "varchar(64)")]),
+      table("models", [column("slug", 1, "varchar(128)")]),
+      table("prompts", [column("slug", 1, "varchar(128)")]),
+      table("sessions", columns),
+    ],
   };
 }
 
@@ -117,7 +128,7 @@ Deno.test("renderRows is deterministic", () => {
 
 Deno.test("renderRows refuses a table it has no type name for", () => {
   const described = schema([column("id", 1, "varchar(64)")]);
-  described.tables[0]!.name = "widgets";
+  described.tables.push(table("widgets", [column("id", 1, "varchar(64)")]));
   let message = "";
   try {
     renderRows(described);
@@ -135,4 +146,19 @@ Deno.test("renderRows refuses a column type it has no mapping for", () => {
     message = error instanceof Error ? error.message : String(error);
   }
   assertIncludes(message, "no mapping for blob blob");
+});
+
+Deno.test("renderRows refuses a DDL that lacks a canonical table", () => {
+  const described = schema([column("session_id", 1, "varchar(64)")]);
+  described.tables = described.tables.filter((t) => t.name !== "prompts");
+  let message = "";
+  try {
+    renderRows(described);
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  assertIncludes(
+    message,
+    "canonical table(s) the DDL does not define: prompts",
+  );
 });

@@ -15,7 +15,7 @@ import {
 import {
   createDoltPool,
   DoltStore,
-  MissingSchemaColumnsError,
+  isDatabaseUnavailableError,
 } from "./store/mod.ts";
 import { resolveSecrets } from "./secrets.ts";
 import { buildExternalMcpCommands } from "./mcp-tools.ts";
@@ -57,11 +57,13 @@ const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
 
 // Boot-time column check: a reachable database that predates a migration in
 // schema/migrations/ fails the boot loudly, naming the missing columns. A
-// database that is not reachable yet is left to fail on first use, as before.
+// database that cannot be reached or used yet (connection, authentication,
+// unknown database) is left to fail on first use, as before; any other
+// failure of the check fails the boot too.
 try {
   await store.assertCanonicalColumns();
 } catch (error) {
-  if (error instanceof MissingSchemaColumnsError) {
+  if (!isDatabaseUnavailableError(error)) {
     await store.close().catch(() => {});
     throw error;
   }

@@ -159,8 +159,10 @@ README are tracked separately in its Revision history section.
   column tuples. When the database is reachable and any are missing, the boot
   fails with a message naming the missing columns and pointing at
   `schema/migrations/`. Before, the event and model readers fell back to older
-  column sets instead. A database that is not reachable at boot is left to fail
-  on first use, as before; extra columns are not reported.
+  column sets instead. A database that cannot be reached or used at boot
+  (connection refused or lost, access denied, unknown database) is left to fail
+  on first use, as before; any other failure of the check fails the boot. Extra
+  columns are not reported.
 - **One schema apply-order rule in the docs**: a fresh install applies
   `schema/current/` then `schema/catalog/`; an existing database replays
   forward through `schema/migrations/` on top of the structure `schema/history/`

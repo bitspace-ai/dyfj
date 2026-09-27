@@ -44,6 +44,7 @@ export {
 export { createDoltPool, type DoltPool } from "./dolt-pool.ts";
 export { DoltStore } from "./dolt.ts";
 export {
+  isDatabaseUnavailableError,
   missingCanonicalColumns,
   type MissingColumn,
   MissingSchemaColumnsError,

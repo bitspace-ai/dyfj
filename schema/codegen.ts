@@ -272,6 +272,17 @@ export function renderRows(schema: SchemaDescription): string {
       );
     }
   }
+  const described = new Set(schema.tables.map((table) => table.name));
+  const absent = Object.keys(TABLE_NAMES).filter((name) =>
+    !described.has(name)
+  );
+  if (absent.length > 0) {
+    throw new Error(
+      `codegen expected canonical table(s) the DDL does not define: ${
+        absent.join(", ")
+      }; restore them in schema/current/ or remove them from TABLE_NAMES`,
+    );
+  }
   const lines = [
     "// generated from schema/ — do not edit",
     "//",

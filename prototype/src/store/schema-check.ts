@@ -34,6 +34,36 @@ export class MissingSchemaColumnsError extends Error {
 }
 
 /**
+ * `mysql2` error codes meaning the database could not be reached or used at
+ * all, as opposed to a query that ran and failed.
+ */
+const UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "PROTOCOL_CONNECTION_LOST",
+  "ER_ACCESS_DENIED_ERROR",
+  "ER_BAD_DB_ERROR",
+]);
+
+/**
+ * Whether the boot-time column check failed because the database was not
+ * reachable or usable (connection, authentication, unknown database), in
+ * which case the engine boots as it did before the check existed and the
+ * error surfaces on first use. Any other failure is not recognized here, so
+ * the boot fails rather than serving with a check that never completed.
+ */
+export function isDatabaseUnavailableError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && UNAVAILABLE_CODES.has(code);
+}
+
+/**
  * Canonical columns absent from `live` (table name to its column names), in
  * table then declaration order. A missing table reports every column.
  * Columns the live database has beyond the canonical set are not reported.

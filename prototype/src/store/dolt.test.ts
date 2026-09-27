@@ -19,7 +19,10 @@ import {
 } from "./dolt-pool.ts";
 import { DoltStore } from "./dolt.ts";
 import { CANONICAL_TABLE_COLUMNS, type EventInsert } from "./generated/rows.ts";
-import { MissingSchemaColumnsError } from "./schema-check.ts";
+import {
+  isDatabaseUnavailableError,
+  MissingSchemaColumnsError,
+} from "./schema-check.ts";
 
 interface Call {
   sql: string;
@@ -286,6 +289,34 @@ Deno.test("assertCanonicalColumns reports a missing table as all of its columns"
     error.missing.map(({ column }) => column),
     [...CANONICAL_TABLE_COLUMNS.prompts],
   );
+});
+
+Deno.test("only connection, access and unknown-database errors count as unavailable", () => {
+  for (
+    const code of [
+      "ECONNREFUSED",
+      "ETIMEDOUT",
+      "ENOTFOUND",
+      "PROTOCOL_CONNECTION_LOST",
+      "ER_ACCESS_DENIED_ERROR",
+      "ER_BAD_DB_ERROR",
+    ]
+  ) {
+    assert(
+      isDatabaseUnavailableError(Object.assign(new Error(code), { code })),
+    );
+  }
+  // A check that reached the database and failed is not "unavailable": the
+  // boot must fail rather than serve with the check incomplete.
+  for (
+    const code of ["ER_PARSE_ERROR", "ER_TABLEACCESS_DENIED_ERROR", undefined]
+  ) {
+    assertFalse(
+      isDatabaseUnavailableError(Object.assign(new Error("x"), { code })),
+    );
+  }
+  assertFalse(isDatabaseUnavailableError(new MissingSchemaColumnsError([])));
+  assertFalse(isDatabaseUnavailableError("ECONNREFUSED"));
 });
 
 Deno.test("assertCanonicalColumns passes a connection failure through unchanged", async () => {
