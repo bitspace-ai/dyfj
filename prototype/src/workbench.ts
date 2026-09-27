@@ -31,7 +31,7 @@ import {
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
 } from "./provider.ts";
-import { RpcError } from "./jsonrpc.ts";
+import { RpcError } from "./transport/mod.ts";
 import type { PackedContextSummary } from "./repo-context.ts";
 import type { AskContextProfile } from "./repo-context.ts";
 import { loadAgentsInstructions } from "./repo-context.ts";

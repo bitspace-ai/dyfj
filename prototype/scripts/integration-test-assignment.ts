@@ -13,6 +13,9 @@ export const integrationTestAssignments = {
     "src/memory-search.integration.test.ts",
     "scripts/memory-recall-uat-fixture.integration.test.ts",
     "scripts/test-files.integration.test.ts",
+    "src/transport/jsonrpc-peer.integration.test.ts",
+    "src/transport/uds-client.integration.test.ts",
+    "src/transport/uds-listener.integration.test.ts",
   ],
 } as const;
 

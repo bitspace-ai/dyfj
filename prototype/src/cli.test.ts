@@ -56,7 +56,10 @@ import {
   type TurnResult,
 } from "./cli.ts";
 import { serveWorkbenchUnix } from "./uds-server.ts";
-import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client.ts";
+import {
+  connectUnixClient,
+  type ToolApprovalVerdict,
+} from "./transport/mod.ts";
 import { DomainError } from "./contract/mod.ts";
 import { fakeIo } from "../testing/fakes/fake-io.ts";
 import type {

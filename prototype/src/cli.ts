@@ -28,12 +28,13 @@ import {
 } from "./contract/mod.ts";
 import {
   connectUnixClient,
+  resolveSocketPath,
+  RpcError,
+  RpcErrorCode,
   type ToolApprovalVerdict,
   type UnixClient,
   type UnixClientOptions,
-} from "./uds-client.ts";
-import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
-import { resolveSocketPath } from "./uds-path.ts";
+} from "./transport/mod.ts";
 import { assertSecureMemoryUrl } from "./memory-search.ts";
 import {
   type Env,

@@ -7,8 +7,12 @@ import {
   socketError,
 } from "./cli.ts";
 import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
-import { connectUnixClient, type UnixClient } from "./uds-client.ts";
-import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
+import {
+  connectUnixClient,
+  RpcError,
+  RpcErrorCode,
+  type UnixClient,
+} from "./transport/mod.ts";
 import { fakeIo } from "../testing/fakes/fake-io.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];

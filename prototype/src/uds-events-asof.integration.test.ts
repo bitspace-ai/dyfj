@@ -16,7 +16,7 @@
 import { generateSpanId, generateTraceId, generateULID } from "./kernel/mod.ts";
 import { afterAll, describe, expect, test } from "vitest";
 import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
-import { connectUnixClient } from "./uds-client.ts";
+import { connectUnixClient } from "./transport/mod.ts";
 import { isValidAsOfTimestamp } from "./sessions.ts";
 import {
   doltExec,

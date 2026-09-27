@@ -1,7 +1,7 @@
 // Default Unix-socket path for the workbench runtime seam. Engine-free
 // so the thin CLI client and the server both import it.
 
-import { type Env, processEnv } from "./config/mod.ts";
+import { type Env, processEnv } from "../config/mod.ts";
 
 // DYFJ_SOCKET wins; otherwise a per-user runtime dir ($XDG_RUNTIME_DIR/dyfj, or
 // ~/.dyfj/run). The dir is created owner-only (0700) by ensureSocketDir.
