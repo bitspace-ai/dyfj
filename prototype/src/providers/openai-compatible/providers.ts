@@ -4,7 +4,10 @@
  * and one bearer-key variable each.
  */
 
-export const openAICompatibleLocalProviders = new Set(["ollama", "mlx-lm"]);
+export const openAICompatibleLocalProviders: ReadonlySet<string> = new Set([
+  "ollama",
+  "mlx-lm",
+]);
 /**
  * Hosted OpenAI-compatible providers: the env var each reads its bearer key
  * from, and the exact https host that key may be sent to. A static code-level
@@ -24,7 +27,7 @@ export const openAIHostedProviderContracts: ReadonlyMap<
   ["openrouter", { keyEnvVar: "OPENROUTER_API_KEY", host: "openrouter.ai" }],
   ["xai", { keyEnvVar: "XAI_API_KEY", host: "api.x.ai" }],
 ]);
-export const openAIHostedProviders = new Set(
+export const openAIHostedProviders: ReadonlySet<string> = new Set(
   openAIHostedProviderContracts.keys(),
 );
 export const HOSTED_OPENAI_DEFAULT_MAX_TOKENS = 8192;

@@ -48,8 +48,11 @@ Create `src/providers/<family>/` with:
 The `ProviderAdapter` (`src/providers/adapter.ts`):
 
 - `api`: the family name; `providers`: the catalog `provider` values it serves.
-  The registry dispatches on `provider`, and two adapters may not serve the same
-  one.
+  Two adapters may not serve the same provider. The registry currently
+  dispatches on the catalog `provider` column, as the runtime always has;
+  `01-architecture.md` §5.2 describes a lookup by `api` instead, and which of
+  the two stands is an open maintainer decision. Declare both, so either lookup
+  finds the adapter.
 - `streamsToolCalls`, `supportsTranscriptRetry`, `defaultOutputTokens(model)`:
   what the engine may ask of this family (buffer tool-offering calls or stream
   them; retry with a rewritten transcript; the output ceiling when the caller
