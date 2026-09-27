@@ -55,15 +55,16 @@ import {
   toolchainReadGrant,
   type TurnInterruptSource,
   type TurnResult,
-} from "./cli";
-import { serveWorkbenchUnix } from "./uds-server";
-import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client";
-import { DomainError } from "./turn-contract";
+} from "./cli.ts";
+import { serveWorkbenchUnix } from "./uds-server.ts";
+import { connectUnixClient, type ToolApprovalVerdict } from "./uds-client.ts";
+import { DomainError } from "./contract/mod.ts";
+import { fakeIo } from "../testing/fakes/fake-io.ts";
 import type {
   SupersedingRetryStartedEvent,
   TurnStreamFrame,
   UnparsedToolCallMarkupDetectedEvent,
-} from "./turn-contract";
+} from "./contract/mod.ts";
 
 // Assembled at runtime so the public-boundary scan never matches these
 // fixtures as home-directory paths in tracked source.
@@ -244,29 +245,6 @@ function unparsedMarkupEvent(): Record<string, unknown> {
     count: 64,
     countIsLowerBound: true,
   } satisfies UnparsedToolCallMarkupDetectedEvent;
-}
-
-function fakeIo(
-  lines: string[] = [],
-  opts: { errIsTerminal?: boolean } = {},
-) {
-  const queue = [...lines];
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  const raw: string[] = [];
-  const prompts: string[] = [];
-  const io: Io = {
-    out: (text) => stdout.push(text),
-    err: (line) => stderr.push(line),
-    errRaw: (text) => raw.push(text),
-    errIsTerminal: opts.errIsTerminal,
-    readLine: (prompt) => {
-      prompts.push(prompt);
-      return Promise.resolve(queue.length ? queue.shift()! : null);
-    },
-    close: () => {},
-  };
-  return { io, stdout, stderr, raw, prompts };
 }
 
 // ── socketTurn (turns over the UDS seam) ─────────────────────────────────────
@@ -3025,7 +3003,6 @@ describe("runtime lifecycle commands", () => {
       "-P=serve-unix",
       "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
       "--env-file=.env",
-      "--sloppy-imports",
       "src/uds-serve.ts",
     ]);
   });
@@ -3307,15 +3284,11 @@ describe("runtime lifecycle commands", () => {
       '--allow-run="bash,$node_path"',
     );
     expect(tasks["codex-chatgpt-login"]).toContain("--allow-sys=uid");
-    for (const task of ["serve-unix", "workbench", "start"]) {
-      expect(tasks[task]).toMatch(/^deno run --no-prompt /);
-      expect(tasks[task]).not.toContain("/bin/sh");
-      expect(tasks[task]).not.toContain("DYFJ_NODE_PATH");
-    }
-    for (const profile of ["serve-unix", "workbench"]) {
-      expect(parsed.permissions[profile].run).toContain("/bin/kill");
-      expect(parsed.permissions[profile].sys).toContain("uid");
-    }
+    expect(tasks["serve-unix"]).toMatch(/^deno run --no-prompt /);
+    expect(tasks["serve-unix"]).not.toContain("/bin/sh");
+    expect(tasks["serve-unix"]).not.toContain("DYFJ_NODE_PATH");
+    expect(parsed.permissions["serve-unix"].run).toContain("/bin/kill");
+    expect(parsed.permissions["serve-unix"].sys).toContain("uid");
     expect(parsed.permissions["test"].run).toContain("/bin/bash");
     const vitestRunner = await Deno.readTextFile("scripts/run-vitest.ts");
     expect(vitestRunner).toContain("const run = [");
@@ -3326,10 +3299,6 @@ describe("runtime lifecycle commands", () => {
     );
     expect(parsed.permissions["serve-unix"].env).toContain("NODE_V8_COVERAGE");
     expect(parsed.permissions["serve-unix"].read).toBe(true);
-    for (const profile of ["workbench"]) {
-      expect(parsed.permissions[profile].env).toContain("NODE_V8_COVERAGE");
-      expect(parsed.permissions[profile].read).toEqual([".."]);
-    }
   });
 
   test("codex-chatgpt-login fails clearly when Node is unavailable", async () => {

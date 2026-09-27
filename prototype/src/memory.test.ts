@@ -2,7 +2,7 @@
  * Unit tests for src/memory.ts
  *
  * All tests are pure - no Dolt, no network.
- * I/O functions (loadMemoriesByType, loadMemoryIndex, getMemoryBySlug,
+ * I/O functions (loadInjectedMemories, loadIndexedMemories,
  * executeReadMemory) are not tested here; they delegate to doltQuery which
  * talks to Dolt sql-server. The pure functions that compose the session context
  * are fully covered.
@@ -11,9 +11,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildMemoryContextSourceLines,
-  buildReadMemoryTool,
   buildSystemPrompt,
-  buildToolResult,
   escapeUntrustedMemoryContent,
   formatUntrustedMemoryRecord,
   type Memory,
@@ -21,7 +19,7 @@ import {
   memoryClearanceFor,
   type MemoryIndexEntry,
   UNTRUSTED_MEMORY_INSTRUCTIONS,
-} from "./memory";
+} from "./memory.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -539,87 +537,5 @@ describe("memory prompt-injection framing", () => {
     expect(escaped).toBe(
       "`\u200b`\u200b` <untrusted-memory\\> <\\/untrusted-memory>",
     );
-  });
-});
-
-// ── buildReadMemoryTool ───────────────────────────────────────────────────────
-
-describe("buildReadMemoryTool", () => {
-  test("tool name is 'read_memory'", () => {
-    const tool = buildReadMemoryTool();
-    expect(tool.name).toBe("read_memory");
-  });
-
-  test("description mentions loading full content", () => {
-    const tool = buildReadMemoryTool();
-    expect(tool.description.toLowerCase()).toContain("full content");
-  });
-
-  test("description says loaded memory is untrusted data", () => {
-    const tool = buildReadMemoryTool();
-    expect(tool.description.toLowerCase()).toContain("untrusted data");
-  });
-
-  test("description mentions the Context Index as source for slugs", () => {
-    const tool = buildReadMemoryTool();
-    expect(tool.description).toContain("Context Index");
-  });
-
-  test("parameters schema has a required 'slug' string property", () => {
-    const tool = buildReadMemoryTool();
-    const schema = tool.parameters as any;
-    expect(schema.type).toBe("object");
-    expect(schema.properties?.slug?.type).toBe("string");
-    expect(schema.required).toContain("slug");
-  });
-
-  test("slug parameter description gives an example slug", () => {
-    const tool = buildReadMemoryTool();
-    const schema = tool.parameters as any;
-    expect(schema.properties.slug.description).toContain("project_dyfj");
-  });
-});
-
-// ── buildToolResult ───────────────────────────────────────────────────────────
-
-describe("buildToolResult", () => {
-  test("sets role to 'toolResult'", () => {
-    const result = buildToolResult("call-123", "read_memory", "content");
-    expect(result.role).toBe("toolResult");
-  });
-
-  test("carries toolCallId and toolName", () => {
-    const result = buildToolResult("call-abc", "read_memory", "some content");
-    expect(result.toolCallId).toBe("call-abc");
-    expect(result.toolName).toBe("read_memory");
-  });
-
-  test("wraps content as TextContent array", () => {
-    const result = buildToolResult(
-      "call-1",
-      "read_memory",
-      "memory content here",
-    );
-    expect(result.content).toHaveLength(1);
-    expect(result.content[0].type).toBe("text");
-    expect((result.content[0] as any).text).toBe("memory content here");
-  });
-
-  test("defaults isError to false", () => {
-    const result = buildToolResult("call-1", "read_memory", "ok");
-    expect(result.isError).toBe(false);
-  });
-
-  test("isError can be set to true for error responses", () => {
-    const result = buildToolResult("call-1", "read_memory", "not found", true);
-    expect(result.isError).toBe(true);
-  });
-
-  test("timestamp is a recent number", () => {
-    const before = Date.now();
-    const result = buildToolResult("call-1", "read_memory", "x");
-    const after = Date.now();
-    expect(result.timestamp).toBeGreaterThanOrEqual(before);
-    expect(result.timestamp).toBeLessThanOrEqual(after);
   });
 });

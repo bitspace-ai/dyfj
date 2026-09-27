@@ -1,15 +1,13 @@
-import {
-  createMcpHandler,
-  McpServer,
-} from "npm:@modelcontextprotocol/server@2.0.0";
+import { McpServer } from "@modelcontextprotocol/server";
 import { parse as parseToml } from "@std/toml";
-import { z } from "npm:zod@4.4.3";
+import { z } from "zod";
 import {
   type McpHttpServerConfig,
   parseMcpServersConfig,
   parseSecretsConfig,
 } from "./config.ts";
 import { buildExternalMcpCommands } from "./mcp-tools.ts";
+import { startLoopbackMcpServer } from "../testing/servers/mcp-server.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -143,12 +141,9 @@ Deno.test("external MCP discovery and call stay strict, allowlisted, and framed"
     routeMethod: string | null;
     routeName: string | null;
   }> = [];
-  const mcp = createMcpHandler(() => fixtureServer((id) => calls.push(id)), {
-    legacy: "reject",
-  });
-  const http = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    async (request) => {
+  const http = startLoopbackMcpServer(
+    () => fixtureServer((id) => calls.push(id)),
+    async (request, mcp) => {
       if (request.method === "POST") {
         const body = await request.clone().json() as { method?: string };
         if (typeof body.method === "string") {
@@ -164,11 +159,10 @@ Deno.test("external MCP discovery and call stay strict, allowlisted, and framed"
       return mcp.fetch(request);
     },
   );
-  const { port } = http.addr as Deno.NetAddr;
 
   try {
     const built = await buildExternalMcpCommands(
-      [fixtureConfig(`http://127.0.0.1:${port}/mcp`)],
+      [fixtureConfig(http.url)],
       { fixture_mcp: "fixture-secret" },
     );
     assertEquals(built.diagnostics, [{
@@ -211,7 +205,7 @@ Deno.test("external MCP discovery and call stay strict, allowlisted, and framed"
       "server content closed the framing boundary",
     );
   } finally {
-    await Promise.all([mcp.close(), http.shutdown()]);
+    await http.close();
   }
 
   assertEquals(calls, ["fixture-1"]);
@@ -273,12 +267,9 @@ Deno.test("external MCP redirect refusal never reaches the redirect target", asy
 Deno.test("a broken external MCP tool response fails once without replay", async () => {
   let toolCalls = 0;
   const requestIds: unknown[] = [];
-  const mcp = createMcpHandler(() => fixtureServer(() => {}), {
-    legacy: "reject",
-  });
-  const http = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    async (request) => {
+  const http = startLoopbackMcpServer(
+    () => fixtureServer(() => {}),
+    async (request, mcp) => {
       if (request.method === "POST") {
         const body = await request.clone().json() as {
           id?: unknown;
@@ -296,10 +287,9 @@ Deno.test("a broken external MCP tool response fails once without replay", async
       return mcp.fetch(request);
     },
   );
-  const port = (http.addr as Deno.NetAddr).port;
   try {
     const built = await buildExternalMcpCommands(
-      [fixtureConfig(`http://127.0.0.1:${port}/mcp`)],
+      [fixtureConfig(http.url)],
       { fixture_mcp: "fixture-secret" },
     );
     const command = built.commands[0];
@@ -320,7 +310,7 @@ Deno.test("a broken external MCP tool response fails once without replay", async
     }
     assert(rejected, "broken response unexpectedly succeeded");
   } finally {
-    await Promise.all([mcp.close(), http.shutdown()]);
+    await http.close();
   }
   assertEquals(toolCalls, 1);
   assertEquals(requestIds.length, 1);
@@ -328,7 +318,7 @@ Deno.test("a broken external MCP tool response fails once without replay", async
 
 Deno.test("an oversized external MCP tool response fails at the transport bound", async () => {
   let toolCalls = 0;
-  const mcp = createMcpHandler(() => {
+  const http = startLoopbackMcpServer(() => {
     const server = new McpServer({
       name: "oversized-result-fixture",
       version: "1.0.0",
@@ -347,15 +337,10 @@ Deno.test("an oversized external MCP tool response fails at the transport bound"
       },
     );
     return server;
-  }, { legacy: "reject" });
-  const http = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    (request) => mcp.fetch(request),
-  );
-  const port = (http.addr as Deno.NetAddr).port;
+  });
   try {
     const built = await buildExternalMcpCommands(
-      [fixtureConfig(`http://127.0.0.1:${port}/mcp`)],
+      [fixtureConfig(http.url)],
       { fixture_mcp: "fixture-secret" },
     );
     const command = built.commands[0];
@@ -389,14 +374,14 @@ Deno.test("an oversized external MCP tool response fails at the transport bound"
     }
     assert(rejected, "oversized response unexpectedly succeeded");
   } finally {
-    await Promise.all([mcp.close(), http.shutdown()]);
+    await http.close();
   }
   assertEquals(toolCalls, 2);
 });
 
 Deno.test("external search server capability registers web_search and web_fetch commands", async () => {
   let searchCalls = 0;
-  const mcp = createMcpHandler(() => {
+  const http = startLoopbackMcpServer(() => {
     const server = new McpServer({
       name: "search-fixture",
       version: "1.0.0",
@@ -454,19 +439,13 @@ Deno.test("external search server capability registers web_search and web_fetch 
       },
     );
     return server;
-  }, { legacy: "reject" });
-
-  const http = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    (request) => mcp.fetch(request),
-  );
-  const port = (http.addr as Deno.NetAddr).port;
+  });
 
   try {
     const serverConfig: McpHttpServerConfig = {
       id: "search_engine",
       transport: "streamable_http",
-      url: `http://127.0.0.1:${port}/mcp`,
+      url: http.url,
       minimumClearance: "loopback",
       auth: { type: "bearer", secret: "search_mcp" },
       tools: [
@@ -517,6 +496,6 @@ Deno.test("external search server capability registers web_search and web_fetch 
     );
     assertEquals(searchCalls, 1);
   } finally {
-    await Promise.all([mcp.close(), http.shutdown()]);
+    await http.close();
   }
 });

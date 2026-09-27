@@ -5,25 +5,30 @@
 // turn with identical clearance behavior. There must be exactly one copy of
 // the money/audit/clearance orchestration; this is it.
 
-import {
-  type PaidEscalationVerdict,
-  resolveRuntimeEnvDefaults,
-  type WorkbenchAuthContext,
-  type WorkbenchRuntimeEvent,
-  type WorkbenchRuntimeInput,
-  type WorkbenchRuntimeResult,
-} from "./workbench";
-import { type WorkbenchRoutingOptions } from "./provider";
+import type {
+  WorkbenchRuntimeInput,
+  WorkbenchRuntimeResult,
+} from "./workbench.ts";
+import { type WorkbenchRoutingOptions } from "./provider.ts";
 import {
   buildConversationMessages,
   type WorkbenchSessionEvent,
-} from "./sessions";
-import type { CommandDefinition, ConfirmToolApproval } from "./commands";
-import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget";
-import type { PermissionLevel, WorkbenchConfig } from "./config";
-import type { HistoryOmissionProjection } from "./turn-contract";
+} from "./sessions.ts";
+import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
+import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget.ts";
+import {
+  type PermissionLevel,
+  resolveRuntimeEnvDefaults,
+  type WorkbenchConfig,
+} from "./config.ts";
+import type {
+  HistoryOmissionProjection,
+  PaidEscalationVerdict,
+  WorkbenchAuthContext,
+  WorkbenchRuntimeEvent,
+} from "./contract/mod.ts";
 
-export type WorkbenchHttpRuntime = (
+export type TurnRuntime = (
   input: WorkbenchRuntimeInput,
 ) => Promise<WorkbenchRuntimeResult>;
 
@@ -46,7 +51,7 @@ export interface TurnRequestBody {
   budget?: unknown;
 }
 
-import { SESSION_ID_SHAPE } from "./turn-contract";
+import { SESSION_ID_SHAPE } from "./contract/mod.ts";
 
 const TURN_ID_SHAPE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -379,7 +384,7 @@ async function buildResume(
 export interface ExecuteTurnDeps {
   authContext: WorkbenchAuthContext;
   loopback: boolean;
-  runRuntime: WorkbenchHttpRuntime;
+  runRuntime: TurnRuntime;
   fetchSessionEvents: FetchSessionEvents;
   onTextDelta?: (delta: string) => void;
   // Matches WorkbenchRuntimeInput.onRuntimeEvent: a transport handler may return

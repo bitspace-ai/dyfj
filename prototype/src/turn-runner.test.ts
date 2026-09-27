@@ -6,9 +6,9 @@ import {
   PAID_ESCALATION_REMOTE_DENIED,
   paidEscalationVerdict,
   resolveTurnFromBody,
-} from "./turn-runner";
-import { fetchWorkbenchSessionEvents } from "./sessions";
-import type { WorkbenchRuntimeInput } from "./workbench";
+} from "./turn-runner.ts";
+import { fetchWorkbenchSessionEvents } from "./sessions.ts";
+import type { WorkbenchRuntimeInput } from "./workbench.ts";
 
 describe("resolveTurnFromBody paid posture", () => {
   test("selects the fixture runner only for a loopback turn", () => {

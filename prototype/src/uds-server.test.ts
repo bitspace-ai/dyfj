@@ -5,13 +5,13 @@ import {
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
   type WorkbenchUnixServerOptions,
-} from "./uds-server";
-import { JsonRpcPeer } from "./jsonrpc-peer";
-import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc";
-import type { WorkbenchHttpRuntime } from "./turn-runner";
-import type { TurnStreamFrame } from "./turn-contract";
-import type { CommandDefinition } from "./commands";
-import { installRuntimeSigintHandler } from "./runtime-sigint";
+} from "./uds-server.ts";
+import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc.ts";
+import type { TurnRuntime } from "./turn-runner.ts";
+import type { TurnStreamFrame } from "./contract/mod.ts";
+import type { CommandDefinition } from "./commands.ts";
+import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -490,7 +490,7 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("runtime close shuts down warm ACP sessions", async () => {
-    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const { AcpSessionHandleMap } = await import("./acp-session-map.ts");
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     let closed = false;
     await map.acquire({
@@ -535,7 +535,7 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("foreground SIGINT closes the server and reaps warm ACP sessions", async () => {
-    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const { AcpSessionHandleMap } = await import("./acp-session-map.ts");
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     let closed = false;
     await map.acquire({
@@ -628,7 +628,7 @@ describe("serveWorkbenchUnix read methods", () => {
   });
 
   test("runtime/stop reaps warm ACP sessions then returns stopping", async () => {
-    const { AcpSessionHandleMap } = await import("./acp-session-map");
+    const { AcpSessionHandleMap } = await import("./acp-session-map.ts");
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     let closed = false;
     await map.acquire({
@@ -709,7 +709,7 @@ describe("serveWorkbenchUnix read methods", () => {
 
   test("threads boot-discovered external MCP commands into UDS turns", async () => {
     let received: unknown;
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       received = input.externalMcpCommands;
       return anyVal({ receiptId: "r1" });
     };
@@ -962,7 +962,7 @@ describe("serveWorkbenchUnix read methods", () => {
 
 describe("serveWorkbenchUnix turn method", () => {
   test("streams deltas + events and returns the receipt", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       input.onTextDelta?.("hello ");
       input.onTextDelta?.("world");
       input.onRuntimeEvent?.(anyVal({ kind: "tool-call", name: "noop" }));
@@ -1022,7 +1022,7 @@ describe("serveWorkbenchUnix turn method", () => {
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    const runRuntime: WorkbenchHttpRuntime = (input) =>
+    const runRuntime: TurnRuntime = (input) =>
       new Promise((resolve) => {
         markStarted();
         input.abortSignal?.addEventListener("abort", () => {
@@ -1072,7 +1072,7 @@ describe("serveWorkbenchUnix turn method", () => {
     });
     let executorStarted = false;
     let runtimeCalls = 0;
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       runtimeCalls++;
       if (runtimeCalls > 1) return anyVal({ text: "next turn" });
       let matchedSignalReason = false;
@@ -1135,7 +1135,7 @@ describe("serveWorkbenchUnix turn method", () => {
     const finalized = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       input.onCancellationClosed?.();
       markFinalizing();
       await finalized;
@@ -1167,7 +1167,7 @@ describe("serveWorkbenchUnix turn method", () => {
     const bothStarted = new Promise<void>((resolve) => {
       markBothStarted = resolve;
     });
-    const runRuntime: WorkbenchHttpRuntime = (input) =>
+    const runRuntime: TurnRuntime = (input) =>
       new Promise((resolve) => {
         startedCount++;
         if (startedCount === 2) markBothStarted();
@@ -1203,7 +1203,7 @@ describe("serveWorkbenchUnix turn method", () => {
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
-    const runRuntime: WorkbenchHttpRuntime = (input) =>
+    const runRuntime: TurnRuntime = (input) =>
       new Promise((resolve) => {
         markStarted();
         input.abortSignal?.addEventListener("abort", () => {
@@ -1243,7 +1243,7 @@ describe("serveWorkbenchUnix turn method", () => {
       modelSlug: "gemma4:e2b",
       reason: "context_overflow_recovery",
     };
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       input.onTextDelta?.("stale partial");
       await input.onRuntimeEvent?.(anyVal(supersede));
       input.onTextDelta?.("replacement answer");
@@ -1277,7 +1277,7 @@ describe("serveWorkbenchUnix turn method", () => {
       reason: "context_overflow_recovery",
     };
     let replacementProviderCalled = false;
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       input.onTextDelta?.("stale partial");
       await input.onRuntimeEvent?.(anyVal(supersede));
       replacementProviderCalled = true;
@@ -1317,7 +1317,7 @@ describe("serveWorkbenchUnix turn method", () => {
       countIsLowerBound: false,
     };
     let completed = false;
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       await input.onRuntimeEvent?.(anyVal(warning));
       completed = true;
       return anyVal({ receiptId: "r1" });
@@ -1343,7 +1343,7 @@ describe("serveWorkbenchUnix turn method", () => {
     // surfaced — so the turn runs to completion instead of failing on a dropped
     // notification, and no per-event rejection floods back to the runtime.
     let afterEventReached = false;
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       // A plain status event, not either fail-closed safety signal.
       await input.onRuntimeEvent?.(anyVal({ type: "toolCallStarted" }));
       afterEventReached = true;
@@ -1363,7 +1363,7 @@ describe("serveWorkbenchUnix turn method", () => {
   });
 
   test("a turn without a prompt -> invalidParams", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async () => anyVal({});
+    const runRuntime: TurnRuntime = async () => anyVal({});
     const client = await connectClient(
       await startServer({ ...fakes, runRuntime }),
     );
@@ -1376,7 +1376,7 @@ describe("serveWorkbenchUnix turn method", () => {
   // paid inference is available — but only with the explicit per-turn opt-in,
   // decided by the shared turn core. Same gate as the HTTP loopback path.
   test("loopback clearance: paid approved with the per-turn opt-in", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       const verdict = await input.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
@@ -1392,7 +1392,7 @@ describe("serveWorkbenchUnix turn method", () => {
   });
 
   test("paid denied without the per-turn opt-in", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       const verdict = await input.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
@@ -1404,7 +1404,7 @@ describe("serveWorkbenchUnix turn method", () => {
   });
 
   test("loopback inherits approvePaidDefault when the request omits opt-in", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       const verdict = await input.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
@@ -1427,7 +1427,7 @@ describe("serveWorkbenchUnix turn method", () => {
   });
 
   test("applies a loopback budget override", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async (input) =>
+    const runRuntime: TurnRuntime = async (input) =>
       anyVal({ sessionLimitUsd: input.sessionLimitUsd ?? null });
     const client = await connectClient(
       await startServer({ ...fakes, runRuntime }),
@@ -1448,7 +1448,7 @@ describe("serveWorkbenchUnix turn method", () => {
 
 describe("serveWorkbenchUnix turn approval round-trip", () => {
   // A runtime that asks to approve one mutating tool and reports the verdict.
-  function approvalProbeRuntime(): WorkbenchHttpRuntime {
+  function approvalProbeRuntime(): TurnRuntime {
     return async (input) => {
       const verdict = await input.confirmToolApproval?.({
         commandId: "write_file",
@@ -1460,7 +1460,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
     };
   }
 
-  function acpPermissionProbeRuntime(): WorkbenchHttpRuntime {
+  function acpPermissionProbeRuntime(): TurnRuntime {
     return async (input) => {
       const selection = await input.confirmExternalAgentPermission?.({
         sessionId: "external-session",
@@ -1489,7 +1489,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
     };
   }
 
-  function emptyAllowOnlyPermissionProbeRuntime(): WorkbenchHttpRuntime {
+  function emptyAllowOnlyPermissionProbeRuntime(): TurnRuntime {
     return async (input) => {
       const selection = await input.confirmExternalAgentPermission?.({
         sessionId: "external-session",
@@ -1619,7 +1619,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
   });
 
   test("an interrupted approval aborts the server-side turn signal", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       let matchedSignalReason = false;
       try {
         await input.confirmToolApproval?.({
@@ -1662,7 +1662,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
   });
 
   test("a reasonless anomaly-halt denial names the anomaly gate, not the budget ceiling", async () => {
-    const runRuntime: WorkbenchHttpRuntime = async (input) => {
+    const runRuntime: TurnRuntime = async (input) => {
       const verdict = await input.confirmRunawayAnomaly?.({
         kind: "runaway_anomaly",
         trigger: "turn_spend",

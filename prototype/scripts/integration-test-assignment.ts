@@ -11,6 +11,7 @@ export const integrationTestAssignments = {
     "src/mcp-tools.integration.test.ts",
     "src/memory-search.integration.test.ts",
     "scripts/memory-recall-uat-fixture.integration.test.ts",
+    "scripts/test-files.integration.test.ts",
   ],
 } as const;
 

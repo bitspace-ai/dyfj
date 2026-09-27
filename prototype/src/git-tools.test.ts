@@ -5,7 +5,7 @@ import {
   GIT_SUBCOMMANDS,
   type GitResult,
   type GitRunner,
-} from "./git-tools";
+} from "./git-tools.ts";
 
 const ROOT = "/work";
 

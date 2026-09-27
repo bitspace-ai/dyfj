@@ -5,7 +5,7 @@ import {
   renderMarkdownLine,
   visibleWidth,
   wordWrap,
-} from "./streaming-markdown";
+} from "./streaming-markdown.ts";
 
 describe("renderInlineMarkdown", () => {
   test("strips bold markers and applies ANSI when color is on", () => {

@@ -2,12 +2,16 @@ import {
   createMcpHandler,
   legacyStatelessFallback,
   McpServer,
-} from "npm:@modelcontextprotocol/server@2.0.0";
-import { z } from "npm:zod@4.4.3";
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
 import {
   buildMemorySearch,
   type MemorySearchDiagnostic,
 } from "./memory-search.ts";
+import {
+  type LoopbackHttp,
+  startLoopbackHttp,
+} from "../testing/servers/mcp-server.ts";
 
 const FIXTURE_TOOL = "fixture-search";
 
@@ -108,25 +112,6 @@ function fixtureServer(
   return server;
 }
 
-interface LoopbackFixture {
-  url: string;
-  close(): Promise<void>;
-}
-
-function startLoopbackServer(
-  handler: (request: Request) => Response | Promise<Response>,
-): LoopbackFixture {
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    handler,
-  );
-  const { port } = server.addr as Deno.NetAddr;
-  return {
-    url: `http://127.0.0.1:${port}/mcp`,
-    close: () => server.shutdown(),
-  };
-}
-
 Deno.test(
   "modern recall negotiates 2026-07-28 and emits actual routing headers",
   async () => {
@@ -149,7 +134,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackServer(async (request) => {
+    const http = startLoopbackHttp(async (request) => {
       if (request.method === "POST") {
         const body = await request.clone().json() as {
           method?: string;
@@ -207,7 +192,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackServer((request) => mcp.fetch(request));
+    const http = startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
       const recall = buildMemorySearch({ url: http.url, tool: FIXTURE_TOOL });
@@ -229,7 +214,7 @@ Deno.test(
       () => fixtureServer(() => {}),
       { legacy: "reject" },
     );
-    const http = startLoopbackServer((request) => mcp.fetch(request));
+    const http = startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
       const recall = buildMemorySearch(
@@ -258,7 +243,7 @@ Deno.test(
         calls.push(query);
       })
     );
-    const http = startLoopbackServer(async (request) => {
+    const http = startLoopbackHttp(async (request) => {
       if (request.method === "POST") {
         const body = await request.clone().json() as { method?: string };
         if (typeof body.method === "string") methods.push(body.method);
@@ -303,7 +288,7 @@ Deno.test(
     const probeRelease = new Promise<void>((resolve) => {
       releaseProbe = resolve;
     });
-    const http = startLoopbackServer(async (request) => {
+    const http = startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return new Response(null, { status: 405 });
       const body = await request.clone().json() as { method?: string };
       if (typeof body.method === "string") methods.push(body.method);
@@ -345,7 +330,7 @@ Deno.test(
       releaseInitialize = resolve;
     });
     const legacy = legacyStatelessFallback(() => fixtureServer(() => {}));
-    const http = startLoopbackServer(async (request) => {
+    const http = startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return legacy(request);
       const body = await request.clone().json() as { method?: string };
       if (typeof body.method === "string") methods.push(body.method);
@@ -394,7 +379,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackServer(async (request) => {
+    const http = startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return mcp.fetch(request);
       const body = await request.clone().json() as { method?: string };
       if (typeof body.method === "string") observedMethods.push(body.method);
@@ -441,7 +426,7 @@ Deno.test(
   "redirect refusal contains both fixed token header modes on the SDK probe",
   async () => {
     let targetRequests = 0;
-    const target = startLoopbackServer(() => {
+    const target = startLoopbackHttp(() => {
       targetRequests++;
       return new Response("unexpected redirect target");
     });
@@ -463,7 +448,7 @@ Deno.test(
       ) {
         let sourceRequests = 0;
         let tokenHeaderObserved: string | null = null;
-        const source = startLoopbackServer((request) => {
+        const source = startLoopbackHttp((request) => {
           sourceRequests++;
           tokenHeaderObserved = request.headers.get(tokenConfig.expectedHeader);
           return new Response(null, {
@@ -505,7 +490,7 @@ Deno.test(
       { legacy: "reject" },
     );
     const encoder = new TextEncoder();
-    const http = startLoopbackServer(async (request) => {
+    const http = startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return mcp.fetch(request);
       const body = await request.clone().json() as {
         id?: unknown;
@@ -573,7 +558,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackServer((request) => mcp.fetch(request));
+    const http = startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
       const recall = buildMemorySearch(
@@ -645,11 +630,11 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    let http: LoopbackFixture | undefined;
+    let http: LoopbackHttp | undefined;
     const originalNormalize = String.prototype.normalize;
 
     try {
-      http = startLoopbackServer((request) => mcp.fetch(request));
+      http = startLoopbackHttp((request) => mcp.fetch(request));
       String.prototype.normalize = function (form?: string): string {
         const value = String(this);
         if (value.length > 256) {
@@ -703,10 +688,10 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    let http: LoopbackFixture | undefined;
+    let http: LoopbackHttp | undefined;
 
     try {
-      http = startLoopbackServer((request) => mcp.fetch(request));
+      http = startLoopbackHttp((request) => mcp.fetch(request));
       const recall = buildMemorySearch(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),
@@ -738,10 +723,10 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    let http: LoopbackFixture | undefined;
+    let http: LoopbackHttp | undefined;
 
     try {
-      http = startLoopbackServer((request) => mcp.fetch(request));
+      http = startLoopbackHttp((request) => mcp.fetch(request));
       const recall = buildMemorySearch(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),

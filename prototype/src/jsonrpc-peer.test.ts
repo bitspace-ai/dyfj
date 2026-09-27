@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer";
+import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 import {
   encodeFrame,
   FrameDecoder,
@@ -10,7 +10,7 @@ import {
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
-} from "./jsonrpc";
+} from "./jsonrpc.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

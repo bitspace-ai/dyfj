@@ -12,8 +12,9 @@ import {
   parseSecretsConfig,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
+  resolveRuntimeEnvDefaults,
   resolveTrustWorkspaceInstructionsFromEnv,
-} from "./config";
+} from "./config.ts";
 
 function env(map: Record<string, string> = {}) {
   return { get: (k: string) => map[k] };
@@ -256,7 +257,6 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
   // Turn-running engine profiles: each runs the SAME turn, so each must grant
   // the whole engine env surface.
   const ENGINE_PROFILES = [
-    "workbench",
     "serve-unix",
   ] as const;
 
@@ -321,7 +321,7 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
 
 describe("loadConfig daily budget env override", () => {
   test("DYFJ_BUDGET_DAILY_USD overrides the file layer in loadConfig", async () => {
-    const { loadConfig } = await import("./config");
+    const { loadConfig } = await import("./config.ts");
     const config = await loadConfig({
       env: {
         get: (key: string) =>
@@ -334,7 +334,7 @@ describe("loadConfig daily budget env override", () => {
   });
 
   test("the file layer sets the daily envelope when env is silent", async () => {
-    const { loadConfig } = await import("./config");
+    const { loadConfig } = await import("./config.ts");
     const config = await loadConfig({
       env: { get: () => undefined },
       readTextFile: async () => "stub",
@@ -346,7 +346,7 @@ describe("loadConfig daily budget env override", () => {
 
 describe("anomaly multiples config surface", () => {
   test("declared defaults: turn 3×, scope 2×", async () => {
-    const { ANOMALY_DEFAULTS, CONFIG_DEFAULTS } = await import("./config");
+    const { ANOMALY_DEFAULTS, CONFIG_DEFAULTS } = await import("./config.ts");
     expect(ANOMALY_DEFAULTS.turnMultiple).toBe(3.0);
     expect(ANOMALY_DEFAULTS.scopeMultiple).toBe(2.0);
     expect(CONFIG_DEFAULTS.anomalyTurnMultiple).toBe(3.0);
@@ -354,7 +354,7 @@ describe("anomaly multiples config surface", () => {
   });
 
   test("the [anomaly] file layer sets the multiples", async () => {
-    const { loadConfig } = await import("./config");
+    const { loadConfig } = await import("./config.ts");
     const config = await loadConfig({
       env: { get: () => undefined },
       readTextFile: async () => "stub",
@@ -365,7 +365,7 @@ describe("anomaly multiples config surface", () => {
   });
 
   test("env overrides the file layer", async () => {
-    const { loadConfig } = await import("./config");
+    const { loadConfig } = await import("./config.ts");
     const config = await loadConfig({
       env: {
         get: (key: string) =>
@@ -378,7 +378,7 @@ describe("anomaly multiples config surface", () => {
   });
 
   test("a zero or negative multiple fails loud (no degenerate hard stop)", async () => {
-    const { loadConfig } = await import("./config");
+    const { loadConfig } = await import("./config.ts");
     await expect(loadConfig({
       env: { get: () => undefined },
       readTextFile: async () => "stub",
@@ -397,7 +397,7 @@ describe("anomaly multiples config surface", () => {
   });
 
   test("resolveAnomalyDefaultsFromEnv: defaults → env precedence", async () => {
-    const { resolveAnomalyDefaultsFromEnv } = await import("./config");
+    const { resolveAnomalyDefaultsFromEnv } = await import("./config.ts");
     expect(resolveAnomalyDefaultsFromEnv({ get: () => undefined })).toEqual({
       turnMultiple: 3.0,
       scopeMultiple: 2.0,
@@ -413,7 +413,7 @@ describe("anomaly multiples config surface", () => {
 
 describe("anomaly env parsing strictness", () => {
   test("trailing junk fails loud instead of half-parsing ('2x' is not 2)", async () => {
-    const { resolveAnomalyDefaultsFromEnv } = await import("./config");
+    const { resolveAnomalyDefaultsFromEnv } = await import("./config.ts");
     expect(() =>
       resolveAnomalyDefaultsFromEnv({
         get: (key: string) =>
@@ -808,4 +808,26 @@ describe("loadConfig agent tool-step limit", () => {
       })).rejects.toThrow(/max tool steps|integer from 1 through 64/);
     },
   );
+});
+
+describe("resolveRuntimeEnvDefaults trust posture boundary", () => {
+  test("the standalone entrypoint resolves the standing trust posture from its env binding", () => {
+    const prev = process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
+    try {
+      delete process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
+      expect(resolveRuntimeEnvDefaults().trustWorkspaceInstructions).toBe(
+        false,
+      );
+      process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS = "true";
+      expect(resolveRuntimeEnvDefaults().trustWorkspaceInstructions).toBe(
+        true,
+      );
+    } finally {
+      if (prev === undefined) {
+        delete process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
+      } else {
+        process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS = prev;
+      }
+    }
+  });
 });

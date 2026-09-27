@@ -1,0 +1,9 @@
+{
+  "lint": {
+    "plugins": ["./arch-imports-lint-plugin.ts"],
+    "rules": {
+      "tags": [],
+      "include": ["arch-imports/dynamic-import"]
+    }
+  }
+}

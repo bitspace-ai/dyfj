@@ -9,8 +9,66 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Added
+
+- **A `Deno.test` unit lane and shared test fakes**: new tests can now be
+  written with `Deno.test`, `@std/assert` and `@std/testing` (pinned in the
+  prototype import map) and run in a fast lane of their own.
+  `deno task test:unit` in `prototype/` runs every non-integration, non-golden
+  `Deno.test` file with `deno test --parallel`, the op and resource sanitizers
+  enabled (opt-in in the pinned Deno), and no run, net, or env permission; the
+  aggregate gate runs it as `Prototype unit Deno.test suite (test.unit)`,
+  including under `deno task test:fast`, and the prototype `deno task test` runs
+  it before Vitest. `prototype/testing/fakes/` provides the first port fakes,
+  each with its own tests: `ManualClock`, `SequentialIds`, `MapEnv`, and
+  `fakeIo`. The three copies each of the `fakeIo` and `buildClock` test helpers
+  now import these instead. During the transition a test file's framework is
+  read from its imports as `deno info --json` reports them: files whose static
+  imports reach `vitest`, directly or through a helper module, stay under
+  Vitest, which now excludes every other `*.test.ts`.
+- **`arch.imports` gate lane (ratchet mode)**: `scripts/arch-imports.ts` builds
+  the module graph of `prototype/src`, `prototype/mcp`, `prototype/scripts`,
+  and `prototype/diagnostics` (once it exists) with `deno info --json`, plus a
+  `deno lint` plugin that reports every dynamic `import()`, and checks it
+  against the layer rules in `specs/01-architecture.md` §3–4, kept as
+  data in `scripts/arch-layers.json`. It detects import cycles (type-only edges
+  included), upward and non-listed same-layer edges, `cli/` imports outside its
+  allow-list, and dynamic local imports. Today's violations are committed in
+  `scripts/arch-imports-baseline.json` — three cycles (`mcp-tools` ⇄
+  `web-tools`, `workbench` ⇄ `external-agent-runtime`, `sessions` ⇄
+  `idea-packet`) and 32 entries in all. The lane fails on any violation not in
+  the baseline and on any baseline entry that no longer occurs, so the count
+  can only go down. Intentional cycles need a named entry in
+  `scripts/arch-cycles.json` with exact edges inside an import cycle, a
+  justification, and an existing test file; an entry exempts those edges from
+  the cycle and dynamic-import rules only. The list starts empty. Deep imports
+  that bypass a `mod.ts` and a size report (modules over 600 lines, functions
+  over 150 lines) are printed without failing. The lane runs in both
+  `deno task test` and `deno task test:fast` under the existing
+  `test.aggregate` check id.
+
 ### Changed
 
+- **Typecheck file lists are derived, not hand-maintained**: the prototype
+  `check` task and the aggregate gate's source typecheck each carried their own
+  hand-written list of entry files, and the two had drifted apart. Both now run
+  `deno task check:sources`, which typechecks every non-test module under
+  `src/`, `mcp/`, `scripts/` and `testing/`, found by walking the tree; the
+  test-file typecheck (`check:tests`) uses the same discovery module
+  (`prototype/scripts/test-files.ts`, replacing `check-test-files.ts`). A new
+  module is covered on arrival, and modules that were outside both lists are now
+  typechecked too.
+
+- **Local imports carry explicit extensions; `--sloppy-imports` is gone**: every
+  local import under `prototype/` now names its file (`./utils.ts`), and the
+  inline `npm:` specifiers for the MCP SDK, `zod`, `ulid` and `mysql2` moved into
+  the `prototype/deno.json` import map. `--sloppy-imports` is no longer passed by
+  any task (`compile-cli` included), by the CLI when it autostarts the server,
+  by the launcher's `deno run` fallback, or by the typecheck, integration and golden
+  lanes. Runtime behavior is unchanged. An extensionless local import now fails
+  the typecheck instead of being guessed, which keeps file moves grep-safe.
+  `prototype/scripts/add-import-extensions.ts` rewrites extensionless imports in
+  bulk.
 - **Vitest test and hook timeouts are sized to the suite**: the suite ran on
   Vitest's defaults of 5 seconds per test and 10 seconds per hook. Neither was
   chosen for a suite whose workers spawn and reap real processes. Measured on an
@@ -80,7 +138,66 @@ README are tracked separately in its Revision history section.
   instead. A server signalling continuation some other way reads as finished,
   which the source states rather than hides.
 
+### Removed
+
+- **Standalone in-process workbench CLI removed**: `deno task workbench` (root
+  and `prototype/`), `deno task start` (`prototype/`), the `workbench`
+  permission profile they ran under, and the argv CLI in `src/workbench.ts`
+  (its entrypoint, `runWorkbench`, `resolveWorkbenchInvocation`,
+  `buildWorkbenchRuntimeInput`, and the TTY consent prompt
+  `promptPaidEscalationTty`) are gone. Run turns through the `dyfj` launcher
+  over the UDS JSON-RPC seam (`dyfj exec`, or `deno task serve-unix` for the
+  engine alone). `deno task verify-workbench-events` now calls the runtime
+  directly with its routing read from `DYFJ_WORKBENCH_MODEL`, `_HINT` and
+  `_TIER` as before; it no longer prompts for paid-inference consent, so a
+  turn routed to a paid model is declined rather than asked about.
+- **Unused helpers removed**: the CSV parsers (`parseCSVRows`, `parseCsvRow`),
+  `extractText`, `extractThinking` and their `MessageContent` type, and
+  `normaliseStopReason` (`utils.ts`); the `read_memory` definition and result
+  builders (`buildReadMemoryTool`, `buildToolResult`) and the type-keyed memory
+  loaders (`loadMemoriesByType`, `loadMemoryIndex`) (`memory.ts`); and
+  `createProjectWorkbenchSession` (`sessions.ts`). None had a production caller.
+  `buildModelSelectedEventPayload` and `getMemoryBySlug` are still used inside
+  their modules and are no longer exported. The turn runtime type loses its
+  HTTP-era name: `WorkbenchHttpRuntime` is now `TurnRuntime`.
+
+### Fixed
+
+- **ACP agent stdout cancellation is handled cleanly**: when the ACP client
+  closes its connection after the agent process exits but before the agent's
+  stdout has closed (for example, a descendant still holds the pipe), the
+  client now cancels its view of stdout by closing the underlying pipe
+  directly instead of forwarding the cancel reason into Deno's Node-stream
+  adapter. `prototype/src/acp-client.test.ts` covers the case with an agent
+  launched behind a backgrounded descendant that keeps stdout open.
+- **A prototype unit test no longer changes the process environment under the
+  parallel run**: tests in `prototype/src/external-agent-runtime.test.ts` set
+  `PATH`, `HOME`, `DENO_DIR`, `DYFJ_*`, and credential-shaped marker variables
+  through `Deno.env.set` and restored them after an `await`. Vitest's worker threads share one process
+  environment, so tests running at the same time in other files could see the
+  temporary values; one intermittently failed to spawn `bash` by name. Those
+  tests now overlay the values on the reads of their own worker only, with
+  assertions unchanged. Test-only; runtime behavior is unchanged.
+
 ### Added
+
+- **Golden characterization suite and its gate lane (`test.golden`)**:
+  twelve black-box scenarios now pin the engine's observable behavior before
+  the restructuring starts. They cover one-shot and multi-step turns, approval
+  under both permission postures, session resume, the budget ceiling and paid
+  consent gates, the runaway-anomaly hard stop, an ACP fixture turn,
+  mid-stream cancellation, the read and extension RPC methods, and transcript
+  compression. Each scenario drives the real engine server and `dyfj` CLI as
+  child processes against an isolated Dolt fixture, a loopback
+  OpenAI-compatible model server and a loopback Linear MCP server, and compares
+  stream frames, RPC responses, rendered CLI output, and every `events` and
+  `sessions` row it writes with committed snapshots. Only generated IDs,
+  timestamps, durations, temp paths, PIDs and the fixtures' loopback endpoints
+  are normalized; timestamps keep their format, so a change of wire format
+  still fails the lane. The aggregate gate runs the lane under `test.aggregate`,
+  and `deno task test:golden` (in `prototype/`) runs it alone. Three
+  pre-existing defects it surfaced are recorded in `specs/bug-log.md` and are
+  not fixed here.
 
 - **DeepSeek V4.1 Flash and Gemini 3.8 Flash in the model catalog**: both are
   routable, on the fresh-install path and the upgrade path alike. DeepSeek

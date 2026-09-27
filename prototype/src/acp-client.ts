@@ -1,4 +1,9 @@
 import {
+  sanitizeBoundaryText,
+  takeCodePointPrefix,
+  utf8ByteLengthWithinLimit,
+} from "./kernel/mod.ts";
+import {
   client,
   methods,
   ndJsonStream,
@@ -10,9 +15,7 @@ import {
   DomainError,
   type ExternalAgentAccessRoute,
   type ExternalAgentCostBasis,
-  sanitizeBoundaryText,
-  takeCodePointPrefix,
-} from "./turn-contract";
+} from "./contract/mod.ts";
 import { isAbsolute, win32 } from "node:path";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";
@@ -502,7 +505,7 @@ async function spawnAcpChild(
   return {
     pid,
     stdin: Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-    stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    stdout: cancellableStdout(child.stdout),
     stderr: child.stderr,
     status,
     hasExited: () => exited,
@@ -545,6 +548,26 @@ async function spawnAcpChild(
       return success;
     },
   };
+}
+
+// The protocol connection cancels its input when it closes, which can happen
+// while a descendant still holds the agent's stdout open. Pass reads through
+// the Node adapter but tear the pipe down directly on cancel, without handing
+// the cancel reason to the Node stream as an error.
+function cancellableStdout(stdout: Readable): ReadableStream<Uint8Array> {
+  const reader = (Readable.toWeb(stdout) as ReadableStream<Uint8Array>)
+    .getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await reader.read();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    cancel() {
+      stdout.on("error", () => {});
+      stdout.destroy();
+    },
+  });
 }
 
 export const TEST_RUN_DIR_ENV = "DYFJ_TEST_RUN_DIR";
@@ -640,29 +663,12 @@ function addUtf8BytesWithinLimit(
   currentBytes: number,
   maxBytes: number,
 ): number {
-  const encoder = new TextEncoder();
-  const buffer = new Uint8Array(12_288);
-  let bytes = currentBytes;
-  for (let start = 0; start < value.length;) {
-    let end = Math.min(start + 4_096, value.length);
-    if (
-      end < value.length &&
-      value.charCodeAt(end - 1) >= 0xD800 &&
-      value.charCodeAt(end - 1) <= 0xDBFF &&
-      value.charCodeAt(end) >= 0xDC00 &&
-      value.charCodeAt(end) <= 0xDFFF
-    ) {
-      end -= 1;
-    }
-    const { written } = encoder.encodeInto(value.slice(start, end), buffer);
-    bytes += written;
-    if (bytes > maxBytes) {
-      throw new AcpRunnerError(
-        "ACP agent response exceeded the text limit",
-        "protocol",
-      );
-    }
-    start = end;
+  const bytes = utf8ByteLengthWithinLimit(value, maxBytes, currentBytes);
+  if (bytes === undefined) {
+    throw new AcpRunnerError(
+      "ACP agent response exceeded the text limit",
+      "protocol",
+    );
   }
   return bytes;
 }

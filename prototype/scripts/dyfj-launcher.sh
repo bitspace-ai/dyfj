@@ -234,7 +234,6 @@ client_parse_check() {
     DYFJ_PROTOTYPE_ROOT="$proto" deno run \
       --allow-env="$(cli_env_allowlist)" \
       --allow-read \
-      --sloppy-imports \
       "${proto}/src/cli.ts" \
       --parse-check ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} >/dev/null 2>&1
   fi
@@ -297,7 +296,6 @@ probe_runtime() {
       --allow-write \
       --allow-run=deno \
       --allow-net="unix:${sock}" \
-      --sloppy-imports \
       "${proto}/src/cli.ts" \
       ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
   fi
@@ -622,7 +620,6 @@ run_deno_cli() {
     --allow-write \
     --allow-run=deno \
     --allow-net="unix:${sock}" \
-    --sloppy-imports \
     "${proto}/src/cli.ts" \
     "$@"
 }

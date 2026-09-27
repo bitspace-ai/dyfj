@@ -11,7 +11,7 @@ import {
   memoryAuthHeaders,
   memorySearchConfigFromEnv,
   recallRequestInit,
-} from "./memory-search";
+} from "./memory-search.ts";
 
 describe("memorySearchConfigFromEnv", () => {
   test("returns null when no endpoint is configured (capability disabled)", () => {

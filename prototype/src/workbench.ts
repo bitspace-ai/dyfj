@@ -1,21 +1,27 @@
+import {
+  generateSpanId,
+  generateTraceId,
+  generateULID,
+  sanitizeBoundaryText,
+} from "./kernel/mod.ts";
 import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
   SpendBaselines,
-} from "./budget";
+} from "./budget.ts";
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
   RunawayAnomalyHaltError,
-} from "./budget";
-import type { WorkbenchRoutingOptions } from "./provider";
-import type { WorkbenchCallTimings } from "./provider";
+} from "./budget.ts";
+import type { WorkbenchRoutingOptions } from "./provider.ts";
+import type { WorkbenchCallTimings } from "./provider.ts";
 import type {
   WorkbenchMessage,
   WorkbenchModel,
   WorkbenchToolCall,
   WorkbenchTurnResult,
-} from "./provider";
+} from "./provider.ts";
 import {
   HostedInferenceRequiresProviderError,
   HostedProviderCredentialMissingError,
@@ -24,38 +30,43 @@ import {
   WorkbenchModelFastSpeedUnsupportedError,
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
-} from "./provider";
-import { RpcError } from "./jsonrpc";
-import type { PackedContextSummary } from "./repo-context";
-import type { AskContextProfile } from "./repo-context";
-import { loadAgentsInstructions } from "./repo-context";
-import type { WorkspaceRootIdentity } from "./repo-context";
-import type { CommandDefinition, ConfirmToolApproval } from "./commands";
-import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
-import type { AcpSessionHandleMap } from "./acp-session-map";
-import type { PermissionLevel } from "./config";
+} from "./provider.ts";
+import { RpcError } from "./jsonrpc.ts";
+import type { PackedContextSummary } from "./repo-context.ts";
+import type { AskContextProfile } from "./repo-context.ts";
+import { loadAgentsInstructions } from "./repo-context.ts";
+import type { WorkspaceRootIdentity } from "./repo-context.ts";
+import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
+import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
+import type { BudgetTallyMode, PermissionLevel } from "./config.ts";
 import type {
-  ExternalAgentTurnReceipt,
-  HistoryOmissionProjection,
+  AcpRunnerSelection,
+  ExternalAgentWorkbenchRuntimeResult,
   HistoryOmissionReceipt,
+  LengthRecoveryOutcome,
   NativeTurnReceipt,
+  PaidEscalationVerdict,
+  Runner,
   SupersedingRetryStartedEvent,
-  TurnAbortedEvent,
   UnparsedToolCallMarkupDetectedEvent,
-} from "./turn-contract";
+  WorkbenchAuthContext,
+  WorkbenchRuntimeEvent,
+  WorkbenchRuntimeMode,
+  WorkbenchRuntimeRequest,
+} from "./contract/mod.ts";
 import {
   buildHistoryOmissionNotice,
   DomainError,
   formatHistoryOmissionSummary,
   historyOmissionForDelivery,
   MAX_REASON_FIELD_BYTES,
-  sanitizeBoundaryText,
   summarizeError,
-} from "./turn-contract";
+  workspaceRootForTransport,
+} from "./contract/mod.ts";
 import type {
   CompressionCompletion,
   CompressionOutcome,
-} from "./context-compression";
+} from "./context-compression.ts";
 import {
   compressElderTranscript,
   COMPRESSION_SYSTEM_PROMPT,
@@ -64,33 +75,16 @@ import {
   partitionForCompression,
   SUMMARY_TRUST_POLICY,
   VERBATIM_TAIL_TURNS,
-} from "./context-compression";
-import type {
-  ContextOverflowRecoverer,
-  LengthRecoveryOutcome,
-  LengthStopClassification,
-} from "./length-recovery";
+} from "./context-compression.ts";
+import type { ContextOverflowRecoverer } from "./length-recovery.ts";
 import {
   buildContinuationMessages,
   classifyLengthStop,
   CONTEXT_OVERFLOW_WINDOW_FRACTION,
   ContextWindowOverflowError,
   isBudgetRefusal,
-} from "./length-recovery";
-import {
-  AGENT_DEFAULTS,
-  ANOMALY_DEFAULTS,
-  BUDGET_DEFAULTS,
-  loadSecretsConfig,
-  resolveAgentDefaultsFromEnv,
-  resolveAnomalyDefaultsFromEnv,
-  resolveBudgetDefaultsFromEnv,
-  resolvePrincipalId,
-  resolveTrustWorkspaceInstructionsFromEnv,
-} from "./config";
-import { resolveSecretsIntoEnv } from "./secrets";
-import process from "node:process";
-import { createInterface } from "node:readline/promises";
+} from "./length-recovery.ts";
+import { AGENT_DEFAULTS, ANOMALY_DEFAULTS, BUDGET_DEFAULTS } from "./config.ts";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;
@@ -144,65 +138,26 @@ export interface PaidEscalationPreflightInput {
   perCallLimitUsd: number;
 }
 
-export type BudgetTallyMode = "on" | "paid" | "off";
-
 export interface WorkbenchInvocation {
-  mode: "ask" | "next-work" | "turn";
+  mode: WorkbenchRuntimeMode;
   prompt: string;
   routingOptions: WorkbenchRoutingOptions;
 }
 
 /**
- * How the caller of a runtime turn was identified and why the call was
- * permitted. Populated by transport layers (HTTP bearer auth); absent for
- * direct CLI invocation, which is authenticated by the local OS session.
+ * The engine's runtime input: the plain-data request from contract/ plus the
+ * in-process hooks and ports this engine consumes. Only the request half is a
+ * contract; everything declared here stays inside the process.
  */
-export interface WorkbenchAuthContext {
-  transport: "loopback" | "remote";
-  authnStatus: "authenticated" | "unauthenticated";
-  authnMechanism: "local_user" | "api_key";
-  authnIssuerRef: string;
-  authzBasis: string;
-}
-
-export interface WorkbenchRuntimeInput {
-  mode: WorkbenchInvocation["mode"];
-  prompt: string;
+export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   routingOptions: WorkbenchRoutingOptions;
-  /** Explicit external-loop selection. When absent, the runtime selects native execution or ACP based on model routing. */
-  runner?: {
-    kind: "acp";
-    profile: "fixture" | "codex-chatgpt";
-  };
   /** External-agent permission requests fail closed when this is absent. */
   confirmExternalAgentPermission?: (
     prompt: AcpPermissionPrompt,
     signal: AbortSignal,
   ) => Promise<AcpPermissionSelection>;
-  turnId?: string;
   abortSignal?: AbortSignal;
   onCancellationClosed?: () => void;
-  authContext?: WorkbenchAuthContext;
-  /**
-   * Client-requested workspace root for the read-only file tools (e.g. the
-   * directory the `dyfj` CLI was invoked in). Honored only for a loopback
-   * operator — see workspaceRootForTransport. Absent => the server default
-   * (DYFJ_ROOT or the server's cwd).
-   */
-  workspaceRoot?: string;
-  /**
-   * Standing operator elevation of the workspace's AGENTS.md into the
-   * system prompt (engine config, default off; loopback only — resolved at
-   * the transport boundary). Without it, no workspace instructions are
-   * loaded or injected at all: selecting a workspace is not a trust
-   * decision, setting this posture is.
-   */
-  trustWorkspaceInstructions?: boolean;
-  /**
-   * Resume an existing session: events append to this id and the session
-   * row is updated rather than created. Omit for a fresh session.
-   */
-  sessionId?: string;
   /**
    * Earlier turns in the session as real conversation messages, assembled by
    * the caller (e.g. from session_start/model_response events). Seeded into the
@@ -211,15 +166,6 @@ export interface WorkbenchRuntimeInput {
    * Companion turn mode only; ignored for one-shot ask/next-work modes.
    */
   conversationMessages?: WorkbenchMessage[];
-  /** Immutable-event omission facts computed by the resume projection. */
-  historyOmission?: HistoryOmissionProjection;
-  /**
-   * Last runner-reported external session id recorded for this Workbench
-   * session, assembled by the caller from prior events. Continuity evidence
-   * only: it identifies the native session a replacement turn succeeds, and
-   * never grants access to it.
-   */
-  priorExternalSessionId?: string;
   onTextDelta?: (delta: string) => void;
   /**
    * Runtime lifecycle events. A streaming caller (one that renders `onTextDelta`)
@@ -236,8 +182,9 @@ export interface WorkbenchRuntimeInput {
   /**
    * Presentation sink for human-readable turn narration: context loading,
    * workspace/model/route lines, turn text, budget tally, and the receipt.
-   * The in-process one-shot path injects console output; the UDS server leaves
-   * it unset so client presentation never renders on the server console.
+   * An in-process caller (the verify-workbench-events check) injects console
+   * output; the UDS server leaves it unset so client presentation never
+   * renders on the server console.
    * Default: silent — the runtime core does not narrate.
    */
   log?: (...parts: unknown[]) => void;
@@ -245,7 +192,8 @@ export interface WorkbenchRuntimeInput {
    * Consent handler for paid-inference escalation. Returns a verdict
    * (approve | deny+reason | escalate), not void/throw — so a headless driver
    * can pre-approve or escalate. Drivers inject their own; the core defaults to
-   * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
+   * deny and makes no TTY assumption. The UDS turn runner grants approval
+   * only to a loopback caller that set approvePaidInference for the turn.
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
   /**
@@ -270,19 +218,6 @@ export interface WorkbenchRuntimeInput {
   confirmToolApproval?: ConfirmToolApproval;
   /** Boot-discovered external MCP commands; filtered again by turn clearance. */
   externalMcpCommands?: readonly CommandDefinition[];
-  /**
-   * Principal identity recorded on this turn's events. Lifted to the boundary
-   * : entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
-   * resolveRuntimeEnvDefaults(); the core reads only this field (default
-   * "user"), never the environment. A headless driver supplies its own.
-   */
-  principalId?: string;
-  /**
-   * Server/workspace root the read-only file tools fall back to when no loopback
-   * workspace is bound. Lifted to the boundary: entrypoints pass
-   * DYFJ_ROOT; the core falls back to Deno.cwd() when this is absent.
-   */
-  rootOverride?: string;
   /**
    * Whether to print the end-of-turn budget tally — a presentation/driver
    * concern. Lifted to the boundary: entrypoints resolve it from
@@ -357,143 +292,6 @@ export interface WorkbenchRuntimeInput {
   recoverContextOverflow?: ContextOverflowRecoverer;
 }
 
-export type WorkbenchRuntimeEvent =
-  | { type: "sessionStart"; sessionId: string; traceId: string; mode: string }
-  | { type: "inputReceived"; sessionId: string; promptLength: number }
-  | {
-    type: "contextBuilt";
-    sessionId: string;
-    sourceCount: number;
-    profile?: unknown;
-  }
-  | {
-    type: "modelSelected";
-    sessionId: string;
-    modelSlug: string;
-    tier: 0 | 1 | 2;
-    reason: string;
-  }
-  | {
-    type: "beforeProviderRequest";
-    sessionId: string;
-    modelSlug: string;
-    estimatedInputCount: number;
-  }
-  | {
-    type: "afterProviderResponse";
-    sessionId: string;
-    modelSlug: string;
-    inputCount: number;
-    outputCount: number;
-    totalMs?: number;
-  }
-  | {
-    type: "toolStepStarted";
-    sessionId: string;
-    step: number;
-    toolCallCount: number;
-  }
-  | {
-    /** The configured tool-step limit was reached; a no-tools conclusion is attempted next. */
-    type: "toolStepLimitReached";
-    sessionId: string;
-    maxSteps: number;
-  }
-  | {
-    type: "toolCallStarted";
-    sessionId: string;
-    commandId: string;
-    callId: string;
-  }
-  | {
-    type: "toolCallCompleted";
-    sessionId: string;
-    commandId: string;
-    callId: string;
-    isError: boolean;
-    durationMs: number;
-    errorName?: string;
-    errorMessage?: string;
-  }
-  | {
-    /** Bounded, content-free protocol evidence for one external recall connection. */
-    type: "memoryRecallNegotiated";
-    sessionId: string;
-    era: "modern" | "legacy";
-    revision: string;
-    server?: { name: string; version: string };
-    extensions: string[];
-  }
-  | {
-    /**
-     * A provider call stopped with stopReason "length", classified from the
-     * catalog limits + reported usage. severity is "warn" for output-budget
-     * exhaustion (a bounded retry follows) and "error" for context overflow
-     * (the turn is about to fail unless a recovery hook supplies a plan).
-     */
-    type: "lengthStopDetected";
-    sessionId: string;
-    modelSlug: string;
-    classification: LengthStopClassification;
-    severity: "warn" | "error";
-    inputTokens: number;
-    outputTokens: number;
-    contextWindow?: number;
-    maxOutputTokens?: number;
-  }
-  /**
-   * A superseding retry is starting: everything streamed for this turn so far
-   * is stale and the retry's answer replaces it. Shape pinned in the wire
-   * contract (turn-contract.ts) because streaming clients must act on it —
-   * reset the rendered buffer — not merely display it.
-   */
-  | SupersedingRetryStartedEvent
-  | TurnAbortedEvent
-  | UnparsedToolCallMarkupDetectedEvent
-  | {
-    /** Terminal outcome of length recovery for one provider call. */
-    type: "lengthRecoveryFinished";
-    sessionId: string;
-    modelSlug: string;
-    outcome: LengthRecoveryOutcome;
-    retriesUsed: number;
-  }
-  | {
-    /**
-     * Elder conversation turns were compressed into a named-section summary
-     * (proactively at ~50% of the window, or reactively on overflow recovery).
-     * Surfaced so compression is never invisible context surgery.
-     */
-    type: "contextCompressed";
-    sessionId: string;
-    compressorModelSlug: string;
-    trigger: "proactive" | "context_overflow";
-    turnsCompressed: number;
-    tokensBeforeEstimate: number;
-    tokensAfterEstimate: number;
-  }
-  | { type: "turnCompleted"; sessionId: string; traceId: string }
-  | {
-    type: "turnFailed";
-    sessionId: string;
-    traceId: string;
-    errorName?: string;
-    errorMessage: string;
-  }
-  | {
-    /**
-     * Ephemeral ACP reasoning/tool status for the interactive spinner.
-     * Thought activity never carries raw model text. Not written to
-     * durable session history.
-     */
-    type: "agentProgress";
-    sessionId: string;
-    kind: "thought" | "tool_call";
-    title?: string;
-    name?: string;
-    status?: string;
-  };
-
 export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
   context: {
     profile?: AskContextProfile;
@@ -507,8 +305,6 @@ export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
   };
   validation?: WorkbenchValidationSummary;
 }
-
-export type ExternalAgentWorkbenchRuntimeResult = ExternalAgentTurnReceipt;
 
 export type WorkbenchRuntimeResult =
   | NativeWorkbenchRuntimeResult
@@ -564,23 +360,12 @@ export interface ToolResultSummary {
   result: string;
 }
 
-/**
- * Verdict returned by a paid-inference consent handler. A structured
- * value, not a throw, so a driver can express the third state — escalate — that
- * void/throw could not: the driver can't decide and an out-of-band operator
- * must. `approve` proceeds; `deny` and `escalate` both stop the turn.
- */
-export type PaidEscalationVerdict =
-  | { decision: "approve" }
-  | { decision: "deny"; reason?: string }
-  | { decision: "escalate"; reason?: string };
-
 export class PaidEscalationDeclinedError extends DomainError {
   readonly verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>;
   // verdict.reason comes from the injected confirmPaidEscalation callback —
-  // an operator's TTY answer today, potentially a remote approval peer
-  // tomorrow. DomainError certifies the message THIS constructor builds, not
-  // that field's content, so it's capped and control-char-stripped before it
+  // the turn runner's loopback posture today, potentially a remote approval
+  // peer tomorrow. DomainError certifies the message THIS constructor builds,
+  // not that field's content, so it's capped and control-char-stripped before it
   // reaches either the message or the stored `.verdict` (read directly by
   // workbench.ts's log branch, not just via .message).
   constructor(
@@ -818,22 +603,6 @@ export function toolStepToMessages(
     });
   }
   return messages;
-}
-
-/**
- * Decide whether to honor a client-requested workspace root for the read-only
- * file tools. Only a loopback operator — who already has full local file access,
- * since the server runs as them — may steer the root to their own working
- * directory. A remote or shared consumer (even with the bearer key) is pinned to
- * the server default, so a crafted `workspace` can never aim the file tools at
- * arbitrary host paths. Returns the requested root for a loopback caller (or
- * undefined when none was sent), and undefined for any non-loopback transport.
- */
-export function workspaceRootForTransport(
-  requested: string | undefined,
-  transport: WorkbenchAuthContext["transport"],
-): string | undefined {
-  return transport === "loopback" ? requested : undefined;
 }
 
 /** Concatenated text of a transcript, for the fallback input-token estimate. */
@@ -1090,57 +859,6 @@ export function maybeBuildPaidEscalationPreflightBanner(
   return buildPaidEscalationPreflightBanner(input);
 }
 
-export function parseBudgetTallyMode(
-  value: string | undefined,
-): BudgetTallyMode {
-  if (value === "on" || value === "off" || value === "paid") return value;
-  return "paid";
-}
-
-/**
- * Resolve the env-derived runtime defaults at the process boundary,
- * so the core runtime reads no environment variables. Entrypoints (the CLI
- * one-shot and the UDS server) spread this into the runtime input; a headless
- * driver supplies these explicitly instead. `rootOverride` stays undefined when
- * DYFJ_ROOT is unset, so the core falls back to the process cwd.
- */
-export function resolveRuntimeEnvDefaults(): Pick<
-  WorkbenchRuntimeInput,
-  | "principalId"
-  | "rootOverride"
-  | "budgetTallyMode"
-  | "defaultSessionBudgetUsd"
-  | "defaultPerCallBudgetUsd"
-  | "defaultDailyBudgetUsd"
-  | "anomalyTurnMultiple"
-  | "anomalyScopeMultiple"
-  | "trustWorkspaceInstructions"
-  | "maxToolSteps"
-> {
-  // process.env adapter so the declared resolvers (config.ts) read the same
-  // environment as the rest of this boundary.
-  const env = { get: (key: string): string | undefined => process.env[key] };
-  const budget = resolveBudgetDefaultsFromEnv(env);
-  const anomaly = resolveAnomalyDefaultsFromEnv(env);
-  const agent = resolveAgentDefaultsFromEnv(env);
-  return {
-    principalId: resolvePrincipalId(env),
-    // The standalone in-process entrypoint is the operator's own process
-    // (loopback-equivalent), so the standing trust posture is honored here
-    // via its environment binding; served sessions resolve it from engine
-    // config at their transport boundary.
-    trustWorkspaceInstructions: resolveTrustWorkspaceInstructionsFromEnv(env),
-    rootOverride: Deno.env.get("DYFJ_ROOT") ?? undefined,
-    budgetTallyMode: parseBudgetTallyMode(process.env.DYFJ_BUDGET_TALLY),
-    defaultSessionBudgetUsd: budget.sessionLimitUsd,
-    defaultPerCallBudgetUsd: budget.perCallLimitUsd,
-    defaultDailyBudgetUsd: budget.dailyLimitUsd,
-    anomalyTurnMultiple: anomaly.turnMultiple,
-    anomalyScopeMultiple: anomaly.scopeMultiple,
-    maxToolSteps: agent.maxToolSteps,
-  };
-}
-
 export function shouldPrintBudgetTally(
   mode: BudgetTallyMode,
   session: { paidCalls: number },
@@ -1223,108 +941,16 @@ function printNextWorkResult(
   }
 }
 
-function getArg(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  return idx !== -1 ? args[idx + 1] : undefined;
-}
-
-function firstPositional(args: string[]): string | undefined {
-  return args.find((arg, idx) =>
-    !arg.startsWith("--") && (idx === 0 || !args[idx - 1]?.startsWith("--"))
-  );
-}
-
-function parseTier(value: string | undefined): 0 | 1 | 2 | undefined {
-  if (value === undefined) return undefined;
-  const tier = Number(value);
-  return tier === 0 || tier === 1 || tier === 2 ? tier : undefined;
-}
-
-function parseHint(
-  value: string | undefined,
-): "code" | "chat" | "reasoning" | undefined {
-  return value === "code" || value === "chat" || value === "reasoning"
-    ? value
-    : undefined;
-}
-
-export function resolveWorkbenchInvocation(
-  args: string[],
-  env: Record<string, string | undefined> = process.env,
-): WorkbenchInvocation {
-  const mode =
-    args[0] === "ask" || args[0] === "next-work"
-      ? args[0]
-      : "turn";
-  const effectiveArgs = mode === "ask" || mode === "next-work"
-    ? args.slice(1)
-    : args;
-  const cliModel = getArg(effectiveArgs, "--model");
-  const cliTier = getArg(effectiveArgs, "--tier");
-  const cliHint = getArg(effectiveArgs, "--hint");
-  const prompt = mode === "ask" || mode === "next-work"
-    ? firstPositional(effectiveArgs) ?? "what should I work on next here?"
-    : getArg(effectiveArgs, "--prompt") ??
-      "What is the next useful DYFJ workbench step?";
-
-  return {
-    mode,
-    prompt,
-    routingOptions: {
-      modelId: cliModel ?? env.DYFJ_WORKBENCH_MODEL,
-      hint: parseHint(cliHint ?? env.DYFJ_WORKBENCH_HINT),
-      tier: parseTier(cliTier ?? env.DYFJ_WORKBENCH_TIER),
-    },
-  };
-}
-
-export function buildWorkbenchRuntimeInput(
-  invocation: WorkbenchInvocation,
-): WorkbenchRuntimeInput {
-  return {
-    mode: invocation.mode,
-    prompt: invocation.prompt,
-    routingOptions: invocation.routingOptions,
-  };
-}
-
 /**
  * Default consent handler: deny. The core makes no TTY assumption —
  * drivers inject their own. A headless Workshop driver pre-approves or escalates
- * to an out-of-band operator; the CLI uses promptPaidEscalationTty.
+ * to an out-of-band operator.
  */
 function denyPaidEscalation(): Promise<PaidEscalationVerdict> {
   return Promise.resolve({
     decision: "deny",
     reason: "no consent handler configured",
   });
-}
-
-/**
- * CLI consent driver: prompt the operator on an interactive TTY. A
- * non-interactive CLI session escalates (operator must approve out of band)
- * rather than guessing or blocking.
- */
-export async function promptPaidEscalationTty(
-  banner: string,
-): Promise<PaidEscalationVerdict> {
-  if (!process.stdin.isTTY) {
-    return {
-      decision: "escalate",
-      reason: "non-interactive session cannot grant paid-inference consent",
-    };
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question(
-      `${banner}\nContinue with paid inference? Type yes to run: `,
-    );
-    return answer.trim().toLowerCase() === "yes"
-      ? { decision: "approve" }
-      : { decision: "deny", reason: "operator declined" };
-  } finally {
-    rl.close();
-  }
 }
 
 async function writeMaybe(
@@ -1407,51 +1033,46 @@ function estimateRuntimeInputCount(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export async function runWorkbench(
-  args = process.argv.slice(2),
-): Promise<WorkbenchRuntimeResult | void> {
-  const invocation = resolveWorkbenchInvocation(args);
-  const runtimeInput = buildWorkbenchRuntimeInput(invocation);
-  // This in-process one-shot path owns the Dolt pool lifecycle: the
-  // runtime no longer closes it, so close here after the single turn so the
-  // process exits cleanly.
-  const { closeDoltPool } = await import("./utils");
-  try {
-    return await runWorkbenchRuntime({
-      ...runtimeInput,
-      ...resolveRuntimeEnvDefaults(),
-      // The in-process one-shot CLI is its own presenter.
-      log: console.log,
-      onTextDelta: (delta) => {
-        process.stdout.write(delta);
-      },
-      confirmPaidEscalation: promptPaidEscalationTty,
-    });
-  } finally {
-    await closeDoltPool();
+/**
+ * The external-agent (ACP) runner the engine delegates to. The composition
+ * root binds the concrete runner; the engine never imports it.
+ */
+export type ExternalAgentRunner = Runner<
+  WorkbenchRuntimeInput & { runner: AcpRunnerSelection },
+  ExternalAgentWorkbenchRuntimeResult
+>;
+
+export interface WorkbenchRuntimeServices {
+  externalAgentRunner?: ExternalAgentRunner;
+}
+
+function requireExternalAgentRunner(
+  services: WorkbenchRuntimeServices | undefined,
+): ExternalAgentRunner {
+  const runner = services?.externalAgentRunner;
+  if (runner === undefined) {
+    throw new DomainError("No external-agent runner is configured");
   }
+  return runner;
 }
 
 export function runWorkbenchRuntime(
-  runtimeInput: WorkbenchRuntimeInput & {
-    runner: {
-      kind: "acp";
-      profile: "fixture" | "codex-chatgpt";
-    };
+  runtimeInput: WorkbenchRuntimeInput & { runner: AcpRunnerSelection },
+  services: WorkbenchRuntimeServices & {
+    externalAgentRunner: ExternalAgentRunner;
   },
-  services?: { acpSessions?: AcpSessionHandleMap },
 ): Promise<ExternalAgentWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput & { runner?: undefined },
-  services?: { acpSessions?: AcpSessionHandleMap },
+  services?: WorkbenchRuntimeServices,
 ): Promise<NativeWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
-  services?: { acpSessions?: AcpSessionHandleMap },
+  services?: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult>;
 export async function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
-  services?: { acpSessions?: AcpSessionHandleMap },
+  services?: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult> {
   if (runtimeInput.runner?.kind === "acp") {
     if (
@@ -1483,13 +1104,10 @@ export async function runWorkbenchRuntime(
         }
       }
     }
-    const { runExternalAgentWorkbenchRuntime } = await import(
-      "./external-agent-runtime"
-    );
-    return await runExternalAgentWorkbenchRuntime({
+    return await requireExternalAgentRunner(services).run({
       ...runtimeInput,
       runner: runtimeInput.runner,
-    }, { sessionMap: services?.acpSessions });
+    });
   }
 
   const {
@@ -1499,7 +1117,7 @@ export async function runWorkbenchRuntime(
     withDefaultLocalWorkbenchModels,
     WorkbenchModelNotFoundError,
     WorkbenchModelNotRoutableError,
-  } = await import("./provider");
+  } = await import("./provider.ts");
 
   let acpProfile: "codex-chatgpt" | "fixture" | null = null;
   let acpSelectedModelSlug: string | null = null;
@@ -1573,10 +1191,7 @@ export async function runWorkbenchRuntime(
         }
       }
     }
-    const { runExternalAgentWorkbenchRuntime } = await import(
-      "./external-agent-runtime"
-    );
-    return await runExternalAgentWorkbenchRuntime({
+    return await requireExternalAgentRunner(services).run({
       ...runtimeInput,
       routingOptions: {
         ...runtimeInput.routingOptions,
@@ -1585,7 +1200,7 @@ export async function runWorkbenchRuntime(
           : {}),
       },
       runner: { kind: "acp", profile: acpProfile },
-    }, { sessionMap: services?.acpSessions });
+    });
   }
 
   return await runNativeWorkbenchRuntime(runtimeInput);
@@ -1596,12 +1211,9 @@ async function runNativeWorkbenchRuntime(
 ): Promise<NativeWorkbenchRuntimeResult> {
   const {
     eventExists,
-    generateULID,
-    generateTraceId,
-    generateSpanId,
     writeEvent,
     writeModelSelectedEvent,
-  } = await import("./utils");
+  } = await import("./utils.ts");
   const {
     defaultLocalWorkbenchModels,
     estimateTextTokens,
@@ -1613,35 +1225,35 @@ async function runNativeWorkbenchRuntime(
     runWorkbenchTurn,
     selectWorkbenchModel,
     withDefaultLocalWorkbenchModels,
-  } = await import("./provider");
+  } = await import("./provider.ts");
   const {
     BudgetTracker,
     ceilingConfirmationStoreFor,
     createRunawayAnomalyGate,
     createTurnBudgetCeilingGate,
     fetchSpendBaselines,
-  } = await import("./budget");
+  } = await import("./budget.ts");
   const {
     buildAskSystemPrompt,
     buildContextSourceLines,
     loadAskRepoContext,
-  } = await import("./repo-context");
-  const { loadCompanionBasePrompt } = await import("./prompts");
+  } = await import("./repo-context.ts");
+  const { loadCompanionBasePrompt } = await import("./prompts.ts");
   const {
     buildMemoryContextSourceLines,
     loadInjectedMemories,
     loadIndexedMemories,
     buildSystemPrompt,
     memoryClearanceFor,
-  } = await import("./memory");
+  } = await import("./memory.ts");
   const {
     createCommandRegistry,
     invokeCommandWithEvent,
     registerCoreCommands,
-  } = await import("./commands");
-  const { externalMcpCommandsForTransport } = await import("./mcp-tools");
+  } = await import("./commands.ts");
+  const { externalMcpCommandsForTransport } = await import("./mcp-tools.ts");
   const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
-    "./memory-search"
+    "./memory-search.ts"
   );
   const {
     buildWorkbenchSessionContent,
@@ -1649,7 +1261,7 @@ async function runNativeWorkbenchRuntime(
     createWorkbenchSession,
     fetchWorkbenchSessionWorkspace,
     updateWorkbenchSession,
-  } = await import("./sessions");
+  } = await import("./sessions.ts");
 
   const {
     mode,
@@ -3743,7 +3355,7 @@ async function runNativeWorkbenchRuntime(
     // the runtime no longer closes the shared Dolt pool. A long-running
     // host (the UDS server) runs many concurrent turns through this function; a
     // per-turn close would end the pool out from under an in-flight turn and
-    // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
+    // crash it. Pool lifecycle is owned by the entrypoint (an in-process caller
     // closes it in a finally; the server keeps it for the process lifetime).
     // If an integrity audit/transcript write failed inside
     // the try above, surface it to the caller instead of masking it behind a
@@ -3795,15 +3407,4 @@ async function runNativeWorkbenchRuntime(
       validation,
     };
   }
-}
-
-if (import.meta.main) {
-  // Credential the process from declared secret pointers before any turn reads
-  // a provider key. env wins; presence-only; a locked/unavailable pointer
-  // degrades that provider fail-closed. (`deno task workbench` carries no
-  // dynamic --allow-run for the resolver binary, so a resolver that needs one
-  // simply reports unavailable and the operator projects the key ambiently or
-  // via .env — `dyfj start` is the credentialed daily-driver path.)
-  await resolveSecretsIntoEnv(await loadSecretsConfig());
-  await runWorkbench();
 }

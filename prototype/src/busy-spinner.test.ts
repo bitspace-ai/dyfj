@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { type BusySpinnerOptions, createBusySpinner } from "./busy-spinner";
+import { type BusySpinnerOptions, createBusySpinner } from "./busy-spinner.ts";
 
 const ERASE = "\r\x1b[2K";
 

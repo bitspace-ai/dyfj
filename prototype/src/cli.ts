@@ -13,6 +13,7 @@
  * `dyfj start` to foreground the local UDS runtime.
  */
 
+import { hasDotPathComponent, takeCodePointPrefix } from "./kernel/mod.ts";
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import {
@@ -20,33 +21,30 @@ import {
   formatHistoryOmissionSummary,
   isSupersedingRetryStarted,
   MAX_ERROR_SUMMARY_BYTES,
-  sanitizeBoundaryText,
   SESSION_ID_SHAPE,
   summarizeError,
-  takeCodePointPrefix,
   type TurnReceipt,
   type TurnStreamFrame,
-} from "./turn-contract";
+} from "./contract/mod.ts";
 import {
   connectUnixClient,
   type ToolApprovalVerdict,
   type UnixClient,
   type UnixClientOptions,
-} from "./uds-client";
-import { RpcError, RpcErrorCode } from "./jsonrpc";
-import { resolveSocketPath } from "./uds-path";
-import { assertSecureMemoryUrl } from "./memory-search";
+} from "./uds-client.ts";
+import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
+import { resolveSocketPath } from "./uds-path.ts";
+import { assertSecureMemoryUrl } from "./memory-search.ts";
 import {
   loadMcpServersConfig,
   loadSecretsConfig,
   type McpHttpServerConfig,
   type SecretsConfig,
-} from "./config";
-import { mcpServerNetGrants } from "./mcp-net-grants";
-import { secretsRunGrant } from "./secrets";
-import { createStreamingMarkdownRenderer } from "./streaming-markdown";
-import { type BusySpinner, createBusySpinner } from "./busy-spinner";
-import { hasDotPathComponent } from "./lexical-path";
+} from "./config.ts";
+import { mcpServerNetGrants } from "./mcp-net-grants.ts";
+import { secretsRunGrant } from "./secrets.ts";
+import { createStreamingMarkdownRenderer } from "./streaming-markdown.ts";
+import { type BusySpinner, createBusySpinner } from "./busy-spinner.ts";
 import {
   defaultIdeaPacketRegistry,
   draftWorkPacketFromContext,
@@ -59,12 +57,12 @@ import {
   stripOuterQuotes,
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
-} from "./idea-packet";
-import type { WorkbenchSessionEvent } from "./sessions";
-import { type FrictionPostResult, normalizeFrictionContext } from "./friction";
+} from "./idea-packet.ts";
+import type { WorkbenchSessionEvent } from "./sessions.ts";
+import { type FrictionPostResult, normalizeFrictionContext } from "./friction.ts";
 
 // ── Seam contract (shared with the server) ──────────────────────────
-// The receipt and stream frame shapes are defined once in turn-contract.ts and
+// The receipt and stream frame shapes are defined once in contract/turn.ts and
 // imported by both sides, so this thin client can never silently drift from
 // what the server sends. Type imports are erased at compile, and the one value
 // import (the superseding-retry guard) comes from that dependency-free
@@ -668,7 +666,7 @@ export function formatPostureLine(posture: SessionPosture): string {
 // error), and dispatchRequest (jsonrpc.ts) forwards err.message verbatim to
 // the client. The server console already logs class-only for exactly this
 // reason (workbench.ts's [turn-error] line, and every joint that forwards a
-// turn error toward a client — see summarizeError in turn-contract.ts, the
+// turn error toward a client — see summarizeError in contract/turn.ts, the
 // shared discipline this client and the server both apply); the client had no
 // equivalent discipline, so an unbounded server message printed pages of raw
 // payload to the operator's terminal. summarizeError caps what any client
@@ -3010,10 +3008,9 @@ export async function runModels(
  * Returns the canonical uppercase session id.
  */
 export function normalizeSessionRef(value: string): string {
-  const ULID = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
   const slugMatch = value.match(/^workbench-([0-9A-Za-z]{26})$/i);
   const candidate = slugMatch ? slugMatch[1] : value;
-  if (!ULID.test(candidate)) {
+  if (!SESSION_ID_SHAPE.test(candidate)) {
     throw new Error(
       `--session expects a session id or a slug as listed by 'dyfj sessions', got: ${value}`,
     );
@@ -3316,7 +3313,6 @@ export function buildServeUnixArgs(
     // committed profile — only launch-resolved from the operator's config.
     ...(envGrants != null ? [`--allow-env=${envGrants.join(",")}`] : []),
     "--env-file=.env",
-    "--sloppy-imports",
     "src/uds-serve.ts",
     ...(autostarted ? ["--autostarted"] : []),
   ];
