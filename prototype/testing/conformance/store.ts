@@ -22,6 +22,7 @@ import {
 } from "@std/assert";
 import {
   type EventInsert,
+  type EventType,
   MCP_STDIO_MEMORY_CLEARANCE,
   MEMORY_VISIBILITY_ALL,
   memoryClearanceFor,
@@ -54,9 +55,7 @@ function id(prefix: string): string {
   return `${prefix}${String(counter).padStart(6, "0")}`;
 }
 
-export function event(
-  fields: Partial<Record<string, unknown>> = {},
-): EventInsert {
+export function event(fields: Partial<EventInsert> = {}): EventInsert {
   return {
     event_id: id("EV"),
     session_id: "S1",
@@ -377,19 +376,22 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     },
   );
 
-  run("events with the same explicit created_at order by event_id", async (store) => {
-    const at = "2026-01-01 00:00:00.000000";
-    const later = event({ event_id: "EV_TIE_B", created_at: at });
-    const earlier = event({ event_id: "EV_TIE_A", created_at: at });
-    // Written in the opposite order to their ids.
-    await commitEvents(store, later);
-    await commitEvents(store, earlier);
-    const ids = async (order: "asc" | "desc") =>
-      (await store.events.bySession({ sessionId: "S1", limit: 10, order }))
-        .map((r) => r.event_id);
-    assertEquals(await ids("asc"), ["EV_TIE_A", "EV_TIE_B"]);
-    assertEquals(await ids("desc"), ["EV_TIE_B", "EV_TIE_A"]);
-  });
+  run(
+    "events with the same explicit created_at order by event_id",
+    async (store) => {
+      const at = "2026-01-01 00:00:00.000000";
+      const later = event({ event_id: "EV_TIE_B", created_at: at });
+      const earlier = event({ event_id: "EV_TIE_A", created_at: at });
+      // Written in the opposite order to their ids.
+      await commitEvents(store, later);
+      await commitEvents(store, earlier);
+      const ids = async (order: "asc" | "desc") =>
+        (await store.events.bySession({ sessionId: "S1", limit: 10, order }))
+          .map((r) => r.event_id);
+      assertEquals(await ids("asc"), ["EV_TIE_A", "EV_TIE_B"]);
+      assertEquals(await ids("desc"), ["EV_TIE_B", "EV_TIE_A"]);
+    },
+  );
 
   run(
     "bySession rejects a malformed asOf and a non-positive limit",
@@ -416,9 +418,9 @@ export function storeConformance(subject: StoreConformanceSubject): void {
 
   run("a batch is atomic: one invalid event writes nothing", async (store) => {
     const good = event();
-    const bad = event();
-    delete (bad as Record<string, unknown>).trace_id;
-    await assertRejects(() => commitEvents(store, good, bad));
+    // Deliberately invalid: an event without its NOT NULL trace_id.
+    const { trace_id: _omitted, ...bad } = event();
+    await assertRejects(() => commitEvents(store, good, bad as EventInsert));
     assertFalse(await store.events.exists(String(good.event_id)));
     assertEquals(await store.events.countBySession("S1"), 0);
   });
@@ -555,14 +557,17 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     },
   );
 
-  run("an aborted commit rejects even when the batch is empty", async (store) => {
-    const controller = new AbortController();
-    controller.abort();
-    const error = await assertRejects(() =>
-      store.journal.commit({ events: [] }, { signal: controller.signal })
-    );
-    assertEquals((error as Error).name, "AbortError");
-  });
+  run(
+    "an aborted commit rejects even when the batch is empty",
+    async (store) => {
+      const controller = new AbortController();
+      controller.abort();
+      const error = await assertRejects(() =>
+        store.journal.commit({ events: [] }, { signal: controller.signal })
+      );
+      assertEquals((error as Error).name, "AbortError");
+    },
+  );
 
   run("an aborted commit writes nothing", async (store) => {
     const controller = new AbortController();
@@ -954,7 +959,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       const cost = (
         sessionId: string,
         cost_total: number | null,
-        event_type = "model_response",
+        event_type: EventType = "model_response",
       ) => event({ session_id: sessionId, event_type, cost_total });
       await commitEvents(
         store,

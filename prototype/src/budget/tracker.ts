@@ -26,7 +26,11 @@
  */
 
 import { generateSpanId, generateULID } from "../kernel/mod.ts";
-import type { Journal } from "../store/mod.ts";
+import {
+  budgetSummaryEvent,
+  type EventInsert,
+  type Journal,
+} from "../store/mod.ts";
 import {
   type Env,
   processEnv,
@@ -339,12 +343,11 @@ export class BudgetTracker {
     overrides: { eventId?: string; spanId?: string; parentSpanId?: string } =
       {},
     extra: Record<string, unknown> = {},
-  ): Record<string, unknown> {
+  ): EventInsert {
     const summary = this.getSummary();
-    return {
+    return budgetSummaryEvent({
       event_id: overrides.eventId ?? generateULID(),
       session_id: this.sessionId,
-      event_type: "budget_summary",
       trace_id: this.traceId,
       span_id: overrides.spanId ?? generateSpanId(),
       parent_span_id: overrides.parentSpanId ?? null,
@@ -362,7 +365,7 @@ export class BudgetTracker {
       // failed, so an audit-log gap is durably on record, not just a
       // scrolled-away console line).
       content: JSON.stringify({ ...summary, ...extra }),
-    };
+    });
   }
 
   /**

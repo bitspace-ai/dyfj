@@ -1,5 +1,5 @@
 // `DoltStore` against a scripted pool: the SQL each reader issues, the
-// historical-schema fallbacks, parameter binding, and how the journal chooses
+// boot-time column check, parameter binding, and how the journal chooses
 // between one auto-committed statement and a transaction. Behavior against a
 // real Dolt server is the conformance suite's job
 // (`dolt-store.integration.test.ts`).
@@ -18,6 +18,11 @@ import {
   selectOnly,
 } from "./dolt-pool.ts";
 import { DoltStore } from "./dolt.ts";
+import { CANONICAL_TABLE_COLUMNS, type EventInsert } from "./generated/rows.ts";
+import {
+  isDatabaseUnavailableError,
+  MissingSchemaColumnsError,
+} from "./schema-check.ts";
 
 interface Call {
   sql: string;
@@ -79,7 +84,7 @@ function scriptedPool(
 
 const SESSION = "01ABCDEF0123456789ABCDEF01";
 
-function event(fields: Record<string, unknown> = {}) {
+function event(fields: Partial<EventInsert> = {}): EventInsert {
   return {
     event_id: "01EVENT",
     session_id: SESSION,
@@ -149,114 +154,6 @@ Deno.test("events.bySession rejects a malformed AS OF value before touching SQL"
   assertEquals(calls, []);
 });
 
-/** Fail until the query projects `marker`; then answer with `row`. */
-function missingColumnUntil(marker: string, column: string, row: object) {
-  return scriptedPool((sql) =>
-    sql.includes(marker)
-      ? [row]
-      : new Error(`column "${column}" could not be found in any table in scope`)
-  );
-}
-
-Deno.test("events.bySession projects provider-call nulls for an AS OF schema before migration 003", async () => {
-  const { pool, calls } = missingColumnUntil(
-    "NULL AS provider_call_order",
-    "provider_call_order",
-    { event_id: "01HISTORICAL", provider_call_order: null },
-  );
-  const rows = await new DoltStore(pool).events.bySession({
-    sessionId: SESSION,
-    asOf: "2026-06-12 10:00:00",
-    limit: 10,
-    order: "asc",
-  });
-  assertEquals(calls.length, 2);
-  assertStringIncludes(
-    calls[0]!.sql,
-    "provider_call_order, provider_call_purpose, provider_error_class",
-  );
-  assertStringIncludes(calls[1]!.sql, "NULL AS provider_call_order");
-  assertStringIncludes(calls[1]!.sql, "NULL AS unparsed_tool_call_count");
-  assertStringIncludes(calls[1]!.sql, "NULL AS trace_flags");
-  assertEquals(rows, [{ event_id: "01HISTORICAL", provider_call_order: "" }]);
-});
-
-Deno.test("events.bySession projects trace-context nulls for an AS OF schema before migration 007", async () => {
-  const { pool, calls } = missingColumnUntil(
-    "NULL AS trace_flags",
-    "trace_flags",
-    { event_id: "01PRETRACE" },
-  );
-  await new DoltStore(pool).events.bySession({
-    sessionId: SESSION,
-    asOf: "2026-08-11 10:00:00",
-    limit: 10,
-    order: "asc",
-  });
-  assertEquals(calls.length, 2);
-  assertStringIncludes(calls[0]!.sql, "trace_flags, trace_state, span_kind");
-  assertStringIncludes(calls[1]!.sql, "NULL AS trace_flags");
-  assertStringIncludes(
-    calls[1]!.sql,
-    "provider_call_order, provider_call_purpose",
-  );
-});
-
-Deno.test("events.bySession projects unparsed-markup nulls for an AS OF schema before migration 004", async () => {
-  const { pool, calls } = missingColumnUntil(
-    "NULL AS unparsed_tool_call_count",
-    "unparsed_tool_call_count",
-    { event_id: "01PRE004" },
-  );
-  await new DoltStore(pool).events.bySession({
-    sessionId: SESSION,
-    asOf: "2026-08-01 10:00:00",
-    limit: 10,
-    order: "asc",
-  });
-  assertEquals(calls.length, 2);
-  assertStringIncludes(
-    calls[1]!.sql,
-    "provider_call_order, provider_call_purpose",
-  );
-  assertStringIncludes(calls[1]!.sql, "NULL AS unparsed_tool_call_count");
-  assertStringIncludes(calls[1]!.sql, "NULL AS trace_flags");
-});
-
-Deno.test("events.bySession retains migration-005 runner fields when auth evidence is absent", async () => {
-  const { pool, calls } = missingColumnUntil(
-    "NULL AS runner_route_source",
-    "runner_route_source",
-    { event_id: "01PRE006" },
-  );
-  await new DoltStore(pool).events.bySession({
-    sessionId: SESSION,
-    asOf: "2026-08-05 10:00:00",
-    limit: 10,
-    order: "asc",
-  });
-  assertEquals(calls.length, 2);
-  assertStringIncludes(calls[1]!.sql, "runner_kind, runner_profile");
-  assertStringIncludes(calls[1]!.sql, "NULL AS runner_route_source");
-});
-
-Deno.test("events.bySession does not retry for an unrelated missing column", async () => {
-  const error = new Error(
-    'column "tool_name" could not be found in any table in scope',
-  );
-  const { pool, calls } = scriptedPool(() => error);
-  const rejected = await assertRejects(() =>
-    new DoltStore(pool).events.bySession({
-      sessionId: SESSION,
-      asOf: "2026-06-12 10:00:00",
-      limit: 10,
-      order: "asc",
-    })
-  );
-  assertEquals(rejected, error);
-  assertEquals(calls.length, 1);
-});
-
 Deno.test("events.exists and countBySession render driver values", async () => {
   const { pool } = scriptedPool((sql) =>
     sql.includes("COUNT(*)") ? [{ count: 3 }] : [{ event_id: "01EVENT" }]
@@ -304,17 +201,133 @@ Deno.test("memories bind slug, clearance and type values instead of interpolatin
   assertEquals(calls[1]!.params, ["client_safe", "public", "project"]);
 });
 
-Deno.test("models.listActive falls back to the pre-hardware-column query", async () => {
-  const { pool, calls } = scriptedPool((sql) =>
-    sql.includes("architecture")
-      ? new Error("Unknown column 'architecture' in 'field list'")
-      : [{ slug: "legacy" }]
+Deno.test("models.listActive reads the current catalog columns, with no fallback", async () => {
+  const error = new Error("Unknown column 'architecture' in 'field list'");
+  const { pool, calls } = scriptedPool(() => error);
+  const rejected = await assertRejects(() =>
+    new DoltStore(pool).models.listActive()
   );
-  assertEquals(await new DoltStore(pool).models.listActive(), [{
-    slug: "legacy",
-  }]);
-  assertEquals(calls.length, 2);
-  assertFalse(calls[1]!.sql.includes("architecture"));
+  assertEquals(rejected, error);
+  assertEquals(calls.length, 1);
+  assertStringIncludes(calls[0]!.sql, "architecture, total_params_b");
+});
+
+Deno.test("events.bySession has no fallback for a column a snapshot predates", async () => {
+  const error = new Error(
+    'column "trace_flags" could not be found in any table in scope',
+  );
+  const { pool, calls } = scriptedPool(() => error);
+  const rejected = await assertRejects(() =>
+    new DoltStore(pool).events.bySession({
+      sessionId: SESSION,
+      asOf: "2026-06-12 10:00:00",
+      limit: 10,
+      order: "asc",
+    })
+  );
+  assertEquals(rejected, error);
+  assertEquals(calls.length, 1);
+});
+
+// ─── boot-time column check ──────────────────────────────────────────────────
+
+function liveColumns(
+  omit: readonly string[] = [],
+): Record<string, string>[] {
+  return Object.entries(CANONICAL_TABLE_COLUMNS).flatMap(([tbl, columns]) =>
+    columns
+      .filter((col) => !omit.includes(`${tbl}.${col}`))
+      .map((col) => ({ tbl, col }))
+  );
+}
+
+Deno.test("assertCanonicalColumns passes a database at the current baseline", async () => {
+  const extra = [{ tbl: "events", col: "vestigial" }, {
+    tbl: "other",
+    col: "x",
+  }];
+  const { pool, calls } = scriptedPool(() => [...liveColumns(), ...extra]);
+  await new DoltStore(pool).assertCanonicalColumns();
+  assertEquals(calls.length, 1);
+  assertStringIncludes(calls[0]!.sql, "FROM information_schema.columns");
+  assertStringIncludes(calls[0]!.sql, "table_schema = database()");
+});
+
+Deno.test("assertCanonicalColumns names every missing column and points at the migrations", async () => {
+  const { pool } = scriptedPool(() =>
+    liveColumns([
+      "events.trace_flags",
+      "events.span_kind",
+      "models.architecture",
+    ])
+  );
+  const error = await assertRejects(
+    () => new DoltStore(pool).assertCanonicalColumns(),
+    MissingSchemaColumnsError,
+  );
+  assertEquals(error.missing, [
+    { table: "events", column: "trace_flags" },
+    { table: "events", column: "span_kind" },
+    { table: "models", column: "architecture" },
+  ]);
+  assertStringIncludes(
+    error.message,
+    "events.trace_flags, events.span_kind, models.architecture",
+  );
+  assertStringIncludes(error.message, "schema/migrations/");
+});
+
+Deno.test("assertCanonicalColumns reports a missing table as all of its columns", async () => {
+  const { pool } = scriptedPool(() =>
+    liveColumns().filter((row) => row.tbl !== "prompts")
+  );
+  const error = await assertRejects(
+    () => new DoltStore(pool).assertCanonicalColumns(),
+    MissingSchemaColumnsError,
+  );
+  assertEquals(
+    error.missing.map(({ column }) => column),
+    [...CANONICAL_TABLE_COLUMNS.prompts],
+  );
+});
+
+Deno.test("only connection, access and unknown-database errors count as unavailable", () => {
+  for (
+    const code of [
+      "ECONNREFUSED",
+      "ETIMEDOUT",
+      "ENOTFOUND",
+      "PROTOCOL_CONNECTION_LOST",
+      "ER_ACCESS_DENIED_ERROR",
+      "ER_BAD_DB_ERROR",
+    ]
+  ) {
+    assert(
+      isDatabaseUnavailableError(Object.assign(new Error(code), { code })),
+    );
+  }
+  // A check that reached the database and failed is not "unavailable": the
+  // boot must fail rather than serve with the check incomplete.
+  for (
+    const code of ["ER_PARSE_ERROR", "ER_TABLEACCESS_DENIED_ERROR", undefined]
+  ) {
+    assertFalse(
+      isDatabaseUnavailableError(Object.assign(new Error("x"), { code })),
+    );
+  }
+  assertFalse(isDatabaseUnavailableError(new MissingSchemaColumnsError([])));
+  assertFalse(isDatabaseUnavailableError("ECONNREFUSED"));
+});
+
+Deno.test("assertCanonicalColumns passes a connection failure through unchanged", async () => {
+  const refused = Object.assign(new Error("connect ECONNREFUSED"), {
+    code: "ECONNREFUSED",
+  });
+  const { pool } = scriptedPool(() => refused);
+  const rejected = await assertRejects(() =>
+    new DoltStore(pool).assertCanonicalColumns()
+  );
+  assertEquals(rejected, refused);
 });
 
 Deno.test("spend.baselines scopes by session and day and maps the rollup row", async () => {

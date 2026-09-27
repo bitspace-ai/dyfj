@@ -78,7 +78,10 @@ import {
   registerCoreCommands,
   type ToolApprovalVerdict,
 } from "./commands.ts";
-import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
+import type {
+  AcpPermissionPrompt,
+  AcpPermissionSelection,
+} from "./acp-client.ts";
 import { AcpSessionHandleMap } from "./acp-session-map.ts";
 import {
   FRICTION_SEVERITIES,
@@ -89,7 +92,11 @@ import {
   postFriction,
   requireFrictionIssueIdentifier,
 } from "./friction.ts";
-import { isValidAsOfTimestamp, type Store } from "./store/mod.ts";
+import {
+  type EventInsert,
+  isValidAsOfTimestamp,
+  type Store,
+} from "./store/mod.ts";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -199,9 +206,7 @@ export interface WorkbenchUnixServerOptions {
   /** Injectable wall clock for deterministic friction receipt tests. */
   frictionNow?: () => Date;
   /** Injectable durable tool-receipt writer for friction/post tests. */
-  frictionEventWriter?: (
-    event: Record<string, unknown>,
-  ) => Promise<void> | void;
+  frictionEventWriter?: (event: EventInsert) => Promise<void> | void;
   /** Engine default companion model (config), applied to bare turns. */
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config); the seam is always loopback. */
@@ -494,7 +499,7 @@ export function buildWorkbenchHandlers(
     ((input: { sessionId: string }) =>
       countWorkbenchSessionEvents({ ...input, events: store().events }));
   const frictionEventWriter = options.frictionEventWriter ??
-    (async (event: Record<string, unknown>) => {
+    (async (event: EventInsert) => {
       await store().journal.commit({ events: [event] });
     });
   let frictionQueue: Promise<void> = Promise.resolve();

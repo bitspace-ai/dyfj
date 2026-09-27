@@ -10,6 +10,7 @@ import {
 import { executeBash } from "./exec-tools.ts";
 import { executeGit, GIT_SUBCOMMANDS } from "./git-tools.ts";
 import { generateSpanId, generateULID, utf8SafePrefix } from "./kernel/mod.ts";
+import { type EventInsert, toolCallEvent } from "./store/mod.ts";
 
 export type PrincipalType = "human" | "agent" | "service";
 export type PolicyDecision = "allow" | "ask" | "deny";
@@ -233,7 +234,7 @@ export interface CommandEventContext {
   parentSpanId?: string;
   durationMs?: number;
   /** Persists the tool_call event (the caller commits it to the journal). */
-  writeEvent: (event: Record<string, unknown>) => Promise<void> | void;
+  writeEvent: (event: EventInsert) => Promise<void> | void;
 }
 
 export function createCommandRegistry(
@@ -1104,7 +1105,7 @@ export function buildCommandToolCallEventPayload(
   loggedArguments: Record<string, unknown> = call.arguments,
   redactResult = false,
   spanKind?: CommandDefinition["spanKind"],
-): Record<string, unknown> {
+): EventInsert {
   const isError = result.isError;
   // An error reason is our own message (safe); a success result may carry the
   // command's raw output, which for redactResult tools (bash) is replaced with
@@ -1114,10 +1115,9 @@ export function buildCommandToolCallEventPayload(
     : redactResult
     ? REDACTED
     : formatCommandResult(result.result);
-  return {
+  return toolCallEvent({
     event_id: context.eventId ?? generateULID(),
     session_id: context.sessionId,
-    event_type: "tool_call",
     trace_id: context.traceId,
     span_id: context.spanId ?? generateSpanId(),
     parent_span_id: context.parentSpanId ?? null,
@@ -1142,7 +1142,7 @@ export function buildCommandToolCallEventPayload(
         : `${call.commandId} denied: ${result.reason}`
       : `${call.commandId} allowed`,
     duration_ms: context.durationMs ?? null,
-  };
+  });
 }
 
 export async function invokeCommandWithEvent<TResult = unknown>(

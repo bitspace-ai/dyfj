@@ -28,13 +28,20 @@ import type {
 } from "./acp-session-map.ts";
 import type { WorkbenchMessage, WorkbenchRoutingOptions } from "./provider.ts";
 import {
+  agentPermissionEvent,
+  agentResponseEvent,
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
   createWorkbenchSession,
+  errorEvent,
   type EventInsert,
   fetchWorkbenchSessionWorkspaceRecord,
+  runnerSelectedEvent,
+  sessionEndEvent,
   type SessionReader,
+  sessionStartEvent,
   type Store,
+  toolCallEvent,
   updateWorkbenchSession,
 } from "./store/mod.ts";
 import {
@@ -1189,30 +1196,32 @@ export async function runExternalAgentWorkbenchRuntime(
     verdict: AcpPermissionVerdict,
     signal: AbortSignal,
   ) => {
-    await writeEvent({
-      event_id: generateULID(),
-      session_id: sessionId,
-      event_type: "agent_permission",
-      trace_id: traceId,
-      span_id: generateSpanId(),
-      parent_span_id: rootSpanId,
-      principal_id: verdict.source === "operator"
-        ? principalId
-        : "dyfj-workbench",
-      principal_type: verdict.source === "operator" ? "human" : "service",
-      action: verdict.source === "operator" ? "decide" : "enforce",
-      resource: verdict.toolCallId,
-      authz_basis: authContext.authzBasis,
-      ...authnFields,
-      permission_verdict: verdict.decision === "approve"
-        ? "approved"
-        : verdict.decision === "deny"
-        ? "denied"
-        : "cancelled",
-      runner_kind: "external_agent",
-      runner_profile: profile.slug,
-      runner_protocol: "acp",
-    }, { signal });
+    await writeEvent(
+      agentPermissionEvent({
+        event_id: generateULID(),
+        session_id: sessionId,
+        trace_id: traceId,
+        span_id: generateSpanId(),
+        parent_span_id: rootSpanId,
+        principal_id: verdict.source === "operator"
+          ? principalId
+          : "dyfj-workbench",
+        principal_type: verdict.source === "operator" ? "human" : "service",
+        action: verdict.source === "operator" ? "decide" : "enforce",
+        resource: verdict.toolCallId,
+        authz_basis: authContext.authzBasis,
+        ...authnFields,
+        permission_verdict: verdict.decision === "approve"
+          ? "approved"
+          : verdict.decision === "deny"
+          ? "denied"
+          : "cancelled",
+        runner_kind: "external_agent",
+        runner_profile: profile.slug,
+        runner_protocol: "acp",
+      }),
+      { signal },
+    );
   };
 
   try {
@@ -1227,10 +1236,9 @@ export async function runExternalAgentWorkbenchRuntime(
       sessionId,
       promptLength: input.prompt.length,
     });
-    await writeEvent({
+    await writeEvent(sessionStartEvent({
       event_id: generateULID(),
       session_id: sessionId,
-      event_type: "session_start",
       trace_id: traceId,
       span_id: rootSpanId,
       principal_id: principalId,
@@ -1240,7 +1248,7 @@ export async function runExternalAgentWorkbenchRuntime(
       authz_basis: authContext.authzBasis,
       ...authnFields,
       content: input.prompt,
-    });
+    }));
     sessionStartWritten = true;
     if (input.sessionId === undefined) {
       await createWorkbenchSession({
@@ -1272,30 +1280,32 @@ export async function runExternalAgentWorkbenchRuntime(
       evidence: AcpRouteEvidence,
       signal: AbortSignal,
     ) => {
-      await writeEvent({
-        event_id: generateULID(),
-        session_id: sessionId,
-        event_type: "runner_selected",
-        trace_id: traceId,
-        span_id: generateSpanId(),
-        parent_span_id: rootSpanId,
-        principal_id: principalId,
-        principal_type: "agent",
-        action: "select",
-        resource: profile.slug,
-        authz_basis: authContext.authzBasis,
-        ...authnFields,
-        runner_kind: "external_agent",
-        runner_profile: profile.slug,
-        runner_protocol: "acp",
-        runner_transport: profile.transport,
-        runner_access_route: profile.accessRoute,
-        runner_cost_basis: profile.costBasis,
-        runner_workspace: workspaceEvidence,
-        runner_evidence_scope: "outer_only",
-        runner_auth_type: evidence.authenticationType ?? null,
-        runner_route_source: evidence.source,
-      }, { signal });
+      await writeEvent(
+        runnerSelectedEvent({
+          event_id: generateULID(),
+          session_id: sessionId,
+          trace_id: traceId,
+          span_id: generateSpanId(),
+          parent_span_id: rootSpanId,
+          principal_id: principalId,
+          principal_type: "agent",
+          action: "select",
+          resource: profile.slug,
+          authz_basis: authContext.authzBasis,
+          ...authnFields,
+          runner_kind: "external_agent",
+          runner_profile: profile.slug,
+          runner_protocol: "acp",
+          runner_transport: profile.transport,
+          runner_access_route: profile.accessRoute,
+          runner_cost_basis: profile.costBasis,
+          runner_workspace: workspaceEvidence,
+          runner_evidence_scope: "outer_only",
+          runner_auth_type: evidence.authenticationType ?? null,
+          runner_route_source: evidence.source,
+        }),
+        { signal },
+      );
       verifiedRouteEvidence = evidence;
     };
     // Prior messages of this Workbench session. A live native handle carries them
@@ -1393,10 +1403,9 @@ export async function runExternalAgentWorkbenchRuntime(
     const toolEvidence = prepareAcpToolEvidence(result.toolEvidence);
     const writeToolHistoryGap = () => {
       const eventId = generateULID();
-      return writeEvent({
+      return writeEvent(toolCallEvent({
         event_id: eventId,
         session_id: sessionId,
-        event_type: "tool_call",
         trace_id: traceId,
         span_id: generateSpanId(),
         parent_span_id: rootSpanId,
@@ -1414,17 +1423,16 @@ export async function runExternalAgentWorkbenchRuntime(
         runner_kind: "external_agent",
         runner_profile: profile.slug,
         runner_protocol: "acp",
-      });
+      }));
     };
     if (toolEvidence.status === "unavailable") {
       await writeToolHistoryGap();
     } else {
       try {
         for (const call of toolEvidence.calls) {
-          await writeEvent({
+          await writeEvent(toolCallEvent({
             event_id: generateULID(),
             session_id: sessionId,
-            event_type: "tool_call",
             trace_id: traceId,
             span_id: generateSpanId(),
             parent_span_id: rootSpanId,
@@ -1442,7 +1450,7 @@ export async function runExternalAgentWorkbenchRuntime(
             runner_kind: "external_agent",
             runner_profile: profile.slug,
             runner_protocol: "acp",
-          });
+          }));
         }
       } catch (error) {
         try {
@@ -1468,10 +1476,9 @@ export async function runExternalAgentWorkbenchRuntime(
       toolEvidence,
       historyOmission,
     });
-    await writeEvent({
+    await writeEvent(agentResponseEvent({
       event_id: generateULID(),
       session_id: sessionId,
-      event_type: "agent_response",
       trace_id: traceId,
       span_id: generateSpanId(),
       parent_span_id: rootSpanId,
@@ -1502,11 +1509,10 @@ export async function runExternalAgentWorkbenchRuntime(
       runner_evidence_scope: "outer_only",
       runner_auth_type: verifiedRouteEvidence?.authenticationType ?? null,
       runner_route_source: verifiedRouteEvidence?.source ?? null,
-    });
-    await writeEvent({
+    }));
+    await writeEvent(sessionEndEvent({
       event_id: generateULID(),
       session_id: sessionId,
-      event_type: "session_end",
       trace_id: traceId,
       span_id: generateSpanId(),
       parent_span_id: rootSpanId,
@@ -1517,7 +1523,7 @@ export async function runExternalAgentWorkbenchRuntime(
       authz_basis: authContext.authzBasis,
       ...authnFields,
       duration_ms: Date.now() - startedAt,
-    });
+    }));
     try {
       await updateWorkbenchSession({
         journal: store.journal,
@@ -1658,10 +1664,9 @@ export async function runExternalAgentWorkbenchRuntime(
     }
     if (sessionStartWritten) {
       try {
-        await writeEvent({
+        await writeEvent(errorEvent({
           event_id: generateULID(),
           session_id: sessionId,
-          event_type: "error",
           trace_id: traceId,
           span_id: generateSpanId(),
           parent_span_id: rootSpanId,
@@ -1680,15 +1685,14 @@ export async function runExternalAgentWorkbenchRuntime(
             runner_auth_type: verifiedRouteEvidence.authenticationType ?? null,
             runner_route_source: verifiedRouteEvidence.source,
           }),
-        });
+        }));
       } catch {
         // The originating failure remains authoritative.
       }
       try {
-        await writeEvent({
+        await writeEvent(sessionEndEvent({
           event_id: generateULID(),
           session_id: sessionId,
-          event_type: "session_end",
           trace_id: traceId,
           span_id: generateSpanId(),
           parent_span_id: rootSpanId,
@@ -1699,7 +1703,7 @@ export async function runExternalAgentWorkbenchRuntime(
           authz_basis: authContext.authzBasis,
           ...authnFields,
           duration_ms: Date.now() - startedAt,
-        });
+        }));
       } catch {
         // Continue to the client-visible failure notification.
       }

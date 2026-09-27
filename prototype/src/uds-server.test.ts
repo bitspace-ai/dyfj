@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { MemoryStore } from "./store/mod.ts";
+import { type EventInsert, MemoryStore } from "./store/mod.ts";
 import {
   buildTurnHandlers,
   serveWorkbenchUnix,
@@ -738,7 +738,7 @@ describe("serveWorkbenchUnix read methods", () => {
   test("friction/post numbers comments and preserves write approval", async () => {
     const createdBodies: string[] = [];
     const approvals: unknown[] = [];
-    const receiptEvents: Record<string, unknown>[] = [];
+    const receiptEvents: EventInsert[] = [];
     const client = await connectClient(
       await startServer({
         ...fakes,
@@ -822,7 +822,7 @@ describe("serveWorkbenchUnix read methods", () => {
     async (frictionIssueId) => {
       let reads = 0;
       let writes = 0;
-      const receiptEvents: Record<string, unknown>[] = [];
+      const receiptEvents: EventInsert[] = [];
       const commands = frictionCommands();
       instrumentCommand(commands, "mcp.linear.get_issue", () => {
         reads++;
