@@ -10,6 +10,31 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **`deno task verify-workbench-events` cannot read `DYFJ_ROOT`.**
+  - **Location:** `prototype/src/config/defaults.ts:198`
+    (`resolveRuntimeEnvDefaults` reads `DYFJ_ROOT`) against the
+    `verify-workbench-events` permission profile in `prototype/deno.json:160`,
+    which does not grant it.
+  - **Symptom:** the in-process check spreads `resolveRuntimeEnvDefaults()` into
+    its runtime input, and that read of an ungranted variable throws
+    `NotCapable`, so the task fails before its first turn.
+  - **Suspected cause:** the profile's env list was not updated when the root
+    override joined the runtime env defaults. The parity test covers only the
+    `serve-unix` profile and checks this one for `DYFJ_MAX_TOOL_STEPS` alone.
+  - **Found during:** WO-10 (present on `main` before it; the move kept the read
+    unchanged).
+- 2026-09-27 — **Budget env values accept a numeric prefix.**
+  - **Location:** `prototype/src/config/values.ts:91` (`readPositiveUsd`, used
+    for `DYFJ_BUDGET_SESSION_USD`, `DYFJ_BUDGET_PER_CALL_USD` and
+    `DYFJ_BUDGET_DAILY_USD`).
+  - **Symptom:** a value such as `1oops` or `2x` is read as `1` or `2` instead of
+    failing the boot, so a mistyped envelope silently applies a different limit.
+    The anomaly multiples already reject trailing junk.
+  - **Suspected cause:** the reader uses `Number.parseFloat`, which accepts a
+    valid numeric prefix, where the multiples use a strict `Number()`
+    conversion.
+  - **Found during:** WO-10 (present on `main` before it; the move kept the
+    parsing unchanged).
 - 2026-09-27 — **An upgraded database keeps a local model row active that a
   fresh install ships inactive.**
   - **Location:** `schema/migrations/008_models_execution_profile.sql:14` (sets
