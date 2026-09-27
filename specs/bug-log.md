@@ -10,13 +10,42 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **An upgraded database keeps a local model row active that a
+  fresh install ships inactive.**
+  - **Location:** `schema/migrations/008_models_execution_profile.sql:14` (sets
+    `active = TRUE` on the `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit`
+    row) against `schema/catalog/001_models.sql:1296` (the same row, shipped
+    with `active = FALSE`).
+  - **Symptom:** a database brought forward through `history/` and `migrations/`
+    lists the MLX Qwen3-Coder row in `dyfj models` and accepts it for `--model`,
+    while a fresh `current/` + `catalog/` install does not. The default local
+    route is unaffected on both paths, because `qwen3.6:35b-a3b` is active on
+    both and comes first in the local preference order.
+  - **Suspected cause:** the catalog change that retired the MLX coder as the
+    local default updated `catalog/` but added no forward migration, so the
+    upgrade path still ends in the older catalog state. The schema validator
+    checks that both sequences apply, not that they agree, and the planned
+    `schema.equivalence` lane compares structure only, not catalog data. Other
+    catalog rows may diverge the same way; this is the one observed.
+  - **Found during:** WO-06.
+- 2026-09-27 — **`dyfj --help` omits several working REPL commands.**
+  - **Location:** `prototype/src/cli.ts:3962` (the `REPL commands:` block of
+    `HELP`), against the dispatch at `prototype/src/cli.ts:863` and `:869`.
+  - **Symptom:** the help text lists `/model`, `/fast`, `/session`, `/friction`,
+    and `/exit`/`/quit`, but not `/idea mark|list|show`,
+    `/packet draft|list|show`, the `/session list` and `/session switch`
+    subcommands, or `/friction last`. All of these run in the REPL.
+  - **Suspected cause:** the commands were added without updating the static
+    help string; nothing checks the help against the dispatcher.
+  - **Found during:** WO-06.
+
 - 2026-09-27 — **Terminal escape sequences are recognized three different
   ways.**
   - **Location:** `prototype/src/kernel/ansi.ts` (`stripAnsiEscapes`, used by
     the idea/packet renderer and the RPC string sanitizer);
     `prototype/src/streaming-markdown.ts:39` (`visibleWidth`) with its paired
-    scanner at `:308` (`ansiSequenceEnd`); and `prototype/src/cli.ts:254`
-    (`sanitizeSpinnerLabel` and its `skip*` helpers at `:318`–`:361`).
+    scanner at `:308` (`ansiSequenceEnd`); and `prototype/src/cli.ts:250`
+    (`sanitizeSpinnerLabel` and its `skip*` helpers at `:314`–`:357`).
   - **Symptom:** the same input is treated differently depending on where it
     is shown. `visibleWidth` removes only CSI and OSC sequences and accepts CSI
     parameter bytes (`<`, `=`, `>`, `:`) that `stripAnsiEscapes` does not. It
@@ -35,8 +64,8 @@ changes with a CHANGELOG `Fixed` entry.
     recognizer the surfaces should share.
 
 - 2026-09-26 — **Piped REPL input runs only its first line.**
-  - **Location:** `prototype/src/cli.ts:4035` (`readLineOrNull`) and
-    `prototype/src/cli.ts:813` (`runRepl`).
+  - **Location:** `prototype/src/cli.ts:4031` (`readLineOrNull`) and
+    `prototype/src/cli.ts:811` (`runRepl`).
   - **Symptom:** when the REPL's stdin delivers several lines and then EOF in
     one go (for example `printf 'a\nb\n' | dyfj`), only the first line runs as
     a turn. The REPL then exits with status 0 without running the remaining
@@ -49,10 +78,10 @@ changes with a CHANGELOG `Fixed` entry.
     prompt, so it does not pin this.
 - 2026-09-26 — **Session and event timestamps reach RPC clients as
   second-precision, time-zone-dependent text.**
-  - **Location:** `prototype/src/utils.ts:92` (`doltQuery` converts every
+  - **Location:** `prototype/src/utils.ts:51` (`doltQuery` converts every
     column with `String(value)`), surfacing through
     `prototype/src/sessions.ts:140-141` (`sessions/inspect`) and
-    `prototype/src/sessions.ts:716` (`events/query`).
+    `prototype/src/sessions.ts:687` (`events/query`).
   - **Symptom:** `sessions/inspect` and `events/query` return `createdAt` and
     `updatedAt` as `Date.prototype.toString()` text, for example
     `Sat Sep 26 2026 21:51:50 GMT+0000 (Coordinated Universal Time)`. The text
@@ -79,12 +108,14 @@ changes with a CHANGELOG `Fixed` entry.
 
 - 2026-09-25 — **Model-registry load errors are silently dropped on the ACP
   dispatch path.**
-  - **Location:** `prototype/src/workbench.ts:1535-1543`.
+  - **Location:** `prototype/src/workbench.ts:1400-1431`: a failed catalog load
+    falls back to the built-in local models, and the `catch` rethrows only
+    domain and routing errors.
   - **Symptom:** a catalog failure is swallowed rather than surfaced.
   - **Found during:** baseline analysis. WO-16 must preserve the current
     behavior.
 - 2026-09-25 — **Ideas and packets are lost on server restart.**
-  - **Location:** `prototype/src/idea-packet.ts:809`
+  - **Location:** `prototype/src/idea-packet.ts:801`
     (`defaultIdeaPacketRegistry`, a module-level in-memory singleton).
   - **Symptom:** marked ideas and drafted packets disappear when the engine
     server restarts. They never reach the event log.
