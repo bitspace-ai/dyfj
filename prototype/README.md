@@ -263,7 +263,9 @@ it cannot resolve.
 twelve black-box scenarios that drive the engine server (`src/uds-serve.ts`)
 and the CLI (`src/cli.ts`) as child processes against an isolated Dolt
 fixture, a loopback model server (`testing/servers/model-server.ts`) and a
-loopback Linear MCP server. Each scenario's stream frames, RPC responses,
+loopback Linear MCP server (`testing/golden/linear-mcp.ts`, built on the shared
+loopback MCP server in `testing/servers/mcp-server.ts` that the MCP integration
+tests also use). Each scenario's stream frames, RPC responses,
 rendered CLI output, and `events`/`sessions` rows are normalized (generated
 IDs, timestamps, durations, temp paths, PIDs and the fixtures' loopback
 endpoints only) and compared with `testing/golden/snapshots/`. During the
@@ -318,6 +320,7 @@ The response must include generated text. Health/list endpoints such as Ollama `
 
 - `src/` — Workbench entrypoint, the JSON-RPC/UDS transport seam, shared runtime boundary, native provider path, ACP client runner, command registry, memory, budget, session persistence, event verification, utilities, tests
 - `src/kernel/` — layer L0: pure shared helpers with one implementation each (UTF-8 byte bounding, code-point prefixes, terminal escape stripping, boundary-text sanitizing, ULID/trace/span IDs, canonical JSON, the time-bounded regex matcher, lexical path checks), imported through `src/kernel/mod.ts` and importing nothing from other runtime layers
+- `src/tools/mcp/transport.ts` — the MCP transport every MCP consumer shares: the byte-bounded fetch, the untrusted-result framing, bearer-header construction, and the one SDK client factory, used by the external MCP tools (`src/mcp-tools.ts`), the web tools (`src/web-tools.ts`), and memory recall (`src/memory-search.ts`)
 - `mcp/` — MCP server (`server.ts`)
 - `examples/` — diagnostic programs, verification helpers, and historical transport spikes; these are not operator launch paths
 

@@ -6,7 +6,7 @@ import {
   MAX_COMMENT_PAGES,
   postFriction,
 } from "./friction.ts";
-import { formatUntrustedMcpResult } from "./mcp-tools.ts";
+import { formatUntrustedMcpResult } from "./tools/mcp/transport.ts";
 
 const getIssueCommand: CommandDefinition = {
   id: "mcp.linear.get_issue",

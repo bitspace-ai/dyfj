@@ -15,6 +15,7 @@
     { "dir": "store", "layer": 2 },
     { "dir": "providers", "layer": 2 },
     { "dir": "tools", "layer": 2 },
+    { "dir": "tools/mcp", "layer": 2 },
     { "dir": "budget", "layer": 2 },
     { "dir": "context", "layer": 2 },
     { "dir": "transport", "layer": 2 },
@@ -42,6 +43,8 @@
     { "from": "context", "to": "providers", "typesOnly": true },
     { "from": "budget", "to": "store" },
     { "from": "tools", "to": "store" },
+    { "from": "tools", "to": "tools/mcp" },
+    { "from": "tools/mcp", "to": "tools", "typesOnly": true },
     { "from": "context", "to": "store" }
   ],
   "cli": {
