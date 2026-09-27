@@ -28,10 +28,10 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { ulid } from "ulid";
 import mysql from "mysql2/promise";
 import { buildDoltPoolOptions, type SqlParam } from "./dolt-config.ts";
 import { listMcpMemories, readMcpMemory } from "./memory-tools.ts";
+import { generateULID } from "../src/kernel/mod.ts";
 
 type McpMemoryType = "user" | "feedback" | "project" | "reference";
 type McpSessionStatus = "active" | "completed";
@@ -134,7 +134,7 @@ function createServer(): McpServer {
         content: string;
       },
     ) => {
-      const id = ulid();
+      const id = generateULID();
       await doltExec(
         `INSERT INTO memories (memory_id, slug, type, name, description, content) ` +
           `VALUES (?, ?, ?, ?, ?, ?) ` +
@@ -185,7 +185,7 @@ function createServer(): McpServer {
         session_name?: string;
       },
     ) => {
-      const id = ulid();
+      const id = generateULID();
       const now = new Date();
       const ts = now.toISOString().slice(0, 10).replace(/-/g, "");
       const hms = now.toISOString().slice(11, 23).replace(/[:.]/g, "");

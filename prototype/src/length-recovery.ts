@@ -8,8 +8,9 @@
 // The agent loop (workbench.ts) owns the retry/failure mechanics; everything
 // here is pure and unit-testable.
 
+import { sanitizeBoundaryText } from "./kernel/mod.ts";
 import type { WorkbenchMessage, WorkbenchModel } from "./provider.ts";
-import { DomainError, sanitizeBoundaryText } from "./turn-contract.ts";
+import { DomainError } from "./turn-contract.ts";
 
 export type LengthStopClassification =
   | "output_budget_exhausted"

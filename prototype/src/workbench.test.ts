@@ -137,13 +137,16 @@ const runtimeMocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("./kernel/ids.ts", () => ({
+  generateULID: () => `01TEST${String(++runtimeMocks.ulid).padStart(20, "0")}`,
+  generateTraceId: () => "0123456789abcdef0123456789abcdef",
+  generateSpanId: () => String(++runtimeMocks.span).padStart(16, "0"),
+}));
+
 vi.mock("./utils.ts", () => ({
   // Spend-baseline rollup: no prior spend on the books in unit tests.
   doltQuery:
     async () => [{ session_spent: "0", session_today: "0", daily_others: "0" }],
-  generateULID: () => `01TEST${String(++runtimeMocks.ulid).padStart(20, "0")}`,
-  generateTraceId: () => "0123456789abcdef0123456789abcdef",
-  generateSpanId: () => String(++runtimeMocks.span).padStart(16, "0"),
   writeEvent: async (event: Record<string, unknown>) => {
     if (event.event_type === runtimeMocks.failEventType) {
       // Record what a rejected-but-committed write leaves behind, so the

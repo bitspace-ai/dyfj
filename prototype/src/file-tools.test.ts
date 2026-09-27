@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { resolve as resolvePath } from "node:path";
 import {
   clampLimit,
-  clipToUtf8Bytes,
   excludedSegment,
   executeEditFile,
   executeGlobFiles,
@@ -627,25 +626,6 @@ describe("grep_files resource bounds", () => {
 });
 
 // ── Containment and completeness ─────────────────────────────────────────────
-
-describe("clipToUtf8Bytes", () => {
-  test("returns null when the text already fits", () => {
-    expect(clipToUtf8Bytes("abc", 10)).toBeNull();
-  });
-  test("measures bytes, not UTF-16 code units", () => {
-    // 10 three-byte characters: 10 code units, 30 bytes.
-    const text = "\u4e2d".repeat(10);
-    expect(text.length).toBe(10);
-    expect(clipToUtf8Bytes(text, 12)).not.toBeNull();
-  });
-  test("cuts on a character boundary, never mid-sequence", () => {
-    const clipped = clipToUtf8Bytes("\u4e2d".repeat(10), 10)!;
-    expect(clipped).not.toContain("\ufffd");
-    expect(new TextEncoder().encode(clipped).byteLength).toBeLessThanOrEqual(
-      10,
-    );
-  });
-});
 
 describe("ancestor replacement cannot leak a file out of the workspace", () => {
   // The sandbox cannot create real symlinks, so the canonicalizer is the seam:

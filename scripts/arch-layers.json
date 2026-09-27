@@ -50,8 +50,6 @@
     "allowedPaths": ["prototype/src/extensions/*/client.ts"]
   },
   "files": {
-    "prototype/src/bounded-regex.ts": "kernel",
-    "prototype/src/lexical-path.ts": "kernel",
     "prototype/src/turn-contract.ts": "contract",
     "prototype/src/config.ts": "config",
     "prototype/src/secrets.ts": "config",

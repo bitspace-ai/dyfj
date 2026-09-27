@@ -1,3 +1,11 @@
+import {
+  generateSpanId,
+  generateTraceId,
+  generateULID,
+  hasDotPathComponent,
+  sanitizeBoundaryText,
+  utf8ByteLengthWithinLimit,
+} from "./kernel/mod.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
@@ -30,12 +38,7 @@ import {
   fetchWorkbenchSessionWorkspaceRecord,
   updateWorkbenchSession,
 } from "./sessions.ts";
-import {
-  generateSpanId,
-  generateTraceId,
-  generateULID,
-  writeEvent,
-} from "./utils.ts";
+import { writeEvent } from "./utils.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   DomainError,
@@ -43,9 +46,7 @@ import {
   historyOmissionForDelivery,
   type HistoryOmissionReceipt,
   prependHistoryOmissionNotice,
-  sanitizeBoundaryText,
 } from "./turn-contract.ts";
-import { hasDotPathComponent } from "./lexical-path.ts";
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
   const home = Deno.env.get("HOME");
@@ -569,39 +570,6 @@ function sanitizeHistoryText(raw: string): string {
     out += ch;
   }
   return out;
-}
-
-function utf8ByteLengthWithinLimit(
-  value: string,
-  maxBytes: number,
-): number | undefined {
-  const chunkCodeUnits = 4_096;
-  // A BMP character needs at most 3 UTF-8 bytes. A surrogate pair needs 4
-  // bytes across 2 code units, while a lone surrogate becomes U+FFFD (3
-  // bytes), so 3 bytes per UTF-16 code unit is a conservative chunk bound.
-  const maxBytesPerCodeUnit = 3;
-  const encoder = new TextEncoder();
-  const buffer = new Uint8Array(chunkCodeUnits * maxBytesPerCodeUnit);
-  let bytes = 0;
-  for (let start = 0; start < value.length;) {
-    let end = Math.min(start + chunkCodeUnits, value.length);
-    if (
-      end < value.length && value.charCodeAt(end - 1) >= 0xD800 &&
-      value.charCodeAt(end - 1) <= 0xDBFF &&
-      value.charCodeAt(end) >= 0xDC00 && value.charCodeAt(end) <= 0xDFFF
-    ) {
-      end -= 1;
-    }
-    const chunk = value.slice(start, end);
-    const { read, written } = encoder.encodeInto(chunk, buffer);
-    // A short read violates the buffer invariant. Return the overflow sentinel
-    // so the immediate caller refuses the field with its specific DomainError.
-    if (read !== chunk.length) return undefined;
-    bytes += written;
-    if (bytes > maxBytes) return undefined;
-    start += read;
-  }
-  return bytes;
 }
 
 /**

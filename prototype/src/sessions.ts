@@ -1,4 +1,5 @@
-import { doltExec, doltQuery, generateULID, type SqlParam } from "./utils.ts";
+import { generateULID } from "./kernel/mod.ts";
+import { doltExec, doltQuery, type SqlParam } from "./utils.ts";
 import type { WorkbenchMessage } from "./provider.ts";
 import { formatSummaryMessage } from "./context-compression.ts";
 import {

@@ -16,10 +16,13 @@ const state = vi.hoisted(() => ({
   sessionWorkspace: undefined as string | null | undefined,
 }));
 
-vi.mock("./utils.ts", () => ({
+vi.mock("./kernel/ids.ts", () => ({
   generateULID: () => `01ACP${String(++state.nextId).padStart(21, "0")}`,
   generateTraceId: () => "trace-acp",
   generateSpanId: () => `span-${++state.nextId}`,
+}));
+
+vi.mock("./utils.ts", () => ({
   writeEvent: (
     event: Record<string, unknown>,
     options: { signal?: AbortSignal } = {},

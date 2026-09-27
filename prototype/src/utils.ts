@@ -1,4 +1,4 @@
-import { ulid } from "ulid";
+import { generateSpanId, generateULID } from "./kernel/mod.ts";
 import { resolvePrincipalId } from "./config.ts";
 import process from "node:process";
 
@@ -6,20 +6,6 @@ export type MessageContent =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
   | { type: string; [key: string]: unknown };
-
-export function generateULID(): string {
-  return ulid();
-}
-
-// W3C trace context compatible — 32 hex chars
-export function generateTraceId(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 32);
-}
-
-// 16 hex chars
-export function generateSpanId(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-}
 
 export function extractText(content: MessageContent[]): string | null {
   const texts = content.filter(isTextContent).map((c) => c.text);

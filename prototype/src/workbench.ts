@@ -1,3 +1,9 @@
+import {
+  generateSpanId,
+  generateTraceId,
+  generateULID,
+  sanitizeBoundaryText,
+} from "./kernel/mod.ts";
 import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
@@ -49,7 +55,6 @@ import {
   formatHistoryOmissionSummary,
   historyOmissionForDelivery,
   MAX_REASON_FIELD_BYTES,
-  sanitizeBoundaryText,
   summarizeError,
 } from "./turn-contract.ts";
 import type {
@@ -1596,9 +1601,6 @@ async function runNativeWorkbenchRuntime(
 ): Promise<NativeWorkbenchRuntimeResult> {
   const {
     eventExists,
-    generateULID,
-    generateTraceId,
-    generateSpanId,
     writeEvent,
     writeModelSelectedEvent,
   } = await import("./utils.ts");

@@ -6,6 +6,7 @@
 // `approval` requests carry mutating-tool, budget, and exact ACP permission
 // option decisions over the same duplex seam.
 
+import { generateTraceId, stripAnsiEscapes } from "./kernel/mod.ts";
 import {
   defaultLocalWorkbenchModels,
   getModelAccessModality,
@@ -84,7 +85,7 @@ import {
   postFriction,
   requireFrictionIssueIdentifier,
 } from "./friction.ts";
-import { generateTraceId, writeEvent as writeDoltEvent } from "./utils.ts";
+import { writeEvent as writeDoltEvent } from "./utils.ts";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -267,14 +268,6 @@ function sanitizeRpcIdentifier(
     );
   }
   return val;
-}
-
-function stripAnsiEscapes(text: string): string {
-  return text
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
-    .replace(/\x1b[()*+-./][0-9A-Za-z]/g, "")
-    .replace(/\x1b[@-Z\\-_]/g, "");
 }
 
 function sanitizeRpcString(

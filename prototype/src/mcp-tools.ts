@@ -6,6 +6,7 @@ import type {
 } from "./commands.ts";
 import { CommandExecutionError } from "./commands.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
+import { utf8SafePrefix } from "./kernel/mod.ts";
 import { buildWebCommands, createWebToolsSessionState } from "./web-tools.ts";
 import {
   buildBoundedLinearCreateIssueCommand,
@@ -384,9 +385,9 @@ function boundedUtf8(value: string, maxBytes: number): string {
   if (maxBytes <= markerBytes.byteLength) {
     return new TextDecoder().decode(markerBytes.slice(0, maxBytes));
   }
-  let end = maxBytes - markerBytes.byteLength;
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
-  return new TextDecoder().decode(bytes.slice(0, end)) + marker;
+  return new TextDecoder().decode(
+    utf8SafePrefix(bytes, maxBytes - markerBytes.byteLength),
+  ) + marker;
 }
 
 export function formatUntrustedMcpResult(value: string): string {

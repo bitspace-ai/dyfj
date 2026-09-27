@@ -22,9 +22,10 @@
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   BoundedMatcher,
+  clipToUtf8Bytes,
   RegexBudgetExceeded,
   RegexUnavailable,
-} from "./bounded-regex.ts";
+} from "./kernel/mod.ts";
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
 const DEFAULT_MAX_ENTRIES = 500;
@@ -306,21 +307,6 @@ function lineWindow(
     endLine = totalLines;
   }
   return { text: text.slice(startIndex, endIndex), totalLines, endLine };
-}
-
-/**
- * `text` cut to at most `maxBytes` encoded UTF-8 bytes, or null when it already
- * fits. The cut walks back off UTF-8 continuation bytes (top bits `10`) so it
- * lands on a character boundary: a naive slice can swap a clipped tail for a
- * differently-sized replacement character and end up past the ceiling it was
- * enforcing.
- */
-export function clipToUtf8Bytes(text: string, maxBytes: number): string | null {
-  const encoded = new TextEncoder().encode(text);
-  if (encoded.byteLength <= maxBytes) return null;
-  let end = Math.min(maxBytes, encoded.byteLength);
-  while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
-  return new TextDecoder().decode(encoded.subarray(0, end));
 }
 
 /**
@@ -692,7 +678,7 @@ export async function executeEditFile(
 //     count, so one file of very long matching lines cannot produce an
 //     unbounded tool result.
 //   - Regex matching runs in a terminateable worker under a wall-clock budget
-//     (bounded-regex.ts). Matching line by line does NOT bound backtracking —
+//     (kernel/bounded-regex.ts). Matching line by line does NOT bound backtracking —
 //     one long line is enough for a catastrophic pattern — so lines over
 //     MAX_LINE_LENGTH are skipped outright and the budget, not the pattern,
 //     is what bounds the cost. If the worker cannot start, the search fails
