@@ -4,6 +4,12 @@ Status: historical design note for the first worklet-routing experiment
 (2026-05-28). It records the experiment, not the current operator entrypoint or
 the current model catalog.
 
+> **Status update (2026-09-27):** the `deno task workbench` and `deno task start`
+> tasks and the standalone argv CLI in `prototype/src/workbench.ts` were removed.
+> The operator entrypoint is `dyfj` over the Unix-socket seam. The task names
+> below are history, not commands to run; the next-work mode is now
+> `dyfj --mode next-work exec "<prompt>"`.
+
 ## Frame
 
 Workbench routing is not a generic provider abstraction. It is a small decision
