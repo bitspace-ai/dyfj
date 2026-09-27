@@ -32,6 +32,18 @@ function column(
   };
 }
 
+function primaryKey() {
+  return {
+    name: "PRIMARY",
+    type: "PRIMARY KEY",
+    columns: ["session_id"],
+    referencedTable: null,
+    referencedColumns: [],
+    updateRule: null,
+    deleteRule: null,
+  };
+}
+
 function table(options: Partial<TableDescription> = {}): TableDescription {
   return {
     name: "sessions",
@@ -45,7 +57,7 @@ function table(options: Partial<TableDescription> = {}): TableDescription {
       type: "BTREE",
       columns: ["session_id"],
     }],
-    constraints: [{ name: "PRIMARY", type: "PRIMARY KEY" }],
+    constraints: [primaryKey()],
     checks: [],
     ...options,
   };
@@ -116,4 +128,29 @@ Deno.test("indexes, constraints and checks are compared by name", () => {
     "sessions.constraints.PRIMARY: only in current + catalog",
     "sessions.checks.chk: only in history + migrations",
   ]);
+});
+
+Deno.test("a foreign key's referenced table, columns and rules are compared", () => {
+  const withKey = (referencedTable: string, deleteRule: string) =>
+    table({
+      constraints: [primaryKey(), {
+        name: "fk_owner",
+        type: "FOREIGN KEY",
+        columns: ["owner_id"],
+        referencedTable,
+        referencedColumns: ["id"],
+        updateRule: "NO ACTION",
+        deleteRule,
+      }],
+    });
+  assertEquals(
+    schemaDifferences(
+      schema(withKey("owners", "CASCADE")),
+      schema(withKey("people", "RESTRICT")),
+    ),
+    [
+      'sessions.constraints.fk_owner.referencedTable: current + catalog "owners", history + migrations "people"',
+      'sessions.constraints.fk_owner.deleteRule: current + catalog "CASCADE", history + migrations "RESTRICT"',
+    ],
+  );
 });

@@ -33,6 +33,49 @@ export class MissingSchemaColumnsError extends Error {
   }
 }
 
+/** How long the boot waits for the column check before booting without it. */
+export const BOOT_COLUMN_CHECK_TIMEOUT_MS = 5_000;
+
+/** The column check did not answer in time: treated as an unavailable database. */
+export class ColumnCheckTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`the boot-time column check did not answer within ${timeoutMs}ms`);
+    this.name = "ColumnCheckTimeoutError";
+  }
+}
+
+/**
+ * Run the boot-time column check, bounded by `timeoutMs`. Resolves when the
+ * check passes, or when the database could not be reached or used in time
+ * (`isDatabaseUnavailableError`), so the engine boots as it did before the
+ * check existed and the error surfaces on first use. Rejects with any other
+ * failure, `MissingSchemaColumnsError` included. A check still running when
+ * the bound expires is left to settle unobserved.
+ */
+export async function checkColumnsAtBoot(
+  store: { assertCanonicalColumns(): Promise<void> },
+  timeoutMs = BOOT_COLUMN_CHECK_TIMEOUT_MS,
+): Promise<"checked" | "unavailable"> {
+  const check = store.assertCanonicalColumns();
+  check.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new ColumnCheckTimeoutError(timeoutMs)),
+      timeoutMs,
+    );
+  });
+  try {
+    await Promise.race([check, expired]);
+    return "checked";
+  } catch (error) {
+    if (isDatabaseUnavailableError(error)) return "unavailable";
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * `mysql2` error codes meaning the database could not be reached or used at
  * all, as opposed to a query that ran and failed.
@@ -58,6 +101,7 @@ const UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
  * the boot fails rather than serving with a check that never completed.
  */
 export function isDatabaseUnavailableError(error: unknown): boolean {
+  if (error instanceof ColumnCheckTimeoutError) return true;
   if (typeof error !== "object" || error === null) return false;
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" && UNAVAILABLE_CODES.has(code);

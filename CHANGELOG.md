@@ -23,8 +23,9 @@ README are tracked separately in its Revision history section.
   The `schema.equivalence` lane (`deno task schema:equivalence`) applies
   `current/` + `catalog/` and `history/` + `migrations/` to two repositories
   and fails on any difference in tables, columns, types, nullability,
-  defaults, ON UPDATE clauses, indexes, enums, constraints or check
-  constraints. Catalog data is not compared.
+  defaults, ON UPDATE clauses, indexes, enums, constraints (with their key
+  columns and, for foreign keys, the referenced table, columns and rules) or
+  check constraints. Catalog data is not compared.
 - **Typed event writes**: `journal.commit` takes the generated `EventInsert`,
   and every event the runtime appends is built by its per-type constructor in
   `prototype/src/store/events/builders.ts` (`sessionStartEvent`,
@@ -160,9 +161,9 @@ README are tracked separately in its Revision history section.
   fails with a message naming the missing columns and pointing at
   `schema/migrations/`. Before, the event and model readers fell back to older
   column sets instead. A database that cannot be reached or used at boot
-  (connection refused or lost, access denied, unknown database) is left to fail
-  on first use, as before; any other failure of the check fails the boot. Extra
-  columns are not reported.
+  (connection refused or lost, access denied, unknown database, or no answer
+  within 5 seconds) is left to fail on first use, as before; any other failure
+  of the check fails the boot. Extra columns are not reported.
 - **One schema apply-order rule in the docs**: a fresh install applies
   `schema/current/` then `schema/catalog/`; an existing database replays
   forward through `schema/migrations/` on top of the structure `schema/history/`

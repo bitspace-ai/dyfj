@@ -44,6 +44,9 @@ export {
 export { createDoltPool, type DoltPool } from "./dolt-pool.ts";
 export { DoltStore } from "./dolt.ts";
 export {
+  BOOT_COLUMN_CHECK_TIMEOUT_MS,
+  checkColumnsAtBoot,
+  ColumnCheckTimeoutError,
   isDatabaseUnavailableError,
   missingCanonicalColumns,
   type MissingColumn,

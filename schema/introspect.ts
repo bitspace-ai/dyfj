@@ -1,7 +1,8 @@
 /**
  * Read a database's structure from `information_schema` into a normalized,
  * sorted description: tables, columns (type, nullability, default, ON UPDATE),
- * indexes, constraints and check constraints. `codegen.ts` renders row types
+ * indexes, constraints (with their key columns and, for foreign keys, the
+ * referenced table, columns and rules) and check constraints. `codegen.ts` renders row types
  * from it and `equivalence.ts` compares two of them. Catalog data is not read.
  */
 
@@ -36,6 +37,14 @@ export interface IndexDescription {
 export interface ConstraintDescription {
   name: string;
   type: string;
+  /** Constrained columns, in key order. */
+  columns: string[];
+  /** For a foreign key: the referenced table and columns, in key order. */
+  referencedTable: string | null;
+  referencedColumns: string[];
+  /** For a foreign key: its ON UPDATE / ON DELETE rules. */
+  updateRule: string | null;
+  deleteRule: string | null;
 }
 
 export interface CheckDescription {
@@ -122,6 +131,17 @@ export async function describeSchema(
       "FROM information_schema.table_constraints " +
       "WHERE table_schema = database()",
   );
+  const keyColumnRows = await query(
+    "SELECT table_name, constraint_name, column_name, ordinal_position, " +
+      "referenced_table_name, referenced_column_name " +
+      "FROM information_schema.key_column_usage " +
+      "WHERE table_schema = database()",
+  );
+  const referentialRows = await query(
+    "SELECT table_name, constraint_name, update_rule, delete_rule " +
+      "FROM information_schema.referential_constraints " +
+      "WHERE constraint_schema = database()",
+  );
   const checkRows = await query(
     "SELECT tc.table_name, cc.constraint_name, cc.check_clause " +
       "FROM information_schema.check_constraints cc " +
@@ -185,10 +205,30 @@ export async function describeSchema(
           .sort((a, b) => a.seq - b.seq)
           .map(({ column }) => column),
       })).sort(byName),
-      constraints: constraintRows.filter(inTable).map((r) => ({
-        name: required(r, "CONSTRAINT_NAME"),
-        type: required(r, "CONSTRAINT_TYPE"),
-      })).sort(byName),
+      constraints: constraintRows.filter(inTable).map((r) => {
+        const constraintName = required(r, "CONSTRAINT_NAME");
+        const ofConstraint = (k: Record<string, unknown>) =>
+          inTable(k) && k.CONSTRAINT_NAME === constraintName;
+        const keyColumns = keyColumnRows.filter(ofConstraint).sort((a, b) =>
+          Number(required(a, "ORDINAL_POSITION")) -
+          Number(required(b, "ORDINAL_POSITION"))
+        );
+        const referential = referentialRows.find(ofConstraint);
+        return {
+          name: constraintName,
+          type: required(r, "CONSTRAINT_TYPE"),
+          columns: keyColumns.map((k) => required(k, "COLUMN_NAME")),
+          referencedTable: keyColumns.length === 0
+            ? null
+            : text(keyColumns[0]!, "REFERENCED_TABLE_NAME"),
+          referencedColumns: keyColumns.flatMap((k) => {
+            const column = text(k, "REFERENCED_COLUMN_NAME");
+            return column === null ? [] : [column];
+          }),
+          updateRule: referential ? text(referential, "UPDATE_RULE") : null,
+          deleteRule: referential ? text(referential, "DELETE_RULE") : null,
+        };
+      }).sort(byName),
       checks: checkRows.filter(inTable).map((r) => ({
         name: required(r, "CONSTRAINT_NAME"),
         clause: required(r, "CHECK_CLAUSE"),

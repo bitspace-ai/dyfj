@@ -4,7 +4,8 @@
  * structure (`specs/02-data-layer.md` section 4). Each sequence is applied to
  * its own disposable Dolt repository, both are described from
  * `information_schema`, and any difference in tables, columns, types,
- * nullability, defaults, ON UPDATE clauses, indexes, enums, constraints or
+ * nullability, defaults, ON UPDATE clauses, indexes, enums, constraints
+ * (foreign-key references and rules included) or
  * check constraints fails. Catalog data is not compared.
  */
 
