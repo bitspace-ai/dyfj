@@ -1551,6 +1551,8 @@ Document revisions only. Code and behavior changes are tracked in
   1 changes only the TypeScript tier, TypeScript is the temporary tier under
   Layer 0 stance #3, and no enabler may make moving a stabilized component to
   Rust harder.
+- 2026-09-27 - `specs/01-architecture.md` §3 names `workspaceRootForTransport`
+  in the `contract/` row, where WO-08 placed it as trust-boundary policy.
 - 2026-09-27 - Docs drift corrected against the code: Ollama `qwen3.6:35b-a3b`
   is the local default and xAI is listed among hosted providers; the retired
   HTTP engine is gone from the tool-step and config text; a fresh database
