@@ -1,4 +1,4 @@
-import { doltQuery } from "./utils.ts";
+import type { PromptReader } from "./store/mod.ts";
 
 // The companion base prompt is the trust anchor of a turn. It is loaded from
 // the Dolt `prompts` table (authored, versioned config — see
@@ -19,13 +19,12 @@ export const DEFAULT_COMPANION_PROMPT =
  * Load the active companion base prompt from the Dolt `prompts` table, falling
  * back to DEFAULT_COMPANION_PROMPT when the store is unavailable or empty.
  */
-export async function loadCompanionBasePrompt(): Promise<string> {
+export async function loadCompanionBasePrompt(
+  prompts: PromptReader,
+): Promise<string> {
   try {
-    const rows = await doltQuery(
-      "SELECT content FROM prompts " +
-        "WHERE slug = 'companion-base' AND active = TRUE LIMIT 1;",
-    );
-    const content = rows[0]?.content;
+    const row = await prompts.active("companion-base");
+    const content = row?.content;
     if (typeof content === "string" && content.trim().length > 0) {
       return content;
     }

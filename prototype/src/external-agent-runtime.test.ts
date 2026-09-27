@@ -22,45 +22,6 @@ vi.mock("./kernel/ids.ts", () => ({
   generateSpanId: () => `span-${++state.nextId}`,
 }));
 
-vi.mock("./utils.ts", () => ({
-  writeEvent: (
-    event: Record<string, unknown>,
-    options: { signal?: AbortSignal } = {},
-  ) => {
-    if (event.event_type === "runner_selected" && state.abortNextRunnerSelected) {
-      state.abortNextRunnerSelected = false;
-      state.abortController?.abort();
-    }
-    if (
-      event.event_type === "runner_selected" &&
-      state.delayNextRunnerSelectedMs > 0
-    ) {
-      const delayMs = state.delayNextRunnerSelectedMs;
-      state.delayNextRunnerSelectedMs = 0;
-      return new Promise<void>((resolve, reject) => {
-        globalThis.setTimeout(() => {
-          if (options.signal?.aborted) {
-            reject(new DOMException("Event write aborted", "AbortError"));
-            return;
-          }
-          state.events.push(event);
-          resolve();
-        }, delayMs);
-      });
-    }
-    if (options.signal?.aborted) {
-      return Promise.reject(
-        new DOMException("Event write aborted", "AbortError"),
-      );
-    }
-    if (event.event_type === state.failEventType) {
-      return Promise.reject(new Error(`failed ${state.failEventType}`));
-    }
-    state.events.push(event);
-    return Promise.resolve();
-  },
-}));
-
 vi.mock("./sessions.ts", () => ({
   buildWorkbenchSessionSlug: (sessionId: string) => `workbench-${sessionId}`,
   buildWorkbenchSessionContent: (input: Record<string, unknown>) =>
@@ -102,9 +63,10 @@ import {
   MAX_HISTORY_TOOL_RESULT_BYTES,
   MAX_RECONSTRUCTED_PRIOR_MESSAGES,
   reconstructAcpContinuityPrompt,
-  runExternalAgentWorkbenchRuntime,
+  runExternalAgentWorkbenchRuntime as runWithDependencies,
   verifiedRouteFacts,
 } from "./external-agent-runtime.ts";
+import { MemoryStore, type Store } from "./store/mod.ts";
 import type { WorkbenchMessage } from "./provider.ts";
 import {
   type AcpExecutionProfile,
@@ -114,6 +76,79 @@ import {
 } from "./acp-client.ts";
 import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map.ts";
 import { DomainError, summarizeError } from "./contract/mod.ts";
+
+/**
+ * The journal these tests record through: it keeps each committed event in
+ * `state.events` and can fail, delay or abort writes by event type.
+ */
+function recordEvent(
+  event: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {},
+): Promise<void> {
+  if (event.event_type === "runner_selected" && state.abortNextRunnerSelected) {
+    state.abortNextRunnerSelected = false;
+    state.abortController?.abort();
+  }
+  if (
+    event.event_type === "runner_selected" &&
+    state.delayNextRunnerSelectedMs > 0
+  ) {
+    const delayMs = state.delayNextRunnerSelectedMs;
+    state.delayNextRunnerSelectedMs = 0;
+    return new Promise<void>((resolve, reject) => {
+      globalThis.setTimeout(() => {
+        if (options.signal?.aborted) {
+          reject(new DOMException("Event write aborted", "AbortError"));
+          return;
+        }
+        state.events.push(event);
+        resolve();
+      }, delayMs);
+    });
+  }
+  if (options.signal?.aborted) {
+    return Promise.reject(
+      new DOMException("Event write aborted", "AbortError"),
+    );
+  }
+  if (event.event_type === state.failEventType) {
+    return Promise.reject(new Error(`failed ${state.failEventType}`));
+  }
+  state.events.push(event);
+  return Promise.resolve();
+}
+
+const baseStore = new MemoryStore();
+const testStore: Store = {
+  journal: {
+    commit: async (batch, options) => {
+      for (const event of batch.events) {
+        await recordEvent({ ...event }, options);
+      }
+      return {
+        eventIds: batch.events.map((e) => String(e.event_id)),
+        mutations: batch.mutations?.length ?? 0,
+      };
+    },
+  },
+  events: baseStore.events,
+  sessions: baseStore.sessions,
+  memories: baseStore.memories,
+  models: baseStore.models,
+  prompts: baseStore.prompts,
+  spend: baseStore.spend,
+  close: () => Promise.resolve(),
+};
+
+type RunnerDependencies = Parameters<typeof runWithDependencies>[1];
+
+/** The runner under test, with the recording store unless a test passes one. */
+function runExternalAgentWorkbenchRuntime(
+  input: Parameters<typeof runWithDependencies>[0],
+  dependencies: Omit<RunnerDependencies, "store"> & { store?: Store } = {},
+) {
+  return runWithDependencies(input, { store: testStore, ...dependencies });
+}
 
 /**
  * Runs `run` while this worker's `Deno.env` reads see `overlay` on top of the
@@ -3022,10 +3057,14 @@ describe("reconstructed tool history", () => {
       >("./sessions.ts");
       const priorEvents = await actualSessions.fetchWorkbenchSessionEvents({
         sessionId,
-        query: () =>
-          Promise.resolve(
-            persistedRows as unknown as Record<string, string>[],
-          ),
+        events: {
+          exists: () => Promise.resolve(false),
+          countBySession: () => Promise.resolve(persistedRows.length),
+          bySession: () =>
+            Promise.resolve(
+              persistedRows as unknown as Record<string, string>[],
+            ),
+        },
       });
       const priorMessages = actualSessions.buildConversationMessages(
         priorEvents,

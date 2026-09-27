@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { MemoryStore } from "./store/mod.ts";
 import {
   assertSocketBindable,
   buildTurnHandlers,
@@ -22,7 +23,10 @@ async function startServer(
   options: WorkbenchUnixServerOptions,
 ): Promise<WorkbenchUnixServer> {
   const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
-  const server = await serveWorkbenchUnix(socketPath, options);
+  const server = await serveWorkbenchUnix(socketPath, {
+    store: new MemoryStore(),
+    ...options,
+  });
   cleanups.push(async () => {
     await server.close();
     try {
@@ -1698,7 +1702,10 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
 describe("socket bind safety", () => {
   test("refuses to bind while a live runtime answers on the socket", async () => {
     const server = await startServer(fakes);
-    await expect(serveWorkbenchUnix(server.socketPath, fakes)).rejects.toThrow(
+    await expect(serveWorkbenchUnix(server.socketPath, {
+      ...fakes,
+      store: new MemoryStore(),
+    })).rejects.toThrow(
       /live runtime is already serving/,
     );
     // The live server is untouched: its socket file still exists and accepts.

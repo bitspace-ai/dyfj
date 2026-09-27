@@ -1,10 +1,20 @@
-import { describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import {
   buildConversationMessages,
   fetchWorkbenchSessionEvents,
 } from "./sessions.ts";
-import { doltExec } from "./utils.ts";
+import {
+  openFixtureSql,
+  openFixtureStore,
+} from "../testing/dolt/fixture-sql.ts";
+
+const sql = openFixtureSql();
+const store = openFixtureStore();
+afterAll(async () => {
+  await sql.close();
+  await store.close();
+});
 
 describe("external ACP runner persistence (integration)", () => {
   test(
@@ -16,11 +26,12 @@ describe("external ACP runner persistence (integration)", () => {
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         workspaceRoot: Deno.cwd(),
-      });
+      }, { store });
 
       try {
         const events = await fetchWorkbenchSessionEvents({
           sessionId: result.sessionId,
+          events: store.events,
         });
         expect(events.map((event) => event.eventType)).toEqual([
           "session_start",
@@ -67,10 +78,10 @@ describe("external ACP runner persistence (integration)", () => {
           "sessionCapabilities.close",
         );
       } finally {
-        await doltExec("DELETE FROM events WHERE session_id = ?", [
+        await sql.query("DELETE FROM events WHERE session_id = ?", [
           result.sessionId,
         ]);
-        await doltExec("DELETE FROM sessions WHERE session_id = ?", [
+        await sql.query("DELETE FROM sessions WHERE session_id = ?", [
           result.sessionId,
         ]);
       }
@@ -87,11 +98,12 @@ describe("external ACP runner persistence (integration)", () => {
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         workspaceRoot: Deno.cwd(),
-      });
+      }, { store });
 
       try {
         const events = await fetchWorkbenchSessionEvents({
           sessionId: result.sessionId,
+          events: store.events,
         });
         expect(events.map((event) => event.eventType)).toEqual([
           "session_start",
@@ -139,10 +151,10 @@ describe("external ACP runner persistence (integration)", () => {
           { role: "assistant", content: "recorded" },
         ]);
       } finally {
-        await doltExec("DELETE FROM events WHERE session_id = ?", [
+        await sql.query("DELETE FROM events WHERE session_id = ?", [
           result.sessionId,
         ]);
-        await doltExec("DELETE FROM sessions WHERE session_id = ?", [
+        await sql.query("DELETE FROM sessions WHERE session_id = ?", [
           result.sessionId,
         ]);
       }

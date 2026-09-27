@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { MemoryStore } from "./store/mod.ts";
 import {
   type CliConfig,
   formatRuntimeStatus,
@@ -123,6 +124,7 @@ describe("runStop behavior over real sockets", () => {
     let shutdownInvoked = false;
 
     serverInstance = await serveWorkbenchUnix(socketPath, {
+      store: new MemoryStore(),
       onShutdown: async () => {
         shutdownInvoked = true;
         if (serverInstance) {
@@ -161,6 +163,7 @@ describe("runStop behavior over real sockets", () => {
     let serverInstance: WorkbenchUnixServer | undefined;
 
     serverInstance = await serveWorkbenchUnix(socketPath, {
+      store: new MemoryStore(),
       onShutdown: () => Promise.reject(new Error("ACP close failed")),
     });
 
@@ -265,6 +268,7 @@ describe("runStop behavior over real sockets", () => {
     let serverInstance: WorkbenchUnixServer | undefined;
 
     serverInstance = await serveWorkbenchUnix(socketPath, {
+      store: new MemoryStore(),
       onShutdown: () => {
         // Stubborn server acknowledges stop but does not close
       },

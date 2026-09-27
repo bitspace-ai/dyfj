@@ -1,19 +1,9 @@
-import { describe, expect, test } from "vitest";
-import type { SqlParam } from "./dolt-config.ts";
-import {
-  listMcpMemories,
-  type McpMemoryQuery,
-  readMcpMemory,
-} from "./memory-tools.ts";
+import { assertEquals, assertStringIncludes } from "@std/assert";
+import { type MemorySeed, MemoryStore } from "../src/store/mod.ts";
+import { listMcpMemories, readMcpMemory } from "./memory-tools.ts";
 
-type Visibility = "private" | "shareable" | "client_safe" | "public";
-
-interface QueryCall {
-  sql: string;
-  params: SqlParam[];
-}
-
-const rows = [
+// Every visibility class, plus rows that stress the Markdown table rendering.
+const seed: MemorySeed[] = [
   {
     memory_id: "1",
     slug: "client_safe_memory",
@@ -62,7 +52,7 @@ const rows = [
   {
     memory_id: "6",
     slug: "slug\\path|part\r\nnext",
-    type: "project\\type|part\rnext",
+    type: "project",
     visibility: "public",
     name: "Name\\path|part\nnext",
     description: `${"x".repeat(98)}\\|trailing\r\nnext`,
@@ -70,136 +60,80 @@ const rows = [
   },
 ];
 
-function queryFixture(calls: QueryCall[]): McpMemoryQuery {
-  return async (sql, params = []) => {
-    calls.push({ sql, params: [...params] });
-    const allowed = sql.includes("visibility IN")
-      ? new Set(
-        params.filter((param): param is Visibility =>
-          ["private", "shareable", "client_safe", "public"].includes(
-            String(param),
-          )
-        ),
-      )
-      : null;
-    const requestedSlug = sql.includes("slug = ?")
-      ? String(params[0])
-      : undefined;
-    const requestedType = sql.includes("type = ?")
-      ? String(params[params.length - 1])
-      : undefined;
-    return rows.filter((row) =>
-      (!requestedSlug || row.slug === requestedSlug) &&
-      (!requestedType || row.type === requestedType) &&
-      (!allowed || allowed.has(row.visibility as Visibility))
-    );
-  };
-}
+const memories = () => new MemoryStore({ memories: seed }).memories;
 
-describe("standalone MCP memory projection", () => {
-  test("lists and reads client-safe and public rows", async () => {
-    const calls: QueryCall[] = [];
-    const query = queryFixture(calls);
-    const listed = await listMcpMemories(query);
-    const clientSafe = await readMcpMemory(query, "client_safe_memory");
-    const publicMemory = await readMcpMemory(query, "public_memory");
+Deno.test("standalone MCP memory projection lists and reads client-safe and public rows", async () => {
+  const reader = memories();
+  const listed = await listMcpMemories(reader);
+  assertStringIncludes(listed.content[0]!.text, "client_safe_memory");
+  assertStringIncludes(listed.content[0]!.text, "public_memory");
+  assertStringIncludes(
+    (await readMcpMemory(reader, "client_safe_memory")).content[0]!.text,
+    "Client-safe content",
+  );
+  assertEquals(
+    (await readMcpMemory(reader, "public_memory")).content[0]!.text,
+    "# Public memory\n\nPublic content",
+  );
+});
 
-    expect(listed.content[0]?.text).toContain("client_safe_memory");
-    expect(listed.content[0]?.text).toContain("public_memory");
-    expect(clientSafe.content[0]?.text).toContain("Client-safe content");
-    expect(publicMemory.content[0]?.text).toContain("Public content");
-    expect(calls[0]).toMatchObject({
-      sql: expect.stringContaining("visibility IN (?, ?)"),
-      params: ["client_safe", "public"],
-    });
-    expect(calls[1]).toEqual({
-      sql: "SELECT memory_id, slug, type, name, description, content " +
-        "FROM memories WHERE slug = ? AND visibility IN (?, ?) LIMIT 1;",
-      params: ["client_safe_memory", "client_safe", "public"],
-    });
+Deno.test("standalone MCP memory projection does not list or read private and shareable rows", async () => {
+  const reader = memories();
+  const listed = await listMcpMemories(reader);
+  assertEquals(listed.content[0]!.text.includes("private_memory"), false);
+  assertEquals(listed.content[0]!.text.includes("shareable_memory"), false);
+  const privateMemory = await readMcpMemory(reader, "private_memory");
+  assertEquals(privateMemory, await readMcpMemory(reader, "shareable_memory"));
+  assertEquals(privateMemory, {
+    content: [{
+      type: "text",
+      text: "Memory not found. Use list_memories() to see valid slugs.",
+    }],
+    isError: true,
+  });
+});
+
+Deno.test("standalone MCP memory projection makes private and nonexistent slugs indistinguishable", async () => {
+  const reader = memories();
+  assertEquals(
+    await readMcpMemory(reader, "private_memory"),
+    await readMcpMemory(reader, "does_not_exist"),
+  );
+  assertEquals(
+    await readMcpMemory(reader, "private_memory' OR 1=1 --"),
+    await readMcpMemory(reader, "does_not_exist"),
+  );
+});
+
+Deno.test("standalone MCP memory projection filters by type within the clearance", async () => {
+  const listed = await listMcpMemories(memories(), "project");
+  assertStringIncludes(listed.content[0]!.text, "client_safe_memory");
+  assertEquals(listed.content[0]!.text.includes("public_memory"), false);
+});
+
+Deno.test("standalone MCP memory projection preserves empty lists and escapes Markdown table cells", async () => {
+  assertEquals(await listMcpMemories(memories(), "user"), {
+    content: [{ type: "text", text: "No memories found." }],
   });
 
-  test("does not list or read private and shareable rows", async () => {
-    const calls: QueryCall[] = [];
-    const query = queryFixture(calls);
-    const listed = await listMcpMemories(query);
-    const privateMemory = await readMcpMemory(query, "private_memory");
-    const shareableMemory = await readMcpMemory(query, "shareable_memory");
+  const listed = await listMcpMemories(memories(), "project");
+  const escaped = listed.content[0]!.text.split("\n").find((line) =>
+    line.includes("escaped_memory")
+  );
+  assertEquals(
+    escaped,
+    `| escaped_memory | project | Escaped memory | ${"x".repeat(99)}\\| |`,
+  );
 
-    expect(listed.content[0]?.text).not.toContain("private_memory");
-    expect(listed.content[0]?.text).not.toContain("shareable_memory");
-    expect(privateMemory).toEqual(shareableMemory);
-    expect(privateMemory).toEqual({
-      content: [{
-        type: "text",
-        text: "Memory not found. Use list_memories() to see valid slugs.",
-      }],
-      isError: true,
-    });
-  });
-
-  test("makes private and nonexistent slugs indistinguishable", async () => {
-    const query = queryFixture([]);
-    expect(await readMcpMemory(query, "private_memory")).toEqual(
-      await readMcpMemory(query, "does_not_exist"),
-    );
-  });
-
-  test("composes the optional type filter after bound visibility values", async () => {
-    const calls: QueryCall[] = [];
-    const listed = await listMcpMemories(queryFixture(calls), "project");
-
-    expect(listed.content[0]?.text).toContain("client_safe_memory");
-    expect(listed.content[0]?.text).not.toContain("public_memory");
-    expect(calls).toEqual([{
-      sql: expect.stringMatching(
-        /WHERE visibility IN \(\?, \?\) AND type = \? ORDER BY type, slug;/,
-      ),
-      params: ["client_safe", "public", "project"],
-    }]);
-  });
-
-  test("binds slug and type values instead of interpolating them into SQL", async () => {
-    const calls: QueryCall[] = [];
-    const query = queryFixture(calls);
-    const injectedSlug = "private_memory' OR 1=1 --";
-    await readMcpMemory(query, injectedSlug);
-    await listMcpMemories(query, "project");
-
-    expect(calls[0]).toMatchObject({
-      sql: expect.not.stringContaining(injectedSlug),
-      params: [injectedSlug, "client_safe", "public"],
-    });
-    expect(calls[1]).toMatchObject({
-      sql: expect.not.stringContaining("project"),
-      params: ["client_safe", "public", "project"],
-    });
-  });
-
-  test("preserves empty lists and escapes Markdown table cells before rendering", async () => {
-    await expect(listMcpMemories(queryFixture([]), "user")).resolves.toEqual({
-      content: [{ type: "text", text: "No memories found." }],
-    });
-
-    const listed = await listMcpMemories(queryFixture([]), "project");
-    const escaped = listed.content[0]?.text.split("\n").find((line) =>
-      line.includes("escaped_memory")
-    );
-    expect(escaped).toBe(
-      `| escaped_memory | project | Escaped memory | ${"x".repeat(99)}\\| |`,
-    );
-
-    const allMemories = await listMcpMemories(queryFixture([]));
-    const adversarial = allMemories.content[0]?.text.split("\n").find((line) =>
-      line.includes("path")
-    );
-    const escapedBackslash = "\\".repeat(2);
-    const escapedPipe = "\\|";
-    expect(adversarial).toBe(
-      `| slug${escapedBackslash}path${escapedPipe}part next | ` +
-        `project${escapedBackslash}type${escapedPipe}part next | ` +
-        `Name${escapedBackslash}path${escapedPipe}part next | ` +
-        `${"x".repeat(98)}${escapedBackslash}${escapedPipe} |`,
-    );
-  });
+  const adversarial = listed.content[0]!.text.split("\n").find((line) =>
+    line.includes("path")
+  );
+  const escapedBackslash = "\\".repeat(2);
+  const escapedPipe = "\\|";
+  assertEquals(
+    adversarial,
+    `| slug${escapedBackslash}path${escapedPipe}part next | project | ` +
+      `Name${escapedBackslash}path${escapedPipe}part next | ` +
+      `${"x".repeat(98)}${escapedBackslash}${escapedPipe} |`,
+  );
 });

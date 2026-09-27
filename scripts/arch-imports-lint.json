@@ -6,7 +6,9 @@
       "include": [
         "arch-imports/dynamic-import",
         "arch-imports/env-access",
-        "arch-imports/dyfj-key"
+        "arch-imports/dyfj-key",
+        "arch-imports/package-import",
+        "arch-imports/sql-write"
       ]
     }
   }

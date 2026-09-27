@@ -4,6 +4,11 @@ import {
   generateULID,
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
+import {
+  type EventInsert,
+  memoryClearanceFor,
+  type Store,
+} from "./store/mod.ts";
 import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
@@ -279,7 +284,7 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   dailyLimitUsd?: number;
   /**
    * Test seam for the events-table spend rollup that seeds the session/daily
-   * envelopes; the default queries Dolt (fetchSpendBaselines).
+   * envelopes; the default reads the store's spend rollup (fetchSpendBaselines).
    */
   fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
   /**
@@ -1043,6 +1048,8 @@ export type ExternalAgentRunner = Runner<
 >;
 
 export interface WorkbenchRuntimeServices {
+  /** The store every native-turn read and write goes through. */
+  store: Store;
   externalAgentRunner?: ExternalAgentRunner;
 }
 
@@ -1064,15 +1071,15 @@ export function runWorkbenchRuntime(
 ): Promise<ExternalAgentWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput & { runner?: undefined },
-  services?: WorkbenchRuntimeServices,
+  services: WorkbenchRuntimeServices,
 ): Promise<NativeWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
-  services?: WorkbenchRuntimeServices,
+  services: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult>;
 export async function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
-  services?: WorkbenchRuntimeServices,
+  services: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult> {
   if (runtimeInput.runner?.kind === "acp") {
     if (
@@ -1128,7 +1135,7 @@ export async function runWorkbenchRuntime(
   } | null = null;
   let acpSelectionReason: string | null = null;
   try {
-    const models = await loadWorkbenchModels().then(
+    const models = await loadWorkbenchModels(services.store.models).then(
       withDefaultLocalWorkbenchModels,
       () => defaultLocalWorkbenchModels(),
     );
@@ -1203,17 +1210,21 @@ export async function runWorkbenchRuntime(
     });
   }
 
-  return await runNativeWorkbenchRuntime(runtimeInput);
+  return await runNativeWorkbenchRuntime(runtimeInput, services.store);
 }
 
 async function runNativeWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
+  store: Store,
 ): Promise<NativeWorkbenchRuntimeResult> {
-  const {
-    eventExists,
-    writeEvent,
-    writeModelSelectedEvent,
-  } = await import("./utils.ts");
+  const { writeModelSelectedEvent } = await import("./utils.ts");
+  const writeEvent = async (
+    event: EventInsert,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<void> => {
+    await store.journal.commit({ events: [event] }, options);
+  };
+  const eventExists = (eventId: string) => store.events.exists(eventId);
   const {
     defaultLocalWorkbenchModels,
     estimateTextTokens,
@@ -1244,7 +1255,7 @@ async function runNativeWorkbenchRuntime(
     loadInjectedMemories,
     loadIndexedMemories,
     buildSystemPrompt,
-    memoryClearanceFor,
+    executeReadMemory,
   } = await import("./memory.ts");
   const {
     createCommandRegistry,
@@ -1310,7 +1321,7 @@ async function runNativeWorkbenchRuntime(
   // Seed the envelopes with spend already on the books: this session's prior
   // turns and today's spend across all sessions. Injectable for tests.
   const fetchBaselines = runtimeInput.fetchSpendBaselines ??
-    fetchSpendBaselines;
+    ((id: string) => fetchSpendBaselines(store.spend, id));
   const spendBaselines = await fetchBaselines(sessionId);
   const budget = new BudgetTracker(
     sessionId,
@@ -1355,8 +1366,10 @@ async function runNativeWorkbenchRuntime(
   let workspaceLookupFailed = false;
   if (resumingSession && requestedWorkspace === undefined) {
     try {
-      requestedWorkspace =
-        (await fetchWorkbenchSessionWorkspace({ sessionId })) ?? undefined;
+      requestedWorkspace = (await fetchWorkbenchSessionWorkspace({
+        sessionId,
+        sessions: store.sessions,
+      })) ?? undefined;
     } catch {
       workspaceLookupFailed = true;
     }
@@ -1593,7 +1606,7 @@ async function runNativeWorkbenchRuntime(
         noteSkippedEventWrite,
       );
 
-      const companionBasePrompt = await loadCompanionBasePrompt();
+      const companionBasePrompt = await loadCompanionBasePrompt(store.prompts);
       systemPrompt = buildAskSystemPrompt(companionBasePrompt, repoContext);
       if (isNextWork) {
         modelPrompt = buildNextWorkBrief({
@@ -1617,8 +1630,11 @@ async function runNativeWorkbenchRuntime(
       // non-loopback consumer gets only client-safe + public, so the personal
       // corpus never leaks to a remote or shared surface.
       const clearance = memoryClearanceFor(authContext.transport);
-      const coreMemories = await loadInjectedMemories(clearance);
-      const memoryIndex = await loadIndexedMemories(clearance);
+      const coreMemories = await loadInjectedMemories(
+        store.memories,
+        clearance,
+      );
+      const memoryIndex = await loadIndexedMemories(store.memories, clearance);
       // Record the memory layer as context sources so turn-mode receipts and the
       // inspector reflect what was loaded (previously [] — the bug this fixes).
       contextSourceLines = buildMemoryContextSourceLines(
@@ -1636,6 +1652,7 @@ async function runNativeWorkbenchRuntime(
         ? memorySearchConfigFromEnv()
         : null;
       registerCoreCommands(commandRegistry, {
+        readMemory: (slug) => executeReadMemory(store.memories, slug),
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
         searchMemory: recallConfig
           ? buildMemorySearch(recallConfig, async (diagnostic) => {
@@ -1749,6 +1766,7 @@ async function runNativeWorkbenchRuntime(
     if (!resumingSession) {
       await writeIntegrity(() =>
         createWorkbenchSession({
+          journal: store.journal,
           sessionId,
           slug: sessionSlug,
           taskDescription: cliPrompt,
@@ -1767,7 +1785,7 @@ async function runNativeWorkbenchRuntime(
 
     let models;
     try {
-      models = await loadWorkbenchModels();
+      models = await loadWorkbenchModels(store.models);
       if (usesRepoAskContext) {
         models = withDefaultLocalWorkbenchModels(models);
       }
@@ -1860,7 +1878,7 @@ async function runNativeWorkbenchRuntime(
 
     await writeMaybe(
       () =>
-        writeModelSelectedEvent({
+        writeModelSelectedEvent(store.journal, {
           selected: selected.slug,
           considered: selection.considered,
           reason: routingReason,
@@ -3292,6 +3310,7 @@ async function runNativeWorkbenchRuntime(
     await writeMaybe(
       () =>
         budget.writeSummaryEvent(
+          store.journal,
           { skippedEventWrites },
           { parentSpanId: turnRootSpanId },
         ),
@@ -3338,6 +3357,7 @@ async function runNativeWorkbenchRuntime(
     await writeMaybe(
       () =>
         updateWorkbenchSession({
+          journal: store.journal,
           sessionId,
           content: buildWorkbenchSessionContent({
             mode,

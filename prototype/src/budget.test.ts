@@ -1,13 +1,13 @@
 /**
  * Unit tests for src/budget.ts
  *
- * All tests are pure — no Dolt, no network.
- * writeSummaryEvent() is not tested here (it calls writeEvent() which shells
- * out to Dolt); buildSummaryEventPayload() is tested instead as it covers
- * all the interesting logic and produces a deterministic, inspectable result.
+ * All tests are pure — no Dolt, no network. Most of the summary logic lives in
+ * buildSummaryEventPayload(), which produces a deterministic, inspectable
+ * result; writeSummaryEvent() commits it through a MemoryStore journal.
  */
 
 import { MapEnv } from "../testing/fakes/map-env.ts";
+import { MemoryStore } from "./store/mod.ts";
 import { describe, expect, test, vi } from "vitest";
 import {
   type BudgetCeilingWarning,
@@ -274,6 +274,21 @@ describe("BudgetTracker.getSummary()", () => {
 // ── buildSummaryEventPayload() ────────────────────────────────────────────────
 
 describe("BudgetTracker.buildSummaryEventPayload()", () => {
+  test("writeSummaryEvent commits the payload through the journal", async () => {
+    const store = new MemoryStore();
+    const tracker = makeTracker();
+    await tracker.writeSummaryEvent(store.journal, { skippedEventWrites: 0 }, {
+      eventId: "01SUMMARYEVENT",
+    });
+    const [row] = await store.events.bySession({
+      sessionId: SESSION_ID,
+      limit: 10,
+      order: "asc",
+    });
+    expect(row?.event_id).toBe("01SUMMARYEVENT");
+    expect(row?.event_type).toBe("budget_summary");
+  });
+
   test("event_type is 'budget_summary'", () => {
     const payload = makeTracker().buildSummaryEventPayload();
     expect(payload.event_type).toBe("budget_summary");
@@ -594,35 +609,29 @@ describe("daily envelope", () => {
     expect(check.sessionCostSoFar).toBeCloseTo(0.98);
   });
 
-  test("fetchSpendBaselines maps the rollup row and scopes by session and day", async () => {
+  test("fetchSpendBaselines reads the store's spend rollup for the session and day", async () => {
     const { fetchSpendBaselines } = await import("./budget.ts");
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
-    const query = async (sql: string, params: unknown[] = []) => {
-      calls.push({ sql, params });
-      return [{ session_spent: "0.12", session_today: "0.05", daily_others: "3.4" }];
-    };
+    const calls: Array<[string, string]> = [];
     const baselines = await fetchSpendBaselines(
+      {
+        baselines: async (sessionId, dayStart) => {
+          calls.push([sessionId, dayStart]);
+          return {
+            sessionSpentUsd: 0.12,
+            sessionSpentTodayUsd: 0.05,
+            dailyOtherSessionsUsd: 3.4,
+          };
+        },
+      },
       SESSION_ID,
       "2026-07-06 00:00:00",
-      query as never,
     );
     expect(baselines).toEqual({
       sessionSpentUsd: 0.12,
       sessionSpentTodayUsd: 0.05,
       dailyOtherSessionsUsd: 3.4,
     });
-    expect(calls[0].params).toEqual([
-      SESSION_ID,
-      SESSION_ID,
-      "2026-07-06 00:00:00",
-      "2026-07-06 00:00:00",
-      SESSION_ID,
-    ]);
-    // Other-session scoping: this session's own rows must not count twice.
-    expect(calls[0].sql).toContain("session_id <> ?");
-    expect(calls[0].sql).toContain("cost_total");
-    // budget_summary rows aggregate the session and would double count.
-    expect(calls[0].sql).toContain("event_type = 'model_response'");
+    expect(calls).toEqual([[SESSION_ID, "2026-07-06 00:00:00"]]);
   });
 
   test("localDayStart is a local-midnight timestamp string", async () => {

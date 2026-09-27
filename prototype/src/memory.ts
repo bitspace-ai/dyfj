@@ -27,46 +27,15 @@
  * unit tested without Dolt.
  */
 
-import { doltQuery } from "./utils.ts";
+import type {
+  MemoryReader,
+  MemoryType,
+  MemoryVisibility,
+  TextRow,
+} from "./store/mod.ts";
+import { MEMORY_VISIBILITY_ALL } from "./store/mod.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-export type MemoryType = "user" | "feedback" | "project" | "reference";
-
-/**
- * Privacy class of a memory row (AGENTS.md taxonomy). Governs which consumers
- * receive the row at injection time. Stored in the `memories.visibility` column
- * (schema/current/001_structure.sql); existing rows default to 'private'.
- */
-export type MemoryVisibility =
-  | "private"
-  | "shareable"
-  | "client_safe"
-  | "public";
-
-/** Full clearance: a local operator sees every class. */
-export const MEMORY_VISIBILITY_ALL: readonly MemoryVisibility[] = [
-  "private",
-  "shareable",
-  "client_safe",
-  "public",
-];
-
-/**
- * Visibility classes a consumer is cleared to receive, by transport. The
- * loopback/in-process operator at the machine sees everything; any
- * non-loopback consumer — remote or shared, even with the bearer key, since the
- * shared bearer does not prove identity — is limited to client-safe + public
- * until per-principal identity exists. Safe by default: an
- * unrecognised transport gets the most restrictive set.
- */
-export function memoryClearanceFor(
-  transport: "loopback" | "remote",
-): MemoryVisibility[] {
-  return transport === "loopback"
-    ? [...MEMORY_VISIBILITY_ALL]
-    : ["client_safe", "public"];
-}
 
 export interface Memory {
   memoryId: string;
@@ -118,17 +87,10 @@ export const UNTRUSTED_MEMORY_INSTRUCTIONS = [
  * rather than the full personal pile.
  */
 export async function loadInjectedMemories(
+  memories: MemoryReader,
   allowedVisibility: readonly MemoryVisibility[],
 ): Promise<Memory[]> {
-  if (allowedVisibility.length === 0) return [];
-  const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
-  const rows = await doltQuery(
-    `SELECT memory_id, slug, type, name, description, content ` +
-      `FROM memories WHERE inject = 'always' ` +
-      `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
-    [...allowedVisibility],
-  );
-  return rows.map(rowToMemory);
+  return (await memories.injected(allowedVisibility)).map(rowToMemory);
 }
 
 /**
@@ -138,35 +100,15 @@ export async function loadInjectedMemories(
  * withheld from the index entirely.
  */
 export async function loadIndexedMemories(
+  memories: MemoryReader,
   allowedVisibility: readonly MemoryVisibility[],
 ): Promise<MemoryIndexEntry[]> {
-  if (allowedVisibility.length === 0) return [];
-  const visPlaceholders = allowedVisibility.map(() => "?").join(", ");
-  const rows = await doltQuery(
-    `SELECT slug, type, name, description ` +
-      `FROM memories WHERE inject = 'index' ` +
-      `AND visibility IN (${visPlaceholders}) ORDER BY type, slug;`,
-    [...allowedVisibility],
-  );
-  return rows.map(rowToIndexEntry);
-}
-
-/**
- * Fetch the full content of a single memory by slug.
- * Called at tool-execution time when the model invokes read_memory().
- */
-async function getMemoryBySlug(slug: string): Promise<Memory | null> {
-  const rows = await doltQuery(
-    `SELECT memory_id, slug, type, name, description, content ` +
-      `FROM memories WHERE slug = ? LIMIT 1;`,
-    [slug],
-  );
-  return rows.length > 0 ? rowToMemory(rows[0]!) : null;
+  return (await memories.indexed(allowedVisibility)).map(rowToIndexEntry);
 }
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
-function rowToMemory(row: Record<string, string>): Memory {
+function rowToMemory(row: TextRow): Memory {
   return {
     memoryId: row["memory_id"] ?? "",
     slug: row["slug"] ?? "",
@@ -177,7 +119,7 @@ function rowToMemory(row: Record<string, string>): Memory {
   };
 }
 
-function rowToIndexEntry(row: Record<string, string>): MemoryIndexEntry {
+function rowToIndexEntry(row: TextRow): MemoryIndexEntry {
   return {
     slug: row["slug"] ?? "",
     type: (row["type"] ?? "") as MemoryType,
@@ -391,8 +333,12 @@ export function buildSystemPrompt(
  * helpful not-found message if the slug doesn't exist (graceful — the model
  * may occasionally hallucinate a slug).
  */
-export async function executeReadMemory(slug: string): Promise<string> {
-  const memory = await getMemoryBySlug(slug);
+export async function executeReadMemory(
+  memories: MemoryReader,
+  slug: string,
+): Promise<string> {
+  const row = await memories.bySlug(slug, MEMORY_VISIBILITY_ALL);
+  const memory = row === null ? null : rowToMemory(row);
   if (!memory) {
     return (
       `Memory not found: '${slug}'. ` +

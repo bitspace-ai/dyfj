@@ -6,7 +6,6 @@ import {
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
 import { processEnv } from "./config/mod.ts";
-import { doltQuery } from "./utils.ts";
 import { DomainError } from "./contract/mod.ts";
 
 export type ModelAccessModality =
@@ -573,32 +572,14 @@ function parseCapabilities(value: string | undefined): string[] {
     .filter((item) => item.length > 0);
 }
 
-export async function loadWorkbenchModels(): Promise<WorkbenchModel[]> {
-  try {
-    const rows = await doltQuery(
-      "SELECT slug, display_name, provider, api, base_url, tier, " +
-        "cost_input, cost_output, capabilities, " +
-        "context_window, max_output_tokens, " +
-        "architecture, total_params_b, active_params_b, recommended_quant, " +
-        "resident_ram_gib, reasoning_effort_control " +
-        "FROM models WHERE active = TRUE ORDER BY tier, slug;",
-    );
-    return parseModelRegistryRows(rows);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (
-      message.includes("architecture") || message.includes("Unknown column")
-    ) {
-      const legacyRows = await doltQuery(
-        "SELECT slug, display_name, provider, api, base_url, tier, " +
-          "cost_input, cost_output, capabilities, " +
-          "context_window, max_output_tokens " +
-          "FROM models WHERE active = TRUE ORDER BY tier, slug;",
-      );
-      return parseModelRegistryRows(legacyRows);
-    }
-    throw err;
-  }
+/**
+ * The active catalog, parsed. `models` is the store's model reader (declared
+ * structurally: providers/ sits beside store/ and does not import it).
+ */
+export async function loadWorkbenchModels(
+  models: { listActive(): Promise<Record<string, string>[]> },
+): Promise<WorkbenchModel[]> {
+  return parseModelRegistryRows(await models.listActive());
 }
 
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
@@ -1092,7 +1073,8 @@ export interface WorkbenchTurnParams {
    * falling back to the registry local default. Threaded from config.
    */
   defaultModelId?: string | null;
-  models?: WorkbenchModel[];
+  /** The catalog to route against (the caller loads it from the store). */
+  models: WorkbenchModel[];
   onTextDelta?: (delta: string) => void;
   jsonObject?: boolean;
   tools?: WorkbenchToolDefinition[];
@@ -1163,7 +1145,7 @@ export function modelRequestedOutputCap(
 export async function runWorkbenchTurn(
   params: WorkbenchTurnParams,
 ): Promise<WorkbenchTurnResult> {
-  const models = params.models ?? await loadWorkbenchModels();
+  const models = params.models;
   const selection = selectWorkbenchModel(
     models,
     params.routing,

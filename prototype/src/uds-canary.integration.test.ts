@@ -17,7 +17,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
 import { connectUnixClient } from "./uds-client.ts";
-import { doltExec } from "./utils.ts";
+import {
+  type FixtureSql,
+  openFixtureSql,
+  openFixtureStore,
+} from "../testing/dolt/fixture-sql.ts";
+import type { DoltStore } from "./store/mod.ts";
 
 const MEMORY_SLUG = "canary_leak_test_cf9a";
 const MEMORY_NAME = "CANARY-MEMORY-NAME-cf9a";
@@ -67,15 +72,19 @@ describe("server console canary (integration)", () => {
   let stub: { port: number; close(): Promise<void> };
   let server: WorkbenchUnixServer;
   let socketDir: string;
+  let sql: FixtureSql;
+  let store: DoltStore;
 
   beforeAll(async () => {
     stub = startStubModelServer();
-    await doltExec(
+    sql = openFixtureSql();
+    store = openFixtureStore();
+    await sql.query(
       "INSERT INTO memories (memory_id, slug, type, visibility, inject, name, description, content) " +
         "VALUES (?, ?, 'user', 'private', 'always', ?, 'canary row for the console leak test', ?)",
       [`mem_${MEMORY_SLUG}`, MEMORY_SLUG, MEMORY_NAME, MEMORY_CONTENT],
     );
-    await doltExec(
+    await sql.query(
       "INSERT INTO models (slug, display_name, provider, api, base_url, tier, " +
         "context_window, max_output_tokens, cost_input, cost_output, " +
         "cost_cache_read, cost_cache_write, reasoning, capabilities, active) " +
@@ -84,14 +93,16 @@ describe("server console canary (integration)", () => {
       [MODEL_SLUG, `http://127.0.0.1:${stub.port}/v1`, '["text"]'],
     );
     socketDir = await Deno.makeTempDir();
-    server = await serveWorkbenchUnix(`${socketDir}/wb.sock`, {});
+    server = await serveWorkbenchUnix(`${socketDir}/wb.sock`, { store });
   });
 
   afterAll(async () => {
     await server?.close();
     await stub?.close();
-    await doltExec("DELETE FROM memories WHERE slug = ?", [MEMORY_SLUG]);
-    await doltExec("DELETE FROM models WHERE slug = ?", [MODEL_SLUG]);
+    await sql.query("DELETE FROM memories WHERE slug = ?", [MEMORY_SLUG]);
+    await sql.query("DELETE FROM models WHERE slug = ?", [MODEL_SLUG]);
+    await sql.close();
+    await store.close();
     try {
       await Deno.remove(socketDir, { recursive: true });
     } catch {

@@ -10,7 +10,9 @@ import {
   loadMcpServersConfig,
   loadSecretsConfig,
   processEnv,
+  resolveDoltConnection,
 } from "./config/mod.ts";
+import { createDoltPool, DoltStore } from "./store/mod.ts";
 import { resolveSecrets } from "./secrets.ts";
 import { buildExternalMcpCommands } from "./mcp-tools.ts";
 import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
@@ -44,6 +46,10 @@ for (const diagnostic of externalMcp.diagnostics) {
       : `external MCP ${diagnostic.serverId}: unavailable (${diagnostic.reason})`,
   );
 }
+
+// The runtime's one store over one Dolt pool. Connections open on first use,
+// so the boot does not wait for (or require) a running sql-server.
+const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
 
 let resolveCloseServer!: (close: () => Promise<void>) => void;
 const closeServerReady = new Promise<() => Promise<void>>((resolve) => {
@@ -80,6 +86,7 @@ const shutdown = async (
 try {
   const server = await serveWorkbenchUnix(socketPath, {
     onParseError: (detail) => console.error(`[uds] ${detail}`),
+    store,
     engineConfig: config,
     externalMcpCommands: externalMcp.commands,
     frictionIssueId: processEnv.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||

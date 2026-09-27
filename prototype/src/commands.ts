@@ -1,4 +1,3 @@
-import { executeReadMemory } from "./memory.ts";
 import type { PermissionLevel } from "./config/mod.ts";
 import {
   executeEditFile,
@@ -11,7 +10,6 @@ import {
 import { executeBash } from "./exec-tools.ts";
 import { executeGit, GIT_SUBCOMMANDS } from "./git-tools.ts";
 import { generateSpanId, generateULID, utf8SafePrefix } from "./kernel/mod.ts";
-import { writeEvent as writeDoltEvent } from "./utils.ts";
 
 export type PrincipalType = "human" | "agent" | "service";
 export type PolicyDecision = "allow" | "ask" | "deny";
@@ -208,6 +206,10 @@ export class CommandExecutionError extends Error {
 }
 
 export interface CoreCommandDependencies {
+  /**
+   * Backs `memory.read`. A registry built only to list the catalog may omit
+   * it; executing `memory.read` without it fails.
+   */
   readMemory?: (slug: string) => Promise<string> | string;
   allowedMemorySlugs?: readonly string[];
   /** When set, register the workspace file tools rooted here. */
@@ -230,7 +232,8 @@ export interface CommandEventContext {
   spanId?: string;
   parentSpanId?: string;
   durationMs?: number;
-  writeEvent?: (event: Record<string, unknown>) => Promise<void> | void;
+  /** Persists the tool_call event (the caller commits it to the journal). */
+  writeEvent: (event: Record<string, unknown>) => Promise<void> | void;
 }
 
 export function createCommandRegistry(
@@ -470,7 +473,9 @@ export async function invokeCommand<TResult = unknown>(
 export function buildMemoryReadCommand(
   deps: CoreCommandDependencies = {},
 ): CommandDefinition<string> {
-  const readMemory = deps.readMemory ?? executeReadMemory;
+  const readMemory = deps.readMemory ?? (() => {
+    throw new Error("memory.read has no memory reader configured");
+  });
   const slugPattern = buildMemorySlugPattern(deps.allowedMemorySlugs);
   return {
     id: "memory.read",
@@ -1095,7 +1100,7 @@ export function truncateForEventColumn(
 export function buildCommandToolCallEventPayload(
   call: CommandCall,
   result: CommandInvocationResult,
-  context: CommandEventContext,
+  context: Omit<CommandEventContext, "writeEvent">,
   loggedArguments: Record<string, unknown> = call.arguments,
   redactResult = false,
   spanKind?: CommandDefinition["spanKind"],
@@ -1171,7 +1176,7 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   if (command?.eventContent !== undefined) {
     event.content = command.eventContent(result.isError, result);
   }
-  await (context.writeEvent ?? writeDoltEvent)(event);
+  await context.writeEvent(event);
   return result;
 }
 

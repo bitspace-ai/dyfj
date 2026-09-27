@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { MemoryStore } from "./store/mod.ts";
 import {
   type CliConfig,
   isTimeoutError,
@@ -157,7 +158,10 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
   test("runStatus succeeds against a live UDS server", async () => {
     const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     const server: WorkbenchUnixServer = await serveWorkbenchUnix(socketPath, {
-      loadModels: async () => [anyVal({ slug: "local-qwen", tier: 0, costInput: 0, costOutput: 0 })],
+      store: new MemoryStore(),
+      loadModels: async () => [
+        anyVal({ slug: "local-qwen", tier: 0, costInput: 0, costOutput: 0 }),
+      ],
       listSessions: async () => [],
       fetchSessionEvents: async () => [],
     });

@@ -19,6 +19,15 @@ import {
   updateWorkbenchSession,
 } from "./sessions.ts";
 import type { HistoryOmissionProjection } from "./contract/mod.ts";
+import {
+  type CommitBatch,
+  type EventReader,
+  type Journal,
+  MemoryStore,
+  type SessionEventsQuery,
+  type SessionReader,
+  type TextRow,
+} from "./store/mod.ts";
 
 describe("buildWorkbenchSessionSlug", () => {
   test("derives a stable workbench slug from the session id", () => {
@@ -48,48 +57,100 @@ describe("buildWorkbenchSessionContent", () => {
   });
 });
 
+/** A recording journal: the batches committed through it. */
+function recordingJournal(): Journal & { batches: CommitBatch[] } {
+  const batches: CommitBatch[] = [];
+  return {
+    batches,
+    commit: (batch) => {
+      batches.push(batch);
+      return Promise.resolve({
+        eventIds: [],
+        mutations: batch.mutations?.length ?? 0,
+      });
+    },
+  };
+}
+
+/** An event reader that serves these rows (in this order) for any session. */
+function eventsReturning(
+  rows: Record<string, unknown>[],
+  calls: SessionEventsQuery[] = [],
+): EventReader {
+  return {
+    exists: () => Promise.resolve(false),
+    countBySession: () => Promise.resolve(rows.length),
+    bySession: (query) => {
+      calls.push(query);
+      return Promise.resolve(rows.map((row) => ({ ...row })) as TextRow[]);
+    },
+  };
+}
+
+function sessionsReturning(
+  rows: { workspace?: TextRow | null; list?: TextRow[] },
+  listCalls: unknown[] = [],
+): SessionReader {
+  return {
+    workspace: () => Promise.resolve(rows.workspace ?? null),
+    summary: () => Promise.resolve(null),
+    list: (query) => {
+      listCalls.push(query);
+      return Promise.resolve(rows.list ?? []);
+    },
+    recent: () => Promise.resolve([]),
+    detail: () => Promise.resolve(null),
+  };
+}
+
 describe("createWorkbenchSession", () => {
-  test("inserts an interactive session working view", async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
+  test("commits an interactive session working view as a session_insert", async () => {
+    const journal = recordingJournal();
 
     await createWorkbenchSession({
       sessionId: "01TESTSESSION00000000000000",
       slug: "workbench-01testsession00000000000000",
       taskDescription: "What next?",
       content: "initial content",
-      exec: async (sql, params) => {
-        calls.push({ sql, params });
-      },
+      journal,
     });
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0].sql).toContain("INSERT INTO sessions");
-    expect(calls[0].sql).toContain("workspace");
-    expect(calls[0].params).toEqual([
-      "01TESTSESSION00000000000000",
-      "workbench-01testsession00000000000000",
-      "Workbench Harness Shell",
-      "What next?",
-      "active",
-      "interactive",
-      null, // workspace unbound
-      "initial content",
-    ]);
+    expect(journal.batches).toEqual([{
+      events: [],
+      mutations: [{
+        kind: "session_insert",
+        sessionId: "01TESTSESSION00000000000000",
+        slug: "workbench-01testsession00000000000000",
+        sessionName: "Workbench Harness Shell",
+        taskDescription: "What next?",
+        status: "active",
+        mode: "interactive",
+        workspace: null, // workspace unbound
+        content: "initial content",
+        progressDone: 0,
+        progressTotal: 0,
+      }],
+    }]);
   });
 
-  test("persists the workspace when bound", async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
+  test("persists the workspace when bound and caps the task description", async () => {
+    const store = new MemoryStore();
     await createWorkbenchSession({
       sessionId: "01TESTSESSION00000000000000",
       slug: "workbench-01testsession00000000000000",
-      taskDescription: "What next?",
+      taskDescription: "x".repeat(300),
       content: "initial content",
       workspace: "/workspace/example-project",
-      exec: async (sql, params) => {
-        calls.push({ sql, params });
-      },
+      journal: store.journal,
     });
-    expect(calls[0].params[6]).toBe("/workspace/example-project");
+    expect(
+      await fetchWorkbenchSessionWorkspace({
+        sessionId: "01TESTSESSION00000000000000",
+        sessions: store.sessions,
+      }),
+    ).toBe("/workspace/example-project");
+    const summary = await store.sessions.summary("01TESTSESSION00000000000000");
+    expect(summary?.task_description).toHaveLength(256);
   });
 });
 
@@ -97,7 +158,9 @@ describe("fetchWorkbenchSessionWorkspace", () => {
   test("returns the persisted workspace for a session", async () => {
     const ws = await fetchWorkbenchSessionWorkspace({
       sessionId: "01TESTSESSION00000000000000",
-      query: async () => [{ workspace: "/workspace/example-project" }],
+      sessions: sessionsReturning({
+        workspace: { workspace: "/workspace/example-project" },
+      }),
     });
     expect(ws).toBe("/workspace/example-project");
   });
@@ -106,13 +169,13 @@ describe("fetchWorkbenchSessionWorkspace", () => {
     expect(
       await fetchWorkbenchSessionWorkspace({
         sessionId: "x",
-        query: async () => [{ workspace: "" }],
+        sessions: sessionsReturning({ workspace: { workspace: "" } }),
       }),
     ).toBeNull();
     expect(
       await fetchWorkbenchSessionWorkspace({
         sessionId: "x",
-        query: async () => [],
+        sessions: sessionsReturning({ workspace: null }),
       }),
     ).toBeNull();
   });
@@ -123,13 +186,13 @@ describe("fetchWorkbenchSessionWorkspaceRecord", () => {
     expect(
       await fetchWorkbenchSessionWorkspaceRecord({
         sessionId: "existing",
-        query: async () => [{ workspace: "" }],
+        sessions: sessionsReturning({ workspace: { workspace: "" } }),
       }),
     ).toEqual({ exists: true, workspace: null });
     expect(
       await fetchWorkbenchSessionWorkspaceRecord({
         sessionId: "missing",
-        query: async () => [],
+        sessions: sessionsReturning({ workspace: null }),
       }),
     ).toEqual({ exists: false, workspace: null });
   });
@@ -137,25 +200,25 @@ describe("fetchWorkbenchSessionWorkspaceRecord", () => {
 
 describe("updateWorkbenchSession", () => {
   test("marks the session complete with updated content", async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const journal = recordingJournal();
 
     await updateWorkbenchSession({
       sessionId: "01TESTSESSION00000000000000",
       content: "final content",
-      exec: async (sql, params) => {
-        calls.push({ sql, params });
-      },
+      journal,
     });
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0].sql).toContain("UPDATE sessions");
-    expect(calls[0].params).toEqual([
-      "completed",
-      1,
-      1,
-      "final content",
-      "01TESTSESSION00000000000000",
-    ]);
+    expect(journal.batches).toEqual([{
+      events: [],
+      mutations: [{
+        kind: "session_update",
+        sessionId: "01TESTSESSION00000000000000",
+        status: "completed",
+        progressDone: 1,
+        progressTotal: 1,
+        content: "final content",
+      }],
+    }]);
   });
 });
 
@@ -174,8 +237,8 @@ describe("listWorkbenchSessions", () => {
 
   test("groups sessions by project with unfiled last", async () => {
     const groups = await listWorkbenchSessions({
-      query: () =>
-        Promise.resolve([
+      sessions: sessionsReturning({
+        list: [
           row({
             session_id: "01AAAAAAAAAAAAAAAAAAAAAAAB",
             project: "dyfj",
@@ -187,316 +250,88 @@ describe("listWorkbenchSessions", () => {
             project: "project-b",
             updated_at: "2026-06-12 11:00:00",
           }),
-        ]),
+        ],
+      }),
     });
     expect(groups.map((g) => g.project)).toEqual(["dyfj", "project-b", null]);
     expect(groups[0].sessions[0].sessionId).toBe("01AAAAAAAAAAAAAAAAAAAAAAAB");
     expect(groups[2].sessions[0].project).toBeNull();
   });
 
-  test("filters by project via SQL parameters", async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
+  test("passes the project filter and a clamped limit to the reader", async () => {
+    const calls: unknown[] = [];
     await listWorkbenchSessions({
       project: "dyfj",
-      query: (sql, params) => {
-        calls.push({ sql, params });
-        return Promise.resolve([]);
-      },
+      sessions: sessionsReturning({}, calls),
     });
-    expect(calls[0].sql).toContain("WHERE project = ?");
-    expect(calls[0].params).toEqual(["dyfj"]);
+    await listWorkbenchSessions({
+      limit: 5000.7,
+      sessions: sessionsReturning({}, calls),
+    });
+    await listWorkbenchSessions({
+      limit: -1,
+      sessions: sessionsReturning({}, calls),
+    });
+    expect(calls).toEqual([
+      { project: "dyfj", limit: 200 },
+      { limit: 1000 },
+      { limit: 1 },
+    ]);
   });
 });
 
 describe("fetchWorkbenchSessionEvents", () => {
-  test("queries events for a session in order", async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
-    await fetchWorkbenchSessionEvents({
+  test("reads a session's newest events and returns them oldest first", async () => {
+    const calls: SessionEventsQuery[] = [];
+    const events = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: (sql, params) => {
-        calls.push({ sql, params });
-        return Promise.resolve([]);
-      },
+      events: eventsReturning([
+        { event_id: "evt-2", event_type: "model_response", created_at: "b" },
+        { event_id: "evt-1", event_type: "session_start", created_at: "a" },
+      ], calls),
     });
-    expect(calls[0].sql).toContain("WHERE session_id = ?");
-    expect(calls[0].sql).toContain(
-      "ORDER BY created_at DESC, event_id DESC LIMIT 5000;",
-    );
-    expect(calls[0].sql).not.toContain("AS OF");
-    expect(calls[0].params).toEqual(["01ABCDEF0123456789ABCDEF01"]);
+    expect(calls).toEqual([{
+      sessionId: "01ABCDEF0123456789ABCDEF01",
+      limit: 5000,
+      order: "desc",
+    }]);
+    expect(events.map((e) => e.eventId)).toEqual(["evt-1", "evt-2"]);
   });
 
-  test("inlines a validated AS OF timestamp", async () => {
-    const calls: Array<{ sql: string }> = [];
+  test("passes asOf and an event id through, capping an event lookup at 10", async () => {
+    const calls: SessionEventsQuery[] = [];
     await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
+      eventId: "01EVENT",
       asOf: "2026-06-12T10:00:00",
-      query: (sql) => {
-        calls.push({ sql });
-        return Promise.resolve([]);
-      },
+      events: eventsReturning([], calls),
     });
-    expect(calls[0].sql).toContain("AS OF TIMESTAMP('2026-06-12 10:00:00')");
-  });
-
-  test("projects provider-call nulls for an AS OF schema before migration 003", async () => {
-    const calls: string[] = [];
-    const historicalRow = {
-      event_id: "01HISTORICAL",
-      event_type: "model_response",
-      trace_id: "0123",
-      span_id: "historical-span",
-      parent_span_id: "",
-      principal_id: "workbench",
-      model_id: "gemma4",
-      provider: "ollama",
-      api: "openai-completions",
-      content: "historical response",
-      stop_reason: "stop",
-      tokens_input: "",
-      tokens_output: "",
-      tokens_cache_read: "",
-      tokens_cache_write: "",
-      cost_total: "",
-      duration_ms: "",
-      tool_name: "",
-      tool_call_id: "",
-      tool_arguments: "",
-      tool_result: "",
-      tool_is_error: "",
-      created_at: "2026-06-12 10:00:00",
-    };
-    const [event] = await fetchWorkbenchSessionEvents({
+    expect(calls).toEqual([{
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      asOf: "2026-06-12 10:00:00",
-      query: (sql) => {
-        calls.push(sql);
-        if (!sql.includes("NULL AS provider_call_order")) {
-          return Promise.reject(
-            new Error(
-              'column "provider_call_order" could not be found in any table in scope',
-            ),
-          );
-        }
-        return Promise.resolve([historicalRow]);
-      },
-    });
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toContain(
-      "provider_call_order, provider_call_purpose, provider_error_class",
-    );
-    expect(calls[1]).toContain("NULL AS provider_call_order");
-    expect(calls[1]).toContain("NULL AS unparsed_tool_call_count");
-    expect(calls[1]).toContain("NULL AS trace_flags");
-    expect(event).toMatchObject({
-      eventId: "01HISTORICAL",
-      providerCallOrder: null,
-      providerCallPurpose: null,
-      providerErrorClass: null,
-      unparsedToolCallCount: null,
-      unparsedToolCallCountIsLowerBound: null,
-      tokensInput: null,
-      tokensOutput: null,
-    });
-  });
-
-  test("projects trace-context nulls for an AS OF schema before migration 007", async () => {
-    const calls: string[] = [];
-    const [event] = await fetchWorkbenchSessionEvents({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      asOf: "2026-08-11 10:00:00",
-      query: (sql) => {
-        calls.push(sql);
-        if (!sql.includes("NULL AS trace_flags")) {
-          return Promise.reject(
-            new Error('column "trace_flags" could not be found in any table in scope'),
-          );
-        }
-        return Promise.resolve([{
-          event_id: "01PRETRACE",
-          event_type: "tool_call",
-          trace_id: "0123",
-          span_id: "tool-span",
-          parent_span_id: "provider-span",
-          principal_id: "workbench",
-          created_at: "2026-08-11 10:00:00",
-        }]);
-      },
-    });
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toContain("trace_flags, trace_state, span_kind");
-    expect(calls[1]).toContain("NULL AS trace_flags");
-    expect(event).toMatchObject({
-      traceFlags: null,
-      traceState: null,
-      spanKind: null,
-      parentIsRemote: null,
-    });
-  });
-
-  test("projects unparsed-markup nulls for an AS OF schema before migration 004", async () => {
-    const calls: string[] = [];
-    const [event] = await fetchWorkbenchSessionEvents({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      asOf: "2026-08-01 10:00:00",
-      query: (sql) => {
-        calls.push(sql);
-        if (!sql.includes("NULL AS unparsed_tool_call_count")) {
-          return Promise.reject(
-            new Error(
-              'column "unparsed_tool_call_count" could not be found in any table in scope',
-            ),
-          );
-        }
-        return Promise.resolve([{
-          event_id: "01PRE004",
-          event_type: "provider_call",
-          trace_id: "0123",
-          span_id: "provider-span",
-          principal_id: "workbench",
-          provider_call_order: "1",
-          provider_call_purpose: "initial",
-          created_at: "2026-08-01 10:00:00",
-        }]);
-      },
-    });
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toContain("provider_call_order, provider_call_purpose");
-    expect(calls[1]).toContain("NULL AS unparsed_tool_call_count");
-    expect(calls[1]).toContain("NULL AS trace_flags");
-    expect(event).toMatchObject({
-      providerCallOrder: 1,
-      providerCallPurpose: "initial",
-      unparsedToolCallCount: null,
-      unparsedToolCallCountIsLowerBound: null,
-    });
-  });
-
-  test("does not retry an AS OF query for an unrelated missing column", async () => {
-    const calls: string[] = [];
-    const error = new Error(
-      'column "tool_name" could not be found in any table in scope',
-    );
-    await expect(fetchWorkbenchSessionEvents({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      asOf: "2026-06-12 10:00:00",
-      query: (sql) => {
-        calls.push(sql);
-        return Promise.reject(error);
-      },
-    })).rejects.toThrow(error);
-    expect(calls).toHaveLength(1);
-  });
-
-  test("retains provider-call fields for a post-migration AS OF query", async () => {
-    const calls: string[] = [];
-    const [event] = await fetchWorkbenchSessionEvents({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      asOf: "2026-06-12 10:00:00",
-      query: (sql) => {
-        calls.push(sql);
-        return Promise.resolve([{
-          event_id: "01POSTMIGRATION",
-          event_type: "provider_call",
-          trace_id: "0123",
-          span_id: "provider-span",
-          parent_span_id: "root-span",
-          principal_id: "workbench",
-          provider_call_order: "2",
-          provider_call_purpose: "tool_followup",
-          provider_error_class: "",
-          unparsed_tool_call_count: "64",
-          unparsed_tool_call_count_is_lower_bound: "1",
-          created_at: "2026-06-12 10:00:00",
-        }]);
-      },
-    });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toContain(
-      "provider_call_order, provider_call_purpose, provider_error_class",
-    );
-    expect(event).toMatchObject({
-      providerCallOrder: 2,
-      providerCallPurpose: "tool_followup",
-      providerErrorClass: null,
-      unparsedToolCallCount: 64,
-      unparsedToolCallCountIsLowerBound: true,
-    });
-  });
-
-  test("retains migration-005 runner fields when auth evidence is absent", async () => {
-    const calls: string[] = [];
-    const [event] = await fetchWorkbenchSessionEvents({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      asOf: "2026-08-05 10:00:00",
-      query: (sql) => {
-        calls.push(sql);
-        if (!sql.includes("NULL AS runner_route_source")) {
-          return Promise.reject(
-            new Error(
-              'column "runner_route_source" could not be found in any table in scope',
-            ),
-          );
-        }
-        return Promise.resolve([{
-          event_id: "01PRE006",
-          event_type: "agent_response",
-          trace_id: "0123",
-          span_id: "runner-span",
-          principal_id: "workbench",
-          runner_kind: "external_agent",
-          runner_profile: "fixture",
-          runner_protocol: "acp",
-          runner_transport: "local_stdio",
-          runner_access_route: "local_sidecar",
-          runner_cost_basis: "local_free",
-          runner_workspace: "/tmp/workspace",
-          runner_capabilities: '["sessionCapabilities.close"]',
-          runner_evidence_scope: "outer_only",
-          permission_verdict: "approved",
-          created_at: "2026-08-05 10:00:00",
-        }]);
-      },
-    });
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toContain("runner_kind, runner_profile");
-    expect(calls[1]).toContain("NULL AS runner_route_source");
-    expect(event).toMatchObject({
-      runnerKind: "external_agent",
-      runnerProfile: "fixture",
-      runnerAccessRoute: "local_sidecar",
-      runnerCostBasis: "local_free",
-      runnerRouteSource: null,
-      runnerAuthType: null,
-    });
-  });
-
-  test("rejects a malformed AS OF value before touching SQL", async () => {
-    await expect(fetchWorkbenchSessionEvents({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      asOf: "yesterday'); DROP TABLE events;--",
-      query: () => Promise.resolve([]),
-    })).rejects.toThrow("asOf must be a timestamp");
+      eventId: "01EVENT",
+      asOf: "2026-06-12T10:00:00",
+      limit: 10,
+      order: "desc",
+    }]);
   });
 
   test("maps row fields and nulls empty strings", async () => {
     const events = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () =>
-        Promise.resolve([{
-          event_id: "01EVENT",
-          event_type: "model_response",
-          trace_id: "0123",
-          principal_id: "chris",
-          model_id: "gemma4:e2b",
-          provider: "ollama",
-          content: "hello",
-          stop_reason: "stop",
-          tokens_input: "10",
-          tokens_output: "4",
-          cost_total: "0.000000",
-          created_at: "2026-06-12 10:00:00",
-        }]),
+      events: eventsReturning([{
+        event_id: "01EVENT",
+        event_type: "model_response",
+        trace_id: "0123",
+        principal_id: "chris",
+        model_id: "gemma4:e2b",
+        provider: "ollama",
+        content: "hello",
+        stop_reason: "stop",
+        tokens_input: "10",
+        tokens_output: "4",
+        cost_total: "0.000000",
+        created_at: "2026-06-12 10:00:00",
+      }]),
     });
     expect(events[0]).toMatchObject({
       eventType: "model_response",
@@ -508,43 +343,36 @@ describe("fetchWorkbenchSessionEvents", () => {
   });
 
   test("round-trips typed external-runner metadata", async () => {
-    const queries: string[] = [];
     const [event] = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: (sql) => {
-        queries.push(sql);
-        return Promise.resolve([{
-          event_id: "01RUNNER",
-          event_type: "agent_response",
-          trace_id: "0123",
-          span_id: "runner-span",
-          principal_id: "workbench",
-          content: "external answer",
-          stop_reason: "stop",
-          runner_kind: "external_agent",
-          runner_profile: "fixture",
-          runner_protocol: "acp",
-          runner_protocol_version: "1",
-          runner_stop_reason: "end_turn",
-          runner_external_session_id: "fixture-1",
-          runner_agent_name: "dyfj-acp-fixture",
-          runner_agent_version: "1.0.0",
-          runner_transport: "local_stdio",
-          runner_access_route: "local_sidecar",
-          runner_cost_basis: "local_free",
-          runner_workspace: "/tmp/workspace",
-          runner_capabilities: '["sessionCapabilities.close"]',
-          runner_evidence_scope: "outer_only",
-          runner_route_source: "agent_auth_status",
-          runner_auth_type: "chat-gpt",
-          permission_verdict: "approved",
-          created_at: "2026-08-05 10:00:00",
-        }]);
-      },
+      events: eventsReturning([{
+        event_id: "01RUNNER",
+        event_type: "agent_response",
+        trace_id: "0123",
+        span_id: "runner-span",
+        principal_id: "workbench",
+        content: "external answer",
+        stop_reason: "stop",
+        runner_kind: "external_agent",
+        runner_profile: "fixture",
+        runner_protocol: "acp",
+        runner_protocol_version: "1",
+        runner_stop_reason: "end_turn",
+        runner_external_session_id: "fixture-1",
+        runner_agent_name: "dyfj-acp-fixture",
+        runner_agent_version: "1.0.0",
+        runner_transport: "local_stdio",
+        runner_access_route: "local_sidecar",
+        runner_cost_basis: "local_free",
+        runner_workspace: "/tmp/workspace",
+        runner_capabilities: '["sessionCapabilities.close"]',
+        runner_evidence_scope: "outer_only",
+        runner_route_source: "agent_auth_status",
+        runner_auth_type: "chat-gpt",
+        permission_verdict: "approved",
+        created_at: "2026-08-05 10:00:00",
+      }]),
     });
-    expect(queries[0]).toContain(
-      "CAST(runner_capabilities AS CHAR) AS runner_capabilities",
-    );
     expect(event).toMatchObject({
       eventType: "agent_response",
       runnerKind: "external_agent",
@@ -567,28 +395,27 @@ describe("fetchWorkbenchSessionEvents", () => {
   test("returns trace parentage and tool arguments as structured JSON", async () => {
     const [event] = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () =>
-        Promise.resolve([{
-          event_id: "01EVENT",
-          event_type: "tool_call",
-          trace_id: "0123",
-          span_id: "tool-span",
-          parent_span_id: "provider-span",
-          trace_flags: "1",
-          trace_state: "vendor=value",
-          span_kind: "client",
-          parent_is_remote: "0",
-          principal_id: "workbench",
-          api: "responses",
-          tokens_cache_read: "3",
-          tokens_cache_write: "1",
-          duration_ms: "25",
-          provider_call_order: "2",
-          provider_call_purpose: "tool_followup",
-          provider_error_class: "",
-          tool_arguments: '{"path":"README.md","max":20}',
-          created_at: "2026-06-12 10:00:00",
-        }]),
+      events: eventsReturning([{
+        event_id: "01EVENT",
+        event_type: "tool_call",
+        trace_id: "0123",
+        span_id: "tool-span",
+        parent_span_id: "provider-span",
+        trace_flags: "1",
+        trace_state: "vendor=value",
+        span_kind: "client",
+        parent_is_remote: "0",
+        principal_id: "workbench",
+        api: "responses",
+        tokens_cache_read: "3",
+        tokens_cache_write: "1",
+        duration_ms: "25",
+        provider_call_order: "2",
+        provider_call_purpose: "tool_followup",
+        provider_error_class: "",
+        tool_arguments: '{"path":"README.md","max":20}',
+        created_at: "2026-06-12 10:00:00",
+      }]),
     });
     expect(event).toMatchObject({
       spanId: "tool-span",
@@ -611,15 +438,14 @@ describe("fetchWorkbenchSessionEvents", () => {
   test("leaves array-valued tool arguments absent", async () => {
     const [event] = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () =>
-        Promise.resolve([{
-          event_id: "01EVENT",
-          event_type: "tool_call",
-          trace_id: "0123",
-          principal_id: "workbench",
-          tool_arguments: "[]",
-          created_at: "2026-06-12 10:00:00",
-        }]),
+      events: eventsReturning([{
+        event_id: "01EVENT",
+        event_type: "tool_call",
+        trace_id: "0123",
+        principal_id: "workbench",
+        tool_arguments: "[]",
+        created_at: "2026-06-12 10:00:00",
+      }]),
     });
     expect(event.toolArguments).toBeNull();
   });
@@ -642,10 +468,9 @@ describe("fetchWorkbenchSessionEvents", () => {
     }));
     const events = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () =>
-        Promise.resolve(
-          rows.slice().reverse() as unknown as Record<string, string>[],
-        ),
+      events: eventsReturning(
+        rows.slice().reverse() as unknown as Record<string, string>[],
+      ),
     });
     expect(events.map((e) => e.toolIsError)).toEqual([
       true,
@@ -671,7 +496,7 @@ describe("fetchWorkbenchSessionEvents", () => {
     };
     const [emptyResult] = await fetchWorkbenchSessionEvents({
       sessionId: "01ABCDEF0123456789ABCDEF01",
-      query: () => Promise.resolve([valid]),
+      events: eventsReturning([valid]),
     });
     expect(emptyResult.toolHistoryValid).toBe(true);
     expect(buildConversationMessages([emptyResult])).toContainEqual({
@@ -692,10 +517,9 @@ describe("fetchWorkbenchSessionEvents", () => {
     ) {
       const [event] = await fetchWorkbenchSessionEvents({
         sessionId: "01ABCDEF0123456789ABCDEF01",
-        query: () =>
-          Promise.resolve([
-            corrupted as unknown as Record<string, string>,
-          ]),
+        events: eventsReturning([
+          corrupted as unknown as Record<string, string>,
+        ]),
       });
       expect(event.toolHistoryValid).toBe(false);
       expect(() => buildConversationMessages([event])).toThrow(
@@ -1469,7 +1293,7 @@ describe("buildConversationMessages", () => {
       fetchWorkbenchSessionEvents({
         sessionId: "s1",
         limit: 0,
-        query: async () => [],
+        events: eventsReturning([]),
       }),
     ).rejects.toThrow("limit must be a positive integer");
 
@@ -1477,37 +1301,32 @@ describe("buildConversationMessages", () => {
       fetchWorkbenchSessionEvents({
         sessionId: "s1",
         limit: -3,
-        query: async () => [],
+        events: eventsReturning([]),
       }),
     ).rejects.toThrow("limit must be a positive integer");
   });
 
   test("fetchWorkbenchSessionEvents preserves explicit descending order", async () => {
-    const executedSql: string[] = [];
+    const calls: SessionEventsQuery[] = [];
     const events = await fetchWorkbenchSessionEvents({
       sessionId: "s1",
       limit: 10,
       order: "desc",
-      query: async (sql) => {
-        executedSql.push(sql);
-        return [
-          {
-            event_id: "evt-2",
-            event_type: "model_response",
-            created_at: "2026-08-15 12:01:00",
-          } as any,
-          {
-            event_id: "evt-1",
-            event_type: "session_start",
-            created_at: "2026-08-15 12:00:00",
-          } as any,
-        ];
-      },
+      events: eventsReturning([
+        {
+          event_id: "evt-2",
+          event_type: "model_response",
+          created_at: "2026-08-15 12:01:00",
+        },
+        {
+          event_id: "evt-1",
+          event_type: "session_start",
+          created_at: "2026-08-15 12:00:00",
+        },
+      ], calls),
     });
 
-    expect(executedSql[0]).toContain(
-      "ORDER BY created_at DESC, event_id DESC LIMIT 10",
-    );
+    expect(calls[0]).toMatchObject({ limit: 10, order: "desc" });
     expect(events.map((e) => e.eventId)).toEqual(["evt-2", "evt-1"]);
   });
 });

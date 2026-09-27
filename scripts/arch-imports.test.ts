@@ -5,6 +5,7 @@ import {
   type Baseline,
   type CycleAllowEntry,
   type LayerRules,
+  packageName,
   stronglyConnected,
 } from "./arch-imports.ts";
 import { loadModuleGraph } from "./arch-imports-graph.ts";
@@ -64,6 +65,15 @@ const RULES: LayerRules = {
       { unit: "tooling", justification: "Separate processes." },
     ],
   },
+  packages: [{
+    name: "mysql2",
+    allowedUnits: ["store"],
+    entrypoints: [{ unit: "tooling", justification: "Test fixture." }],
+  }],
+  sqlWrites: {
+    allowedPaths: [`${S}/store/journal.ts`],
+    entrypoints: [{ unit: "tooling", justification: "Test fixture." }],
+  },
   files: { [`${S}/legacy-utils.ts`]: "store" },
 };
 
@@ -74,6 +84,8 @@ const EMPTY: Baseline = {
   dynamic: [],
   env: [],
   envKeys: [],
+  packages: [],
+  sqlWrites: [],
 };
 
 // Writes the fixture modules into a temporary tree and builds the graph with
@@ -85,6 +97,7 @@ async function run(
 ) {
   const all: Record<string, string> = {
     [`${S}/legacy-utils.ts`]: "export {};",
+    [`${S}/store/journal.ts`]: "export {};",
     ...files,
   };
   const root = Deno.realPathSync(await Deno.makeTempDir());
@@ -723,4 +736,121 @@ Deno.test("env entrypoints must name one existing unit or module and justify it"
   assertSome(result.errors, "ghost: unit is not declared");
   assertSome(result.errors, "name exactly one of unit or path");
   assertSome(result.errors, "tooling: missing justification");
+});
+
+Deno.test("a confined package is a violation outside its units and entrypoints", async () => {
+  const result = await run({
+    [`${S}/store/journal.ts`]:
+      'import mysql from "mysql2/promise"; export { mysql };',
+    [`${S}/store/pool.ts`]: 'export { createPool } from "mysql2";',
+    ["prototype/scripts/fixture.ts"]:
+      'import mysql from "mysql2/promise"; mysql;',
+    [`${S}/legacy-utils.ts`]: 'import mysql from "mysql2"; export { mysql };',
+    [`${S}/engine/static.ts`]: 'import mysql from "mysql2/promise"; mysql;',
+    [`${S}/engine/versioned.ts`]:
+      'import m from "npm:mysql2@3.24.4/promise"; m;',
+    [`${S}/engine/reexport.ts`]: 'export * from "mysql2";',
+    [`${S}/engine/dynamic.ts`]: 'export const m = () => import("mysql2");',
+    [`${S}/engine/type.ts`]: 'export type P = typeof import("mysql2/promise");',
+    [`${S}/engine/type-only.ts`]:
+      'import type { Pool } from "mysql2/promise"; export type P = Pool;',
+    [`${S}/engine/other.ts`]: 'import { z } from "zod"; z;',
+    [`${S}/engine/lookalike.ts`]: 'import x from "mysql2-lookalike"; x;',
+  });
+  assertEquals(result.current.packages, [
+    `${S}/engine/dynamic.ts: mysql2`,
+    `${S}/engine/reexport.ts: mysql2`,
+    `${S}/engine/static.ts: mysql2`,
+    `${S}/engine/type-only.ts: mysql2`,
+    `${S}/engine/type.ts: mysql2`,
+    `${S}/engine/versioned.ts: mysql2`,
+    // Mapped to store/ by name only: it has not moved, so no exemption.
+    `${S}/legacy-utils.ts: mysql2`,
+  ]);
+  assertSome(result.added, `package: ${S}/engine/static.ts: mysql2`);
+});
+
+Deno.test("an SQL write literal is a violation outside the journal and entrypoints", async () => {
+  const result = await run({
+    [`${S}/store/journal.ts`]:
+      'export const a = "INSERT INTO events (event_id) VALUES (?)";',
+    [`${S}/store/readers.ts`]: [
+      'export const r = "SELECT slug FROM memories WHERE slug = ?";',
+      'export const u = "UPDATE sessions SET status = ?";',
+    ].join("\n"),
+    ["prototype/scripts/fixture.ts"]:
+      'export const seed = "INSERT INTO memories (slug) VALUES (1)";',
+    [`${S}/engine/writes.ts`]: [
+      'export const a = "INSERT INTO sessions (x) VALUES (?)";',
+      "export const b = `  DELETE FROM events WHERE id = ?`;",
+      "export const c = (t: string) => `REPLACE INTO ${t} VALUES (?)`;",
+      "export const d = \"CALL DOLT_COMMIT('-Am', 'x')\";",
+      'export const e = "DROP TABLE events";',
+      'export const f = "TRUNCATE memories";',
+    ].join("\n"),
+    [`${S}/engine/prose.ts`]: [
+      'export const a = "Update the session row after the turn";',
+      'export const b = "Updated sessions: 3";',
+      'export const c = "insert into the log";',
+      'export const d = "SELECT 1; UPDATE x SET y = 1";',
+    ].join("\n"),
+  });
+  assertEquals(result.current.sqlWrites, [
+    `${S}/engine/writes.ts: CALL DOLT_`,
+    `${S}/engine/writes.ts: DELETE FROM`,
+    `${S}/engine/writes.ts: DROP TABLE`,
+    `${S}/engine/writes.ts: INSERT INTO`,
+    `${S}/engine/writes.ts: REPLACE INTO`,
+    `${S}/engine/writes.ts: TRUNCATE`,
+    // store/ is not a blanket exemption: only the journal may write.
+    `${S}/store/readers.ts: UPDATE`,
+  ]);
+  assertSome(result.added, `sql-write: ${S}/engine/writes.ts: INSERT INTO`);
+});
+
+Deno.test("package and sql-write rules must name existing units and modules and justify entrypoints", async () => {
+  const result = await run({}, {
+    rules: {
+      ...RULES,
+      packages: [{
+        name: "mysql2",
+        allowedUnits: ["nowhere"],
+        entrypoints: [{ unit: "tooling", justification: "" }],
+      }],
+      sqlWrites: {
+        allowedPaths: [`${S}/store/missing.ts`],
+        entrypoints: [{ path: `${S}/missing.ts`, justification: "x" }],
+      },
+    },
+  });
+  assertSome(
+    result.errors,
+    "package mysql2 rule: allowed unit is not declared: nowhere",
+  );
+  assertSome(
+    result.errors,
+    "package mysql2 entrypoint tooling: missing justification",
+  );
+  assertSome(
+    result.errors,
+    `sql-write rule: allowed module does not exist: ${S}/store/missing.ts`,
+  );
+  assertSome(
+    result.errors,
+    `sql-write entrypoint ${S}/missing.ts: module does not exist`,
+  );
+});
+
+Deno.test("packageName strips registries, versions and subpaths", () => {
+  assertEquals(
+    [
+      "mysql2",
+      "mysql2/promise",
+      "npm:mysql2@3.24.4/promise",
+      "npm:@scope/pkg@1.0.0/sub",
+      "@scope/pkg",
+      "jsr:@std/assert@1",
+    ].map(packageName),
+    ["mysql2", "mysql2", "mysql2", "@scope/pkg", "@scope/pkg", "@std/assert"],
+  );
 });

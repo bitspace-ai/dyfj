@@ -130,18 +130,19 @@ changes with a CHANGELOG `Fixed` entry.
     prompt, so it does not pin this.
 - 2026-09-26 — **Session and event timestamps reach RPC clients as
   second-precision, time-zone-dependent text.**
-  - **Location:** `prototype/src/utils.ts:92` (`doltQuery` converts every
-    column with `String(value)`), surfacing through
-    `prototype/src/sessions.ts:140-141` (`sessions/inspect`) and
-    `prototype/src/sessions.ts:716` (`events/query`).
+  - **Location:** `prototype/src/store/dolt-readers.ts:35` (`textRow`
+    converts every column with `String(value)`; before the store port this
+    was `doltQuery` in `utils.ts`, and `MemoryStore` reproduces it), surfacing
+    through `prototype/src/sessions.ts:128-129` (`sessions/inspect`) and
+    `prototype/src/sessions.ts:433` (`events/query`).
   - **Symptom:** `sessions/inspect` and `events/query` return `createdAt` and
     `updatedAt` as `Date.prototype.toString()` text, for example
     `Sat Sep 26 2026 21:51:50 GMT+0000 (Coordinated Universal Time)`. The text
     depends on the server's time zone and drops the microseconds the columns
     store. `sessions/list` returns ISO 8601 for the same columns.
   - **Suspected cause:** mysql2 returns `TIMESTAMP` columns as `Date` objects;
-    `doltQuery` stringifies them without a format, and only some readers
-    re-normalize the result.
+    the store's readers stringify them without a format, and only some
+    callers re-normalize the result.
   - **Found during:** WO-01 (golden scenario 10 pins the current format).
 - 2026-09-26 — **`sessions/list` can order a resumed session below older
   activity.**

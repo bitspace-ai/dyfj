@@ -12,6 +12,7 @@
 
 export { type Env, type MutableEnv, processEnv } from "./env.ts";
 export { envFileVar, readLauncherEnvVar } from "./env-file.ts";
+export { type DoltConnectionConfig, resolveDoltConnection } from "./dolt.ts";
 export {
   CONFIG_SCHEMA,
   type ConfigDomain,

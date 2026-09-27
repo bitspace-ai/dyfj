@@ -15,10 +15,21 @@
  * - `dyfj-key` reports every string literal, identifier object key, and
  *   non-computed member name that is exactly a `DYFJ_*` environment key, so
  *   the lane can require each one to be declared.
+ * - `package-import` reports the specifier of every non-relative import,
+ *   re-export, dynamic `import()` and `import("...")` type, so the lane can
+ *   confine a package (such as `mysql2`) to the units allowed to use it.
+ * - `sql-write` reports every string literal, and the leading text of every
+ *   template literal, that begins with an SQL write statement (`INSERT INTO`,
+ *   `REPLACE INTO`, `UPDATE`, `DELETE FROM`, `TRUNCATE`, table or database
+ *   DDL, `CALL DOLT_...`), in upper case as the codebase writes SQL. It sees
+ *   statements written as literals; SQL assembled from non-literal pieces is
+ *   out of its reach.
  */
 
 const ENV_OWNERS = new Set(["Deno", "process"]);
 const DYFJ_KEY = /^DYFJ_[A-Za-z0-9_]+$/;
+const SQL_WRITE =
+  /^\s*(INSERT\s+INTO|REPLACE\s+INTO|UPDATE\s|DELETE\s+FROM|TRUNCATE\s|(?:CREATE|DROP|ALTER)\s+(?:TABLE|DATABASE)|CALL\s+DOLT_)/;
 
 // deno-lint-ignore no-explicit-any
 type Node = any;
@@ -191,6 +202,59 @@ const plugin: Deno.lint.Plugin = {
                 context.report({ node, message: "process.env" });
               }
             }
+          },
+        };
+      },
+    },
+    "package-import": {
+      create(context) {
+        const report = (node: Node, source: Node) => {
+          const value = source?.type === "Literal" ? source.value : undefined;
+          if (
+            typeof value === "string" && !value.startsWith(".") &&
+            !value.startsWith("/")
+          ) {
+            context.report({ node, message: value });
+          }
+        };
+        return {
+          ImportDeclaration(node: Node) {
+            report(node, node.source);
+          },
+          ExportNamedDeclaration(node: Node) {
+            if (node.source) report(node, node.source);
+          },
+          ExportAllDeclaration(node: Node) {
+            report(node, node.source);
+          },
+          ImportExpression(node: Node) {
+            report(node, node.source);
+          },
+          TSImportType(node: Node) {
+            report(node, node.argument?.literal ?? node.argument);
+          },
+        };
+      },
+    },
+    "sql-write": {
+      create(context) {
+        const report = (node: Node, value: unknown) => {
+          if (typeof value !== "string") return;
+          const match = SQL_WRITE.exec(value);
+          if (match) {
+            context.report({
+              node,
+              message: match[1]!.replace(/\s+/g, " ").trim(),
+            });
+          }
+        };
+        return {
+          Literal(node: Node) {
+            report(node, node.value);
+          },
+          TemplateLiteral(node: Node) {
+            const quasi = node.quasis?.[0];
+            report(node, quasi?.cooked ?? quasi?.value?.cooked);
           },
         };
       },

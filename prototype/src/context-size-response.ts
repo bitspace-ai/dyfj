@@ -31,7 +31,7 @@ export async function compareContextPayloads(params: {
   prompt: string;
   routing: WorkbenchRoutingOptions;
   payloads: ContextPayload[];
-  models?: WorkbenchModel[];
+  models: WorkbenchModel[];
   now?: () => number;
   fetchFn?: FetchLike;
 }): Promise<ContextPayloadReport[]> {

@@ -131,6 +131,44 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Every database read and write goes through one store port
+  (`prototype/src/store/`), and every write through `journal.commit`**: the
+  store is the only code that issues SQL. `Store` exposes `journal` (the one
+  mutation path) and read-only readers for events, sessions, memories, the
+  model catalog, prompts and spend baselines; each reader is one of the
+  queries the runtime and the memory MCP server issued before, with the same
+  SQL. `DoltStore` runs over one `mysql2` pool that the composition root
+  builds and passes in: the engine server, the memory MCP server and the
+  `verify-workbench-events` diagnostic each build theirs from the `DOLT_*`
+  settings (`config/dolt.ts`; names and defaults unchanged). The module-level
+  pool in `utils.ts`, the MCP server's private pool, `mcp/dolt-config.ts`, and
+  the second raw connection that cancellable event writes opened are gone; a
+  cancellable write now runs in a transaction on a pooled connection.
+  `journal.commit` applies a batch's events, their projections and its
+  declared mutations in one transaction. The writes that have no event type
+  yet (session inserts and updates, from the runtime and from the MCP
+  server's `start_session`/`update_session`, and the MCP `write_memory`
+  upsert) pass through it as the three `UnjournaledMutation` kinds listed,
+  each with its reason, in `store/unjournaled.ts`; `commit` rejects any other
+  kind. The projector mechanism is in place with no phase-1 projectors,
+  because no event written today reproduces a session or memory row. Memory
+  clearance for loopback, non-loopback and standalone MCP stdio consumers is
+  computed in one place, `store/memories.ts`. Rows, receipts, event sequences
+  and MCP tool output are unchanged, and the golden suite passes with no
+  snapshot change. `MemoryStore` holds the same port in memory for tests. A
+  store conformance suite (`prototype/testing/conformance/store.ts`) runs
+  against it in the unit lane and against `DoltStore` in the isolated Dolt
+  integration lane, each case in its own database. It covers every reader,
+  memory clearance for the three consumers, and the journal cases: atomicity
+  (including a failing projector), no update or delete path for events,
+  rejection of an undeclared mutation kind, and projector determinism. The
+  `arch.imports` lane gains two rules, both starting with no baselined
+  violations: `mysql2` may be imported only from `store/` (and the
+  isolated-Dolt test fixture), and a string literal that begins with an SQL
+  write statement may appear only in the store's journal (and that fixture).
+  The second rule sees SQL written as literals; the `mysql2` confinement is
+  what keeps any other SQL inside `store/`.
+
 - **Configuration lives in `prototype/src/config/`, and runtime code reads the
   environment only through an `Env` port**: `config.ts` is split into the env-key
   schema (`schema.ts`), TOML loading (`toml.ts`), the engine config

@@ -59,6 +59,29 @@
       }
     ]
   },
+  "packages": [
+    {
+      "$comment": "mysql2 is the Dolt driver. Only store/ (specs/02-data-layer.md section 2) may import it, so no other runtime module can hold a database connection: every read goes through a store reader and every write through journal.commit.",
+      "name": "mysql2",
+      "allowedUnits": ["store"],
+      "entrypoints": [
+        {
+          "unit": "tooling",
+          "justification": "prototype/scripts/isolated-dolt-fixture.ts starts the isolated Dolt sql-server that the integration and golden lanes run against, probes it for readiness and seeds its fixture rows. It is test tooling that runs as its own process outside the runtime graph, which no runtime module may import."
+        }
+      ]
+    }
+  ],
+  "sqlWrites": {
+    "$comment": "SQL write statements (a string literal beginning INSERT INTO, REPLACE INTO, UPDATE, DELETE FROM, TRUNCATE, table or database DDL, or CALL DOLT_) may appear only in the store's journal, the one mutation path (specs/02-data-layer.md section 2), and in the named entrypoints. The rule sees statements written as literals; SQL assembled from non-literal pieces is out of its reach, and the mysql2 confinement above is what keeps any SQL inside store/.",
+    "allowedPaths": ["prototype/src/store/dolt-journal.ts"],
+    "entrypoints": [
+      {
+        "unit": "tooling",
+        "justification": "prototype/scripts/isolated-dolt-fixture.ts seeds the isolated fixture's rows before the lanes that read them start. It writes test data into a throwaway database, not runtime state, and runs outside the runtime graph."
+      }
+    ]
+  },
   "files": {
     "prototype/src/secrets.ts": "config",
     "prototype/src/utils.ts": "store",

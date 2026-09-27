@@ -53,7 +53,7 @@ export async function compareStructuredOutputModes(params: {
   systemPrompt: string;
   prompt: string;
   routing: WorkbenchRoutingOptions;
-  models?: WorkbenchModel[];
+  models: WorkbenchModel[];
   now?: () => number;
   fetchFn?: FetchLike;
 }): Promise<StructuredOutputReport[]> {
@@ -82,7 +82,7 @@ export async function compareStreamingStructuredOutputModes(params: {
   loosePrompt: string;
   rigidPrompt: string;
   routing: WorkbenchRoutingOptions;
-  models?: WorkbenchModel[];
+  models: WorkbenchModel[];
   now?: () => number;
   fetchFn?: FetchLike;
 }): Promise<StreamingStructuredOutputReport[]> {
