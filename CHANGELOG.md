@@ -26,6 +26,26 @@ README are tracked separately in its Revision history section.
   read from its imports as `deno info --json` reports them: files whose static
   imports reach `vitest`, directly or through a helper module, stay under
   Vitest, which now excludes every other `*.test.ts`.
+- **`arch.imports` gate lane (ratchet mode)**: `scripts/arch-imports.ts` builds
+  the module graph of `prototype/src`, `prototype/mcp`, `prototype/scripts`,
+  and `prototype/diagnostics` (once it exists) with `deno info --json`, plus a
+  `deno lint` plugin that reports every dynamic `import()`, and checks it
+  against the layer rules in `specs/01-architecture.md` §3–4, kept as
+  data in `scripts/arch-layers.json`. It detects import cycles (type-only edges
+  included), upward and non-listed same-layer edges, `cli/` imports outside its
+  allow-list, and dynamic local imports. Today's violations are committed in
+  `scripts/arch-imports-baseline.json` — three cycles (`mcp-tools` ⇄
+  `web-tools`, `workbench` ⇄ `external-agent-runtime`, `sessions` ⇄
+  `idea-packet`) and 32 entries in all. The lane fails on any violation not in
+  the baseline and on any baseline entry that no longer occurs, so the count
+  can only go down. Intentional cycles need a named entry in
+  `scripts/arch-cycles.json` with exact edges inside an import cycle, a
+  justification, and an existing test file; an entry exempts those edges from
+  the cycle and dynamic-import rules only. The list starts empty. Deep imports
+  that bypass a `mod.ts` and a size report (modules over 600 lines, functions
+  over 150 lines) are printed without failing. The lane runs in both
+  `deno task test` and `deno task test:fast` under the existing
+  `test.aggregate` check id.
 
 ### Changed
 

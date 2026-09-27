@@ -302,6 +302,24 @@ Deno.test("policy check lanes invoke their dedicated scripts", () => {
   }
 });
 
+Deno.test("the arch.imports lane runs the checker read-only", () => {
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "Architecture import rules (arch.imports)");
+  if (!lane) throw new Error("arch.imports lane is missing");
+  assertEquals(lane.checkId, "test.aggregate");
+  assertEquals(lane.cwd, "/repo");
+  assertStringIncludes(lane.args.join(" "), "scripts/arch-imports.ts");
+  assertEquals(lane.args.some((arg) => arg.startsWith("--allow-write")), false);
+  // `deno info` runs through the selected Deno binary, granted by path.
+  assertEquals(
+    lane.args.includes("--allow-run=/fixtures/runtime/deno"),
+    true,
+  );
+  assertEquals(lane.args.includes("--deno=/fixtures/runtime/deno"), true);
+  assertEquals(FAST_LANE_LABELS.includes(lane.label), true);
+});
+
 Deno.test("binding-aware lanes forward the CI subject and range", () => {
   const sentinel = "f".repeat(40);
   const prior = Deno.env.get("DYFJ_GATE_SUBJECT");

@@ -130,7 +130,7 @@ The number is kept so references stay stable.
   6. **Size report.** Emit a non-failing report of modules over 600 LOC and
      functions over 150 lines.
 - **Acceptance:**
-  - The baseline contains exactly the four cycles documented in
+  - The baseline contains exactly the three cycles documented in
     `00-baseline-findings.md`, plus upward edges.
   - The unit tests cover each rule type, including an allow-listed cycle that
     passes, one whose cited test file is missing (fails), and a stale entry
