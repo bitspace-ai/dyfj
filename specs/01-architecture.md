@@ -11,9 +11,12 @@ it does.
   - event rows, config/env keys, receipts
 
   The only exceptions are the approved deletions in §8.
-- **TypeScript only.** `core/` (Rust) is unchanged. A later Rust component
-  arrives behind the JSON-RPC process seam, not behind an in-process TypeScript
-  interface (§10).
+- **TypeScript tier only, and temporary** (D25). Phase 1 restructures the
+  TypeScript prototype; `core/` (Rust) is untouched during phase 1. TypeScript
+  holds a component only while its shape is still moving (Layer 0 stance #3). A
+  stabilized component moves to Rust behind the JSON-RPC process seam, not
+  behind an in-process TypeScript interface (§10), and no phase-1 change may
+  make that move harder.
 - **Schema stays canonical** (Layer 0 #4). TypeScript row types are _generated_
   from it (see `02-data-layer.md`).
 - **AGENTS.md engineering doctrine**, all four rules:
