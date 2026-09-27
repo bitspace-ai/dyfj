@@ -125,14 +125,30 @@ const plugin: Deno.lint.Plugin = {
             }
           },
           VariableDeclarator(node: Node) {
-            // `const g = globalThis` makes `g.Deno` / `g.process` owners too.
-            if (
-              node.id?.type === "Identifier" &&
-              node.init?.type === "Identifier" &&
+            const fromGlobal = node.init?.type === "Identifier" &&
               (node.init.name === "globalThis" ||
-                aliases.get(node.init.name) === "globalThis")
-            ) {
+                aliases.get(node.init.name) === "globalThis");
+            // `const g = globalThis` makes `g.Deno` / `g.process` owners too.
+            if (fromGlobal && node.id?.type === "Identifier") {
               aliases.set(node.id.name, "globalThis");
+              return;
+            }
+            // `const { Deno: D, process: p } = globalThis` binds owners.
+            if (fromGlobal && node.id?.type === "ObjectPattern") {
+              for (const property of node.id.properties ?? []) {
+                const key = property.key;
+                const name = key?.type === "Identifier"
+                  ? key.name
+                  : key?.type === "Literal"
+                  ? key.value
+                  : undefined;
+                if (
+                  ENV_OWNERS.has(name) &&
+                  property.value?.type === "Identifier"
+                ) {
+                  aliases.set(property.value.name, name);
+                }
+              }
               return;
             }
             const owner = envOwner(node.init, aliases);

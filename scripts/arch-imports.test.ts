@@ -635,6 +635,8 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
       "const d = globalThis.Deno; const e = d; e.env.get('HOME');",
     [`${S}/engine/global-object-alias.ts`]:
       "const g = globalThis; g.process.env.HOME;",
+    [`${S}/engine/global-destructure.ts`]:
+      "const { Deno: D } = globalThis; D.env.get('HOME');",
     [`${S}/engine/alias-destructure.ts`]:
       'import * as p from "node:process"; const { env } = p; env.HOME;',
     [`${S}/engine/reexport.ts`]: 'export { env } from "node:process";',
@@ -663,6 +665,7 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
     `${S}/engine/deno.ts: Deno.env`,
     `${S}/engine/destructure.ts: Deno.env`,
     `${S}/engine/global-alias.ts: Deno.env`,
+    `${S}/engine/global-destructure.ts: Deno.env`,
     `${S}/engine/global-object-alias.ts: process.env`,
     `${S}/engine/global.ts: Deno.env`,
     `${S}/engine/named.ts: process.env`,
