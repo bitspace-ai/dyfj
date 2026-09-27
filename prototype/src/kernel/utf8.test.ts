@@ -22,13 +22,18 @@ Deno.test("utf8SafePrefix backs a mid-character cut off to the character start",
   assertEquals(utf8SafePrefix(encode("😀"), 3).byteLength, 0);
 });
 
-Deno.test("utf8SafePrefix treats a zero ceiling as empty", () => {
+Deno.test("utf8SafePrefix treats a zero or negative ceiling as empty", () => {
   assertEquals(utf8SafePrefix(encode("abc"), 0).byteLength, 0);
+  assertEquals(utf8SafePrefix(encode("abcdef"), -2).byteLength, 0);
 });
 
 Deno.test("clipToUtf8Bytes returns null when the text already fits", () => {
   assertStrictEquals(clipToUtf8Bytes("abc", 10), null);
   assertStrictEquals(clipToUtf8Bytes("abc", 3), null);
+});
+
+Deno.test("clipToUtf8Bytes cuts to empty under a negative ceiling", () => {
+  assertEquals(clipToUtf8Bytes("abcdef", -2), "");
 });
 
 Deno.test("clipToUtf8Bytes measures bytes, not UTF-16 code units", () => {

@@ -10,13 +10,14 @@
  * on the start of a character (or the end of the array), so the result decodes
  * cleanly with zero replacement characters. A naive `slice` plus a permissive
  * decode can instead swap a clipped tail for a differently-sized replacement
- * character and end up past the ceiling it was enforcing.
+ * character and end up past the ceiling it was enforcing. A negative ceiling is
+ * treated as zero, never as an offset from the end.
  */
 export function utf8SafePrefix(
   bytes: Uint8Array,
   maxBytes: number,
 ): Uint8Array {
-  let end = Math.min(maxBytes, bytes.byteLength);
+  let end = Math.max(0, Math.min(maxBytes, bytes.byteLength));
   while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
   return bytes.subarray(0, end);
 }
