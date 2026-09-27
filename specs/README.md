@@ -107,7 +107,7 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 | --- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | D1  | **Seams now, domain later.** Phase 1 restructures current behavior; phase 2 adopts the first-product contract model.        | Seams are named for their phase-2 landing spots; no new entities in phase 1       |
 | D2  | **Ports and fakes.** Fakes only at declared ports; module mocking banned; fakes proven by conformance suites                | Replaces README §4 testing bullets (`03-testing.md` §1)                           |
-| D3  | **TypeScript only.** `core/` is unchanged.                                                                                  | Superseded in part by D15: the Rust boundary is the process seam                  |
+| D3  | _(superseded by D25)_ **TypeScript only.** `core/` is unchanged.                                                            | Superseded in part by D15: the Rust boundary is the process seam                  |
 | D4  | **Specs live in the public repo** under `specs/`.                                                                           | Everything here must be public-safe; private context stays in the private tracker |
 | D5  | **Approved deletions:** standalone workbench CLI, schema-drift shims, dead exports, HTTP naming. `schema/history/` is kept. | `01-architecture.md` §8                                                           |
 | D6  | **`Deno.test` + `@std`**; Vitest retired at phase-1 exit                                                                    | Supervisor kept or retired on evidence (WO-23)                                    |
@@ -154,6 +154,12 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 | #   | Decision                                                                                                                         | Consequence                                                                         |
 | --- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | D24 | **Conformance suites land with their ports.** A shared fake may land before its port; its conformance suite ships with the port. | `03-testing.md` §1; the `Clock`, `IdSource` and `Env` fakes precede their port work |
+
+### Language boundary (2026-09-27)
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                         | Consequence                                                    |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| D25 | **Phase 1 changes only the TypeScript tier, and TypeScript is the temporary tier.** `core/` is untouched during phase 1. TypeScript stays only while a component's shape is still moving (Layer 0 stance #3); stable components move to Rust behind the JSON-RPC process seam (D15). No enabler may make that move harder. Supersedes D3, whose "TypeScript only" wording read as a language stance rather than a phase-1 scope. | `01-architecture.md` §1 and §10; §10 lists the Rust candidates |
 
 ## Phase-1 exit
 
