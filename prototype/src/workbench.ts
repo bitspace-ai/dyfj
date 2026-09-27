@@ -1652,7 +1652,8 @@ async function runNativeWorkbenchRuntime(
         ? memorySearchConfigFromEnv()
         : null;
       registerCoreCommands(commandRegistry, {
-        readMemory: (slug) => executeReadMemory(store.memories, slug),
+        readMemory: (slug) =>
+          executeReadMemory(store.memories, slug, clearance),
         allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
         searchMemory: recallConfig
           ? buildMemorySearch(recallConfig, async (diagnostic) => {

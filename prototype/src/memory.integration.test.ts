@@ -58,29 +58,50 @@ describe("memory lookup (integration)", () => {
     const result = await executeReadMemory(
       store.memories,
       "fixture_feedback_shareable",
+      MEMORY_VISIBILITY_ALL,
     );
     expect(result).toContain("Fixture Shareable Feedback");
     expect(result).toContain("shareable content");
-    expect(await executeReadMemory(store.memories, "does-not-exist")).toContain(
-      "Memory not found",
-    );
-    expect(await executeReadMemory(store.memories, "' OR '1'='1")).toContain(
-      "Memory not found",
-    );
+    expect(
+      await executeReadMemory(
+        store.memories,
+        "does-not-exist",
+        MEMORY_VISIBILITY_ALL,
+      ),
+    ).toContain("Memory not found");
+    expect(
+      await executeReadMemory(
+        store.memories,
+        "' OR '1'='1",
+        MEMORY_VISIBILITY_ALL,
+      ),
+    ).toContain("Memory not found");
   });
 
   test("formats a known row and gives a useful not-found result", async () => {
     const result = await executeReadMemory(
       store.memories,
       "fixture_user_private",
+      MEMORY_VISIBILITY_ALL,
     );
     expect(result).toMatch(/^<untrusted-memory>/);
     expect(result).toContain("Fixture Private User");
     expect(result).toContain("private multiline");
 
-    const missing = await executeReadMemory(store.memories, "does-not-exist");
+    const missing = await executeReadMemory(
+      store.memories,
+      "does-not-exist",
+      MEMORY_VISIBILITY_ALL,
+    );
     expect(missing).toContain("Memory not found");
     expect(missing).toContain("does-not-exist");
+
+    const outside = await executeReadMemory(
+      store.memories,
+      "fixture_user_private",
+      ["client_safe", "public"],
+    );
+    expect(outside).toContain("Memory not found");
   });
 });
 

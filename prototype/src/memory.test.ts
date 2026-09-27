@@ -143,12 +143,26 @@ describe("store-backed memory loaders", () => {
   });
 
   test("executeReadMemory formats a known row and gives a useful not-found result", async () => {
-    const found = await executeReadMemory(store.memories, "user_identity");
+    const found = await executeReadMemory(
+      store.memories,
+      "user_identity",
+      MEMORY_VISIBILITY_ALL,
+    );
     expect(found).toMatch(/^<untrusted-memory>/);
     expect(found).toContain("core content");
-    expect(await executeReadMemory(store.memories, "missing")).toContain(
-      "Memory not found: 'missing'",
-    );
+    expect(
+      await executeReadMemory(store.memories, "missing", MEMORY_VISIBILITY_ALL),
+    ).toContain("Memory not found: 'missing'");
+  });
+
+  test("executeReadMemory reads within the clearance it is given", async () => {
+    const clearance = ["client_safe", "public"] as const;
+    expect(
+      await executeReadMemory(store.memories, "project_notes", clearance),
+    ).toContain("<untrusted-memory>");
+    expect(
+      await executeReadMemory(store.memories, "user_identity", clearance),
+    ).toContain("Memory not found: 'user_identity'");
   });
 });
 

@@ -33,7 +33,6 @@ import type {
   MemoryVisibility,
   TextRow,
 } from "./store/mod.ts";
-import { MEMORY_VISIBILITY_ALL } from "./store/mod.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -331,13 +330,14 @@ export function buildSystemPrompt(
 /**
  * Execute a read_memory tool call. Returns formatted memory content, or a
  * helpful not-found message if the slug doesn't exist (graceful — the model
- * may occasionally hallucinate a slug).
+ * may occasionally hallucinate a slug) or is outside the turn's clearance.
  */
 export async function executeReadMemory(
   memories: MemoryReader,
   slug: string,
+  clearance: readonly MemoryVisibility[],
 ): Promise<string> {
-  const row = await memories.bySlug(slug, MEMORY_VISIBILITY_ALL);
+  const row = await memories.bySlug(slug, clearance);
   const memory = row === null ? null : rowToMemory(row);
   if (!memory) {
     return (
