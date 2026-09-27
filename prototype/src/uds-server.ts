@@ -45,7 +45,8 @@ import {
   type RpcHandlers,
 } from "./jsonrpc.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
-import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench.ts";
+import { type ExternalAgentRunner, runWorkbenchRuntime } from "./workbench.ts";
+import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import {
   AGENT_DEFAULTS,
   type PermissionLevel,
@@ -56,8 +57,8 @@ import {
   type BudgetCeilingVerdict,
   runawayAnomalyApprovalRequest,
 } from "./budget.ts";
-import type { TurnStreamFrame } from "./turn-contract.ts";
-import { isSupersedingRetryStarted, summarizeError } from "./turn-contract.ts";
+import type { TurnStreamFrame, WorkbenchAuthContext } from "./contract/mod.ts";
+import { isSupersedingRetryStarted, summarizeError } from "./contract/mod.ts";
 import {
   engineConfigToTurnDeps,
   executeTurn,
@@ -1227,6 +1228,16 @@ function resolveEngineTurnDeps(
   };
 }
 
+// The production turn runtime: the engine with its external-agent runner bound
+// here, at the composition root, so the engine never imports the ACP runner.
+function composeTurnRuntime(acpSessions?: AcpSessionHandleMap): TurnRuntime {
+  const externalAgentRunner: ExternalAgentRunner = {
+    run: (input) =>
+      runExternalAgentWorkbenchRuntime(input, { sessionMap: acpSessions }),
+  };
+  return (input) => runWorkbenchRuntime(input, { externalAgentRunner });
+}
+
 // The `turn` method: run an agentic turn over the shared turn-runner core —
 // lock/resume/clearance/paid — streaming intermediate text
 // deltas and runtime events back as `stream` notifications on this connection.
@@ -1234,7 +1245,7 @@ function resolveEngineTurnDeps(
 export function buildTurnHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
-  const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
+  const runRuntime = options.runRuntime ?? composeTurnRuntime();
   const fetchSessionEvents = options.fetchSessionEvents ??
     fetchWorkbenchSessionEvents;
   const engineDeps = resolveEngineTurnDeps(options);
@@ -1521,8 +1532,7 @@ export async function serveWorkbenchUnix(
   const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
   const serverOptions: WorkbenchUnixServerOptions = {
     ...options,
-    runRuntime: options.runRuntime ??
-      ((input) => runWorkbenchRuntime(input, { acpSessions })),
+    runRuntime: options.runRuntime ?? composeTurnRuntime(acpSessions),
   };
   const handlers: RpcHandlers = {
     ...buildWorkbenchHandlers(serverOptions),

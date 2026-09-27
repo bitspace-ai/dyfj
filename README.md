@@ -1558,3 +1558,6 @@ Document revisions only. Code and behavior changes are tracked in
   `/packet`, and `web_search`/`web_fetch` are documented; the macOS gate job is
   named; Section 6 items carry runtime-status notes; the stale D2 flow diagram
   is removed in favor of the C4 workspace.
+- 2026-09-27 - Architecture spec §3 moves error summarizing from the `kernel/`
+  (L0) row to the `contract/` (L1) row: deciding which error messages cross the
+  wire as trusted is trust-boundary policy, not a policy-free helper.

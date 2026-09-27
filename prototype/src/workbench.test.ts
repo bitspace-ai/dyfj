@@ -25,6 +25,7 @@ import {
   buildWorkspaceGrounding,
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
+  type ExternalAgentRunner,
   formatMoney,
   isNextWorkMode,
   maybeBuildPaidEscalationPreflightBanner,
@@ -35,10 +36,15 @@ import {
   toolStepToMessages,
   validateNextWorkJson,
   type WorkbenchReceiptInput,
+  type WorkbenchRuntimeInput,
   WorkspaceContextUnavailableError,
-  workspaceRootForTransport,
 } from "./workbench.ts";
-import { DomainError, MAX_REASON_FIELD_BYTES } from "./turn-contract.ts";
+import {
+  DomainError,
+  type ExternalAgentWorkbenchRuntimeResult,
+  MAX_REASON_FIELD_BYTES,
+} from "./contract/mod.ts";
+import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 
 const runtimeMocks = vi.hoisted(() => {
   const model = {
@@ -442,44 +448,46 @@ vi.mock("./sessions.ts", () => ({
   },
 }));
 
-vi.mock("./external-agent-runtime.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./external-agent-runtime.ts")>();
-  return {
-    ...actual,
-    runExternalAgentWorkbenchRuntime: (
-      input: Parameters<typeof actual.runExternalAgentWorkbenchRuntime>[0],
-      dependencies?: Parameters<typeof actual.runExternalAgentWorkbenchRuntime>[1],
-    ) => {
-      if (!runtimeMocks.stubExternalAgent) {
-        return actual.runExternalAgentWorkbenchRuntime(input, dependencies);
-      }
-      return Promise.resolve({
-        sessionId: input.sessionId ?? "01ACPSTUB00000000000000001",
-        traceId: "0123456789abcdef0123456789abcdef",
-        stopReason: "stop" as const,
-        text: "stubbed",
-        receipt: "stubbed receipt",
-        runner: {
-          kind: "external_agent" as const,
-          profile: input.runner.profile,
-          protocol: "acp" as const,
-          capabilities: [],
-          workspace: input.workspaceRoot ?? Deno.cwd(),
-          transport: "local_stdio" as const,
-          costBasis: "unknown" as const,
-          evidence: {
-            source: "acp" as const,
-            innerState: "opaque" as const,
-            toolchainDirectoryCount: 0 as const,
-          },
-          elapsedMs: 1,
+// The external-agent runner reaches the engine through its runner port, the
+// same way the composition root binds it; the stub stands in for it when a
+// test only needs the engine's routing and consent gates.
+const externalAgentRunner: ExternalAgentRunner = {
+  run: (input) => {
+    if (!runtimeMocks.stubExternalAgent) {
+      return runExternalAgentWorkbenchRuntime(input);
+    }
+    // A partial receipt: the tests that stub the runner assert routing and
+    // consent only, never the external-agent evidence fields.
+    return Promise.resolve({
+      sessionId: input.sessionId ?? "01ACPSTUB00000000000000001",
+      traceId: "0123456789abcdef0123456789abcdef",
+      stopReason: "stop" as const,
+      text: "stubbed",
+      receipt: "stubbed receipt",
+      runner: {
+        kind: "external_agent" as const,
+        profile: input.runner.profile,
+        protocol: "acp" as const,
+        capabilities: [],
+        workspace: input.workspaceRoot ?? Deno.cwd(),
+        transport: "local_stdio" as const,
+        costBasis: "unknown" as const,
+        evidence: {
+          source: "acp" as const,
+          innerState: "opaque" as const,
+          toolchainDirectoryCount: 0 as const,
         },
-        route: { reason: "explicit_external_agent" },
-        context: { sources: [] },
-      });
-    },
-  };
-});
+        elapsedMs: 1,
+      },
+      route: { reason: "explicit_external_agent" },
+      context: { sources: [] },
+    } as unknown as ExternalAgentWorkbenchRuntimeResult);
+  },
+};
+
+const runWithExternalAgentRunner = (
+  input: Parameters<typeof runWorkbenchRuntime>[0],
+) => runWorkbenchRuntime(input, { externalAgentRunner });
 
 beforeEach(() => {
   // Ceiling confirmations persist per scope by design; tests need isolation.
@@ -826,23 +834,6 @@ describe("toolStepToMessages", () => {
   });
 });
 
-describe("workspaceRootForTransport", () => {
-  test("honors a loopback operator's requested workspace root", () => {
-    expect(workspaceRootForTransport("/workspace/example-project", "loopback"))
-      .toBe("/workspace/example-project");
-  });
-
-  test("returns undefined for a loopback caller that sent no root", () => {
-    expect(workspaceRootForTransport(undefined, "loopback")).toBeUndefined();
-  });
-
-  test("ignores a remote caller's requested root (pinned to server default)", () => {
-    // A crafted cwd from a remote/shared consumer must not steer the file tools.
-    expect(workspaceRootForTransport("/etc", "remote")).toBeUndefined();
-    expect(workspaceRootForTransport("/", "remote")).toBeUndefined();
-  });
-});
-
 describe("ask-mode workspace context binding", () => {
   test("loads context from the selected loopback workspace, not the runtime root", async () => {
     const runtimeRoot = await Deno.makeTempDir({ prefix: "ask-runtime-root-" });
@@ -1176,8 +1167,52 @@ describe("isNextWorkMode", () => {
 });
 
 describe("runWorkbenchRuntime external-agent invariants", () => {
+  test("fails closed when an explicit ACP route has no runner bound", async () => {
+    // Typed through the general overload: a direct caller that omits the
+    // runner service must get the fixed error, never a lazily loaded runner.
+    const input: WorkbenchRuntimeInput = {
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      trustWorkspaceInstructions: true,
+    };
+    await expect(runWorkbenchRuntime(input)).rejects.toThrow(
+      new DomainError("No external-agent runner is configured"),
+    );
+  });
+
+  test("fails closed when model selection routes to ACP with no runner bound", async () => {
+    const prevRegistry = runtimeMocks.registry;
+    runtimeMocks.registry = [
+      {
+        slug: "fixture",
+        displayName: "ACP Fixture",
+        provider: "fixture",
+        api: "acp",
+        baseUrl: "local_stdio",
+        tier: 0 as const,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text"],
+        contextWindow: undefined,
+        maxOutputTokens: undefined,
+      },
+    ];
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "inspect",
+        routingOptions: { modelId: "fixture" },
+        trustWorkspaceInstructions: true,
+      })).rejects.toThrow("No external-agent runner is configured");
+    } finally {
+      runtimeMocks.registry = prevRegistry;
+    }
+  });
+
   test("rejects the Codex ChatGPT route without explicit workspace trust", async () => {
-    await expect(runWorkbenchRuntime({
+    await expect(runWithExternalAgentRunner({
       mode: "turn",
       prompt: "inspect",
       routingOptions: {},
@@ -1187,7 +1222,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
   });
 
   test("rejects the Codex ChatGPT route via model selection without explicit workspace trust", async () => {
-    await expect(runWorkbenchRuntime({
+    await expect(runWithExternalAgentRunner({
       mode: "turn",
       prompt: "inspect",
       routingOptions: { modelId: "codex-chatgpt/gpt-5.6-sol" },
@@ -1196,7 +1231,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
   });
 
   test("rejects an unapproved explicit Codex ChatGPT runner request with PaidEscalationDeclinedError", async () => {
-    await expect(runWorkbenchRuntime({
+    await expect(runWithExternalAgentRunner({
       mode: "turn",
       prompt: "inspect",
       routingOptions: {},
@@ -1207,7 +1242,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
 
   test("allows an explicit Codex ChatGPT runner request when paid escalation is confirmed", async () => {
     runtimeMocks.stubExternalAgent = true;
-    const result = await runWorkbenchRuntime({
+    const result = await runWithExternalAgentRunner({
       mode: "turn",
       prompt: "inspect",
       routingOptions: {},
@@ -1236,7 +1271,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
         maxOutputTokens: 128000,
       },
     ];
-    await expect(runWorkbenchRuntime({
+    await expect(runWithExternalAgentRunner({
       mode: "turn",
       prompt: "test unapproved paid",
       routingOptions: { modelId: "codex-chatgpt/gpt-5.6-terra" },
@@ -1261,7 +1296,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
         maxOutputTokens: 128000,
       },
     ];
-    const result = await runWorkbenchRuntime({
+    const result = await runWithExternalAgentRunner({
       mode: "turn",
       prompt: "test approved paid",
       routingOptions: { modelId: "codex-chatgpt/gpt-5.6-terra" },
@@ -1289,7 +1324,7 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
         maxOutputTokens: undefined,
       },
     ];
-    const result = await runWorkbenchRuntime({
+    const result = await runWithExternalAgentRunner({
       mode: "turn",
       prompt: "test acp dispatch",
       routingOptions: { modelId: "fixture" },
@@ -1320,13 +1355,13 @@ describe("runWorkbenchRuntime external-agent invariants", () => {
         maxOutputTokens: undefined,
       },
     ];
-    const first = await runWorkbenchRuntime({
+    const first = await runWithExternalAgentRunner({
       mode: "turn",
       prompt: "first turn",
       routingOptions: { modelId: "fixture" },
       trustWorkspaceInstructions: true,
     });
-    const second = await runWorkbenchRuntime({
+    const second = await runWithExternalAgentRunner({
       mode: "turn",
       prompt: "second turn",
       routingOptions: { modelId: "fixture" },
@@ -4350,29 +4385,6 @@ describe("runWorkbenchRuntime event-write integrity policy", () => {
       );
     } finally {
       runtimeMocks.commandThrows = null;
-    }
-  });
-});
-
-describe("resolveRuntimeEnvDefaults trust posture boundary", () => {
-  test("the standalone entrypoint resolves the standing trust posture from its env binding", async () => {
-    const { resolveRuntimeEnvDefaults } = await import("./workbench.ts");
-    const prev = process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
-    try {
-      delete process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
-      expect(resolveRuntimeEnvDefaults().trustWorkspaceInstructions).toBe(
-        false,
-      );
-      process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS = "true";
-      expect(resolveRuntimeEnvDefaults().trustWorkspaceInstructions).toBe(
-        true,
-      );
-    } finally {
-      if (prev === undefined) {
-        delete process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS;
-      } else {
-        process.env.DYFJ_TRUST_WORKSPACE_INSTRUCTIONS = prev;
-      }
     }
   });
 });

@@ -113,7 +113,7 @@ import {
   AcpSessionUpdateLimitError,
 } from "./acp-client.ts";
 import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map.ts";
-import { DomainError, summarizeError } from "./turn-contract.ts";
+import { DomainError, summarizeError } from "./contract/mod.ts";
 
 /**
  * Runs `run` while this worker's `Deno.env` reads see `overlay` on top of the

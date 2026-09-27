@@ -15,7 +15,7 @@ import {
   DomainError,
   type ExternalAgentAccessRoute,
   type ExternalAgentCostBasis,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 import { isAbsolute, win32 } from "node:path";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { Readable, Writable } from "node:stream";

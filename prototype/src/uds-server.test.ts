@@ -9,7 +9,7 @@ import {
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc.ts";
 import type { TurnRuntime } from "./turn-runner.ts";
-import type { TurnStreamFrame } from "./turn-contract.ts";
+import type { TurnStreamFrame } from "./contract/mod.ts";
 import type { CommandDefinition } from "./commands.ts";
 import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
 

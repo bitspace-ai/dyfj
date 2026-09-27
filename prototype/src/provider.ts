@@ -6,7 +6,7 @@ import {
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
 import { doltQuery } from "./utils.ts";
-import { DomainError } from "./turn-contract.ts";
+import { DomainError } from "./contract/mod.ts";
 
 export type ModelAccessModality =
   | "local"

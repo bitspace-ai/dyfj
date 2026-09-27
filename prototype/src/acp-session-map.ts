@@ -14,7 +14,7 @@ import {
   DomainError,
   type ExternalAgentContinuityState,
   type ExternalAgentDurableResumeStatus,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 
 export const DEFAULT_ACP_SESSION_CAPACITY = 8;
 export const DEFAULT_ACP_IDLE_TTL_MS = 5 * 60_000;

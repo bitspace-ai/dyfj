@@ -50,7 +50,6 @@
     "allowedPaths": ["prototype/src/extensions/*/client.ts"]
   },
   "files": {
-    "prototype/src/turn-contract.ts": "contract",
     "prototype/src/config.ts": "config",
     "prototype/src/secrets.ts": "config",
     "prototype/src/utils.ts": "store",
