@@ -243,7 +243,8 @@ export interface WorkbenchRuntimeInput {
    * Consent handler for paid-inference escalation. Returns a verdict
    * (approve | deny+reason | escalate), not void/throw — so a headless driver
    * can pre-approve or escalate. Drivers inject their own; the core defaults to
-   * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
+   * deny and makes no TTY assumption. The UDS turn runner grants approval
+   * only to a loopback caller that set approvePaidInference for the turn.
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
   /**
@@ -576,9 +577,9 @@ export type PaidEscalationVerdict =
 export class PaidEscalationDeclinedError extends DomainError {
   readonly verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>;
   // verdict.reason comes from the injected confirmPaidEscalation callback —
-  // an operator's TTY answer today, potentially a remote approval peer
-  // tomorrow. DomainError certifies the message THIS constructor builds, not
-  // that field's content, so it's capped and control-char-stripped before it
+  // the turn runner's loopback posture today, potentially a remote approval
+  // peer tomorrow. DomainError certifies the message THIS constructor builds,
+  // not that field's content, so it's capped and control-char-stripped before it
   // reaches either the message or the stored `.verdict` (read directly by
   // workbench.ts's log branch, not just via .message).
   constructor(
