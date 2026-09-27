@@ -11,6 +11,88 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Rust REPL front-end (`core/dyfj-repl`)**: an interactive client that owns
+  the terminal and speaks the existing Workbench UDS protocol. The agent loop
+  is untouched — it stays server-side in `prototype/`, and this is a second
+  client of it.
+
+  It exists to make a pasted prompt behave like a typed one. The TypeScript
+  REPL borrows Node's `readline` through Deno's compatibility layer, which
+  splits a multi-line paste into one turn per line; the layer also lacks the
+  bracketed-paste markers Node added in 2023, so enabling them there corrupts
+  input rather than fixing it. Owning the terminal in Rust gets paste, line
+  editing and history from `rustyline` instead of reimplementing them.
+
+  At startup it prints a posture line from `runtime/status`: the default
+  model, its tier and locality, whether paid inference is approved or off
+  (hosted turns fail closed), the permission level and the tool-step limit.
+
+  An approval is read only when both the question and the answer are on an
+  interactive terminal. Without terminal input there is no operator and a
+  prewritten line on a pipe would answer the request; without terminal output
+  the request's details go somewhere the answering operator cannot see, so
+  redirecting output would collect consent for a command, an amount and a limit
+  that were never displayed. A line typed at the terminal while a turn is running does not answer
+  a later prompt either: pending input is discarded first, and if that discard
+  fails the prompt is not read at all and the request is denied, because a
+  warning would not stop the queued keystroke from answering. Approval arguments are shown in full rather than
+  clipped, and control characters are replaced in the runtime-supplied text
+  that reaches the terminal — approval titles and arguments, streamed answers,
+  receipt text, tool names, error messages and the posture line — so neither
+  truncation nor an escape sequence can hide what is being approved. Sanitising
+  only the approval would leave a streamed answer, or an error, able to change
+  terminal state before the prompt appears. Answer text keeps its newlines and
+  tabs so paragraphs and code blocks render; carriage returns are dropped from
+  it, and everywhere else newlines and tabs become spaces.
+
+  A budget request is not a tool call and is not rendered as one. Its amounts,
+  limits and crossed scopes arrive in named fields with a preformatted warning
+  rather than in `arguments`, so it is shown with that warning and a line
+  naming what approving authorises. A spending request whose warning cannot be
+  read is denied rather than reduced to a bare question: an approval nobody
+  could read is not consent. A request that offers options is refused unless
+  every option can be read, as the TypeScript CLI requires: each needs an id, a
+  name and a known kind, ids are unique, and there are at most 16. It does not
+  fall back to yes/no, where `y` would grant broader consent than any option
+  offered.
+
+  Ctrl-C cancels an in-flight turn through `turn/cancel` and leaves the session
+  alive; a second press abandons the wait. Inside an approval prompt Ctrl-C
+  denies that approval instead, which is a different path. Ctrl-D at the
+  ordinary prompt exits. A panic restores echo, line editing and the cursor;
+  there is no termination-signal handler, so a SIGTERM mid-read exits without
+  restoring.
+
+  One approval is handled at a time, on the loop that issued the turn, so the
+  prompt on screen is the request being answered. That costs an earlier warning
+  — a runtime disconnecting mid-approval is not reported until the operator
+  answers. Approvals carry no turn id, so a delayed approval from an abandoned
+  turn can still be presented during a later one; tagging them is a protocol
+  change rather than a client fix.
+
+  When the runtime abandons an attempt and starts again, the answer shown so
+  far is marked as abandoned and the turn is treated as having displayed
+  nothing authoritative — otherwise a replacement that arrives only in the
+  receipt would be suppressed, leaving the abandoned attempt on screen as the
+  answer. Tool-call markup that executed nothing is reported rather than left
+  to read as tool activity.
+
+  Known limits are recorded in the source where they are met, not left to be
+  rediscovered: approvals and frames carry no turn id, so a delayed one from an
+  abandoned turn can appear during a later turn; a dropped write can leave a
+  partial frame; no closed state is recorded after the reader
+  ends; one pending entry leaks per abandoned turn; and the submission ceiling
+  bounds what is remembered rather than what is allocated.
+
+  Frames from the runtime are capped at 16 MiB, the TypeScript peer's
+  ceiling; a larger one, or a stream that passes the ceiling without a newline,
+  closes the connection and fails the requests waiting on it. So does a frame
+  that is not valid JSON, which could be the response a request is waiting
+  for; skipping it would leave that request waiting with nothing on screen.
+
+  Not yet: model switching, session resume and the other interactive commands
+  remain in the TypeScript CLI, which is unchanged and still the entry point.
+
 - **A `Deno.test` unit lane and shared test fakes**: new tests can now be
   written with `Deno.test`, `@std/assert` and `@std/testing` (pinned in the
   prototype import map) and run in a fast lane of their own.
