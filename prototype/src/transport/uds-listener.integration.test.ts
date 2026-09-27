@@ -27,14 +27,15 @@ async function removeIfPresent(path: string): Promise<void> {
   }
 }
 
-// A raw client peer on a new connection; close() ends it and waits for its
-// read loop.
+// A raw client peer on a new connection; `closed` settles when its read loop
+// ends, and disposal closes it and waits for that.
 async function dial(socketPath: string, handlers: RpcHandlers = {}) {
   const conn = await Deno.connect({ transport: "unix", path: socketPath });
   const peer = new JsonRpcPeer(conn, { handlers });
   const loop = peer.run();
   return {
     peer,
+    closed: loop,
     async [Symbol.asyncDispose]() {
       peer.close();
       await loop;
@@ -108,10 +109,20 @@ Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file"
   });
   await using client = await dial(socketPath);
   const pending = client.peer.request("hang");
+  // The client's read loop rejects `pending` the moment it sees the server
+  // hang up, which can land before server.close() resolves. Attach the
+  // expectation first, or that rejection is briefly unhandled and Deno fails
+  // the file with an uncaught error.
+  const rejected = assertRejects(() => pending, Error, "connection closed");
   // Let the request reach the server before closing.
   await new Promise((resolve) => setTimeout(resolve, 20));
   await server.close();
-  await assertRejects(() => pending, Error, "connection closed");
+  // The client observes the disconnect. Waiting for its read loop to end, then
+  // yielding a macrotask, holds open on every run the window the race only
+  // sometimes opened: a rejection with no handler yet at a task boundary.
+  await client.closed;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await rejected;
   assert(!exists(socketPath));
   await assertRejects(() =>
     Deno.connect({ transport: "unix", path: socketPath })
