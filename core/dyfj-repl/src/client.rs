@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -99,38 +99,7 @@ impl Client {
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let (tx, rx) = mpsc::channel(256);
 
-        let reader_pending = Arc::clone(&pending);
-        let reader_write = Arc::clone(&write);
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(read).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
-                    continue;
-                };
-                // Known limit: lines are read without a size bound, so a peer
-                // that sends a very large frame — or bytes without a newline —
-                // grows this buffer unchecked. The TypeScript peer made the
-                // same choice for the same reason, a trusted local socket, and
-                // left a bound for when a remote transport arrives.
-                dispatch(msg, &reader_pending, &reader_write, &tx).await;
-            }
-            // EOF: fail every waiter rather than leaving the loop hung.
-            //
-            // Known limit: no closed state is recorded. A request issued after
-            // this point still writes to the retained write half and then
-            // waits for a reader that no longer exists. A failed turn ends
-            // that invocation of `run_turn`, and the loop then offers another
-            // prompt against the same client — so this is reachable, and a
-            // longer-lived client needs an explicit closed flag.
-            let mut map = reader_pending.lock().await;
-            for (_, sender) in map.drain() {
-                let _ = sender.send(Err("runtime closed the connection".into()));
-            }
-        });
+        tokio::spawn(read_loop(read, Arc::clone(&pending), Arc::clone(&write), tx));
 
         Ok((Self { write, pending, next_id: Arc::new(Mutex::new(1)) }, rx))
     }
@@ -213,10 +182,152 @@ impl Client {
     }
 }
 
+/// The largest frame this client accepts, matching the TypeScript peer's
+/// DEFAULT_MAX_FRAME_BYTES in `prototype/src/jsonrpc-peer.ts`.
+const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// What one bounded read produced.
+#[derive(Debug, PartialEq, Eq)]
+enum Frame {
+    Line(Vec<u8>),
+    Eof,
+    TooLarge,
+}
+
+/// Read one newline-terminated frame of at most `max` bytes, newline excluded.
+///
+/// A frame past the ceiling is reported as soon as the buffer passes it, not
+/// after the newline arrives, so a peer that never sends one cannot grow the
+/// buffer without bound. Trailing bytes without a newline at EOF are a frame.
+async fn next_frame<R: AsyncBufRead + Unpin>(reader: &mut R, max: usize) -> std::io::Result<Frame> {
+    let mut frame = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(if frame.is_empty() { Frame::Eof } else { Frame::Line(frame) });
+        }
+        let (take, complete) = match available.iter().position(|&b| b == b'\n') {
+            Some(at) => (at, true),
+            None => (available.len(), false),
+        };
+        if frame.len() + take > max {
+            return Ok(Frame::TooLarge);
+        }
+        frame.extend_from_slice(&available[..take]);
+        reader.consume(if complete { take + 1 } else { take });
+        if complete {
+            return Ok(Frame::Line(frame));
+        }
+    }
+}
+
+/// Read frames until the connection ends, then fail every waiter rather than
+/// leaving the loop hung.
+async fn read_loop<R: AsyncRead + Unpin>(
+    read: R,
+    pending: Pending,
+    write: Arc<Mutex<OwnedWriteHalf>>,
+    tx: mpsc::Sender<Incoming>,
+) {
+    let mut reader = BufReader::new(read);
+    let closed_because = loop {
+        let bytes = match next_frame(&mut reader, MAX_FRAME_BYTES).await {
+            Ok(Frame::Line(bytes)) => bytes,
+            Ok(Frame::Eof) | Err(_) => break "runtime closed the connection",
+            // Resynchronising mid-frame would mean parsing the remainder of
+            // the oversized line as frames of its own, so the connection ends
+            // here instead.
+            Ok(Frame::TooLarge) => {
+                eprintln!(
+                    "the runtime sent a frame larger than {} MiB; closing the connection",
+                    MAX_FRAME_BYTES / (1024 * 1024)
+                );
+                break "runtime sent an oversized frame";
+            }
+        };
+        let Ok(line) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        dispatch(msg, &pending, &write, &tx).await;
+    };
+    // Known limit: no closed state is recorded. A request issued after this
+    // point still writes to the retained write half and then waits for a
+    // reader that no longer exists. A failed turn ends that invocation of
+    // `run_turn`, and the loop then offers another prompt against the same
+    // client — so this is reachable, and a longer-lived client needs an
+    // explicit closed flag.
+    let mut map = pending.lock().await;
+    for (_, sender) in map.drain() {
+        let _ = sender.send(Err(closed_because.into()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn a_frame_is_read_up_to_its_newline() {
+        let mut input: &[u8] = b"{\"a\":1}\n{\"b\":2}";
+        assert_eq!(next_frame(&mut input, 64).await.unwrap(), Frame::Line(b"{\"a\":1}".to_vec()));
+        assert_eq!(next_frame(&mut input, 64).await.unwrap(), Frame::Line(b"{\"b\":2}".to_vec()));
+        assert_eq!(next_frame(&mut input, 64).await.unwrap(), Frame::Eof);
+    }
+
+    #[tokio::test]
+    async fn a_frame_at_the_ceiling_is_accepted_and_one_past_it_is_not() {
+        let mut at: &[u8] = b"12345678\n";
+        assert_eq!(next_frame(&mut at, 8).await.unwrap(), Frame::Line(b"12345678".to_vec()));
+        let mut over: &[u8] = b"123456789\n";
+        assert_eq!(next_frame(&mut over, 8).await.unwrap(), Frame::TooLarge);
+    }
+
+    /// A peer that never sends a newline must not grow the buffer past the
+    /// ceiling while it waits for one.
+    #[tokio::test]
+    async fn a_newline_less_stream_stops_at_the_ceiling() {
+        let (mut server, client) = tokio::io::duplex(64);
+        let writer = tokio::spawn(async move {
+            let chunk = [b'x'; 32];
+            for _ in 0..16 {
+                if server.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+            server
+        });
+        let mut reader = BufReader::new(client);
+        assert_eq!(next_frame(&mut reader, 100).await.unwrap(), Frame::TooLarge);
+        drop(reader);
+        let _ = writer.await;
+    }
+
+    /// An oversized frame ends the connection, and a request waiting on it
+    /// fails instead of hanging.
+    #[tokio::test]
+    async fn an_oversized_frame_fails_the_waiting_requests() {
+        let (client_side, _server_side) = tokio::net::UnixStream::pair().unwrap();
+        let (_read, write) = client_side.into_split();
+        let write = Arc::new(Mutex::new(write));
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let (sender, receiver) = oneshot::channel();
+        pending.lock().await.insert(1, sender);
+        let (tx, _rx) = mpsc::channel(4);
+
+        let oversized = vec![b'x'; MAX_FRAME_BYTES + 1];
+        read_loop(oversized.as_slice(), pending, write, tx).await;
+
+        let outcome = receiver.await.expect("the waiter must be settled");
+        assert_eq!(outcome.unwrap_err(), "runtime sent an oversized frame");
+    }
 
     /// Drive the real dispatcher, not JSON accessors beside it.
     ///

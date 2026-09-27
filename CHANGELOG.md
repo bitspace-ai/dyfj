@@ -71,11 +71,14 @@ README are tracked separately in its Revision history section.
 
   Known limits are recorded in the source where they are met, not left to be
   rediscovered: approvals and frames carry no turn id, so a delayed one from an
-  abandoned turn can appear during a later turn; line framing is unbounded,
-  matching the TypeScript peer's choice for a trusted local socket; a dropped
-  write can leave a partial frame; no closed state is recorded after the reader
+  abandoned turn can appear during a later turn; a dropped write can leave a
+  partial frame; no closed state is recorded after the reader
   ends; one pending entry leaks per abandoned turn; and the submission ceiling
   bounds what is remembered rather than what is allocated.
+
+  Frames from the runtime are capped at 16 MiB, the TypeScript peer's
+  ceiling; a larger one, or a stream that passes the ceiling without a newline,
+  closes the connection and fails the requests waiting on it.
 
   Not yet: model switching, session resume and the other interactive commands
   remain in the TypeScript CLI, which is unchanged and still the entry point.
