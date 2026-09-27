@@ -4,7 +4,13 @@
 // the suite never touches the rows other integration tests read.
 
 import mysql from "mysql2/promise";
-import { assert, assertEquals, assertFalse } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import {
   event,
   storeConformance,
@@ -16,6 +22,7 @@ import {
   createDoltPool,
   DoltStore,
   type MemoryStoreSeed,
+  MissingSchemaColumnsError,
   type Store,
 } from "./mod.ts";
 
@@ -184,6 +191,30 @@ Deno.test("DoltStore: the pool serves the next commit after an aborted commit", 
       assert(await store.events.exists(`EV_NEXT_${i}`));
       assert(await store.events.exists(`EV_SIGNAL_${i}`));
     }
+  } finally {
+    await subject.dispose(store);
+  }
+});
+
+// The boot-time column check against a real information_schema: a copy of
+// the fixture's schema passes; the same copy with a migration-added column
+// dropped fails, naming it.
+Deno.test("DoltStore: the boot-time column check names a column a migration added", async () => {
+  const store = await subject.make({});
+  try {
+    await (store as DoltStore).assertCanonicalColumns();
+    const admin = adminPool(databases.get(store)!);
+    try {
+      await admin.query("ALTER TABLE events DROP COLUMN trace_flags");
+    } finally {
+      await admin.end();
+    }
+    const error = await assertRejects(
+      () => (store as DoltStore).assertCanonicalColumns(),
+      MissingSchemaColumnsError,
+    );
+    assertEquals(error.missing, [{ table: "events", column: "trace_flags" }]);
+    assertStringIncludes(error.message, "schema/migrations/");
   } finally {
     await subject.dispose(store);
   }

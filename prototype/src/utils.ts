@@ -1,6 +1,11 @@
 import { generateSpanId, generateULID } from "./kernel/mod.ts";
 import { processEnv, resolvePrincipalId } from "./config/mod.ts";
-import type { Journal } from "./store/mod.ts";
+import {
+  type AuthnEventFields,
+  type EventInsert,
+  type Journal,
+  modelSelectedEvent,
+} from "./store/mod.ts";
 
 // ─── Telemetry helpers ────────────────────────────────────────────────────────
 
@@ -14,7 +19,7 @@ export async function writeModelSelectedEvent(journal: Journal, params: {
   api?: string;
   durationMs?: number;
   parentSpanId?: string;
-  authnFields?: Record<string, unknown>;
+  authnFields?: AuthnEventFields;
 }): Promise<void> {
   await journal.commit({ events: [buildModelSelectedEventPayload(params)] });
 }
@@ -32,12 +37,11 @@ function buildModelSelectedEventPayload(params: {
   spanId?: string;
   parentSpanId?: string;
   principalId?: string;
-  authnFields?: Record<string, unknown>;
-}): Record<string, unknown> {
-  return {
+  authnFields?: AuthnEventFields;
+}): EventInsert {
+  return modelSelectedEvent({
     event_id: params.eventId ?? generateULID(),
     session_id: params.sessionId,
-    event_type: "model_selected",
     trace_id: params.traceId,
     span_id: params.spanId ?? generateSpanId(),
     parent_span_id: params.parentSpanId ?? null,
@@ -57,5 +61,5 @@ function buildModelSelectedEventPayload(params: {
       reason: params.reason,
     }),
     duration_ms: params.durationMs ?? null,
-  };
+  });
 }

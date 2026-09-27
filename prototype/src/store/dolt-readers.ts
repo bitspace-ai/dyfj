@@ -18,8 +18,16 @@ import type {
   SpendReader,
   TextRow,
 } from "./port.ts";
-import { invalidAsOfError, isValidAsOfTimestamp } from "./port.ts";
-import type { MemoryType, MemoryVisibility } from "./memories.ts";
+import {
+  invalidAsOfError,
+  isValidAsOfTimestamp,
+  SESSION_EVENT_COLUMNS,
+} from "./port.ts";
+import {
+  EVENT_COLUMN_SPECS,
+  type MemoryType,
+  type MemoryVisibility,
+} from "./generated/rows.ts";
 
 export type SqlParam = string | number | boolean | null;
 
@@ -53,149 +61,18 @@ function placeholders(values: readonly unknown[]): string {
 
 // ─── events ──────────────────────────────────────────────────────────────────
 
-function eventQuery(
-  asOfClause: string,
-  historicalProviderCallSchema = false,
-  historicalUnparsedToolCallSchema = false,
-  historicalRunnerSchema = false,
-  historicalRunnerAuthSchema = false,
-  historicalTraceContextSchema = false,
-  limit?: number,
-  order: "asc" | "desc" = "asc",
-  eventId?: string,
-): string {
-  const traceContextFields = historicalTraceContextSchema
-    ? "NULL AS trace_flags, NULL AS trace_state, NULL AS span_kind, " +
-      "NULL AS parent_is_remote"
-    : "trace_flags, trace_state, span_kind, parent_is_remote";
-  const providerCallFields = historicalProviderCallSchema
-    ? "NULL AS provider_call_order, NULL AS provider_call_purpose, " +
-      "NULL AS provider_error_class"
-    : "provider_call_order, provider_call_purpose, provider_error_class";
-  const unparsedToolCallFields = historicalUnparsedToolCallSchema
-    ? "NULL AS unparsed_tool_call_count, " +
-      "NULL AS unparsed_tool_call_count_is_lower_bound"
-    : "unparsed_tool_call_count, " +
-      "unparsed_tool_call_count_is_lower_bound";
-  // Dolt/MySQL drivers may decode JSON columns to objects. Cast both
-  // runner_capabilities and tool_arguments so Workbench owns their validation.
-  const runnerFields = historicalRunnerSchema
-    ? "NULL AS runner_kind, NULL AS runner_profile, NULL AS runner_protocol, " +
-      "NULL AS runner_protocol_version, NULL AS runner_stop_reason, " +
-      "NULL AS runner_external_session_id, " +
-      "NULL AS runner_agent_name, NULL AS runner_agent_version, " +
-      "NULL AS runner_transport, NULL AS runner_access_route, " +
-      "NULL AS runner_cost_basis, " +
-      "NULL AS runner_workspace, NULL AS runner_capabilities, " +
-      "NULL AS runner_evidence_scope, NULL AS runner_route_source, " +
-      "NULL AS runner_auth_type, NULL AS permission_verdict"
-    : "runner_kind, runner_profile, runner_protocol, runner_protocol_version, " +
-      "runner_stop_reason, runner_external_session_id, runner_agent_name, runner_agent_version, " +
-      "runner_transport, runner_access_route, runner_cost_basis, runner_workspace, " +
-      "CAST(runner_capabilities AS CHAR) AS runner_capabilities, " +
-      "runner_evidence_scope, " +
-      (historicalRunnerAuthSchema
-        ? "NULL AS runner_route_source, NULL AS runner_auth_type, "
-        : "runner_route_source, runner_auth_type, ") +
-      "permission_verdict";
-  const limitClause = typeof limit === "number" && limit > 0
-    ? ` LIMIT ${Math.floor(limit)}`
-    : "";
-  const orderClause = order === "desc" ? "DESC" : "ASC";
-  const eventClause = typeof eventId === "string" && eventId.length > 0
-    ? " AND event_id = ?"
-    : "";
-  return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
-    `${traceContextFields}, ` +
-    `principal_id, model_id, provider, api, content, stop_reason, ` +
-    `tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, ` +
-    `cost_total, duration_ms, ${providerCallFields}, ${unparsedToolCallFields}, ` +
-    `${runnerFields}, ` +
-    `tool_name, tool_call_id, ` +
-    `CAST(tool_arguments AS CHAR) AS tool_arguments, ` +
-    `tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
-    `WHERE session_id = ?${eventClause} ORDER BY created_at ${orderClause}, event_id ${orderClause}${limitClause};`;
-}
-
-interface DriverError {
-  code?: unknown;
-  errno?: unknown;
-  message?: unknown;
-  sqlMessage?: unknown;
-}
-
-function driverMessage(error: unknown): string | null {
-  if (typeof error !== "object" || error === null) return null;
-  const candidate = error as DriverError;
-  return [candidate.message, candidate.sqlMessage]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-}
-
-function reportsMissingField(error: unknown): boolean {
-  const candidate = error as DriverError;
-  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054;
-}
-
-function isMissingRunnerColumn(error: unknown): boolean {
-  const message = driverMessage(error);
-  if (message === null) return false;
-  if (
-    !/runner_(?:kind|profile|protocol|stop|external|agent_(?:name|version)|transport|access|cost|workspace|capabilities|evidence)|permission_verdict/
-      .test(message)
-  ) {
-    return false;
-  }
-  return reportsMissingField(error) ||
-    /unknown column|column\s+["'](?:runner_(?:kind|profile|protocol[^"']*|stop[^"']*|external[^"']*|agent_(?:name|version)|transport|access[^"']*|cost[^"']*|workspace|capabilities|evidence[^"']*)|permission_verdict)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingRunnerAuthColumn(error: unknown): boolean {
-  const message = driverMessage(error);
-  if (message === null) return false;
-  if (!/runner_(?:route_source|auth_type)/.test(message)) return false;
-  return reportsMissingField(error) ||
-    /unknown column|column\s+["']runner_(?:route_source|auth_type)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingTraceContextColumn(error: unknown): boolean {
-  const message = driverMessage(error);
-  if (message === null) return false;
-  if (!/(?:trace_flags|trace_state|span_kind|parent_is_remote)/.test(message)) {
-    return false;
-  }
-  return reportsMissingField(error) ||
-    /unknown column|column\s+["'](?:trace_flags|trace_state|span_kind|parent_is_remote)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingProviderCallColumn(error: unknown): boolean {
-  const message = driverMessage(error);
-  if (message === null) return false;
-  const knownProviderCallColumn =
-    /provider_call_(order|purpose)|provider_error_class/.test(message);
-  if (!knownProviderCallColumn) return false;
-  return reportsMissingField(error) ||
-    /unknown column|column\s+["'](?:provider_call_(?:order|purpose)|provider_error_class)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingUnparsedToolCallColumn(error: unknown): boolean {
-  const message = driverMessage(error);
-  if (message === null) return false;
-  if (!/unparsed_tool_call_count/.test(message)) return false;
-  return reportsMissingField(error) ||
-    /unknown column|column\s+["']unparsed_tool_call_count(?:_is_lower_bound)?["']\s+could not be found/i
-      .test(message);
-}
-
 /**
- * A session's events. Retries with NULL placeholders for columns a
- * historical (`AS OF`) snapshot predates, so time travel across schema
- * migrations still reads.
+ * The `bySession` select list. Dolt/MySQL drivers may decode JSON columns to
+ * objects, so JSON columns (`runner_capabilities`, `tool_arguments`) are cast
+ * to text and Workbench owns their validation.
  */
+const SESSION_EVENT_SELECT = SESSION_EVENT_COLUMNS.map((column) =>
+  EVENT_COLUMN_SPECS[column].kind === "json"
+    ? `CAST(${column} AS CHAR) AS ${column}`
+    : column
+).join(", ");
+
+/** A session's events, oldest or newest first, optionally one event. */
 async function eventsBySession(
   pool: DoltSelect,
   input: SessionEventsQuery,
@@ -208,58 +85,20 @@ async function eventsBySession(
     asOfClause = ` AS OF TIMESTAMP('${input.asOf.replace("T", " ")}')`;
   }
   const limit = positiveInteger(input.limit, "limit");
-  const queryArgs: string[] = [input.sessionId];
+  const params: string[] = [input.sessionId];
+  let eventClause = "";
   if (typeof input.eventId === "string" && input.eventId.length > 0) {
-    queryArgs.push(input.eventId);
+    eventClause = " AND event_id = ?";
+    params.push(input.eventId);
   }
-  let historicalProviderCallSchema = false;
-  let historicalUnparsedToolCallSchema = false;
-  let historicalRunnerSchema = false;
-  let historicalRunnerAuthSchema = false;
-  let historicalTraceContextSchema = false;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    try {
-      return await queryText(
-        pool,
-        eventQuery(
-          asOfClause,
-          historicalProviderCallSchema,
-          historicalUnparsedToolCallSchema,
-          historicalRunnerSchema,
-          historicalRunnerAuthSchema,
-          historicalTraceContextSchema,
-          limit,
-          input.order,
-          input.eventId,
-        ),
-        queryArgs,
-      );
-    } catch (error) {
-      const missingProviderCall = isMissingProviderCallColumn(error);
-      const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
-      const missingRunner = isMissingRunnerColumn(error);
-      const missingRunnerAuth = isMissingRunnerAuthColumn(error);
-      const missingTraceContext = isMissingTraceContextColumn(error);
-      if (
-        !missingProviderCall && !missingUnparsedToolCall && !missingRunner &&
-        !missingRunnerAuth && !missingTraceContext
-      ) throw error;
-      historicalProviderCallSchema ||= missingProviderCall;
-      historicalUnparsedToolCallSchema ||= missingProviderCall ||
-        missingUnparsedToolCall;
-      historicalRunnerSchema ||= missingProviderCall ||
-        missingUnparsedToolCall || missingRunner;
-      historicalRunnerAuthSchema ||= missingProviderCall ||
-        missingUnparsedToolCall || missingRunner ||
-        missingRunnerAuth;
-      // A snapshot missing any migration 003-006 column necessarily predates
-      // migration 007 too, regardless of which missing column the driver names.
-      historicalTraceContextSchema ||= missingProviderCall ||
-        missingUnparsedToolCall || missingRunner ||
-        missingRunnerAuth || missingTraceContext;
-    }
-  }
-  throw new Error("historical event schema did not converge");
+  const order = input.order === "desc" ? "DESC" : "ASC";
+  return await queryText(
+    pool,
+    `SELECT ${SESSION_EVENT_SELECT} FROM events${asOfClause} ` +
+      `WHERE session_id = ?${eventClause} ` +
+      `ORDER BY created_at ${order}, event_id ${order} LIMIT ${limit};`,
+    params,
+  );
 }
 
 export function doltEventReader(pool: DoltSelect): EventReader {
@@ -409,33 +248,16 @@ export function doltMemoryReader(pool: DoltSelect): MemoryReader {
 
 export function doltModelReader(pool: DoltSelect): ModelReader {
   return {
-    async listActive() {
-      try {
-        return await queryText(
-          pool,
-          "SELECT slug, display_name, provider, api, base_url, tier, " +
-            "cost_input, cost_output, capabilities, " +
-            "context_window, max_output_tokens, " +
-            "architecture, total_params_b, active_params_b, recommended_quant, " +
-            "resident_ram_gib, reasoning_effort_control " +
-            "FROM models WHERE active = TRUE ORDER BY tier, slug;",
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (
-          message.includes("architecture") ||
-          message.includes("Unknown column")
-        ) {
-          return await queryText(
-            pool,
-            "SELECT slug, display_name, provider, api, base_url, tier, " +
-              "cost_input, cost_output, capabilities, " +
-              "context_window, max_output_tokens " +
-              "FROM models WHERE active = TRUE ORDER BY tier, slug;",
-          );
-        }
-        throw err;
-      }
+    listActive() {
+      return queryText(
+        pool,
+        "SELECT slug, display_name, provider, api, base_url, tier, " +
+          "cost_input, cost_output, capabilities, " +
+          "context_window, max_output_tokens, " +
+          "architecture, total_params_b, active_params_b, recommended_quant, " +
+          "resident_ram_gib, reasoning_effort_control " +
+          "FROM models WHERE active = TRUE ORDER BY tier, slug;",
+      );
     },
   };
 }

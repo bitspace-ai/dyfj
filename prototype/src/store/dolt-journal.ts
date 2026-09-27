@@ -16,11 +16,11 @@ import {
   selectOnly,
 } from "./dolt-pool.ts";
 import { queryText } from "./dolt-readers.ts";
+import type { EventInsert } from "./generated/rows.ts";
 import type {
   CommitBatch,
   CommitOptions,
   CommitReceipt,
-  EventInsert,
   Journal,
 } from "./port.ts";
 import {
@@ -41,10 +41,11 @@ interface Statement {
 
 /** `null` columns are omitted; booleans are stored as 0/1. */
 function eventInsert(event: EventInsert): Statement {
-  const columns = Object.keys(event).filter((k) => event[k] !== null);
+  const values: Readonly<Record<string, unknown>> = { ...event };
+  const columns = Object.keys(values).filter((k) => values[k] !== null);
   const placeholders = columns.map(() => "?").join(", ");
   const params = columns.map((k) => {
-    const v = event[k];
+    const v = values[k];
     if (typeof v === "boolean") return v ? 1 : 0;
     return v ?? null;
   });

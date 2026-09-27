@@ -2,20 +2,13 @@
  * Memory privacy scoping: the one place the clearance rule lives. Readers take
  * a clearance (the visibility classes the consumer may receive) and filter by
  * it; both the runtime and the memory MCP server compute that clearance here.
+ *
+ * `MemoryVisibility` is the privacy class of a row (AGENTS.md taxonomy),
+ * generated from the `memories.visibility` column; it governs which consumers
+ * receive the row at injection time.
  */
 
-export type MemoryType = "user" | "feedback" | "project" | "reference";
-
-/**
- * Privacy class of a memory row (AGENTS.md taxonomy). Governs which consumers
- * receive the row at injection time. Stored in the `memories.visibility` column
- * (schema/current/001_structure.sql); existing rows default to 'private'.
- */
-export type MemoryVisibility =
-  | "private"
-  | "shareable"
-  | "client_safe"
-  | "public";
+import type { MemoryVisibility } from "./generated/rows.ts";
 
 /** Full clearance: a local operator sees every class. */
 export const MEMORY_VISIBILITY_ALL: readonly MemoryVisibility[] = [

@@ -558,7 +558,13 @@ export function productionLanes(
       checkId: "test.aggregate",
       command: denoExecutable,
       commandLabel: "deno",
-      args: ["test", "--allow-read=schema", "schema/validate-schema.test.ts"],
+      args: [
+        "test",
+        "--allow-read=schema",
+        "schema/validate-schema.test.ts",
+        "schema/codegen.test.ts",
+        "schema/equivalence.test.ts",
+      ],
       cwd: root,
     },
     {
@@ -588,6 +594,40 @@ export function productionLanes(
         "--allow-run=dolt",
         "schema/validate-schema.ts",
         "--history-only",
+      ],
+      cwd: root,
+    },
+    // Schema lanes (specs/02-data-layer.md sections 3 and 4), under the
+    // aggregate check id like arch.imports. `schema.codegen` regenerates the
+    // row types in memory and fails when the committed file differs;
+    // `schema.equivalence` fails when current + catalog and history +
+    // migrations produce different structures.
+    {
+      label: "Schema codegen freshness (schema.codegen)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--allow-read=schema,prototype/src/store/generated",
+        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
+        "--allow-run=dolt",
+        "schema/codegen.ts",
+        "--check",
+      ],
+      cwd: root,
+    },
+    {
+      label: "Schema equivalence (schema.equivalence)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--allow-read=schema",
+        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
+        "--allow-run=dolt",
+        "schema/equivalence.ts",
       ],
       cwd: root,
     },

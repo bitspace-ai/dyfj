@@ -10,6 +10,22 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **The memory MCP server accepts four of the five memory types
+  the DDL allows.**
+  - **Location:** `prototype/mcp/server.ts:80` and `:99` (the `write_memory`
+    and `list_memories` input schemas) against `schema/current/001_structure.sql`
+    (`memories.type`).
+  - **Symptom:** the DDL's `memories.type` enum is `user`, `feedback`,
+    `environment`, `project`, `reference`, but both MCP tools validate `type`
+    against `user`, `feedback`, `project`, `reference`. An `environment` memory
+    can be read and injected, but cannot be written or filtered for through the
+    MCP server.
+  - **Suspected cause:** the tool schemas were written by hand and the
+    hand-written `MemoryType` union matched them, so nothing compared either
+    with the DDL. `MemoryType` is now generated from the DDL and includes
+    `environment`; the tool schemas are unchanged, since widening them changes
+    what the server accepts.
+  - **Found during:** WO-13.
 - 2026-09-27 — **The memory MCP server does not exit when its client closes
   stdin after a database call.**
   - **Location:** `prototype/mcp/server.ts` (the `serveStdio` start at the end

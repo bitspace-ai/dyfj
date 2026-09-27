@@ -9,6 +9,14 @@ TypeScript and Rust bindings are consumers of that schema, not sources of
 truth. If you want the product-level reason, see the project README's Layer 0
 stance on data-layer schema.
 
+The TypeScript row types are generated from it: `codegen.ts` applies
+`current/` then `catalog/` to a disposable Dolt repository, reads
+`information_schema`, and writes `prototype/src/store/generated/rows.ts`
+(`<Table>Row` and `<Table>Insert` shapes, column-name tuples, per-column
+declarations, and the SQL enum unions). Never edit that file by hand;
+regenerate it with `deno task schema:codegen` in the same change as the DDL.
+The `schema.codegen` gate lane fails when the committed file is stale.
+
 ## Layout
 
 Use the readable current baseline for new databases:
@@ -17,9 +25,9 @@ Use the readable current baseline for new databases:
   `events`, `memories`, `sessions`, `models`, and `prompts`.
 - `catalog/001_models.sql` — mutable model catalog seed data.
 - `catalog/002_prompts.sql` — trusted prompt catalog seed data.
-- `migrations/` — forward migrations that upgrade a database created before the
-  current baseline cut; their effects are already folded into `current/` and
-  `catalog/`.
+- `migrations/` — forward migrations that bring an existing database, created
+  from `history/` before the current baseline cut, up to the current structure;
+  their effects are already folded into `current/` and `catalog/`.
 - `history/` — preserved replay history that preceded the current baseline.
 
 The model and prompt catalogs are separated from structure because provider
@@ -40,10 +48,26 @@ memory visibility/injection classification through `024_memories_inject.sql`.
 
 ## Apply the schema
 
+One rule decides what to apply:
+
+- **Fresh install:** `current/` then `catalog/`. The forward migrations are
+  already folded into that baseline and are never applied on top of it.
+- **Existing database:** replay forward. A database created before the
+  baseline cut has the structure `history/` ends with; apply the files in
+  `migrations/` it has not yet applied, in order.
+
+Both paths end at the same structure: the `schema.equivalence` gate lane
+applies `current/` + `catalog/` and `history/` + `migrations/` to two
+disposable repositories and fails on any structural difference (tables,
+columns, types, nullability, defaults, indexes, enums, constraints). Catalog
+data is not compared.
+
+The Workbench engine checks this at boot: if its Dolt database is reachable and
+lacks a column of a canonical table, it refuses to start and names the missing
+columns, pointing here. It has no fallback for an un-migrated database.
+
 Requires [Dolt](https://www.dolthub.com/). Apply from the Dolt database
-directory so `dolt sql` targets the working set directly. A fresh database takes
-the current baseline and then the catalogs; the forward migrations are already
-folded into that baseline and are not applied on top of it:
+directory so `dolt sql` targets the working set directly. A fresh install:
 
 ```sh
 for dir in /path/to/dyfj/schema/current \
@@ -74,24 +98,30 @@ deno task validate-schema
 The command applies two sequences, each to its own fresh repository:
 
 1. `schema/current/*.sql` then `schema/catalog/*.sql` (the fresh-install path)
-2. `schema/history/*.sql` then `schema/migrations/*.sql` (the pre-baseline
-   upgrade check)
+2. `schema/history/*.sql` then `schema/migrations/*.sql` (the existing-database
+   path)
 
 The second sequence proves the preserved history still parses and applies, and
-that the forward migrations apply cleanly on top of its end-state. The history
-replay is provenance, not an upgrade path from every historical state to the
-current baseline. Existing databases created before a baseline cut should be
-migrated with files in `schema/migrations/` or
-with an operator-reviewed manual migration before using current runtime code.
-Validation fails on invalid DDL or ordering errors and confirms the `events`
-table exists. It does not connect to or mutate any long-running local Dolt SQL
+that the forward migrations apply cleanly on top of its end-state. Validation
+fails on invalid DDL or ordering errors and confirms the `events` table exists.
+
+Two more checks run in the gate, and can be run directly:
+
+```sh
+deno task schema:equivalence   # both paths produce the same structure
+deno task schema:codegen       # regenerate prototype/src/store/generated/rows.ts
+```
+
+`deno task schema:codegen --check` compares instead of writing, as the gate
+lane does. None of these connect to or mutate a long-running local Dolt SQL
 server.
 
 ## Forward migration workflow
 
 For the current MVP, keep forward migrations as numbered SQL files in
-`schema/migrations/` and update `schema/current/` when cutting a new readable
-baseline.
+`schema/migrations/` and fold each one into `schema/current/` (or
+`schema/catalog/`) in the same change, so the two paths stay equivalent. Then
+regenerate the row types with `deno task schema:codegen`.
 
 If this becomes difficult to audit, the next step is a tiny DYFJ-native
 migration ledger table that records applied migration ids and checksums. Do not

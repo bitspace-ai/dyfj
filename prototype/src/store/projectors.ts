@@ -8,7 +8,15 @@
  * rows. It returns the new row, or null to remove the row.
  */
 
-import type { EventInsert, TextRow } from "./port.ts";
+import {
+  type ColumnSpec,
+  type EventInsert,
+  MEMORY_COLUMN_SPECS,
+  MEMORY_COLUMNS,
+  SESSION_COLUMN_SPECS,
+  SESSION_COLUMNS,
+} from "./generated/rows.ts";
+import type { TextRow } from "./port.ts";
 
 export type ProjectedTable = "sessions" | "memories";
 
@@ -31,41 +39,25 @@ export interface Projector {
   project(current: TextRow | null, event: EventInsert): ProjectionRow | null;
 }
 
+/** Every column except those stamped at insert time (`created_at`, ...). */
+function writable<C extends string>(
+  columns: readonly C[],
+  specs: Readonly<Record<C, ColumnSpec>>,
+): readonly string[] {
+  return columns.filter((column) => !specs[column].generated);
+}
+
 /** Primary-key column and the columns a projector may write, per table. */
 export const PROJECTED_TABLES: Readonly<
   Record<ProjectedTable, { key: string; columns: readonly string[] }>
 > = {
   sessions: {
     key: "session_id",
-    columns: [
-      "session_id",
-      "slug",
-      "session_name",
-      "external_id",
-      "project",
-      "workspace",
-      "task_description",
-      "effort_level",
-      "status",
-      "progress_done",
-      "progress_total",
-      "mode",
-      "iteration",
-      "content",
-    ],
+    columns: writable(SESSION_COLUMNS, SESSION_COLUMN_SPECS),
   },
   memories: {
     key: "memory_id",
-    columns: [
-      "memory_id",
-      "slug",
-      "type",
-      "visibility",
-      "inject",
-      "name",
-      "description",
-      "content",
-    ],
+    columns: writable(MEMORY_COLUMNS, MEMORY_COLUMN_SPECS),
   },
 };
 
