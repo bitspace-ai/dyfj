@@ -34,7 +34,8 @@ pub enum ReadOutcome {
 }
 
 /// The submission ceiling, mirrored here so history does not retain input that
-/// will be refused. Kept in step with MAX_INPUT_CHARACTERS in the main loop.
+/// will be refused. Kept in step with MAX_INPUT_CHARACTERS in the main loop,
+/// and measured the same way, in UTF-16 code units.
 ///
 /// Known limit: this bounds what is REMEMBERED, not what is read. `readline`
 /// has already allocated the whole line by the time either check runs, so an
@@ -199,7 +200,7 @@ fn read(editor: &mut DefaultEditor, prompt: &str, remember: bool) -> ReadOutcome
             // retained and recallable despite never being sent.
             if remember
                 && !line.trim().is_empty()
-                && line.chars().count() <= MAX_REMEMBERED_CHARACTERS
+                && line.encode_utf16().count() <= MAX_REMEMBERED_CHARACTERS
             {
                 let _ = editor.add_history_entry(line.as_str());
             }
