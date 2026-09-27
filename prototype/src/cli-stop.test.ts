@@ -2,34 +2,17 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   type CliConfig,
   formatRuntimeStatus,
-  type Io,
   parseArgs,
   runStop,
 } from "./cli.ts";
 import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
 import { type UnixClient } from "./uds-client.ts";
+import { fakeIo } from "../testing/fakes/fake-io.ts";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
-
-function fakeIo(): { io: Io; stdout: string[]; stderr: string[] } {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  const raw: string[] = [];
-  return {
-    io: {
-      out: (s) => stdout.push(s),
-      err: (s) => stderr.push(s),
-      errRaw: (s) => raw.push(s),
-      readLine: () => Promise.resolve(null),
-      close: () => {},
-    },
-    stdout,
-    stderr,
-  };
-}
 
 function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
   return {

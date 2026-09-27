@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import {
   compareResponseModes,
   type ResponseModeReport,
@@ -24,7 +25,7 @@ describe("compareResponseModes", () => {
       prompt: "Say hello.",
       routing: { modelId: "gemma4:e2b" },
       models,
-      now: buildClock([0, 30, 100, 0, 20, 40, 100]),
+      now: new ManualClock({ readings: [0, 30, 100, 0, 20, 40, 100] }).now,
       fetchFn: buildFakeResponseModeFetch(),
     });
 
@@ -61,14 +62,6 @@ function summary(report: ResponseModeReport) {
     total_latency_ms: report.total_latency_ms,
     time_to_first_token_ms: report.time_to_first_token_ms,
     output_tokens: report.output_tokens,
-  };
-}
-
-function buildClock(values: number[]): () => number {
-  let last = 0;
-  return () => {
-    last = values.shift() ?? last;
-    return last;
   };
 }
 

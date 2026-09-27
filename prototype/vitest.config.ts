@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { discoverDenoTestSources } from "./scripts/test-files.ts";
 
 export default defineConfig({
   root: ".",
@@ -53,6 +54,11 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
+      // `Deno.test` files share the `*.test.ts` naming during the transition;
+      // they run in the `test.unit` lane (or their own integration and golden
+      // lanes), never under Vitest.
+      // Paths are relative to `root` (the working directory), like the globs.
+      ...discoverDenoTestSources("."),
       // Deno.test files, run by the golden lane (`deno task test:golden`).
       "testing/golden/**",
     ],
