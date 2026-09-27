@@ -118,7 +118,12 @@ impl Client {
         // sender per abandoned turn against a runtime that never answers.
         self.pending.lock().await.insert(id, tx);
         let frame = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
-        self.send(&frame).await?;
+        // A request that was never sent will never be answered, so its waiter
+        // is removed here rather than retained until the connection closes.
+        if let Err(err) = self.send(&frame).await {
+            self.pending.lock().await.remove(&id);
+            return Err(err);
+        }
         match rx.await {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(message)) => Err(anyhow!(message)),
@@ -349,6 +354,22 @@ mod tests {
 
         let outcome = receiver.await.expect("the waiter must be settled");
         assert_eq!(outcome.unwrap_err(), "runtime sent a malformed frame");
+    }
+
+    /// A request whose frame could not be written leaves no waiter behind.
+    #[tokio::test]
+    async fn a_failed_send_removes_its_waiter() {
+        let (client_side, _server_side) = tokio::net::UnixStream::pair().unwrap();
+        let (_read, mut write) = client_side.into_split();
+        write.shutdown().await.unwrap();
+        let client = Client {
+            write: Arc::new(Mutex::new(write)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(Mutex::new(1)),
+        };
+
+        assert!(client.request("runtime/status", json!({})).await.is_err());
+        assert!(client.pending.lock().await.is_empty(), "the waiter must be removed");
     }
 
     /// Drive the real dispatcher, not JSON accessors beside it.
