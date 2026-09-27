@@ -1,8 +1,10 @@
 import {
-  assertEventsTablePresent,
   assertSchemaApplyPlan,
   buildSchemaApplyPlan,
   migrationFileNames,
+} from "./dolt-apply.ts";
+import {
+  assertEventsTablePresent,
   parseSchemaValidationScope,
 } from "./validate-schema.ts";
 
