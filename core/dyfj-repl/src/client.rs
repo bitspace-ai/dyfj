@@ -188,7 +188,7 @@ impl Client {
 }
 
 /// The largest frame this client accepts, matching the TypeScript peer's
-/// DEFAULT_MAX_FRAME_BYTES in `prototype/src/jsonrpc-peer.ts`.
+/// DEFAULT_MAX_FRAME_BYTES in `prototype/src/transport/jsonrpc-peer.ts`.
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 /// What one bounded read produced.

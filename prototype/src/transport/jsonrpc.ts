@@ -5,7 +5,7 @@
 // transport-agnostic — the UDS server peer, the CLI client, and the WS path all
 // build on this. The wire shape and error codes follow the transport-seam contract.
 
-import { DomainError, summarizeError } from "./contract/mod.ts";
+import { DomainError, summarizeError } from "../contract/mod.ts";
 
 export const JSONRPC_VERSION = "2.0";
 
@@ -146,6 +146,16 @@ export function classify(message: unknown): MessageKind {
 }
 
 // --- envelope builders ---
+
+export function request(
+  id: JsonRpcId,
+  method: string,
+  params?: unknown,
+): JsonRpcRequest {
+  const msg: JsonRpcRequest = { jsonrpc: JSONRPC_VERSION, id, method };
+  if (params !== undefined) msg.params = params;
+  return msg;
+}
 
 export function success(id: JsonRpcId, result: unknown): JsonRpcSuccess {
   return { jsonrpc: JSONRPC_VERSION, id, result };

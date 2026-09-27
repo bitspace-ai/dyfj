@@ -131,6 +131,27 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The JSON-RPC/UDS transport lives in `prototype/src/transport/`**: the
+  codec, request dispatch and duplex peer (`jsonrpc.ts`, `jsonrpc-peer.ts`),
+  socket-path resolution (`uds-path.ts`), the client connect (`uds-client.ts`)
+  and the server's socket bind/accept/close loop, split out of
+  `uds-server.ts` into `uds-listener.ts`, sit behind `transport/mod.ts`. The
+  CLI reaches the engine only through it, and `uds-server.ts` keeps the method
+  handlers and calls the listener. The peer now builds its request frames with
+  the codec's new `request()` envelope builder instead of an object literal;
+  the bytes on the wire are unchanged (framing, method names, error codes and
+  socket-path resolution included), which the Rust REPL client relies on, and
+  unit tests pin the request, notification and response frames byte for byte.
+  The transport tests moved to `Deno.test` beside their modules: protocol
+  cases run in the unit lane over in-memory connections, and `uds-client`,
+  which had no tests, gains unit and real-socket cases. The real-socket cases,
+  including the stale-socket and bind-refusal checks that were in
+  `uds-server.test.ts`, run in the isolated-Dolt integration lane, which now
+  grants `unix:` access to the exact socket paths listed in
+  `prototype/testing/servers/uds-sockets.ts` inside a lane-created directory
+  passed as `DYFJ_UDS_TEST_SOCKET_DIR` (declared in `CONFIG_SCHEMA`'s `test`
+  domain; no runtime permission profile grants it).
+
 - **Configuration lives in `prototype/src/config/`, and runtime code reads the
   environment only through an `Env` port**: `config.ts` is split into the env-key
   schema (`schema.ts`), TOML loading (`toml.ts`), the engine config
