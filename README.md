@@ -71,7 +71,7 @@ transport), shared single-turn runtime boundary, a multi-step agent loop
 (iterating model↔tools with workspace file tools, an approval-gated `bash`
 escape hatch, and a bounded `git` tool), an operator-routed
 provider path with local models plus hosted providers (Anthropic, OpenAI,
-OpenRouter, and Google Gemini) behind paid-approval and budget controls, and a
+OpenRouter, Google Gemini, and xAI) behind paid-approval and budget controls, and a
 local ACP-client foundation verified against a deterministic fixture agent. The
 ACP runner is distinct from the native model/provider loop and records outer
 protocol evidence while treating agent-internal state as opaque. The prototype
@@ -250,8 +250,9 @@ How the work actually happens, separate from what gets built.
 
 - [Deno](https://deno.com) 2.9+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
-- [MLX-LM](https://github.com/ml-explore/mlx-lm) for the Apple silicon local
-  default, or [Ollama](https://ollama.com) as a supported local fallback
+- [Ollama](https://ollama.com) for the local default model;
+  [MLX-LM](https://github.com/ml-explore/mlx-lm) remains a supported local
+  provider, but its catalog rows ship inactive
 - _(Optional, for `core/`)_ [`rustup`](https://rustup.rs/) - the toolchain pin
   in `core/rust-toolchain.toml` will install the right Rust automatically when
   you `cargo build` there.
@@ -279,23 +280,23 @@ export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
 
-For the Apple silicon local default, run an OpenAI-compatible MLX-LM Server:
+The local default is the Ollama model `qwen3.6:35b-a3b`, the first active Tier 0
+row in the registry's local preference order. Pull it and keep Ollama on its
+default port:
 
 ```sh
-mlx_lm.server \
-  --model mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit \
-  --host 127.0.0.1 \
-  --port 18080
+ollama pull qwen3.6:35b-a3b
 ```
 
-Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama
-remains a supported local fallback; pass `--model laguna-xs.2` or set
-`DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the Ollama fallback explicitly.
+Workbench reaches that model through Ollama's OpenAI-compatible endpoint,
+`http://localhost:11434/v1`. The catalog also carries MLX-LM Server rows
+(`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a
+row's `active` flag in the `models` table before selecting it with `--model`.
 
 Agent-tool turns default to 32 steps. Every entrypoint accepts
-`DYFJ_MAX_TOOL_STEPS`; served HTTP and UDS engines also load
+`DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads
 `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1
-through 64, and the environment value takes precedence for served engines. The
+through 64, and the environment value takes precedence for the engine. The
 final receipt reports `Tool steps: used/limit` and marks when the configured
 limit ended tool use.
 
@@ -566,6 +567,34 @@ server, tool, revision, and outcome metadata. Use a dedicated, minimally scoped
 server credential; the bearer token grants whatever authority the MCP server
 assigns to it.
 
+A configured server can also back the native runner's `web_search` and
+`web_fetch` tools. Name the upstream tools under `capabilities`; each named tool
+must also appear in the server's `tools` allowlist, and at least one of the two
+keys is required:
+
+```toml
+[[mcp.servers]]
+id = "web"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+auth = { type = "bearer", secret = "web_mcp" }
+tools = [
+  { name = "search", effect = "read", approval = "allow" },
+  { name = "fetch", effect = "read", approval = "allow" },
+]
+capabilities = { search_tool = "search", fetch_tool = "fetch" }
+```
+
+The first ready server that declares a discovered search tool supplies
+`web_search`, and likewise for `web_fetch`. `web_search` takes a query and an
+optional limit (1–10, default 5) and returns bounded snippets, each with a
+source ID (`s1`, `s2`, …) when it carries a URL. `web_fetch` takes either an
+HTTPS URL or a source ID from the current turn's latest search, refuses
+non-public hosts, and passes the canonical URL to the upstream fetch tool. Per
+turn, at most 3 searches and 5 fetches run, returned text is capped at 40,000
+characters per fetch and 100,000 per turn, and results are framed as untrusted
+external data.
+
 Which models exist, what they cost, and which tier they sit in is registry data,
 not code - see the current catalog in `schema/catalog/001_models.sql`. Catalog
 pricing and availability rows are operator-curated seed values, not
@@ -580,7 +609,7 @@ From the repo root:
 mkdir -p data/dolt
 cd data/dolt
 dolt init
-for dir in ../../schema/current ../../schema/catalog ../../schema/migrations; do
+for dir in ../../schema/current ../../schema/catalog; do
     find "$dir" -maxdepth 1 -name '*.sql' | sort | while read -r f; do
         dolt sql < "$f"
     done
@@ -589,7 +618,10 @@ dolt sql-server --host 127.0.0.1 --port 3306 &
 cd ../..
 ```
 
-The `data/` directory is gitignored.
+The `data/` directory is gitignored. A fresh database takes the current baseline
+and the catalogs only; `schema/migrations/` upgrades a database created before
+the baseline cut and is not applied on top of it (see
+[`schema/README.md`](schema/README.md)).
 
 ### Run Workbench
 
@@ -611,6 +643,7 @@ prefix. Common commands are:
 ./prototype/dist/dyfj models
 ./prototype/dist/dyfj sessions
 ./prototype/dist/dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
+./prototype/dist/dyfj stop    # stop the running runtime at the socket
 ```
 
 The HTTP peer server is retired. UDS JSON-RPC is the only seam
@@ -645,12 +678,27 @@ execs the compiled binary on the default socket path and falls back to
 `deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or
 `XDG_RUNTIME_DIR` shifts the path.
 
-The seam exposes read methods for `runtime/status`, `surface/snapshot`,
-`models/list`, `sessions/list`, `events/query`, `tools/list`, and
-`tools/inspect`, the narrow operator-approved `friction/post` method, plus
-streaming `turn` and cancellation `turn/cancel` methods
+The seam exposes read methods for `runtime/liveness`, `runtime/status`,
+`surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
+`events/query`, `ideas/list`, `ideas/get`, `packets/list`, `packets/get`,
+`tools/list`, and `tools/inspect`; `runtime/stop`, which shuts the runtime down
+for `dyfj stop`; the narrow operator-approved `friction/post` method;
+`ideas/mark` and `packets/draft`; plus streaming `turn` and cancellation
+`turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications;
-the receipt is the result). `runtime/status` returns both the simple method id
+the receipt is the result). `runtime/liveness` is the cheap probe `dyfj status`
+(and so the launcher's autostart check) sends first; it loads no models and
+queries no Dolt state.
+`sessions/inspect` returns one session's record, workspace, and event count.
+`ideas/mark` records a candidate idea against a session, optionally anchored to
+one of its events, and `packets/draft` drafts a work packet (title, source
+context, operator intent, proposed acceptance criteria, verifier provenance)
+from an idea or event. Ideas and packets are held in the runtime's process
+memory only: they are not written to Dolt and do not survive a restart. The REPL
+drives them with `/idea mark [--event <event-id>] <label...>`, `/idea list`,
+`/idea show <idea-id>`, `/packet draft [<idea-id>] [--idea <id>] [--event <id>]
+[--issue <id>] [--title <title>]`, `/packet list`, and `/packet show
+<packet-id>`. `runtime/status` returns both the simple method id
 list and grouped method catalog metadata for CLI/TUI/GUI surfaces. The `dyfj`
 CLI drives turns over this seam, renders companion markdown line-by-line while
 streaming, wraps prose toward a 100-column maximum without splitting words,
@@ -987,7 +1035,9 @@ The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
 on pull requests and pushes to `main`, with a read-only token, no secrets, and
 the subject/range binding described above. Its stable check name, `full-gate`,
-is the intended branch-protection required check. The workflow pins its one
+is the intended branch-protection required check. A second job,
+`macos-portability`, runs the same command on a macOS runner so process,
+filesystem, and runtime portability are observable. The workflow pins its one
 third-party action by full commit digest (watched by Dependabot), installs Deno
 2.9.6 and Dolt 2.3.1 from exact-version release URLs — never a `latest` URL,
 never a script piped into a shell — and checks each downloaded archive against a
@@ -1145,6 +1195,9 @@ Things that exist as boxes on a diagram.
   versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool
   results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
+  _Runtime status: partly implemented. Sessions and their events persist in
+  Dolt, and `--session` resumes a session; rewind and fork are not
+  implemented, and artifacts are not stored._
 - **Inter-Agent Contracts & Capability Discovery.** Bilateral registration:
   agents advertise capabilities, agents declare needs, the substrate matches
   them. Per Section 1: the shared runtime event schema carries the audit and
@@ -1191,6 +1244,9 @@ Touch every subsystem.
 - **Observability.** OpenTelemetry metadata is mandatory on the event/message
   schema. Every step (context build → LLM call → tool exec → result injection)
   gets automatic spans plus full transcript. Sampling controls volume.
+  _Runtime status: partly implemented. Every event row carries trace and span
+  IDs, and MCP calls propagate W3C trace context; there is no OpenTelemetry
+  SDK, span export, or sampling control._
 - **Permissions / Policy Engine.** Identity and authz metadata mandatory on the
   core event schema. Dedicated policy engine intercepts every tool call before
   execution. Tiered rules (allow / ask / deny) keyed on tool, pattern, or risk.
@@ -1204,9 +1260,12 @@ Touch every subsystem.
 - **Eval & Regression.** Built-in benchmark harness. Capability tests,
   regression catches, model-comparison and prompt-comparison runs. Measurement
   is part of the work product, not a side artifact.
+  _Runtime status: not implemented. The prototype has manual local-provider
+  diagnostics (`deno task model-response-modes` and similar), not an eval
+  harness._
 - **Self-reflection / planning / review loops.** Built-in mechanisms for the
   agent to critique its own output, decompose subtasks, verify results, and
-  recover from errors.
+  recover from errors. _Runtime status: not implemented._
 
 ### 6.4 Layer 3 - runtime mechanisms
 
@@ -1215,11 +1274,15 @@ How things actually execute.
 - **Streaming + interruptability + partial result handling.** Output streams.
   Users (and other agents) can interrupt mid-stream. Partial results are
   represented explicitly and can be resumed, inspected, or discarded.
+  _Runtime status: partly implemented. Turns stream over the UDS seam and
+  `turn/cancel` interrupts one; resuming a partial result is not implemented._
 - **Checkpointing + transactional state.** Every meaningful state transition is
-  checkpointed. Rollback is real, not aspirational.
+  checkpointed. Rollback is real, not aspirational. _Runtime status: not
+  implemented; there is no checkpoint or rollback mechanism._
 - **Time / async / scheduled action.** Cron-ness as a primitive: agents can take
   action on a schedule, watch for change, return async results, and reason about
-  asymmetric time between themselves and the world.
+  asymmetric time between themselves and the world. _Runtime status: not
+  implemented; there is no scheduler or cron primitive._
 
 ---
 
@@ -1488,6 +1551,13 @@ Document revisions only. Code and behavior changes are tracked in
   1 changes only the TypeScript tier, TypeScript is the temporary tier under
   Layer 0 stance #3, and no enabler may make moving a stabilized component to
   Rust harder.
+- 2026-09-27 - Docs drift corrected against the code: Ollama `qwen3.6:35b-a3b`
+  is the local default and xAI is listed among hosted providers; the retired
+  HTTP engine is gone from the tool-step and config text; a fresh database
+  applies the baseline and catalogs only; the UDS method list, `/idea` and
+  `/packet`, and `web_search`/`web_fetch` are documented; the macOS gate job is
+  named; Section 6 items carry runtime-status notes; the stale D2 flow diagram
+  is removed in favor of the C4 workspace.
 - 2026-09-27 - Architecture spec §3 moves error summarizing from the `kernel/`
   (L0) row to the `contract/` (L1) row: deciding which error messages cross the
   wire as trusted is trust-boundary policy, not a policy-free helper.
