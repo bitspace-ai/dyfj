@@ -36,6 +36,7 @@ import {
   toolStepToMessages,
   validateNextWorkJson,
   type WorkbenchReceiptInput,
+  type WorkbenchRuntimeInput,
   WorkspaceContextUnavailableError,
 } from "./workbench.ts";
 import {
@@ -1166,6 +1167,50 @@ describe("isNextWorkMode", () => {
 });
 
 describe("runWorkbenchRuntime external-agent invariants", () => {
+  test("fails closed when an explicit ACP route has no runner bound", async () => {
+    // Typed through the general overload: a direct caller that omits the
+    // runner service must get the fixed error, never a lazily loaded runner.
+    const input: WorkbenchRuntimeInput = {
+      mode: "turn",
+      prompt: "inspect",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      trustWorkspaceInstructions: true,
+    };
+    await expect(runWorkbenchRuntime(input)).rejects.toThrow(
+      new DomainError("No external-agent runner is configured"),
+    );
+  });
+
+  test("fails closed when model selection routes to ACP with no runner bound", async () => {
+    const prevRegistry = runtimeMocks.registry;
+    runtimeMocks.registry = [
+      {
+        slug: "fixture",
+        displayName: "ACP Fixture",
+        provider: "fixture",
+        api: "acp",
+        baseUrl: "local_stdio",
+        tier: 0 as const,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text"],
+        contextWindow: undefined,
+        maxOutputTokens: undefined,
+      },
+    ];
+    try {
+      await expect(runWorkbenchRuntime({
+        mode: "turn",
+        prompt: "inspect",
+        routingOptions: { modelId: "fixture" },
+        trustWorkspaceInstructions: true,
+      })).rejects.toThrow("No external-agent runner is configured");
+    } finally {
+      runtimeMocks.registry = prevRegistry;
+    }
+  });
+
   test("rejects the Codex ChatGPT route without explicit workspace trust", async () => {
     await expect(runWithExternalAgentRunner({
       mode: "turn",

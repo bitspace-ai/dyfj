@@ -1,10 +1,9 @@
 import process from "node:process";
 import type { WorkbenchRoutingOptions } from "../src/provider.ts";
 import { doltQuery, closeDoltPool } from "../src/utils.ts";
-import {
-  resolveRuntimeEnvDefaults,
-  runWorkbenchRuntime,
-} from "../src/workbench.ts";
+import { resolveRuntimeEnvDefaults } from "../src/config.ts";
+import { runExternalAgentWorkbenchRuntime } from "../src/external-agent-runtime.ts";
+import { runWorkbenchRuntime } from "../src/workbench.ts";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
@@ -37,6 +36,10 @@ try {
     onTextDelta: (delta) => {
       process.stdout.write(delta);
     },
+  }, {
+    // This entrypoint composes the engine itself, so it binds the ACP runner
+    // the same way the UDS server does.
+    externalAgentRunner: { run: (input) => runExternalAgentWorkbenchRuntime(input) },
   });
 
   const output = captured.join("\n");

@@ -1058,7 +1058,9 @@ function requireExternalAgentRunner(
 
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput & { runner: AcpRunnerSelection },
-  services?: WorkbenchRuntimeServices,
+  services: WorkbenchRuntimeServices & {
+    externalAgentRunner: ExternalAgentRunner;
+  },
 ): Promise<ExternalAgentWorkbenchRuntimeResult>;
 export function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput & { runner?: undefined },
