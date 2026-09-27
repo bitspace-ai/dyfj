@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "./store/mod.ts";
 import {
-  assertSocketBindable,
   buildTurnHandlers,
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
   type WorkbenchUnixServerOptions,
 } from "./uds-server.ts";
-import { JsonRpcPeer } from "./jsonrpc-peer.ts";
-import { type RpcContext, RpcErrorCode, type RpcHandlers } from "./jsonrpc.ts";
+import {
+  JsonRpcPeer,
+  type RpcContext,
+  RpcErrorCode,
+  type RpcHandlers,
+} from "./transport/mod.ts";
 import type { TurnRuntime } from "./turn-runner.ts";
 import type { TurnStreamFrame } from "./contract/mod.ts";
 import type { CommandDefinition } from "./commands.ts";
@@ -1696,50 +1699,6 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
       decision: "deny",
       reason: "operator declined the anomaly halt",
     });
-  });
-});
-
-describe("socket bind safety", () => {
-  test("refuses to bind while a live runtime answers on the socket", async () => {
-    const server = await startServer(fakes);
-    await expect(serveWorkbenchUnix(server.socketPath, {
-      ...fakes,
-      store: new MemoryStore(),
-    })).rejects.toThrow(
-      /live runtime is already serving/,
-    );
-    // The live server is untouched: its socket file still exists and accepts.
-    const client = await connectClient(server);
-    await expect(client.request("runtime/status")).resolves.toBeTruthy();
-  });
-
-  test("clears a genuinely stale socket and binds", async () => {
-    const sock = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
-    // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its
-    // socket file behind with nothing accepting. (A cleanly closed Deno
-    // listener removes its file, so this needs a hard-killed process.)
-    const fabricate = await new Deno.Command("bash", {
-      args: [
-        "-c",
-        `nc -lU '${sock}' & pid=$!; for i in $(seq 1 50); do [ -S '${sock}' ] && break; sleep 0.1; done; kill -9 $pid 2>/dev/null; wait $pid 2>/dev/null; [ -S '${sock}' ]`,
-      ],
-    }).output();
-    expect(fabricate.success).toBe(true);
-    expect(Deno.lstatSync(sock).isSocket).toBe(true);
-    await assertSocketBindable(sock);
-    expect(() => Deno.lstatSync(sock)).toThrow();
-  });
-
-  test("refuses to bind over a non-socket path", async () => {
-    const path = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
-    await Deno.writeTextFile(path, "not a socket");
-    try {
-      await expect(assertSocketBindable(path)).rejects.toThrow(
-        /exists and is not a socket/,
-      );
-    } finally {
-      await Deno.remove(path);
-    }
   });
 });
 

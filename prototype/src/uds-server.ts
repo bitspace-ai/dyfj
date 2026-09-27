@@ -42,8 +42,8 @@ import {
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
-} from "./jsonrpc.ts";
-import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+  serveUnixJsonRpc,
+} from "./transport/mod.ts";
 import { type ExternalAgentRunner, runWorkbenchRuntime } from "./workbench.ts";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import {
@@ -1528,48 +1528,10 @@ export interface WorkbenchUnixServer {
   close(options?: { disconnectPeers?: boolean }): Promise<void>;
 }
 
-/**
- * Assert the socket path is bindable, clearing a stale socket from a prior
- * unclean exit — but only if the path is actually a socket, never an
- * arbitrary file/dir, and never while a live runtime still answers on it.
- * Silently unlinking a live runtime's socket orphans it: the old process
- * keeps running (holding its Dolt pool) but becomes unreachable, and clients
- * silently land on whichever process bound last.
- */
-export async function assertSocketBindable(socketPath: string): Promise<void> {
-  let info: Deno.FileInfo;
-  try {
-    info = Deno.lstatSync(socketPath);
-  } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return;
-    throw err;
-  }
-  if (!info.isSocket) {
-    throw new Error(
-      `refusing to bind: ${socketPath} exists and is not a socket`,
-    );
-  }
-  let live: Deno.UnixConn;
-  try {
-    live = await Deno.connect({ transport: "unix", path: socketPath });
-  } catch {
-    // Nothing answered: a stale socket from an unclean exit. Clear it.
-    Deno.removeSync(socketPath);
-    return;
-  }
-  live.close();
-  throw new Error(
-    `refusing to bind: a live runtime is already serving on ${socketPath} ` +
-      `(inspect with: dyfj status; stop it before starting another)`,
-  );
-}
-
 export async function serveWorkbenchUnix(
   socketPath: string,
   options: WorkbenchUnixServerOptions & { store: Store },
 ): Promise<WorkbenchUnixServer> {
-  await assertSocketBindable(socketPath);
-
   const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
   const serverOptions: WorkbenchUnixServerOptions = {
     ...options,
@@ -1580,36 +1542,21 @@ export async function serveWorkbenchUnix(
     ...buildWorkbenchHandlers(serverOptions),
     ...buildTurnHandlers(serverOptions),
   };
-  const listener = Deno.listen({ transport: "unix", path: socketPath });
-  const peers = new Set<JsonRpcPeer>();
-
-  (async () => {
-    for (;;) {
-      let conn: Deno.Conn;
+  const transport = await serveUnixJsonRpc(socketPath, {
+    handlers,
+    onParseError: options.onParseError,
+    onRequestSettled: async (req, res) => {
+      if (req.method !== "runtime/stop") return;
+      const code = "result" in res ? 0 : 1;
       try {
-        conn = await listener.accept();
-      } catch {
-        break; // listener closed
+        await options.onStopComplete?.(code);
+      } catch (err) {
+        options.onParseError?.(
+          `onStopComplete error: ${summarizeError(err)}`,
+        );
       }
-      const peer = new JsonRpcPeer(conn, {
-        handlers,
-        onParseError: options.onParseError,
-        onRequestSettled: async (req, res) => {
-          if (req.method !== "runtime/stop") return;
-          const code = "result" in res ? 0 : 1;
-          try {
-            await options.onStopComplete?.(code);
-          } catch (err) {
-            options.onParseError?.(
-              `onStopComplete error: ${summarizeError(err)}`,
-            );
-          }
-        },
-      });
-      peers.add(peer);
-      peer.run().finally(() => peers.delete(peer));
-    }
-  })();
+    },
+  });
 
   return {
     socketPath,
@@ -1620,20 +1567,7 @@ export async function serveWorkbenchUnix(
       } catch (error) {
         shutdownError = error;
       }
-      try {
-        listener.close();
-      } catch {
-        // already closed
-      }
-      if (options.disconnectPeers !== false) {
-        for (const peer of peers) peer.close();
-        peers.clear();
-      }
-      try {
-        await Deno.remove(socketPath);
-      } catch {
-        // already gone
-      }
+      await transport.close(options);
       if (shutdownError !== undefined) throw shutdownError;
     },
   };

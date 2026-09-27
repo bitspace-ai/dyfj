@@ -255,6 +255,12 @@ suite in `testing/golden/`, loopback servers in `testing/servers/`, and the port
 its fake; module mocking is not allowed (`specs/03-testing.md` §1). A fake's conformance
 suite lands with the port it stands in for.
 
+Deno grants Unix-socket access per exact path, not per directory, so a `Deno.test`
+integration test that binds or dials a real socket takes its path from
+`testing/servers/uds-sockets.ts`: the isolated-Dolt integration lane creates one
+directory, passes it in `DYFJ_UDS_TEST_SOCKET_DIR`, and grants `unix:` access to each
+socket named in that file. A new socket-using test adds its socket name there.
+
 Local imports name the file they load, extension included (`./utils.ts`, not
 `./utils`); no task passes `--sloppy-imports`, so an extensionless local import
 fails the typecheck. Third-party packages resolve through the `imports` map in
@@ -328,6 +334,7 @@ The response must include generated text. Health/list endpoints such as Ollama `
 - `src/contract/` — layer L1: the runtime contract shared by the engine, its runners, the server, and the CLI (turn request, receipt and stream-frame types, runtime auth and event types, history-omission notices, `DomainError`, the `Runner` interface, and the wire trust policy in `summarizeError` and `workspaceRootForTransport`), imported through `src/contract/mod.ts` and importing only `src/kernel/`; wire types stay plain data. The engine binds its external-agent (ACP) runner through the `Runner` interface: the UDS server composes it, so the engine never imports the ACP runtime
 - `src/config/` — layer L1: the declared configuration surface, imported through `src/config/mod.ts`: the env-key schema (`CONFIG_SCHEMA` in `schema.ts`, every `DYFJ_*` key declared), the `Env` port (`env.ts`, the only runtime module that reads `Deno.env` or `process.env`), the launcher's `.env` parser, TOML loading and the engine config, the `[secrets]` and `[mcp]` parsers, the budget/agent/anomaly defaults, and the Dolt connection settings (`dolt.ts`). The `arch.imports` lane enforces that no other runtime module reads the environment
 - `src/store/` — layer L2: the store port and the only code that issues SQL (`specs/02-data-layer.md` §2), imported through `src/store/mod.ts`. `journal.commit` is the one mutation path: a batch's events, their projections and its declared unjournaled mutations (`store/unjournaled.ts`, each kind with the reason it has no event yet) commit in one transaction. Read-only readers cover events, sessions, memories (the loopback/non-loopback/MCP-stdio clearance rule lives in `store/memories.ts`), the model catalog, prompts and spend baselines. `DoltStore` runs over one `mysql2` pool the composition root builds from `src/config/dolt.ts` and passes in; `MemoryStore` is the in-memory adapter for tests. Both pass `testing/conformance/store.ts`. The readers get only a handle that runs a single `SELECT`; only the journal holds a write-capable connection. `mysql2` may be imported only here, which the `arch.imports` lane enforces
+- `src/transport/` — layer L2: the JSON-RPC 2.0 process seam over Unix sockets (codec and framing, request dispatch, the duplex connection peer, socket-path resolution, the client connect, and the server bind/accept loop), imported through `src/transport/mod.ts` and importing only `src/kernel/`, `src/contract/`, and `src/config/`. The CLI reaches the engine only through it; the engine's method handlers stay in `src/uds-server.ts`. The Rust REPL client in `../core/dyfj-repl` speaks the same wire format, so framing, method names, error codes, and socket-path resolution stay byte-identical
 - `src/tools/mcp/transport.ts` — the MCP transport every MCP consumer shares: the byte-bounded fetch, the untrusted-result framing, bearer-header construction, and the one SDK client factory, used by the external MCP tools (`src/mcp-tools.ts`), the web tools (`src/web-tools.ts`), and memory recall (`src/memory-search.ts`)
 - `mcp/` — MCP server (`server.ts`), a separate stdio entrypoint that builds its own `DoltStore` and reads and writes through the same journal and readers as the runtime
 - `examples/` — diagnostic programs, verification helpers, and historical transport spikes; these are not operator launch paths
@@ -339,8 +346,8 @@ stack; their built-in values target Ollama `gemma4:e2b` rather than the
 registry's local default.
 `verify-workbench-events` is the live event-sequence check. The standalone
 `uds-jsonrpc-spike.ts` records the original duplex-transport proof; the current
-transport implementation lives in `src/jsonrpc.ts`, `src/jsonrpc-peer.ts`, and
-`src/uds-server.ts`.
+transport implementation lives in `src/transport/`, with the engine's method
+handlers in `src/uds-server.ts`.
 
 ## Where this is heading
 

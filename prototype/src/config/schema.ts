@@ -433,6 +433,15 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "string",
     kind: "value",
   },
+  // Directory the isolated Dolt integration lane hands to the transport tests
+  // that bind real Unix sockets (testing/servers/uds-sockets.ts).
+  {
+    key: "udsTestSocketDir",
+    envVar: "DYFJ_UDS_TEST_SOCKET_DIR",
+    domain: "test",
+    type: "string",
+    kind: "value",
+  },
   // ── tooling: read only by prototype/scripts (test-process-harness.ts) ──
   // Wall-clock bound, in seconds, for a supervised Vitest run.
   {

@@ -4,7 +4,7 @@
 //   deno task serve-unix
 
 import { serveWorkbenchUnix } from "./uds-server.ts";
-import { ensureSocketDir, resolveSocketPath } from "./uds-path.ts";
+import { ensureSocketDir, resolveSocketPath } from "./transport/mod.ts";
 import {
   loadConfig,
   loadMcpServersConfig,

@@ -7,6 +7,10 @@ import { resolveEsbuildBinary } from "./esbuild-binary.ts";
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import { fileURLToPath } from "node:url";
+import {
+  UDS_TEST_SOCKET_DIR_ENV,
+  udsTestSocketGrants,
+} from "../testing/servers/uds-sockets.ts";
 
 class IntegrationInterruptedError extends Error {
   constructor() {
@@ -112,6 +116,7 @@ Deno.addSignalListener("SIGTERM", onSigterm);
 
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
 let mcpTestTempDir: string | undefined;
+let udsTestSocketDir: string | undefined;
 try {
   fixture = await startIsolatedDoltFixture({
     repoRoot,
@@ -127,6 +132,9 @@ try {
     ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}`,
   };
   mcpTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-mcp-roundtrip-" });
+  // Deno grants Unix sockets per exact path, so the Deno.test files that bind
+  // real sockets get this directory and a grant for each socket they name.
+  udsTestSocketDir = await Deno.makeTempDir({ prefix: "dyfj-uds-" });
   await runChecked(denoExecutable, [
     "run",
     "-P=test",
@@ -142,15 +150,21 @@ try {
   ], { cwd: prototypeRoot, env, signal: abortController.signal });
   await runChecked(denoExecutable, [
     "test",
-    "--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,ENV_CONFORMANCE_PROBE",
-    `--allow-read=.,${mcpTestTempDir}`,
-    `--allow-write=${mcpTestTempDir}`,
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE`,
+    `--allow-read=.,${mcpTestTempDir},${udsTestSocketDir}`,
+    `--allow-write=${mcpTestTempDir},${udsTestSocketDir}`,
     `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill`,
-    "--allow-net=127.0.0.1",
+    `--allow-net=${
+      ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
+    }`,
     ...integrationTestAssignments.deno,
   ], {
     cwd: prototypeRoot,
-    env: { ...env, DYFJ_MCP_TEST_TEMP_DIR: mcpTestTempDir },
+    env: {
+      ...env,
+      DYFJ_MCP_TEST_TEMP_DIR: mcpTestTempDir,
+      [UDS_TEST_SOCKET_DIR_ENV]: udsTestSocketDir,
+    },
     signal: abortController.signal,
   });
   await runChecked(
@@ -169,6 +183,9 @@ try {
   await fixture?.cleanup();
   if (mcpTestTempDir !== undefined) {
     await Deno.remove(mcpTestTempDir, { recursive: true });
+  }
+  if (udsTestSocketDir !== undefined) {
+    await Deno.remove(udsTestSocketDir, { recursive: true });
   }
   Deno.removeSignalListener("SIGINT", onSigint);
   Deno.removeSignalListener("SIGTERM", onSigterm);

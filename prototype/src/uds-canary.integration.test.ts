@@ -16,7 +16,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
-import { connectUnixClient } from "./uds-client.ts";
+import { connectUnixClient } from "./transport/mod.ts";
 import {
   type FixtureSql,
   openFixtureSql,
