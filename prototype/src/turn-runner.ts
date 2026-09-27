@@ -20,7 +20,7 @@ import {
   type PermissionLevel,
   resolveRuntimeEnvDefaults,
   type WorkbenchConfig,
-} from "./config.ts";
+} from "./config/mod.ts";
 import type {
   HistoryOmissionProjection,
   PaidEscalationVerdict,

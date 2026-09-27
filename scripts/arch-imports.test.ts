@@ -38,6 +38,7 @@ const RULES: LayerRules = {
   units: [
     { dir: "kernel", layer: 0 },
     { dir: "contract", layer: 1 },
+    { dir: "config", layer: 1 },
     { dir: "store", layer: 2 },
     { dir: "providers", layer: 2 },
     { dir: "context", layer: 2 },
@@ -57,10 +58,23 @@ const RULES: LayerRules = {
     allowedUnits: ["kernel", "contract"],
     allowedPaths: [`${S}/extensions/*/client.ts`],
   },
+  env: {
+    allowedUnits: ["config"],
+    entrypoints: [
+      { unit: "tooling", justification: "Separate processes." },
+    ],
+  },
   files: { [`${S}/legacy-utils.ts`]: "store" },
 };
 
-const EMPTY: Baseline = { cycles: [], layer: [], cli: [], dynamic: [] };
+const EMPTY: Baseline = {
+  cycles: [],
+  layer: [],
+  cli: [],
+  dynamic: [],
+  env: [],
+  envKeys: [],
+};
 
 // Writes the fixture modules into a temporary tree and builds the graph with
 // the real `deno info`, so every rule test runs through the same parser as the
@@ -95,6 +109,7 @@ async function run(
       rules: RULES,
       allowList: [],
       baseline: EMPTY,
+      declaredEnvKeys: new Set(["DYFJ_DECLARED"]),
       exists: (path) => path in all || extra.has(path),
       ...overrides,
     });
@@ -524,6 +539,8 @@ Deno.test("the ratchet fails on a new violation and on a stale baseline entry", 
     layer: [`${S}/kernel/k.ts -> ${S}/engine/gone.ts`],
     cli: [],
     dynamic: [],
+    env: [],
+    envKeys: [],
   };
   const result = await run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e.ts";',
@@ -586,4 +603,82 @@ Deno.test("the size report lists long modules and long functions", () => {
   assertEquals(report.functions, [
     { path: "m/big.ts", name: "big", line: 1, lines: 152 },
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// Environment access
+
+Deno.test("direct env access is a violation outside config/ and named entrypoints", async () => {
+  const result = await run({
+    [`${S}/config/env.ts`]: "export const e = Deno.env;",
+    [`${S}/server/main.ts`]: 'Deno.env.get("HOME");',
+    ["prototype/scripts/tool.ts"]: 'Deno.env.get("HOME");',
+    [`${S}/engine/deno.ts`]: 'Deno.env.get("HOME");',
+    [`${S}/engine/global.ts`]: 'globalThis.Deno.env.get("HOME");',
+    [`${S}/engine/computed.ts`]: 'Deno["env"].get("HOME");',
+    [`${S}/engine/destructure.ts`]: "const { env } = Deno; env.get('HOME');",
+    [`${S}/engine/node.ts`]:
+      'import process from "node:process"; process.env.HOME;',
+    [`${S}/engine/named.ts`]: 'import { env } from "node:process"; env.HOME;',
+    [`${S}/engine/other.ts`]:
+      'import process from "node:process"; process.stdin; Deno.args;',
+  }, {
+    rules: {
+      ...RULES,
+      env: {
+        allowedUnits: ["config"],
+        entrypoints: [
+          ...RULES.env.entrypoints,
+          { path: `${S}/server/main.ts`, justification: "Composition root." },
+        ],
+      },
+    },
+  });
+  assertEquals(result.current.env, [
+    `${S}/engine/computed.ts: Deno.env`,
+    `${S}/engine/deno.ts: Deno.env`,
+    `${S}/engine/destructure.ts: Deno.env`,
+    `${S}/engine/global.ts: Deno.env`,
+    `${S}/engine/named.ts: process.env`,
+    `${S}/engine/node.ts: process.env`,
+  ]);
+  assertSome(result.added, `env: ${S}/engine/deno.ts: Deno.env`);
+});
+
+Deno.test("an undeclared DYFJ_* key in a runtime module is a violation", async () => {
+  const result = await run({
+    [`${S}/engine/keys.ts`]: [
+      'export const a = "DYFJ_DECLARED";',
+      'export const b = "DYFJ_UNDECLARED";',
+      "export const c = `DYFJ_TEMPLATE`;",
+      'export const d = "DYFJ_UNDECLARED must be set";',
+    ].join("\n"),
+    ["prototype/scripts/tool.ts"]: 'export const t = "DYFJ_TOOLING_ONLY";',
+  });
+  assertEquals(result.current.envKeys, [
+    `${S}/engine/keys.ts: DYFJ_TEMPLATE`,
+    `${S}/engine/keys.ts: DYFJ_UNDECLARED`,
+  ]);
+});
+
+Deno.test("env entrypoints must name one existing unit or module and justify it", async () => {
+  const result = await run({}, {
+    rules: {
+      ...RULES,
+      env: {
+        allowedUnits: ["config", "nowhere"],
+        entrypoints: [
+          { path: `${S}/missing.ts`, justification: "x" },
+          { unit: "ghost", justification: "x" },
+          { unit: "tooling", path: `${S}/legacy-utils.ts`, justification: "x" },
+          { unit: "tooling", justification: " " },
+        ],
+      },
+    },
+  });
+  assertSome(result.errors, "allowed unit is not declared: nowhere");
+  assertSome(result.errors, `${S}/missing.ts: module does not exist`);
+  assertSome(result.errors, "ghost: unit is not declared");
+  assertSome(result.errors, "name exactly one of unit or path");
+  assertSome(result.errors, "tooling: missing justification");
 });

@@ -15,6 +15,8 @@
  * a real process.
  */
 
+import { processEnv } from "./config/mod.ts";
+
 export interface BashResult {
   code: number;
   signal: string | null;
@@ -55,7 +57,7 @@ const SAFE_ENV_KEYS = [
 
 function readEnv(key: string): string | undefined {
   try {
-    return Deno.env.get(key);
+    return processEnv.get(key);
   } catch {
     return undefined; // not granted to the runtime — treat as absent
   }

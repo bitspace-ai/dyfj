@@ -1,4 +1,4 @@
-import type { McpHttpServerConfig } from "./config.ts";
+import type { McpHttpServerConfig } from "./config/mod.ts";
 
 // Keep launch authority derivation dependency-light: the thin CLI must not
 // import the external-tool runtime and its engine dependencies.

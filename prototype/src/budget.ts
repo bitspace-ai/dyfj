@@ -14,7 +14,7 @@
  *   - writeSummaryEvent() calls writeEvent(); call once at session end
  *
  * Budget defaults are a declared engine config key (`CONFIG_SCHEMA` in
- * config.ts): the env-var bindings and the limit numbers live on the declared
+ * config/): the env-var bindings and the limit numbers live on the declared
  * surface, not inline here, so the permission allowlist derives from one source.
  *   DYFJ_BUDGET_SESSION_USD  — max total spend per session  (default $1.00)
  *   DYFJ_BUDGET_PER_CALL_USD — max spend per individual call (default $0.10)
@@ -30,12 +30,15 @@ import {
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
 import { doltQuery, writeEvent } from "./utils.ts";
-import { resolveBudgetDefaultsFromEnv } from "./config.ts";
+import {
+  type Env,
+  processEnv,
+  resolveBudgetDefaultsFromEnv,
+} from "./config/mod.ts";
 import {
   DomainError,
   MAX_REASON_FIELD_BYTES,
 } from "./contract/mod.ts";
-import process from "node:process";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -122,8 +125,7 @@ export async function fetchSpendBaselines(
  * `BudgetTracker` and the not-yet-config-wired entrypoints; the runtime boundary
  * resolves these once and threads them in (see resolveRuntimeEnvDefaults).
  */
-export function defaultBudgetConfig(): BudgetConfig {
-  const env = { get: (key: string): string | undefined => process.env[key] };
+export function defaultBudgetConfig(env: Env = processEnv): BudgetConfig {
   return resolveBudgetDefaultsFromEnv(env);
 }
 

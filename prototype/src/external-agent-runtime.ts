@@ -6,6 +6,7 @@ import {
   sanitizeBoundaryText,
   utf8ByteLengthWithinLimit,
 } from "./kernel/mod.ts";
+import { processEnv } from "./config/mod.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
@@ -71,7 +72,7 @@ export interface ExternalAgentRuntimeInput extends WorkbenchRuntimeRequest {
 }
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
-  const home = Deno.env.get("HOME");
+  const home = processEnv.get("HOME");
   const environment: Record<string, string> = {};
   if (home !== undefined) {
     environment.HOME = home;
@@ -399,7 +400,7 @@ export async function codexChatGptProfile(
   workspace: string,
   options: CodexChatGptProfileOptions = {},
 ): Promise<AcpExecutionProfile> {
-  const operatorHome = options.home ?? Deno.env.get("HOME");
+  const operatorHome = options.home ?? processEnv.get("HOME");
   if (
     operatorHome === undefined || !operatorHome.startsWith("/") ||
     operatorHome.includes(",") || operatorHome.includes(":")
@@ -443,14 +444,14 @@ export async function codexChatGptProfile(
     join(packageRoot, "dist", "index.js"),
   );
   const nodePath = await operatorAuthorizedExecutable(
-    options.nodePath ?? Deno.env.get("DYFJ_NODE_PATH"),
+    options.nodePath ?? processEnv.get("DYFJ_NODE_PATH"),
   );
   const codexPath = await bundledCodexExecutable(packageRoot);
   const toolchainPath = await operatorAuthorizedToolchainDirectory(
-    options.toolchainPath ?? Deno.env.get("DYFJ_CODEX_TOOLCHAIN_PATH"),
+    options.toolchainPath ?? processEnv.get("DYFJ_CODEX_TOOLCHAIN_PATH"),
   );
   const rustupHome = await operatorAuthorizedRustupHomeDirectory(
-    options.rustupHome ?? Deno.env.get("DYFJ_CODEX_RUSTUP_HOME"),
+    options.rustupHome ?? processEnv.get("DYFJ_CODEX_RUSTUP_HOME"),
   );
   const projectedDirectories = new Set<string>();
   if (toolchainPath !== undefined) projectedDirectories.add(toolchainPath);
@@ -492,7 +493,7 @@ export async function codexChatGptProfile(
     CODEX_CONFIG: JSON.stringify(codexConfig),
   };
   if (rustupHome !== undefined) environment.RUSTUP_HOME = rustupHome;
-  const user = Deno.env.get("USER");
+  const user = processEnv.get("USER");
   if (user !== undefined) environment.USER = user;
   return {
     slug: "codex-chatgpt",

@@ -14,7 +14,7 @@ import type {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import type { McpHttpServerConfig } from "../../config.ts";
+import type { McpHttpServerConfig } from "../../config/mod.ts";
 import type { CommandTraceContext, JsonSchemaObject } from "../../commands.ts";
 import { utf8SafePrefix } from "../../kernel/mod.ts";
 

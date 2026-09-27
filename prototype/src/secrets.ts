@@ -2,9 +2,10 @@
  * secrets.ts — resolve declared secret POINTERS into the process environment at
  * engine boot, so `dyfj start` alone yields a fully credentialed runtime.
  *
- * The config surface holds POINTERS, never values (see config.ts). At boot the
+ * The config surface holds POINTERS, never values (see config/). At boot the
  * runtime invokes the operator-configured resolver command once per declared
- * pointer and sets the resulting value into `Deno.env`, exactly where the
+ * pointer and sets the resulting value into the process environment (through
+ * the `Env` port's `processEnv` adapter), exactly where the
  * providers already read it (`getEnv(NAME)` in provider.ts). The value lives
  * only in process env — the same posture the retired 1Password wrapper held —
  * never on the config object, in logs, or in an error message.
@@ -23,7 +24,11 @@
  *     must never carry the value into a log).
  */
 
-import type { SecretsConfig } from "./config.ts";
+import {
+  type MutableEnv,
+  processEnv,
+  type SecretsConfig,
+} from "./config/mod.ts";
 
 export type SecretStatus = "resolved" | "already-set" | "unavailable";
 
@@ -77,12 +82,6 @@ export interface SecretCommandResult {
   reason?: string;
 }
 
-/** The env surface the resolver reads and writes; injectable for tests. */
-export interface SecretsEnv {
-  get(key: string): string | undefined;
-  set(key: string, value: string): void;
-}
-
 export type RunSecretCommand = (
   command: readonly string[],
   pointer: string,
@@ -92,7 +91,7 @@ export type RunSecretCommand = (
 ) => Promise<SecretCommandResult>;
 
 export interface ResolveSecretsDeps {
-  env?: SecretsEnv;
+  env?: MutableEnv;
   run?: RunSecretCommand;
   log?: (message: string) => void;
 }
@@ -113,7 +112,7 @@ const RESOLVER_ENV_BASE: readonly string[] = [
 ];
 
 /** Read one ambient var, treating an ungranted read (NotCapable) as unset. */
-function readAmbient(env: SecretsEnv, name: string): string | undefined {
+function readAmbient(env: MutableEnv, name: string): string | undefined {
   try {
     return env.get(name);
   } catch {
@@ -132,7 +131,7 @@ function readAmbient(env: SecretsEnv, name: string): string | undefined {
  */
 export function buildResolverEnv(
   secrets: SecretsConfig,
-  env: SecretsEnv,
+  env: MutableEnv,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const name of [...RESOLVER_ENV_BASE, ...secrets.inheritEnv]) {
@@ -275,7 +274,7 @@ export async function resolveSecrets(
   if (secrets === null) {
     return { environment: [], named: {}, namedResolutions: [] };
   }
-  const env = deps.env ?? Deno.env;
+  const env = deps.env ?? processEnv;
   const run = deps.run ?? runSecretCommand;
   const log = deps.log ?? ((message: string) => console.error(message));
   const { command, timeoutMs } = secrets;

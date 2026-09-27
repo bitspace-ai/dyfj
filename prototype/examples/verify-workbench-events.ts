@@ -1,7 +1,7 @@
 import process from "node:process";
 import type { WorkbenchRoutingOptions } from "../src/provider.ts";
 import { doltQuery, closeDoltPool } from "../src/utils.ts";
-import { resolveRuntimeEnvDefaults } from "../src/config.ts";
+import { resolveRuntimeEnvDefaults } from "../src/config/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../src/external-agent-runtime.ts";
 import { runWorkbenchRuntime } from "../src/workbench.ts";
 import {

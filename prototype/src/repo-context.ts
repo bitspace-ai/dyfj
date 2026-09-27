@@ -1,3 +1,4 @@
+import { processEnv } from "./config/mod.ts";
 import path from "node:path";
 import { summarizeError } from "./contract/mod.ts";
 
@@ -625,7 +626,7 @@ export async function loadAskRepoContext(options: {
 }
 
 export function askContextProfileFromEnv(): AskContextProfile {
-  const rawProfile = Deno.env.get("DYFJ_WORKBENCH_CONTEXT_PROFILE");
+  const rawProfile = processEnv.get("DYFJ_WORKBENCH_CONTEXT_PROFILE");
   return rawProfile === "full" ? "full" : "compact";
 }
 
@@ -633,7 +634,7 @@ function contextBudgetFromEnv(profile: AskContextProfile): ContextBudget {
   const baseBudget = profile === "full"
     ? DEFAULT_CONTEXT_BUDGET
     : COMPACT_CONTEXT_BUDGET;
-  const rawTotal = Deno.env.get("DYFJ_WORKBENCH_CONTEXT_TOKENS");
+  const rawTotal = processEnv.get("DYFJ_WORKBENCH_CONTEXT_TOKENS");
   const totalTokens = rawTotal === undefined
     ? baseBudget.totalTokens
     : Number(rawTotal);

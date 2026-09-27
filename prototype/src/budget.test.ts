@@ -7,6 +7,7 @@
  * all the interesting logic and produces a deterministic, inspectable result.
  */
 
+import { MapEnv } from "../testing/fakes/map-env.ts";
 import { describe, expect, test, vi } from "vitest";
 import {
   type BudgetCeilingWarning,
@@ -50,49 +51,21 @@ function makeUsage(input: number, output: number, costTotal: number) {
 
 describe("defaultBudgetConfig", () => {
   test("returns $1.00 session limit by default", () => {
-    const original = process.env.DYFJ_BUDGET_SESSION_USD;
-    delete process.env.DYFJ_BUDGET_SESSION_USD;
-    try {
-      expect(defaultBudgetConfig().sessionLimitUsd).toBe(1.00);
-    } finally {
-      if (original !== undefined) {
-        process.env.DYFJ_BUDGET_SESSION_USD = original;
-      }
-    }
+    expect(defaultBudgetConfig(new MapEnv()).sessionLimitUsd).toBe(1.00);
   });
 
   test("returns $0.10 per-call limit by default", () => {
-    const original = process.env.DYFJ_BUDGET_PER_CALL_USD;
-    delete process.env.DYFJ_BUDGET_PER_CALL_USD;
-    try {
-      expect(defaultBudgetConfig().perCallLimitUsd).toBe(0.10);
-    } finally {
-      if (original !== undefined) {
-        process.env.DYFJ_BUDGET_PER_CALL_USD = original;
-      }
-    }
+    expect(defaultBudgetConfig(new MapEnv()).perCallLimitUsd).toBe(0.10);
   });
 
   test("reads DYFJ_BUDGET_SESSION_USD from env", () => {
-    const original = process.env.DYFJ_BUDGET_SESSION_USD;
-    process.env.DYFJ_BUDGET_SESSION_USD = "5.00";
-    try {
-      expect(defaultBudgetConfig().sessionLimitUsd).toBe(5.00);
-    } finally {
-      if (original === undefined) delete process.env.DYFJ_BUDGET_SESSION_USD;
-      else process.env.DYFJ_BUDGET_SESSION_USD = original;
-    }
+    const env = new MapEnv({ DYFJ_BUDGET_SESSION_USD: "5.00" });
+    expect(defaultBudgetConfig(env).sessionLimitUsd).toBe(5.00);
   });
 
   test("reads DYFJ_BUDGET_PER_CALL_USD from env", () => {
-    const original = process.env.DYFJ_BUDGET_PER_CALL_USD;
-    process.env.DYFJ_BUDGET_PER_CALL_USD = "0.25";
-    try {
-      expect(defaultBudgetConfig().perCallLimitUsd).toBe(0.25);
-    } finally {
-      if (original === undefined) delete process.env.DYFJ_BUDGET_PER_CALL_USD;
-      else process.env.DYFJ_BUDGET_PER_CALL_USD = original;
-    }
+    const env = new MapEnv({ DYFJ_BUDGET_PER_CALL_USD: "0.25" });
+    expect(defaultBudgetConfig(env).perCallLimitUsd).toBe(0.25);
   });
 });
 

@@ -6,7 +6,6 @@ import {
   type ConnectFn,
   createTurnOutputHandlers,
   createTurnSpinner,
-  envFileVar,
   fetchSessionPosture,
   formatPostureLine,
   formatReceipt,
@@ -3132,21 +3131,6 @@ describe("runtime lifecycle commands", () => {
     expect(() => memoryMcpNetGrant("http://127.example.com/mcp")).toThrow(
       "https",
     );
-  });
-
-  test("envFileVar reads the dotenv shapes --env-file accepts", () => {
-    const text = [
-      "# comment",
-      "",
-      "OTHER=1",
-      'export DYFJ_MEMORY_MCP_URL="https://memory.example/mcp"',
-    ].join("\n");
-    expect(envFileVar(text, "DYFJ_MEMORY_MCP_URL")).toBe(
-      "https://memory.example/mcp",
-    );
-    expect(envFileVar(text, "OTHER")).toBe("1");
-    expect(envFileVar("A='x'\n", "A")).toBe("x");
-    expect(envFileVar(text, "MISSING")).toBeUndefined();
   });
 
   const noAmbient = { get: () => undefined };

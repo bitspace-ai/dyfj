@@ -36,11 +36,14 @@ import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
 import { resolveSocketPath } from "./uds-path.ts";
 import { assertSecureMemoryUrl } from "./memory-search.ts";
 import {
+  type Env,
   loadMcpServersConfig,
   loadSecretsConfig,
   type McpHttpServerConfig,
+  processEnv,
+  readLauncherEnvVar,
   type SecretsConfig,
-} from "./config.ts";
+} from "./config/mod.ts";
 import { mcpServerNetGrants } from "./mcp-net-grants.ts";
 import { secretsRunGrant } from "./secrets.ts";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown.ts";
@@ -3221,7 +3224,7 @@ export async function runStop(
  *   3. Otherwise throw — better to fail closed than trust the current directory.
  */
 function defaultPrototypeRoot(): string {
-  const envRoot = Deno.env.get("DYFJ_PROTOTYPE_ROOT");
+  const envRoot = processEnv.get("DYFJ_PROTOTYPE_ROOT");
   if (envRoot && envRoot.length > 0) return envRoot;
   const installRoot = installRootFromModuleUrl(import.meta.url);
   if (installRoot !== null) return installRoot;
@@ -3350,7 +3353,7 @@ export async function readServeUnixRunGrants(cwd: string): Promise<string[]> {
 
 /** Validate the selected executable and carry that same path into exact grants. */
 export async function nodeRunGrant(
-  env: { get(name: string): string | undefined } = Deno.env,
+  env: Env = processEnv,
 ): Promise<string | null> {
   const configured = env.get("DYFJ_NODE_PATH");
   if (configured === undefined || configured === "") return null;
@@ -3381,7 +3384,7 @@ export async function nodeRunGrant(
 
 /** Validate the optional toolchain path using only the CLI's read authority. */
 export async function toolchainReadGrant(
-  env: { get(name: string): string | undefined } = Deno.env,
+  env: Env = processEnv,
 ): Promise<string | null> {
   const configured = env.get("DYFJ_CODEX_TOOLCHAIN_PATH");
   if (configured === undefined || configured === "") return null;
@@ -3417,7 +3420,7 @@ export async function toolchainReadGrant(
 
 /** Validate the optional Rustup home using only the CLI's read authority. */
 export async function rustupHomeReadGrant(
-  env: { get(name: string): string | undefined } = Deno.env,
+  env: Env = processEnv,
 ): Promise<string | null> {
   const configured = env.get("DYFJ_CODEX_RUSTUP_HOME");
   if (configured === undefined || configured === "") return null;
@@ -3476,31 +3479,6 @@ export function memoryMcpNetGrant(url: string | undefined): string | null {
 }
 
 /**
- * Read one variable from env-file text (KEY=VALUE lines; `export` prefix,
- * surrounding quotes, comments, and blank lines tolerated). Just enough of the
- * dotenv shape for the launcher to resolve the same value the spawned runtime
- * will read via --env-file=.env.
- */
-export function envFileVar(text: string, name: string): string | undefined {
-  for (const line of text.split("\n")) {
-    const match = line.match(
-      /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/,
-    );
-    if (match === null || match[1] !== name) continue;
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    }
-    return value;
-  }
-  return undefined;
-}
-
-/**
  * Resolve the memory MCP net grant the way the spawned runtime will resolve
  * the URL itself: ambient environment first (--env-file does NOT override
  * already-set process env, and the child inherits ours), then `<cwd>/.env`.
@@ -3511,23 +3489,15 @@ export function envFileVar(text: string, name: string): string | undefined {
 export async function readMemoryMcpNetGrant(
   cwd: string,
   readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
-  env: { get(name: string): string | undefined } = Deno.env,
+  env: Env = processEnv,
 ): Promise<string | null> {
   // Any DEFINED ambient value is authoritative — including empty: --env-file
   // does not fill an explicitly empty inherited var, so the child sees "" and
   // disables recall; granting the .env host anyway would be an unnecessary
   // grant with no consumer.
-  const ambient = env.get("DYFJ_MEMORY_MCP_URL");
-  if (ambient !== undefined) {
-    return memoryMcpNetGrant(ambient);
-  }
-  let raw: string;
-  try {
-    raw = await readTextFile(`${cwd}/.env`);
-  } catch {
-    return null;
-  }
-  return memoryMcpNetGrant(envFileVar(raw, "DYFJ_MEMORY_MCP_URL"));
+  return memoryMcpNetGrant(
+    await readLauncherEnvVar(cwd, "DYFJ_MEMORY_MCP_URL", readTextFile, env),
+  );
 }
 
 /**
@@ -3545,21 +3515,14 @@ export async function readMemoryMcpNetGrant(
 export async function readLauncherSecretsConfig(
   cwd: string,
   readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
-  env: { get(name: string): string | undefined } = Deno.env,
+  env: Env = processEnv,
   parseToml?: (raw: string) =>
     | Record<string, unknown>
     | Promise<
       Record<string, unknown>
     >,
 ): Promise<Awaited<ReturnType<typeof loadSecretsConfig>>> {
-  let root = env.get("DYFJ_ROOT");
-  if (root === undefined) {
-    try {
-      root = envFileVar(await readTextFile(`${cwd}/.env`), "DYFJ_ROOT");
-    } catch {
-      root = undefined;
-    }
-  }
+  const root = await readLauncherEnvVar(cwd, "DYFJ_ROOT", readTextFile, env);
   const home = env.get("HOME");
   const configEnv = {
     get: (name: string): string | undefined =>
@@ -3572,19 +3535,12 @@ export async function readLauncherMcpServersConfig(
   cwd: string,
   secrets: SecretsConfig | null,
   readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
-  env: { get(name: string): string | undefined } = Deno.env,
+  env: Env = processEnv,
   parseToml?: (raw: string) =>
     | Record<string, unknown>
     | Promise<Record<string, unknown>>,
 ): Promise<McpHttpServerConfig[]> {
-  let root = env.get("DYFJ_ROOT");
-  if (root === undefined) {
-    try {
-      root = envFileVar(await readTextFile(`${cwd}/.env`), "DYFJ_ROOT");
-    } catch {
-      root = undefined;
-    }
-  }
+  const root = await readLauncherEnvVar(cwd, "DYFJ_ROOT", readTextFile, env);
   const home = env.get("HOME");
   const configEnv = {
     get: (name: string): string | undefined =>
@@ -4099,7 +4055,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   }
   const config = resolveConfig(
     parsed.overrides,
-    Deno.env,
+    processEnv,
     Deno.stdout.isTerminal(),
     Deno.cwd(),
   );

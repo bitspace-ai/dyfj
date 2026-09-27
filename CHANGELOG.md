@@ -131,6 +131,30 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Configuration lives in `prototype/src/config/`, and runtime code reads the
+  environment only through an `Env` port**: `config.ts` is split into the env-key
+  schema (`schema.ts`), TOML loading (`toml.ts`), the engine config
+  (`workbench.ts`), the `[secrets]` and `[mcp]` parsers, and the
+  budget/agent/anomaly resolvers (`defaults.ts`), behind `config/mod.ts`. The
+  port (`config/env.ts`) is the only runtime module that touches `Deno.env` or
+  `process.env`; every other module, including the CLI, engine and memory MCP
+  entrypoints, takes an `Env` or uses its process adapter. Its semantics are
+  `Deno.env`'s exactly, so env var names, defaults, precedence and error
+  messages are unchanged. The launcher's `.env` parser moved out of `cli.ts`
+  into `config/env-file.ts`, together with the ambient-before-`.env` rule the
+  launcher shares with the spawned runtime. `CONFIG_SCHEMA` now also declares
+  `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH`, `DYFJ_CODEX_RUSTUP_HOME` (engine
+  and client), `DYFJ_PROTOTYPE_ROOT` (client) and `DYFJ_TEST_RUN_DIR` (a new
+  `test` domain that no runtime permission profile grants); no permission
+  profile changed. The `arch.imports` lane gains two rules: direct
+  environment access outside `config/` and the entrypoints named in
+  `scripts/arch-layers.json` (today only the `prototype/scripts` tooling), and
+  a `DYFJ_*` key literal in a runtime module that the schema does not declare.
+  Both start with no baselined violations. The config tests moved to
+  `Deno.test` next to the modules they cover, and an `Env` conformance suite
+  (`prototype/testing/conformance/env.ts`) runs against the `MapEnv` fake in
+  the unit lane and against the process adapter in the integration lane.
+
 - **Typecheck file lists are derived, not hand-maintained**: the prototype
   `check` task and the aggregate gate's source typecheck each carried their own
   hand-written list of entry files, and the two had drifted apart. Both now run

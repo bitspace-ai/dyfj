@@ -13,7 +13,7 @@ import {
   resetWebToolsTurnState,
   safeFetchDocument,
 } from "./web-tools.ts";
-import type { McpHttpServerConfig } from "./config.ts";
+import type { McpHttpServerConfig } from "./config/mod.ts";
 
 describe("isPrivateOrLoopbackIp", () => {
   test("identifies loopback, private, link-local, CGNAT, benchmark, and documentation IPv4 addresses", () => {

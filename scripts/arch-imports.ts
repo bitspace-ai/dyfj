@@ -14,7 +14,10 @@
  *   do not map fails the lane, so a new file cannot escape the rules.
  * - Violations: import cycles (Tarjan SCCs; every edge inside a strongly
  *   connected component, type-only edges included), upward or non-listed
- *   same-layer edges, `cli/` allow-list breaches, and dynamic local imports.
+ *   same-layer edges, `cli/` allow-list breaches, dynamic local imports,
+ *   direct `Deno.env`/`process.env` access outside `config/` and the
+ *   entrypoints named in `arch-layers.json`, and `DYFJ_*` key literals in
+ *   runtime modules that `CONFIG_SCHEMA` does not declare.
  *   An entry in `arch-cycles.json` (AGENTS.md rule 1) must name edges inside a
  *   cycle, and exempts them from the cycle and dynamic-import rules only.
  * - Ratchet: violations are compared with `arch-imports-baseline.json`. A
@@ -38,6 +41,7 @@ import {
 } from "./arch-imports-graph.ts";
 import { repoRootFromMeta } from "./scan-lib.ts";
 import { formatSizeReport, sizeReport } from "./arch-imports-size.ts";
+import { CONFIG_SCHEMA } from "../prototype/src/config/schema.ts";
 
 // ---------------------------------------------------------------------------
 // Rules
@@ -56,7 +60,25 @@ export interface LayerRules {
   units: UnitRule[];
   sameLayerEdges: { from: string; to: string; typesOnly?: boolean }[];
   cli: { unit: string; allowedUnits: string[]; allowedPaths: string[] };
+  env: EnvRules;
   files: Record<string, string>;
+}
+
+/**
+ * Where the process environment may be read directly (spec section 4): the
+ * units in `allowedUnits` (the `Env` port's home) and the named entrypoints.
+ * An entrypoint names either a `unit` (as declared) or an exact module `path`,
+ * and must justify its exemption.
+ */
+export interface EnvRules {
+  allowedUnits: string[];
+  entrypoints: EnvEntrypoint[];
+}
+
+export interface EnvEntrypoint {
+  unit?: string;
+  path?: string;
+  justification: string;
 }
 
 export interface CycleAllowEntry {
@@ -71,6 +93,10 @@ export interface Baseline {
   layer: string[];
   cli: string[];
   dynamic: string[];
+  /** `<module>: Deno.env|process.env` read outside config/ and entrypoints. */
+  env: string[];
+  /** `<module>: DYFJ_*` key in a runtime module that the schema lacks. */
+  envKeys: string[];
 }
 
 interface Unit {
@@ -195,6 +221,8 @@ export interface AnalysisInput {
   rules: LayerRules;
   allowList: readonly CycleAllowEntry[];
   baseline: Baseline;
+  /** Every env key declared in the config schema (`CONFIG_SCHEMA`). */
+  declaredEnvKeys: ReadonlySet<string>;
   /** Whether a repo-relative path exists (resolution and allow-list tests). */
   exists: (path: string) => boolean;
 }
@@ -216,12 +244,44 @@ function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
 }
 
+export function validateEnvRules(
+  rules: LayerRules,
+  units: ReadonlyMap<string, Unit>,
+): string[] {
+  const errors: string[] = [];
+  const declared = new Set(rules.units.map((u) => u.dir));
+  for (const unit of rules.env.allowedUnits) {
+    if (!declared.has(unit)) {
+      errors.push(`env rule: allowed unit is not declared: ${unit}`);
+    }
+  }
+  rules.env.entrypoints.forEach((entry, position) => {
+    const label = entry.path ?? entry.unit ?? `#${position}`;
+    if ((entry.unit === undefined) === (entry.path === undefined)) {
+      errors.push(`env entrypoint ${label}: name exactly one of unit or path`);
+    } else if (entry.unit !== undefined && !declared.has(entry.unit)) {
+      errors.push(`env entrypoint ${label}: unit is not declared`);
+    } else if (entry.path !== undefined && !units.has(entry.path)) {
+      errors.push(`env entrypoint ${label}: module does not exist`);
+    }
+    if (
+      typeof entry.justification !== "string" ||
+      entry.justification.trim() === ""
+    ) {
+      errors.push(`env entrypoint ${label}: missing justification`);
+    }
+  });
+  return errors;
+}
+
 export function flattenBaseline(baseline: Baseline): string[] {
   return [
     ...baseline.cycles.flatMap((c) => c.edges.map((e) => `cycle: ${e}`)),
     ...baseline.layer.map((e) => `layer: ${e}`),
     ...baseline.cli.map((e) => `cli: ${e}`),
     ...baseline.dynamic.map((e) => `dynamic: ${e}`),
+    ...baseline.env.map((e) => `env: ${e}`),
+    ...baseline.envKeys.map((e) => `env-key: ${e}`),
   ].sort();
 }
 
@@ -409,7 +469,33 @@ export function analyze(input: AnalysisInput): AnalysisResult {
     ).filter((key) => !allowed.has(key)),
   );
 
-  const current: Baseline = { cycles, layer, cli, dynamic };
+  // Direct process-environment access and undeclared DYFJ_* keys.
+  errors.push(...validateEnvRules(rules, units));
+  const envAllowed = (path: string): boolean => {
+    const unit = units.get(path);
+    if (unit !== undefined && rules.env.allowedUnits.includes(unit.pattern)) {
+      return true;
+    }
+    return rules.env.entrypoints.some((entry) =>
+      entry.path === path ||
+      (entry.unit !== undefined && unit !== undefined &&
+        entry.unit === unit.pattern)
+    );
+  };
+  const env = sortedUnique(
+    input.graph.envAccesses.filter((a) => !envAllowed(a.from)).map((a) =>
+      `${a.from}: ${a.via}`
+    ),
+  );
+  const envKeys = sortedUnique(
+    input.graph.dyfjKeys.filter((k) => {
+      const unit = units.get(k.from);
+      return unit !== undefined && !unit.outside &&
+        !input.declaredEnvKeys.has(k.key);
+    }).map((k) => `${k.from}: ${k.key}`),
+  );
+
+  const current: Baseline = { cycles, layer, cli, dynamic, env, envKeys };
   const now = new Set(flattenBaseline(current));
   const before = new Set(flattenBaseline(input.baseline));
   return {
@@ -511,6 +597,7 @@ export async function main(
     rules,
     allowList,
     baseline,
+    declaredEnvKeys: new Set(CONFIG_SCHEMA.map((spec) => spec.envVar)),
     exists: existsIn(root),
   });
 

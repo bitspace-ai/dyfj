@@ -1,3 +1,4 @@
+import { type Env, processEnv } from "./config/mod.ts";
 import {
   sanitizeBoundaryText,
   takeCodePointPrefix,
@@ -578,7 +579,7 @@ export function processGroupSignalerEvalSource(): string {
 
 export function processGroupSignalerEvalArgs(
   runDir?: string,
-  env: { get(name: string): string | undefined } = Deno.env,
+  env: Env = processEnv,
 ): string[] {
   let resolved = runDir;
   if (resolved === undefined) {

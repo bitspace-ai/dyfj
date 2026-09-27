@@ -1,13 +1,11 @@
 // Default Unix-socket path for the workbench runtime seam. Engine-free
 // so the thin CLI client and the server both import it.
 
-export interface EnvLookup {
-  get(key: string): string | undefined;
-}
+import { type Env, processEnv } from "./config/mod.ts";
 
 // DYFJ_SOCKET wins; otherwise a per-user runtime dir ($XDG_RUNTIME_DIR/dyfj, or
 // ~/.dyfj/run). The dir is created owner-only (0700) by ensureSocketDir.
-export function resolveSocketPath(env: EnvLookup = Deno.env): string {
+export function resolveSocketPath(env: Env = processEnv): string {
   const explicit = env.get("DYFJ_SOCKET");
   if (explicit && explicit.length > 0) return explicit;
   const runtimeDir = env.get("XDG_RUNTIME_DIR");
