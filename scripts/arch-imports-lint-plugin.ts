@@ -53,13 +53,16 @@ function envOwner(
   aliases: ReadonlyMap<string, string>,
 ): string | undefined {
   if (node?.type === "Identifier") {
-    if (aliases.has(node.name)) return aliases.get(node.name);
+    const alias = aliases.get(node.name);
+    if (alias !== undefined) return alias === "globalThis" ? undefined : alias;
     if (ENV_OWNERS.has(node.name)) return node.name;
     return undefined;
   }
   if (
     node?.type === "MemberExpression" &&
-    node.object?.type === "Identifier" && node.object.name === "globalThis"
+    node.object?.type === "Identifier" &&
+    (node.object.name === "globalThis" ||
+      aliases.get(node.object.name) === "globalThis")
   ) {
     const name = propertyName(node);
     if (name !== undefined && ENV_OWNERS.has(name)) return name;
@@ -122,6 +125,16 @@ const plugin: Deno.lint.Plugin = {
             }
           },
           VariableDeclarator(node: Node) {
+            // `const g = globalThis` makes `g.Deno` / `g.process` owners too.
+            if (
+              node.id?.type === "Identifier" &&
+              node.init?.type === "Identifier" &&
+              (node.init.name === "globalThis" ||
+                aliases.get(node.init.name) === "globalThis")
+            ) {
+              aliases.set(node.id.name, "globalThis");
+              return;
+            }
             const owner = envOwner(node.init, aliases);
             if (owner === undefined) return;
             if (node.id?.type === "Identifier") {
