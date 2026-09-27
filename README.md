@@ -1484,3 +1484,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-26 - WO-02's acceptance now counts three baseline cycles, matching the
   three listed in `specs/00-baseline-findings.md` and the tree; "four" was a
   miscount introduced when the ACP cycle was reinstated.
+- 2026-09-27 - Specs decision D25 replaces D3's "TypeScript only" wording: phase
+  1 changes only the TypeScript tier, TypeScript is the temporary tier under
+  Layer 0 stance #3, and no enabler may make moving a stabilized component to
+  Rust harder.
