@@ -147,7 +147,10 @@ README are tracked separately in its Revision history section.
   which the system clock and the `ManualClock` fake both pass a shared
   conformance suite against; the budget's session-envelope warn-then-confirm
   and anomaly hard stop gain component tests over `ManualClock` and
-  `MemoryStore`. The moved tests run under `Deno.test`. The engine now imports
+  `MemoryStore`. The moved tests run under `Deno.test`, except two
+  repo-context cases that need a subprocess and the process environment,
+  which the `Deno.test` unit lane does not grant; they stay on the Vitest
+  lane in `repo-context.platform.test.ts`. The engine now imports
   these modules statically rather than through `await import()`, and the
   `arch.imports` baseline shrinks from 23 entries to 13.
 
