@@ -1472,7 +1472,6 @@ async function runNativeWorkbenchRuntime(
       content: cliPrompt,
     })), INTEGRITY);
 
-  let spanId: string | null = null;
   let selectedForReceipt:
     | {
       displayName: string;
@@ -2990,7 +2989,6 @@ async function runNativeWorkbenchRuntime(
     callTimings = turn.timings;
 
     const responseSpanId = generateSpanId();
-    spanId = responseSpanId;
     // Per-call budget.record() now happens inside runObservedTurn, so the
     // session summary already aggregates every call in this (and prior) turns.
     const summary = budget.getSummary();
@@ -3106,7 +3104,6 @@ async function runNativeWorkbenchRuntime(
     if (cancelledAtApproval) {
       finalStopReason = "aborted";
       const cancelledSpanId = generateSpanId();
-      spanId = cancelledSpanId;
       await writeIntegrity(() =>
         writeEvent(modelResponseEvent({
           event_id: generateULID(),
