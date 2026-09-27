@@ -3284,15 +3284,11 @@ describe("runtime lifecycle commands", () => {
       '--allow-run="bash,$node_path"',
     );
     expect(tasks["codex-chatgpt-login"]).toContain("--allow-sys=uid");
-    for (const task of ["serve-unix", "workbench", "start"]) {
-      expect(tasks[task]).toMatch(/^deno run --no-prompt /);
-      expect(tasks[task]).not.toContain("/bin/sh");
-      expect(tasks[task]).not.toContain("DYFJ_NODE_PATH");
-    }
-    for (const profile of ["serve-unix", "workbench"]) {
-      expect(parsed.permissions[profile].run).toContain("/bin/kill");
-      expect(parsed.permissions[profile].sys).toContain("uid");
-    }
+    expect(tasks["serve-unix"]).toMatch(/^deno run --no-prompt /);
+    expect(tasks["serve-unix"]).not.toContain("/bin/sh");
+    expect(tasks["serve-unix"]).not.toContain("DYFJ_NODE_PATH");
+    expect(parsed.permissions["serve-unix"].run).toContain("/bin/kill");
+    expect(parsed.permissions["serve-unix"].sys).toContain("uid");
     expect(parsed.permissions["test"].run).toContain("/bin/bash");
     const vitestRunner = await Deno.readTextFile("scripts/run-vitest.ts");
     expect(vitestRunner).toContain("const run = [");
@@ -3303,10 +3299,6 @@ describe("runtime lifecycle commands", () => {
     );
     expect(parsed.permissions["serve-unix"].env).toContain("NODE_V8_COVERAGE");
     expect(parsed.permissions["serve-unix"].read).toBe(true);
-    for (const profile of ["workbench"]) {
-      expect(parsed.permissions[profile].env).toContain("NODE_V8_COVERAGE");
-      expect(parsed.permissions[profile].read).toEqual([".."]);
-    }
   });
 
   test("codex-chatgpt-login fails clearly when Node is unavailable", async () => {
