@@ -17,7 +17,7 @@
  * words" as model-generated like the rest of the summary.
  */
 
-import type { WorkbenchMessage } from "./provider.ts";
+import type { WorkbenchMessage } from "../provider.ts";
 
 /**
  * Proactive trigger: compress when the seeded transcript's estimated tokens
@@ -252,7 +252,7 @@ export function formatSummaryMessage(summary: string): WorkbenchMessage {
  * THE TURN-COUNTING INVARIANT — a turn begins at each user-role message. Every
  * count that crosses the persistence boundary MUST use this one rule:
  * `partitionForCompression`'s split, this function, and the replay-side slice in
- * sessions.ts (`keepTrailingTurns`). A count written by the live path is
+ * conversation.ts (`keepTrailingProjectionTurns`). A count written by the live path is
  * meaningless to the path that reads it unless both count the same thing.
  *
  * Corollary — why the persisted count is the RETAINED (trailing) one, never the

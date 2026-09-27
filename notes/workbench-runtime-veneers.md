@@ -56,12 +56,12 @@ now share the same runtime state, event writes, and session persistence.
   and cost calculation for a model turn.
 - `prototype/src/commands.ts` owns the command registry, policy check,
   `memory.read`, model-facing tool projection, and `tool_call` event payload.
-- `prototype/src/sessions.ts` owns Workbench session slug/content creation and
-  `sessions` table writes.
-- `prototype/src/budget.ts` owns per-session budget tracking, pre-call checks,
-  summaries, and budget-summary event payloads.
-- `prototype/src/repo-context.ts` owns repo-local context loading for `ask` and
-  `next-work`.
+- `prototype/src/store/sessions.ts` owns Workbench session slug/content
+  creation and `sessions` table writes (through the journal).
+- `prototype/src/budget/` owns per-session budget tracking, pre-call checks,
+  the envelope and anomaly gates, summaries, and budget-summary event payloads.
+- `prototype/src/context/repo-context.ts` owns repo-local context loading for
+  `ask` and `next-work`.
 - `prototype/src/memory.ts` owns full user/feedback memory loading and
   project/reference memory indexing for generic `turn`.
 

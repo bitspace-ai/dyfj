@@ -8,7 +8,7 @@ import {
   paidEscalationVerdict,
   resolveTurnFromBody,
 } from "./turn-runner.ts";
-import { fetchWorkbenchSessionEvents } from "./sessions.ts";
+import { fetchWorkbenchSessionEvents } from "./store/mod.ts";
 import type { WorkbenchRuntimeInput } from "./workbench.ts";
 
 describe("resolveTurnFromBody paid posture", () => {

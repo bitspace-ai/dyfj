@@ -25,6 +25,7 @@ import {
   summarizeError,
   type TurnReceipt,
   type TurnStreamFrame,
+  type WorkbenchSessionEvent,
 } from "./contract/mod.ts";
 import {
   connectUnixClient,
@@ -62,7 +63,6 @@ import {
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
 } from "./idea-packet.ts";
-import type { WorkbenchSessionEvent } from "./sessions.ts";
 import { type FrictionPostResult, normalizeFrictionContext } from "./friction.ts";
 
 // ── Seam contract (shared with the server) ──────────────────────────

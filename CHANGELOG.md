@@ -154,6 +154,33 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Budget and context code live in `prototype/src/budget/` and
+  `prototype/src/context/`**, with no change in behavior. `budget.ts` is split
+  into the tracker (`tracker.ts`), spend baselines and the local-day boundary
+  (`spend.ts`), the envelope gates (`envelope-gate.ts`), the ceiling
+  confirmation store (`confirmations.ts`) and the runaway anomaly gate
+  (`anomaly-gate.ts`). The confirmation store is no longer a pair of
+  module-level maps: the composition root builds one `CeilingConfirmationStore`
+  per engine and passes it to the runtime with its services, so confirmations
+  still last for their scope periods across the engine's turns. `context/`
+  gathers repo-context packing, companion prompt loading, transcript
+  compression (`context-compression.ts` is now `compression.ts`), length
+  recovery, and the conversation projection that
+  rebuilds prior turns from session events (`conversation.ts`). `sessions.ts`
+  is gone: its session-record helpers moved to `store/sessions.ts`, and the
+  `WorkbenchSessionEvent` read shape moved to `contract/`, so the CLI and the
+  ideas extension take it from the contract. Reading wall-clock time for the
+  budget's local day now goes through a `Clock` port (`kernel/clock.ts`),
+  which the system clock and the `ManualClock` fake both pass a shared
+  conformance suite against; the budget's session-envelope warn-then-confirm
+  and anomaly hard stop gain component tests over `ManualClock` and
+  `MemoryStore`. The moved tests run under `Deno.test`, except two
+  repo-context cases that need a subprocess and the process environment,
+  which the `Deno.test` unit lane does not grant; they stay on the Vitest
+  lane in `repo-context.platform.test.ts`. The engine now imports
+  these modules statically rather than through `await import()`, and the
+  `arch.imports` baseline shrinks from 23 entries to 13.
+
 - **The engine refuses to start against an un-migrated database**: at boot,
   `serve-unix` compares the Dolt database's columns for the canonical tables
   (`events`, `memories`, `models`, `prompts`, `sessions`) with the generated

@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   BudgetExceededError,
-  resetCeilingConfirmations,
+  CeilingConfirmationStore,
   type RunawayAnomalyWarning,
-} from "./budget.ts";
+} from "./budget/mod.ts";
 import { AGENT_DEFAULTS } from "./config/mod.ts";
-import { LENGTH_CONTINUATION_NUDGE } from "./length-recovery.ts";
+import { LENGTH_CONTINUATION_NUDGE } from "./context/length-recovery.ts";
 import {
   COMPRESSION_SECTIONS,
   COMPRESSION_SYSTEM_PROMPT,
   CONVERSATION_SUMMARY_MARKER,
   SUMMARY_TRUST_POLICY,
-} from "./context-compression.ts";
+} from "./context/compression.ts";
 import {
   type WorkbenchMessage,
   WorkbenchModelFastSpeedUnsupportedError,
@@ -279,12 +279,12 @@ vi.mock("./provider.ts", async (importOriginal) => {
   };
 });
 
-vi.mock("./prompts.ts", () => ({
+vi.mock("./context/prompts.ts", () => ({
   loadCompanionBasePrompt: async () => "companion base prompt",
   DEFAULT_COMPANION_PROMPT: "companion base prompt",
 }));
 
-vi.mock("./repo-context.ts", () => ({
+vi.mock("./context/repo-context.ts", () => ({
   buildAskSystemPrompt: () => "repo system prompt",
   buildContextSourceLines: (sources: Array<{ label: string; path: string }>) =>
     sources.map((source) => `${source.label} <${source.path}>`),
@@ -399,7 +399,7 @@ vi.mock("./commands.ts", () => ({
   registerCoreCommands: () => {},
 }));
 
-vi.mock("./sessions.ts", () => ({
+vi.mock("./store/sessions.ts", () => ({
   buildWorkbenchSessionContent: (input: Record<string, unknown>) =>
     JSON.stringify(input),
   buildWorkbenchSessionSlug: (sessionId: string) =>
@@ -488,6 +488,8 @@ function recordEvent(event: Record<string, unknown>): void {
 }
 
 const baseStore = new MemoryStore();
+let testConfirmations = new CeilingConfirmationStore();
+
 const testStore: Store = {
   journal: {
     commit: (batch) => {
@@ -538,7 +540,11 @@ function runWorkbenchRuntime(
   input: WorkbenchRuntimeInput,
   services: Partial<WorkbenchRuntimeServices> = {},
 ): Promise<WorkbenchRuntimeResult> {
-  return runtimeUnderTest(input, { store: testStore, ...services });
+  return runtimeUnderTest(input, {
+    store: testStore,
+    ceilingConfirmations: testConfirmations,
+    ...services,
+  });
 }
 
 const runWithExternalAgentRunner = (
@@ -547,7 +553,7 @@ const runWithExternalAgentRunner = (
 
 beforeEach(() => {
   // Ceiling confirmations persist per scope by design; tests need isolation.
-  resetCeilingConfirmations();
+  testConfirmations = new CeilingConfirmationStore();
   runtimeMocks.supportsTranscriptRetry = true;
   runtimeMocks.commandResult = null;
   runtimeMocks.commandThrows = null;
@@ -5257,8 +5263,8 @@ describe("runWorkbenchRuntime proactive context compression", () => {
       );
       expect(compressed).toBeDefined();
       const { buildConversationMessages } = await vi.importActual<
-        typeof import("./sessions.ts")
-      >("./sessions.ts");
+        typeof import("./context/conversation.ts")
+      >("./context/conversation.ts");
       const event = (
         eventType: string,
         content: string | null,
@@ -5375,8 +5381,8 @@ describe("runWorkbenchRuntime proactive context compression", () => {
     // stream through the real buildConversationMessages, and require the result
     // to equal the messages the live turn was actually given.
     const { buildConversationMessages } = await vi.importActual<
-      typeof import("./sessions.ts")
-    >("./sessions.ts");
+      typeof import("./context/conversation.ts")
+    >("./context/conversation.ts");
     const prevWindow = runtimeMocks.model.contextWindow;
     runtimeMocks.model.contextWindow = 100;
     runtimeMocks.writtenEvents.length = 0;
