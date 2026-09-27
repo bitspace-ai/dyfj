@@ -1,4 +1,4 @@
-import { doltExec, doltQuery, generateULID, type SqlParam } from "./utils.ts";
+import { doltExec, doltQuery, type SqlParam } from "./utils.ts";
 import type { WorkbenchMessage } from "./provider.ts";
 import { formatSummaryMessage } from "./context-compression.ts";
 import {
@@ -297,35 +297,6 @@ export async function listWorkbenchSessions(options: {
     if (!bFirst) return -1;
     return compareSessionActivity(aFirst, bFirst);
   });
-}
-
-export async function createProjectWorkbenchSession(input: {
-  project?: string;
-  taskDescription?: string;
-  exec?: SessionExec;
-  sessionId?: string;
-}): Promise<{ sessionId: string; slug: string; project: string | null }> {
-  const exec = input.exec ?? doltExec;
-  const sessionId = input.sessionId ?? generateULID();
-  const slug = buildWorkbenchSessionSlug(sessionId);
-  const project = input.project?.trim() || null;
-  await exec(
-    "INSERT INTO sessions " +
-      "(session_id, slug, session_name, project, task_description, mode, content) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?);",
-    [
-      sessionId,
-      slug,
-      "Workbench Harness Shell",
-      project,
-      truncateTaskDescription(
-        input.taskDescription ?? "Workbench conversation",
-      ),
-      "interactive",
-      "# Workbench Session\n\nCreated empty; turns append below.",
-    ],
-  );
-  return { sessionId, slug, project };
 }
 
 export interface WorkbenchSessionEvent {

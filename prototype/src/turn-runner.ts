@@ -23,7 +23,7 @@ import type { ConfirmBudgetCeiling, ConfirmRunawayAnomaly } from "./budget.ts";
 import type { PermissionLevel, WorkbenchConfig } from "./config.ts";
 import type { HistoryOmissionProjection } from "./turn-contract.ts";
 
-export type WorkbenchHttpRuntime = (
+export type TurnRuntime = (
   input: WorkbenchRuntimeInput,
 ) => Promise<WorkbenchRuntimeResult>;
 
@@ -379,7 +379,7 @@ async function buildResume(
 export interface ExecuteTurnDeps {
   authContext: WorkbenchAuthContext;
   loopback: boolean;
-  runRuntime: WorkbenchHttpRuntime;
+  runRuntime: TurnRuntime;
   fetchSessionEvents: FetchSessionEvents;
   onTextDelta?: (delta: string) => void;
   // Matches WorkbenchRuntimeInput.onRuntimeEvent: a transport handler may return

@@ -81,16 +81,13 @@ import {
   AGENT_DEFAULTS,
   ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
-  loadSecretsConfig,
   resolveAgentDefaultsFromEnv,
   resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
   resolveTrustWorkspaceInstructionsFromEnv,
 } from "./config.ts";
-import { resolveSecretsIntoEnv } from "./secrets.ts";
 import process from "node:process";
-import { createInterface } from "node:readline/promises";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;
@@ -236,8 +233,9 @@ export interface WorkbenchRuntimeInput {
   /**
    * Presentation sink for human-readable turn narration: context loading,
    * workspace/model/route lines, turn text, budget tally, and the receipt.
-   * The in-process one-shot path injects console output; the UDS server leaves
-   * it unset so client presentation never renders on the server console.
+   * An in-process caller (the verify-workbench-events check) injects console
+   * output; the UDS server leaves it unset so client presentation never
+   * renders on the server console.
    * Default: silent — the runtime core does not narrate.
    */
   log?: (...parts: unknown[]) => void;
@@ -245,7 +243,8 @@ export interface WorkbenchRuntimeInput {
    * Consent handler for paid-inference escalation. Returns a verdict
    * (approve | deny+reason | escalate), not void/throw — so a headless driver
    * can pre-approve or escalate. Drivers inject their own; the core defaults to
-   * deny and makes no TTY assumption. The CLI supplies a TTY prompt.
+   * deny and makes no TTY assumption. The UDS turn runner grants approval
+   * only to a loopback caller that set approvePaidInference for the turn.
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
   /**
@@ -578,9 +577,9 @@ export type PaidEscalationVerdict =
 export class PaidEscalationDeclinedError extends DomainError {
   readonly verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>;
   // verdict.reason comes from the injected confirmPaidEscalation callback —
-  // an operator's TTY answer today, potentially a remote approval peer
-  // tomorrow. DomainError certifies the message THIS constructor builds, not
-  // that field's content, so it's capped and control-char-stripped before it
+  // the turn runner's loopback posture today, potentially a remote approval
+  // peer tomorrow. DomainError certifies the message THIS constructor builds,
+  // not that field's content, so it's capped and control-char-stripped before it
   // reaches either the message or the stored `.verdict` (read directly by
   // workbench.ts's log branch, not just via .message).
   constructor(
@@ -1099,8 +1098,9 @@ export function parseBudgetTallyMode(
 
 /**
  * Resolve the env-derived runtime defaults at the process boundary,
- * so the core runtime reads no environment variables. Entrypoints (the CLI
- * one-shot and the UDS server) spread this into the runtime input; a headless
+ * so the core runtime reads no environment variables. Entrypoints (the UDS
+ * server and the in-process verify-workbench-events check) spread this into the
+ * runtime input; a headless
  * driver supplies these explicitly instead. `rootOverride` stays undefined when
  * DYFJ_ROOT is unset, so the core falls back to the process cwd.
  */
@@ -1223,108 +1223,16 @@ function printNextWorkResult(
   }
 }
 
-function getArg(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  return idx !== -1 ? args[idx + 1] : undefined;
-}
-
-function firstPositional(args: string[]): string | undefined {
-  return args.find((arg, idx) =>
-    !arg.startsWith("--") && (idx === 0 || !args[idx - 1]?.startsWith("--"))
-  );
-}
-
-function parseTier(value: string | undefined): 0 | 1 | 2 | undefined {
-  if (value === undefined) return undefined;
-  const tier = Number(value);
-  return tier === 0 || tier === 1 || tier === 2 ? tier : undefined;
-}
-
-function parseHint(
-  value: string | undefined,
-): "code" | "chat" | "reasoning" | undefined {
-  return value === "code" || value === "chat" || value === "reasoning"
-    ? value
-    : undefined;
-}
-
-export function resolveWorkbenchInvocation(
-  args: string[],
-  env: Record<string, string | undefined> = process.env,
-): WorkbenchInvocation {
-  const mode =
-    args[0] === "ask" || args[0] === "next-work"
-      ? args[0]
-      : "turn";
-  const effectiveArgs = mode === "ask" || mode === "next-work"
-    ? args.slice(1)
-    : args;
-  const cliModel = getArg(effectiveArgs, "--model");
-  const cliTier = getArg(effectiveArgs, "--tier");
-  const cliHint = getArg(effectiveArgs, "--hint");
-  const prompt = mode === "ask" || mode === "next-work"
-    ? firstPositional(effectiveArgs) ?? "what should I work on next here?"
-    : getArg(effectiveArgs, "--prompt") ??
-      "What is the next useful DYFJ workbench step?";
-
-  return {
-    mode,
-    prompt,
-    routingOptions: {
-      modelId: cliModel ?? env.DYFJ_WORKBENCH_MODEL,
-      hint: parseHint(cliHint ?? env.DYFJ_WORKBENCH_HINT),
-      tier: parseTier(cliTier ?? env.DYFJ_WORKBENCH_TIER),
-    },
-  };
-}
-
-export function buildWorkbenchRuntimeInput(
-  invocation: WorkbenchInvocation,
-): WorkbenchRuntimeInput {
-  return {
-    mode: invocation.mode,
-    prompt: invocation.prompt,
-    routingOptions: invocation.routingOptions,
-  };
-}
-
 /**
  * Default consent handler: deny. The core makes no TTY assumption —
  * drivers inject their own. A headless Workshop driver pre-approves or escalates
- * to an out-of-band operator; the CLI uses promptPaidEscalationTty.
+ * to an out-of-band operator.
  */
 function denyPaidEscalation(): Promise<PaidEscalationVerdict> {
   return Promise.resolve({
     decision: "deny",
     reason: "no consent handler configured",
   });
-}
-
-/**
- * CLI consent driver: prompt the operator on an interactive TTY. A
- * non-interactive CLI session escalates (operator must approve out of band)
- * rather than guessing or blocking.
- */
-export async function promptPaidEscalationTty(
-  banner: string,
-): Promise<PaidEscalationVerdict> {
-  if (!process.stdin.isTTY) {
-    return {
-      decision: "escalate",
-      reason: "non-interactive session cannot grant paid-inference consent",
-    };
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = await rl.question(
-      `${banner}\nContinue with paid inference? Type yes to run: `,
-    );
-    return answer.trim().toLowerCase() === "yes"
-      ? { decision: "approve" }
-      : { decision: "deny", reason: "operator declined" };
-  } finally {
-    rl.close();
-  }
 }
 
 async function writeMaybe(
@@ -1405,31 +1313,6 @@ async function deliverUnparsedToolCallMarkupSignal(
 
 function estimateRuntimeInputCount(text: string): number {
   return Math.ceil(text.length / 4);
-}
-
-export async function runWorkbench(
-  args = process.argv.slice(2),
-): Promise<WorkbenchRuntimeResult | void> {
-  const invocation = resolveWorkbenchInvocation(args);
-  const runtimeInput = buildWorkbenchRuntimeInput(invocation);
-  // This in-process one-shot path owns the Dolt pool lifecycle: the
-  // runtime no longer closes it, so close here after the single turn so the
-  // process exits cleanly.
-  const { closeDoltPool } = await import("./utils.ts");
-  try {
-    return await runWorkbenchRuntime({
-      ...runtimeInput,
-      ...resolveRuntimeEnvDefaults(),
-      // The in-process one-shot CLI is its own presenter.
-      log: console.log,
-      onTextDelta: (delta) => {
-        process.stdout.write(delta);
-      },
-      confirmPaidEscalation: promptPaidEscalationTty,
-    });
-  } finally {
-    await closeDoltPool();
-  }
 }
 
 export function runWorkbenchRuntime(
@@ -3743,7 +3626,7 @@ async function runNativeWorkbenchRuntime(
     // the runtime no longer closes the shared Dolt pool. A long-running
     // host (the UDS server) runs many concurrent turns through this function; a
     // per-turn close would end the pool out from under an in-flight turn and
-    // crash it. Pool lifecycle is owned by the entrypoint (one-shot `runWorkbench`
+    // crash it. Pool lifecycle is owned by the entrypoint (an in-process caller
     // closes it in a finally; the server keeps it for the process lifetime).
     // If an integrity audit/transcript write failed inside
     // the try above, surface it to the caller instead of masking it behind a
@@ -3795,15 +3678,4 @@ async function runNativeWorkbenchRuntime(
       validation,
     };
   }
-}
-
-if (import.meta.main) {
-  // Credential the process from declared secret pointers before any turn reads
-  // a provider key. env wins; presence-only; a locked/unavailable pointer
-  // degrades that provider fail-closed. (`deno task workbench` carries no
-  // dynamic --allow-run for the resolver binary, so a resolver that needs one
-  // simply reports unavailable and the operator projects the key ambiently or
-  // via .env — `dyfj start` is the credentialed daily-driver path.)
-  await resolveSecretsIntoEnv(await loadSecretsConfig());
-  await runWorkbench();
 }

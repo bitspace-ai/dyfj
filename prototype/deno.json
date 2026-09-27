@@ -7,8 +7,6 @@
     "test": "DENO_BIN=$(deno run scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno task check && DENO_BIN=\"$DENO_BIN\" deno task test:unit && mkdir -p .vitest-tmp && TMPDIR=.vitest-tmp DENO_BIN=\"$DENO_BIN\" deno run --allow-env --allow-read=.,$HOME/.dyfj/run --allow-write=.,$HOME/.dyfj/run --allow-run=\"$DENO_BIN,/bin/kill,/bin/ps,/bin/bash\" scripts/run-vitest.ts run --root . --pool=threads --exclude '**/*.integration.{test,spec}.?(c|m)[jt]s?(x)'",
     "test:golden": "DENO_BIN=$(deno run scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN --allow-read=. --allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders --allow-run=\"$DENO_BIN\" testing/golden/run.ts",
     "test:file": "bash -c 'test $# -gt 0 || { echo \"usage: deno task test:file <path|-t pattern>\" >&2; exit 2; }; DENO_BIN=$(deno run scripts/deno-executable.ts) && mkdir -p .vitest-tmp && TMPDIR=.vitest-tmp DENO_BIN=\"$DENO_BIN\" exec deno run --allow-env --allow-read=.,$HOME/.dyfj/run --allow-write=.,$HOME/.dyfj/run --allow-run=\"$DENO_BIN,/bin/kill,/bin/ps,/bin/bash\" scripts/run-vitest.ts run --root . --pool=threads \"$@\"' dyfj-test-file",
-    "start": "deno run --no-prompt -P=workbench --env-file=.env src/workbench.ts",
-    "workbench": "deno run --no-prompt -P=workbench --env-file=.env src/workbench.ts",
     "cli": "scripts/dyfj-launcher.sh",
     "serve-unix": "deno run --no-prompt -P=serve-unix --env-file=.env src/uds-serve.ts",
     "memory-recall-uat-fixture": "deno run --no-prompt --allow-net=127.0.0.1 scripts/memory-recall-uat-fixture.ts",
@@ -50,78 +48,6 @@
         "hostname",
         "homedir",
         "osRelease"
-      ]
-    },
-    "workbench": {
-      "env": [
-        "PATH",
-        "DYFJ_NODE_PATH",
-        "DYFJ_CODEX_TOOLCHAIN_PATH",
-        "DYFJ_CODEX_RUSTUP_HOME",
-        "USER",
-        "HOME",
-        "XDG_RUNTIME_DIR",
-        "DYFJ_ROOT",
-        "DYFJ_PRINCIPAL_ID",
-        "DYFJ_WORKBENCH_MODEL",
-        "DYFJ_WORKBENCH_HINT",
-        "DYFJ_WORKBENCH_TIER",
-        "DYFJ_WORKBENCH_CONTEXT_PROFILE",
-        "DYFJ_WORKBENCH_CONTEXT_TOKENS",
-        "DYFJ_BUDGET_SESSION_USD",
-        "DYFJ_BUDGET_PER_CALL_USD",
-        "DYFJ_BUDGET_DAILY_USD",
-        "DYFJ_ANOMALY_TURN_MULTIPLE",
-        "DYFJ_ANOMALY_SCOPE_MULTIPLE",
-        "DYFJ_APPROVE_PAID_DEFAULT",
-        "DYFJ_TRUST_WORKSPACE_INSTRUCTIONS",
-        "DYFJ_MAX_TOOL_STEPS",
-        "DYFJ_BUDGET_TALLY",
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "OPENROUTER_API_KEY",
-        "GEMINI_API_KEY",
-        "XAI_API_KEY",
-        "DOLT_HOST",
-        "DOLT_PORT",
-        "DOLT_USER",
-        "DOLT_PASSWORD",
-        "DOLT_DATABASE",
-        "DYFJ_MEMORY_MCP_URL",
-        "DYFJ_MEMORY_MCP_TOOL",
-        "DYFJ_FRICTION_ISSUE_ID",
-        "DYFJ_MEMORY_MCP_TOKEN",
-        "DYFJ_MEMORY_MCP_TOKEN_HEADER",
-        "DYFJ_PERMISSION_LEVEL",
-        "NODE_DEBUG_NATIVE",
-        "NODE_V8_COVERAGE",
-        "NODE_DISABLE_COMPILE_CACHE",
-        "NODE_COMPILE_CACHE_PORTABLE",
-        "NODE_COMPILE_CACHE"
-      ],
-      "read": [
-        ".."
-      ],
-      "net": [
-        "127.0.0.1:3306",
-        "127.0.0.1:18080",
-        "localhost:18080",
-        "127.0.0.1:11434",
-        "localhost:11434",
-        "api.anthropic.com:443",
-        "api.openai.com:443",
-        "openrouter.ai:443",
-        "generativelanguage.googleapis.com:443",
-        "api.x.ai:443"
-      ],
-      "run": [
-        "bash",
-        "deno",
-        "git",
-        "/bin/kill"
-      ],
-      "sys": [
-        "uid"
       ]
     },
     "cli": {

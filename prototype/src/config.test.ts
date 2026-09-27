@@ -256,7 +256,6 @@ describe("config surface ⇄ deno.json permission allowlist", () => {
   // Turn-running engine profiles: each runs the SAME turn, so each must grant
   // the whole engine env surface.
   const ENGINE_PROFILES = [
-    "workbench",
     "serve-unix",
   ] as const;
 
