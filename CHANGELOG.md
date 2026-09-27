@@ -140,6 +140,13 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **ACP agent stdout cancellation is handled cleanly**: when the ACP client
+  closes its connection after the agent process exits but before the agent's
+  stdout has closed (for example, a descendant still holds the pipe), the
+  client now cancels its view of stdout by closing the underlying pipe
+  directly instead of forwarding the cancel reason into Deno's Node-stream
+  adapter. `prototype/src/acp-client.test.ts` covers the case with an agent
+  launched behind a backgrounded descendant that keeps stdout open.
 - **A prototype unit test no longer changes the process environment under the
   parallel run**: tests in `prototype/src/external-agent-runtime.test.ts` set
   `PATH`, `HOME`, `DENO_DIR`, `DYFJ_*`, and credential-shaped marker variables

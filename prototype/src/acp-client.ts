@@ -502,7 +502,7 @@ async function spawnAcpChild(
   return {
     pid,
     stdin: Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-    stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+    stdout: cancellableStdout(child.stdout),
     stderr: child.stderr,
     status,
     hasExited: () => exited,
@@ -545,6 +545,26 @@ async function spawnAcpChild(
       return success;
     },
   };
+}
+
+// The protocol connection cancels its input when it closes, which can happen
+// while a descendant still holds the agent's stdout open. Pass reads through
+// the Node adapter but tear the pipe down directly on cancel, without handing
+// the cancel reason to the Node stream as an error.
+function cancellableStdout(stdout: Readable): ReadableStream<Uint8Array> {
+  const reader = (Readable.toWeb(stdout) as ReadableStream<Uint8Array>)
+    .getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await reader.read();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    cancel() {
+      stdout.on("error", () => {});
+      stdout.destroy();
+    },
+  });
 }
 
 export const TEST_RUN_DIR_ENV = "DYFJ_TEST_RUN_DIR";
