@@ -13,6 +13,7 @@
  * `dyfj start` to foreground the local UDS runtime.
  */
 
+import { hasDotPathComponent, takeCodePointPrefix } from "./kernel/mod.ts";
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import {
@@ -20,10 +21,8 @@ import {
   formatHistoryOmissionSummary,
   isSupersedingRetryStarted,
   MAX_ERROR_SUMMARY_BYTES,
-  sanitizeBoundaryText,
   SESSION_ID_SHAPE,
   summarizeError,
-  takeCodePointPrefix,
   type TurnReceipt,
   type TurnStreamFrame,
 } from "./turn-contract.ts";
@@ -46,7 +45,6 @@ import { mcpServerNetGrants } from "./mcp-net-grants.ts";
 import { secretsRunGrant } from "./secrets.ts";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown.ts";
 import { type BusySpinner, createBusySpinner } from "./busy-spinner.ts";
-import { hasDotPathComponent } from "./lexical-path.ts";
 import {
   defaultIdeaPacketRegistry,
   draftWorkPacketFromContext,
@@ -3010,10 +3008,9 @@ export async function runModels(
  * Returns the canonical uppercase session id.
  */
 export function normalizeSessionRef(value: string): string {
-  const ULID = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
   const slugMatch = value.match(/^workbench-([0-9A-Za-z]{26})$/i);
   const candidate = slugMatch ? slugMatch[1] : value;
-  if (!ULID.test(candidate)) {
+  if (!SESSION_ID_SHAPE.test(candidate)) {
     throw new Error(
       `--session expects a session id or a slug as listed by 'dyfj sessions', got: ${value}`,
     );

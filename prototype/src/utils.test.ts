@@ -1,35 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  buildDoltPoolOptions,
-  generateSpanId,
-  generateTraceId,
-  generateULID,
-} from "./utils.ts";
-
-test("generateULID returns a valid ULID", () => {
-  const id = generateULID();
-  expect(typeof id).toBe("string");
-  expect(id.length).toBe(26); // ULID length
-  // Basic check for ULID structure (alphanumeric, base32)
-  expect(id).toMatch(/^[0-9A-Z]{26}$/);
-
-  const anotherId = generateULID();
-  expect(id).not.toBe(anotherId);
-});
-
-test("generateTraceId returns a 32-char hex string", () => {
-  const id = generateTraceId();
-  expect(typeof id).toBe("string");
-  expect(id.length).toBe(32);
-  expect(id).toMatch(/^[0-9a-f]{32}$/); // Hexadecimal characters
-});
-
-test("generateSpanId returns a 16-char hex string", () => {
-  const id = generateSpanId();
-  expect(typeof id).toBe("string");
-  expect(id.length).toBe(16);
-  expect(id).toMatch(/^[0-9a-f]{16}$/); // Hexadecimal characters
-});
+import { buildDoltPoolOptions } from "./utils.ts";
 
 describe("buildDoltPoolOptions", () => {
   test("reads Dolt connection settings from environment", () => {

@@ -24,12 +24,16 @@
  * limit check post-call (via record()) catches overruns if they occur.
  */
 
-import { doltQuery, generateSpanId, generateULID, writeEvent } from "./utils.ts";
+import {
+  generateSpanId,
+  generateULID,
+  sanitizeBoundaryText,
+} from "./kernel/mod.ts";
+import { doltQuery, writeEvent } from "./utils.ts";
 import { resolveBudgetDefaultsFromEnv } from "./config.ts";
 import {
   DomainError,
   MAX_REASON_FIELD_BYTES,
-  sanitizeBoundaryText,
 } from "./turn-contract.ts";
 import process from "node:process";
 

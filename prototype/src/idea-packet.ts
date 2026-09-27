@@ -1,7 +1,7 @@
 // Idea marking and Work Packet drafting domain model for Workbench.
 // Enriches candidate ideas and draft work packets with supplied session context.
 
-import { generateULID } from "./utils.ts";
+import { generateULID, stripAnsiEscapes } from "./kernel/mod.ts";
 import type { WorkbenchSessionEvent } from "./sessions.ts";
 
 export interface WorkbenchIdea {
@@ -219,14 +219,6 @@ function sanitizeHtmlHeadingsOutsideCodeSpans(text: string): string {
     }
   }
   return result;
-}
-
-function stripAnsiEscapes(text: string): string {
-  return text
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
-    .replace(/\x1b[()*+-./][0-9A-Za-z]/g, "")
-    .replace(/\x1b[@-Z\\-_]/g, "");
 }
 
 function parseCodeFence(line: string): { prefix: string; fence: string; info: string } | null {
