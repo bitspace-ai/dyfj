@@ -16,10 +16,13 @@ const state = vi.hoisted(() => ({
   sessionWorkspace: undefined as string | null | undefined,
 }));
 
-vi.mock("./utils", () => ({
+vi.mock("./kernel/ids.ts", () => ({
   generateULID: () => `01ACP${String(++state.nextId).padStart(21, "0")}`,
   generateTraceId: () => "trace-acp",
   generateSpanId: () => `span-${++state.nextId}`,
+}));
+
+vi.mock("./utils.ts", () => ({
   writeEvent: (
     event: Record<string, unknown>,
     options: { signal?: AbortSignal } = {},
@@ -58,7 +61,7 @@ vi.mock("./utils", () => ({
   },
 }));
 
-vi.mock("./sessions", () => ({
+vi.mock("./sessions.ts", () => ({
   buildWorkbenchSessionSlug: (sessionId: string) => `workbench-${sessionId}`,
   buildWorkbenchSessionContent: (input: Record<string, unknown>) =>
     String(input.receipt ?? "# Workbench Session"),
@@ -101,16 +104,52 @@ import {
   reconstructAcpContinuityPrompt,
   runExternalAgentWorkbenchRuntime,
   verifiedRouteFacts,
-} from "./external-agent-runtime";
-import type { WorkbenchMessage } from "./provider";
+} from "./external-agent-runtime.ts";
+import type { WorkbenchMessage } from "./provider.ts";
 import {
   type AcpExecutionProfile,
   type AcpSessionHandle,
   AcpProtocolMessageLimitError,
   AcpSessionUpdateLimitError,
-} from "./acp-client";
-import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map";
-import { DomainError, summarizeError } from "./turn-contract";
+} from "./acp-client.ts";
+import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map.ts";
+import { DomainError, summarizeError } from "./contract/mod.ts";
+
+/**
+ * Runs `run` while this worker's `Deno.env` reads see `overlay` on top of the
+ * real environment. `Deno.env.set` would change the environment of the whole
+ * process, which every Vitest worker thread shares, so a value held across an
+ * `await` leaks into tests running concurrently in other files (a temporary
+ * `PATH` made them fail to spawn commands by name). A spy on this worker's
+ * `Deno.env` is visible only to code running in this worker, and child
+ * processes still inherit the real environment.
+ */
+async function withEnvOverlay<T>(
+  overlay: Readonly<Record<string, string>>,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  const env = Deno.env;
+  const get = env.get.bind(env);
+  const has = env.has.bind(env);
+  const toObject = env.toObject.bind(env);
+  const spies = [
+    vi.spyOn(env, "get").mockImplementation((key) =>
+      Object.hasOwn(overlay, key) ? overlay[key] : get(key)
+    ),
+    vi.spyOn(env, "has").mockImplementation((key) =>
+      Object.hasOwn(overlay, key) || has(key)
+    ),
+    vi.spyOn(env, "toObject").mockImplementation(() => ({
+      ...toObject(),
+      ...overlay,
+    })),
+  ];
+  try {
+    return await run();
+  } finally {
+    for (const spy of spies) spy.mockRestore();
+  }
+}
 
 async function processIsAlive(pid: number): Promise<boolean> {
   const status = await new Deno.Command("bash", {
@@ -520,10 +559,8 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     expect(state.events).toEqual([]);
   });
 
-  test("does not read or forward an ambient Deno cache path", () => {
-    const original = Deno.env.get("DENO_DIR");
-    try {
-      Deno.env.set("DENO_DIR", "/tmp/acp-declared-deno-dir");
+  test("does not read or forward an ambient Deno cache path", async () => {
+    await withEnvOverlay({ DENO_DIR: "/tmp/acp-declared-deno-dir" }, () => {
       expect(fixtureProfile(Deno.cwd()).environment).not.toHaveProperty(
         "DENO_DIR",
       );
@@ -533,10 +570,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           expect.stringMatching(/^--config=\/.*\/prototype\/deno\.json$/),
         ]),
       );
-    } finally {
-      if (original === undefined) Deno.env.delete("DENO_DIR");
-      else Deno.env.set("DENO_DIR", original);
-    }
+    });
   });
 
   test("builds a pinned, isolated Codex ChatGPT profile without ambient secrets", async () => {
@@ -570,16 +604,19 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       "APP_SERVER_LOGS",
       "SSH_AUTH_SOCK",
     ];
-    const originals = new Map(
-      ambientNames.map((name) => [name, Deno.env.get(name)]),
+    const ambient = Object.fromEntries(
+      ambientNames.map((name) => [name, "must-not-cross"]),
     );
-    for (const name of ambientNames) Deno.env.set(name, "must-not-cross");
     try {
-      const profile = await codexChatGptProfile(Deno.cwd(), {
-        home,
-        prototypeRoot: root,
-        nodePath,
-      });
+      const profile = await withEnvOverlay(
+        ambient,
+        () =>
+          codexChatGptProfile(Deno.cwd(), {
+            home,
+            prototypeRoot: root,
+            nodePath,
+          }),
+      );
       expect(profile).toMatchObject({
         slug: "codex-chatgpt",
         command: nodePath,
@@ -632,10 +669,6 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         `export PATH='${home}/.dyfj/runner-homes/codex-chatgpt/bin:/usr/bin:/bin'\n`,
       );
     } finally {
-      for (const [name, value] of originals) {
-        if (value === undefined) Deno.env.delete(name);
-        else Deno.env.set(name, value);
-      }
       await Deno.remove(root, { recursive: true });
     }
   });
@@ -693,21 +726,17 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     const nodePath = `${home}/node`;
     await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
     await Deno.chmod(nodePath, 0o700);
-    const ambient = Deno.env.get("PATH");
-    let profile: Awaited<ReturnType<typeof codexChatGptProfile>>;
-    try {
-      Deno.env.set("PATH", `${home}/ambient-bin`);
-      profile = await codexChatGptProfile(Deno.cwd(), {
-        home,
-        prototypeRoot: Deno.cwd(),
-        nodePath,
-        toolchainPath: toolchain,
-        rustupHome,
-      });
-    } finally {
-      if (ambient === undefined) Deno.env.delete("PATH");
-      else Deno.env.set("PATH", ambient);
-    }
+    const profile = await withEnvOverlay(
+      { PATH: `${home}/ambient-bin` },
+      () =>
+        codexChatGptProfile(Deno.cwd(), {
+          home,
+          prototypeRoot: Deno.cwd(),
+          nodePath,
+          toolchainPath: toolchain,
+          rustupHome,
+        }),
+    );
     try {
       expect(profile.environment.PATH).toBe(
         `${home}/.dyfj/runner-homes/codex-chatgpt/bin:${await Deno.realPath(
@@ -792,12 +821,9 @@ Deno.exit(output.code);`,
   });
 
   test("runExternalAgentWorkbenchRuntime propagates routingOptions model and fast settings to production profile", async () => {
-    // This test overrides HOME for the whole process, so every child spawned
-    // during its window inherits it — including ACP fixture children, whose
-    // Deno cache lands in `$HOME/Library/Caches` and can be written after this
-    // test has already removed the directory. Allocate the disposable HOME in
-    // the ignored scratch directory so a late write cannot resurrect a
-    // scannable artifact in the repository tree.
+    // The operator HOME and toolchain inputs reach the production profile
+    // through this worker's environment reads only (see `withEnvOverlay`), so
+    // no other test or child process sees them.
     const scratch = join(Deno.cwd(), ".vitest-tmp");
     await Deno.mkdir(scratch, { recursive: true });
     const home = await Deno.makeTempDir({ dir: scratch });
@@ -809,47 +835,44 @@ Deno.exit(output.code);`,
       `#!/bin/sh\nif [ "$1" = "-p" ]; then printf '{"execPath":"${nodePath}","release":"node"}\\n'; exit 0; fi\nprintf '{"type":"stop"}\\n'\n`,
     );
     await Deno.chmod(nodePath, 0o700);
-    const ambient = Deno.env.get("PATH");
-    const prevHome = Deno.env.get("HOME");
-    const prevDenoDir = Deno.env.get("DENO_DIR");
-    const prevNode = Deno.env.get("DYFJ_NODE_PATH");
-    const prevToolchain = Deno.env.get("DYFJ_CODEX_TOOLCHAIN_PATH");
-    const prevRustup = Deno.env.get("DYFJ_CODEX_RUSTUP_HOME");
-    Deno.env.set("HOME", home);
-    // Keep fresh-checkout package initialization out of the disposable HOME.
-    Deno.env.set("DENO_DIR", join(Deno.cwd(), ".vitest-tmp", "deno-cache"));
-    Deno.env.set("DYFJ_NODE_PATH", nodePath);
-    Deno.env.set("DYFJ_CODEX_TOOLCHAIN_PATH", toolchain);
-    Deno.env.set("DYFJ_CODEX_RUSTUP_HOME", rustupHome);
     try {
       let capturedEnv: Record<string, string> | undefined;
-      const result = await runExternalAgentWorkbenchRuntime(
+      const result = await withEnvOverlay(
         {
-          mode: "turn",
-          prompt: "test",
-          routingOptions: {
-            modelId: "codex-chatgpt/gpt-5.6-sol",
-            fast: true,
-          },
-          runner: { kind: "acp", profile: "codex-chatgpt" },
-          workspaceRoot: Deno.cwd(),
-          trustWorkspaceInstructions: true,
+          HOME: home,
+          DYFJ_NODE_PATH: nodePath,
+          DYFJ_CODEX_TOOLCHAIN_PATH: toolchain,
+          DYFJ_CODEX_RUSTUP_HOME: rustupHome,
         },
-        {
-          runAgent: (agentInput) => {
-            capturedEnv = agentInput.profile.environment;
-            return Promise.resolve({
-              text: "ok",
-              stopReason: "stop",
-              capabilities: [],
-              routeEvidence: {
-                source: "profile_declared",
-                authenticationType: "chat-gpt",
+        () =>
+          runExternalAgentWorkbenchRuntime(
+            {
+              mode: "turn",
+              prompt: "test",
+              routingOptions: {
+                modelId: "codex-chatgpt/gpt-5.6-sol",
+                fast: true,
               },
-              elapsedMs: 1,
-            });
-          },
-        },
+              runner: { kind: "acp", profile: "codex-chatgpt" },
+              workspaceRoot: Deno.cwd(),
+              trustWorkspaceInstructions: true,
+            },
+            {
+              runAgent: (agentInput) => {
+                capturedEnv = agentInput.profile.environment;
+                return Promise.resolve({
+                  text: "ok",
+                  stopReason: "stop",
+                  capabilities: [],
+                  routeEvidence: {
+                    source: "profile_declared",
+                    authenticationType: "chat-gpt",
+                  },
+                  elapsedMs: 1,
+                });
+              },
+            },
+          ),
       );
       expect(result.stopReason).toBe("stop");
       expect(capturedEnv).toBeDefined();
@@ -859,18 +882,6 @@ Deno.exit(output.code);`,
         service_tier: "fast",
       });
     } finally {
-      if (ambient === undefined) Deno.env.delete("PATH");
-      else Deno.env.set("PATH", ambient);
-      if (prevHome === undefined) Deno.env.delete("HOME");
-      else Deno.env.set("HOME", prevHome);
-      if (prevDenoDir === undefined) Deno.env.delete("DENO_DIR");
-      else Deno.env.set("DENO_DIR", prevDenoDir);
-      if (prevNode === undefined) Deno.env.delete("DYFJ_NODE_PATH");
-      else Deno.env.set("DYFJ_NODE_PATH", prevNode);
-      if (prevToolchain === undefined) Deno.env.delete("DYFJ_CODEX_TOOLCHAIN_PATH");
-      else Deno.env.set("DYFJ_CODEX_TOOLCHAIN_PATH", prevToolchain);
-      if (prevRustup === undefined) Deno.env.delete("DYFJ_CODEX_RUSTUP_HOME");
-      else Deno.env.set("DYFJ_CODEX_RUSTUP_HOME", prevRustup);
       await Deno.remove(home, { recursive: true });
       await Deno.remove(toolchain, { recursive: true });
       await Deno.remove(rustupHome, { recursive: true });
@@ -3007,8 +3018,8 @@ describe("reconstructed tool history", () => {
         created_at: `2026-09-02 12:00:00.${String(index).padStart(6, "0")}`,
       }));
       const actualSessions = await vi.importActual<
-        typeof import("./sessions")
-      >("./sessions");
+        typeof import("./sessions.ts")
+      >("./sessions.ts");
       const priorEvents = await actualSessions.fetchWorkbenchSessionEvents({
         sessionId,
         query: () =>

@@ -1,7 +1,17 @@
+import {
+  generateSpanId,
+  generateTraceId,
+  generateULID,
+  hasDotPathComponent,
+  sanitizeBoundaryText,
+  utf8ByteLengthWithinLimit,
+} from "./kernel/mod.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
+  type AcpPermissionPrompt,
+  type AcpPermissionSelection,
   type AcpPermissionVerdict,
   type AcpProgressUpdate,
   AcpProtocolMessageLimitError,
@@ -10,42 +20,55 @@ import {
   type AcpToolEvidence,
   assertAcpPromptWithinLimit,
   runAcpAgent,
-} from "./acp-client";
+} from "./acp-client.ts";
 import type {
   AcpContinuityEvidence,
   AcpSessionHandleMap,
-} from "./acp-session-map";
-import type { WorkbenchMessage } from "./provider";
-import {
-  type ExternalAgentWorkbenchRuntimeResult,
-  type WorkbenchAuthContext,
-  type WorkbenchRuntimeEvent,
-  type WorkbenchRuntimeInput,
-  workspaceRootForTransport,
-} from "./workbench";
+} from "./acp-session-map.ts";
+import type { WorkbenchMessage, WorkbenchRoutingOptions } from "./provider.ts";
 import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
   createWorkbenchSession,
   fetchWorkbenchSessionWorkspaceRecord,
   updateWorkbenchSession,
-} from "./sessions";
-import {
-  generateSpanId,
-  generateTraceId,
-  generateULID,
-  writeEvent,
-} from "./utils";
+} from "./sessions.ts";
+import { writeEvent } from "./utils.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
+  type AcpRunnerSelection,
   DomainError,
+  type ExternalAgentWorkbenchRuntimeResult,
   formatHistoryOmissionSummary,
   historyOmissionForDelivery,
   type HistoryOmissionReceipt,
   prependHistoryOmissionNotice,
-  sanitizeBoundaryText,
-} from "./turn-contract";
-import { hasDotPathComponent } from "./lexical-path";
+  type WorkbenchAuthContext,
+  type WorkbenchRuntimeEvent,
+  type WorkbenchRuntimeRequest,
+  workspaceRootForTransport,
+} from "./contract/mod.ts";
+
+/**
+ * What this runner reads from a runtime turn: the plain-data request from
+ * contract/ plus the in-process hooks the engine passes through. The engine's
+ * runtime input satisfies it structurally, so this module never imports the
+ * engine.
+ */
+export interface ExternalAgentRuntimeInput extends WorkbenchRuntimeRequest {
+  runner: AcpRunnerSelection;
+  routingOptions: WorkbenchRoutingOptions;
+  /** External-agent permission requests fail closed when this is absent. */
+  confirmExternalAgentPermission?: (
+    prompt: AcpPermissionPrompt,
+    signal: AbortSignal,
+  ) => Promise<AcpPermissionSelection>;
+  abortSignal?: AbortSignal;
+  onCancellationClosed?: () => void;
+  conversationMessages?: WorkbenchMessage[];
+  onTextDelta?: (delta: string) => void;
+  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
+}
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
   const home = Deno.env.get("HOME");
@@ -571,39 +594,6 @@ function sanitizeHistoryText(raw: string): string {
   return out;
 }
 
-function utf8ByteLengthWithinLimit(
-  value: string,
-  maxBytes: number,
-): number | undefined {
-  const chunkCodeUnits = 4_096;
-  // A BMP character needs at most 3 UTF-8 bytes. A surrogate pair needs 4
-  // bytes across 2 code units, while a lone surrogate becomes U+FFFD (3
-  // bytes), so 3 bytes per UTF-16 code unit is a conservative chunk bound.
-  const maxBytesPerCodeUnit = 3;
-  const encoder = new TextEncoder();
-  const buffer = new Uint8Array(chunkCodeUnits * maxBytesPerCodeUnit);
-  let bytes = 0;
-  for (let start = 0; start < value.length;) {
-    let end = Math.min(start + chunkCodeUnits, value.length);
-    if (
-      end < value.length && value.charCodeAt(end - 1) >= 0xD800 &&
-      value.charCodeAt(end - 1) <= 0xDBFF &&
-      value.charCodeAt(end) >= 0xDC00 && value.charCodeAt(end) <= 0xDFFF
-    ) {
-      end -= 1;
-    }
-    const chunk = value.slice(start, end);
-    const { read, written } = encoder.encodeInto(chunk, buffer);
-    // A short read violates the buffer invariant. Return the overflow sentinel
-    // so the immediate caller refuses the field with its specific DomainError.
-    if (read !== chunk.length) return undefined;
-    bytes += written;
-    if (bytes > maxBytes) return undefined;
-    start += read;
-  }
-  return bytes;
-}
-
 /**
  * Bound and sanitize one field. Overflow throws rather than truncates: a
  * shortened tool result reads as complete evidence and would be a quieter
@@ -964,7 +954,7 @@ export function reconstructAcpContinuityPrompt(input: {
 }
 
 async function resolveWorkspace(
-  input: WorkbenchRuntimeInput,
+  input: ExternalAgentRuntimeInput,
   authContext: WorkbenchAuthContext,
 ): Promise<string> {
   let requested = input.workspaceRoot;
@@ -1085,7 +1075,7 @@ export function verifiedRouteFacts(
 }
 
 async function emitRuntimeEvent(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  handler: ExternalAgentRuntimeInput["onRuntimeEvent"],
   event: WorkbenchRuntimeEvent,
 ): Promise<void> {
   if (handler === undefined) return;
@@ -1097,12 +1087,7 @@ async function emitRuntimeEvent(
 }
 
 export async function runExternalAgentWorkbenchRuntime(
-  input: WorkbenchRuntimeInput & {
-    runner: {
-      kind: "acp";
-      profile: "fixture" | "codex-chatgpt";
-    };
-  },
+  input: ExternalAgentRuntimeInput,
   dependencies: {
     resolveProfile?: (
       profile: "fixture" | "codex-chatgpt",

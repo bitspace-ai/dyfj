@@ -46,8 +46,8 @@
 
 import { relative, resolve } from "node:path";
 import { buildSafeBashEnv } from "./exec-tools.ts";
+import { clipToUtf8Bytes } from "./kernel/mod.ts";
 import {
-  clipToUtf8Bytes,
   resolveWorkspacePath,
   sanitizeOutputText,
   toPosixPath,

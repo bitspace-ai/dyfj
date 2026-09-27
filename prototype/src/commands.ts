@@ -1,5 +1,5 @@
-import { executeReadMemory } from "./memory";
-import type { PermissionLevel } from "./config";
+import { executeReadMemory } from "./memory.ts";
+import type { PermissionLevel } from "./config.ts";
 import {
   executeEditFile,
   executeGlobFiles,
@@ -7,14 +7,11 @@ import {
   executeListFiles,
   executeReadFile,
   executeWriteFile,
-} from "./file-tools";
-import { executeBash } from "./exec-tools";
-import { executeGit, GIT_SUBCOMMANDS } from "./git-tools";
-import {
-  generateSpanId,
-  generateULID,
-  writeEvent as writeDoltEvent,
-} from "./utils";
+} from "./file-tools.ts";
+import { executeBash } from "./exec-tools.ts";
+import { executeGit, GIT_SUBCOMMANDS } from "./git-tools.ts";
+import { generateSpanId, generateULID, utf8SafePrefix } from "./kernel/mod.ts";
+import { writeEvent as writeDoltEvent } from "./utils.ts";
 
 export type PrincipalType = "human" | "agent" | "service";
 export type PolicyDecision = "allow" | "ask" | "deny";
@@ -1067,21 +1064,6 @@ export function redactCommandArguments(
 export const EVENT_RESULT_MAX_BYTES = 60_000;
 
 /**
- * The largest prefix of `bytes` that is at most `maxBytes` long AND does not
- * split a multi-byte UTF-8 character. A UTF-8 continuation byte has the top
- * two bits `10`; walking `end` back while `bytes[end]` is a continuation byte
- * lands the cut on the start of a character (or the end of the array), so the
- * result decodes cleanly with zero replacement characters — unlike a naive
- * `slice` + permissive decode, which can silently swap a clipped tail for a
- * differently-sized replacement character and land past `maxBytes`.
- */
-function utf8SafeByteSlice(bytes: Uint8Array, maxBytes: number): Uint8Array {
-  let end = Math.min(maxBytes, bytes.byteLength);
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
-  return bytes.slice(0, end);
-}
-
-/**
  * Cap `text` to `maxBytes` UTF-8 bytes for a TEXT event column, appending a
  * marker with the untruncated size so the audit trail records that clipping
  * happened — and by how much — rather than silently losing the tail. The
@@ -1102,11 +1084,11 @@ export function truncateForEventColumn(
   // the production column budget.
   if (markerEncoded.byteLength >= maxBytes) {
     return new TextDecoder("utf-8")
-      .decode(utf8SafeByteSlice(markerEncoded, maxBytes));
+      .decode(utf8SafePrefix(markerEncoded, maxBytes));
   }
   const excerptBudget = maxBytes - markerEncoded.byteLength;
   const excerpt = new TextDecoder("utf-8")
-    .decode(utf8SafeByteSlice(encoded, excerptBudget));
+    .decode(utf8SafePrefix(encoded, excerptBudget));
   return `${excerpt}${marker}`;
 }
 

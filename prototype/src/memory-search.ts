@@ -30,6 +30,10 @@ import {
   injectMcpTraceContext,
   type McpTraceContext,
 } from "./mcp-conformance.ts";
+import {
+  bearerAuthorizationHeader,
+  createMcpClient,
+} from "./tools/mcp/transport.ts";
 
 export interface MemorySearchConfig {
   /** The external memory MCP endpoint. */
@@ -259,7 +263,7 @@ export function memoryAuthHeaders(
   if (config.tokenHeader !== undefined) {
     return { [config.tokenHeader]: config.token };
   }
-  return { Authorization: `Bearer ${config.token}` };
+  return bearerAuthorizationHeader(config.token);
 }
 
 /**
@@ -290,24 +294,12 @@ export function buildMemorySearch(
     query: string,
     traceContext?: McpTraceContext,
   ): Promise<string> => {
-    // SDK imported lazily: this module must load under the node-based test
-    // runner, which cannot resolve Deno `npm:` specifiers. The SDK is only
-    // needed when a recall actually executes under the Deno runtime.
-    const { Client, StreamableHTTPClientTransport } = await import(
-      "npm:@modelcontextprotocol/client@2.0.0"
-    );
-    const transport = new StreamableHTTPClientTransport(new URL(config.url), {
+    const { client, transport } = await createMcpClient({
+      url: config.url,
+      clientName: "dyfj-workbench-recall",
       requestInit: recallRequestInit(config),
+      probeTimeoutMs: RECALL_PROBE_TIMEOUT_MS,
     });
-    const client = new Client(
-      { name: "dyfj-workbench-recall", version: "1.0.0" },
-      {
-        versionNegotiation: {
-          mode: "auto",
-          probe: { timeoutMs: RECALL_PROBE_TIMEOUT_MS, maxRetries: 0 },
-        },
-      },
-    );
     try {
       await client.connect(transport, { timeout: RECALL_PROBE_TIMEOUT_MS });
       const diagnostic = recallDiagnostic(client, [

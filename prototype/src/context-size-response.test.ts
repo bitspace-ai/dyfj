@@ -1,9 +1,10 @@
 import { describe, expect, test } from "vitest";
+import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import {
   compareContextPayloads,
   type ContextPayloadReport,
-} from "./context-size-response";
-import type { WorkbenchModel } from "./provider";
+} from "./context-size-response.ts";
+import type { WorkbenchModel } from "./provider.ts";
 
 const models: WorkbenchModel[] = [{
   slug: "gemma4:e2b",
@@ -27,7 +28,7 @@ describe("compareContextPayloads", () => {
         { label: "small", systemPrompt: "short context" },
         { label: "large", systemPrompt: "large context ".repeat(100) },
       ],
-      now: buildClock([0, 10, 30, 70, 0, 20, 80, 140]),
+      now: new ManualClock({ readings: [0, 10, 30, 70, 0, 20, 80, 140] }).now,
       fetchFn: buildFakeStreamingFetch(),
     });
 
@@ -63,14 +64,6 @@ function summary(report: ContextPayloadReport) {
     estimated_input_tokens: report.estimated_input_tokens,
     total_latency_ms: report.total_latency_ms,
     time_to_first_token_ms: report.time_to_first_token_ms,
-  };
-}
-
-function buildClock(values: number[]): () => number {
-  let last = 0;
-  return () => {
-    last = values.shift() ?? last;
-    return last;
   };
 }
 

@@ -17,7 +17,9 @@ Use the readable current baseline for new databases:
   `events`, `memories`, `sessions`, `models`, and `prompts`.
 - `catalog/001_models.sql` — mutable model catalog seed data.
 - `catalog/002_prompts.sql` — trusted prompt catalog seed data.
-- `migrations/` — forward migrations after the current baseline.
+- `migrations/` — forward migrations that upgrade a database created before the
+  current baseline cut; their effects are already folded into `current/` and
+  `catalog/`.
 - `history/` — preserved replay history that preceded the current baseline.
 
 The model and prompt catalogs are separated from structure because provider
@@ -39,12 +41,13 @@ memory visibility/injection classification through `024_memories_inject.sql`.
 ## Apply the schema
 
 Requires [Dolt](https://www.dolthub.com/). Apply from the Dolt database
-directory so `dolt sql` targets the working set directly:
+directory so `dolt sql` targets the working set directly. A fresh database takes
+the current baseline and then the catalogs; the forward migrations are already
+folded into that baseline and are not applied on top of it:
 
 ```sh
 for dir in /path/to/dyfj/schema/current \
-           /path/to/dyfj/schema/catalog \
-           /path/to/dyfj/schema/migrations; do
+           /path/to/dyfj/schema/catalog; do
   find "$dir" -maxdepth 1 -name '*.sql' | sort | while read -r f; do
     dolt sql < "$f"
   done
@@ -68,16 +71,17 @@ Run the canonical validation against fresh disposable Dolt repositories:
 deno task validate-schema
 ```
 
-The command applies:
+The command applies two sequences, each to its own fresh repository:
 
-1. `schema/current/*.sql`
-2. `schema/catalog/*.sql`
-3. `schema/migrations/*.sql`
+1. `schema/current/*.sql` then `schema/catalog/*.sql` (the fresh-install path)
+2. `schema/history/*.sql` then `schema/migrations/*.sql` (the pre-baseline
+   upgrade check)
 
-It also separately replays `schema/history/*.sql` to prove the preserved history
-still parses and applies. That replay is provenance, not an upgrade path from
-every historical state to the current baseline. Existing databases created
-before a baseline cut should be migrated with files in `schema/migrations/` or
+The second sequence proves the preserved history still parses and applies, and
+that the forward migrations apply cleanly on top of its end-state. The history
+replay is provenance, not an upgrade path from every historical state to the
+current baseline. Existing databases created before a baseline cut should be
+migrated with files in `schema/migrations/` or
 with an operator-reviewed manual migration before using current runtime code.
 Validation fails on invalid DDL or ordering errors and confirms the `events`
 table exists. It does not connect to or mutate any long-running local Dolt SQL

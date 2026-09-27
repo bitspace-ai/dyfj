@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildDoltPoolOptions } from "./dolt-config";
+import { buildDoltPoolOptions } from "./dolt-config.ts";
 
 describe("MCP Dolt pool config", () => {
   test("reads credentials from environment", () => {

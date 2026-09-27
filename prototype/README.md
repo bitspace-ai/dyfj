@@ -23,16 +23,13 @@ launcher starts one in the background and waits for it. Use `dyfj exec
 `dyfj start` when you explicitly want to foreground the runtime. Put `dist/` on
 your `PATH` to use `dyfj` without the `./dist/` prefix.
 
-The Apple silicon local default expects an OpenAI-compatible MLX-LM Server:
+The local default is the Ollama model `qwen3.6:35b-a3b`, reached through Ollama's OpenAI-compatible endpoint:
 
 ```sh
-mlx_lm.server \
-  --model mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit \
-  --host 127.0.0.1 \
-  --port 18080
+ollama pull qwen3.6:35b-a3b
 ```
 
-Workbench uses `http://127.0.0.1:18080/v1` for that MLX endpoint. Ollama remains a supported local fallback; pass `--model laguna-xs.2` or set `DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the fallback explicitly.
+The catalog also carries MLX-LM Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a row's `active` flag in the `models` table before selecting it with `--model`.
 
 Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use.
 
@@ -97,6 +94,7 @@ dyfj --model codex-chatgpt/gpt-5.6-terra --approve-paid --fast exec "Fast one-sh
 dyfj --runner fixture exec "Exercise the local ACP fixture"
 dyfj --runner codex-chatgpt --approve-paid exec "Inspect this repository"
 dyfj status
+dyfj stop
 dyfj models
 dyfj sessions
 ```
@@ -106,7 +104,10 @@ switches the active model (with optional `--fast` or `--no-fast`), `/fast [on|of
 toggles the fast speed tier for supported models,
 `/friction <sev> [--escaped] <text...>` posts a numbered daily-driver friction
 entry through the configured Linear MCP tools, and `/quit` or `/exit` quits
-cleanly. `/friction last` shows only the last successfully posted receipt from
+cleanly. `/idea mark|list|show` marks and reviews candidate ideas for the
+session, and `/packet draft|list|show` drafts work packets from them; both are
+held in the runtime's memory only (see the root README's UDS method notes).
+`/friction last` shows only the last successfully posted receipt from
 the current REPL. Its posted `Context:` line contains exactly the model slug,
 workspace basename, and previous slash command when one exists; the slash
 command is capped at 120 characters with a visible `…` marker, and free-text
@@ -122,9 +123,11 @@ development use, the equivalent engine task is:
 deno task serve-unix
 ```
 
-It serves a duplex JSON-RPC 2.0 protocol — read methods for `runtime/status`,
-`surface/snapshot`, `models/list`, `sessions/list`, `events/query`, `tools/list`,
-and `tools/inspect`; the narrow operator-approved `friction/post` method; plus
+It serves a duplex JSON-RPC 2.0 protocol — read methods for `runtime/liveness`,
+`runtime/status`, `surface/snapshot`, `models/list`, `sessions/list`,
+`sessions/inspect`, `events/query`, `ideas/list`, `ideas/get`, `packets/list`,
+`packets/get`, `tools/list`, and `tools/inspect`; `runtime/stop`; the narrow
+operator-approved `friction/post` method; `ideas/mark` and `packets/draft`; plus
 streaming `turn` and cancellation `turn/cancel` methods — over a socket resolved
 from `DYFJ_SOCKET` (else `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`), running
 the shared turn core. `friction/post` accepts
@@ -213,21 +216,67 @@ export DOLT_DATABASE=dolt
 Useful checks:
 
 ```sh
-deno task check          # production and Vitest source typechecking
-deno task check:tests    # Vitest sources only
-deno task test           # checks first, then runs the prototype unit suite
+deno task check          # check:sources, then check:tests
+deno task check:sources  # every non-test module under src, mcp, scripts, testing
+deno task check:tests    # every test file, both frameworks
+deno task test:unit      # Deno.test unit lane (test.unit)
+deno task test           # checks, test:unit, then the Vitest unit suite
 deno task test:file <path>  # run a single test file without full typecheck
                          # (requires a path or -t pattern; exits 2 otherwise)
 deno task verify-workbench-events
+deno task test:golden    # golden characterization suite (needs Dolt)
+deno task test:golden --update  # rewrite snapshots (see below)
 (cd .. && deno task test) # repository aggregate gate
 ```
 
-Use `test:file` for tight iteration loops while developing a single test — it skips
+Use `test:file` for tight iteration loops while developing a single Vitest test — it skips
 the full typecheck and runs only your named file. Use `test` for the gate before commit,
 which typechecks the entire codebase and runs the full suite excluding integration tests.
 
-The root aggregate gate runs the schema, Rust, and isolated-Dolt integration
-lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
+Both typecheck file lists and the `test.unit` file list are derived by walking the tree
+(`scripts/test-files.ts`); nothing is hand-listed. While the two frameworks coexist, a
+test file's framework is read from its imports, as `deno info --json` (Deno's own parser)
+reports them: a file whose static imports reach `vitest`, directly or through a helper
+module, runs under Vitest; any other `*.test.ts` is a `Deno.test` file and Vitest
+excludes it.
+`*.integration.test.ts` files and `testing/golden/` have their own lanes. `test:unit`
+runs `deno test --parallel --sanitize-ops --sanitize-resources` (both sanitizers are
+opt-in in the pinned Deno), with read access to the prototype and
+temp roots, write access to temp roots only, and no run, net, or env grant, so unit and
+component tests stay off Dolt, the network, and child processes. Write fixture output to
+`Deno.makeTempDir()`, never the working tree.
+
+Shared test support lives in `testing/` (never imported by runtime code): the golden
+suite in `testing/golden/`, loopback servers in `testing/servers/`, and the port fakes in
+`testing/fakes/`: `ManualClock` (`Clock`), `SequentialIds` (`IdSource`, ULID-shaped),
+`MapEnv` (`Env`), and `fakeIo` (the CLI's terminal `Io`). A unit test replaces a port with
+its fake; module mocking is not allowed (`specs/03-testing.md` §1). A fake's conformance
+suite lands with the port it stands in for.
+
+Local imports name the file they load, extension included (`./utils.ts`, not
+`./utils`); no task passes `--sloppy-imports`, so an extensionless local import
+fails the typecheck. Third-party packages resolve through the `imports` map in
+`deno.json` rather than inline `npm:` or `jsr:` specifiers. To fix up a batch of
+extensionless imports, for example after a merge, run
+`deno run --allow-read=. --allow-write=. scripts/add-import-extensions.ts` from
+this directory; it rewrites each one to the file it resolves to and reports any
+it cannot resolve.
+
+`test:golden` runs the golden characterization suite in `testing/golden/`:
+twelve black-box scenarios that drive the engine server (`src/uds-serve.ts`)
+and the CLI (`src/cli.ts`) as child processes against an isolated Dolt
+fixture, a loopback model server (`testing/servers/model-server.ts`) and a
+loopback Linear MCP server (`testing/golden/linear-mcp.ts`, built on the shared
+loopback MCP server in `testing/servers/mcp-server.ts` that the MCP integration
+tests also use). Each scenario's stream frames, RPC responses,
+rendered CLI output, and `events`/`sessions` rows are normalized (generated
+IDs, timestamps, durations, temp paths, PIDs and the fixtures' loopback
+endpoints only) and compared with `testing/golden/snapshots/`. During the
+phase-1 restructuring a snapshot may change only for a reason the PR states,
+as `specs/03-testing.md` §4 sets out; `--update` rewrites them.
+
+The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
+golden characterization lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
 and bounded: `$HOME/.dyfj/run/dyfj-vitest-run.lock` refuses a second run while
 a prior run is alive (including across checkouts), a hang fails
 `DYFJ_TEST_BOUND_SEC` (default 600s; 180s for a named file or `-t` pattern),
@@ -272,15 +321,18 @@ The response must include generated text. Health/list endpoints such as Ollama `
 
 ## Layout
 
-- `src/` — Workbench entrypoint, the JSON-RPC/UDS transport seam, shared runtime boundary, native provider path, ACP client runner, command registry, memory, budget, session persistence, event verification, utilities, tests
+- `src/` — the `dyfj` CLI (`cli.ts`) and engine (`uds-serve.ts`) entrypoints, the JSON-RPC/UDS transport seam, shared runtime boundary, native provider path, ACP client runner, command registry, memory, budget, session persistence, event verification, utilities, tests
+- `src/kernel/` — layer L0: pure shared helpers with one implementation each (UTF-8 byte bounding, code-point prefixes, terminal escape stripping, boundary-text sanitizing, ULID/trace/span IDs, canonical JSON, the time-bounded regex matcher, lexical path checks), imported through `src/kernel/mod.ts` and importing nothing from other runtime layers
+- `src/contract/` — layer L1: the runtime contract shared by the engine, its runners, the server, and the CLI (turn request, receipt and stream-frame types, runtime auth and event types, history-omission notices, `DomainError`, the `Runner` interface, and the wire trust policy in `summarizeError` and `workspaceRootForTransport`), imported through `src/contract/mod.ts` and importing only `src/kernel/`; wire types stay plain data. The engine binds its external-agent (ACP) runner through the `Runner` interface: the UDS server composes it, so the engine never imports the ACP runtime
+- `src/tools/mcp/transport.ts` — the MCP transport every MCP consumer shares: the byte-bounded fetch, the untrusted-result framing, bearer-header construction, and the one SDK client factory, used by the external MCP tools (`src/mcp-tools.ts`), the web tools (`src/web-tools.ts`), and memory recall (`src/memory-search.ts`)
 - `mcp/` — MCP server (`server.ts`)
 - `examples/` — diagnostic programs, verification helpers, and historical transport spikes; these are not operator launch paths
 
 The named `context-size-response`, `model-response-modes`, `structured-output`,
 and `structured-output-streaming` tasks are manual local-provider diagnostics.
 Pass their `--model` and `--base-url` options when testing the current local
-stack; their built-in values target the Ollama development fixture rather than
-the MLX daily-driver default.
+stack; their built-in values target Ollama `gemma4:e2b` rather than the
+registry's local default.
 `verify-workbench-events` is the live event-sequence check. The standalone
 `uds-jsonrpc-spike.ts` records the original duplex-transport proof; the current
 transport implementation lives in `src/jsonrpc.ts`, `src/jsonrpc-peer.ts`, and

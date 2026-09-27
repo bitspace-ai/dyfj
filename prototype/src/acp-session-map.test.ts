@@ -8,7 +8,7 @@ import {
   type AcpSessionHandle,
   assertAcpPromptWithinLimit,
   startAcpSession,
-} from "./acp-client";
+} from "./acp-client.ts";
 import {
   AcpSessionBusyError,
   AcpSessionCapacityError,
@@ -17,12 +17,12 @@ import {
   canonicalExecutionProfileDigest,
   encodeAcpSessionHandleKey,
   selectAcpContinuity,
-} from "./acp-session-map";
+} from "./acp-session-map.ts";
 import {
   DomainError,
   historyOmissionForDelivery,
   prependHistoryOmissionNotice,
-} from "./turn-contract";
+} from "./contract/mod.ts";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},

@@ -40,6 +40,8 @@
  * continues incrementally.
  */
 
+import process from "node:process";
+
 export type PermissionLevel = "strict" | "operator";
 const PERMISSION_LEVELS: readonly PermissionLevel[] = ["strict", "operator"];
 
@@ -1536,4 +1538,62 @@ export function resolveAnomalyDefaultsFromEnv(
  */
 export function resolvePrincipalId(env: ConfigEnv = Deno.env): string {
   return env.get("DYFJ_PRINCIPAL_ID") ?? env.get("USER") ?? "user";
+}
+
+// ── Runtime env defaults (process boundary) ──────────────────────────────────
+
+export type BudgetTallyMode = "on" | "paid" | "off";
+
+export function parseBudgetTallyMode(
+  value: string | undefined,
+): BudgetTallyMode {
+  if (value === "on" || value === "off" || value === "paid") return value;
+  return "paid";
+}
+
+/** The env-derived runtime defaults an entrypoint spreads into a runtime input. */
+export interface RuntimeEnvDefaults {
+  principalId: string;
+  rootOverride: string | undefined;
+  budgetTallyMode: BudgetTallyMode;
+  defaultSessionBudgetUsd: number;
+  defaultPerCallBudgetUsd: number;
+  defaultDailyBudgetUsd: number;
+  anomalyTurnMultiple: number;
+  anomalyScopeMultiple: number;
+  trustWorkspaceInstructions: boolean;
+  maxToolSteps: number;
+}
+
+/**
+ * Resolve the env-derived runtime defaults at the process boundary,
+ * so the core runtime reads no environment variables. Entrypoints (the UDS
+ * server and the in-process verify-workbench-events check) spread this into the
+ * runtime input; a headless
+ * driver supplies these explicitly instead. `rootOverride` stays undefined when
+ * DYFJ_ROOT is unset, so the core falls back to the process cwd.
+ */
+export function resolveRuntimeEnvDefaults(): RuntimeEnvDefaults {
+  // process.env adapter so the declared resolvers (config.ts) read the same
+  // environment as the rest of this boundary.
+  const env = { get: (key: string): string | undefined => process.env[key] };
+  const budget = resolveBudgetDefaultsFromEnv(env);
+  const anomaly = resolveAnomalyDefaultsFromEnv(env);
+  const agent = resolveAgentDefaultsFromEnv(env);
+  return {
+    principalId: resolvePrincipalId(env),
+    // The standalone in-process entrypoint is the operator's own process
+    // (loopback-equivalent), so the standing trust posture is honored here
+    // via its environment binding; served sessions resolve it from engine
+    // config at their transport boundary.
+    trustWorkspaceInstructions: resolveTrustWorkspaceInstructionsFromEnv(env),
+    rootOverride: Deno.env.get("DYFJ_ROOT") ?? undefined,
+    budgetTallyMode: parseBudgetTallyMode(process.env.DYFJ_BUDGET_TALLY),
+    defaultSessionBudgetUsd: budget.sessionLimitUsd,
+    defaultPerCallBudgetUsd: budget.perCallLimitUsd,
+    defaultDailyBudgetUsd: budget.dailyLimitUsd,
+    anomalyTurnMultiple: anomaly.turnMultiple,
+    anomalyScopeMultiple: anomaly.scopeMultiple,
+    maxToolSteps: agent.maxToolSteps,
+  };
 }

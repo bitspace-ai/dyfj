@@ -19,8 +19,12 @@ or `public`; it does not expose private or shareable memory rows.
 ## Running
 
 ```bash
-deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE /path/to/dyfj/prototype/mcp/server.ts
+deno run --config /path/to/dyfj/prototype/deno.json --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE /path/to/dyfj/prototype/mcp/server.ts
 ```
+
+`--config` points Deno at the prototype's import map, which resolves the
+server's package imports; without it the command fails to load when run from
+outside `prototype/`.
 
 Transport: stdio (standard for CLI agents). The server uses the MCP v2 split
 SDK and accepts both the modern `2026-07-28` opening and legacy `initialize`
@@ -39,7 +43,7 @@ Replace `/path/to/dyfj` with your actual install path. Find your Deno binary wit
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/deno",
-      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "args": ["run", "--config", "/path/to/dyfj/prototype/deno.json", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
@@ -64,7 +68,7 @@ Add to the MCP server list in settings. Same command/args pattern.
   "mcpServers": {
     "dyfj-memory": {
       "command": "/path/to/deno",
-      "args": ["run", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "args": ["run", "--config", "/path/to/dyfj/prototype/deno.json", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }

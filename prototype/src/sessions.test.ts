@@ -5,21 +5,20 @@ import {
   formatSummaryMessage,
   partitionForCompression,
   VERBATIM_TAIL_TURNS,
-} from "./context-compression";
+} from "./context-compression.ts";
 import {
   assertRepresentableToolHistory,
   buildConversationMessages,
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
-  createProjectWorkbenchSession,
   createWorkbenchSession,
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionWorkspace,
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
   updateWorkbenchSession,
-} from "./sessions";
-import type { HistoryOmissionProjection } from "./turn-contract";
+} from "./sessions.ts";
+import type { HistoryOmissionProjection } from "./contract/mod.ts";
 
 describe("buildWorkbenchSessionSlug", () => {
   test("derives a stable workbench slug from the session id", () => {
@@ -206,42 +205,6 @@ describe("listWorkbenchSessions", () => {
     });
     expect(calls[0].sql).toContain("WHERE project = ?");
     expect(calls[0].params).toEqual(["dyfj"]);
-  });
-});
-
-describe("createProjectWorkbenchSession", () => {
-  test("inserts a project-bound session and returns its identity", async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
-    const created = await createProjectWorkbenchSession({
-      project: "dyfj",
-      taskDescription: "left pane demo",
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      exec: (sql, params) => {
-        calls.push({ sql, params });
-        return Promise.resolve();
-      },
-    });
-    expect(created).toEqual({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      slug: "workbench-01abcdef0123456789abcdef01",
-      project: "dyfj",
-    });
-    expect(calls[0].sql).toContain("INSERT INTO sessions");
-    expect(calls[0].params).toContain("dyfj");
-    expect(calls[0].params).toContain("left pane demo");
-  });
-
-  test("stores a null project when none is given", async () => {
-    const calls: Array<{ params: unknown[] }> = [];
-    const created = await createProjectWorkbenchSession({
-      sessionId: "01ABCDEF0123456789ABCDEF01",
-      exec: (_sql, params) => {
-        calls.push({ params });
-        return Promise.resolve();
-      },
-    });
-    expect(created.project).toBeNull();
-    expect(calls[0].params).toContain(null);
   });
 });
 

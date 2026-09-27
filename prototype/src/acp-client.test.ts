@@ -19,7 +19,7 @@ import {
   startAcpSession,
   tokenUsageFromPromptResponse,
   usageSnapshotFromUpdate,
-} from "./acp-client";
+} from "./acp-client.ts";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},
@@ -109,12 +109,27 @@ async function expectContainedFailure(input: {
   abortAfterDelta?: boolean;
   message?: string;
   confirmPermission?: AcpRunInput["confirmPermission"];
+  holdStdoutOpen?: boolean;
 }): Promise<void> {
   const pidFile = await Deno.makeTempFile({ dir: Deno.cwd() });
   const controller = new AbortController();
+  const profile = fixtureProfile(input.profile, pidFile);
   try {
     await expect(runAcpAgent({
-      profile: fixtureProfile(input.profile, pidFile),
+      // A backgrounded descendant inherits the agent's stdout, so the stream
+      // stays open after the agent itself exits.
+      profile: input.holdStdoutOpen
+        ? {
+          ...profile,
+          command: "/bin/bash",
+          args: [
+            "-c",
+            'sleep 0.5 & exec "$0" "$@"',
+            profile.command,
+            ...profile.args,
+          ],
+        }
+        : profile,
       prompt: input.prompt,
       abortSignal: input.abortAfterDelta ? controller.signal : undefined,
       onTextDelta: input.abortAfterDelta ? () => controller.abort() : undefined,
@@ -1224,6 +1239,16 @@ describe("runAcpAgent", () => {
       prompt: "FIXTURE_EARLY_EXIT",
       phase: "prompt",
     });
+  });
+
+  test("contains an early child exit while its stdout is still held open", async () => {
+    await expectContainedFailure({
+      prompt: "FIXTURE_EARLY_EXIT",
+      phase: "prompt",
+      holdStdoutOpen: true,
+    });
+    // Outlive the descendant so any late stream teardown lands in this test.
+    await new Promise((resolve) => setTimeout(resolve, 800));
   });
 
   test("contains malformed updates and reaps the child", async () => {

@@ -8,30 +8,9 @@
 // The agent loop (workbench.ts) owns the retry/failure mechanics; everything
 // here is pure and unit-testable.
 
-import type { WorkbenchMessage, WorkbenchModel } from "./provider";
-import { DomainError, sanitizeBoundaryText } from "./turn-contract";
-
-export type LengthStopClassification =
-  | "output_budget_exhausted"
-  | "context_overflow";
-
-export type LengthRecoveryOutcome =
-  | "recovered"
-  | "still_truncated"
-  | "retry_refused_budget"
-  /** The adapter cannot run a transcript retry (modelSupportsTranscriptRetry). */
-  | "retry_unsupported"
-  /**
-   * Both the output cap and the context window bound this stop: the
-   * continuation (original transcript + partial answer + nudge) no longer fits
-   * the window, so retrying would be a doomed over-window call. The capped
-   * partial is delivered instead. Upgrade site for a future compressor:
-   * compress-then-continue when both limits bind.
-   */
-  | "retry_would_overflow"
-  /** The recovery hook or the retry call threw; the error surfaces after this. */
-  | "retry_errored"
-  | "overflow_failed";
+import { sanitizeBoundaryText } from "./kernel/mod.ts";
+import type { WorkbenchMessage, WorkbenchModel } from "./provider.ts";
+import { DomainError, type LengthStopClassification } from "./contract/mod.ts";
 
 /**
  * Overflow evidence threshold: input + output at or past this fraction of the

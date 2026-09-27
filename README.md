@@ -71,7 +71,7 @@ transport), shared single-turn runtime boundary, a multi-step agent loop
 (iterating model↔tools with workspace file tools, an approval-gated `bash`
 escape hatch, and a bounded `git` tool), an operator-routed
 provider path with local models plus hosted providers (Anthropic, OpenAI,
-OpenRouter, and Google Gemini) behind paid-approval and budget controls, and a
+OpenRouter, Google Gemini, and xAI) behind paid-approval and budget controls, and a
 local ACP-client foundation verified against a deterministic fixture agent. The
 ACP runner is distinct from the native model/provider loop and records outer
 protocol evidence while treating agent-internal state as opaque. The prototype
@@ -176,6 +176,11 @@ deferrable enhancement.
   Model-supplied arguments are ignored during permission checks.
 - **Immutable message log is ground truth.** Memory is a derived view; the log
   is the audit trail.
+  _Runtime status: not yet true in full. Events are append-only, but session
+  rows are updated in place, memories are written directly by the MCP server
+  without an event, and ideas/packets live only in process memory. Closing this
+  gap is roadmap durable-state work; the design direction is in
+  `specs/02-data-layer.md` §7._
 
 ---
 
@@ -204,10 +209,23 @@ How the work actually happens, separate from what gets built.
 
 - **Tests land with the code, not after it.** Any commit that adds a function
   adds a test for it. PRs without tests are not "ready except for tests" -
-  they're not yet ready. Integration tests run against real dependencies (a real
-  Dolt instance, real model APIs in CI when relevant), not mocks. Mocks are
-  reserved for things that don't exist yet (failure modes we haven't observed,
-  third-party services we haven't integrated).
+  they're not yet ready.
+- **Fakes live at declared ports only, and are proven against the real
+  thing.** A unit or component test replaces a declared port with its in-repo
+  fake; module mocking is banned, and existing Vitest tests that still mock move
+  to this shape as their modules move. Each fake that stands in for a real adapter
+  passes the same conformance suite as that adapter. Real dependencies (a real
+  Dolt instance, real processes, real sockets) belong to the integration tier;
+  third-party network services are faked at the network boundary with loopback
+  servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
+  Shared fakes live in `prototype/testing/fakes/`. New tests use `Deno.test`
+  with `@std/assert` and `@std/testing`; Vitest is being retired as tests move
+  with their modules.
+- **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
+  a black-box golden suite (`prototype/testing/golden/`, gate lane
+  `test.golden`) snapshots the engine server and CLI at process level. A
+  snapshot changes only with a stated reason, as `specs/03-testing.md` §4 sets
+  out.
 - **Model integration tests validate generation, not just service health.**
   Ollama `/api/version`, `/api/tags`, and `/api/ps` only prove the server
   process is answering. Workbench integration checks that depend on local
@@ -232,8 +250,9 @@ How the work actually happens, separate from what gets built.
 
 - [Deno](https://deno.com) 2.9+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
-- [MLX-LM](https://github.com/ml-explore/mlx-lm) for the Apple silicon local
-  default, or [Ollama](https://ollama.com) as a supported local fallback
+- [Ollama](https://ollama.com) for the local default model;
+  [MLX-LM](https://github.com/ml-explore/mlx-lm) remains a supported local
+  provider, but its catalog rows ship inactive
 - _(Optional, for `core/`)_ [`rustup`](https://rustup.rs/) - the toolchain pin
   in `core/rust-toolchain.toml` will install the right Rust automatically when
   you `cargo build` there.
@@ -261,23 +280,23 @@ export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
 
-For the Apple silicon local default, run an OpenAI-compatible MLX-LM Server:
+The local default is the Ollama model `qwen3.6:35b-a3b`, the first active Tier 0
+row in the registry's local preference order. Pull it and keep Ollama on its
+default port:
 
 ```sh
-mlx_lm.server \
-  --model mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit \
-  --host 127.0.0.1 \
-  --port 18080
+ollama pull qwen3.6:35b-a3b
 ```
 
-Workbench uses `http://127.0.0.1:18080/v1` for that local MLX endpoint. Ollama
-remains a supported local fallback; pass `--model laguna-xs.2` or set
-`DYFJ_WORKBENCH_MODEL=laguna-xs.2` to select the Ollama fallback explicitly.
+Workbench reaches that model through Ollama's OpenAI-compatible endpoint,
+`http://localhost:11434/v1`. The catalog also carries MLX-LM Server rows
+(`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a
+row's `active` flag in the `models` table before selecting it with `--model`.
 
 Agent-tool turns default to 32 steps. Every entrypoint accepts
-`DYFJ_MAX_TOOL_STEPS`; served HTTP and UDS engines also load
+`DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads
 `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1
-through 64, and the environment value takes precedence for served engines. The
+through 64, and the environment value takes precedence for the engine. The
 final receipt reports `Tool steps: used/limit` and marks when the configured
 limit ended tool use.
 
@@ -548,6 +567,34 @@ server, tool, revision, and outcome metadata. Use a dedicated, minimally scoped
 server credential; the bearer token grants whatever authority the MCP server
 assigns to it.
 
+A configured server can also back the native runner's `web_search` and
+`web_fetch` tools. Name the upstream tools under `capabilities`; each named tool
+must also appear in the server's `tools` allowlist, and at least one of the two
+keys is required:
+
+```toml
+[[mcp.servers]]
+id = "web"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+auth = { type = "bearer", secret = "web_mcp" }
+tools = [
+  { name = "search", effect = "read", approval = "allow" },
+  { name = "fetch", effect = "read", approval = "allow" },
+]
+capabilities = { search_tool = "search", fetch_tool = "fetch" }
+```
+
+The first ready server that declares a discovered search tool supplies
+`web_search`, and likewise for `web_fetch`. `web_search` takes a query and an
+optional limit (1–10, default 5) and returns bounded snippets, each with a
+source ID (`s1`, `s2`, …) when it carries a URL. `web_fetch` takes either an
+HTTPS URL or a source ID from the current turn's latest search, refuses
+non-public hosts, and passes the canonical URL to the upstream fetch tool. Per
+turn, at most 3 searches and 5 fetches run, returned text is capped at 40,000
+characters per fetch and 100,000 per turn, and results are framed as untrusted
+external data.
+
 Which models exist, what they cost, and which tier they sit in is registry data,
 not code - see the current catalog in `schema/catalog/001_models.sql`. Catalog
 pricing and availability rows are operator-curated seed values, not
@@ -562,7 +609,7 @@ From the repo root:
 mkdir -p data/dolt
 cd data/dolt
 dolt init
-for dir in ../../schema/current ../../schema/catalog ../../schema/migrations; do
+for dir in ../../schema/current ../../schema/catalog; do
     find "$dir" -maxdepth 1 -name '*.sql' | sort | while read -r f; do
         dolt sql < "$f"
     done
@@ -571,7 +618,10 @@ dolt sql-server --host 127.0.0.1 --port 3306 &
 cd ../..
 ```
 
-The `data/` directory is gitignored.
+The `data/` directory is gitignored. A fresh database takes the current baseline
+and the catalogs only; `schema/migrations/` upgrades a database created before
+the baseline cut and is not applied on top of it (see
+[`schema/README.md`](schema/README.md)).
 
 ### Run Workbench
 
@@ -593,6 +643,7 @@ prefix. Common commands are:
 ./prototype/dist/dyfj models
 ./prototype/dist/dyfj sessions
 ./prototype/dist/dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
+./prototype/dist/dyfj stop    # stop the running runtime at the socket
 ```
 
 The HTTP peer server is retired. UDS JSON-RPC is the only seam
@@ -627,12 +678,27 @@ execs the compiled binary on the default socket path and falls back to
 `deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or
 `XDG_RUNTIME_DIR` shifts the path.
 
-The seam exposes read methods for `runtime/status`, `surface/snapshot`,
-`models/list`, `sessions/list`, `events/query`, `tools/list`, and
-`tools/inspect`, the narrow operator-approved `friction/post` method, plus
-streaming `turn` and cancellation `turn/cancel` methods
+The seam exposes read methods for `runtime/liveness`, `runtime/status`,
+`surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
+`events/query`, `ideas/list`, `ideas/get`, `packets/list`, `packets/get`,
+`tools/list`, and `tools/inspect`; `runtime/stop`, which shuts the runtime down
+for `dyfj stop`; the narrow operator-approved `friction/post` method;
+`ideas/mark` and `packets/draft`; plus streaming `turn` and cancellation
+`turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications;
-the receipt is the result). `runtime/status` returns both the simple method id
+the receipt is the result). `runtime/liveness` is the cheap probe `dyfj status`
+(and so the launcher's autostart check) sends first; it loads no models and
+queries no Dolt state.
+`sessions/inspect` returns one session's record, workspace, and event count.
+`ideas/mark` records a candidate idea against a session, optionally anchored to
+one of its events, and `packets/draft` drafts a work packet (title, source
+context, operator intent, proposed acceptance criteria, verifier provenance)
+from an idea or event. Ideas and packets are held in the runtime's process
+memory only: they are not written to Dolt and do not survive a restart. The REPL
+drives them with `/idea mark [--event <event-id>] <label...>`, `/idea list`,
+`/idea show <idea-id>`, `/packet draft [<idea-id>] [--idea <id>] [--event <id>]
+[--issue <id>] [--title <title>]`, `/packet list`, and `/packet show
+<packet-id>`. `runtime/status` returns both the simple method id
 list and grouped method catalog metadata for CLI/TUI/GUI surfaces. The `dyfj`
 CLI drives turns over this seam, renders companion markdown line-by-line while
 streaming, wraps prose toward a 100-column maximum without splitting words,
@@ -846,11 +912,12 @@ Useful validation tasks:
 
 ```sh
 deno task test            # repository aggregate gate (full green bar)
-deno task test:fast       # policy checks + source typecheck, for local feedback
+deno task test:fast       # policy checks, source typecheck, Deno.test unit lane
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
 deno task verify-workbench-events
+(cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
 
 `deno task test` runs a set of deterministic policy checks, each reported under
@@ -887,11 +954,24 @@ capability and claims no remote review, acceptance testing, or publication —
 private gates (disclosure review, independent model review, operator acceptance)
 remain outside this repository.
 
-After the policy checks, the gate runs the retired-surface scan, the source and
-recursive test-file typechecks, the prototype unit suite, current and historical
-schema checks, non-ignored Rust tests using offline SQLx metadata and no
-inherited `DATABASE_URL`, and an isolated-Dolt integration lane (including UDS
-and MCP round trips). The task resolves the Deno executable selected for the
+After the policy checks, the gate runs the retired-surface scan, the
+`arch.imports` module-boundary check, the source and test-file typechecks (both
+file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
+never hand-listed), the prototype `Deno.test` unit lane (`test.unit`: every
+non-integration, non-golden `Deno.test` file, run in parallel with the op and
+resource sanitizers enabled and no run, net, or env grant), the prototype Vitest
+unit suite (files that import `vitest`; it may only shrink), current and
+historical schema checks, non-ignored Rust tests using offline SQLx metadata and
+no inherited `DATABASE_URL`, an isolated-Dolt integration lane (including UDS
+and MCP round trips), and the golden characterization lane (`test.golden`). The
+golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
+model server and a loopback Linear MCP server, runs the engine server and the
+`dyfj` CLI as child processes, and compares normalized captures (stream frames,
+RPC responses, rendered CLI output, and every `events` and `sessions` row a
+scenario writes) with the snapshots committed under
+`prototype/testing/golden/snapshots/`. Its tests get loopback TCP and the exact
+Unix socket of each engine server they start, and cannot write the snapshot
+directory unless run with `--update`. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
 lane and permission grant. The prototype Vitest lane is exclusive and bounded:
 one operator-scoped lock (`$HOME/.dyfj/run/dyfj-vitest-run.lock`) refuses a
@@ -922,11 +1002,42 @@ The Rust tracer test retains its manual-run `.env` loader, but the fixture's
 explicit `DATABASE_URL` takes precedence, so the lane does not use the
 operator's Dolt database. It requires Deno, Dolt, and the pinned Rust toolchain.
 
+`arch.imports` (`scripts/arch-imports.ts`, reported under `test.aggregate`)
+builds the module graph of every module under `prototype/src`,
+`prototype/mcp`, `prototype/scripts`, and `prototype/diagnostics` (once it
+exists) with `deno info --json` (`scripts/arch-imports-graph.ts`, offline and
+config-free): static imports, re-exports, and dynamic `import()`, with
+type-only edges (`import type`, `export type`, `typeof import()`) marked.
+Because deno's graph merges a dynamic import into a static import of the same
+module and has no entry for a non-literal `import()`, every `import()`
+expression is also collected with `deno lint` and a repository-owned plugin
+(`scripts/arch-imports-lint-plugin.ts`, configured by
+`scripts/arch-imports-lint.json`). It maps each module to the target layer in
+`specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
+`scripts/arch-layers.json`) and checks import cycles, upward and non-listed
+same-layer edges, the `cli/` allow-list, and dynamic local imports, literal or
+not. A module that fails to load or a local import that does not resolve fails
+the lane. It runs in ratchet mode: current violations are recorded in
+`scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
+that baseline and on any baseline entry that no longer occurs, so the baseline
+can only shrink. An intentional cycle is allowed only by a named entry in
+`scripts/arch-cycles.json` (empty today) that lists its exact edges, each of
+which must lie inside an import cycle, a justification, and an existing test
+file; an entry exempts its edges from the cycle and dynamic-import rules only,
+never from layer direction or the `cli/` allow-list. Deep imports that bypass a
+`mod.ts`, modules over 600 lines, and functions over 150 lines are reported
+without failing (`scripts/arch-imports-size.ts`; its function spans come from a
+small best-effort tokenizer). After an intended reduction, regenerate the
+baseline with
+`deno run --allow-read=. --allow-run=deno --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
+
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
 on pull requests and pushes to `main`, with a read-only token, no secrets, and
 the subject/range binding described above. Its stable check name, `full-gate`,
-is the intended branch-protection required check. The workflow pins its one
+is the intended branch-protection required check. A second job,
+`macos-portability`, runs the same command on a macOS runner so process,
+filesystem, and runtime portability are observable. The workflow pins its one
 third-party action by full commit digest (watched by Dependabot), installs Deno
 2.9.6 and Dolt 2.3.1 from exact-version release URLs — never a `latest` URL,
 never a script piped into a shell — and checks each downloaded archive against a
@@ -940,8 +1051,9 @@ toolchain is installed from the exact pin in `core/rust-toolchain.toml`.
 Workflow-hygiene tests inside the gate assert those properties — including that
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
-`deno task test:fast` runs every deterministic policy check plus the source
-typecheck, reusing the production lane definitions verbatim for quick local
+`deno task test:fast` runs every deterministic policy check (including
+`arch.imports`) plus the contract package checks, the source typecheck, and the
+`test.unit` lane, reusing the production lane definitions verbatim for quick local
 feedback; it is a convenience, not the green bar — `deno task test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
 public deterministic checks it runs.
@@ -1083,6 +1195,9 @@ Things that exist as boxes on a diagram.
   versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool
   results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
+  _Runtime status: partly implemented. Sessions and their events persist in
+  Dolt, and `--session` resumes a session; rewind and fork are not
+  implemented, and artifacts are not stored._
 - **Inter-Agent Contracts & Capability Discovery.** Bilateral registration:
   agents advertise capabilities, agents declare needs, the substrate matches
   them. Per Section 1: the shared runtime event schema carries the audit and
@@ -1129,6 +1244,9 @@ Touch every subsystem.
 - **Observability.** OpenTelemetry metadata is mandatory on the event/message
   schema. Every step (context build → LLM call → tool exec → result injection)
   gets automatic spans plus full transcript. Sampling controls volume.
+  _Runtime status: partly implemented. Every event row carries trace and span
+  IDs, and MCP calls propagate W3C trace context; there is no OpenTelemetry
+  SDK, span export, or sampling control._
 - **Permissions / Policy Engine.** Identity and authz metadata mandatory on the
   core event schema. Dedicated policy engine intercepts every tool call before
   execution. Tiered rules (allow / ask / deny) keyed on tool, pattern, or risk.
@@ -1142,9 +1260,12 @@ Touch every subsystem.
 - **Eval & Regression.** Built-in benchmark harness. Capability tests,
   regression catches, model-comparison and prompt-comparison runs. Measurement
   is part of the work product, not a side artifact.
+  _Runtime status: not implemented. The prototype has manual local-provider
+  diagnostics (`deno task model-response-modes` and similar), not an eval
+  harness._
 - **Self-reflection / planning / review loops.** Built-in mechanisms for the
   agent to critique its own output, decompose subtasks, verify results, and
-  recover from errors.
+  recover from errors. _Runtime status: not implemented._
 
 ### 6.4 Layer 3 - runtime mechanisms
 
@@ -1153,11 +1274,15 @@ How things actually execute.
 - **Streaming + interruptability + partial result handling.** Output streams.
   Users (and other agents) can interrupt mid-stream. Partial results are
   represented explicitly and can be resumed, inspected, or discarded.
+  _Runtime status: partly implemented. Turns stream over the UDS seam and
+  `turn/cancel` interrupts one; resuming a partial result is not implemented._
 - **Checkpointing + transactional state.** Every meaningful state transition is
-  checkpointed. Rollback is real, not aspirational.
+  checkpointed. Rollback is real, not aspirational. _Runtime status: not
+  implemented; there is no checkpoint or rollback mechanism._
 - **Time / async / scheduled action.** Cron-ness as a primitive: agents can take
   action on a schedule, watch for change, return async results, and reason about
-  asymmetric time between themselves and the world.
+  asymmetric time between themselves and the world. _Runtime status: not
+  implemented; there is no scheduler or cron primitive._
 
 ---
 
@@ -1379,3 +1504,62 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-15 - Status corrected: the agent loop's workspace file tools are no
   longer read-only, and the loop now carries an approval-gated `bash` escape
   hatch and a bounded `git` tool limited to status, diff, log, add and commit.
+- 2026-09-25 - Restructuring specifications added under `specs/`: baseline
+  findings, target architecture, data layer, test architecture, phase-1 PRDs,
+  and sequenced agent work orders. README §4 testing bullets are superseded by
+  `specs/03-testing.md` §1 once its first work order lands.
+- 2026-09-25 - AGENTS.md engineering doctrine replaced (module graph acyclic
+  with named exceptions, runtime ownership as a tree, single writer per piece of
+  state, the event log as the write path); Section 1 now marks the
+  log-as-ground-truth decision with its current runtime status; specs updated
+  to match, including an event-first data layer and the Rust boundary at the
+  JSON-RPC seam.
+- 2026-09-26 - `specs/README.md` gains a structure-and-terminology section:
+  the authority chain from Section 1 down to work orders, artifact types,
+  phases, numbering conventions, and the rule that a work order conflicting
+  with a higher document stops for a recorded decision rather than deviating.
+- 2026-09-26 - AGENTS.md tracker-ID rule scoped rather than absolute: IDs are
+  allowed in branch names, commits, and PRs so the tracker's GitHub integration
+  can link work, stay out of code, docs, `CHANGELOG.md`, and `specs/`, and
+  never replace a public-safe explanation of the why.
+- 2026-09-26 - AGENTS.md adds two safeguards: security-shaped findings stay in
+  the private tracker until fixed, and agents take instructions only from
+  AGENTS.md, README Section 1, and `specs/` on the default branch, with
+  `.github/CODEOWNERS` requiring maintainer review of those files.
+- 2026-09-26 - Specs aligned with the privately tracked product roadmap: work
+  orders are enablers that state the capability they enable; the ACP lane is
+  deferred rather than retired; the log-as-ground-truth PRD and the phase-2
+  outline are withdrawn in favor of roadmap work; the contract package is open
+  to roadmap contract work; the interactive REPL moves to a separate client.
+- 2026-09-26 - Section 4 testing bullets revised to the doctrine in
+  `specs/03-testing.md` §1 (fakes at declared ports, conformance-proven fakes,
+  loopback fakes for third-party services, golden tests pinning behavior);
+  validation guidance documents the golden characterization lane.
+- 2026-09-26 - Section 4 notes where shared fakes live and that new tests use
+  `Deno.test`; the validation notes describe the glob-derived typecheck lists
+  and the `test.unit` lane.
+- 2026-09-26 - Test spec freshened: conformance suites land with their ports
+  (decision D24), and the sanitizer rule names the explicit flags the pinned
+  Deno requires instead of calling them the default.
+- 2026-09-26 - Validation guidance now documents the `arch.imports` gate lane:
+  the layer mapping, the ratchet baseline that may only shrink, the named-cycle
+  allow-list, and the non-failing deep-import and size reports.
+- 2026-09-26 - WO-02's acceptance now counts three baseline cycles, matching the
+  three listed in `specs/00-baseline-findings.md` and the tree; "four" was a
+  miscount introduced when the ACP cycle was reinstated.
+- 2026-09-27 - Specs decision D25 replaces D3's "TypeScript only" wording: phase
+  1 changes only the TypeScript tier, TypeScript is the temporary tier under
+  Layer 0 stance #3, and no enabler may make moving a stabilized component to
+  Rust harder.
+- 2026-09-27 - `specs/01-architecture.md` §3 names `workspaceRootForTransport`
+  in the `contract/` row, where WO-08 placed it as trust-boundary policy.
+- 2026-09-27 - Docs drift corrected against the code: Ollama `qwen3.6:35b-a3b`
+  is the local default and xAI is listed among hosted providers; the retired
+  HTTP engine is gone from the tool-step and config text; a fresh database
+  applies the baseline and catalogs only; the UDS method list, `/idea` and
+  `/packet`, and `web_search`/`web_fetch` are documented; the macOS gate job is
+  named; Section 6 items carry runtime-status notes; the stale D2 flow diagram
+  is removed in favor of the C4 workspace.
+- 2026-09-27 - Architecture spec §3 moves error summarizing from the `kernel/`
+  (L0) row to the `contract/` (L1) row: deciding which error messages cross the
+  wire as trusted is trust-boundary policy, not a policy-free helper.

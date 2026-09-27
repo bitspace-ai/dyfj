@@ -1,8 +1,8 @@
 import {
   compareStructuredOutputModes,
   type StructuredOutputReport,
-} from "../src/structured-output";
-import { defaultLocalWorkbenchModels } from "../src/provider";
+} from "../src/structured-output.ts";
+import { defaultLocalWorkbenchModels } from "../src/provider.ts";
 
 const prompt = firstPrompt(Deno.args) ??
   'Return {"answer":"ok","confidence":"high"} and no other text.';

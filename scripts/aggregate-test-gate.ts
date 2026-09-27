@@ -398,6 +398,25 @@ export function productionLanes(
       env: binding,
     },
     {
+      // Module-boundary ratchet (specs/01-architecture.md section 4): runs
+      // under the aggregate check id rather than a new required id, so the
+      // receipt check-id vocabulary is unchanged. It builds the module graph
+      // with `deno info`, run through the same selected Deno binary.
+      label: "Architecture import rules (arch.imports)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--no-prompt",
+        `--allow-read=${root}`,
+        `--allow-run=${denoExecutable}`,
+        "scripts/arch-imports.ts",
+        `--deno=${denoExecutable}`,
+      ],
+      cwd: root,
+    },
+    {
       label: "Receipt schema validation",
       checkId: "receipt.schema",
       command: denoExecutable,
@@ -422,6 +441,7 @@ export function productionLanes(
         "scripts/subject-check.test.ts",
         "scripts/range-checks.test.ts",
         "scripts/dependency-policy.test.ts",
+        "scripts/arch-imports.test.ts",
       ],
       cwd: root,
       // Lane children run with a cleared environment, so the temp root the
@@ -434,28 +454,11 @@ export function productionLanes(
       command: denoExecutable,
       checkId: "test.aggregate",
       commandLabel: "deno",
-      args: [
-        "check",
-        "--sloppy-imports",
-        "src/workbench.ts",
-        "src/jsonrpc.ts",
-        "src/jsonrpc-peer.ts",
-        "src/uds-server.ts",
-        "src/uds-path.ts",
-        "src/uds-client.ts",
-        "src/uds-serve.ts",
-        "mcp/server.ts",
-        "src/cli.ts",
-        "scripts/esbuild-binary.ts",
-        "scripts/deno-executable.ts",
-        "scripts/integration-child-environment.ts",
-        "scripts/run-vitest.ts",
-        "scripts/test-process-harness.ts",
-        "scripts/test-process-reaper.ts",
-        "scripts/isolated-dolt-fixture.ts",
-        "scripts/isolated-dolt-integration.ts",
-      ],
+      // The file list is derived by globbing in `scripts/test-files.ts`, the
+      // same source the `check` task uses; nothing is hand-listed here.
+      args: ["task", "check:sources"],
       cwd: prototype,
+      env: { DENO_BIN: denoExecutable },
     },
     {
       label: "Prototype test-file typecheck",
@@ -465,6 +468,15 @@ export function productionLanes(
       args: ["task", "check:tests"],
       cwd: prototype,
       env: { DENO_BIN: denoExecutable },
+    },
+    {
+      label: "Prototype unit Deno.test suite (test.unit)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: ["task", "test:unit"],
+      cwd: prototype,
+      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
     {
       label: "Prototype unit Vitest suite",
@@ -604,6 +616,26 @@ export function productionLanes(
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
+    // Golden characterization suite (`test.golden`): black-box snapshots of
+    // the engine server and CLI over an isolated Dolt fixture. The runner
+    // itself needs no network; it grants the tests loopback and the exact
+    // engine sockets it creates.
+    {
+      label: "Golden characterization suite (test.golden)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN",
+        "--allow-read=.",
+        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
+        `--allow-run=${denoExecutable}`,
+        "testing/golden/run.ts",
+      ],
+      cwd: prototype,
+      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+    },
   ];
 }
 
@@ -622,10 +654,12 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Changed-Markdown link check",
   "Changed-shell parse check",
   "Dependency policy check",
+  "Architecture import rules (arch.imports)",
   "Receipt schema validation",
   "Contract closure report generation",
   "Contract package tests",
   "Prototype source typecheck",
+  "Prototype unit Deno.test suite (test.unit)",
 ];
 
 export function fastLanes(

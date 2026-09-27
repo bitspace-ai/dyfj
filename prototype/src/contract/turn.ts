@@ -16,6 +16,8 @@
  * (see `uds-server.ts`), so dropping or renaming a receipt field stops compiling.
  */
 
+import { utf8SafePrefix } from "../kernel/mod.ts";
+
 /**
  * Native-loop receipt carried identically on buffered and streaming turns
  * over the UDS JSON-RPC seam. External-agent turns use the separate receipt below because ACP
@@ -490,13 +492,12 @@ export function summarizeError(error: unknown): string {
       return `[${label}, ${encoded.byteLength} bytes]`;
     }
     if (encoded.byteLength <= MAX_ERROR_SUMMARY_BYTES) return message;
-    // Byte-safe boundary: walk the cut back over UTF-8 continuation bytes
-    // (top two bits `10`) so it lands on a character start — the excerpt is
-    // genuinely at most MAX_ERROR_SUMMARY_BYTES, with no replacement
+    // Byte-safe boundary: the cut lands on a character start, so the excerpt
+    // is genuinely at most MAX_ERROR_SUMMARY_BYTES, with no replacement
     // character inflating it past the stated bound.
-    let end = MAX_ERROR_SUMMARY_BYTES;
-    while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
-    const excerpt = new TextDecoder("utf-8").decode(encoded.slice(0, end));
+    const excerpt = new TextDecoder("utf-8").decode(
+      utf8SafePrefix(encoded, MAX_ERROR_SUMMARY_BYTES),
+    );
     return `${excerpt}… [truncated; DomainError, ${encoded.byteLength} bytes]`;
   } catch {
     // Even summarization can fail — encoding a near-limit string can throw
@@ -511,83 +512,6 @@ export function summarizeError(error: unknown): string {
 // MAX_ERROR_SUMMARY_BYTES because it is one piece of a bigger message, not
 // the whole thing.
 export const MAX_REASON_FIELD_BYTES = 200;
-
-/**
- * Take at most `limit` code points from `source` and stop. A string is a
- * valid source; the iterator is not drained past the budget.
- */
-export function takeCodePointPrefix(
-  source: Iterable<string>,
-  limit: number,
-): string[] {
-  const out: string[] = [];
-  if (limit <= 0) return out;
-  for (const ch of source) {
-    out.push(ch);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
-/**
- * Cap `raw` to `maxBytes` UTF-8 bytes (byte-safe — never splits a multi-byte
- * character) and strip C0/C1 control characters and DEL, including the ESC
- * byte that starts a terminal escape sequence. Tab/newline/carriage-return
- * collapse to a single space rather than being dropped outright — this
- * function's callers are single-field, 200–500-byte strings (a reason, a
- * wire-derived error message), not multi-line content, and LF/CR are their
- * own injection surface at that size: an embedded LF can forge a fake log
- * line in a durable/console record, and a CR can rewind the cursor to
- * overwrite a rendered prefix in a terminal. Collapsing instead of dropping
- * keeps words from running together (a reason of "line one\nline two" reads
- * as "line one line two", not "line oneline two").
- *
- * DomainError is a provenance marker, not a content filter: it means "this
- * codebase constructed the message," not "every byte in it is safe to
- * display or store." Two places still need explicit sanitizing even for
- * trusted DomainErrors:
- *   - A reason/comment field interpolated into a DomainError's message that
- *     originated from an operator, a remote approval peer, or an injected
- *     callback the caller controls — content this codebase did not author,
- *     merely relayed.
- *   - A message reconstructed on one side of the wire from a string the
- *     OTHER side sent — the sender already ran its own message through
- *     summarizeError, but the wire itself is not a trust boundary
- *     (the UDS peer is another local process, not this one), so honest
- *     content passes through unaffected
- *     while a hostile or buggy peer's content is bounded and inert.
- */
-export function sanitizeBoundaryText(raw: string, maxBytes: number): string {
-  // Iterate by code point (not UTF-16 code unit) so a surrogate pair stays
-  // intact, and filter by numeric range rather than a regex/string literal
-  // containing control characters -- those are exactly the bytes this
-  // function exists to strip, so building the filter out of numeric
-  // comparisons avoids ever writing one into the source.
-  let stripped = "";
-  for (const ch of raw) {
-    const code = ch.codePointAt(0) ?? 0;
-    const isTab = code === 9;
-    const isLf = code === 10;
-    const isCr = code === 13;
-    if (isTab || isLf || isCr) {
-      stripped += " ";
-      continue;
-    }
-    const isC0Control = code <= 31;
-    const isDel = code === 127;
-    const isC1Control = code >= 128 && code <= 159;
-    if (isC0Control || isDel || isC1Control) continue;
-    stripped += ch;
-  }
-  const encoded = new TextEncoder().encode(stripped);
-  if (encoded.byteLength <= maxBytes) return stripped;
-  // Byte-safe: walk the cut point back over any trailing UTF-8 continuation
-  // bytes (top two bits `10`) so it lands on a character boundary -- no
-  // replacement characters, no risk of landing mid multi-byte sequence.
-  let end = maxBytes;
-  while (end > 0 && (encoded[end] & 0xc0) === 0x80) end--;
-  return new TextDecoder("utf-8").decode(encoded.slice(0, end));
-}
 
 /**
  * Canonical 26-character Crockford Base32 ULID session identifier regex.

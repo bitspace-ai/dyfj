@@ -6,6 +6,7 @@
 // `approval` requests carry mutating-tool, budget, and exact ACP permission
 // option decisions over the same duplex seam.
 
+import { generateTraceId, stripAnsiEscapes } from "./kernel/mod.ts";
 import {
   defaultLocalWorkbenchModels,
   getModelAccessModality,
@@ -15,7 +16,7 @@ import {
   selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
-} from "./provider";
+} from "./provider.ts";
 import {
   defaultIdeaPacketRegistry,
   draftWorkPacketFromContext,
@@ -24,7 +25,7 @@ import {
   markWorkbenchIdea,
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
-} from "./idea-packet";
+} from "./idea-packet.ts";
 import {
   compareSessionActivity,
   countWorkbenchSessionEvents,
@@ -36,35 +37,36 @@ import {
   type WorkbenchProjectSessions,
   type WorkbenchSessionEvent,
   type WorkbenchSessionSummary,
-} from "./sessions";
+} from "./sessions.ts";
 import {
   type RpcContext,
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
-} from "./jsonrpc";
-import { JsonRpcPeer } from "./jsonrpc-peer";
-import { runWorkbenchRuntime, type WorkbenchAuthContext } from "./workbench";
+} from "./jsonrpc.ts";
+import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+import { type ExternalAgentRunner, runWorkbenchRuntime } from "./workbench.ts";
+import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import {
   AGENT_DEFAULTS,
   type PermissionLevel,
   type WorkbenchConfig,
-} from "./config";
+} from "./config.ts";
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
   runawayAnomalyApprovalRequest,
-} from "./budget";
-import type { TurnStreamFrame } from "./turn-contract";
-import { isSupersedingRetryStarted, summarizeError } from "./turn-contract";
+} from "./budget.ts";
+import type { TurnStreamFrame, WorkbenchAuthContext } from "./contract/mod.ts";
+import { isSupersedingRetryStarted, summarizeError } from "./contract/mod.ts";
 import {
   engineConfigToTurnDeps,
   executeTurn,
   isValidTurnId,
   resolveTurnFromBody,
   type TurnRequestBody,
-  type WorkbenchHttpRuntime,
-} from "./turn-runner";
+  type TurnRuntime,
+} from "./turn-runner.ts";
 import {
   type CommandDefinition,
   type ConfirmToolApproval,
@@ -72,9 +74,9 @@ import {
   invokeCommandWithEvent,
   registerCoreCommands,
   type ToolApprovalVerdict,
-} from "./commands";
-import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client";
-import { AcpSessionHandleMap } from "./acp-session-map";
+} from "./commands.ts";
+import type { AcpPermissionPrompt, AcpPermissionSelection } from "./acp-client.ts";
+import { AcpSessionHandleMap } from "./acp-session-map.ts";
 import {
   FRICTION_SEVERITIES,
   type FrictionContext,
@@ -83,8 +85,8 @@ import {
   isLinearCommentCommandId,
   postFriction,
   requireFrictionIssueIdentifier,
-} from "./friction";
-import { generateTraceId, writeEvent as writeDoltEvent } from "./utils";
+} from "./friction.ts";
+import { writeEvent as writeDoltEvent } from "./utils.ts";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -144,7 +146,7 @@ export interface WorkbenchSurfaceSnapshot {
 }
 
 export interface WorkbenchUnixServerOptions {
-  runRuntime?: WorkbenchHttpRuntime;
+  runRuntime?: TurnRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
   listSessions?: (
     options: { project?: string; limit?: number },
@@ -267,14 +269,6 @@ function sanitizeRpcIdentifier(
     );
   }
   return val;
-}
-
-function stripAnsiEscapes(text: string): string {
-  return text
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, "")
-    .replace(/\x1b[()*+-./][0-9A-Za-z]/g, "")
-    .replace(/\x1b[@-Z\\-_]/g, "");
 }
 
 function sanitizeRpcString(
@@ -1234,6 +1228,16 @@ function resolveEngineTurnDeps(
   };
 }
 
+// The production turn runtime: the engine with its external-agent runner bound
+// here, at the composition root, so the engine never imports the ACP runner.
+function composeTurnRuntime(acpSessions?: AcpSessionHandleMap): TurnRuntime {
+  const externalAgentRunner: ExternalAgentRunner = {
+    run: (input) =>
+      runExternalAgentWorkbenchRuntime(input, { sessionMap: acpSessions }),
+  };
+  return (input) => runWorkbenchRuntime(input, { externalAgentRunner });
+}
+
 // The `turn` method: run an agentic turn over the shared turn-runner core —
 // lock/resume/clearance/paid — streaming intermediate text
 // deltas and runtime events back as `stream` notifications on this connection.
@@ -1241,7 +1245,7 @@ function resolveEngineTurnDeps(
 export function buildTurnHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
-  const runRuntime = options.runRuntime ?? runWorkbenchRuntime;
+  const runRuntime = options.runRuntime ?? composeTurnRuntime();
   const fetchSessionEvents = options.fetchSessionEvents ??
     fetchWorkbenchSessionEvents;
   const engineDeps = resolveEngineTurnDeps(options);
@@ -1528,8 +1532,7 @@ export async function serveWorkbenchUnix(
   const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
   const serverOptions: WorkbenchUnixServerOptions = {
     ...options,
-    runRuntime: options.runRuntime ??
-      ((input) => runWorkbenchRuntime(input, { acpSessions })),
+    runRuntime: options.runRuntime ?? composeTurnRuntime(acpSessions),
   };
   const handlers: RpcHandlers = {
     ...buildWorkbenchHandlers(serverOptions),

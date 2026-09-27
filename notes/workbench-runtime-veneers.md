@@ -6,6 +6,11 @@ Status: historical implementation inventory for the original CLI/HTTP split
 (2026-06-04). The direct tasks below were removed 2026-08-26; the operator
 entrypoint is `dyfj` over the Unix-socket seam.
 
+> **Status update (2026-09-27):** `deno task workbench` and the standalone argv
+> CLI in `src/workbench.ts` outlived the 2026-08-26 removal above; they were
+> removed on 2026-09-27, and the task names below are history, not commands to
+> run.
+
 ## Original Direct Entry Points
 
 - `prototype/deno.json` exposes `deno task workbench`, which runs
