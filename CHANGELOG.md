@@ -44,9 +44,11 @@ README are tracked separately in its Revision history section.
   rather than in `arguments`, so it is shown with that warning and a line
   naming what approving authorises. A spending request whose warning cannot be
   read is denied rather than reduced to a bare question: an approval nobody
-  could read is not consent. A request that offers options none of which can be read is refused
-  rather than falling back to yes/no, where `y` would grant broader consent
-  than any option offered.
+  could read is not consent. A request that offers options is refused unless
+  every option can be read, as the TypeScript CLI requires: each needs an id, a
+  name and a known kind, ids are unique, and there are at most 16. It does not
+  fall back to yes/no, where `y` would grant broader consent than any option
+  offered.
 
   Ctrl-C cancels an in-flight turn through `turn/cancel` and leaves the session
   alive; a second press abandons the wait. Inside an approval prompt Ctrl-C

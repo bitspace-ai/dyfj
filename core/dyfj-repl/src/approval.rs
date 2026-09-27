@@ -67,22 +67,49 @@ fn describe(params: &Value) -> String {
     }
 }
 
+/// The most options a request may offer, matching MAX_ACP_PERMISSION_OPTIONS
+/// in the TypeScript CLI.
+const MAX_OPTIONS: usize = 16;
+
+/// The option kinds the runtime's permission requests carry.
+const OPTION_KINDS: [&str; 4] = ["allow_once", "allow_always", "reject_once", "reject_always"];
+
 /// Options for an exact-permission request, when the runtime offers a choice
 /// rather than a yes/no.
+///
+/// The list is taken whole or not at all, as the TypeScript CLI takes it: every
+/// entry needs a non-empty `optionId`, a readable name and a known kind, ids
+/// must be unique, and there are at most MAX_OPTIONS. One entry that fails
+/// empties the list, and an empty list on a request that offers options is
+/// refused by `ask`. Showing the entries that did parse would present a
+/// partial list as the whole choice.
 fn options(params: &Value) -> Vec<(String, String)> {
-    params
-        .get("options")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|option| {
-                    let id = option.get("optionId").or_else(|| option.get("id"))?;
-                    let name = option.get("name").and_then(Value::as_str).unwrap_or("option");
-                    Some((id.as_str()?.to_string(), name.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    let Some(list) = params.get("options").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    if list.is_empty() || list.len() > MAX_OPTIONS {
+        return Vec::new();
+    }
+    let mut choices: Vec<(String, String)> = Vec::with_capacity(list.len());
+    for option in list {
+        let id = option.get("optionId").and_then(Value::as_str).filter(|id| !id.is_empty());
+        let name = option
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty());
+        let kind_known = option
+            .get("kind")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| OPTION_KINDS.contains(&kind));
+        let (Some(id), Some(name), true) = (id, name, kind_known) else {
+            return Vec::new();
+        };
+        if choices.iter().any(|(seen, _)| seen == id) {
+            return Vec::new();
+        }
+        choices.push((id.to_string(), name.to_string()));
+    }
+    choices
 }
 
 /// Request kinds that are not a tool call and carry their detail in named
@@ -262,15 +289,46 @@ mod tests {
     }
 
     #[test]
-    fn reads_options_from_either_id_field() {
+    fn reads_a_complete_option_list() {
         let params = json!({"options": [
-            {"optionId": "allow-once", "name": "Allow once"},
-            {"id": "always", "name": "Always allow"}
+            {"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+            {"optionId": "reject", "name": "Reject", "kind": "reject_once"}
         ]});
         let parsed = options(&params);
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].0, "allow-once");
-        assert_eq!(parsed[1].0, "always");
+        assert_eq!(
+            parsed,
+            vec![
+                ("allow-once".to_string(), "Allow once".to_string()),
+                ("reject".to_string(), "Reject".to_string())
+            ]
+        );
+    }
+
+    /// One entry that cannot be read voids the whole list rather than being
+    /// dropped from it.
+    #[test]
+    fn one_unreadable_entry_voids_the_list() {
+        let good = json!({"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"});
+        for bad in [
+            json!({"optionId": "", "name": "Empty id", "kind": "allow_once"}),
+            json!({"id": "legacy", "name": "No optionId", "kind": "allow_once"}),
+            json!({"optionId": "unnamed", "kind": "allow_once"}),
+            json!({"optionId": "blank", "name": "  ", "kind": "allow_once"}),
+            json!({"optionId": "odd", "name": "Unknown kind", "kind": "allow_forever"}),
+            json!({"optionId": "allow-once", "name": "Duplicate id", "kind": "reject_once"}),
+            json!("allow-once"),
+        ] {
+            let params = json!({"options": [good.clone(), bad.clone()]});
+            assert!(options(&params).is_empty(), "list with {bad} must be void");
+        }
+    }
+
+    #[test]
+    fn more_options_than_the_ceiling_voids_the_list() {
+        let list: Vec<Value> = (0..=MAX_OPTIONS)
+            .map(|i| json!({"optionId": format!("o{i}"), "name": format!("Option {i}"), "kind": "allow_once"}))
+            .collect();
+        assert!(options(&json!({"options": list})).is_empty());
     }
 
     /// Escape sequences in runtime-supplied text must not be able to hide what
@@ -333,6 +391,10 @@ mod tests {
     async fn unreadable_options_are_refused_in_every_shape() {
         for options in [
             json!([{"optionId": 1, "name": "Allow once"}]),
+            json!([
+                {"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+                {"optionId": "allow-always", "kind": "allow_always"}
+            ]),
             json!({"optionId": "allow-once"}),
             json!([]),
             json!("allow-once"),
