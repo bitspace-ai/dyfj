@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import type { EventInsert } from "./store/mod.ts";
 import {
   buildBashCommand,
   buildCommandToolCallEventPayload,
@@ -334,7 +335,7 @@ describe("invalid-arguments feedback", () => {
 
   test("the persisted tool_call event records the same corrective feedback", async () => {
     const registry = createCommandRegistry([buildReadFileCommand("/work")]);
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
 
     const result = await invokeCommandWithEvent(
       registry,
@@ -443,7 +444,7 @@ describe("search_memory (external recall)", () => {
 
   test("propagates the canonical tool span and records client evidence", async () => {
     const registry = createCommandRegistry();
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
     let receivedTrace: unknown;
     registerCoreCommands(registry, {
       searchMemory: (_query, trace) => {
@@ -903,7 +904,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
       executor: () => "ok",
     };
     const registry = createCommandRegistry([writeCmd]);
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
     await invokeCommandWithEvent(
       registry,
       call(
@@ -957,7 +958,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
         ["secret token ABC123"],
       ]
     ) {
-      const events: Record<string, unknown>[] = [];
+      const events: EventInsert[] = [];
       const result = await invokeCommandWithEvent(
         registry,
         call(
@@ -998,7 +999,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
     registerCoreCommands(registry, {
       readMemory: async (slug) => `# ${slug}`,
     });
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
     await invokeCommandWithEvent(registry, call(), {
       sessionId: "01TESTSESSION00000000000000",
       traceId: "0123456789abcdef0123456789abcdef",
@@ -1017,7 +1018,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
     const registry = createCommandRegistry([
       readCommand({ redactArguments: true }),
     ]);
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
     const result = await invokeCommandWithEvent(
       registry,
       call({
@@ -1227,7 +1228,7 @@ describe("buildCommandToolCallEventPayload", () => {
       executor: () => "exit 0\nANTHROPIC_API_KEY=fixture-should-not-persist",
     };
     const registry = createCommandRegistry([sensitiveCmd]);
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
     const result = await invokeCommandWithEvent(
       registry,
       call({ command: "env" }, { commandId: "bash" }),
@@ -1282,7 +1283,7 @@ describe("buildCommandToolCallEventPayload", () => {
 describe("invokeCommandWithEvent", () => {
   test("executes memory.read and writes one success event", async () => {
     const registry = createCommandRegistry();
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
     registerCoreCommands(registry, {
       readMemory: async (slug) => `# ${slug}`,
     });
@@ -1314,7 +1315,7 @@ describe("invokeCommandWithEvent", () => {
   test("writes a denial event when memory.read arguments are invalid", async () => {
     let executed = false;
     const registry = createCommandRegistry();
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
     registerCoreCommands(registry, {
       readMemory: async () => {
         executed = true;
@@ -1498,7 +1499,7 @@ describe("read_file → tool_call event containment", () => {
   test("completes without throwing and records a capped event with a full-size marker", async () => {
     const registry = createCommandRegistry();
     registerCoreCommands(registry, { workspaceRoot: root });
-    const events: Record<string, unknown>[] = [];
+    const events: EventInsert[] = [];
 
     const result = await invokeCommandWithEvent(
       registry,

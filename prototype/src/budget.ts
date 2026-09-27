@@ -29,16 +29,18 @@ import {
   generateULID,
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
-import type { Journal, SpendReader } from "./store/mod.ts";
+import {
+  budgetSummaryEvent,
+  type EventInsert,
+  type Journal,
+  type SpendReader,
+} from "./store/mod.ts";
 import {
   type Env,
   processEnv,
   resolveBudgetDefaultsFromEnv,
 } from "./config/mod.ts";
-import {
-  DomainError,
-  MAX_REASON_FIELD_BYTES,
-} from "./contract/mod.ts";
+import { DomainError, MAX_REASON_FIELD_BYTES } from "./contract/mod.ts";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -138,7 +140,10 @@ export interface PreCallCheck {
   reason?: BudgetLimitReason;
 }
 
-export type BudgetLimitReason = "per_call_limit" | "session_limit" | "daily_limit";
+export type BudgetLimitReason =
+  | "per_call_limit"
+  | "session_limit"
+  | "daily_limit";
 
 /** Structured warn payload for a budget-ceiling confirmation (telemetry-safe). */
 export interface BudgetCeilingWarning {
@@ -198,7 +203,9 @@ export function buildBudgetCeilingWarning(
   };
 }
 
-export function formatBudgetCeilingWarning(warning: BudgetCeilingWarning): string {
+export function formatBudgetCeilingWarning(
+  warning: BudgetCeilingWarning,
+): string {
   const label = (scope: BudgetLimitReason): string =>
     scope === "per_call_limit"
       ? "per-call limit"
@@ -306,7 +313,11 @@ export async function ensureBudgetAllowed(
       scopeSoFar,
     );
   }
-  const warning = buildBudgetCeilingWarning(preCall, promptReason, crossedScopes);
+  const warning = buildBudgetCeilingWarning(
+    preCall,
+    promptReason,
+    crossedScopes,
+  );
   const verdict = await confirm(warning);
   if (verdict.decision !== "approve") {
     throw new BudgetCeilingDeclinedError(verdict.reason);
@@ -999,12 +1010,11 @@ export class BudgetTracker {
     overrides: { eventId?: string; spanId?: string; parentSpanId?: string } =
       {},
     extra: Record<string, unknown> = {},
-  ): Record<string, unknown> {
+  ): EventInsert {
     const summary = this.getSummary();
-    return {
+    return budgetSummaryEvent({
       event_id: overrides.eventId ?? generateULID(),
       session_id: this.sessionId,
-      event_type: "budget_summary",
       trace_id: this.traceId,
       span_id: overrides.spanId ?? generateSpanId(),
       parent_span_id: overrides.parentSpanId ?? null,
@@ -1022,7 +1032,7 @@ export class BudgetTracker {
       // failed, so an audit-log gap is durably on record, not just a
       // scrolled-away console line).
       content: JSON.stringify({ ...summary, ...extra }),
-    };
+    });
   }
 
   /**

@@ -18,6 +18,7 @@ import {
   selectOnly,
 } from "./dolt-pool.ts";
 import { DoltStore } from "./dolt.ts";
+import type { EventInsert } from "./generated/rows.ts";
 
 interface Call {
   sql: string;
@@ -79,7 +80,7 @@ function scriptedPool(
 
 const SESSION = "01ABCDEF0123456789ABCDEF01";
 
-function event(fields: Record<string, unknown> = {}) {
+function event(fields: Partial<EventInsert> = {}): EventInsert {
   return {
     event_id: "01EVENT",
     session_id: SESSION,

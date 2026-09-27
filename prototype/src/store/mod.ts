@@ -13,17 +13,18 @@
  *
  * Readers return rows as the Dolt driver renders them to text, NULL as the
  * empty string: the contract every caller parsed before the port existed.
- * Typed row shapes arrive when row types are generated from the DDL
- * (`specs/02-data-layer.md` section 3).
+ * Writes are typed: `generated/rows.ts` is emitted from the DDL by
+ * `schema/codegen.ts` (`specs/02-data-layer.md` section 3), and every event is
+ * built with a per-type constructor from `events/builders.ts`.
  */
 
 export {
   MCP_STDIO_MEMORY_CLEARANCE,
   MEMORY_VISIBILITY_ALL,
   memoryClearanceFor,
-  type MemoryType,
-  type MemoryVisibility,
 } from "./memories.ts";
+export * from "./generated/rows.ts";
+export * from "./events/builders.ts";
 export {
   isDeclaredMutationKind,
   type MemoryUpsertMutation,
@@ -54,7 +55,6 @@ export {
   type CommitBatch,
   type CommitOptions,
   type CommitReceipt,
-  type EventInsert,
   type EventReader,
   invalidAsOfError,
   isValidAsOfTimestamp,

@@ -19,7 +19,7 @@ import type {
   TextRow,
 } from "./port.ts";
 import { invalidAsOfError, isValidAsOfTimestamp } from "./port.ts";
-import type { MemoryType, MemoryVisibility } from "./memories.ts";
+import type { MemoryType, MemoryVisibility } from "./generated/rows.ts";
 
 export type SqlParam = string | number | boolean | null;
 

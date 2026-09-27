@@ -8,7 +8,8 @@
  * rows. It returns the new row, or null to remove the row.
  */
 
-import type { EventInsert, TextRow } from "./port.ts";
+import type { EventInsert } from "./generated/rows.ts";
+import type { TextRow } from "./port.ts";
 
 export type ProjectedTable = "sessions" | "memories";
 

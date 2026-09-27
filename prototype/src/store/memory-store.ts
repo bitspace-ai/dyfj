@@ -14,7 +14,6 @@ import {
   type CommitBatch,
   type CommitOptions,
   type CommitReceipt,
-  type EventInsert,
   type EventReader,
   invalidAsOfError,
   isValidAsOfTimestamp,
@@ -27,7 +26,11 @@ import {
   type Store,
   type TextRow,
 } from "./port.ts";
-import type { MemoryType, MemoryVisibility } from "./memories.ts";
+import type {
+  EventInsert,
+  MemoryType,
+  MemoryVisibility,
+} from "./generated/rows.ts";
 import {
   assertProjectableRow,
   PHASE1_PROJECTORS,

@@ -4,20 +4,21 @@
  * responsibility.
  */
 
-import type { MemoryType, MemoryVisibility } from "./memories.ts";
+import type {
+  EventInsert,
+  MemoryType,
+  MemoryVisibility,
+} from "./generated/rows.ts";
 import type { UnjournaledMutation } from "./unjournaled.ts";
 
 /** A row as the driver renders it to text; SQL NULL reads as "". */
 export type TextRow = Record<string, string>;
 
-/**
- * One `events` row to append: column name to value. `null` columns are
- * omitted (the DDL default applies) and booleans are stored as 0/1. Typed
- * per-event builders replace this shape once row types are generated.
- */
-export type EventInsert = Readonly<Record<string, unknown>>;
-
 export interface CommitBatch {
+  /**
+   * Events to append, built with `events/builders.ts`. A null column is
+   * omitted, so its DDL default applies; booleans are stored as 0/1.
+   */
   events: readonly EventInsert[];
   mutations?: readonly UnjournaledMutation[];
 }
