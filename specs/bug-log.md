@@ -10,6 +10,19 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **`buildTurnHandlers` ignores its `acpSessions` option.**
+  - **Location:** `prototype/src/uds-server.ts:1248` (`buildTurnHandlers`),
+    with the option declared at `:213`.
+  - **Symptom:** when `buildTurnHandlers` is called without `runRuntime`, its
+    default runtime runs ACP turns with no session map, even if the caller
+    passed `acpSessions`. Sequential ACP turns through that path therefore
+    cannot reuse warm session handles. `serveWorkbenchUnix`, the only
+    production caller, always supplies `runRuntime` bound to its map, so the
+    served runtime is unaffected.
+  - **Suspected cause:** the default runtime is not bound to the option; only
+    `serveWorkbenchUnix` passes its map into the runtime.
+  - **Found during:** WO-08 (review). The move kept the existing behavior.
+
 - 2026-09-27 — **Terminal escape sequences are recognized three different
   ways.**
   - **Location:** `prototype/src/kernel/ansi.ts` (`stripAnsiEscapes`, used by
