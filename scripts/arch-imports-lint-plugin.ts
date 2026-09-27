@@ -25,10 +25,19 @@ type Node = any;
 
 function propertyName(node: Node): string | undefined {
   if (node.computed) {
-    return node.property?.type === "Literal" &&
-        typeof node.property.value === "string"
-      ? node.property.value
-      : undefined;
+    const property = node.property;
+    if (property?.type === "Literal" && typeof property.value === "string") {
+      return property.value;
+    }
+    // A template literal with no substitutions: ``Deno[`env`]``.
+    if (
+      property?.type === "TemplateLiteral" &&
+      (property.expressions ?? []).length === 0
+    ) {
+      const quasi = property.quasis?.[0];
+      return quasi?.cooked ?? quasi?.value?.cooked;
+    }
+    return undefined;
   }
   return node.property?.type === "Identifier" ? node.property.name : undefined;
 }
