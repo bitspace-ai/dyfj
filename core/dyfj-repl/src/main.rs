@@ -45,9 +45,11 @@ fn classify(input: &str) -> Submission {
     if trimmed == "/exit" || trimmed == "/quit" {
         return Submission::Quit;
     }
-    // Count characters, not bytes: the ceiling the runtime applies is a
-    // character count, and a byte count would reject valid multi-byte input.
-    let characters = input.chars().count();
+    // Count as the TypeScript CLI does: its ceiling is JavaScript's
+    // `line.length`, which is UTF-16 code units. A byte count would reject
+    // valid multi-byte input; a scalar count would accept an astral paste
+    // (emoji, some CJK) of up to twice what the peer allows.
+    let characters = input.encode_utf16().count();
     if characters > MAX_INPUT_CHARACTERS {
         return Submission::TooLong { characters };
     }
@@ -466,6 +468,20 @@ mod tests {
         let multibyte = "é".repeat(MAX_INPUT_CHARACTERS);
         assert!(multibyte.len() > MAX_INPUT_CHARACTERS, "the test string must be multi-byte");
         assert_eq!(classify(&multibyte), Submission::Prompt);
+    }
+
+    /// An astral character is two UTF-16 units, as it is to the TypeScript
+    /// peer's `line.length`, so half the ceiling of them is already at it.
+    #[test]
+    fn the_ceiling_counts_utf16_units_like_the_typescript_cli() {
+        let at_limit = "😀".repeat(MAX_INPUT_CHARACTERS / 2);
+        assert_eq!(classify(&at_limit), Submission::Prompt);
+
+        let over = format!("{at_limit}x");
+        assert_eq!(
+            classify(&over),
+            Submission::TooLong { characters: MAX_INPUT_CHARACTERS + 1 }
+        );
     }
 
 
