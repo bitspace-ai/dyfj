@@ -180,18 +180,30 @@ over an engine-owned `TurnState`.
 
 ```ts
 interface ProviderAdapter {
-  api: WorkbenchModel["api"]; // "openai-compatible" | "anthropic" | "gemini"
-  validateBaseUrl(model): Result; // local-loopback vs hosted-pinned rules move here
-  run(params: ProviderTurnParams, io: ProviderIO): Promise<ProviderTurnResult>;
+  api: string; // the API family, e.g. "openai-compatible" | "anthropic" | "gemini"
+  providers: ReadonlySet<string>; // catalog `provider` values served (D27)
+  validateBaseUrl(model): BaseUrlCheck; // local-loopback vs hosted-pinned rules
+  run(
+    request: ProviderTurnRequest,
+    io: ProviderIO,
+  ): Promise<WorkbenchTurnResult>;
+  // plus capability flags: streamsToolCalls, supportsTranscriptRetry,
+  // defaultOutputTokens(model)
 }
-// ProviderIO = { fetch: HttpTransport; clock: Clock; onFrame(frame): void; signal }
+// ProviderIO = { fetch: HttpTransport; clock: MonotonicClock; env: Env;
+//                onFrame?(frame); signal? }   (D27)
 ```
 
 - **Adapter layout:** each adapter is one directory (`request.ts`, `stream.ts`,
   `usage.ts`, `stop-reason.ts`).
 - **Shared code:** text tool-call extraction, canonical JSON and SSE/NDJSON
   readers are shared modules.
-- **Dispatch:** `runWorkbenchTurn` becomes a registry lookup by `api`.
+- **Dispatch:** `runWorkbenchTurn` is a registry lookup by the catalog
+  `provider` column (D27). Each adapter also declares its `api` family; moving
+  the lookup to the catalog `api` column would be a behavior change and needs
+  its own decision.
+- **Clocks:** `ProviderIO.clock` is monotonic, for request timings; wall-clock
+  time comes from the `Clock` port in `kernel/` (D27).
 - **Adding a provider on an existing API family** costs a catalog/pricing
   migration plus, when needed, a host pin. It needs no code in `engine/`.
 - **Adding a new API family** costs:
