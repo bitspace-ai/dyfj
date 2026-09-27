@@ -5,6 +5,7 @@
 // initiates. The server-initiated request() carries the mid-turn `approval`
 // round-trip for the approval keystone. Built on the pure jsonrpc.ts core.
 
+import { sanitizeBoundaryText } from "./kernel/mod.ts";
 import {
   classify,
   dispatchRequest,
@@ -22,7 +23,6 @@ import {
 } from "./jsonrpc.ts";
 import {
   MAX_ERROR_SUMMARY_BYTES,
-  sanitizeBoundaryText,
   summarizeError,
 } from "./turn-contract.ts";
 

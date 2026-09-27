@@ -10,6 +10,30 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-27 — **Terminal escape sequences are recognized three different
+  ways.**
+  - **Location:** `prototype/src/kernel/ansi.ts` (`stripAnsiEscapes`, used by
+    the idea/packet renderer and the RPC string sanitizer);
+    `prototype/src/streaming-markdown.ts:39` (`visibleWidth`) with its paired
+    scanner at `:308` (`ansiSequenceEnd`); and `prototype/src/cli.ts:254`
+    (`sanitizeSpinnerLabel` and its `skip*` helpers at `:318`–`:361`).
+  - **Symptom:** the same input is treated differently depending on where it
+    is shown. `visibleWidth` removes only CSI and OSC sequences and accepts CSI
+    parameter bytes (`<`, `=`, `>`, `:`) that `stripAnsiEscapes` does not. It
+    counts character-set designations (`ESC ( B`) and two-byte `ESC` sequences
+    as visible text, which `stripAnsiEscapes` removes. Model text that
+    contains such a sequence therefore wraps at a different column in the
+    streamed markdown than its width after stripping. The spinner label
+    sanitizer is a separate state machine that also drops 8-bit C1
+    introducers and unterminated sequences, which neither regex-based copy
+    does.
+  - **Suspected cause:** each surface grew its own recognizer. They cannot
+    be merged without changing what at least one surface displays: the
+    markdown wrap column or the spinner label.
+  - **Found during:** WO-07. The kernel took the two identical copies; the
+    other two keep their current behavior pending a decision on which
+    recognizer the surfaces should share.
+
 - 2026-09-26 — **Piped REPL input runs only its first line.**
   - **Location:** `prototype/src/cli.ts:4035` (`readLineOrNull`) and
     `prototype/src/cli.ts:813` (`runRepl`).

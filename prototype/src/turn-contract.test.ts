@@ -5,10 +5,7 @@ import {
   formatHistoryOmissionSummary,
   historyOmissionForDelivery,
   MAX_ERROR_SUMMARY_BYTES,
-  MAX_REASON_FIELD_BYTES,
-  sanitizeBoundaryText,
   summarizeError,
-  takeCodePointPrefix,
 } from "./turn-contract.ts";
 
 describe("persisted history omission notice", () => {
@@ -200,84 +197,5 @@ describe("summarizeError — adversarial candidates (no string is ever read off 
     expect(s).toContain("truncated; DomainError");
     expect(s).not.toContain("FORGED_CLASS_NAME");
     expect(s.length).toBeLessThan(1000);
-  });
-});
-
-describe("takeCodePointPrefix", () => {
-  test("stops the iterator at the configured code-point budget", () => {
-    let yielded = 0;
-    function* gated(): Generator<string> {
-      while (true) {
-        yielded += 1;
-        yield "A";
-      }
-    }
-    expect(takeCodePointPrefix(gated(), 256).join("")).toBe("A".repeat(256));
-    expect(yielded).toBe(256);
-  });
-});
-
-describe("sanitizeBoundaryText", () => {
-  test("leaves ordinary short text unchanged", () => {
-    expect(sanitizeBoundaryText("session not found", 500)).toBe(
-      "session not found",
-    );
-  });
-
-  test("collapses tab/newline/carriage-return to a single space, rather than dropping or preserving them", () => {
-    // At the 200–500-byte single-field sizes this function guards, LF/CR are
-    // their own injection surface — an embedded LF can forge a fake log line
-    // in a durable/console record, and a CR can rewind a terminal cursor to
-    // overwrite a rendered prefix. Collapsing (not dropping outright) keeps
-    // words from running together.
-    expect(sanitizeBoundaryText("hello\tworld", 500)).toBe("hello world");
-    expect(sanitizeBoundaryText("hello\nworld", 500)).toBe("hello world");
-    expect(sanitizeBoundaryText("hello\rworld", 500)).toBe("hello world");
-    expect(sanitizeBoundaryText("hello\r\nworld", 500)).toBe("hello  world");
-  });
-
-  test("an embedded newline cannot forge a fake log line", () => {
-    const injected = "declined" +
-      "\n[2026-01-01] operator approved unlimited spend";
-    const result = sanitizeBoundaryText(injected, 500);
-    expect(result).not.toContain("\n");
-    expect(result.split("\n").length).toBe(1);
-  });
-
-  test("strips a terminal escape sequence, leaving it inert plain text", () => {
-    const esc = String.fromCharCode(27);
-    const withEscape = `${esc}[31mred text${esc}[0m`;
-    const result = sanitizeBoundaryText(withEscape, 500);
-    expect(result).not.toContain(esc);
-    expect(result).toBe("[31mred text[0m");
-  });
-
-  test("strips C0 and C1 control characters and DEL", () => {
-    const withControls = "a" + String.fromCharCode(1) +
-      String.fromCharCode(127) + String.fromCharCode(0x9f) + "b";
-    expect(sanitizeBoundaryText(withControls, 500)).toBe("ab");
-  });
-
-  test("caps to maxBytes on a byte-safe boundary, never exceeding it", () => {
-    // Non-homogeneous payload: a run of one repeated character would make
-    // "output still contains a slice of the input" trivially true regardless
-    // of whether the cap is byte-safe, so it can't discriminate a broken
-    // (character-based) implementation from a correct one.
-    const payload = "SELECT ".repeat(20_000);
-    const result = sanitizeBoundaryText(payload, MAX_REASON_FIELD_BYTES);
-    expect(new TextEncoder().encode(result).byteLength).toBeLessThanOrEqual(
-      MAX_REASON_FIELD_BYTES,
-    );
-    expect(result.length).toBeLessThan(payload.length);
-  });
-
-  test("a byte cap that lands mid-character decodes cleanly (no replacement character)", () => {
-    // Each "é" is 2 UTF-8 bytes; an odd byte cap forces the naive cut to land
-    // mid-character.
-    const result = sanitizeBoundaryText("é".repeat(200), 101);
-    expect(new TextEncoder().encode(result).byteLength).toBeLessThanOrEqual(
-      101,
-    );
-    expect(result).not.toContain("�");
   });
 });

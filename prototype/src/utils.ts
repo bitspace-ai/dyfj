@@ -1,20 +1,6 @@
-import { ulid } from "ulid";
+import { generateSpanId, generateULID } from "./kernel/mod.ts";
 import { resolvePrincipalId } from "./config.ts";
 import process from "node:process";
-
-export function generateULID(): string {
-  return ulid();
-}
-
-// W3C trace context compatible — 32 hex chars
-export function generateTraceId(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 32);
-}
-
-// 16 hex chars
-export function generateSpanId(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-}
 
 // ─── Dolt infrastructure (TCP → sql-server) ─────────────────────────────────
 // Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.
