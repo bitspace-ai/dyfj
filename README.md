@@ -41,9 +41,11 @@ Section 5.
 
 ## Repo layout
 
-- `core/` - Rust substrate. Contains the first schema tracer bullet: a small
-  event read/write library plus a demo binary that round-trips an event through
-  Dolt. Where stabilized components live.
+- `core/` - Rust substrate, a Cargo workspace. Contains the first schema tracer
+  bullet: a small event read/write library plus a demo binary that round-trips
+  an event through Dolt. Also holds `dyfj-repl`, an interactive REPL front-end
+  that owns the terminal and is a second client of the prototype's UDS protocol;
+  the agent loop stays in `prototype/`. Where stabilized components live.
 - `prototype/` - TypeScript on Deno. Real working code (Workbench CLI, the
   JSON-RPC/UDS transport seam, an ACP client foundation, memory, budget, MCP
   server, tests, and provider diagnostics). The active prototyping surface.
@@ -1117,8 +1119,8 @@ cargo build
 cargo run
 ```
 
-Today the binary is the Rust schema tracer bullet: it inserts a `session_start`
-event through `dyfj_core::events::write()`, reads it back with
+A bare `cargo run` runs the Rust schema tracer bullet: it inserts a
+`session_start` event through `dyfj_core::events::write()`, reads it back with
 `events::read_by_id()`, and verifies equality. The ignored integration tests
 exercise the same path when a live Dolt server is available:
 
@@ -1131,6 +1133,20 @@ For a DB-free Rust compile/test pass using the committed `.sqlx/` cache:
 ```sh
 SQLX_OFFLINE=true cargo test
 ```
+
+`cargo build` and `cargo test` cover both workspace members. The REPL
+front-end runs against a live Workbench runtime:
+
+```sh
+cargo run -p dyfj-repl
+```
+
+It resolves the socket as the runtime does (`DYFJ_SOCKET`, else
+`$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`). A multi-line paste arrives as one
+prompt, which the TypeScript REPL cannot do. It covers turns, approvals and
+Ctrl-C cancellation only; model switching, session resume and the other
+interactive commands stay in the TypeScript `dyfj` CLI, which remains the entry
+point. See [`core/README.md`](core/README.md).
 
 ### MCP integration
 
@@ -1563,3 +1579,5 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-27 - Architecture spec §3 moves error summarizing from the `kernel/`
   (L0) row to the `contract/` (L1) row: deciding which error messages cross the
   wire as trusted is trust-boundary policy, not a policy-free helper.
+- 2026-09-27 - Repo layout and Build the core describe `core/` as a Cargo
+  workspace with the `dyfj-repl` front-end, and how to run it.

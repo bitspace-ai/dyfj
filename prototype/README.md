@@ -146,9 +146,11 @@ Set `DYFJ_FRICTION_ISSUE_ID` on the runtime to identify the operator's
 friction-checkpoint issue; `friction/post` fails at the `configuration` stage
 when the variable is unset or blank. `runtime/status` includes grouped method
 catalog metadata for client surfaces.
-The engine-free `dyfj` CLI reaches the read methods over it with `dyfj models`
-and `dyfj sessions`; after a TTY-backed UDS turn connects, Ctrl-C sends
-`turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY
+A second client, the Rust REPL front-end in `core/dyfj-repl`, speaks the same
+protocol for interactive turns, approvals and `turn/cancel`; see
+[`../core/README.md`](../core/README.md). The engine-free `dyfj` CLI reaches the
+read methods over it with `dyfj models` and `dyfj sessions`; after a TTY-backed
+UDS turn connects, Ctrl-C sends `turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY
 SIGINT behavior remains unchanged. After an autostarted server installs its
 SIGINT handler, when cancellation is the terminal outcome after the active
 provider or tool operation settles, the turn stops without stopping the runtime;
