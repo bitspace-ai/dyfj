@@ -23,6 +23,10 @@ README are tracked separately in its Revision history section.
   input rather than fixing it. Owning the terminal in Rust gets paste, line
   editing and history from `rustyline` instead of reimplementing them.
 
+  At startup it prints a posture line from `runtime/status`: the default
+  model, its tier and locality, whether paid inference is approved or off
+  (hosted turns fail closed), the permission level and the tool-step limit.
+
   An approval is read only when both the question and the answer are on an
   interactive terminal. Without terminal input there is no operator and a
   prewritten line on a pipe would answer the request; without terminal output

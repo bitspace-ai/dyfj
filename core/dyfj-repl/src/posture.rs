@@ -26,8 +26,13 @@ pub fn line(status: &Value, socket: &str) -> String {
             None => {}
         }
     }
-    if runtime.get("approvePaidDefault").and_then(Value::as_bool) == Some(true) {
-        parts.push("paid approved".into());
+    // Both states are shown, as the TypeScript posture line shows them: the
+    // default of paid off is the one an operator most needs to see, because
+    // it is why a hosted turn is refused. An absent field narrows the line.
+    match runtime.get("approvePaidDefault").and_then(Value::as_bool) {
+        Some(true) => parts.push("paid approved".into()),
+        Some(false) => parts.push("paid off (hosted turns fail closed)".into()),
+        None => {}
     }
     if let Some(level) = runtime.get("permissionLevel").and_then(Value::as_str) {
         parts.push(format!("permission {}", visible(level)));
@@ -92,5 +97,13 @@ mod tests {
         let rendered = line(&status, "/tmp/s.sock");
         assert!(rendered.contains("local"), "{rendered}");
         assert!(!rendered.contains("paid approved"), "{rendered}");
+        assert!(rendered.contains("paid off (hosted turns fail closed)"), "{rendered}");
+    }
+
+    #[test]
+    fn an_unreported_paid_default_is_left_out() {
+        let status = json!({"runtime": {"permissionLevel": "operator"}});
+        let rendered = line(&status, "/tmp/s.sock");
+        assert!(!rendered.contains("paid"), "{rendered}");
     }
 }
