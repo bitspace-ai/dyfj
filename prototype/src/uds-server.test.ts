@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { MemoryStore } from "./store/mod.ts";
 import {
   buildTurnHandlers,
   serveWorkbenchUnix,
@@ -25,7 +26,10 @@ async function startServer(
   options: WorkbenchUnixServerOptions,
 ): Promise<WorkbenchUnixServer> {
   const socketPath = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
-  const server = await serveWorkbenchUnix(socketPath, options);
+  const server = await serveWorkbenchUnix(socketPath, {
+    store: new MemoryStore(),
+    ...options,
+  });
   cleanups.push(async () => {
     await server.close();
     try {

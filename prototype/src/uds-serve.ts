@@ -10,7 +10,9 @@ import {
   loadMcpServersConfig,
   loadSecretsConfig,
   processEnv,
+  resolveDoltConnection,
 } from "./config/mod.ts";
+import { createDoltPool, DoltStore } from "./store/mod.ts";
 import { resolveSecrets } from "./secrets.ts";
 import { buildExternalMcpCommands } from "./mcp-tools.ts";
 import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
@@ -45,6 +47,10 @@ for (const diagnostic of externalMcp.diagnostics) {
   );
 }
 
+// The runtime's one store over one Dolt pool. Connections open on first use,
+// so the boot does not wait for (or require) a running sql-server.
+const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
+
 let resolveCloseServer!: (close: () => Promise<void>) => void;
 const closeServerReady = new Promise<() => Promise<void>>((resolve) => {
   resolveCloseServer = resolve;
@@ -66,20 +72,30 @@ const closeRuntime = async (
   if (serverInstance) await serverInstance.close(options);
 };
 
+// The store (and its pool) belongs to this composition root. It closes once,
+// after the server, whichever shutdown path runs first.
+let storeClosed: Promise<void> | undefined;
+const closeStore = () => (storeClosed ??= store.close());
+
 const shutdown = async (
   options?: { disconnectPeers?: boolean },
 ) => {
   try {
     await closeRuntime(options);
   } catch (error) {
-    if (error instanceof Deno.errors.BadResource) return;
-    throw error;
+    if (!(error instanceof Deno.errors.BadResource)) {
+      // The server's close failure is the one to report.
+      await closeStore().catch(() => {});
+      throw error;
+    }
   }
+  await closeStore();
 };
 
 try {
   const server = await serveWorkbenchUnix(socketPath, {
     onParseError: (detail) => console.error(`[uds] ${detail}`),
+    store,
     engineConfig: config,
     externalMcpCommands: externalMcp.commands,
     frictionIssueId: processEnv.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||
@@ -99,5 +115,6 @@ try {
   );
 } catch (error) {
   resolveCloseServer(() => Promise.reject(error));
+  await closeStore().catch(() => {});
   throw error;
 }

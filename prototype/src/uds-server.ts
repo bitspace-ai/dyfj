@@ -32,7 +32,6 @@ import {
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspaceRecord,
-  isValidAsOfTimestamp,
   listWorkbenchSessions,
   type WorkbenchProjectSessions,
   type WorkbenchSessionEvent,
@@ -86,7 +85,7 @@ import {
   postFriction,
   requireFrictionIssueIdentifier,
 } from "./friction.ts";
-import { writeEvent as writeDoltEvent } from "./utils.ts";
+import { isValidAsOfTimestamp, type Store } from "./store/mod.ts";
 
 export interface WorkbenchToolSummary {
   id: string;
@@ -145,20 +144,28 @@ export interface WorkbenchSurfaceSnapshot {
   tools: WorkbenchToolSummary[];
 }
 
+interface SessionEventsRequest {
+  sessionId: string;
+  eventId?: string;
+  asOf?: string;
+  limit?: number;
+  order?: "asc" | "desc";
+}
+
 export interface WorkbenchUnixServerOptions {
+  /**
+   * The store behind every default reader, writer and the turn runtime.
+   * `serveWorkbenchUnix` requires it; a handler builder whose defaults are all
+   * overridden may omit it.
+   */
+  store?: Store;
   runRuntime?: TurnRuntime;
   loadModels?: () => Promise<WorkbenchModel[]>;
   listSessions?: (
     options: { project?: string; limit?: number },
   ) => Promise<WorkbenchProjectSessions[]>;
   fetchSessionEvents?: (
-    input: {
-      sessionId: string;
-      eventId?: string;
-      asOf?: string;
-      limit?: number;
-      order?: "asc" | "desc";
-    },
+    input: SessionEventsRequest,
   ) => Promise<WorkbenchSessionEvent[]>;
   countSessionEvents?: (
     input: { sessionId: string },
@@ -213,11 +220,22 @@ export interface WorkbenchUnixServerOptions {
   acpSessions?: AcpSessionHandleMap;
 }
 
+function requireStore(options: WorkbenchUnixServerOptions): Store {
+  if (options.store === undefined) {
+    throw new Error("No store is configured");
+  }
+  return options.store;
+}
+
 // Degrade to the local defaults if the registry is unavailable, preserving
 // the local-first posture instead of an empty list.
-async function loadPickerModels(): Promise<WorkbenchModel[]> {
+async function loadPickerModels(
+  store: () => Store,
+): Promise<WorkbenchModel[]> {
   try {
-    return withDefaultLocalWorkbenchModels(await loadWorkbenchModels());
+    return withDefaultLocalWorkbenchModels(
+      await loadWorkbenchModels(store().models),
+    );
   } catch {
     return defaultLocalWorkbenchModels();
   }
@@ -451,10 +469,30 @@ function buildToolCatalog(
 export function buildWorkbenchHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
-  const loadModels = options.loadModels ?? loadPickerModels;
-  const listSessions = options.listSessions ?? listWorkbenchSessions;
+  const store = () => requireStore(options);
+  const loadModels = options.loadModels ?? (() => loadPickerModels(store));
+  const listSessions = options.listSessions ??
+    ((query: { project?: string; limit?: number }) =>
+      listWorkbenchSessions({ ...query, sessions: store().sessions }));
   const fetchSessionEvents = options.fetchSessionEvents ??
-    fetchWorkbenchSessionEvents;
+    ((input: SessionEventsRequest) =>
+      fetchWorkbenchSessionEvents({ ...input, events: store().events }));
+  const fetchSessionRecord = options.fetchSessionRecord ??
+    ((input: { sessionId: string }) =>
+      fetchWorkbenchSessionRecord({ ...input, sessions: store().sessions }));
+  const fetchSessionWorkspaceRecord = options.fetchSessionWorkspaceRecord ??
+    ((input: { sessionId: string }) =>
+      fetchWorkbenchSessionWorkspaceRecord({
+        ...input,
+        sessions: store().sessions,
+      }));
+  const countSessionEvents = options.countSessionEvents ??
+    ((input: { sessionId: string }) =>
+      countWorkbenchSessionEvents({ ...input, events: store().events }));
+  const frictionEventWriter = options.frictionEventWriter ??
+    (async (event: Record<string, unknown>) => {
+      await store().journal.commit({ events: [event] });
+    });
   let frictionQueue: Promise<void> = Promise.resolve();
 
   const withFrictionLock = async <T>(run: () => Promise<T>): Promise<T> => {
@@ -839,7 +877,7 @@ export function buildWorkbenchHandlers(
               traceId,
               writeEvent: async (event) => {
                 try {
-                  await (options.frictionEventWriter ?? writeDoltEvent)(event);
+                  await frictionEventWriter(event);
                 } catch (error) {
                   const kind = error instanceof Error ? error.name : "unknown";
                   console.warn(`friction tool receipt write failed (${kind})`);
@@ -891,14 +929,9 @@ export function buildWorkbenchHandlers(
         maxLen: 256,
       })!;
       const [session, workspaceRec, eventCount] = await Promise.all([
-        (options.fetchSessionRecord ?? fetchWorkbenchSessionRecord)({
-          sessionId,
-        }),
-        (options.fetchSessionWorkspaceRecord ??
-          fetchWorkbenchSessionWorkspaceRecord)({ sessionId }),
-        (options.countSessionEvents ?? countWorkbenchSessionEvents)({
-          sessionId,
-        }),
+        fetchSessionRecord({ sessionId }),
+        fetchSessionWorkspaceRecord({ sessionId }),
+        countSessionEvents({ sessionId }),
       ]);
       return {
         session,
@@ -1051,8 +1084,7 @@ export function buildWorkbenchHandlers(
       }
       let workspace: string | null = null;
       try {
-        const workspaceRec = await (options.fetchSessionWorkspaceRecord ??
-          fetchWorkbenchSessionWorkspaceRecord)({ sessionId });
+        const workspaceRec = await fetchSessionWorkspaceRecord({ sessionId });
         workspace = workspaceRec.workspace;
       } catch {
         workspace = null;
@@ -1230,12 +1262,19 @@ function resolveEngineTurnDeps(
 
 // The production turn runtime: the engine with its external-agent runner bound
 // here, at the composition root, so the engine never imports the ACP runner.
-function composeTurnRuntime(acpSessions?: AcpSessionHandleMap): TurnRuntime {
+function composeTurnRuntime(
+  store: () => Store,
+  acpSessions?: AcpSessionHandleMap,
+): TurnRuntime {
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
-      runExternalAgentWorkbenchRuntime(input, { sessionMap: acpSessions }),
+      runExternalAgentWorkbenchRuntime(input, {
+        store: store(),
+        sessionMap: acpSessions,
+      }),
   };
-  return (input) => runWorkbenchRuntime(input, { externalAgentRunner });
+  return (input) =>
+    runWorkbenchRuntime(input, { store: store(), externalAgentRunner });
 }
 
 // The `turn` method: run an agentic turn over the shared turn-runner core —
@@ -1245,9 +1284,11 @@ function composeTurnRuntime(acpSessions?: AcpSessionHandleMap): TurnRuntime {
 export function buildTurnHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
-  const runRuntime = options.runRuntime ?? composeTurnRuntime();
+  const store = () => requireStore(options);
+  const runRuntime = options.runRuntime ?? composeTurnRuntime(store);
   const fetchSessionEvents = options.fetchSessionEvents ??
-    fetchWorkbenchSessionEvents;
+    ((input: SessionEventsRequest) =>
+      fetchWorkbenchSessionEvents({ ...input, events: store().events }));
   const engineDeps = resolveEngineTurnDeps(options);
   const activeTurns = new Map<
     RpcContext,
@@ -1489,12 +1530,13 @@ export interface WorkbenchUnixServer {
 
 export async function serveWorkbenchUnix(
   socketPath: string,
-  options: WorkbenchUnixServerOptions = {},
+  options: WorkbenchUnixServerOptions & { store: Store },
 ): Promise<WorkbenchUnixServer> {
   const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
   const serverOptions: WorkbenchUnixServerOptions = {
     ...options,
-    runRuntime: options.runRuntime ?? composeTurnRuntime(acpSessions),
+    runRuntime: options.runRuntime ??
+      composeTurnRuntime(() => options.store, acpSessions),
   };
   const handlers: RpcHandlers = {
     ...buildWorkbenchHandlers(serverOptions),

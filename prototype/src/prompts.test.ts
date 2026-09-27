@@ -1,43 +1,60 @@
-import { describe, expect, test, vi } from "vitest";
+import { assert, assertEquals, assertFalse } from "@std/assert";
+import {
+  DEFAULT_COMPANION_PROMPT,
+  loadCompanionBasePrompt,
+} from "./prompts.ts";
+import { MemoryStore, type PromptReader } from "./store/mod.ts";
 
-vi.mock("./utils.ts", () => ({
-  doltQuery: (...args: unknown[]) => mockDoltQuery(...args),
-}));
+const storeWith = (content: string, active = true) =>
+  new MemoryStore({
+    prompts: [{
+      slug: "companion-base",
+      display_name: "Companion",
+      kind: "base",
+      content,
+      active,
+    }],
+  }).prompts;
 
-let mockDoltQuery: (
-  ...args: unknown[]
-) => Promise<Array<Record<string, unknown>>>;
+Deno.test("loadCompanionBasePrompt returns the active prompt content from the store", async () => {
+  assertEquals(
+    await loadCompanionBasePrompt(storeWith("Stored companion prompt.")),
+    "Stored companion prompt.",
+  );
+});
 
-const { loadCompanionBasePrompt, DEFAULT_COMPANION_PROMPT } = await import(
-  "./prompts.ts"
-);
+Deno.test("loadCompanionBasePrompt falls back to the default when the store has no active row", async () => {
+  assertEquals(
+    await loadCompanionBasePrompt(new MemoryStore().prompts),
+    DEFAULT_COMPANION_PROMPT,
+  );
+  assertEquals(
+    await loadCompanionBasePrompt(storeWith("inactive", false)),
+    DEFAULT_COMPANION_PROMPT,
+  );
+});
 
-describe("loadCompanionBasePrompt", () => {
-  test("returns the active prompt content from the store", async () => {
-    mockDoltQuery = async () => [{ content: "Stored companion prompt." }];
-    expect(await loadCompanionBasePrompt()).toBe("Stored companion prompt.");
-  });
+Deno.test("loadCompanionBasePrompt falls back to the default when the row content is blank", async () => {
+  assertEquals(
+    await loadCompanionBasePrompt(storeWith("   ")),
+    DEFAULT_COMPANION_PROMPT,
+  );
+});
 
-  test("falls back to the default when the store is empty", async () => {
-    mockDoltQuery = async () => [];
-    expect(await loadCompanionBasePrompt()).toBe(DEFAULT_COMPANION_PROMPT);
-  });
+Deno.test("loadCompanionBasePrompt falls back to the default when the store throws", async () => {
+  const unreachable: PromptReader = {
+    active: () => Promise.reject(new Error("dolt unreachable")),
+  };
+  assertEquals(
+    await loadCompanionBasePrompt(unreachable),
+    DEFAULT_COMPANION_PROMPT,
+  );
+});
 
-  test("falls back to the default when the row content is blank", async () => {
-    mockDoltQuery = async () => [{ content: "   " }];
-    expect(await loadCompanionBasePrompt()).toBe(DEFAULT_COMPANION_PROMPT);
-  });
-
-  test("falls back to the default when the store throws", async () => {
-    mockDoltQuery = () => Promise.reject(new Error("dolt unreachable"));
-    expect(await loadCompanionBasePrompt()).toBe(DEFAULT_COMPANION_PROMPT);
-  });
-
-  test("the default is a non-empty, non-scoping capable-companion frame", () => {
-    expect(DEFAULT_COMPANION_PROMPT.length).toBeGreaterThan(0);
-    expect(DEFAULT_COMPANION_PROMPT).toContain("capable");
-    // No scope-fence language that would make a model refuse off-repo work.
-    expect(DEFAULT_COMPANION_PROMPT.toLowerCase()).not.toContain("repo-local");
-    expect(DEFAULT_COMPANION_PROMPT.toLowerCase()).not.toContain("do not");
-  });
+Deno.test("the default is a non-empty, non-scoping capable-companion frame", () => {
+  assert(DEFAULT_COMPANION_PROMPT.length > 0);
+  assert(DEFAULT_COMPANION_PROMPT.includes("capable"));
+  // No scope-fence language that would make a model refuse off-repo work.
+  assertFalse(DEFAULT_COMPANION_PROMPT.toLowerCase().includes("repo-local"));
+  assertFalse(DEFAULT_COMPANION_PROMPT.toLowerCase().includes("do not"));
 });

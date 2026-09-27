@@ -13,7 +13,6 @@
   ],
   "layer": [
     "prototype/src/mcp-tools.ts -> prototype/src/linear-tools.ts",
-    "prototype/src/provider.ts -> prototype/src/utils.ts",
     "prototype/src/sessions.ts -> prototype/src/context-compression.ts",
     "prototype/src/sessions.ts -> prototype/src/idea-packet.ts",
     "prototype/src/sessions.ts -> prototype/src/provider.ts",
@@ -40,5 +39,7 @@
     "prototype/src/workbench.ts -> prototype/src/utils.ts"
   ],
   "env": [],
-  "envKeys": []
+  "envKeys": [],
+  "packages": [],
+  "sqlWrites": []
 }

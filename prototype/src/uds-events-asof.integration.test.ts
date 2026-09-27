@@ -1,8 +1,8 @@
 /**
  * Happy-path Dolt time-travel for events/query over UDS (integration).
  *
- * AS OF TIMESTAMP is commit time-travel, not a created_at filter. writeEvent
- * is a bare autocommit INSERT; that is a MySQL commit, not necessarily a Dolt
+ * AS OF TIMESTAMP is commit time-travel, not a created_at filter. A
+ * single-event journal commit is a bare autocommit INSERT; that is a MySQL commit, not necessarily a Dolt
  * commit on the fixture sql-server. After the first batch this test
  * CALL DOLT_COMMITs if dolt_status is dirty so the row is in Dolt history
  * before the second batch is written. The captured asOf is UTC
@@ -17,41 +17,45 @@ import { generateSpanId, generateTraceId, generateULID } from "./kernel/mod.ts";
 import { afterAll, describe, expect, test } from "vitest";
 import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
 import { connectUnixClient } from "./transport/mod.ts";
-import { isValidAsOfTimestamp } from "./sessions.ts";
+import { isValidAsOfTimestamp } from "./store/mod.ts";
 import {
-  doltExec,
-  doltQuery,
-  writeEvent,
-} from "./utils.ts";
+  openFixtureSql,
+  openFixtureStore,
+} from "../testing/dolt/fixture-sql.ts";
+
+const sql = openFixtureSql();
+const store = openFixtureStore();
 
 const HISTORICAL = "ASOF_HISTORICAL_batch";
 const HEAD = "ASOF_HEAD_batch";
 
 async function insertEvent(sessionId: string, content: string): Promise<void> {
-  await writeEvent({
-    event_id: generateULID(),
-    session_id: sessionId,
-    event_type: "session_start",
-    trace_id: generateTraceId(),
-    span_id: generateSpanId(),
-    principal_id: "asof-uds-test",
-    principal_type: "human",
-    action: "start",
-    resource: "workbench_session",
-    authz_basis: "policy:loopback-local",
-    content,
+  await store.journal.commit({
+    events: [{
+      event_id: generateULID(),
+      session_id: sessionId,
+      event_type: "session_start",
+      trace_id: generateTraceId(),
+      span_id: generateSpanId(),
+      principal_id: "asof-uds-test",
+      principal_type: "human",
+      action: "start",
+      resource: "workbench_session",
+      authz_basis: "policy:loopback-local",
+      content,
+    }],
   });
 }
 
 /** Make the current working set a Dolt commit if autocommit did not. */
 async function commitIfDirty(): Promise<void> {
-  const status = await doltQuery("SELECT table_name FROM dolt_status");
+  const status = await sql.query("SELECT table_name FROM dolt_status");
   if (status.length === 0) return;
-  await doltExec("CALL DOLT_COMMIT('-Am', 'asof test batch')");
+  await sql.query("CALL DOLT_COMMIT('-Am', 'asof test batch')");
 }
 
 async function doltUtcSeconds(): Promise<string> {
-  const rows = await doltQuery(
+  const rows = await sql.query(
     "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS ts",
   );
   const ts = rows[0]?.ts ?? "";
@@ -75,7 +79,9 @@ describe("events/query asOf (integration)", () => {
         // already gone
       }
     }
-    await doltExec("DELETE FROM events WHERE session_id = ?", [sessionId]);
+    await sql.query("DELETE FROM events WHERE session_id = ?", [sessionId]);
+    await sql.close();
+    await store.close();
   });
 
   test(
@@ -83,14 +89,14 @@ describe("events/query asOf (integration)", () => {
     async () => {
       await insertEvent(sessionId, HISTORICAL);
       await commitIfDirty();
-      await doltQuery("SELECT SLEEP(1)");
+      await sql.query("SELECT SLEEP(1)");
       const asOf = await doltUtcSeconds();
-      await doltQuery("SELECT SLEEP(1)");
+      await sql.query("SELECT SLEEP(1)");
       await insertEvent(sessionId, HEAD);
       await commitIfDirty();
 
       socketPath = `/tmp/dyfj-asof-${crypto.randomUUID()}.sock`;
-      server = await serveWorkbenchUnix(socketPath, {});
+      server = await serveWorkbenchUnix(socketPath, { store });
       const client = await connectUnixClient(server.socketPath);
       try {
         const historical = await client.request("events/query", {

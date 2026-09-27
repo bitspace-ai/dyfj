@@ -1018,8 +1018,22 @@ expression is also collected with `deno lint` and a repository-owned plugin
 `specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
 `scripts/arch-layers.json`) and checks import cycles, upward and non-listed
 same-layer edges, the `cli/` allow-list, and dynamic local imports, literal or
-not. A module that fails to load or a local import that does not resolve fails
-the lane. It runs in ratchet mode: current violations are recorded in
+not. It confines environment access to the declared configuration surface:
+`Deno.env` and `process.env` may be read only in `prototype/src/config/`
+(through its `Env` port) and in the `prototype/scripts/` tooling, a legacy
+module mapped into `config` by name gets no exemption, and every `DYFJ_*` key
+named anywhere under the lane's roots must be declared in `CONFIG_SCHEMA`. It
+also confines the Dolt driver and SQL writes to the store port
+(`specs/02-data-layer.md` §2): `mysql2` may be imported only from
+`prototype/src/store/`, and a string literal that begins with an SQL write
+statement may appear only in the store's journal; the isolated-Dolt test
+fixture under `prototype/scripts/` is the one justified exemption from each.
+The write rule sees statements written as literals. The `mysql2` confinement
+keeps any other SQL inside `store/`, and inside it the readers get only a
+handle that runs a single `SELECT`, so only the journal can write. Each
+exemption is named, with its justification, in `scripts/arch-layers.json`. A
+module that fails to load or a local import that does not resolve fails the
+lane. It runs in ratchet mode: current violations are recorded in
 `scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
 that baseline and on any baseline entry that no longer occurs, so the baseline
 can only shrink. An intentional cycle is allowed only by a named entry in
@@ -1585,3 +1599,7 @@ Document revisions only. Code and behavior changes are tracked in
   the existing `dyfj-core` source stays untouched in phase 1, and the D23 REPL
   client `core/dyfj-repl` is the one phase-1 addition to `core/`. D25 is marked
   superseded in part; architecture §1 cites both.
+- 2026-09-27 - Validation guidance now documents the `arch.imports` rules that
+  confine `mysql2` to `prototype/src/store/` and SQL write statements to the
+  store's journal, and the existing environment rules: direct environment
+  access only in `config/` and the tooling, and every `DYFJ_*` key declared.

@@ -23,8 +23,10 @@
  * Dynamic imports therefore come from a second parser pass: `deno lint` with
  * the repository-owned plugin `arch-imports-lint-plugin.ts`, which reports
  * every `import()` expression in the AST, literal or not. The same pass
- * reports direct process-environment access and `DYFJ_*` key literals. Both
- * passes use Deno's own parser; neither is a hand-written lexer.
+ * reports direct process-environment access, `DYFJ_*` key literals, package
+ * import specifiers, and string literals that begin with an SQL write
+ * statement. Both passes use Deno's own parser; neither is a hand-written
+ * lexer.
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -78,6 +80,20 @@ export interface DyfjKey {
   key: string;
 }
 
+export interface PackageImport {
+  from: string;
+  line: number;
+  /** The specifier as written, e.g. `mysql2/promise` or `npm:mysql2@3`. */
+  specifier: string;
+}
+
+export interface SqlWrite {
+  from: string;
+  line: number;
+  /** The write statement's leading keywords, e.g. `INSERT INTO`. */
+  statement: string;
+}
+
 export interface ModuleGraph {
   edges: Edge[];
   /** Every dynamic `import()` of a scanned module, and every non-literal one. */
@@ -86,6 +102,10 @@ export interface ModuleGraph {
   envAccesses: EnvAccess[];
   /** Every string literal that is exactly a `DYFJ_*` key. */
   dyfjKeys: DyfjKey[];
+  /** Every non-relative import specifier. */
+  packageImports: PackageImport[];
+  /** Every string literal that begins with an SQL write statement. */
+  sqlWrites: SqlWrite[];
   /** Scanned modules that failed to load, and local imports that did not
    * resolve to a file. Any entry fails the lane. */
   errors: string[];
@@ -157,6 +177,8 @@ export function graphFromDenoInfo(
     dynamicImports: [],
     envAccesses: [],
     dyfjKeys: [],
+    packageImports: [],
+    sqlWrites: [],
     errors: errors.sort(),
   };
 }
@@ -246,6 +268,38 @@ export function envFromLint(
   return { envAccesses, dyfjKeys };
 }
 
+const PACKAGE_IMPORT_RULE = "arch-imports/package-import";
+const SQL_WRITE_RULE = "arch-imports/sql-write";
+
+/** Turns the plugin's package and SQL diagnostics into graph entries. */
+export function packagesAndSqlFromLint(
+  lint: DenoLintOutput,
+  root: string,
+  modules: ReadonlySet<string>,
+): { packageImports: PackageImport[]; sqlWrites: SqlWrite[] } {
+  const relative = (name: string) => {
+    const file = name.startsWith("file:") ? fileURLToPath(name) : name;
+    return file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
+  };
+  const packageImports: PackageImport[] = [];
+  const sqlWrites: SqlWrite[] = [];
+  for (const d of lint.diagnostics) {
+    const from = relative(d.filename);
+    if (!modules.has(from)) continue;
+    const line = d.range.start.line;
+    if (d.code === PACKAGE_IMPORT_RULE) {
+      packageImports.push({ from, line, specifier: d.message });
+    } else if (d.code === SQL_WRITE_RULE) {
+      sqlWrites.push({ from, line, statement: d.message });
+    }
+  }
+  const key = (d: { from: string; line: number }) =>
+    `${d.from}:${String(d.line).padStart(8, "0")}`;
+  packageImports.sort((a, b) => key(a).localeCompare(key(b)));
+  sqlWrites.sort((a, b) => key(a).localeCompare(key(b)));
+  return { packageImports, sqlWrites };
+}
+
 /** The `data:` root module that side-effect-imports every scanned module. */
 export function rootModuleUrl(root: string, modules: Iterable<string>): string {
   const lines = [...modules].sort().map((path) =>
@@ -316,11 +370,18 @@ export async function loadModuleGraph(
   const graph = graphFromDenoInfo(info as DenoInfoOutput, root, modules);
   const dynamic = dynamicImportsFromLint(lint as DenoLintOutput, root, modules);
   const env = envFromLint(lint as DenoLintOutput, root, modules);
+  const packagesAndSql = packagesAndSqlFromLint(
+    lint as DenoLintOutput,
+    root,
+    modules,
+  );
   return {
     edges: graph.edges,
     dynamicImports: dynamic.dynamicImports,
     envAccesses: env.envAccesses,
     dyfjKeys: env.dyfjKeys,
+    packageImports: packagesAndSql.packageImports,
+    sqlWrites: packagesAndSql.sqlWrites,
     errors: [...new Set([...graph.errors, ...dynamic.errors])].sort(),
   };
 }

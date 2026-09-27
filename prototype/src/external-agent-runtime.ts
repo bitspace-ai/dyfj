@@ -34,7 +34,7 @@ import {
   fetchWorkbenchSessionWorkspaceRecord,
   updateWorkbenchSession,
 } from "./sessions.ts";
-import { writeEvent } from "./utils.ts";
+import type { EventInsert, SessionReader, Store } from "./store/mod.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   type AcpRunnerSelection,
@@ -957,11 +957,13 @@ export function reconstructAcpContinuityPrompt(input: {
 async function resolveWorkspace(
   input: ExternalAgentRuntimeInput,
   authContext: WorkbenchAuthContext,
+  sessions: SessionReader,
 ): Promise<string> {
   let requested = input.workspaceRoot;
   if (input.sessionId !== undefined) {
     const stored = await fetchWorkbenchSessionWorkspaceRecord({
       sessionId: input.sessionId,
+      sessions,
     });
     if (!stored.exists) {
       throw new DomainError("Workbench session not found");
@@ -1090,14 +1092,23 @@ async function emitRuntimeEvent(
 export async function runExternalAgentWorkbenchRuntime(
   input: ExternalAgentRuntimeInput,
   dependencies: {
+    /** The store every event, session row and workspace read goes through. */
+    store: Store;
     resolveProfile?: (
       profile: "fixture" | "codex-chatgpt",
       workspace: string,
     ) => AcpExecutionProfile | Promise<AcpExecutionProfile>;
     runAgent?: typeof runAcpAgent;
     sessionMap?: AcpSessionHandleMap;
-  } = {},
+  },
 ): Promise<ExternalAgentWorkbenchRuntimeResult> {
+  const { store } = dependencies;
+  const writeEvent = async (
+    event: EventInsert,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<void> => {
+    await store.journal.commit({ events: [event] }, options);
+  };
   let cancellationClosed = false;
   const closeCancellation = () => {
     if (cancellationClosed) return;
@@ -1132,7 +1143,7 @@ export async function runExternalAgentWorkbenchRuntime(
       );
     }
     assertAcpPromptWithinLimit(input.prompt);
-    workspace = await resolveWorkspace(input, authContext);
+    workspace = await resolveWorkspace(input, authContext, store.sessions);
     profile = dependencies.resolveProfile === undefined
       ? input.runner.profile === "fixture"
         ? fixtureProfile(workspace)
@@ -1231,6 +1242,7 @@ export async function runExternalAgentWorkbenchRuntime(
     sessionStartWritten = true;
     if (input.sessionId === undefined) {
       await createWorkbenchSession({
+        journal: store.journal,
         sessionId,
         slug: buildWorkbenchSessionSlug(sessionId),
         taskDescription: input.prompt,
@@ -1506,6 +1518,7 @@ export async function runExternalAgentWorkbenchRuntime(
     });
     try {
       await updateWorkbenchSession({
+        journal: store.journal,
         sessionId,
         content: buildWorkbenchSessionContent({
           mode: input.mode,
@@ -1692,6 +1705,7 @@ export async function runExternalAgentWorkbenchRuntime(
     if (sessionCreated) {
       try {
         await updateWorkbenchSession({
+          journal: store.journal,
           sessionId,
           content: buildWorkbenchSessionContent({
             mode: input.mode,

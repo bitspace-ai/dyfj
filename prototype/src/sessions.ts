@@ -1,4 +1,8 @@
-import { doltExec, doltQuery, type SqlParam } from "./utils.ts";
+import {
+  type EventReader,
+  type Journal,
+  type SessionReader,
+} from "./store/mod.ts";
 import type { WorkbenchMessage } from "./provider.ts";
 import { formatSummaryMessage } from "./context-compression.ts";
 import {
@@ -6,12 +10,6 @@ import {
   DomainError,
   type HistoryOmissionProjection,
 } from "./contract/mod.ts";
-
-export type SessionExec = (sql: string, params: SqlParam[]) => Promise<void>;
-export type SessionQuery = (
-  sql: string,
-  params: SqlParam[],
-) => Promise<Record<string, string>[]>;
 
 export interface WorkbenchSessionContentInput {
   mode: string;
@@ -28,13 +26,13 @@ export interface CreateWorkbenchSessionInput {
   content: string;
   /** Directory the file tools are scoped to for this session. Null when unbound. */
   workspace?: string;
-  exec?: SessionExec;
+  journal: Journal;
 }
 
 export interface UpdateWorkbenchSessionInput {
   sessionId: string;
   content: string;
-  exec?: SessionExec;
+  journal: Journal;
 }
 
 export function buildWorkbenchSessionSlug(sessionId: string): string {
@@ -73,22 +71,22 @@ export function buildWorkbenchSessionContent(
 export async function createWorkbenchSession(
   input: CreateWorkbenchSessionInput,
 ): Promise<void> {
-  const exec = input.exec ?? doltExec;
-  await exec(
-    "INSERT INTO sessions " +
-      "(session_id, slug, session_name, task_description, status, mode, workspace, content) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
-    [
-      input.sessionId,
-      input.slug,
-      "Workbench Harness Shell",
-      truncateTaskDescription(input.taskDescription),
-      "active",
-      "interactive",
-      input.workspace ?? null,
-      input.content,
-    ],
-  );
+  await input.journal.commit({
+    events: [],
+    mutations: [{
+      kind: "session_insert",
+      sessionId: input.sessionId,
+      slug: input.slug,
+      sessionName: "Workbench Harness Shell",
+      taskDescription: truncateTaskDescription(input.taskDescription),
+      status: "active",
+      mode: "interactive",
+      workspace: input.workspace ?? null,
+      content: input.content,
+      progressDone: 0,
+      progressTotal: 0,
+    }],
+  });
 }
 
 /**
@@ -97,21 +95,17 @@ export async function createWorkbenchSession(
  * directory the session was created in, without the client re-sending its cwd.
  */
 export async function fetchWorkbenchSessionWorkspace(
-  input: { sessionId: string; query?: SessionQuery },
+  input: { sessionId: string; sessions: SessionReader },
 ): Promise<string | null> {
   return (await fetchWorkbenchSessionWorkspaceRecord(input)).workspace;
 }
 
 export async function fetchWorkbenchSessionWorkspaceRecord(
-  input: { sessionId: string; query?: SessionQuery },
+  input: { sessionId: string; sessions: SessionReader },
 ): Promise<{ exists: boolean; workspace: string | null }> {
-  const query = input.query ?? doltQuery;
-  const rows = await query(
-    "SELECT workspace FROM sessions WHERE session_id = ? LIMIT 1;",
-    [input.sessionId],
-  );
-  if (rows.length === 0) return { exists: false, workspace: null };
-  const value = rows[0]?.workspace;
+  const row = await input.sessions.workspace(input.sessionId);
+  if (row === null) return { exists: false, workspace: null };
+  const value = row.workspace;
   return {
     exists: true,
     workspace: typeof value === "string" && value.length > 0 ? value : null,
@@ -119,16 +113,10 @@ export async function fetchWorkbenchSessionWorkspaceRecord(
 }
 
 export async function fetchWorkbenchSessionRecord(
-  input: { sessionId: string; query?: SessionQuery },
+  input: { sessionId: string; sessions: SessionReader },
 ): Promise<WorkbenchSessionSummary | null> {
-  const query = input.query ?? doltQuery;
-  const rows = await query(
-    "SELECT session_id, slug, session_name, task_description, project, " +
-      "status, created_at, updated_at FROM sessions WHERE session_id = ? LIMIT 1;",
-    [input.sessionId],
-  );
-  if (rows.length === 0) return null;
-  const row = rows[0];
+  const row = await input.sessions.summary(input.sessionId);
+  if (row === null) return null;
   const project = row.project === "" ? null : row.project;
   return {
     sessionId: row.session_id,
@@ -144,16 +132,9 @@ export async function fetchWorkbenchSessionRecord(
 
 export async function countWorkbenchSessionEvents(input: {
   sessionId: string;
-  query?: SessionQuery;
+  events: EventReader;
 }): Promise<number> {
-  const query = input.query ?? doltQuery;
-  const rows = await query(
-    "SELECT COUNT(*) as count FROM events WHERE session_id = ?;",
-    [input.sessionId],
-  );
-  if (rows.length === 0) return 0;
-  const count = Number(rows[0].count);
-  return Number.isNaN(count) ? 0 : count;
+  return await input.events.countBySession(input.sessionId);
 }
 
 export * from "./idea-packet.ts";
@@ -161,18 +142,17 @@ export * from "./idea-packet.ts";
 export async function updateWorkbenchSession(
   input: UpdateWorkbenchSessionInput,
 ): Promise<void> {
-  const exec = input.exec ?? doltExec;
-  await exec(
-    "UPDATE sessions SET status = ?, progress_done = ?, progress_total = ?, " +
-      "content = ? WHERE session_id = ?;",
-    [
-      "completed",
-      1,
-      1,
-      input.content,
-      input.sessionId,
-    ],
-  );
+  await input.journal.commit({
+    events: [],
+    mutations: [{
+      kind: "session_update",
+      sessionId: input.sessionId,
+      status: "completed",
+      progressDone: 1,
+      progressTotal: 1,
+      content: input.content,
+    }],
+  });
 }
 
 function truncateTaskDescription(value: string): string {
@@ -235,9 +215,8 @@ export function compareSessionActivity(
 export async function listWorkbenchSessions(options: {
   project?: string;
   limit?: number;
-  query?: SessionQuery;
-} = {}): Promise<WorkbenchProjectSessions[]> {
-  const query = options.query ?? doltQuery;
+  sessions: SessionReader;
+}): Promise<WorkbenchProjectSessions[]> {
   const limit = Math.floor(
     Math.min(
       Math.max(
@@ -249,19 +228,10 @@ export async function listWorkbenchSessions(options: {
       1000,
     ),
   );
-  const params: SqlParam[] = [];
-  let where = "";
-  if (options.project !== undefined) {
-    where = "WHERE project = ? ";
-    params.push(options.project);
-  }
-  const rows = await query(
-    "SELECT session_id, slug, session_name, task_description, project, " +
-      "status, created_at, updated_at FROM sessions " +
-      where +
-      `ORDER BY COALESCE(updated_at, created_at) DESC LIMIT ${limit};`,
-    params,
-  );
+  const rows = await options.sessions.list({
+    ...(options.project !== undefined ? { project: options.project } : {}),
+    limit,
+  });
   const groups = new Map<string, WorkbenchProjectSessions>();
   for (const row of rows) {
     const project = row.project === "" ? null : row.project;
@@ -355,181 +325,14 @@ export interface WorkbenchSessionEvent {
   createdAt: string;
 }
 
-const AS_OF_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$/;
-
-export function isValidAsOfTimestamp(value: string): boolean {
-  return AS_OF_TIMESTAMP.test(value);
-}
-
-function eventQuery(
-  asOfClause: string,
-  historicalProviderCallSchema = false,
-  historicalUnparsedToolCallSchema = false,
-  historicalRunnerSchema = false,
-  historicalRunnerAuthSchema = false,
-  historicalTraceContextSchema = false,
-  limit?: number,
-  order: "asc" | "desc" = "asc",
-  eventId?: string,
-): string {
-  const traceContextFields = historicalTraceContextSchema
-    ? "NULL AS trace_flags, NULL AS trace_state, NULL AS span_kind, " +
-      "NULL AS parent_is_remote"
-    : "trace_flags, trace_state, span_kind, parent_is_remote";
-  const providerCallFields = historicalProviderCallSchema
-    ? "NULL AS provider_call_order, NULL AS provider_call_purpose, " +
-      "NULL AS provider_error_class"
-    : "provider_call_order, provider_call_purpose, provider_error_class";
-  const unparsedToolCallFields = historicalUnparsedToolCallSchema
-    ? "NULL AS unparsed_tool_call_count, " +
-      "NULL AS unparsed_tool_call_count_is_lower_bound"
-    : "unparsed_tool_call_count, " +
-      "unparsed_tool_call_count_is_lower_bound";
-  // Dolt/MySQL drivers may decode JSON columns to objects. Cast both
-  // runner_capabilities and tool_arguments so Workbench owns their validation.
-  const runnerFields = historicalRunnerSchema
-    ? "NULL AS runner_kind, NULL AS runner_profile, NULL AS runner_protocol, " +
-      "NULL AS runner_protocol_version, NULL AS runner_stop_reason, " +
-      "NULL AS runner_external_session_id, " +
-      "NULL AS runner_agent_name, NULL AS runner_agent_version, " +
-      "NULL AS runner_transport, NULL AS runner_access_route, " +
-      "NULL AS runner_cost_basis, " +
-      "NULL AS runner_workspace, NULL AS runner_capabilities, " +
-      "NULL AS runner_evidence_scope, NULL AS runner_route_source, " +
-      "NULL AS runner_auth_type, NULL AS permission_verdict"
-    : "runner_kind, runner_profile, runner_protocol, runner_protocol_version, " +
-      "runner_stop_reason, runner_external_session_id, runner_agent_name, runner_agent_version, " +
-      "runner_transport, runner_access_route, runner_cost_basis, runner_workspace, " +
-      "CAST(runner_capabilities AS CHAR) AS runner_capabilities, " +
-      "runner_evidence_scope, " +
-      (historicalRunnerAuthSchema
-        ? "NULL AS runner_route_source, NULL AS runner_auth_type, "
-        : "runner_route_source, runner_auth_type, ") +
-      "permission_verdict";
-  const limitClause = typeof limit === "number" && limit > 0
-    ? ` LIMIT ${Math.floor(limit)}`
-    : "";
-  const orderClause = order === "desc" ? "DESC" : "ASC";
-  const eventClause = typeof eventId === "string" && eventId.length > 0
-    ? " AND event_id = ?"
-    : "";
-  return `SELECT event_id, event_type, trace_id, span_id, parent_span_id, ` +
-    `${traceContextFields}, ` +
-    `principal_id, model_id, provider, api, content, stop_reason, ` +
-    `tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, ` +
-    `cost_total, duration_ms, ${providerCallFields}, ${unparsedToolCallFields}, ` +
-    `${runnerFields}, ` +
-    `tool_name, tool_call_id, ` +
-    `CAST(tool_arguments AS CHAR) AS tool_arguments, ` +
-    `tool_result, tool_is_error, created_at FROM events${asOfClause} ` +
-    `WHERE session_id = ?${eventClause} ORDER BY created_at ${orderClause}, event_id ${orderClause}${limitClause};`;
-}
-
-function isMissingRunnerColumn(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as {
-    code?: unknown;
-    errno?: unknown;
-    message?: unknown;
-    sqlMessage?: unknown;
-  };
-  const message = [candidate.message, candidate.sqlMessage]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  if (
-    !/runner_(?:kind|profile|protocol|stop|external|agent_(?:name|version)|transport|access|cost|workspace|capabilities|evidence)|permission_verdict/
-      .test(message)
-  ) {
-    return false;
-  }
-  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
-    /unknown column|column\s+["'](?:runner_(?:kind|profile|protocol[^"']*|stop[^"']*|external[^"']*|agent_(?:name|version)|transport|access[^"']*|cost[^"']*|workspace|capabilities|evidence[^"']*)|permission_verdict)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingRunnerAuthColumn(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as {
-    code?: unknown;
-    errno?: unknown;
-    message?: unknown;
-    sqlMessage?: unknown;
-  };
-  const message = [candidate.message, candidate.sqlMessage]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  if (!/runner_(?:route_source|auth_type)/.test(message)) return false;
-  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
-    /unknown column|column\s+["']runner_(?:route_source|auth_type)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingTraceContextColumn(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as {
-    code?: unknown;
-    errno?: unknown;
-    message?: unknown;
-    sqlMessage?: unknown;
-  };
-  const message = [candidate.message, candidate.sqlMessage]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  if (!/(?:trace_flags|trace_state|span_kind|parent_is_remote)/.test(message)) {
-    return false;
-  }
-  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
-    /unknown column|column\s+["'](?:trace_flags|trace_state|span_kind|parent_is_remote)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingProviderCallColumn(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as {
-    code?: unknown;
-    errno?: unknown;
-    message?: unknown;
-    sqlMessage?: unknown;
-  };
-  const message = [candidate.message, candidate.sqlMessage]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  const knownProviderCallColumn =
-    /provider_call_(order|purpose)|provider_error_class/.test(message);
-  if (!knownProviderCallColumn) return false;
-  const driverReportsMissingField = candidate.code === "ER_BAD_FIELD_ERROR" ||
-    candidate.errno === 1054;
-  return driverReportsMissingField ||
-    /unknown column|column\s+["'](?:provider_call_(?:order|purpose)|provider_error_class)["']\s+could not be found/i
-      .test(message);
-}
-
-function isMissingUnparsedToolCallColumn(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const candidate = error as {
-    code?: unknown;
-    errno?: unknown;
-    message?: unknown;
-    sqlMessage?: unknown;
-  };
-  const message = [candidate.message, candidate.sqlMessage]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  if (!/unparsed_tool_call_count/.test(message)) return false;
-  return candidate.code === "ER_BAD_FIELD_ERROR" || candidate.errno === 1054 ||
-    /unknown column|column\s+["']unparsed_tool_call_count(?:_is_lower_bound)?["']\s+could not be found/i
-      .test(message);
-}
-
 export async function fetchWorkbenchSessionEvents(input: {
   sessionId: string;
   eventId?: string;
   asOf?: string;
   limit?: number;
   order?: "asc" | "desc";
-  query?: SessionQuery;
+  events: EventReader;
 }): Promise<WorkbenchSessionEvent[]> {
-  const query = input.query ?? doltQuery;
   if (input.limit !== undefined) {
     if (
       typeof input.limit !== "number" ||
@@ -543,72 +346,15 @@ export async function fetchWorkbenchSessionEvents(input: {
   const effectiveLimit = input.limit ?? (input.eventId ? 10 : 5000);
   const explicitOrder = input.order;
   const order = explicitOrder ?? "desc";
-  // AS OF cannot be parameterized; the timestamp is validated against a
-  // strict shape before being inlined.
-  let asOfClause = "";
-  if (input.asOf !== undefined) {
-    if (!isValidAsOfTimestamp(input.asOf)) {
-      throw new Error(
-        "asOf must be a timestamp like 2026-06-12 10:00:00",
-      );
-    }
-    asOfClause = ` AS OF TIMESTAMP('${input.asOf.replace("T", " ")}')`;
-  }
-  const queryArgs: string[] = [input.sessionId];
-  if (typeof input.eventId === "string" && input.eventId.length > 0) {
-    queryArgs.push(input.eventId);
-  }
-  let rows: Record<string, string>[] | undefined;
-  let historicalProviderCallSchema = false;
-  let historicalUnparsedToolCallSchema = false;
-  let historicalRunnerSchema = false;
-  let historicalRunnerAuthSchema = false;
-  let historicalTraceContextSchema = false;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    try {
-      rows = await query(
-        eventQuery(
-          asOfClause,
-          historicalProviderCallSchema,
-          historicalUnparsedToolCallSchema,
-          historicalRunnerSchema,
-          historicalRunnerAuthSchema,
-          historicalTraceContextSchema,
-          effectiveLimit,
-          order,
-          input.eventId,
-        ),
-        queryArgs,
-      );
-      break;
-    } catch (error) {
-      const missingProviderCall = isMissingProviderCallColumn(error);
-      const missingUnparsedToolCall = isMissingUnparsedToolCallColumn(error);
-      const missingRunner = isMissingRunnerColumn(error);
-      const missingRunnerAuth = isMissingRunnerAuthColumn(error);
-      const missingTraceContext = isMissingTraceContextColumn(error);
-      if (
-        !missingProviderCall && !missingUnparsedToolCall && !missingRunner &&
-        !missingRunnerAuth && !missingTraceContext
-      ) throw error;
-      historicalProviderCallSchema ||= missingProviderCall;
-      historicalUnparsedToolCallSchema ||= missingProviderCall ||
-        missingUnparsedToolCall;
-      historicalRunnerSchema ||= missingProviderCall ||
-        missingUnparsedToolCall || missingRunner;
-      historicalRunnerAuthSchema ||= missingProviderCall ||
-        missingUnparsedToolCall || missingRunner ||
-        missingRunnerAuth;
-      // A snapshot missing any migration 003-006 column necessarily predates
-      // migration 007 too, regardless of which missing column the driver names.
-      historicalTraceContextSchema ||= missingProviderCall ||
-        missingUnparsedToolCall || missingRunner ||
-        missingRunnerAuth || missingTraceContext;
-    }
-  }
-  if (rows === undefined) {
-    throw new Error("historical event schema did not converge");
-  }
+  const rows = await input.events.bySession({
+    sessionId: input.sessionId,
+    ...(typeof input.eventId === "string" && input.eventId.length > 0
+      ? { eventId: input.eventId }
+      : {}),
+    ...(input.asOf !== undefined ? { asOf: input.asOf } : {}),
+    limit: effectiveLimit,
+    order,
+  });
   if (!explicitOrder && order === "desc") {
     rows.reverse();
   }

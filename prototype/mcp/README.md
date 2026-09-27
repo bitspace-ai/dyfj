@@ -80,6 +80,8 @@ Add to the MCP server list in settings. Same command/args pattern.
 Coding agent (any)
     ↓ MCP (stdio)
 dyfj-memory MCP server
+    ↓ store port (src/store/: the runtime's journal and readers)
+DoltStore
     ↓ mysql2 (TCP → Dolt sql-server)
 local Dolt sql-server (default 127.0.0.1:3306, database `dolt`)
 ```

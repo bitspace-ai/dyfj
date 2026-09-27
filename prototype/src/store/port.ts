@@ -1,0 +1,161 @@
+/**
+ * The store port: the types every adapter implements and every caller sees
+ * (`specs/02-data-layer.md` section 2). See `mod.ts` for the directory's
+ * responsibility.
+ */
+
+import type { MemoryType, MemoryVisibility } from "./memories.ts";
+import type { UnjournaledMutation } from "./unjournaled.ts";
+
+/** A row as the driver renders it to text; SQL NULL reads as "". */
+export type TextRow = Record<string, string>;
+
+/**
+ * One `events` row to append: column name to value. `null` columns are
+ * omitted (the DDL default applies) and booleans are stored as 0/1. Typed
+ * per-event builders replace this shape once row types are generated.
+ */
+export type EventInsert = Readonly<Record<string, unknown>>;
+
+export interface CommitBatch {
+  events: readonly EventInsert[];
+  mutations?: readonly UnjournaledMutation[];
+}
+
+export interface CommitOptions {
+  /**
+   * Abort the commit. An abort before the transaction commits rejects with
+   * an `AbortError` and leaves nothing written. An abort cannot recall a
+   * COMMIT already sent: if the server acknowledges it, the batch is durable
+   * and `commit` resolves; if the connection is lost first, `commit` rejects
+   * with the driver's error and the outcome is unknown, so a caller that must
+   * know reads the batch back (`events.exists`).
+   */
+  signal?: AbortSignal;
+}
+
+export interface CommitReceipt {
+  /** `event_id` of each appended event, in batch order. */
+  eventIds: string[];
+  /** Number of unjournaled mutations applied. */
+  mutations: number;
+}
+
+/**
+ * The only mutation path. A batch's events, their projections and its declared
+ * mutations are applied in one transaction: all of them, or none.
+ */
+export interface Journal {
+  commit(batch: CommitBatch, options?: CommitOptions): Promise<CommitReceipt>;
+}
+
+export interface SessionEventsQuery {
+  sessionId: string;
+  /** Only this event (still scoped to the session). */
+  eventId?: string;
+  /**
+   * Read the table as of a Dolt commit timestamp
+   * (`YYYY-MM-DD HH:MM:SS[.ffffff]`, `T` accepted). Dolt time travel;
+   * `MemoryStore` rejects it.
+   */
+  asOf?: string;
+  /** Positive integer row cap. */
+  limit: number;
+  order: "asc" | "desc";
+}
+
+export interface EventReader {
+  exists(eventId: string): Promise<boolean>;
+  countBySession(sessionId: string): Promise<number>;
+  /**
+   * A session's events, ordered by `created_at` then `event_id`. The rows
+   * carry the columns a transcript projection reads; JSON columns
+   * (`tool_arguments`, `runner_capabilities`) are rendered as JSON text.
+   */
+  bySession(query: SessionEventsQuery): Promise<TextRow[]>;
+}
+
+export interface SessionReader {
+  /** `{ workspace }` for a session, or null when there is no such session. */
+  workspace(sessionId: string): Promise<TextRow | null>;
+  /** The listing columns of one session, or null. */
+  summary(sessionId: string): Promise<TextRow | null>;
+  /**
+   * Sessions by latest activity (`COALESCE(updated_at, created_at)` desc),
+   * optionally one project's, capped at `limit` (a positive integer).
+   */
+  list(query: { project?: string; limit: number }): Promise<TextRow[]>;
+  /** Newest sessions first, optionally by status (memory MCP listing). */
+  recent(query: { status?: string; limit: number }): Promise<TextRow[]>;
+  /** One session's full record by id or slug (memory MCP `get_session`). */
+  detail(key: { sessionId: string } | { slug: string }): Promise<
+    TextRow | null
+  >;
+}
+
+export interface MemoryReader {
+  /** Full rows classified `inject = 'always'` within the clearance. */
+  injected(clearance: readonly MemoryVisibility[]): Promise<TextRow[]>;
+  /** Index rows (no content) classified `inject = 'index'`. */
+  indexed(clearance: readonly MemoryVisibility[]): Promise<TextRow[]>;
+  /** One full row by slug, if its visibility is within the clearance. */
+  bySlug(
+    slug: string,
+    clearance: readonly MemoryVisibility[],
+  ): Promise<TextRow | null>;
+  /** Index rows of every inject class, optionally of one type. */
+  list(
+    clearance: readonly MemoryVisibility[],
+    filter?: { type?: MemoryType },
+  ): Promise<TextRow[]>;
+}
+
+/** Reference data: the model catalog (written only by `schema/`). */
+export interface ModelReader {
+  /** Active catalog rows, by tier then slug. */
+  listActive(): Promise<TextRow[]>;
+}
+
+/** Reference data: companion prompts (written only by `schema/`). */
+export interface PromptReader {
+  /** `{ content }` of the active prompt with this slug, or null. */
+  active(slug: string): Promise<TextRow | null>;
+}
+
+export interface SpendBaselineSums {
+  /** This session's lifetime `model_response` spend. */
+  sessionSpentUsd: number;
+  /** This session's spend at or after `dayStart`. */
+  sessionSpentTodayUsd: number;
+  /** Every other session's spend at or after `dayStart`. */
+  dailyOtherSessionsUsd: number;
+}
+
+/** Spend rolled up from `model_response` events. */
+export interface SpendReader {
+  /** `dayStart` is a `YYYY-MM-DD HH:MM:SS` local-clock boundary. */
+  baselines(sessionId: string, dayStart: string): Promise<SpendBaselineSums>;
+}
+
+export interface Store {
+  /** The only mutation path. */
+  journal: Journal;
+  events: EventReader;
+  sessions: SessionReader;
+  memories: MemoryReader;
+  models: ModelReader;
+  prompts: PromptReader;
+  spend: SpendReader;
+  close(): Promise<void>;
+}
+
+const AS_OF_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?$/;
+
+export function isValidAsOfTimestamp(value: string): boolean {
+  return AS_OF_TIMESTAMP.test(value);
+}
+
+/** Thrown by `bySession` for a malformed `asOf`. */
+export function invalidAsOfError(): Error {
+  return new Error("asOf must be a timestamp like 2026-06-12 10:00:00");
+}

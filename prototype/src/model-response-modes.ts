@@ -24,7 +24,7 @@ export async function compareResponseModes(params: {
   systemPrompt: string;
   prompt: string;
   routing: WorkbenchRoutingOptions;
-  models?: WorkbenchModel[];
+  models: WorkbenchModel[];
   now?: () => number;
   fetchFn?: FetchLike;
 }): Promise<ResponseModeReport[]> {

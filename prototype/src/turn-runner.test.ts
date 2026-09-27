@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import type { EventReader } from "./store/mod.ts";
 import {
   executeTurn,
   formatTurnSummaryLine,
@@ -154,24 +155,32 @@ describe("paidEscalationVerdict", () => {
   });
 });
 
+/** An event reader that serves these rows for any session. */
+function eventsReturning(rows: Record<string, string>[]): EventReader {
+  return {
+    exists: () => Promise.resolve(false),
+    countBySession: () => Promise.resolve(rows.length),
+    bySession: () => Promise.resolve(rows.map((row) => ({ ...row }))),
+  };
+}
+
 describe("executeTurn persisted-history boundary", () => {
   test("[case 5 boundary] empty-after-withholding history fails before runtime model work", async () => {
     const sessionId = "01ABCDEF0123456789ABCDEF01";
     const events = await fetchWorkbenchSessionEvents({
       sessionId,
-      query: () =>
-        Promise.resolve([{
-          event_id: "tool-event",
-          event_type: "tool_call",
-          trace_id: "trace",
-          principal_id: "workbench",
-          tool_name: "read_file",
-          tool_call_id: "call-1",
-          tool_arguments: "not-json",
-          tool_result: "README.md",
-          tool_is_error: "0",
-          created_at: "2026-09-01 12:00:00",
-        }]),
+      events: eventsReturning([{
+        event_id: "tool-event",
+        event_type: "tool_call",
+        trace_id: "trace",
+        principal_id: "workbench",
+        tool_name: "read_file",
+        tool_call_id: "call-1",
+        tool_arguments: "not-json",
+        tool_result: "README.md",
+        tool_is_error: "0",
+        created_at: "2026-09-01 12:00:00",
+      }]),
     });
     const resolved = resolveTurnFromBody({
       prompt: "what did it find?",
@@ -197,29 +206,28 @@ describe("executeTurn persisted-history boundary", () => {
     const sessionId = "01ABCDEF0123456789ABCDEF01";
     const events = await fetchWorkbenchSessionEvents({
       sessionId,
-      query: () =>
-        Promise.resolve([
-          {
-            event_id: "gap-event",
-            event_type: "tool_call",
-            trace_id: "trace",
-            principal_id: "workbench",
-            tool_name: "acp.history_unavailable",
-            tool_call_id: "gap-1",
-            tool_arguments: "{}",
-            tool_result: "",
-            tool_is_error: "1",
-            created_at: "2026-09-01 12:00:01",
-          },
-          {
-            event_id: "prompt-event",
-            event_type: "session_start",
-            trace_id: "trace",
-            principal_id: "operator",
-            content: "original persisted prompt",
-            created_at: "2026-09-01 12:00:00",
-          },
-        ] as unknown as Record<string, string>[]),
+      events: eventsReturning([
+        {
+          event_id: "gap-event",
+          event_type: "tool_call",
+          trace_id: "trace",
+          principal_id: "workbench",
+          tool_name: "acp.history_unavailable",
+          tool_call_id: "gap-1",
+          tool_arguments: "{}",
+          tool_result: "",
+          tool_is_error: "1",
+          created_at: "2026-09-01 12:00:01",
+        },
+        {
+          event_id: "prompt-event",
+          event_type: "session_start",
+          trace_id: "trace",
+          principal_id: "operator",
+          content: "original persisted prompt",
+          created_at: "2026-09-01 12:00:00",
+        },
+      ] as unknown as Record<string, string>[]),
     });
     const resolved = resolveTurnFromBody(
       { prompt: "continue now", sessionId },

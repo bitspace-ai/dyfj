@@ -1,11 +1,10 @@
 /**
  * Unit tests for src/memory.ts
  *
- * All tests are pure - no Dolt, no network.
- * I/O functions (loadInjectedMemories, loadIndexedMemories,
- * executeReadMemory) are not tested here; they delegate to doltQuery which
- * talks to Dolt sql-server. The pure functions that compose the session context
- * are fully covered.
+ * All tests are pure - no Dolt, no network. The I/O functions
+ * (loadInjectedMemories, loadIndexedMemories, executeReadMemory) read through
+ * the store port and run here against MemoryStore; the store conformance suite
+ * covers the readers themselves.
  */
 
 import { describe, expect, test } from "vitest";
@@ -13,13 +12,15 @@ import {
   buildMemoryContextSourceLines,
   buildSystemPrompt,
   escapeUntrustedMemoryContent,
+  executeReadMemory,
   formatUntrustedMemoryRecord,
+  loadIndexedMemories,
+  loadInjectedMemories,
   type Memory,
-  MEMORY_VISIBILITY_ALL,
-  memoryClearanceFor,
   type MemoryIndexEntry,
   UNTRUSTED_MEMORY_INSTRUCTIONS,
 } from "./memory.ts";
+import { MEMORY_VISIBILITY_ALL, MemoryStore } from "./store/mod.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -89,25 +90,79 @@ const SAMPLE_INDEX: MemoryIndexEntry[] = [
   }),
 ];
 
-// ── memoryClearanceFor (privacy-class scoping) ────────────────────────────────
+// ── store-backed loaders ──────────────────────────────────────────────────────
 
-describe("memoryClearanceFor", () => {
-  test("loopback (local operator) is cleared for every visibility class", () => {
-    expect(memoryClearanceFor("loopback")).toEqual([...MEMORY_VISIBILITY_ALL]);
+describe("store-backed memory loaders", () => {
+  const store = new MemoryStore({
+    memories: [
+      {
+        memory_id: "m1",
+        slug: "user_identity",
+        type: "user",
+        visibility: "private",
+        inject: "always",
+        name: "Identity",
+        description: "who",
+        content: "core content",
+      },
+      {
+        memory_id: "m2",
+        slug: "project_notes",
+        type: "project",
+        visibility: "public",
+        inject: "index",
+        name: "Notes",
+        description: "notes",
+        content: "notes content",
+      },
+    ],
   });
 
-  test("loopback clearance includes the private class", () => {
-    expect(memoryClearanceFor("loopback")).toContain("private");
+  test("load injected and indexed rows within the clearance", async () => {
+    expect(
+      await loadInjectedMemories(store.memories, MEMORY_VISIBILITY_ALL),
+    ).toEqual([{
+      memoryId: "m1",
+      slug: "user_identity",
+      type: "user",
+      name: "Identity",
+      description: "who",
+      content: "core content",
+    }]);
+    expect(
+      await loadInjectedMemories(store.memories, ["client_safe", "public"]),
+    ).toEqual([]);
+    expect(
+      await loadIndexedMemories(store.memories, MEMORY_VISIBILITY_ALL),
+    ).toEqual([{
+      slug: "project_notes",
+      type: "project",
+      name: "Notes",
+      description: "notes",
+    }]);
   });
 
-  test("remote consumers get only client-safe + public (no private corpus)", () => {
-    expect(memoryClearanceFor("remote")).toEqual(["client_safe", "public"]);
+  test("executeReadMemory formats a known row and gives a useful not-found result", async () => {
+    const found = await executeReadMemory(
+      store.memories,
+      "user_identity",
+      MEMORY_VISIBILITY_ALL,
+    );
+    expect(found).toMatch(/^<untrusted-memory>/);
+    expect(found).toContain("core content");
+    expect(
+      await executeReadMemory(store.memories, "missing", MEMORY_VISIBILITY_ALL),
+    ).toContain("Memory not found: 'missing'");
   });
 
-  test("remote clearance excludes private and agent-shareable", () => {
-    const remote = memoryClearanceFor("remote");
-    expect(remote).not.toContain("private");
-    expect(remote).not.toContain("shareable");
+  test("executeReadMemory reads within the clearance it is given", async () => {
+    const clearance = ["client_safe", "public"] as const;
+    expect(
+      await executeReadMemory(store.memories, "project_notes", clearance),
+    ).toContain("<untrusted-memory>");
+    expect(
+      await executeReadMemory(store.memories, "user_identity", clearance),
+    ).toContain("Memory not found: 'user_identity'");
   });
 });
 

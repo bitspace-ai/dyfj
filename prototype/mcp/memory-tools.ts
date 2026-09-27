@@ -1,27 +1,13 @@
-import { memoryClearanceFor, type MemoryVisibility } from "../src/memory.ts";
-import type { SqlParam } from "./dolt-config.ts";
-
-type MemoryType = "user" | "feedback" | "project" | "reference";
-
-export type McpMemoryQuery = (
-  sql: string,
-  params?: SqlParam[],
-) => Promise<Record<string, string>[]>;
+import {
+  MCP_STDIO_MEMORY_CLEARANCE,
+  type MemoryReader,
+  type MemoryType,
+} from "../src/store/mod.ts";
 
 export interface McpMemoryToolResult {
   [key: string]: unknown;
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
-}
-
-// A standalone stdio MCP connection has no authenticated principal. Until it
-// does, it receives the same conservative clearance as every remote consumer.
-const STANDALONE_MCP_MEMORY_CLEARANCE = memoryClearanceFor("remote");
-
-function visibilityPlaceholders(
-  visibility: readonly MemoryVisibility[],
-): string {
-  return visibility.map(() => "?").join(", ");
 }
 
 function markdownTableCell(value: string): string {
@@ -31,19 +17,14 @@ function markdownTableCell(value: string): string {
     .replace(/\|/g, "\\|");
 }
 
+// A standalone stdio MCP connection has no authenticated principal, so it
+// reads with the store's stdio clearance (the remote consumer's).
 export async function readMcpMemory(
-  query: McpMemoryQuery,
+  memories: MemoryReader,
   slug: string,
 ): Promise<McpMemoryToolResult> {
-  const rows = await query(
-    `SELECT memory_id, slug, type, name, description, content ` +
-      `FROM memories WHERE slug = ? ` +
-      `AND visibility IN (${
-        visibilityPlaceholders(STANDALONE_MCP_MEMORY_CLEARANCE)
-      }) LIMIT 1;`,
-    [slug, ...STANDALONE_MCP_MEMORY_CLEARANCE],
-  );
-  if (rows.length === 0) {
+  const memory = await memories.bySlug(slug, MCP_STDIO_MEMORY_CLEARANCE);
+  if (memory === null) {
     return {
       content: [
         {
@@ -54,7 +35,6 @@ export async function readMcpMemory(
       isError: true,
     };
   }
-  const memory = rows[0]!;
   return {
     content: [
       {
@@ -66,23 +46,12 @@ export async function readMcpMemory(
 }
 
 export async function listMcpMemories(
-  query: McpMemoryQuery,
+  memories: MemoryReader,
   type?: MemoryType,
 ): Promise<McpMemoryToolResult> {
-  const predicates = [
-    `visibility IN (${
-      visibilityPlaceholders(STANDALONE_MCP_MEMORY_CLEARANCE)
-    })`,
-  ];
-  const params: SqlParam[] = [...STANDALONE_MCP_MEMORY_CLEARANCE];
-  if (type) {
-    predicates.push("type = ?");
-    params.push(type);
-  }
-  const rows = await query(
-    `SELECT slug, type, name, description FROM memories ` +
-      `WHERE ${predicates.join(" AND ")} ORDER BY type, slug;`,
-    params,
+  const rows = await memories.list(
+    MCP_STDIO_MEMORY_CLEARANCE,
+    type ? { type } : {},
   );
   if (rows.length === 0) {
     return { content: [{ type: "text", text: "No memories found." }] };

@@ -11,7 +11,7 @@
  *   - record()    called after each done event with the message's usage
  *   - checkPreCall() called before starting a Tier 1/2 model call
  *   - buildSummaryEventPayload() is a pure function — testable without Dolt
- *   - writeSummaryEvent() calls writeEvent(); call once at session end
+ *   - writeSummaryEvent() commits it through the journal; call once at session end
  *
  * Budget defaults are a declared engine config key (`CONFIG_SCHEMA` in
  * config/): the env-var bindings and the limit numbers live on the declared
@@ -29,7 +29,7 @@ import {
   generateULID,
   sanitizeBoundaryText,
 } from "./kernel/mod.ts";
-import { doltQuery, writeEvent } from "./utils.ts";
+import type { Journal, SpendReader } from "./store/mod.ts";
 import {
   type Env,
   processEnv,
@@ -96,27 +96,15 @@ export function localDayKey(now: Date = new Date()): string {
  * receipts — this is a
  * single-operator cost envelope, not an adversarial control, and it is
  * deliberately global rather than per-principal (single-operator system per
- * the README boundaries). Query is injectable so the rollup logic is
- * testable without Dolt.
+ * the README boundaries). The rollup is the store's spend reader, so it is
+ * testable against the store fakes.
  */
 export async function fetchSpendBaselines(
+  spend: SpendReader,
   sessionId: string,
   dayStart: string = localDayStart(),
-  query: typeof doltQuery = doltQuery,
 ): Promise<SpendBaselines> {
-  const rows = await query(
-    "SELECT " +
-      "COALESCE(SUM(CASE WHEN session_id = ? THEN cost_total ELSE 0 END), 0) AS session_spent, " +
-      "COALESCE(SUM(CASE WHEN session_id = ? AND created_at >= ? THEN cost_total ELSE 0 END), 0) AS session_today, " +
-      "COALESCE(SUM(CASE WHEN created_at >= ? AND session_id <> ? THEN cost_total ELSE 0 END), 0) AS daily_others " +
-      "FROM events WHERE event_type = 'model_response' AND cost_total IS NOT NULL AND cost_total > 0",
-    [sessionId, sessionId, dayStart, dayStart, sessionId],
-  );
-  return {
-    sessionSpentUsd: Number(rows[0]?.session_spent ?? 0) || 0,
-    sessionSpentTodayUsd: Number(rows[0]?.session_today ?? 0) || 0,
-    dailyOtherSessionsUsd: Number(rows[0]?.daily_others ?? 0) || 0,
-  };
+  return await spend.baselines(sessionId, dayStart);
 }
 
 /**
@@ -1038,14 +1026,17 @@ export class BudgetTracker {
   }
 
   /**
-   * Write the budget_summary event to Dolt.
+   * Commit the budget_summary event through the journal.
    * Call once at session end, after the session_end lifecycle event.
    */
   async writeSummaryEvent(
+    journal: Journal,
     extra: Record<string, unknown> = {},
     overrides: { eventId?: string; spanId?: string; parentSpanId?: string } =
       {},
   ): Promise<void> {
-    await writeEvent(this.buildSummaryEventPayload(overrides, extra));
+    await journal.commit({
+      events: [this.buildSummaryEventPayload(overrides, extra)],
+    });
   }
 }

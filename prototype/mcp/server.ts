@@ -19,56 +19,33 @@
  *   get_session(session_id?, slug?)           — load a prior session
  *
  * Architecture:
- *   Coding agent (any) → MCP → this server → Dolt CLI → Dolt database
+ *   Coding agent (any) → MCP → this server → store (DoltStore) → Dolt sql-server
  *
  * Workbench and external agents use this server instead of embedding memory
  * SQL directly in each client.
  */
 
 import { McpServer } from "@modelcontextprotocol/server";
-import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import {
+  serveStdio,
+  StdioServerTransport,
+} from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import mysql from "mysql2/promise";
-import { buildDoltPoolOptions, type SqlParam } from "./dolt-config.ts";
 import { listMcpMemories, readMcpMemory } from "./memory-tools.ts";
 import { generateULID } from "../src/kernel/mod.ts";
+import { processEnv, resolveDoltConnection } from "../src/config/mod.ts";
+import {
+  createDoltPool,
+  DoltStore,
+  type MemoryType,
+  type Store,
+} from "../src/store/mod.ts";
 
-type McpMemoryType = "user" | "feedback" | "project" | "reference";
 type McpSessionStatus = "active" | "completed";
-
-// ── Dolt connection (TCP → sql-server) ────────────────────────────────────────
-// Uses mysql2 over TCP to avoid file-lock conflicts with dolt sql-server.
-
-let _pool: mysql.Pool | null = null;
-
-function getPool(): mysql.Pool {
-  if (!_pool) {
-    _pool = mysql.createPool(buildDoltPoolOptions());
-  }
-  return _pool;
-}
-
-/** Run a SELECT and return rows as plain objects */
-async function doltQuery(
-  sql: string,
-  params: SqlParam[] = [],
-): Promise<Record<string, string>[]> {
-  const [rows] = await getPool().execute(sql, params);
-  return (rows as mysql.RowDataPacket[]).map((r) => {
-    const out: Record<string, string> = {};
-    for (const k of Object.keys(r)) out[k] = r[k] == null ? "" : String(r[k]);
-    return out;
-  });
-}
-
-/** Run an INSERT/UPDATE/DELETE */
-async function doltExec(sql: string, params: SqlParam[] = []): Promise<void> {
-  await getPool().execute(sql, params);
-}
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
-function createServer(): McpServer {
+function createServer(store: Store): McpServer {
   const server = new McpServer({
     name: "dyfj-memory",
     version: "1.0.0",
@@ -87,7 +64,7 @@ function createServer(): McpServer {
         slug: z.string().describe("Memory slug from list_memories"),
       }),
     },
-    ({ slug }: { slug: string }) => readMcpMemory(doltQuery, slug),
+    ({ slug }: { slug: string }) => readMcpMemory(store.memories, slug),
   );
 
   // ── Tool: list_memories ───────────────────────────────────────────────────────
@@ -105,7 +82,7 @@ function createServer(): McpServer {
           .describe("Filter by memory type (omit for all)"),
       }),
     },
-    ({ type }: { type?: McpMemoryType }) => listMcpMemories(doltQuery, type),
+    ({ type }: { type?: MemoryType }) => listMcpMemories(store.memories, type),
   );
 
   // ── Tool: write_memory ────────────────────────────────────────────────────────
@@ -129,18 +106,23 @@ function createServer(): McpServer {
       { slug, name, type, description, content }: {
         slug: string;
         name: string;
-        type: McpMemoryType;
+        type: MemoryType;
         description: string;
         content: string;
       },
     ) => {
-      const id = generateULID();
-      await doltExec(
-        `INSERT INTO memories (memory_id, slug, type, name, description, content) ` +
-          `VALUES (?, ?, ?, ?, ?, ?) ` +
-          `ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), content = VALUES(content), updated_at = CURRENT_TIMESTAMP(6);`,
-        [id, slug, type, name, description, content],
-      );
+      await store.journal.commit({
+        events: [],
+        mutations: [{
+          kind: "memory_upsert",
+          memoryId: generateULID(),
+          slug,
+          type,
+          name,
+          description,
+          content,
+        }],
+      });
       return {
         content: [
           {
@@ -198,11 +180,22 @@ function createServer(): McpServer {
             .replace(/-$/, "")
         }`;
 
-      await doltExec(
-        `INSERT INTO sessions (session_id, slug, session_name, task_description, status, progress_done, progress_total) ` +
-          `VALUES (?, ?, ?, ?, 'active', 0, 0);`,
-        [id, derivedSlug, session_name ?? null, task_description],
-      );
+      await store.journal.commit({
+        events: [],
+        mutations: [{
+          kind: "session_insert",
+          sessionId: id,
+          slug: derivedSlug,
+          sessionName: session_name ?? null,
+          taskDescription: task_description,
+          status: "active",
+          mode: "interactive",
+          workspace: null,
+          content: null,
+          progressDone: 0,
+          progressTotal: 0,
+        }],
+      });
       return {
         content: [
           {
@@ -253,11 +246,17 @@ function createServer(): McpServer {
         content?: string;
       },
     ) => {
-      await doltExec(
-        `UPDATE sessions SET status = ?, progress_done = ?, progress_total = ?, ` +
-          `content = COALESCE(?, content) WHERE session_id = ?;`,
-        [status, progress_done, progress_total, content ?? null, session_id],
-      );
+      await store.journal.commit({
+        events: [],
+        mutations: [{
+          kind: "session_update",
+          sessionId: session_id,
+          status,
+          progressDone: progress_done,
+          progressTotal: progress_total,
+          content: content ?? null,
+        }],
+      });
       return {
         content: [
           {
@@ -295,14 +294,10 @@ function createServer(): McpServer {
     async (
       { limit = 10, status }: { limit?: number; status?: McpSessionStatus },
     ) => {
-      const where = status ? "WHERE status = ?" : "";
-      const params: SqlParam[] = status ? [status, limit] : [limit];
-      const rows = await doltQuery(
-        `SELECT session_id, slug, session_name, task_description, status, ` +
-          `progress_done, progress_total, created_at ` +
-          `FROM sessions ${where} ORDER BY created_at DESC LIMIT ?;`,
-        params,
-      );
+      const rows = await store.sessions.recent({
+        ...(status ? { status } : {}),
+        limit,
+      });
       if (rows.length === 0) {
         return { content: [{ type: "text", text: "No sessions found." }] };
       }
@@ -347,15 +342,10 @@ function createServer(): McpServer {
           isError: true,
         };
       }
-      const where = session_id ? "WHERE session_id = ?" : "WHERE slug = ?";
-      const params = [session_id ?? slug!];
-      const rows = await doltQuery(
-        `SELECT session_id, slug, session_name, task_description, effort_level, ` +
-          `status, progress_done, progress_total, mode, content, created_at, updated_at ` +
-          `FROM sessions ${where} LIMIT 1;`,
-        params,
+      const s = await store.sessions.detail(
+        session_id ? { sessionId: session_id } : { slug: slug! },
       );
-      if (rows.length === 0) {
+      if (s === null) {
         return {
           content: [{
             type: "text",
@@ -364,7 +354,6 @@ function createServer(): McpServer {
           isError: true,
         };
       }
-      const s = rows[0]!;
       const header = [
         `# Session: ${s.task_description}`,
         `**ID:** ${s.session_id}`,
@@ -385,4 +374,24 @@ function createServer(): McpServer {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-serveStdio(createServer, { legacy: "serve" });
+// The server's one store over one Dolt pool, shared by every connection. This
+// composition root owns it and closes it, once, when the stdio transport
+// closes or the server fails to start.
+const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
+let storeClosed: Promise<void> | undefined;
+const closeStore = () => (storeClosed ??= store.close().catch(() => {}));
+
+const transport = new StdioServerTransport();
+try {
+  serveStdio(() => createServer(store), { legacy: "serve", transport });
+} catch (error) {
+  await closeStore();
+  throw error;
+}
+// serveStdio binds the transport's close to tearing the server down; chain
+// the store's close after it.
+const closeServer = transport.onclose;
+transport.onclose = () => {
+  closeServer?.();
+  void closeStore();
+};

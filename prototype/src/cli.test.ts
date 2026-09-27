@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { MemoryStore } from "./store/mod.ts";
 import {
   buildServeUnixArgs,
   buildTurnBody,
@@ -776,6 +777,7 @@ describe("socketTurn over a real Unix socket (integration)", () => {
   test("streams deltas and returns the receipt across the wire", async () => {
     const sock = `/tmp/dyfj-uds-${crypto.randomUUID()}.sock`;
     const server = await serveWorkbenchUnix(sock, {
+      store: new MemoryStore(),
       // Stub runtime: stream two deltas, then return a receipt. Cast loosely so
       // the test need not import the engine's runtime result type.
       // deno-lint-ignore no-explicit-any

@@ -18,7 +18,10 @@
  *   direct `Deno.env`/`process.env` access outside `config/` and the
  *   entrypoints named in `arch-layers.json`, and `DYFJ_*` key literals in
  *   any scanned module (runtime, `mcp/` and the `scripts/` tooling) that
- *   `CONFIG_SCHEMA` does not declare.
+ *   `CONFIG_SCHEMA` does not declare; a confined package (`mysql2`) imported
+ *   outside the units and entrypoints allowed to use it; and a string literal
+ *   that begins with an SQL write statement outside the modules allowed to
+ *   write (`store/`'s journal, and the named entrypoints).
  *   An entry in `arch-cycles.json` (AGENTS.md rule 1) must name edges inside a
  *   cycle, and exempts them from the cycle and dynamic-import rules only.
  * - Ratchet: violations are compared with `arch-imports-baseline.json`. A
@@ -62,7 +65,29 @@ export interface LayerRules {
   sameLayerEdges: { from: string; to: string; typesOnly?: boolean }[];
   cli: { unit: string; allowedUnits: string[]; allowedPaths: string[] };
   env: EnvRules;
+  packages: PackageRule[];
+  sqlWrites: SqlWriteRules;
   files: Record<string, string>;
+}
+
+/**
+ * A package only some units may import (spec section 4): `name` is the
+ * package name as it appears in a specifier (`mysql2` matches `mysql2`,
+ * `mysql2/promise` and `npm:mysql2@3/promise`).
+ */
+export interface PackageRule {
+  name: string;
+  allowedUnits: string[];
+  entrypoints: EnvEntrypoint[];
+}
+
+/**
+ * Where SQL write statements may be written (spec 02 section 2): the named
+ * modules (the journal) and the named entrypoints, each justified.
+ */
+export interface SqlWriteRules {
+  allowedPaths: string[];
+  entrypoints: EnvEntrypoint[];
 }
 
 /**
@@ -98,6 +123,10 @@ export interface Baseline {
   env: string[];
   /** `<module>: DYFJ_*` key in a scanned module that the schema lacks. */
   envKeys: string[];
+  /** `<module>: <package>` import of a confined package outside its units. */
+  packages?: string[];
+  /** `<module>: <statement>` SQL write literal outside the allowed modules. */
+  sqlWrites?: string[];
 }
 
 interface Unit {
@@ -245,34 +274,95 @@ function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
 }
 
-export function validateEnvRules(
+function validateExemptions(
+  rule: string,
   rules: LayerRules,
   units: ReadonlyMap<string, Unit>,
+  allowedUnits: readonly string[],
+  entrypoints: readonly EnvEntrypoint[],
 ): string[] {
   const errors: string[] = [];
   const declared = new Set(rules.units.map((u) => u.dir));
-  for (const unit of rules.env.allowedUnits) {
+  for (const unit of allowedUnits) {
     if (!declared.has(unit)) {
-      errors.push(`env rule: allowed unit is not declared: ${unit}`);
+      errors.push(`${rule} rule: allowed unit is not declared: ${unit}`);
     }
   }
-  rules.env.entrypoints.forEach((entry, position) => {
+  entrypoints.forEach((entry, position) => {
     const label = entry.path ?? entry.unit ?? `#${position}`;
     if ((entry.unit === undefined) === (entry.path === undefined)) {
-      errors.push(`env entrypoint ${label}: name exactly one of unit or path`);
+      errors.push(
+        `${rule} entrypoint ${label}: name exactly one of unit or path`,
+      );
     } else if (entry.unit !== undefined && !declared.has(entry.unit)) {
-      errors.push(`env entrypoint ${label}: unit is not declared`);
+      errors.push(`${rule} entrypoint ${label}: unit is not declared`);
     } else if (entry.path !== undefined && !units.has(entry.path)) {
-      errors.push(`env entrypoint ${label}: module does not exist`);
+      errors.push(`${rule} entrypoint ${label}: module does not exist`);
     }
     if (
       typeof entry.justification !== "string" ||
       entry.justification.trim() === ""
     ) {
-      errors.push(`env entrypoint ${label}: missing justification`);
+      errors.push(`${rule} entrypoint ${label}: missing justification`);
     }
   });
   return errors;
+}
+
+export function validateEnvRules(
+  rules: LayerRules,
+  units: ReadonlyMap<string, Unit>,
+): string[] {
+  return validateExemptions(
+    "env",
+    rules,
+    units,
+    rules.env.allowedUnits,
+    rules.env.entrypoints,
+  );
+}
+
+export function validatePackageAndSqlRules(
+  rules: LayerRules,
+  units: ReadonlyMap<string, Unit>,
+): string[] {
+  const errors: string[] = [];
+  for (const rule of rules.packages) {
+    errors.push(
+      ...validateExemptions(
+        `package ${rule.name}`,
+        rules,
+        units,
+        rule.allowedUnits,
+        rule.entrypoints,
+      ),
+    );
+  }
+  for (const path of rules.sqlWrites.allowedPaths) {
+    if (!units.has(path)) {
+      errors.push(`sql-write rule: allowed module does not exist: ${path}`);
+    }
+  }
+  errors.push(
+    ...validateExemptions(
+      "sql-write",
+      rules,
+      units,
+      [],
+      rules.sqlWrites.entrypoints,
+    ),
+  );
+  return errors;
+}
+
+/** `mysql2/promise`, `npm:mysql2@3/promise` -> `mysql2`; scoped names kept. */
+export function packageName(specifier: string): string {
+  const bare = specifier.replace(/^(?:npm|jsr):/, "");
+  const segments = bare.split("/");
+  const strip = (segment: string) => segment.replace(/(.)@.*$/, "$1");
+  return bare.startsWith("@")
+    ? `${segments[0]}/${strip(segments[1] ?? "")}`
+    : strip(segments[0]!);
 }
 
 export function flattenBaseline(baseline: Baseline): string[] {
@@ -283,6 +373,8 @@ export function flattenBaseline(baseline: Baseline): string[] {
     ...baseline.dynamic.map((e) => `dynamic: ${e}`),
     ...baseline.env.map((e) => `env: ${e}`),
     ...baseline.envKeys.map((e) => `env-key: ${e}`),
+    ...(baseline.packages ?? []).map((e) => `package: ${e}`),
+    ...(baseline.sqlWrites ?? []).map((e) => `sql-write: ${e}`),
   ].sort();
 }
 
@@ -475,17 +567,23 @@ export function analyze(input: AnalysisInput): AnalysisResult {
   // A unit exempts only the modules that physically live in it: a legacy
   // module mapped into the unit by name (`files`) has not moved yet and gets
   // no exemption.
-  const envAllowed = (path: string): boolean => {
+  const exempt = (
+    path: string,
+    allowedUnits: readonly string[],
+    entrypoints: readonly EnvEntrypoint[],
+  ): boolean => {
     const unit = path in rules.files ? undefined : units.get(path);
-    if (unit !== undefined && rules.env.allowedUnits.includes(unit.pattern)) {
+    if (unit !== undefined && allowedUnits.includes(unit.pattern)) {
       return true;
     }
-    return rules.env.entrypoints.some((entry) =>
+    return entrypoints.some((entry) =>
       entry.path === path ||
       (entry.unit !== undefined && unit !== undefined &&
         entry.unit === unit.pattern)
     );
   };
+  const envAllowed = (path: string): boolean =>
+    exempt(path, rules.env.allowedUnits, rules.env.entrypoints);
   const env = sortedUnique(
     input.graph.envAccesses.filter((a) => !envAllowed(a.from)).map((a) =>
       `${a.from}: ${a.via}`
@@ -498,7 +596,35 @@ export function analyze(input: AnalysisInput): AnalysisResult {
     ).map((k) => `${k.from}: ${k.key}`),
   );
 
-  const current: Baseline = { cycles, layer, cli, dynamic, env, envKeys };
+  // Confined packages and SQL writes.
+  errors.push(...validatePackageAndSqlRules(rules, units));
+  const packages = sortedUnique(
+    input.graph.packageImports.flatMap((i) => {
+      const name = packageName(i.specifier);
+      const rule = rules.packages.find((r) => r.name === name);
+      if (rule === undefined) return [];
+      return exempt(i.from, rule.allowedUnits, rule.entrypoints)
+        ? []
+        : [`${i.from}: ${name}`];
+    }),
+  );
+  const sqlWrites = sortedUnique(
+    input.graph.sqlWrites.filter((w) =>
+      !rules.sqlWrites.allowedPaths.includes(w.from) &&
+      !exempt(w.from, [], rules.sqlWrites.entrypoints)
+    ).map((w) => `${w.from}: ${w.statement}`),
+  );
+
+  const current: Baseline = {
+    cycles,
+    layer,
+    cli,
+    dynamic,
+    env,
+    envKeys,
+    packages,
+    sqlWrites,
+  };
   const now = new Set(flattenBaseline(current));
   const before = new Set(flattenBaseline(input.baseline));
   return {
