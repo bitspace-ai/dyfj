@@ -22,7 +22,7 @@ import {
   DomainError,
   historyOmissionForDelivery,
   prependHistoryOmissionNotice,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},

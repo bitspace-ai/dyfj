@@ -2,16 +2,6 @@
   "cycles": [
     {
       "members": [
-        "prototype/src/external-agent-runtime.ts",
-        "prototype/src/workbench.ts"
-      ],
-      "edges": [
-        "prototype/src/external-agent-runtime.ts -> prototype/src/workbench.ts",
-        "prototype/src/workbench.ts -> prototype/src/external-agent-runtime.ts"
-      ]
-    },
-    {
-      "members": [
         "prototype/src/idea-packet.ts",
         "prototype/src/sessions.ts"
       ],
@@ -32,16 +22,13 @@
     }
   ],
   "layer": [
-    "prototype/src/external-agent-runtime.ts -> prototype/src/workbench.ts",
     "prototype/src/mcp-tools.ts -> prototype/src/linear-tools.ts",
     "prototype/src/provider.ts -> prototype/src/utils.ts",
     "prototype/src/sessions.ts -> prototype/src/context-compression.ts",
     "prototype/src/sessions.ts -> prototype/src/idea-packet.ts",
     "prototype/src/sessions.ts -> prototype/src/provider.ts",
     "prototype/src/uds-serve.ts -> prototype/src/runtime-sigint.ts",
-    "prototype/src/workbench.ts -> prototype/src/acp-client.ts",
-    "prototype/src/workbench.ts -> prototype/src/acp-session-map.ts",
-    "prototype/src/workbench.ts -> prototype/src/external-agent-runtime.ts"
+    "prototype/src/workbench.ts -> prototype/src/acp-client.ts"
   ],
   "cli": [
     "prototype/src/cli.ts -> prototype/src/friction.ts",
@@ -53,7 +40,6 @@
   "dynamic": [
     "prototype/src/workbench.ts -> prototype/src/budget.ts",
     "prototype/src/workbench.ts -> prototype/src/commands.ts",
-    "prototype/src/workbench.ts -> prototype/src/external-agent-runtime.ts",
     "prototype/src/workbench.ts -> prototype/src/mcp-tools.ts",
     "prototype/src/workbench.ts -> prototype/src/memory-search.ts",
     "prototype/src/workbench.ts -> prototype/src/memory.ts",

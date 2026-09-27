@@ -5,7 +5,7 @@ import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   DomainError,
   type HistoryOmissionProjection,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 
 export type SessionExec = (sql: string, params: SqlParam[]) => Promise<void>;
 export type SessionQuery = (

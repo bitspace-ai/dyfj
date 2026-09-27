@@ -19,7 +19,7 @@ import {
   RunawayAnomalyHaltError,
   type TierSpend,
 } from "./budget.ts";
-import { MAX_REASON_FIELD_BYTES } from "./turn-contract.ts";
+import { MAX_REASON_FIELD_BYTES } from "./contract/mod.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

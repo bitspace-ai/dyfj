@@ -24,7 +24,7 @@ import {
 import {
   MAX_ERROR_SUMMARY_BYTES,
   summarizeError,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 
 export interface JsonRpcPeerOptions {
   /** Incoming requests (and matching notifications) are dispatched here. */
