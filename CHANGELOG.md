@@ -78,7 +78,9 @@ README are tracked separately in its Revision history section.
 
   Frames from the runtime are capped at 16 MiB, the TypeScript peer's
   ceiling; a larger one, or a stream that passes the ceiling without a newline,
-  closes the connection and fails the requests waiting on it.
+  closes the connection and fails the requests waiting on it. So does a frame
+  that is not valid JSON, which could be the response a request is waiting
+  for; skipping it would leave that request waiting with nothing on screen.
 
   Not yet: model switching, session resume and the other interactive commands
   remain in the TypeScript CLI, which is unchanged and still the entry point.

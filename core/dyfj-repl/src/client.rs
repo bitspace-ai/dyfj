@@ -245,15 +245,18 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 break "runtime sent an oversized frame";
             }
         };
-        let Ok(line) = std::str::from_utf8(&bytes) else {
-            continue;
-        };
+        let line = String::from_utf8_lossy(&bytes);
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
+        // A frame that is not JSON may be the response a request is waiting
+        // for, and this client cannot tell which. Skipping it would leave that
+        // request waiting with nothing on screen, so the connection ends and
+        // the drain below fails every waiter with a reason.
         let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
-            continue;
+            eprintln!("the runtime sent a frame that is not valid JSON; closing the connection");
+            break "runtime sent a malformed frame";
         };
         dispatch(msg, &pending, &write, &tx).await;
     };
@@ -327,6 +330,25 @@ mod tests {
 
         let outcome = receiver.await.expect("the waiter must be settled");
         assert_eq!(outcome.unwrap_err(), "runtime sent an oversized frame");
+    }
+
+    /// A frame that is not JSON could be the response a request is waiting
+    /// for, so it must fail that request rather than leave it hanging.
+    #[tokio::test]
+    async fn a_malformed_frame_fails_the_waiting_requests() {
+        let (client_side, _server_side) = tokio::net::UnixStream::pair().unwrap();
+        let (_read, write) = client_side.into_split();
+        let write = Arc::new(Mutex::new(write));
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let (sender, receiver) = oneshot::channel();
+        pending.lock().await.insert(1, sender);
+        let (tx, _rx) = mpsc::channel(4);
+
+        let input: &[u8] = b"\n{\"jsonrpc\":\"2.0\",\"id\":1,\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n";
+        read_loop(input, pending, write, tx).await;
+
+        let outcome = receiver.await.expect("the waiter must be settled");
+        assert_eq!(outcome.unwrap_err(), "runtime sent a malformed frame");
     }
 
     /// Drive the real dispatcher, not JSON accessors beside it.
