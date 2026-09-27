@@ -24,8 +24,12 @@ export interface CommitBatch {
 
 export interface CommitOptions {
   /**
-   * Abort the commit. An aborted commit rejects with an `AbortError` and
-   * leaves nothing written.
+   * Abort the commit. An abort before the transaction commits rejects with
+   * an `AbortError` and leaves nothing written. An abort cannot recall a
+   * COMMIT already sent: if the server acknowledges it, the batch is durable
+   * and `commit` resolves; if the connection is lost first, `commit` rejects
+   * with the driver's error and the outcome is unknown, so a caller that must
+   * know reads the batch back (`events.exists`).
    */
   signal?: AbortSignal;
 }

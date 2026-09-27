@@ -252,6 +252,10 @@ export class DoltJournal implements Journal {
       await connection.beginTransaction();
       await work(connection);
       if (aborted) throw abortError();
+      // From here an abort cannot recall the batch. An acknowledged COMMIT is
+      // durable and reported as such; a connection lost mid-COMMIT rejects
+      // with the driver's error, and the outcome is unknown
+      // (`CommitOptions.signal`).
       await connection.commit();
     } catch (error) {
       try {

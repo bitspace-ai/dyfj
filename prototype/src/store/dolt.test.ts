@@ -28,7 +28,10 @@ interface Call {
 type Responder = (sql: string, params: unknown[]) => unknown[] | Error;
 
 /** A pool that records every statement and answers from `respond`. */
-function scriptedPool(respond: Responder = () => []) {
+function scriptedPool(
+  respond: Responder = () => [],
+  onCommit?: () => Promise<void>,
+) {
   const calls: Call[] = [];
   const log: string[] = [];
   const answer = (on: Call["on"]) => (sql: string, params: unknown[] = []) => {
@@ -43,7 +46,10 @@ function scriptedPool(respond: Responder = () => []) {
   const connection: DoltConnection = {
     execute: answer("connection"),
     beginTransaction: () => (log.push("begin"), Promise.resolve()),
-    commit: () => (log.push("commit"), Promise.resolve()),
+    commit: () => {
+      log.push("commit");
+      return onCommit?.() ?? Promise.resolve();
+    },
     rollback: () => (log.push("rollback"), Promise.resolve()),
     release: () => void log.push("release"),
     destroy: () => void log.push("destroy"),
@@ -514,6 +520,38 @@ Deno.test("journal.commit rejects an already-aborted empty batch", async () => {
   assertEquals((error as Error).name, "AbortError");
   assertEquals(calls, []);
   assertEquals(log, []);
+});
+
+Deno.test("an abort while COMMIT is in flight cannot recall an acknowledged commit", async () => {
+  const controller = new AbortController();
+  // The abort lands while the server is committing, and the server then
+  // acknowledges: the batch is durable, so commit reports it.
+  const { pool, log } = scriptedPool(() => [], () => {
+    controller.abort();
+    return Promise.resolve();
+  });
+  const receipt = await new DoltStore(pool).journal.commit(
+    { events: [event()] },
+    { signal: controller.signal },
+  );
+  assertEquals(receipt.eventIds, ["01EVENT"]);
+  assertEquals(log, ["acquire", "begin", "commit", "destroy"]);
+});
+
+Deno.test("a connection lost mid-COMMIT rejects with the driver's error", async () => {
+  const controller = new AbortController();
+  const lost = new Error("Connection lost: The server closed the connection.");
+  const { pool } = scriptedPool(() => [], () => {
+    controller.abort();
+    return Promise.reject(lost);
+  });
+  const error = await assertRejects(() =>
+    new DoltStore(pool).journal.commit(
+      { events: [event()] },
+      { signal: controller.signal },
+    )
+  );
+  assertEquals(error, lost);
 });
 
 Deno.test("journal.commit rejects an undeclared mutation before touching SQL", async () => {
