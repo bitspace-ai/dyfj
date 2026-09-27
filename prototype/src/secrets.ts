@@ -6,7 +6,7 @@
  * runtime invokes the operator-configured resolver command once per declared
  * pointer and sets the resulting value into the process environment (through
  * the `Env` port's `processEnv` adapter), exactly where the
- * providers already read it (`getEnv(NAME)` in provider.ts). The value lives
+ * providers already read it (`getEnv(NAME)` in providers/). The value lives
  * only in process env — the same posture the retired 1Password wrapper held —
  * never on the config object, in logs, or in an error message.
  *

@@ -9,7 +9,7 @@ import type {
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
 } from "./workbench.ts";
-import { type WorkbenchRoutingOptions } from "./provider.ts";
+import { type WorkbenchRoutingOptions } from "./providers/mod.ts";
 import {
   buildConversationMessages,
   type WorkbenchSessionEvent,

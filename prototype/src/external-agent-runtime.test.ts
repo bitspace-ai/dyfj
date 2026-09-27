@@ -67,7 +67,7 @@ import {
   verifiedRouteFacts,
 } from "./external-agent-runtime.ts";
 import { MemoryStore, type Store } from "./store/mod.ts";
-import type { WorkbenchMessage } from "./provider.ts";
+import type { WorkbenchMessage } from "./providers/mod.ts";
 import {
   type AcpExecutionProfile,
   type AcpSessionHandle,

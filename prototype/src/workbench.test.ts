@@ -15,7 +15,7 @@ import {
 import {
   type WorkbenchMessage,
   WorkbenchModelFastSpeedUnsupportedError,
-} from "./provider.ts";
+} from "./providers/mod.ts";
 import {
   type BudgetTallyInput,
   buildBudgetTallyLine,
@@ -170,7 +170,7 @@ vi.mock("./utils.ts", () => ({
   },
 }));
 
-vi.mock("./provider.ts", async (importOriginal) => {
+vi.mock("./providers/mod.ts", async (importOriginal) => {
   const estimateExport = "estimateText" + "To" + "kens";
   // Only the pure, side-effect-free error classes stay real — workbench.ts
   // imports them statically to build classifyErrorKind's known-class table.
@@ -184,7 +184,7 @@ vi.mock("./provider.ts", async (importOriginal) => {
     WorkbenchModelFastSpeedUnsupportedError,
     WorkbenchModelNotFoundError,
     WorkbenchModelNotRoutableError,
-  } = await importOriginal<typeof import("./provider.ts")>();
+  } = await importOriginal<typeof import("./providers/mod.ts")>();
   return {
     HostedInferenceRequiresProviderError,
     HostedProviderCredentialMissingError,

@@ -8,7 +8,7 @@ import {
   isBudgetRefusal,
   LENGTH_CONTINUATION_NUDGE,
 } from "./length-recovery.ts";
-import type { WorkbenchMessage } from "./provider.ts";
+import type { WorkbenchMessage } from "./providers/mod.ts";
 
 describe("classifyLengthStop", () => {
   test("output at the catalog output cap is output-budget exhaustion", () => {

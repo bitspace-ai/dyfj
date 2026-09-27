@@ -51,9 +51,9 @@ now share the same runtime state, event writes, and session persistence.
 
 ## Supporting Runtime Modules
 
-- `prototype/src/provider.ts` owns model selection, OpenAI-compatible request
-  shaping, streaming/non-streaming parsing, tool-call parsing, timings, usage,
-  and cost calculation for a model turn.
+- `prototype/src/providers/` owns model selection (`registry/`) and, per API
+  family adapter, request shaping, streaming/non-streaming parsing, tool-call
+  parsing, timings, usage, and cost calculation for a model turn.
 - `prototype/src/commands.ts` owns the command registry, policy check,
   `memory.read`, model-facing tool projection, and `tool_call` event payload.
 - `prototype/src/sessions.ts` owns Workbench session slug/content creation and

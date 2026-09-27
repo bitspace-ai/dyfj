@@ -15,7 +15,7 @@
     "prototype/src/mcp-tools.ts -> prototype/src/linear-tools.ts",
     "prototype/src/sessions.ts -> prototype/src/context-compression.ts",
     "prototype/src/sessions.ts -> prototype/src/idea-packet.ts",
-    "prototype/src/sessions.ts -> prototype/src/provider.ts",
+    "prototype/src/sessions.ts -> prototype/src/providers/mod.ts",
     "prototype/src/uds-serve.ts -> prototype/src/runtime-sigint.ts",
     "prototype/src/workbench.ts -> prototype/src/acp-client.ts"
   ],
@@ -33,7 +33,6 @@
     "prototype/src/workbench.ts -> prototype/src/memory-search.ts",
     "prototype/src/workbench.ts -> prototype/src/memory.ts",
     "prototype/src/workbench.ts -> prototype/src/prompts.ts",
-    "prototype/src/workbench.ts -> prototype/src/provider.ts",
     "prototype/src/workbench.ts -> prototype/src/repo-context.ts",
     "prototype/src/workbench.ts -> prototype/src/sessions.ts",
     "prototype/src/workbench.ts -> prototype/src/utils.ts"

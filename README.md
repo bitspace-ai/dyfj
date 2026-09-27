@@ -1603,3 +1603,8 @@ Document revisions only. Code and behavior changes are tracked in
   confine `mysql2` to `prototype/src/store/` and SQL write statements to the
   store's journal, and the existing environment rules: direct environment
   access only in `config/` and the tooling, and every `DYFJ_*` key declared.
+- 2026-09-27 - `specs/recipes/add-provider.md` added: adding a provider on an
+  existing API family is a catalog/pricing migration plus, for a hosted one, a
+  host pin; a new API family is one adapter directory, one registry line, and
+  the provider conformance kit. `specs/03-testing.md` §4 points the loopback
+  base-URL rule at its new home in `prototype/src/providers/`.

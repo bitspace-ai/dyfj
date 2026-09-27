@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { WorkbenchMessage } from "./provider.ts";
+import type { WorkbenchMessage } from "./providers/mod.ts";
 import {
   buildCompressionMessages,
   compressElderTranscript,

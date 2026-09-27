@@ -2,7 +2,7 @@ import {
   compareResponseModes,
   type ResponseModeReport,
 } from "../src/model-response-modes.ts";
-import { defaultLocalWorkbenchModels } from "../src/provider.ts";
+import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 
 const prompt = firstPrompt(Deno.args) ??
   "Return exactly this text and nothing else: streaming changes response shape.";
