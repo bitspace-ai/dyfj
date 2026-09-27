@@ -12,11 +12,14 @@ it does.
 
   The only exceptions are the approved deletions in §8.
 - **TypeScript tier only, and temporary** (D25). Phase 1 restructures the
-  TypeScript prototype; `core/` (Rust) is untouched during phase 1. TypeScript
-  holds a component only while its shape is still moving (Layer 0 stance #3). A
-  stabilized component moves to Rust behind the JSON-RPC process seam, not
-  behind an in-process TypeScript interface (§10), and no phase-1 change may
-  make that move harder.
+  TypeScript prototype. In `core/` (Rust), the existing `dyfj-core` source is
+  untouched during phase 1; the one addition is the D23 REPL client,
+  `core/dyfj-repl`, a new workspace member (its only effect on `dyfj-core` is
+  the workspace settings in `core/Cargo.toml`) that speaks the existing UDS
+  protocol and changes no engine code. TypeScript holds a component only while
+  its shape is still moving (Layer 0 stance #3). A stabilized component moves
+  to Rust behind the JSON-RPC process seam, not behind an in-process TypeScript
+  interface (§10), and no phase-1 change may make that move harder.
 - **Schema stays canonical** (Layer 0 #4). TypeScript row types are _generated_
   from it (see `02-data-layer.md`).
 - **AGENTS.md engineering doctrine**, all four rules:
