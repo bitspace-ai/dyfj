@@ -472,8 +472,11 @@ export function analyze(input: AnalysisInput): AnalysisResult {
 
   // Direct process-environment access and undeclared DYFJ_* keys.
   errors.push(...validateEnvRules(rules, units));
+  // A unit exempts only the modules that physically live in it: a legacy
+  // module mapped into the unit by name (`files`) has not moved yet and gets
+  // no exemption.
   const envAllowed = (path: string): boolean => {
-    const unit = units.get(path);
+    const unit = path in rules.files ? undefined : units.get(path);
     if (unit !== undefined && rules.env.allowedUnits.includes(unit.pattern)) {
       return true;
     }

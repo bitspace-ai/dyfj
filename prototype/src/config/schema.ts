@@ -425,6 +425,14 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "string",
     kind: "value",
   },
+  // Temp directory the isolated Dolt integration lane hands to the MCP tests.
+  {
+    key: "mcpTestTempDir",
+    envVar: "DYFJ_MCP_TEST_TEMP_DIR",
+    domain: "test",
+    type: "string",
+    kind: "value",
+  },
   // ── tooling: read only by prototype/scripts (test-process-harness.ts) ──
   // Wall-clock bound, in seconds, for a supervised Vitest run.
   {

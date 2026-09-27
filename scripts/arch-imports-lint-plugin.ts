@@ -12,8 +12,9 @@
  *   `node:process` and on a `const` alias of `Deno` or `process`, destructuring
  *   `env` out of any of those, importing `env` from `node:process`, and
  *   re-exporting from `node:process`.
- * - `dyfj-key` reports every string literal that is exactly a `DYFJ_*`
- *   environment key, so the lane can require each one to be declared.
+ * - `dyfj-key` reports every string literal, identifier object key, and
+ *   non-computed member name that is exactly a `DYFJ_*` environment key, so
+ *   the lane can require each one to be declared.
  */
 
 const ENV_OWNERS = new Set(["Deno", "process"]);
@@ -171,6 +172,18 @@ const plugin: Deno.lint.Plugin = {
             if ((node.expressions ?? []).length === 0) {
               const quasi = node.quasis?.[0];
               report(node, quasi?.cooked ?? quasi?.value?.cooked);
+            }
+          },
+          // `{ DYFJ_X: value }` and `env.DYFJ_X`: identifier keys and
+          // non-computed member names name a key as surely as a literal.
+          Property(node: Node) {
+            if (!node.computed && node.key?.type === "Identifier") {
+              report(node.key, node.key.name);
+            }
+          },
+          MemberExpression(node: Node) {
+            if (!node.computed && node.property?.type === "Identifier") {
+              report(node.property, node.property.name);
             }
           },
         };

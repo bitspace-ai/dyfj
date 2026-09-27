@@ -611,6 +611,7 @@ Deno.test("the size report lists long modules and long functions", () => {
 Deno.test("direct env access is a violation outside config/ and named entrypoints", async () => {
   const result = await run({
     [`${S}/config/env.ts`]: "export const e = Deno.env;",
+    [`${S}/legacy-config.ts`]: 'Deno.env.get("HOME");',
     [`${S}/server/main.ts`]: 'Deno.env.get("HOME");',
     ["prototype/scripts/tool.ts"]: 'Deno.env.get("HOME");',
     [`${S}/engine/deno.ts`]: 'Deno.env.get("HOME");',
@@ -637,6 +638,7 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
   }, {
     rules: {
       ...RULES,
+      files: { ...RULES.files, [`${S}/legacy-config.ts`]: "config" },
       env: {
         allowedUnits: ["config"],
         entrypoints: [
@@ -659,6 +661,7 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
     `${S}/engine/namespace.ts: process.env`,
     `${S}/engine/node.ts: process.env`,
     `${S}/engine/reexport.ts: process.env`,
+    `${S}/legacy-config.ts: Deno.env`,
   ]);
   assertSome(result.added, `env: ${S}/engine/deno.ts: Deno.env`);
 });
@@ -670,6 +673,8 @@ Deno.test("an undeclared DYFJ_* key in any scanned module is a violation", async
       'export const b = "DYFJ_UNDECLARED";',
       "export const c = `DYFJ_TEMPLATE`;",
       'export const e = "DYFJ_lower_case";',
+      "export const f = { DYFJ_OBJECT_KEY: 1, DYFJ_DECLARED: 2 };",
+      "export const g = (env: Record<string, string>) => env.DYFJ_MEMBER;",
       'export const d = "DYFJ_UNDECLARED must be set";',
     ].join("\n"),
     ["prototype/scripts/tool.ts"]: [
@@ -679,6 +684,8 @@ Deno.test("an undeclared DYFJ_* key in any scanned module is a violation", async
   });
   assertEquals(result.current.envKeys, [
     "prototype/scripts/tool.ts: DYFJ_TOOLING_ONLY",
+    `${S}/engine/keys.ts: DYFJ_MEMBER`,
+    `${S}/engine/keys.ts: DYFJ_OBJECT_KEY`,
     `${S}/engine/keys.ts: DYFJ_TEMPLATE`,
     `${S}/engine/keys.ts: DYFJ_UNDECLARED`,
     `${S}/engine/keys.ts: DYFJ_lower_case`,
