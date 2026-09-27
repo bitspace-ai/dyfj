@@ -102,6 +102,7 @@ CREATE TABLE events (
 
     thinking                  TEXT,
     duration_ms               INT UNSIGNED,
+    lane_demo_note            VARCHAR(64),
 
     INDEX idx_session (session_id, created_at),
     INDEX idx_event_type (event_type, created_at),
