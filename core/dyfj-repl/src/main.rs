@@ -525,7 +525,7 @@ mod tests {
         let all = [
             ("DYFJ_SOCKET", "/x/explicit.sock"),
             ("XDG_RUNTIME_DIR", "/run/user/1000"),
-            ("HOME", "/home/op"),
+            ("HOME", "/operator-home"),
         ];
         assert_eq!(resolve_socket_path(env(&all)).unwrap(), "/x/explicit.sock");
         assert_eq!(
@@ -534,16 +534,16 @@ mod tests {
         );
         assert_eq!(
             resolve_socket_path(env(&all[2..])).unwrap(),
-            "/home/op/.dyfj/run/workbench.sock"
+            "/operator-home/.dyfj/run/workbench.sock"
         );
     }
 
     #[test]
     fn an_empty_socket_variable_counts_as_unset() {
-        let empty = [("DYFJ_SOCKET", ""), ("XDG_RUNTIME_DIR", ""), ("HOME", "/home/op")];
+        let empty = [("DYFJ_SOCKET", ""), ("XDG_RUNTIME_DIR", ""), ("HOME", "/operator-home")];
         assert_eq!(
             resolve_socket_path(env(&empty)).unwrap(),
-            "/home/op/.dyfj/run/workbench.sock"
+            "/operator-home/.dyfj/run/workbench.sock"
         );
     }
 }
