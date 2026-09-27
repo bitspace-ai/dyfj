@@ -1,16 +1,14 @@
 /**
  * Loopback stand-in for the Linear MCP server, used by the extension-method
- * golden scenario (`friction/post`). It speaks streamable-HTTP MCP on
- * 127.0.0.1 and serves the three tools the friction flow calls. Every
- * `tools/call` it receives is recorded so the scenario can pin what the
- * runtime sent to the third-party service.
+ * golden scenario (`friction/post`). It runs on the shared loopback MCP
+ * server (`testing/servers/mcp-server.ts`) and serves the three tools the
+ * friction flow calls. Every `tools/call` it receives is recorded so the
+ * scenario can pin what the runtime sent to the third-party service.
  */
 
-import {
-  createMcpHandler,
-  McpServer,
-} from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { startLoopbackMcpServer } from "../servers/mcp-server.ts";
 
 export const LINEAR_ISSUE_IDENTIFIER = "GOLD-1";
 export const LINEAR_MCP_TOKEN = "golden-linear-token";
@@ -86,18 +84,9 @@ export function startLinearMcpFake(): LinearMcpFake {
     );
     return server;
   };
-  const mcp = createMcpHandler(build, { legacy: "reject" });
-  const http = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    (request) => {
-      authorization = request.headers.get("authorization");
-      return mcp.fetch(request);
-    },
-  );
-  const { port } = http.addr as Deno.NetAddr;
-  return {
-    url: `http://127.0.0.1:${port}/mcp`,
-    calls,
-    close: () => http.shutdown(),
-  };
+  const http = startLoopbackMcpServer(build, (request, mcp) => {
+    authorization = request.headers.get("authorization");
+    return mcp.fetch(request);
+  });
+  return { url: http.url, calls, close: () => http.close() };
 }

@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
+  type AcpPermissionPrompt,
+  type AcpPermissionSelection,
   type AcpPermissionVerdict,
   type AcpProgressUpdate,
   AcpProtocolMessageLimitError,
@@ -23,14 +25,7 @@ import type {
   AcpContinuityEvidence,
   AcpSessionHandleMap,
 } from "./acp-session-map.ts";
-import type { WorkbenchMessage } from "./provider.ts";
-import {
-  type ExternalAgentWorkbenchRuntimeResult,
-  type WorkbenchAuthContext,
-  type WorkbenchRuntimeEvent,
-  type WorkbenchRuntimeInput,
-  workspaceRootForTransport,
-} from "./workbench.ts";
+import type { WorkbenchMessage, WorkbenchRoutingOptions } from "./provider.ts";
 import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
@@ -41,12 +36,39 @@ import {
 import { writeEvent } from "./utils.ts";
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
+  type AcpRunnerSelection,
   DomainError,
+  type ExternalAgentWorkbenchRuntimeResult,
   formatHistoryOmissionSummary,
   historyOmissionForDelivery,
   type HistoryOmissionReceipt,
   prependHistoryOmissionNotice,
-} from "./turn-contract.ts";
+  type WorkbenchAuthContext,
+  type WorkbenchRuntimeEvent,
+  type WorkbenchRuntimeRequest,
+  workspaceRootForTransport,
+} from "./contract/mod.ts";
+
+/**
+ * What this runner reads from a runtime turn: the plain-data request from
+ * contract/ plus the in-process hooks the engine passes through. The engine's
+ * runtime input satisfies it structurally, so this module never imports the
+ * engine.
+ */
+export interface ExternalAgentRuntimeInput extends WorkbenchRuntimeRequest {
+  runner: AcpRunnerSelection;
+  routingOptions: WorkbenchRoutingOptions;
+  /** External-agent permission requests fail closed when this is absent. */
+  confirmExternalAgentPermission?: (
+    prompt: AcpPermissionPrompt,
+    signal: AbortSignal,
+  ) => Promise<AcpPermissionSelection>;
+  abortSignal?: AbortSignal;
+  onCancellationClosed?: () => void;
+  conversationMessages?: WorkbenchMessage[];
+  onTextDelta?: (delta: string) => void;
+  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
+}
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
   const home = Deno.env.get("HOME");
@@ -932,7 +954,7 @@ export function reconstructAcpContinuityPrompt(input: {
 }
 
 async function resolveWorkspace(
-  input: WorkbenchRuntimeInput,
+  input: ExternalAgentRuntimeInput,
   authContext: WorkbenchAuthContext,
 ): Promise<string> {
   let requested = input.workspaceRoot;
@@ -1053,7 +1075,7 @@ export function verifiedRouteFacts(
 }
 
 async function emitRuntimeEvent(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  handler: ExternalAgentRuntimeInput["onRuntimeEvent"],
   event: WorkbenchRuntimeEvent,
 ): Promise<void> {
   if (handler === undefined) return;
@@ -1065,12 +1087,7 @@ async function emitRuntimeEvent(
 }
 
 export async function runExternalAgentWorkbenchRuntime(
-  input: WorkbenchRuntimeInput & {
-    runner: {
-      kind: "acp";
-      profile: "fixture" | "codex-chatgpt";
-    };
-  },
+  input: ExternalAgentRuntimeInput,
   dependencies: {
     resolveProfile?: (
       profile: "fixture" | "codex-chatgpt",

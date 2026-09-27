@@ -34,7 +34,7 @@ import { resolveBudgetDefaultsFromEnv } from "./config.ts";
 import {
   DomainError,
   MAX_REASON_FIELD_BYTES,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 import process from "node:process";
 
 // ── Config ────────────────────────────────────────────────────────────────────

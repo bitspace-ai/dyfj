@@ -39,13 +39,26 @@ changes with a CHANGELOG `Fixed` entry.
     help string; nothing checks the help against the dispatcher.
   - **Found during:** WO-06.
 
+- 2026-09-27 — **`buildTurnHandlers` ignores its `acpSessions` option.**
+  - **Location:** `prototype/src/uds-server.ts:1248` (`buildTurnHandlers`),
+    with the option declared at `:213`.
+  - **Symptom:** when `buildTurnHandlers` is called without `runRuntime`, its
+    default runtime runs ACP turns with no session map, even if the caller
+    passed `acpSessions`. Sequential ACP turns through that path therefore
+    cannot reuse warm session handles. `serveWorkbenchUnix`, the only
+    production caller, always supplies `runRuntime` bound to its map, so the
+    served runtime is unaffected.
+  - **Suspected cause:** the default runtime is not bound to the option; only
+    `serveWorkbenchUnix` passes its map into the runtime.
+  - **Found during:** WO-08 (review). The move kept the existing behavior.
+
 - 2026-09-27 — **Terminal escape sequences are recognized three different
   ways.**
   - **Location:** `prototype/src/kernel/ansi.ts` (`stripAnsiEscapes`, used by
     the idea/packet renderer and the RPC string sanitizer);
     `prototype/src/streaming-markdown.ts:39` (`visibleWidth`) with its paired
-    scanner at `:308` (`ansiSequenceEnd`); and `prototype/src/cli.ts:250`
-    (`sanitizeSpinnerLabel` and its `skip*` helpers at `:314`–`:357`).
+    scanner at `:308` (`ansiSequenceEnd`); and `prototype/src/cli.ts:254`
+    (`sanitizeSpinnerLabel` and its `skip*` helpers at `:318`–`:361`).
   - **Symptom:** the same input is treated differently depending on where it
     is shown. `visibleWidth` removes only CSI and OSC sequences and accepts CSI
     parameter bytes (`<`, `=`, `>`, `:`) that `stripAnsiEscapes` does not. It
@@ -64,8 +77,8 @@ changes with a CHANGELOG `Fixed` entry.
     recognizer the surfaces should share.
 
 - 2026-09-26 — **Piped REPL input runs only its first line.**
-  - **Location:** `prototype/src/cli.ts:4031` (`readLineOrNull`) and
-    `prototype/src/cli.ts:811` (`runRepl`).
+  - **Location:** `prototype/src/cli.ts:4035` (`readLineOrNull`) and
+    `prototype/src/cli.ts:813` (`runRepl`).
   - **Symptom:** when the REPL's stdin delivers several lines and then EOF in
     one go (for example `printf 'a\nb\n' | dyfj`), only the first line runs as
     a turn. The REPL then exits with status 0 without running the remaining
@@ -78,10 +91,10 @@ changes with a CHANGELOG `Fixed` entry.
     prompt, so it does not pin this.
 - 2026-09-26 — **Session and event timestamps reach RPC clients as
   second-precision, time-zone-dependent text.**
-  - **Location:** `prototype/src/utils.ts:51` (`doltQuery` converts every
+  - **Location:** `prototype/src/utils.ts:92` (`doltQuery` converts every
     column with `String(value)`), surfacing through
     `prototype/src/sessions.ts:140-141` (`sessions/inspect`) and
-    `prototype/src/sessions.ts:687` (`events/query`).
+    `prototype/src/sessions.ts:716` (`events/query`).
   - **Symptom:** `sessions/inspect` and `events/query` return `createdAt` and
     `updatedAt` as `Date.prototype.toString()` text, for example
     `Sat Sep 26 2026 21:51:50 GMT+0000 (Coordinated Universal Time)`. The text
@@ -108,14 +121,12 @@ changes with a CHANGELOG `Fixed` entry.
 
 - 2026-09-25 — **Model-registry load errors are silently dropped on the ACP
   dispatch path.**
-  - **Location:** `prototype/src/workbench.ts:1400-1431`: a failed catalog load
-    falls back to the built-in local models, and the `catch` rethrows only
-    domain and routing errors.
+  - **Location:** `prototype/src/workbench.ts:1535-1543`.
   - **Symptom:** a catalog failure is swallowed rather than surfaced.
   - **Found during:** baseline analysis. WO-16 must preserve the current
     behavior.
 - 2026-09-25 — **Ideas and packets are lost on server restart.**
-  - **Location:** `prototype/src/idea-packet.ts:801`
+  - **Location:** `prototype/src/idea-packet.ts:809`
     (`defaultIdeaPacketRegistry`, a module-level in-memory singleton).
   - **Symptom:** marked ideas and drafted packets disappear when the engine
     server restarts. They never reach the event log.

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { summarizeError } from "./turn-contract.ts";
+import { summarizeError } from "./contract/mod.ts";
 
 export interface ContextSource {
   kind: "file" | "command";

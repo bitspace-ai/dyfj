@@ -13,6 +13,7 @@ import {
 import { z } from "zod";
 import { buildMemorySearch } from "./memory-search.ts";
 import { extractMcpTraceContext } from "./mcp-conformance.ts";
+import { startLoopbackMcpServer } from "../testing/servers/mcp-server.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -41,19 +42,14 @@ async function connectedFixture(
   client: Client,
   fetch?: FetchLike,
 ) {
-  const mcp = createMcpHandler(factory, { legacy: "reject" });
-  const http = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    (request) => mcp.fetch(request),
-  );
-  const { port } = http.addr as Deno.NetAddr;
+  const http = startLoopbackMcpServer(factory);
   const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`),
+    new URL(http.url),
     fetch === undefined ? undefined : { fetch },
   );
   await client.connect(transport);
   return async () => {
-    await Promise.all([client.close(), mcp.close(), http.shutdown()]);
+    await Promise.all([client.close(), http.close()]);
   };
 }
 
@@ -66,7 +62,7 @@ function modernClient(options: ConstructorParameters<typeof Client>[1] = {}): Cl
 
 Deno.test("MCP recall injects and the server extracts canonical W3C context", async () => {
   let receivedMeta: Record<string, unknown> | undefined;
-  const mcp = createMcpHandler(() => {
+  const http = startLoopbackMcpServer(() => {
     const server = new McpServer({
       name: "dyfj-conformance-server",
       version: "1.0.0",
@@ -80,15 +76,10 @@ Deno.test("MCP recall injects and the server extracts canonical W3C context", as
       },
     );
     return server;
-  }, { legacy: "reject" });
-  const http = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    (request) => mcp.fetch(request),
-  );
-  const { port } = http.addr as Deno.NetAddr;
+  });
   try {
     const recall = buildMemorySearch({
-      url: `http://127.0.0.1:${port}/mcp`,
+      url: http.url,
       tool: "trace-read",
     });
     const result = await recall("fixture", {
@@ -105,7 +96,7 @@ Deno.test("MCP recall injects and the server extracts canonical W3C context", as
     assert(extracted.parentIsRemote, "remote-parent evidence was absent");
     assert(receivedMeta?.baggage === undefined, "raw baggage crossed the boundary");
   } finally {
-    await Promise.all([mcp.close(), http.shutdown()]);
+    await http.close();
   }
 });
 

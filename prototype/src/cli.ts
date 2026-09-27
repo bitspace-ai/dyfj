@@ -25,7 +25,7 @@ import {
   summarizeError,
   type TurnReceipt,
   type TurnStreamFrame,
-} from "./turn-contract.ts";
+} from "./contract/mod.ts";
 import {
   connectUnixClient,
   type ToolApprovalVerdict,
@@ -62,7 +62,7 @@ import type { WorkbenchSessionEvent } from "./sessions.ts";
 import { type FrictionPostResult, normalizeFrictionContext } from "./friction.ts";
 
 // ── Seam contract (shared with the server) ──────────────────────────
-// The receipt and stream frame shapes are defined once in turn-contract.ts and
+// The receipt and stream frame shapes are defined once in contract/turn.ts and
 // imported by both sides, so this thin client can never silently drift from
 // what the server sends. Type imports are erased at compile, and the one value
 // import (the superseding-retry guard) comes from that dependency-free
@@ -666,7 +666,7 @@ export function formatPostureLine(posture: SessionPosture): string {
 // error), and dispatchRequest (jsonrpc.ts) forwards err.message verbatim to
 // the client. The server console already logs class-only for exactly this
 // reason (workbench.ts's [turn-error] line, and every joint that forwards a
-// turn error toward a client — see summarizeError in turn-contract.ts, the
+// turn error toward a client — see summarizeError in contract/turn.ts, the
 // shared discipline this client and the server both apply); the client had no
 // equivalent discipline, so an unbounded server message printed pages of raw
 // payload to the operator's terminal. summarizeError caps what any client

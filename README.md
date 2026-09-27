@@ -1551,6 +1551,8 @@ Document revisions only. Code and behavior changes are tracked in
   1 changes only the TypeScript tier, TypeScript is the temporary tier under
   Layer 0 stance #3, and no enabler may make moving a stabilized component to
   Rust harder.
+- 2026-09-27 - `specs/01-architecture.md` §3 names `workspaceRootForTransport`
+  in the `contract/` row, where WO-08 placed it as trust-boundary policy.
 - 2026-09-27 - Docs drift corrected against the code: Ollama `qwen3.6:35b-a3b`
   is the local default and xAI is listed among hosted providers; the retired
   HTTP engine is gone from the tool-step and config text; a fresh database
@@ -1558,3 +1560,6 @@ Document revisions only. Code and behavior changes are tracked in
   `/packet`, and `web_search`/`web_fetch` are documented; the macOS gate job is
   named; Section 6 items carry runtime-status notes; the stale D2 flow diagram
   is removed in favor of the C4 workspace.
+- 2026-09-27 - Architecture spec §3 moves error summarizing from the `kernel/`
+  (L0) row to the `contract/` (L1) row: deciding which error messages cross the
+  wire as trusted is trust-boundary policy, not a policy-free helper.

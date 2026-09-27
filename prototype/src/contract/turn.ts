@@ -16,7 +16,7 @@
  * (see `uds-server.ts`), so dropping or renaming a receipt field stops compiling.
  */
 
-import { utf8SafePrefix } from "./kernel/mod.ts";
+import { utf8SafePrefix } from "../kernel/mod.ts";
 
 /**
  * Native-loop receipt carried identically on buffered and streaming turns

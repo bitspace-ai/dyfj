@@ -11,7 +11,7 @@ import {
   type ExternalMcpDeps,
   formatUntrustedMcpResult,
   type McpCallResult,
-} from "./mcp-tools.ts";
+} from "./tools/mcp/transport.ts";
 
 export const MAX_SEARCH_CALLS_PER_TURN = 3;
 export const MAX_FETCH_CALLS_PER_TURN = 5;
