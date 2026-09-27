@@ -9,16 +9,6 @@
         "prototype/src/idea-packet.ts -> prototype/src/sessions.ts",
         "prototype/src/sessions.ts -> prototype/src/idea-packet.ts"
       ]
-    },
-    {
-      "members": [
-        "prototype/src/mcp-tools.ts",
-        "prototype/src/web-tools.ts"
-      ],
-      "edges": [
-        "prototype/src/mcp-tools.ts -> prototype/src/web-tools.ts",
-        "prototype/src/web-tools.ts -> prototype/src/mcp-tools.ts"
-      ]
     }
   ],
   "layer": [
