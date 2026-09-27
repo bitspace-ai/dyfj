@@ -398,6 +398,25 @@ export function productionLanes(
       env: binding,
     },
     {
+      // Module-boundary ratchet (specs/01-architecture.md section 4): runs
+      // under the aggregate check id rather than a new required id, so the
+      // receipt check-id vocabulary is unchanged. It builds the module graph
+      // with `deno info`, run through the same selected Deno binary.
+      label: "Architecture import rules (arch.imports)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--no-prompt",
+        `--allow-read=${root}`,
+        `--allow-run=${denoExecutable}`,
+        "scripts/arch-imports.ts",
+        `--deno=${denoExecutable}`,
+      ],
+      cwd: root,
+    },
+    {
       label: "Receipt schema validation",
       checkId: "receipt.schema",
       command: denoExecutable,
@@ -422,6 +441,7 @@ export function productionLanes(
         "scripts/subject-check.test.ts",
         "scripts/range-checks.test.ts",
         "scripts/dependency-policy.test.ts",
+        "scripts/arch-imports.test.ts",
       ],
       cwd: root,
       // Lane children run with a cleared environment, so the temp root the
@@ -641,6 +661,7 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Changed-Markdown link check",
   "Changed-shell parse check",
   "Dependency policy check",
+  "Architecture import rules (arch.imports)",
   "Receipt schema validation",
   "Contract closure report generation",
   "Contract package tests",

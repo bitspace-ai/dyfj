@@ -903,8 +903,9 @@ capability and claims no remote review, acceptance testing, or publication —
 private gates (disclosure review, independent model review, operator acceptance)
 remain outside this repository.
 
-After the policy checks, the gate runs the retired-surface scan, the source and
-recursive test-file typechecks, the prototype unit suite, current and historical
+After the policy checks, the gate runs the retired-surface scan, the
+`arch.imports` module-boundary check, the source and recursive test-file
+typechecks, the prototype unit suite, current and historical
 schema checks, non-ignored Rust tests using offline SQLx metadata and no
 inherited `DATABASE_URL`, an isolated-Dolt integration lane (including UDS
 and MCP round trips), and the golden characterization lane (`test.golden`). The
@@ -945,6 +946,35 @@ lane process receives SIGTERM followed by a bounded wait and possible SIGKILL.
 The Rust tracer test retains its manual-run `.env` loader, but the fixture's
 explicit `DATABASE_URL` takes precedence, so the lane does not use the
 operator's Dolt database. It requires Deno, Dolt, and the pinned Rust toolchain.
+
+`arch.imports` (`scripts/arch-imports.ts`, reported under `test.aggregate`)
+builds the module graph of every module under `prototype/src`,
+`prototype/mcp`, `prototype/scripts`, and `prototype/diagnostics` (once it
+exists) with `deno info --json` (`scripts/arch-imports-graph.ts`, offline and
+config-free): static imports, re-exports, and dynamic `import()`, with
+type-only edges (`import type`, `export type`, `typeof import()`) marked.
+Because deno's graph merges a dynamic import into a static import of the same
+module and has no entry for a non-literal `import()`, every `import()`
+expression is also collected with `deno lint` and a repository-owned plugin
+(`scripts/arch-imports-lint-plugin.ts`, configured by
+`scripts/arch-imports-lint.json`). It maps each module to the target layer in
+`specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
+`scripts/arch-layers.json`) and checks import cycles, upward and non-listed
+same-layer edges, the `cli/` allow-list, and dynamic local imports, literal or
+not. A module that fails to load or a local import that does not resolve fails
+the lane. It runs in ratchet mode: current violations are recorded in
+`scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
+that baseline and on any baseline entry that no longer occurs, so the baseline
+can only shrink. An intentional cycle is allowed only by a named entry in
+`scripts/arch-cycles.json` (empty today) that lists its exact edges, each of
+which must lie inside an import cycle, a justification, and an existing test
+file; an entry exempts its edges from the cycle and dynamic-import rules only,
+never from layer direction or the `cli/` allow-list. Deep imports that bypass a
+`mod.ts`, modules over 600 lines, and functions over 150 lines are reported
+without failing (`scripts/arch-imports-size.ts`; its function spans come from a
+small best-effort tokenizer). After an intended reduction, regenerate the
+baseline with
+`deno run --allow-read=. --allow-run=deno --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
@@ -1434,3 +1464,9 @@ Document revisions only. Code and behavior changes are tracked in
   `specs/03-testing.md` §1 (fakes at declared ports, conformance-proven fakes,
   loopback fakes for third-party services, golden tests pinning behavior);
   validation guidance documents the golden characterization lane.
+- 2026-09-26 - Validation guidance now documents the `arch.imports` gate lane:
+  the layer mapping, the ratchet baseline that may only shrink, the named-cycle
+  allow-list, and the non-failing deep-import and size reports.
+- 2026-09-26 - WO-02's acceptance now counts three baseline cycles, matching the
+  three listed in `specs/00-baseline-findings.md` and the tree; "four" was a
+  miscount introduced when the ACP cycle was reinstated.
