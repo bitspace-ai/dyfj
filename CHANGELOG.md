@@ -113,6 +113,17 @@ README are tracked separately in its Revision history section.
   instead. A server signalling continuation some other way reads as finished,
   which the source states rather than hides.
 
+### Fixed
+
+- **A prototype unit test no longer changes the process environment under the
+  parallel run**: tests in `prototype/src/external-agent-runtime.test.ts` set
+  `PATH`, `HOME`, `DENO_DIR`, `DYFJ_*`, and credential-shaped marker variables
+  through `Deno.env.set` and restored them after an `await`. Vitest's worker threads share one process
+  environment, so tests running at the same time in other files could see the
+  temporary values; one intermittently failed to spawn `bash` by name. Those
+  tests now overlay the values on the reads of their own worker only, with
+  assertions unchanged. Test-only; runtime behavior is unchanged.
+
 ### Added
 
 - **Golden characterization suite and its gate lane (`test.golden`)**:
