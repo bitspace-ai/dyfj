@@ -69,6 +69,44 @@ Deno.test("vitestModulesFromDenoInfo reads static imports only", () => {
   );
 });
 
+Deno.test("vitestModulesFromDenoInfo follows static imports through helpers", () => {
+  const dep = (target: string, isDynamic?: boolean) => ({
+    specifier: `./${target}`,
+    code: { specifier: `file:///p/${target}` },
+    isDynamic,
+  });
+  const info: DenoInfoOutput = {
+    modules: [
+      // a.test -> helper -> vitest
+      { specifier: "file:///p/a.test.ts", dependencies: [dep("helper.ts")] },
+      {
+        specifier: "file:///p/helper.ts",
+        dependencies: [{ specifier: "vitest" }],
+      },
+      // b.test -> x <-> y (cycle), y -> vitest
+      { specifier: "file:///p/b.test.ts", dependencies: [dep("x.ts")] },
+      { specifier: "file:///p/x.ts", dependencies: [dep("y.ts")] },
+      {
+        specifier: "file:///p/y.ts",
+        dependencies: [dep("x.ts"), { specifier: "vitest" }],
+      },
+      // c.test reaches the helper only through a dynamic import
+      {
+        specifier: "file:///p/c.test.ts",
+        dependencies: [dep("helper.ts", true)],
+      },
+      // d.test -> plain module
+      { specifier: "file:///p/d.test.ts", dependencies: [dep("plain.ts")] },
+      { specifier: "file:///p/plain.ts" },
+    ],
+  };
+  const urls = ["a", "b", "c", "d"].map((n) => `file:///p/${n}.test.ts`);
+  assertEquals(
+    [...vitestModulesFromDenoInfo(info, urls)].sort(),
+    ["file:///p/a.test.ts", "file:///p/b.test.ts"],
+  );
+});
+
 Deno.test("vitestModulesFromDenoInfo fails closed on a missing or broken module", () => {
   const info: DenoInfoOutput = {
     modules: [{ specifier: "file:///p/broken.test.ts", error: "parse error" }],

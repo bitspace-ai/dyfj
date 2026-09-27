@@ -37,6 +37,19 @@ Deno.test("deno info classifies every Vitest import shape", () => {
   assertEquals(vitestFixtures(sources), sources.map(() => true));
 });
 
+Deno.test("deno info classifies a test that reaches vitest through a helper", () => {
+  const helper = fixture('export { expect, test } from "vitest";');
+  const plain = fixture("export const value = 1;");
+  assertEquals(
+    vitestFixtures([
+      `import { test } from ${JSON.stringify(helper)};`,
+      `import { value } from ${JSON.stringify(plain)};`,
+      `const { test } = await import(${JSON.stringify(helper)});`,
+    ]),
+    [true, false, false],
+  );
+});
+
 Deno.test("deno info ignores import-shaped text that is not an import", () => {
   const sources = [
     'import { assertEquals } from "@std/assert";',

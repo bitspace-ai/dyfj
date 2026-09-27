@@ -23,9 +23,9 @@ README are tracked separately in its Revision history section.
   each with its own tests: `ManualClock`, `SequentialIds`, `MapEnv`, and
   `fakeIo`. The three copies each of the `fakeIo` and `buildClock` test helpers
   now import these instead. During the transition a test file's framework is
-  read from its imports as `deno info --json` reports them: files that
-  statically import `vitest` stay under Vitest, which now excludes every other
-  `*.test.ts`.
+  read from its imports as `deno info --json` reports them: files whose static
+  imports reach `vitest`, directly or through a helper module, stay under
+  Vitest, which now excludes every other `*.test.ts`.
 
 ### Changed
 

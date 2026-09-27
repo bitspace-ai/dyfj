@@ -4,8 +4,8 @@
 //
 // During the Vitest-to-`Deno.test` transition both frameworks share the
 // `*.test.ts` naming, so a test file's framework is read from its imports: a
-// file that statically imports `vitest` belongs to the Vitest lane, anything
-// else is a `Deno.test` file. The imports come from `deno info --json` (the
+// file whose static imports reach `vitest`, directly or through a helper
+// module, belongs to the Vitest lane, anything else is a `Deno.test` file. The imports come from `deno info --json` (the
 // deno_graph parser Deno itself uses), not from scanning the source text, so
 // import-shaped text in strings, template literals or comments never counts.
 // Integration files (`*.integration.test.ts`) and the golden suite
@@ -46,15 +46,21 @@ export interface DenoInfoOutput {
   modules: {
     specifier: string;
     error?: string;
-    dependencies?: { specifier: string; isDynamic?: boolean }[];
+    dependencies?: {
+      specifier: string;
+      code?: { specifier?: string };
+      type?: { specifier?: string };
+      isDynamic?: boolean;
+    }[];
   }[];
 }
 
 /**
- * The module URLs among `urls` that statically import `vitest` (value or
- * type import, bare or `npm:` specifier). A dynamic `import()` does not
- * count. Fails closed: a module missing from the graph, or one that did not
- * parse, cannot be classified and throws.
+ * The module URLs among `urls` whose static import graph reaches `vitest`
+ * (value or type import, bare or `npm:` specifier), directly or through a
+ * local helper module. A dynamic `import()` does not count. Fails closed: a
+ * module missing from the graph, or one that did not parse, cannot be
+ * classified and throws.
  */
 export function vitestModulesFromDenoInfo(
   info: DenoInfoOutput,
@@ -63,6 +69,35 @@ export function vitestModulesFromDenoInfo(
   const byUrl = new Map(
     info.modules.map((module) => [module.specifier, module]),
   );
+  // Every module whose static imports reach `vitest`: start from the modules
+  // that import it directly and walk static import edges backwards, which
+  // also handles import cycles.
+  const importers = new Map<string, string[]>();
+  const reaching = new Set<string>();
+  for (const module of info.modules) {
+    for (const dependency of module.dependencies ?? []) {
+      if (dependency.isDynamic === true) continue;
+      if (isVitestSpecifier(dependency.specifier)) {
+        reaching.add(module.specifier);
+        continue;
+      }
+      const target = dependency.code?.specifier ?? dependency.type?.specifier;
+      if (target === undefined) continue;
+      importers.set(target, [
+        ...(importers.get(target) ?? []),
+        module.specifier,
+      ]);
+    }
+  }
+  const pending = [...reaching];
+  while (pending.length > 0) {
+    for (const importer of importers.get(pending.pop()!) ?? []) {
+      if (!reaching.has(importer)) {
+        reaching.add(importer);
+        pending.push(importer);
+      }
+    }
+  }
   const vitest = new Set<string>();
   for (const url of urls) {
     const module = byUrl.get(url);
@@ -72,10 +107,7 @@ export function vitestModulesFromDenoInfo(
     if (module.error !== undefined) {
       throw new Error(`cannot classify test file: ${module.error}`);
     }
-    const importsVitest = (module.dependencies ?? []).some((dependency) =>
-      dependency.isDynamic !== true && isVitestSpecifier(dependency.specifier)
-    );
-    if (importsVitest) vitest.add(url);
+    if (reaching.has(url)) vitest.add(url);
   }
   return vitest;
 }

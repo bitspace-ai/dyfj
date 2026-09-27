@@ -233,8 +233,9 @@ which typechecks the entire codebase and runs the full suite excluding integrati
 Both typecheck file lists and the `test.unit` file list are derived by walking the tree
 (`scripts/test-files.ts`); nothing is hand-listed. While the two frameworks coexist, a
 test file's framework is read from its imports, as `deno info --json` (Deno's own parser)
-reports them: a file that statically imports `vitest` runs under Vitest, any other
-`*.test.ts` is a `Deno.test` file and Vitest excludes it.
+reports them: a file whose static imports reach `vitest`, directly or through a helper
+module, runs under Vitest; any other `*.test.ts` is a `Deno.test` file and Vitest
+excludes it.
 `*.integration.test.ts` files and `testing/golden/` have their own lanes. `test:unit`
 runs `deno test --parallel --sanitize-ops --sanitize-resources` (both sanitizers are
 opt-in in the pinned Deno), with read access to the prototype and
