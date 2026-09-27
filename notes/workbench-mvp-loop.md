@@ -5,6 +5,11 @@ Status: historical design note for the first Workbench CLI tracer bullet
 operator workflow. The current entrypoint is `dyfj` over UDS, and the runtime now
 supports multi-step tool use.
 
+> **Status update (2026-09-27):** the `deno task workbench` and `deno task start`
+> tasks and the standalone argv CLI in `prototype/src/workbench.ts` were removed.
+> The operator entrypoint is `dyfj` over the Unix-socket seam. The task names
+> below are history, not commands to run.
+
 ## Frame
 
 The first Workbench slice is not a new platform surface. It is the smallest daily-work loop that proves the README Section 1 done-line:

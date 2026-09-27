@@ -32,8 +32,8 @@ level = "strict"
 # trust_instructions = true
 
 [agent]
-# Served HTTP and UDS engines load this file setting; every entrypoint accepts
-# the DYFJ_MAX_TOOL_STEPS environment override.
+# The UDS engine loads this file setting; every entrypoint accepts the
+# DYFJ_MAX_TOOL_STEPS environment override.
 # Maximum model-to-tool steps in one turn. Default 32; valid range 1 through 64.
 # Reaching the limit asks the model for a final no-tools answer from the transcript.
 # Env override: DYFJ_MAX_TOOL_STEPS.
@@ -141,6 +141,11 @@ level = "strict"
 # + declared-secret rules as [secrets.env]. Interactive daily driving needs none
 # of this: app-biometric is fine.
 # inherit_env = ["OP_SERVICE_ACCOUNT_TOKEN"]
+
+# [secrets.named] and [[mcp.servers]] configure external MCP tools, including
+# the servers behind web_search and web_fetch (capabilities.search_tool /
+# capabilities.fetch_tool). Their shapes, trust rules, and limits are in the
+# root README under "Configured external MCP tools".
 
 # The full configuration surface is declared in src/config.ts (CONFIG_SCHEMA),
 # split into engine vs client domains, with secret keys held as POINTERS (op:// /
