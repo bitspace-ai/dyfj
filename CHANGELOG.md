@@ -154,6 +154,19 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The web tools look up hostnames through a `DnsResolver` port**
+  (`prototype/src/tools/web/dns.ts`): the web tools' address check resolves a
+  target's A and AAAA records through an injected resolver whose lookups never
+  throw and report either an answer or why none was obtained. The real adapter wraps `Deno.resolveDns`; tests use the
+  `ScriptedDnsResolver` fake (`prototype/testing/fakes/`) instead of replacing
+  the `Deno.resolveDns` global, and the address check gains direct tests. Both
+  pass the port's conformance suite
+  (`prototype/testing/conformance/dns-resolver.ts`): the fake in the unit
+  lane, the real adapter in the integration lane in whichever mode that lane's
+  net grant allows. The Deno integration lane now runs with `--no-prompt`, so
+  ungranted access fails locally as it does in CI instead of prompting. What
+  the web tools accept and refuse is unchanged.
+
 - **Route resolution and the observed provider call live in
   `prototype/src/engine/`**: `resolveRoute` (`engine/route.ts`) is the one
   step that chooses the runner for a turn. It serves both the native engine

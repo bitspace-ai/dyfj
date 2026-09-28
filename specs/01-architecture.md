@@ -266,6 +266,7 @@ consume it. This breaks the `mcp-tools ⇄ web-tools` cycle.
 | `Approver`       | JSON-RPC server→client request | scripted verdicts                                            |
 | `ProcessSpawner` | `Deno.Command`                 | not faked. Tests that spawn processes are integration tier   |
 | `SecretResolver` | resolver command               | map                                                          |
+| `DnsResolver`    | `Deno.resolveDns`              | `ScriptedDnsResolver` (per-host answers, recorded lookups)   |
 
 The filesystem is **not** a port: tests use real temp directories.
 

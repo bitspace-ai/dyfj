@@ -4,13 +4,17 @@ import type {
   JsonSchemaObject,
 } from "../definition.ts";
 import { CommandExecutionError } from "../definition.ts";
-import type { McpConfiguredTool, McpHttpServerConfig } from "../../config/mod.ts";
+import type {
+  McpConfiguredTool,
+  McpHttpServerConfig,
+} from "../../config/mod.ts";
 import {
   boundedMcpFetch,
   type ExternalMcpDeps,
   formatUntrustedMcpResult,
   type McpCallResult,
 } from "../mcp/transport.ts";
+import { type DnsResolver, systemDnsResolver } from "./dns.ts";
 
 export const MAX_SEARCH_CALLS_PER_TURN = 3;
 export const MAX_FETCH_CALLS_PER_TURN = 5;
@@ -276,6 +280,7 @@ export async function assertPublicDnsResolution(
   hostname: string,
   allowLoopbackHttpForTesting = false,
   signal?: AbortSignal,
+  resolver: DnsResolver = systemDnsResolver,
 ): Promise<void> {
   if (
     allowLoopbackHttpForTesting &&
@@ -288,44 +293,36 @@ export async function assertPublicDnsResolution(
       `Target host '${hostname}' is an enumerated private or internal IP address`,
     );
   }
-  const denoGlobal = (globalThis as {
-    Deno?: {
-      resolveDns?: (
-        host: string,
-        recordType: "A" | "AAAA",
-      ) => Promise<string[]>;
-    };
-  }).Deno;
-  if (typeof denoGlobal?.resolveDns === "function") {
-    try {
-      if (signal?.aborted) return;
-      const dnsPromise = Promise.all([
-        denoGlobal.resolveDns(hostname, "A").catch(() => []),
-        denoGlobal.resolveDns(hostname, "AAAA").catch(() => []),
-      ]);
-      const abortPromise = new Promise<never>((_, reject) => {
-        if (signal?.aborted) {
-          reject(new CommandExecutionError("DNS lookup timed out"));
-          return;
-        }
-        signal?.addEventListener("abort", () => {
-          reject(new CommandExecutionError("DNS lookup timed out"));
-        }, { once: true });
-      });
-      const [aRecords, aaaaRecords] = await Promise.race([
-        dnsPromise,
-        abortPromise,
-      ]);
-      for (const ip of [...aRecords, ...aaaaRecords]) {
+  try {
+    if (signal?.aborted) return;
+    // Listen for the deadline before starting the lookups, so a timeout
+    // settles the race ahead of any lookup the signal cancels.
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (signal?.aborted) {
+        reject(new CommandExecutionError("DNS lookup timed out"));
+        return;
+      }
+      signal?.addEventListener("abort", () => {
+        reject(new CommandExecutionError("DNS lookup timed out"));
+      }, { once: true });
+    });
+    const lookups = Promise.all([
+      resolver.resolve(hostname, "A", signal),
+      resolver.resolve(hostname, "AAAA", signal),
+    ]);
+    const results = await Promise.race([lookups, abortPromise]);
+    for (const lookup of results) {
+      if (!lookup.ok) continue;
+      for (const ip of lookup.addresses) {
         if (isPrivateOrLoopbackIp(ip)) {
           throw new CommandExecutionError(
             `Target host '${hostname}' resolves to private or internal IP address ${ip}`,
           );
         }
       }
-    } catch (err) {
-      if (err instanceof CommandExecutionError) throw err;
     }
+  } catch (err) {
+    if (err instanceof CommandExecutionError) throw err;
   }
 }
 
@@ -413,7 +410,10 @@ export function extractReadableContentFromHtml(html: string): string {
   text = text.replace(/<h3\b[^>]*>([\s\S]*?)<\/h3[^>]*>/gi, "\n\n### $1\n\n");
   text = text.replace(/<h4\b[^>]*>([\s\S]*?)<\/h4[^>]*>/gi, "\n\n#### $1\n\n");
   text = text.replace(/<h5\b[^>]*>([\s\S]*?)<\/h5[^>]*>/gi, "\n\n##### $1\n\n");
-  text = text.replace(/<h6\b[^>]*>([\s\S]*?)<\/h6[^>]*>/gi, "\n\n###### $1\n\n");
+  text = text.replace(
+    /<h6\b[^>]*>([\s\S]*?)<\/h6[^>]*>/gi,
+    "\n\n###### $1\n\n",
+  );
 
   // Convert links: <a href="url">text</a> -> [text](url)
   text = text.replace(
@@ -460,6 +460,7 @@ export async function safeFetchDocument(
   targetUrl: string,
   fetchImpl: typeof fetch = fetch,
   allowLoopbackHttpForTesting = false,
+  resolver: DnsResolver = systemDnsResolver,
 ): Promise<{ text: string; url: string; contentType: string; bytes: number }> {
   const url = assertPublicHttpsUrl(targetUrl, allowLoopbackHttpForTesting);
 
@@ -472,6 +473,7 @@ export async function safeFetchDocument(
       url.hostname,
       allowLoopbackHttpForTesting,
       controller.signal,
+      resolver,
     );
 
     let response: Response;
@@ -659,6 +661,7 @@ export function defineWebCommands(
     searchSchema?: JsonSchemaObject;
     fetchSchema?: JsonSchemaObject;
   } = {},
+  resolver: DnsResolver = systemDnsResolver,
 ): CommandDefinition<string>[] {
   const commands: CommandDefinition<string>[] = [];
   const searchToolName = server.capabilities?.searchTool;
@@ -678,7 +681,8 @@ export function defineWebCommands(
       properties: {
         query: {
           type: "string",
-          description: "The search query string to find information on the web.",
+          description:
+            "The search query string to find information on the web.",
         },
         limit: {
           type: "integer",
@@ -948,13 +952,17 @@ export function defineWebCommands(
         );
 
         const controller = new AbortController();
-        const dnsTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        const dnsTimeout = setTimeout(
+          () => controller.abort(),
+          FETCH_TIMEOUT_MS,
+        );
         try {
           // Preflight DNS check for delegated fetch target with timeout
           await assertPublicDnsResolution(
             parsedUrl.hostname,
             allowLoopbackHttpForTesting,
             controller.signal,
+            resolver,
           );
         } finally {
           clearTimeout(dnsTimeout);

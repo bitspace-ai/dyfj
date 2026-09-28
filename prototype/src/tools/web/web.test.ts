@@ -1,11 +1,5 @@
 import { describe, it } from "@std/testing/bdd";
 import {
-  assertSpyCallArgs,
-  assertSpyCalls,
-  type Stub,
-  stub,
-} from "@std/testing/mock";
-import {
   assert,
   assertArrayIncludes,
   assertEquals,
@@ -18,6 +12,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
+  assertPublicDnsResolution,
   assertPublicHttpsUrl,
   createWebToolsSessionState,
   decodeHtmlEntities,
@@ -32,11 +27,7 @@ import {
   safeFetchDocument,
 } from "./web.ts";
 import type { McpHttpServerConfig } from "../../config/mod.ts";
-
-type ResolveDnsAorAAAA = (
-  host: string,
-  recordType: "A" | "AAAA",
-) => Promise<string[]>;
+import { ScriptedDnsResolver } from "../../../testing/fakes/scripted-dns-resolver.ts";
 
 /** Vitest `toThrow(regex)` equivalent: the thrown error's message must match. */
 function assertThrowsMatching(fn: () => unknown, pattern: RegExp): void {
@@ -58,20 +49,18 @@ async function assertRejectsMatching(
 }
 
 /**
- * Replace the global `Deno.resolveDns` with a fake that answers every A/AAAA
- * lookup with a public address, so the DNS preflight in
- * web.ts never reaches a real resolver. Dispose (via `using`) to restore.
+ * A `DnsResolver` fake that answers the hosts these tests fetch from with
+ * public addresses, so the address check never reaches a real resolver.
  */
-function stubPublicDns(): Stub {
-  const fake: ResolveDnsAorAAAA = (_host, recordType) =>
-    Promise.resolve(
-      recordType === "A" ? ["93.184.216.34"] : ["2606:4700:4700::1111"],
-    );
-  return stub(
-    Deno as unknown as { resolveDns: ResolveDnsAorAAAA },
-    "resolveDns",
-    fake,
-  );
+function publicDns(): ScriptedDnsResolver {
+  const publicHost = {
+    A: ["93.184.216.34"],
+    AAAA: ["2606:4700:4700::1111"],
+  };
+  return new ScriptedDnsResolver({
+    "example.com": publicHost,
+    "docs.tavily.com": publicHost,
+  });
 }
 
 describe("isPrivateOrLoopbackIp", () => {
@@ -314,9 +303,50 @@ describe("normalizeSearchResults", () => {
   });
 });
 
+describe("assertPublicDnsResolution", () => {
+  it("accepts a host whose A and AAAA answers are public", async () => {
+    const dns = publicDns();
+    await assertPublicDnsResolution("example.com", false, undefined, dns);
+    assertEquals(dns.lookups, [
+      { hostname: "example.com", recordType: "A" },
+      { hostname: "example.com", recordType: "AAAA" },
+    ]);
+  });
+
+  it("rejects a host whose A answer includes a private address", async () => {
+    const dns = new ScriptedDnsResolver({
+      "internal.example": { A: ["93.184.216.34", "10.0.0.5"] },
+    });
+    await assertRejectsMatching(
+      () =>
+        assertPublicDnsResolution("internal.example", false, undefined, dns),
+      /resolves to private or internal IP address 10\.0\.0\.5/,
+    );
+  });
+
+  it("rejects a host whose AAAA answer is loopback", async () => {
+    const dns = new ScriptedDnsResolver({
+      "v6.example": { A: ["93.184.216.34"], AAAA: ["::1"] },
+    });
+    await assertRejectsMatching(
+      () => assertPublicDnsResolution("v6.example", false, undefined, dns),
+      /resolves to private or internal IP address ::1/,
+    );
+  });
+
+  it("rejects a private IP literal before any lookup", async () => {
+    const dns = publicDns();
+    await assertRejectsMatching(
+      () => assertPublicDnsResolution("192.168.1.1", false, undefined, dns),
+      /enumerated private or internal IP address/,
+    );
+    assertEquals(dns.lookups, []);
+  });
+});
+
 describe("safeFetchDocument", () => {
   it("fetches and extracts clean markdown from an HTML response", async () => {
-    using dns = stubPublicDns();
+    const dns = publicDns();
     const fakeFetch: typeof fetch = () =>
       Promise.resolve(
         new Response("<h1>Hello World</h1><p>Test body</p>", {
@@ -325,10 +355,16 @@ describe("safeFetchDocument", () => {
         }),
       );
 
-    const doc = await safeFetchDocument("https://example.com/page", fakeFetch);
-    assertSpyCalls(dns, 2);
-    assertSpyCallArgs(dns, 0, ["example.com", "A"]);
-    assertSpyCallArgs(dns, 1, ["example.com", "AAAA"]);
+    const doc = await safeFetchDocument(
+      "https://example.com/page",
+      fakeFetch,
+      false,
+      dns,
+    );
+    assertEquals(dns.lookups, [
+      { hostname: "example.com", recordType: "A" },
+      { hostname: "example.com", recordType: "AAAA" },
+    ]);
     assertStrictEquals(doc.url, "https://example.com/page");
     assertStrictEquals(doc.contentType, "text/html");
     assertStringIncludes(doc.text, "# Hello World");
@@ -336,7 +372,7 @@ describe("safeFetchDocument", () => {
   });
 
   it("rejects unsupported content types and cancels response stream", async () => {
-    using dns = stubPublicDns();
+    const dns = publicDns();
     let bodyCancelled = false;
     const fakeStream = new ReadableStream({
       cancel() {
@@ -352,15 +388,16 @@ describe("safeFetchDocument", () => {
       );
 
     await assertRejectsMatching(
-      () => safeFetchDocument("https://example.com/pic.png", fakeFetch),
+      () =>
+        safeFetchDocument("https://example.com/pic.png", fakeFetch, false, dns),
       /Unsupported content type/,
     );
     assertStrictEquals(bodyCancelled, true);
-    assertSpyCalls(dns, 2);
+    assertEquals(dns.lookups.length, 2);
   });
 
   it("truncates content exceeding character limit", async () => {
-    using dns = stubPublicDns();
+    const dns = publicDns();
     const hugeText = "<p>" +
       "A".repeat(MAX_EXTRACTED_CHARS_PER_FETCH + 5000) + "</p>";
     const fakeFetch: typeof fetch = () =>
@@ -371,8 +408,13 @@ describe("safeFetchDocument", () => {
         }),
       );
 
-    const doc = await safeFetchDocument("https://example.com/huge", fakeFetch);
-    assertSpyCalls(dns, 2);
+    const doc = await safeFetchDocument(
+      "https://example.com/huge",
+      fakeFetch,
+      false,
+      dns,
+    );
+    assertEquals(dns.lookups.length, 2);
     assertStrictEquals(
       doc.text.endsWith("[Content truncated at 40,000 characters]"),
       true,
@@ -417,7 +459,7 @@ describe("defineWebCommands", () => {
   });
 
   it("registers web_search and web_fetch commands with untrusted result framing and clamps result limits", async () => {
-    using dns = stubPublicDns();
+    const dns = publicDns();
     const state = createWebToolsSessionState();
     const fakeCall = () =>
       Promise.resolve({
@@ -446,6 +488,8 @@ describe("defineWebCommands", () => {
       { call: fakeCall },
       state,
       true,
+      {},
+      dns,
     );
 
     assertEquals(commands.map((c) => c.id), ["web_search", "web_fetch"]);
@@ -487,6 +531,8 @@ describe("defineWebCommands", () => {
       { call: fakeFetchCall },
       state,
       true,
+      {},
+      dns,
     );
     const delegatedFetchCmd = fetchCommands.find((c) => c.id === "web_fetch")!;
 
@@ -498,9 +544,10 @@ describe("defineWebCommands", () => {
     }, { authzBasis: "test" });
 
     assertStrictEquals(fetchToolCalled, true);
-    assertSpyCalls(dns, 2);
-    assertSpyCallArgs(dns, 0, ["docs.tavily.com", "A"]);
-    assertSpyCallArgs(dns, 1, ["docs.tavily.com", "AAAA"]);
+    assertEquals(dns.lookups, [
+      { hostname: "docs.tavily.com", recordType: "A" },
+      { hostname: "docs.tavily.com", recordType: "AAAA" },
+    ]);
     assertStringIncludes(fetchRes, "<untrusted-mcp-result>");
     assertStringIncludes(fetchRes, "# Tavily Extract Content");
 
@@ -513,7 +560,7 @@ describe("defineWebCommands", () => {
         arguments: { url: "https://192.168.1.1/admin" },
       }, { authzBasis: "test" }), /forbidden|private/);
     // Rejected on the IP literal, before any DNS lookup.
-    assertSpyCalls(dns, 2);
+    assertEquals(dns.lookups.length, 2);
   });
 
   it("empty search result clears prior source map", async () => {

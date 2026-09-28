@@ -150,6 +150,9 @@ try {
   ], { cwd: prototypeRoot, env, signal: abortController.signal });
   await runChecked(denoExecutable, [
     "test",
+    // Ungranted access throws instead of prompting, as it does in CI, so a
+    // local run from a terminal never parks on a permission prompt.
+    "--no-prompt",
     `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE`,
     `--allow-read=.,${mcpTestTempDir},${udsTestSocketDir}`,
     `--allow-write=${mcpTestTempDir},${udsTestSocketDir}`,

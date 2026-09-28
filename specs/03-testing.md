@@ -75,14 +75,14 @@ in the same change that lands this spec's first work order.
 - **Shared test support** lives in `prototype/testing/`. It is not in `src/`,
   and runtime code never imports it.
   - `fakes/`: `MemoryStore`, `ScriptedHttpTransport`, `ManualClock`,
-    `SequentialIds`, `MapEnv`, `ScriptedApprover`, `MapSecretResolver`, `FakeIo`
-    (terminal I/O for `cli/`).
+    `SequentialIds`, `MapEnv`, `ScriptedApprover`, `MapSecretResolver`,
+    `ScriptedDnsResolver`, `FakeIo` (terminal I/O for `cli/`).
   - `servers/`: loopback OpenAI-compatible model server, MCP HTTP server, UDS
     peer.
   - `builders/`: event, session, model-row and turn-request builders, typed
     against generated rows.
   - `conformance/`: store, provider-adapter and tool suites, and the `Env` port
-    suite (`env.ts`).
+    suite (`env.ts`) and `DnsResolver` port suite (`dns-resolver.ts`).
   - `golden/`: the harness and scenarios.
 - **Integration assignment.** The hand-maintained
   `integration-test-assignment.ts` is deleted. The tier is decided by file name,
