@@ -154,6 +154,13 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`agentLoop` is the native turn's fifth named pipeline stage**
+  (`engine/agent-loop.ts`): it drives model and tool steps until the model
+  stops requesting tools, the model repeats prior tool calls, or the
+  tool-step limit forces a no-tools conclusion. Each step runs its requested
+  tools in order, stops starting new ones once the turn is cancelled, and
+  replays the assistant's tool-call turn with its linked results into the
+  next call. Event rows, receipts and the golden suite are unchanged.
 - **The agent loop's provider calls are engine modules**: `observedTurn`
   (`engine/observed-turn.ts`) is one budget-gated, recorded loop call — the
   daily-spend refresh, the runaway-anomaly stop and the ceiling before the
