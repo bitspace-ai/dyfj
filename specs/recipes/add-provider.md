@@ -23,6 +23,13 @@ A new provider that speaks an API family DYFJ already has needs **no code in
   send a credential anywhere new. If the provider's modality should read as
   frontier or aggregator rather than custom, add its canonical host to
   `getModelAccessModality` (`src/providers/registry/catalog.ts`).
+- **Anthropic and Gemini families.** These adapters pin their key to one
+  canonical https host and base path (`anthropicHostedContract` in
+  `src/providers/anthropic/adapter.ts`, `geminiHostedContract` in
+  `src/providers/gemini/adapter.ts`), the endpoint `getModelAccessModality`
+  classifies as frontier-hosted. A catalog row can add models on that endpoint
+  only; a different endpoint for the same wire format is a code change to the
+  contract, reviewed like any other.
 - **Local servers.** A new loopback server speaking the OpenAI-compatible wire
   format is one entry in `openAICompatibleLocalProviders` in the same file.
 
@@ -56,8 +63,9 @@ The `ProviderAdapter` (`src/providers/adapter.ts`):
   them; retry with a rewritten transcript; the output ceiling when the caller
   sets none).
 - `validateBaseUrl(model)`: loopback-only for a local family, https for a hosted
-  one, and a hosted family that sends a credential pins the host
-  (`shared/base-url.ts`). It runs before any request.
+  one, and a hosted family that sends a credential pins the host, and the base
+  path where the family has one canonical endpoint (`shared/base-url.ts`). It
+  runs before any request, so a rejected base URL sends nothing.
 - `run(request, io)`: everything else, through `io` only. `io.fetch` is the
   `HttpTransport` port, `io.clock` the clock, `io.env` the environment (read the
   credential here, and fail with `HostedProviderCredentialMissingError` when it
@@ -80,8 +88,9 @@ Reuse the shared pieces rather than re-implementing them:
 
 Rules that hold for every adapter:
 
-- Refuse redirects (`redirect: "error"`) unless the family has a reason to
-  follow them.
+- Refuse redirects (`redirect: "error"`) on every request. The kit checks it.
+- Encode any catalog value placed in the request URL (for example a model slug
+  in the path) so it stays within its own path segment.
 - Messages of `DomainError`s cross the wire as trusted text. Put
   registry-sourced values into one only through the bounded fields in
   `errors.ts`.
@@ -97,18 +106,20 @@ Add the adapter to `PROVIDER_ADAPTERS` in `src/providers/registry/registry.ts`.
 Add `src/providers/<family>/conformance.test.ts` calling
 `providerAdapterConformance` from `testing/conformance/provider-adapter.ts` with
 recorded fixtures for every case: plain text, native tool calls, text-markup
-tool calls, usage and cost, a length stop, a mid-stream error, an abort, and a
-base-URL rejection. Each fixture holds the requests the adapter must send
-(assertions on the recorded request) and the provider's recorded responses,
-replayed by the scripted `HttpTransport`. Record the responses from the real
-provider's documented wire format; never point a test at the real service.
+tool calls, usage and cost, a length stop, a mid-stream error, an abort, a
+base-URL rejection, an off-host https base-URL rejection, and a redirect
+response. Each fixture holds the requests the adapter must send (assertions on
+the recorded request) and the provider's recorded responses, replayed by the
+scripted `HttpTransport`. Record the responses from the real provider's
+documented wire format; never point a test at the real service.
 
 A case the family does not support still gets a fixture that pins what the
 adapter does instead (for example `toolCalls: undefined` for a family that never
 returns tool calls).
 
-The kit derives the header-deadline and pre-dispatch-abort cases itself. An
-adapter is mergeable only when the kit passes.
+The kit derives the header-deadline and pre-dispatch-abort cases itself, and
+checks on every fixture that each request refuses redirects. An adapter is
+mergeable only when the kit passes.
 
 ### 4. Unit tests and docs
 

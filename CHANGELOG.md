@@ -166,6 +166,21 @@ README are tracked separately in its Revision history section.
   permission prompt and selection types moved to `contract/`. Same-session
   serialization, the one-turn-per-connection rule, and cancel semantics are
   unchanged, and the golden suite passes with no snapshot change.
+- **Anthropic and Gemini requests follow the same host and redirect rules as
+  the hosted OpenAI-compatible providers**: each key is pinned to its
+  provider's canonical https endpoint, the same one `getModelAccessModality`
+  classifies as frontier-hosted. `ANTHROPIC_API_KEY` goes only to
+  `https://api.anthropic.com` and `GEMINI_API_KEY` only to
+  `https://generativelanguage.googleapis.com`, on the default port with an
+  empty base path. A catalog row for `anthropic` or `google` that names any
+  other base URL fails with `WorkbenchHostedProviderBaseUrlError` before any
+  request is sent. Both adapters now refuse redirects (`redirect: "error"`),
+  as the OpenAI-compatible adapter already did, and the Gemini adapter encodes
+  the model slug as a single path segment of the request URL. The provider
+  conformance kit gains two required fixtures, an off-host https base URL
+  (rejected before any request) and a redirect response (the turn fails), and
+  checks that every request an adapter sends refuses redirects. Requests for
+  the canonical endpoints are unchanged.
 - **Route resolution and the observed provider call live in
   `prototype/src/engine/`**: `resolveRoute` (`engine/route.ts`) is the one
   step that chooses the runner for a turn. It serves both the native engine
