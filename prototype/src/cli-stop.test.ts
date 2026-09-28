@@ -6,7 +6,7 @@ import {
   parseArgs,
   runStop,
 } from "./cli.ts";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
+import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./server/main.ts";
 import { type UnixClient } from "./transport/mod.ts";
 import { fakeIo } from "../testing/fakes/fake-io.ts";
 

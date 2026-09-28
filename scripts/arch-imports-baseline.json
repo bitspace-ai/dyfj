@@ -2,7 +2,7 @@
   "cycles": [],
   "layer": [
     "prototype/src/mcp-tools.ts -> prototype/src/linear-tools.ts",
-    "prototype/src/uds-serve.ts -> prototype/src/runtime-sigint.ts"
+    "prototype/src/server/main.ts -> prototype/src/runtime-sigint.ts"
   ],
   "cli": [
     "prototype/src/cli.ts -> prototype/src/friction.ts",

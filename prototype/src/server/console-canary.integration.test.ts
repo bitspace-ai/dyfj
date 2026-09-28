@@ -14,15 +14,20 @@
  * chat/completions wire as the "model".
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
-import { connectUnixClient } from "./transport/mod.ts";
 import {
-  type FixtureSql,
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+} from "@std/assert";
+import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
+import { MapEnv } from "../../testing/fakes/map-env.ts";
+import { serveWorkbenchUnix } from "./main.ts";
+import { connectUnixClient } from "../transport/mod.ts";
+import {
   openFixtureSql,
   openFixtureStore,
-} from "../testing/dolt/fixture-sql.ts";
-import type { DoltStore } from "./store/mod.ts";
+} from "../../testing/dolt/fixture-sql.ts";
 
 const MEMORY_SLUG = "canary_leak_test_cf9a";
 const MEMORY_NAME = "CANARY-MEMORY-NAME-cf9a";
@@ -68,17 +73,12 @@ function startStubModelServer(): { port: number; close(): Promise<void> } {
   };
 }
 
-describe("server console canary (integration)", () => {
-  let stub: { port: number; close(): Promise<void> };
-  let server: WorkbenchUnixServer;
-  let socketDir: string;
-  let sql: FixtureSql;
-  let store: DoltStore;
-
-  beforeAll(async () => {
-    stub = startStubModelServer();
-    sql = openFixtureSql();
-    store = openFixtureStore();
+Deno.test("a real turn keeps its canaries out of narration console methods", async () => {
+  const stub = startStubModelServer();
+  const sql = openFixtureSql();
+  const store = openFixtureStore();
+  const socketPath = udsTestSocket("server-console-canary");
+  try {
     await sql.query(
       "INSERT INTO memories (memory_id, slug, type, visibility, inject, name, description, content) " +
         "VALUES (?, ?, 'user', 'private', 'always', ?, 'canary row for the console leak test', ?)",
@@ -92,27 +92,13 @@ describe("server console canary (integration)", () => {
         "8192, 1024, 0, 0, 0, 0, FALSE, ?, TRUE)",
       [MODEL_SLUG, `http://127.0.0.1:${stub.port}/v1`, '["text"]'],
     );
-    socketDir = await Deno.makeTempDir();
-    server = await serveWorkbenchUnix(`${socketDir}/wb.sock`, { store });
-  });
-
-  afterAll(async () => {
-    await server?.close();
-    await stub?.close();
-    await sql.query("DELETE FROM memories WHERE slug = ?", [MEMORY_SLUG]);
-    await sql.query("DELETE FROM models WHERE slug = ?", [MODEL_SLUG]);
-    await sql.close();
-    await store.close();
+    // The turn's env-derived defaults come from an empty env, not the
+    // lane's process env, which grants only the fixture's keys.
+    const server = await serveWorkbenchUnix(socketPath, {
+      store,
+      env: new MapEnv(),
+    });
     try {
-      await Deno.remove(socketDir, { recursive: true });
-    } catch {
-      // already gone
-    }
-  });
-
-  test(
-    "a real turn keeps its canaries out of narration console methods",
-    async () => {
       const captured: string[] = [];
       const original = {
         log: console.log,
@@ -153,18 +139,30 @@ describe("server console canary (integration)", () => {
       }
 
       // The turn really ran end to end through the stub model.
-      expect(result.text).toContain(STUB_REPLY);
+      assertStringIncludes(result.text ?? "", STUB_REPLY);
 
       const consoleOutput = captured.join("\n");
-      expect(consoleOutput).toMatch(/^error: \[turn\] session=/m);
+      assertMatch(consoleOutput, /^error: \[turn\] session=/m);
       // The canary must never reach the captured narration methods: not the
       // private memory name, its content, or the model's response text.
-      expect(consoleOutput).not.toContain(MEMORY_NAME);
-      expect(consoleOutput).not.toContain(MEMORY_CONTENT);
-      expect(consoleOutput).not.toContain(STUB_REPLY);
+      for (const canary of [MEMORY_NAME, MEMORY_CONTENT, STUB_REPLY]) {
+        assert(!consoleOutput.includes(canary), `console leaked ${canary}`);
+      }
       // Nor any memory-index narration of the receipt.
-      expect(consoleOutput).not.toContain("memory-index:");
-    },
-    60_000,
-  );
+      assertEquals(consoleOutput.includes("memory-index:"), false);
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await stub.close();
+    await sql.query("DELETE FROM memories WHERE slug = ?", [MEMORY_SLUG]);
+    await sql.query("DELETE FROM models WHERE slug = ?", [MODEL_SLUG]);
+    await sql.close();
+    await store.close();
+    try {
+      await Deno.remove(socketPath);
+    } catch {
+      // already gone
+    }
+  }
 });

@@ -13,15 +13,20 @@
  * The aggregate integration fixture provides the isolated Dolt sql-server.
  */
 
-import { generateSpanId, generateTraceId, generateULID } from "./kernel/mod.ts";
-import { afterAll, describe, expect, test } from "vitest";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
-import { connectUnixClient } from "./transport/mod.ts";
-import { isValidAsOfTimestamp } from "./store/mod.ts";
+import { assertEquals } from "@std/assert";
+import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
+import {
+  generateSpanId,
+  generateTraceId,
+  generateULID,
+} from "../kernel/mod.ts";
+import { serveWorkbenchUnix } from "./main.ts";
+import { connectUnixClient } from "../transport/mod.ts";
+import { isValidAsOfTimestamp } from "../store/mod.ts";
 import {
   openFixtureSql,
   openFixtureStore,
-} from "../testing/dolt/fixture-sql.ts";
+} from "../../testing/dolt/fixture-sql.ts";
 
 const sql = openFixtureSql();
 const store = openFixtureStore();
@@ -65,38 +70,20 @@ async function doltUtcSeconds(): Promise<string> {
   return ts;
 }
 
-describe("events/query asOf (integration)", () => {
+Deno.test("events/query asOf returns the historical set; omitting it returns head", async () => {
   const sessionId = generateULID();
-  let server: WorkbenchUnixServer | undefined;
-  let socketPath: string | undefined;
+  const socketPath = udsTestSocket("server-events-asof");
+  try {
+    await insertEvent(sessionId, HISTORICAL);
+    await commitIfDirty();
+    await sql.query("SELECT SLEEP(1)");
+    const asOf = await doltUtcSeconds();
+    await sql.query("SELECT SLEEP(1)");
+    await insertEvent(sessionId, HEAD);
+    await commitIfDirty();
 
-  afterAll(async () => {
-    await server?.close();
-    if (socketPath) {
-      try {
-        await Deno.remove(socketPath);
-      } catch {
-        // already gone
-      }
-    }
-    await sql.query("DELETE FROM events WHERE session_id = ?", [sessionId]);
-    await sql.close();
-    await store.close();
-  });
-
-  test(
-    "asOf returns the historical set; omitting it returns head",
-    async () => {
-      await insertEvent(sessionId, HISTORICAL);
-      await commitIfDirty();
-      await sql.query("SELECT SLEEP(1)");
-      const asOf = await doltUtcSeconds();
-      await sql.query("SELECT SLEEP(1)");
-      await insertEvent(sessionId, HEAD);
-      await commitIfDirty();
-
-      socketPath = `/tmp/dyfj-asof-${crypto.randomUUID()}.sock`;
-      server = await serveWorkbenchUnix(socketPath, { store });
+    const server = await serveWorkbenchUnix(socketPath, { store });
+    try {
       const client = await connectUnixClient(server.socketPath);
       try {
         const historical = await client.request("events/query", {
@@ -107,14 +94,27 @@ describe("events/query asOf (integration)", () => {
           sessionId,
         }) as { events: Array<{ content: string | null }> };
 
-        const historicalContent = historical.events.map((event) => event.content);
-        const headContent = head.events.map((event) => event.content);
-        expect(historicalContent).toEqual([HISTORICAL]);
-        expect(headContent).toEqual([HISTORICAL, HEAD]);
+        assertEquals(historical.events.map((event) => event.content), [
+          HISTORICAL,
+        ]);
+        assertEquals(head.events.map((event) => event.content), [
+          HISTORICAL,
+          HEAD,
+        ]);
       } finally {
         client.close();
       }
-    },
-    30_000,
-  );
+    } finally {
+      await server.close();
+    }
+  } finally {
+    try {
+      await Deno.remove(socketPath);
+    } catch {
+      // already gone
+    }
+    await sql.query("DELETE FROM events WHERE session_id = ?", [sessionId]);
+    await sql.close();
+    await store.close();
+  }
 });

@@ -57,6 +57,6 @@ Deno.test("the serve-unix task starts the engine with the printed flag", async (
   const tasks = JSON.parse(await Deno.readTextFile("deno.json")).tasks;
   assertStringIncludes(
     tasks["serve-unix"],
-    "-P=serve-unix $(deno run --no-prompt --allow-read=deno.json,/etc/resolv.conf scripts/serve-unix-net-flag.ts) --env-file=.env src/uds-serve.ts",
+    "-P=serve-unix $(deno run --no-prompt --allow-read=deno.json,/etc/resolv.conf scripts/serve-unix-net-flag.ts) --env-file=.env src/server/main.ts",
   );
 });

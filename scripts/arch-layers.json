@@ -50,7 +50,7 @@
     "allowedPaths": ["prototype/src/extensions/*/client.ts"]
   },
   "env": {
-    "$comment": "Direct Deno.env/process.env access (specs/01-architecture.md section 4). The config unit owns the Env port and its process adapter (prototype/src/config/env.ts); every runtime module, the engine (src/uds-serve.ts), client (src/cli.ts) and memory MCP (mcp/server.ts) entrypoints included, reads the environment through that port. Only the entrypoints listed here may read it directly, each with its justification.",
+    "$comment": "Direct Deno.env/process.env access (specs/01-architecture.md section 4). The config unit owns the Env port and its process adapter (prototype/src/config/env.ts); every runtime module, the engine (src/server/main.ts), client (src/cli.ts) and memory MCP (mcp/server.ts) entrypoints included, reads the environment through that port. Only the entrypoints listed here may read it directly, each with its justification.",
     "allowedUnits": ["config"],
     "entrypoints": [
       {
@@ -96,8 +96,6 @@
     "prototype/src/idea-packet.ts": "extensions/ideas",
     "prototype/src/friction.ts": "extensions/friction",
     "prototype/src/linear-tools.ts": "extensions/linear",
-    "prototype/src/uds-server.ts": "server",
-    "prototype/src/uds-serve.ts": "server",
     "prototype/src/cli.ts": "cli",
     "prototype/src/busy-spinner.ts": "cli",
     "prototype/src/streaming-markdown.ts": "cli",

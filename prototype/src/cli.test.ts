@@ -56,7 +56,7 @@ import {
   type TurnInterruptSource,
   type TurnResult,
 } from "./cli.ts";
-import { serveWorkbenchUnix } from "./uds-server.ts";
+import { serveWorkbenchUnix } from "./server/main.ts";
 import {
   connectUnixClient,
   type ToolApprovalVerdict,
@@ -3007,7 +3007,7 @@ describe("runtime lifecycle commands", () => {
       "-P=serve-unix",
       "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
       "--env-file=.env",
-      "src/uds-serve.ts",
+      "src/server/main.ts",
     ]);
   });
 

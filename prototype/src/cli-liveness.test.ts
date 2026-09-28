@@ -7,7 +7,7 @@ import {
   runStatus,
   socketError,
 } from "./cli.ts";
-import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./uds-server.ts";
+import { serveWorkbenchUnix, type WorkbenchUnixServer } from "./server/main.ts";
 import {
   connectUnixClient,
   RpcError,

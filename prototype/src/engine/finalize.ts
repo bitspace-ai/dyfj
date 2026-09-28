@@ -208,7 +208,7 @@ export async function failTurn(
   // that is a plain writable string property, so a foreign error could
   // carry an arbitrary or oversized payload in it.
   const name = classifyErrorKind(err);
-  // errorMessage crosses the wire verbatim (uds-server.ts relays every
+  // errorMessage crosses the wire verbatim (server/rpc/turn.ts relays every
   // runtime event to the connected client): an integrity write's failure
   // can be a rejected event-log INSERT whose driver message embeds the
   // whole offending value (e.g. a huge turn.text), so this must never carry
