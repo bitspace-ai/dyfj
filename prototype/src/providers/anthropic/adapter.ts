@@ -30,7 +30,19 @@ import {
 } from "./stream.ts";
 import { anthropicCost } from "./usage.ts";
 
-const ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY";
+/**
+ * The env var the Anthropic key is read from, and the one https host and base
+ * paths that key may be sent to: the same key-to-host contract the hosted
+ * OpenAI-compatible providers declare in `openAIHostedProviderContracts`, so a
+ * catalog row cannot pair the key with any other endpoint. The host and paths
+ * are the canonical endpoint `getModelAccessModality` classifies as
+ * frontier-hosted.
+ */
+export const anthropicHostedContract = {
+  keyEnvVar: "ANTHROPIC_API_KEY",
+  host: "api.anthropic.com",
+  paths: ["", "/"],
+} as const;
 
 export const anthropicAdapter: ProviderAdapter = {
   api: "anthropic",
@@ -40,18 +52,27 @@ export const anthropicAdapter: ProviderAdapter = {
   supportsTranscriptRetry: true,
   defaultOutputTokens: () => ANTHROPIC_DEFAULT_MAX_TOKENS,
   validateBaseUrl(model): BaseUrlCheck {
-    return isAllowedHostedProviderBaseUrl(model.baseUrl) ? { ok: true } : {
-      ok: false,
-      error: new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl),
-    };
+    return isAllowedHostedProviderBaseUrl(
+        model.baseUrl,
+        anthropicHostedContract.host,
+        anthropicHostedContract.paths,
+      )
+      ? { ok: true }
+      : {
+        ok: false,
+        error: new WorkbenchHostedProviderBaseUrlError(
+          model.slug,
+          model.baseUrl,
+        ),
+      };
   },
   async run(request, io) {
     const { model, selection } = request;
-    const apiKey = io.env.get(ANTHROPIC_API_KEY_ENV_VAR);
+    const apiKey = io.env.get(anthropicHostedContract.keyEnvVar);
     if (!apiKey) {
       throw new HostedProviderCredentialMissingError(
         model.slug,
-        ANTHROPIC_API_KEY_ENV_VAR,
+        anthropicHostedContract.keyEnvVar,
       );
     }
     if (io.signal?.aborted) {
@@ -68,6 +89,9 @@ export const anthropicAdapter: ProviderAdapter = {
       {
         method: "POST",
         signal: io.signal,
+        // Refuse redirects, as every adapter does: the request goes only to
+        // the validated base URL.
+        redirect: "error",
         headers: {
           "content-type": "application/json",
           "x-api-key": apiKey,

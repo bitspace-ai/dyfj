@@ -9,17 +9,20 @@
 // the adapter emitted.
 //
 // Fixture cases (all required): plain text, native tool calls, text-markup
-// tool calls, usage and cost, a length stop, a mid-stream error, an abort,
-// and a base-URL rejection. An adapter that does not support a case still
-// supplies the fixture and pins what it does instead: an adapter that never
-// returns tool calls pins `toolCalls: undefined`. The kit derives two more
-// cases from the plain-text fixture: the header deadline in both request
-// modes, and an abort observed before dispatch.
+// tool calls, usage and cost, a length stop, a mid-stream error, an abort, a
+// base-URL rejection, an off-host https base-URL rejection, and a redirect
+// response. An adapter that does not support a case still supplies the
+// fixture and pins what it does instead: an adapter that never returns tool
+// calls pins `toolCalls: undefined`. The kit derives two more cases from the
+// plain-text fixture: the header deadline in both request modes, and an abort
+// observed before dispatch.
 //
 // Invariants the kit adds to every fixture: every scripted exchange is used;
-// a streamed turn's frames concatenate to its result text, so live output and
-// the durable text agree; and each case's defining property (for example a
-// base-URL rejection sends no request).
+// every request refuses redirects (`redirect: "error"`); a streamed turn's
+// frames concatenate to its result text, so live output and the durable text
+// agree; and each case's defining property (for example a base-URL rejection
+// sends no request, and an off-host base URL is https on a host other than the
+// plain-text model's).
 
 import {
   assert,
@@ -102,6 +105,13 @@ export interface ProviderKitFixtures {
   midStreamError: KitFixture;
   abort: KitFixture;
   baseUrlRejection: KitFixture;
+  /**
+   * An https base URL on a host other than the plain-text model's: it must be
+   * rejected before any request.
+   */
+  offHostBaseUrl: KitFixture;
+  /** One exchange answered with a redirect status: the turn must fail. */
+  redirect: KitFixture;
 }
 
 export interface ProviderKitSubject {
@@ -230,6 +240,8 @@ function assertExpectation(run: KitRun, fixture: KitFixture): void {
   }
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
 function resultOf(run: KitRun): WorkbenchTurnResult {
   if (run.error !== undefined) throw run.error;
   return run.result!;
@@ -248,6 +260,13 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
     Deno.test(label(name), async () => {
       const run = await runKitFixture(adapter, fixture);
       assertExpectation(run, fixture);
+      for (const request of run.transport.requests) {
+        assertEquals(
+          request.redirect,
+          "error",
+          `the request to ${request.url} must refuse redirects`,
+        );
+      }
       extra(run);
       run.transport.assertDone();
     });
@@ -320,6 +339,38 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
     );
     assert("error" in fixtures.baseUrlRejection.expect);
     assertEquals(run.transport.requests.length, 0, "a request was sent");
+  });
+
+  caseTest("off-host base-URL rejection", fixtures.offHostBaseUrl, (run) => {
+    const offHost = new URL(fixtures.offHostBaseUrl.model.baseUrl);
+    assertEquals(offHost.protocol, "https:", "the off-host URL must be https");
+    assert(
+      offHost.hostname !== new URL(fixtures.plainText.model.baseUrl).hostname,
+      "the off-host URL must name a host other than the plain-text model's",
+    );
+    assert(
+      adapter.providers.has(fixtures.offHostBaseUrl.model.provider),
+      "the off-host fixture's provider must be one the adapter serves",
+    );
+    assert(
+      !adapter.validateBaseUrl(fixtures.offHostBaseUrl.model).ok,
+      "validateBaseUrl must reject an off-host https base URL",
+    );
+    assert("error" in fixtures.offHostBaseUrl.expect);
+    assertEquals(run.transport.requests.length, 0, "a request was sent");
+  });
+
+  caseTest("redirect response", fixtures.redirect, (run) => {
+    const exchanges = fixtures.redirect.exchanges;
+    assertEquals(exchanges.length, 1, "the redirect fixture has one exchange");
+    const respond = exchanges[0].respond;
+    assert(
+      typeof respond !== "function" &&
+        REDIRECT_STATUSES.has(respond.status ?? 200),
+      "the redirect fixture must answer with a redirect status",
+    );
+    assert("error" in fixtures.redirect.expect);
+    assertEquals(run.transport.requests.length, 1, "the redirect was followed");
   });
 
   Deno.test(label("the plain-text model passes validateBaseUrl"), () => {

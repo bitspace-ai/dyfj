@@ -249,5 +249,28 @@ providerAdapterConformance({
       exchanges: [],
       expect: { error: { instance: WorkbenchHostedProviderBaseUrlError } },
     },
+    offHostBaseUrl: {
+      model: {
+        ...claude,
+        slug: "claude-elsewhere",
+        baseUrl: "https://example.com",
+      },
+      env,
+      stream: false,
+      exchanges: [],
+      expect: { error: { instance: WorkbenchHostedProviderBaseUrlError } },
+    },
+    redirect: {
+      model: claude,
+      env,
+      stream: false,
+      exchanges: [{
+        respond: {
+          status: 307,
+          headers: { location: "https://example.com/elsewhere" },
+        },
+      }],
+      expect: { error: { message: /redirect/i } },
+    },
   },
 });

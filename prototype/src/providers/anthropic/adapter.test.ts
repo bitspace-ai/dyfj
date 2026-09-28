@@ -11,10 +11,13 @@ import {
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
+  getModelAccessModality,
   HostedProviderCredentialMissingError,
   runWorkbenchTurn,
+  WorkbenchHostedProviderBaseUrlError,
   type WorkbenchModel,
 } from "../mod.ts";
+import { anthropicAdapter } from "./adapter.ts";
 
 const anthropicModel: WorkbenchModel = {
   slug: "claude-haiku-4-5",
@@ -216,6 +219,106 @@ describe("tool wire names", () => {
       })
     );
     assertMatch((error as Error).message, /HTTP 400.*should match pattern/);
+    transport.assertDone();
+  });
+});
+
+describe("Anthropic base-URL contract", () => {
+  const withBaseUrl = (baseUrl: string): WorkbenchModel => ({
+    ...anthropicModel,
+    baseUrl,
+  });
+  const accepted = [
+    "https://api.anthropic.com",
+    "https://api.anthropic.com/",
+    "https://api.anthropic.com:443",
+  ];
+  const rejected = [
+    "https://example.com",
+    "https://api.anthropic.com.example.com",
+    "https://anthropic.com",
+    "https://api.anthropic.com:8443",
+    "https://api.anthropic.com/v1",
+    "https://api.anthropic.com/proxy",
+    "https://api.anthropic.com/?x=1",
+    "http://api.anthropic.com",
+  ];
+
+  it("accepts only the canonical https host and base path", () => {
+    for (const url of accepted) {
+      assertEquals(anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok, true);
+    }
+    for (const url of rejected) {
+      assertEquals(
+        anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok,
+        false,
+        url,
+      );
+    }
+  });
+
+  it("accepts exactly the base URLs classified as frontier-hosted", () => {
+    for (const url of [...accepted, ...rejected]) {
+      assertEquals(
+        anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok,
+        getModelAccessModality({ provider: "anthropic", baseUrl: url }) ===
+          "frontier-hosted",
+        url,
+      );
+    }
+  });
+
+  it("rejects an off-host base URL before reading the key or sending", async () => {
+    const transport = new ScriptedHttpTransport();
+    let keyRead = false;
+    await assertRejects(
+      () =>
+        runWorkbenchTurn({
+          systemPrompt: "sys",
+          prompt: "hi",
+          routing: { modelId: anthropicModel.slug },
+          models: [withBaseUrl("https://example.com")],
+          fetchFn: transport.fetch,
+          getEnv: (name) => {
+            keyRead = true;
+            return env.get(name);
+          },
+        }),
+      WorkbenchHostedProviderBaseUrlError,
+    );
+    assertEquals(keyRead, false);
+    assertEquals(transport.requests.length, 0);
+  });
+
+  it("sends the canonical request unchanged, refusing redirects", async () => {
+    const transport = new ScriptedHttpTransport([{
+      expect: (request) => {
+        assertEquals(request.url, "https://api.anthropic.com/v1/messages");
+        assertEquals(request.method, "POST");
+        assertEquals(request.redirect, "error");
+        assertEquals(request.headers, {
+          "content-type": "application/json",
+          "x-api-key": "test-key-not-real",
+          "anthropic-version": "2023-06-01",
+        });
+      },
+      respond: {
+        body: JSON.stringify({
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      },
+    }]);
+    const result = await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "hi",
+      routing: { modelId: anthropicModel.slug },
+      models: [withBaseUrl("https://api.anthropic.com/")],
+      fetchFn: transport.fetch,
+      getEnv,
+    });
+    assertEquals(result.text, "ok");
     transport.assertDone();
   });
 });
