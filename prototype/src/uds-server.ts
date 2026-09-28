@@ -1,7 +1,7 @@
 // Serve the workbench JSON-RPC seam over a Unix domain socket. UDS is
 // the canonical `loopback` transport — full clearance, gated by filesystem perms
 // — per the transport-seam contract. Wires the read-only methods plus `turn`,
-// which runs an agentic turn over the shared turn-runner core and streams text
+// which runs an agentic turn over the engine's shared turn entry and streams text
 // deltas + runtime events back as `stream` notifications. Server-initiated
 // `approval` requests carry mutating-tool, budget, and exact ACP permission
 // option decisions over the same duplex seam.
@@ -43,7 +43,6 @@ import {
   type RpcHandlers,
   serveUnixJsonRpc,
 } from "./transport/mod.ts";
-import { type ExternalAgentRunner, runWorkbenchRuntime } from "./workbench.ts";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import {
   AGENT_DEFAULTS,
@@ -65,11 +64,15 @@ import { isSupersedingRetryStarted, summarizeError } from "./contract/mod.ts";
 import {
   engineConfigToTurnDeps,
   executeTurn,
+  type ExternalAgentRunner,
   isValidTurnId,
   resolveTurnFromBody,
+  runWorkbenchRuntime,
+  SessionOwners,
   type TurnRequestBody,
   type TurnRuntime,
-} from "./turn-runner.ts";
+  type TurnTicket,
+} from "./engine/mod.ts";
 import {
   buildToolCatalog,
   type CommandDefinition,
@@ -80,7 +83,7 @@ import {
 import type {
   AcpPermissionPrompt,
   AcpPermissionSelection,
-} from "./acp-client.ts";
+} from "./contract/mod.ts";
 import { AcpSessionHandleMap } from "./acp-session-map.ts";
 import {
   FRICTION_SEVERITIES,
@@ -1292,7 +1295,7 @@ function composeTurnRuntime(
     });
 }
 
-// The `turn` method: run an agentic turn over the shared turn-runner core —
+// The `turn` method: run an agentic turn over the engine's shared turn entry —
 // lock/resume/clearance/paid — streaming intermediate text
 // deltas and runtime events back as `stream` notifications on this connection.
 // The final receipt is the RPC result; errors propagate as RPC errors.
@@ -1305,16 +1308,10 @@ export function buildTurnHandlers(
     ((input: SessionEventsRequest) =>
       fetchWorkbenchSessionEvents({ ...input, events: store().events }));
   const engineDeps = resolveEngineTurnDeps(options);
-  const activeTurns = new Map<
-    RpcContext,
-    Map<
-      string,
-      {
-        abortController: AbortController;
-        acceptingCancellation: boolean;
-      }
-    >
-  >();
+  // The engine's session owners: turn locks and cancel signals. The
+  // connection map below only records which turn each connection is running.
+  const owners = new SessionOwners();
+  const activeTurns = new Map<RpcContext, Map<string, TurnTicket>>();
 
   return {
     turn: async (params, ctx) => {
@@ -1331,19 +1328,15 @@ export function buildTurnHandlers(
       }
       const turnId = resolved.runtimeInput.turnId;
       const activeKey = turnId ?? crypto.randomUUID();
-      const abortController = new AbortController();
-      const activeTurn = {
-        abortController,
-        acceptingCancellation: true,
-      };
+      const activeTurn = owners.admit();
       const abortIfApprovalWasInterrupted = (response: unknown): void => {
         if (!approvalWasAborted(response)) return;
-        abortController.abort();
-        throw abortController.signal.reason;
+        activeTurn.abort();
+        throw activeTurn.signal.reason;
       };
       const rejectStaleApprovalAfterCancellation = (): void => {
-        if (abortController.signal.aborted) {
-          throw abortController.signal.reason;
+        if (activeTurn.signal.aborted) {
+          throw activeTurn.signal.reason;
         }
       };
       const requestApproval = (
@@ -1354,8 +1347,8 @@ export function buildTurnHandlers(
           "approval",
           request,
           signal === undefined
-            ? abortController.signal
-            : AbortSignal.any([abortController.signal, signal]),
+            ? activeTurn.signal
+            : AbortSignal.any([activeTurn.signal, signal]),
         );
       let contextTurns = activeTurns.get(ctx);
       if (contextTurns?.size) {
@@ -1369,12 +1362,6 @@ export function buildTurnHandlers(
         activeTurns.set(ctx, contextTurns);
       }
       contextTurns.set(activeKey, activeTurn);
-      if (turnId !== undefined) {
-        resolved.runtimeInput.onCancellationClosed = () => {
-          activeTurn.acceptingCancellation = false;
-        };
-      }
-      resolved.runtimeInput.abortSignal = abortController.signal;
       // A client that drops mid-turn makes every subsequent notify reject.
       // Deltas and status events are best-effort, so their send failures are
       // swallowed and logged once per turn rather than once per frame (a
@@ -1396,6 +1383,8 @@ export function buildTurnHandlers(
       };
       try {
         return await executeTurn(resolved, {
+          owners,
+          ticket: activeTurn,
           authContext: UDS_LOOPBACK_AUTH,
           loopback: true,
           runRuntime,
@@ -1526,13 +1515,9 @@ export function buildTurnHandlers(
         );
       }
       const activeTurn = activeTurns.get(ctx)?.get(turnId);
-      if (
-        activeTurn === undefined || !activeTurn.acceptingCancellation
-      ) {
+      if (activeTurn === undefined || !activeTurn.cancel()) {
         return { cancelled: false, reason: "no_active_turn" };
       }
-      activeTurn.acceptingCancellation = false;
-      activeTurn.abortController.abort();
       return { cancelled: true };
     },
   };

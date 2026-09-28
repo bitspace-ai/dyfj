@@ -13,6 +13,8 @@ import {
   type StopReason as AcpStopReason,
 } from "@agentclientprotocol/sdk";
 import {
+  type AcpPermissionPrompt,
+  type AcpPermissionSelection,
   DomainError,
   type ExternalAgentAccessRoute,
   type ExternalAgentCostBasis,
@@ -51,27 +53,6 @@ export interface AcpExecutionProfile {
   sessionUpdatePolicy?: "standard" | "long_running";
   protocolMessagePolicy?: "standard" | "long_running";
   toolchainDirectoryCount?: 0 | 1 | 2;
-}
-
-export interface AcpPermissionPrompt {
-  sessionId: string;
-  toolCallId: string;
-  toolCall: {
-    title: string;
-    name?: string;
-    kind?: string;
-    inputSummary: string;
-  };
-  options: ReadonlyArray<{
-    optionId: string;
-    name: string;
-    kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
-  }>;
-}
-
-export interface AcpPermissionSelection {
-  optionId: string | null;
-  source?: "operator" | "policy";
 }
 
 export type AcpPermissionDecision = "approve" | "deny";

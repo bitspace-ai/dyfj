@@ -8,3 +8,29 @@
 export interface Runner<Input, Result> {
   run(input: Input): Promise<Result>;
 }
+
+/**
+ * An external agent's permission request as the engine relays it to the
+ * operator: the tool call it wants to run and the protocol options it offers.
+ */
+export interface AcpPermissionPrompt {
+  sessionId: string;
+  toolCallId: string;
+  toolCall: {
+    title: string;
+    name?: string;
+    kind?: string;
+    inputSummary: string;
+  };
+  options: ReadonlyArray<{
+    optionId: string;
+    name: string;
+    kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+  }>;
+}
+
+/** The protocol option the operator chose, or none. */
+export interface AcpPermissionSelection {
+  optionId: string | null;
+  source?: "operator" | "policy";
+}

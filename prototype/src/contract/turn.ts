@@ -447,7 +447,7 @@ export class DomainError extends Error {}
 // error printer that forwards `err.message` verbatim risks leaking whatever
 // that message contains — safe for a DomainError (bounded by construction),
 // unsafe for anything else. Shared here (not duplicated per side) because the
-// server (workbench.ts) and every client (cli.ts) need the identical
+// server (engine/native-runner.ts) and every client (cli.ts) need the identical
 // discipline.
 export const MAX_ERROR_SUMMARY_BYTES = 500;
 
@@ -515,6 +515,6 @@ export const MAX_REASON_FIELD_BYTES = 200;
 
 /**
  * Canonical 26-character Crockford Base32 ULID session identifier regex.
- * Shared across turn-runner, http, and cli to prevent validation drift.
+ * Shared across the turn entry, http, and cli to prevent validation drift.
  */
 export const SESSION_ID_SHAPE = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;

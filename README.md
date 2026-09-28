@@ -1243,7 +1243,8 @@ Things that exist as boxes on a diagram.
   the immutable log. Queryable, evictable, scoped, explicitly reasoned about.
 - **Workbench runtime boundary.** Shared single-turn runtime invoked by the
   `dyfj` CLI over the JSON-RPC/UDS seam — every transport runs the identical
-  turn through one shared core (`turn-runner`), not a per-transport copy.
+  turn through one shared core (the engine's turn entry,
+  `prototype/src/engine/turn.ts`), not a per-transport copy.
   Presentation layers pass inputs and render results; the runtime owns model
   routing, command/tool execution, session/event writes, budget tracking, and
   receipt facts.
@@ -1664,3 +1665,5 @@ Document revisions only. Code and behavior changes are tracked in
   suite. The web tools section now states that `web_fetch` refuses a target
   it cannot verify as public, and that `dyfj start` and `deno task serve-unix`
   grant the engine the system nameservers for the lookups.
+- 2026-09-28 - Layer 1 runtime boundary names the engine's turn entry
+  (`prototype/src/engine/turn.ts`), which replaces `turn-runner`.

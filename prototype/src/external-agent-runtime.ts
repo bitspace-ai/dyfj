@@ -11,8 +11,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
-  type AcpPermissionPrompt,
-  type AcpPermissionSelection,
   type AcpPermissionVerdict,
   type AcpProgressUpdate,
   AcpProtocolMessageLimitError,
@@ -22,6 +20,10 @@ import {
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client.ts";
+import type {
+  AcpPermissionPrompt,
+  AcpPermissionSelection,
+} from "./contract/mod.ts";
 import type {
   AcpContinuityEvidence,
   AcpSessionHandleMap,

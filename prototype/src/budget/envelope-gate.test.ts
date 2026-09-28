@@ -316,7 +316,7 @@ Deno.test("scope-aware budget errors: a daily fail-closed error carries the dail
 // injected confirm callback — content this codebase relays, not authors.
 // DomainError only certifies the message the constructor BUILDS, so these
 // fields are capped and control-char-stripped before they reach either the
-// message or the public `.reason` property workbench.ts's log branch reads
+// message or the public `.reason` property the native runner's log branch reads
 // directly.
 
 Deno.test("BudgetCeilingDeclinedError — reason field sanitization: a short, ordinary reason passes through unchanged", () => {

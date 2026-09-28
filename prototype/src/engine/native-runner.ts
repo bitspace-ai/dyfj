@@ -3,23 +3,27 @@ import {
   generateTraceId,
   generateULID,
   systemClock,
-} from "./kernel/mod.ts";
+} from "../kernel/mod.ts";
 import {
   classifyErrorKind,
-  confirmPaidRoute,
   ContextCompressionPersistenceUncertainError,
-  formatMoney,
-  isNextWorkMode,
+  PaidEscalationDeclinedError,
+  ToolStepLimitConclusionError,
+  WorkspaceContextUnavailableError,
+} from "./errors.ts";
+import { writeMaybe } from "./event-writes.ts";
+import {
   type ObservedCallContext,
   observedProviderCall,
-  PaidEscalationDeclinedError,
+} from "./observed-call.ts";
+import {
+  confirmPaidRoute,
+  formatMoney,
+  isNextWorkMode,
   resolveRoute,
   routeReasonForMode,
   selectModelRoute,
-  ToolStepLimitConclusionError,
-  WorkspaceContextUnavailableError,
-  writeMaybe,
-} from "./engine/mod.ts";
+} from "./route.ts";
 import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
@@ -35,12 +39,12 @@ import {
   type Store,
   toolCallEvent,
   updateWorkbenchSession,
-} from "./store/mod.ts";
+} from "../store/mod.ts";
 import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
   SpendBaselines,
-} from "./budget/mod.ts";
+} from "../budget/mod.ts";
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
@@ -49,15 +53,15 @@ import {
   createRunawayAnomalyGate,
   createTurnBudgetCeilingGate,
   fetchSpendBaselines,
-} from "./budget/mod.ts";
-import type { WorkbenchRoutingOptions } from "./providers/mod.ts";
-import type { WorkbenchCallTimings } from "./providers/mod.ts";
+} from "../budget/mod.ts";
+import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
+import type { WorkbenchCallTimings } from "../providers/mod.ts";
 import type {
   WorkbenchMessage,
   WorkbenchModel,
   WorkbenchToolCall,
   WorkbenchTurnResult,
-} from "./providers/mod.ts";
+} from "../providers/mod.ts";
 import {
   estimateTextTokens,
   isLocalWorkbenchModel,
@@ -66,19 +70,19 @@ import {
   modelSupportsTranscriptRetry,
   runWorkbenchTurn,
   selectWorkbenchModel,
-} from "./providers/mod.ts";
+} from "../providers/mod.ts";
 import type {
   AskContextProfile,
   PackedContextSummary,
   WorkspaceRootIdentity,
-} from "./context/mod.ts";
+} from "../context/mod.ts";
 import {
   buildAskSystemPrompt,
   buildContextSourceLines,
   loadAgentsInstructions,
   loadAskRepoContext,
   loadCompanionBasePrompt,
-} from "./context/mod.ts";
+} from "../context/mod.ts";
 import {
   buildToolCatalog,
   type CommandDefinition,
@@ -88,19 +92,23 @@ import {
   executeReadMemory,
   invokeCommandWithEvent,
   type ToolCatalogPorts,
-} from "./tools/mod.ts";
+} from "../tools/mod.ts";
+import { writeModelSelectedEvent } from "../utils.ts";
+import { externalMcpCommandsForTransport } from "../mcp-tools.ts";
+import {
+  buildMemorySearch,
+  memorySearchConfigFromEnv,
+} from "../memory-search.ts";
 import {
   buildMemoryContextSourceLines,
   buildSystemPrompt,
   loadIndexedMemories,
   loadInjectedMemories,
-} from "./memory.ts";
+} from "../memory.ts";
+import type { BudgetTallyMode, PermissionLevel } from "../config/mod.ts";
 import type {
   AcpPermissionPrompt,
   AcpPermissionSelection,
-} from "./acp-client.ts";
-import type { BudgetTallyMode, PermissionLevel } from "./config/mod.ts";
-import type {
   AcpRunnerSelection,
   ExternalAgentWorkbenchRuntimeResult,
   HistoryOmissionReceipt,
@@ -114,7 +122,7 @@ import type {
   WorkbenchRuntimeEvent,
   WorkbenchRuntimeMode,
   WorkbenchRuntimeRequest,
-} from "./contract/mod.ts";
+} from "../contract/mod.ts";
 import {
   buildHistoryOmissionNotice,
   DomainError,
@@ -122,11 +130,11 @@ import {
   historyOmissionForDelivery,
   summarizeError,
   workspaceRootForTransport,
-} from "./contract/mod.ts";
+} from "../contract/mod.ts";
 import type {
   CompressionCompletion,
   CompressionOutcome,
-} from "./context/mod.ts";
+} from "../context/mod.ts";
 import {
   compressElderTranscript,
   COMPRESSION_SYSTEM_PROMPT,
@@ -135,20 +143,20 @@ import {
   partitionForCompression,
   SUMMARY_TRUST_POLICY,
   VERBATIM_TAIL_TURNS,
-} from "./context/mod.ts";
-import type { ContextOverflowRecoverer } from "./context/mod.ts";
+} from "../context/mod.ts";
+import type { ContextOverflowRecoverer } from "../context/mod.ts";
 import {
   buildContinuationMessages,
   classifyLengthStop,
   CONTEXT_OVERFLOW_WINDOW_FRACTION,
   ContextWindowOverflowError,
   isBudgetRefusal,
-} from "./context/mod.ts";
+} from "../context/mod.ts";
 import {
   AGENT_DEFAULTS,
   ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
-} from "./config/mod.ts";
+} from "../config/mod.ts";
 
 export interface WorkbenchReceiptInput {
   sessionId: string;
@@ -933,7 +941,6 @@ async function runNativeWorkbenchRuntime(
   store: Store,
   ceilingConfirmations: CeilingConfirmationStore,
 ): Promise<NativeWorkbenchRuntimeResult> {
-  const { writeModelSelectedEvent } = await import("./utils.ts");
   const writeEvent = async (
     event: EventInsert,
     options: { signal?: AbortSignal } = {},
@@ -941,10 +948,6 @@ async function runNativeWorkbenchRuntime(
     await store.journal.commit({ events: [event] }, options);
   };
   const eventExists = (eventId: string) => store.events.exists(eventId);
-  const { externalMcpCommandsForTransport } = await import("./mcp-tools.ts");
-  const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
-    "./memory-search.ts"
-  );
 
   const {
     mode,
@@ -1381,7 +1384,7 @@ async function runNativeWorkbenchRuntime(
       // Gated on the operator's standing elevation (config, default off):
       // without it the loader is never even called, so an unelevated
       // workspace's AGENTS.md structurally cannot reach the model request.
-      // The transport check is a structural backstop: the turn-runner wrapper
+      // The transport check is a structural backstop: the turn entry
       // already forces the flag off for non-loopback callers, but the
       // loopback-only contract must hold even for a future direct caller of
       // the runtime core that passes the flag itself. A failed explicit

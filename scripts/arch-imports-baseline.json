@@ -2,8 +2,7 @@
   "cycles": [],
   "layer": [
     "prototype/src/mcp-tools.ts -> prototype/src/linear-tools.ts",
-    "prototype/src/uds-serve.ts -> prototype/src/runtime-sigint.ts",
-    "prototype/src/workbench.ts -> prototype/src/acp-client.ts"
+    "prototype/src/uds-serve.ts -> prototype/src/runtime-sigint.ts"
   ],
   "cli": [
     "prototype/src/cli.ts -> prototype/src/friction.ts",
@@ -11,11 +10,7 @@
     "prototype/src/cli.ts -> prototype/src/mcp-net-grants.ts",
     "prototype/src/cli.ts -> prototype/src/memory-search.ts"
   ],
-  "dynamic": [
-    "prototype/src/workbench.ts -> prototype/src/mcp-tools.ts",
-    "prototype/src/workbench.ts -> prototype/src/memory-search.ts",
-    "prototype/src/workbench.ts -> prototype/src/utils.ts"
-  ],
+  "dynamic": [],
   "env": [],
   "envKeys": [],
   "packages": [],

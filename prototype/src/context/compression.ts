@@ -6,7 +6,7 @@
  * This module holds the transport-free, model-free core: the section taxonomy,
  * the summarize-not-obey prompt, the verbatim-tail partition, structural
  * validation of a produced summary, and the marker the summary re-enters under.
- * The model call, budget routing, persistence, and wiring live in workbench.ts,
+ * The model call, budget routing, persistence, and wiring live in engine/native-runner.ts,
  * which has those dependencies.
  *
  * Only conversation turns are ever compressed — never the system prompt or

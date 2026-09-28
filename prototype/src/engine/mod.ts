@@ -1,13 +1,15 @@
 /**
  * engine/ (L3): the turn pipeline (specs/01-architecture.md §5.1).
  *
- * Responsibility, so far: route resolution (`route.ts`: runner choice, native
- * model selection, the paid-escalation preflight), the observed provider call
- * (`observed-call.ts`: call, `provider_call` event, budget record), the
- * engine's error vocabulary and classifier (`errors.ts`), and best-effort
- * event writes (`event-writes.ts`). The rest of the turn still lives in
- * `src/workbench.ts` and `src/turn-runner.ts`, which the arch lane maps to
- * this unit until they move in.
+ * Responsibility: the turn entry (`turn.ts`: session lock, resume
+ * reconstruction, boundary config; `turn-request.ts`: request validation),
+ * session ownership (`session-owner.ts`: the single writer for each session's
+ * turn lock and turn cancel signals), route resolution (`route.ts`: runner
+ * choice, native model selection, the paid-escalation preflight), the observed
+ * provider call (`observed-call.ts`: call, `provider_call` event, budget
+ * record), the engine's error vocabulary and classifier (`errors.ts`), and
+ * best-effort event writes (`event-writes.ts`). The native turn itself is
+ * `native-runner.ts`, which the pipeline stages are being extracted from.
  *
  * Allowed dependencies: `kernel/`, `contract/`, `config/`, and the L2 units
  * (`store/`, `providers/`, `tools/`, `budget/`, `context/`, `transport/`).
@@ -45,3 +47,40 @@ export {
   type RouteRequest,
   selectModelRoute,
 } from "./route.ts";
+export {
+  AGENTS_INSTRUCTIONS_TRUST_PREAMBLE,
+  buildBudgetTallyLine,
+  buildNextWorkBrief,
+  buildWorkbenchReceipt,
+  buildWorkspaceGrounding,
+  type ExternalAgentRunner,
+  MAX_TOOL_STEPS,
+  type NativeWorkbenchRuntimeResult,
+  runWorkbenchRuntime,
+  shouldPrintBudgetTally,
+  toolStepToMessages,
+  validateNextWorkJson,
+  type WorkbenchRuntimeInput,
+  type WorkbenchRuntimeResult,
+  type WorkbenchRuntimeServices,
+} from "./native-runner.ts";
+export { SessionOwners, TurnTicket } from "./session-owner.ts";
+export {
+  engineConfigToTurnDeps,
+  executeTurn,
+  type ExecuteTurnDeps,
+  type FetchSessionEvents,
+  formatTurnSummaryLine,
+  type TurnRuntime,
+} from "./turn.ts";
+export {
+  isValidTurnId,
+  PAID_ESCALATION_NOT_APPROVED,
+  PAID_ESCALATION_REMOTE_DENIED,
+  paidEscalationVerdict,
+  parseBudgetOverride,
+  type ResolvedTurn,
+  resolveTurnFromBody,
+  type ResolveTurnOptions,
+  type TurnRequestBody,
+} from "./turn-request.ts";

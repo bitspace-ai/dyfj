@@ -5,7 +5,7 @@
 // The two need opposite handling — a cheap bounded retry vs a structured
 // failure that names the operator's options — so classification comes first,
 // from the model registry's catalog limits plus the turn's reported usage.
-// The agent loop (workbench.ts) owns the retry/failure mechanics; everything
+// The agent loop (engine/native-runner.ts) owns the retry/failure mechanics; everything
 // here is pure and unit-testable.
 
 import { sanitizeBoundaryText } from "../kernel/mod.ts";

@@ -90,8 +90,6 @@
     "prototype/src/mcp-net-grants.ts": "tools",
     "prototype/src/memory-search.ts": "tools",
     "prototype/src/memory.ts": "tools",
-    "prototype/src/workbench.ts": "engine",
-    "prototype/src/turn-runner.ts": "engine",
     "prototype/src/acp-client.ts": "runners/acp",
     "prototype/src/acp-session-map.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",

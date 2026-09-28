@@ -154,6 +154,18 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The turn entry and session ownership live in `prototype/src/engine/`**: the
+  shared turn core (`turn-runner.ts`) is now `engine/turn.ts`, with request
+  validation split into `engine/turn-request.ts`, and the native runtime
+  (`workbench.ts`) is now `engine/native-runner.ts`. A new `SessionOwners`
+  (`engine/session-owner.ts`), built once per set of turn handlers (the server
+  builds one), is the single writer for each session's turn lock (previously
+  module-level state in `turn-runner.ts`) and for each admitted turn's cancel
+  signal (previously an `AbortController` and flag in the server's handler); the
+  server routes `turn/cancel` to the turn's ticket. The external-agent
+  permission prompt and selection types moved to `contract/`. Same-session
+  serialization, the one-turn-per-connection rule, and cancel semantics are
+  unchanged, and the golden suite passes with no snapshot change.
 - **`web_fetch` refuses a target it cannot verify as public**: a hostname
   passes the address check only when its A and AAAA lookups both answer
   (either may have no records), together they return at least one address,
