@@ -245,5 +245,28 @@ providerAdapterConformance({
       exchanges: [],
       expect: { error: { instance: WorkbenchHostedProviderBaseUrlError } },
     },
+    offHostBaseUrl: {
+      model: {
+        ...gemini,
+        slug: "gemini-elsewhere",
+        baseUrl: "https://example.com",
+      },
+      env,
+      stream: false,
+      exchanges: [],
+      expect: { error: { instance: WorkbenchHostedProviderBaseUrlError } },
+    },
+    redirect: {
+      model: gemini,
+      env,
+      stream: false,
+      exchanges: [{
+        respond: {
+          status: 307,
+          headers: { location: "https://example.com/elsewhere" },
+        },
+      }],
+      expect: { error: { message: /redirect/i } },
+    },
   },
 });

@@ -4,6 +4,7 @@ import { assertEquals } from "@std/assert";
 import { providerAdapterConformance } from "../../../testing/conformance/provider-adapter.ts";
 import {
   estimateTextTokens,
+  WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   type WorkbenchModel,
 } from "../mod.ts";
@@ -271,6 +272,29 @@ providerAdapterConformance({
       stream: false,
       exchanges: [],
       expect: { error: { instance: WorkbenchLocalProviderBaseUrlError } },
+    },
+    offHostBaseUrl: {
+      // A hosted provider's key is pinned to its own host.
+      model: {
+        ...hosted,
+        slug: "gpt-elsewhere",
+        baseUrl: "https://example.com/v1",
+      },
+      env: { OPENAI_API_KEY: "sk-test-not-real" },
+      stream: false,
+      exchanges: [],
+      expect: { error: { instance: WorkbenchHostedProviderBaseUrlError } },
+    },
+    redirect: {
+      model: local,
+      stream: false,
+      exchanges: [{
+        respond: {
+          status: 307,
+          headers: { location: "https://example.com/elsewhere" },
+        },
+      }],
+      expect: { error: { message: /redirect/i } },
     },
   },
 });

@@ -245,6 +245,29 @@ providerAdapterConformance({
       exchanges: [],
       expect: { error: { instance: WorkbenchHostedProviderBaseUrlError } },
     },
+    offHostBaseUrl: {
+      model: {
+        ...model,
+        slug: "synthetic-off-host",
+        baseUrl: "https://example.org",
+      },
+      env,
+      stream: false,
+      exchanges: [],
+      expect: { error: { instance: WorkbenchHostedProviderBaseUrlError } },
+    },
+    redirect: {
+      model: model,
+      env,
+      stream: false,
+      exchanges: [{
+        respond: {
+          status: 307,
+          headers: { location: "https://example.com/elsewhere" },
+        },
+      }],
+      expect: { error: { message: /redirect/i } },
+    },
   },
 });
 
