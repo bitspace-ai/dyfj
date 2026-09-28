@@ -1158,8 +1158,8 @@ README are tracked separately in its Revision history section.
   slug is encoded as a single URL path segment.
 - **The web tools' private-address check fails closed**: the check that keeps
   `web_fetch` away from private, loopback and internal addresses previously
-  passed a hostname whenever its DNS lookup failed or could not be made. Under
-  the engine's host-pinned network grant that was every lookup, so a hostname
+  passed a hostname whenever its DNS lookup failed or could not be made. The
+  engine's host-pinned network grant made every such lookup fail, so a hostname
   resolving to a private address was not refused. Targets the check cannot
   verify are now refused, lookups go through a `DnsResolver` port, and the
   engine is granted its system nameservers so lookups can run.
