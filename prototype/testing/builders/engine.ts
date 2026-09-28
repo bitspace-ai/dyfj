@@ -17,10 +17,14 @@ import {
 } from "../../src/store/mod.ts";
 import { CeilingConfirmationStore } from "../../src/budget/mod.ts";
 import { SessionOwners } from "../../src/engine/mod.ts";
-import type {
-  NativeTurnPorts,
-  WorkbenchRuntimeServices,
+import {
+  type NativeTurnPorts,
+  type NativeWorkbenchRuntimeResult,
+  runWorkbenchRuntime,
+  type WorkbenchRuntimeInput,
+  type WorkbenchRuntimeServices,
 } from "../../src/engine/mod.ts";
+import type { RecordedRequest } from "../fakes/scripted-http-transport.ts";
 
 /** A local OpenAI-compatible model on a loopback URL: free, tier 0. */
 export const LOCAL_MODEL: ModelSeed = {
@@ -49,6 +53,35 @@ export function pricedLocalModel(
     tier: 1,
     cost_input: price.costInput,
     cost_output: price.costOutput,
+  };
+}
+
+/**
+ * A free row that is NOT on-machine: tier 0, but a hosted provider on a
+ * hosted URL. Its adapter reads `ANTHROPIC_API_KEY` through the env port.
+ */
+export const HOSTED_FREE_MODEL: ModelSeed = {
+  slug: "hosted-free",
+  display_name: "Hosted Free",
+  provider: "anthropic",
+  api: "anthropic-messages",
+  base_url: "https://api.anthropic.com",
+  tier: 0,
+  context_window: 32_768,
+  max_output_tokens: 4_096,
+  capabilities: ["text", "code"],
+};
+
+/** A non-streaming Anthropic messages reply. */
+export function anthropicReply(text: string): ScriptedExchange {
+  return {
+    respond: {
+      body: JSON.stringify({
+        content: [{ type: "text", text }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+    },
   };
 }
 
@@ -122,7 +155,12 @@ export interface ChatReply {
   content?: string;
   toolCalls?: ReadonlyArray<{ id: string; name: string; arguments: unknown }>;
   finishReason?: string;
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    completion_tokens_details?: { reasoning_tokens: number };
+    prompt_tokens_details?: { cached_tokens: number };
+  };
 }
 
 /** A non-streaming OpenAI chat-completions reply. */
@@ -211,4 +249,59 @@ export function patchStore(store: Store, patch: Partial<Store>): Store {
     spend: patch.spend ?? store.spend,
     close: () => store.close(),
   };
+}
+
+/** Run one native turn against `run`'s fakes, on the local model by default. */
+export function runTurn(
+  run: EngineRun,
+  input: Partial<WorkbenchRuntimeInput>,
+): Promise<NativeWorkbenchRuntimeResult> {
+  return runWorkbenchRuntime({
+    mode: "turn",
+    prompt: "hello",
+    routingOptions: {},
+    defaultCompanionModel: LOCAL_MODEL.slug,
+    ...input,
+    runner: undefined,
+  }, run.services);
+}
+
+export interface ChatRequestMessage {
+  role: string;
+  content: string;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+}
+
+/** The chat-completions body a provider request carried. */
+export function requestBody(request: RecordedRequest): {
+  model?: string;
+  messages: ChatRequestMessage[];
+  tools?: unknown[];
+  stream?: boolean;
+} {
+  return JSON.parse(request.body);
+}
+
+/** The system message of a provider request. */
+export function systemMessage(request: RecordedRequest): string {
+  return requestBody(request).messages.find((message) =>
+    message.role === "system"
+  )?.content ?? "";
+}
+
+/** The non-system messages of a provider request. */
+export function conversation(request: RecordedRequest): ChatRequestMessage[] {
+  return requestBody(request).messages.filter((message) =>
+    message.role !== "system"
+  );
+}
+
+/** Every event row the turn wrote, in commit order. */
+export async function eventRows(run: EngineRun, sessionId: string) {
+  return await run.store.events.bySession({
+    sessionId,
+    limit: 500,
+    order: "asc",
+  });
 }

@@ -17,13 +17,16 @@ import {
 import { assertSpyCalls, spy } from "@std/testing/mock";
 import {
   chatReply,
+  conversation,
   type EngineRun,
   engineServices,
+  eventRows,
   patchStore,
   pricedLocalModel,
+  runTurn,
+  systemMessage,
   tempWorkspace,
 } from "../../testing/builders/engine.ts";
-import type { RecordedRequest } from "../../testing/fakes/scripted-http-transport.ts";
 import type {
   HistoryOmissionProjection,
   WorkbenchAuthContext,
@@ -47,51 +50,6 @@ const REMOTE: WorkbenchAuthContext = {
   authzBasis: "bearer_token",
 };
 const NOTICE_OPEN = "[Workbench-generated history notice]";
-
-/** Run one native turn against `run`'s fakes. */
-function runTurn(
-  run: EngineRun,
-  input: Partial<WorkbenchRuntimeInput>,
-): Promise<NativeWorkbenchRuntimeResult> {
-  return runWorkbenchRuntime({
-    mode: "turn",
-    prompt: "hello",
-    routingOptions: {},
-    defaultCompanionModel: "local-chat",
-    ...input,
-    runner: undefined,
-  }, run.services);
-}
-
-interface ChatRequestBody {
-  messages: Array<{ role: string; content: string }>;
-  tools?: unknown[];
-}
-
-function requestBody(request: RecordedRequest): ChatRequestBody {
-  return JSON.parse(request.body) as ChatRequestBody;
-}
-
-function systemMessage(request: RecordedRequest): string {
-  const system = requestBody(request).messages.find((message) =>
-    message.role === "system"
-  );
-  return system?.content ?? "";
-}
-
-function conversation(request: RecordedRequest) {
-  return requestBody(request).messages.filter((message) =>
-    message.role !== "system"
-  );
-}
-
-async function eventRows(run: EngineRun, sessionId: string) {
-  return await run.store.events.bySession({
-    sessionId,
-    limit: 200,
-    order: "asc",
-  });
-}
 
 async function createResumedSession(run: EngineRun): Promise<void> {
   await createWorkbenchSession({

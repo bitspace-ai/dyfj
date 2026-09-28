@@ -154,6 +154,16 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`loadTranscript` is the native turn's fourth named pipeline stage**
+  (`engine/load-transcript.ts`): it seeds the first call's conversation
+  (prior turns for companion turns only, then the current prompt) and
+  compresses elder turns first when the transcript would cross half the
+  model's context window. Transcript compression is its own module
+  (`engine/compression.ts`), shared by that proactive trigger and the agent
+  loop's overflow recovery: on-machine model choice, the gated and recorded
+  compression call, and the durable `context_compressed` write with its
+  by-id durability probe. Event rows, receipts and the golden suite are
+  unchanged.
 - **`budgetGate` is the native turn's third named pipeline stage**
   (`engine/budget-gate.ts`): it selects the turn's model, runs the entry
   checks in their existing order (runaway-anomaly hard stop, budget ceiling,

@@ -10,7 +10,6 @@ import {
 import { processEnv } from "../config/mod.ts";
 import {
   buildWorkbenchSessionContent,
-  contextCompressedEvent,
   errorEvent,
   type EventInsert,
   modelResponseEvent,
@@ -18,15 +17,12 @@ import {
   updateWorkbenchSession,
 } from "../store/mod.ts";
 import {
-  isLocalWorkbenchModel,
   modelRequestedOutputCap,
   modelStreamsToolCalls,
   modelSupportsTranscriptRetry,
   runWorkbenchTurn,
-  selectWorkbenchModel,
   type WorkbenchCallTimings,
   type WorkbenchMessage,
-  type WorkbenchModel,
   type WorkbenchToolCall,
   type WorkbenchTurnResult,
 } from "../providers/mod.ts";
@@ -37,23 +33,13 @@ import {
 import {
   buildContinuationMessages,
   classifyLengthStop,
-  compressElderTranscript,
-  COMPRESSION_SYSTEM_PROMPT,
-  type CompressionCompletion,
-  type CompressionOutcome,
-  CONTEXT_COMPRESSION_TRIGGER_FRACTION,
   CONTEXT_OVERFLOW_WINDOW_FRACTION,
-  type ContextOverflowRecoverer,
   ContextWindowOverflowError,
-  countTurns,
   isBudgetRefusal,
-  partitionForCompression,
-  VERBATIM_TAIL_TURNS,
 } from "../context/mod.ts";
 import { createCommandRegistry, invokeCommandWithEvent } from "../tools/mod.ts";
 import {
   classifyErrorKind,
-  ContextCompressionPersistenceUncertainError,
   PaidEscalationDeclinedError,
   ToolStepLimitConclusionError,
   WorkspaceContextUnavailableError,
@@ -92,6 +78,13 @@ import {
   newTurnState,
 } from "./turn-state.ts";
 import { budgetGate } from "./budget-gate.ts";
+import type { RoutedTurn } from "./routed-turn.ts";
+import { loadTranscript } from "./load-transcript.ts";
+import { compressionRecoverer } from "./compression.ts";
+import {
+  estimateRuntimeInputCount,
+  transcriptEstimateText,
+} from "./transcript.ts";
 
 function forcedConclusionSystemPrompt(
   baseSystemPrompt: string,
@@ -133,21 +126,6 @@ export function toolStepToMessages(
   return messages;
 }
 
-/** Concatenated text of a transcript, for the fallback input-token estimate. */
-function transcriptEstimateText(
-  systemPrompt: string,
-  messages: WorkbenchMessage[],
-): string {
-  const body = messages
-    .map((m) =>
-      m.role === "assistant"
-        ? m.content + (m.toolCalls ? JSON.stringify(m.toolCalls) : "")
-        : m.content
-    )
-    .join("\n");
-  return `${systemPrompt}\n${body}`;
-}
-
 function commandResultText(
   result: { isError: boolean; reason?: string; result?: unknown },
 ): string {
@@ -155,10 +133,6 @@ function commandResultText(
   return typeof result.result === "string"
     ? result.result
     : JSON.stringify(result.result);
-}
-
-function estimateRuntimeInputCount(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 function requireExternalAgentRunner(
@@ -262,7 +236,6 @@ async function runNativeWorkbenchRuntime(
   // branch logs only to server stderr and the turn looks like a benign empty
   // ($0 / 0-token) success to the client.
   let turnError: unknown = null;
-  let providerCallOrder = 0;
   // Shared by every provider call this turn makes (agent loop and
   // compression): observedProviderCall writes each call's provider_call event
   // under the turn root span and records its usage with this turn's tracker.
@@ -280,11 +253,6 @@ async function runNativeWorkbenchRuntime(
 
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
-  // Reasoning/thinking tokens are provider-reported when available. Streaming
-  // adapters that receive plaintext reasoning before an interrupt can estimate
-  // uncovered usage. The receipt surfaces them separately; the provider
-  // adapter includes them in billable cost.
-  let reasoningTokens = 0;
   // Per-turn aggregates across every provider call the agent loop makes, so
   // receipts/events count the whole turn, not just the final call.
   let turnInputTokens = 0;
@@ -310,247 +278,12 @@ async function runNativeWorkbenchRuntime(
     const route = await budgetGate(state, runtimeInput, ports);
     const { models, selected, budgetCeilingGate, anomalyGate } = route;
 
-    // Compress elder conversation turns into a named-section summary. Routes
-    // only to an on-machine local provider on a loopback endpoint (the session
-    // model when it is tier 0 and local, else the registry's preferred tier-0
-    // local model); it never issues a hosted-provider request, declining if no
-    // local model is routable. The call is budget-gated and recorded like any provider
-    // call. Every failure path returns a declined OUTCOME rather than throwing;
-    // the caller decides what a decline means — the proactive path continues on
-    // the uncompressed transcript, the reactive recoverer returns null (its turn
-    // then fails structured). Either way turn state is never corrupted.
-    // `turnsRetained` is the number of turns that, AT THE MOMENT THIS EVENT IS
-    // WRITTEN, already exist in the event stream and survive verbatim in the live
-    // transcript. It is the caller's to compute, not this closure's: the two
-    // triggers differ on whether the current prompt is already inside `tail`,
-    // and getting that wrong silently drops a retained turn on resume.
-    const compressTranscript = async (
-      elder: WorkbenchMessage[],
-      turnsRetained: number,
-      trigger: "proactive" | "context_overflow",
-    ): Promise<CompressionOutcome> => {
-      let compressionModel: WorkbenchModel;
-      try {
-        // Locality is a ROUTING input, not only a backstop: tier does not imply
-        // on-machine, so both arms must consider local rows only. The session
-        // model may itself be a tier-0 hosted row, and the registry's preferred
-        // tier-0 row may be hosted while a local one exists — either would
-        // otherwise decline compression despite a routable local model. Filter to
-        // on-machine candidates first, then let the selector apply its own
-        // pricing/preference rules within them.
-        const localTier0 = models.filter(
-          (model) => model.tier === 0 && isLocalWorkbenchModel(model),
-        );
-        compressionModel =
-          selected.tier === 0 && isLocalWorkbenchModel(selected)
-            ? selected
-            : selectWorkbenchModel(
-              localTier0,
-              { tier: 0 },
-              defaultCompanionModel,
-            ).selected;
-      } catch {
-        // Empty candidate set (or an unpriced one) throws from the selector; a
-        // decline is the only outcome — compression never escalates off-machine.
-        return {
-          status: "declined",
-          reason: "no local model routable for compression",
-        };
-      }
-      // Locality boundary — NOT tier alone: a tier-0 row could name a hosted
-      // provider, which would send the elder transcript off-machine. Require an
-      // on-machine local provider on a loopback URL; decline otherwise, never
-      // escalating compression to a hosted endpoint.
-      if (!isLocalWorkbenchModel(compressionModel)) {
-        return {
-          status: "declined",
-          reason: "no on-machine local model for compression",
-        };
-      }
-      const runCompletion: CompressionCompletion = async (compressionInput) => {
-        const estimatedInputCount = estimateRuntimeInputCount(
-          transcriptEstimateText(COMPRESSION_SYSTEM_PROMPT, compressionInput),
-        );
-        // Gate on the compression model's OWN tier (0 → free, so the gates pass
-        // trivially); a paid model — which selection forbids — would be caught
-        // here, and any budget refusal declines compression via the catch in
-        // compressElderTranscript rather than failing the turn.
-        await anomalyGate.ensureAllowed(
-          budget.checkAnomaly(compressionModel.tier, anomalyConfig),
-        );
-        await budgetCeilingGate.ensureAllowed(
-          budget.checkPreCall(
-            compressionModel.tier,
-            compressionModel.costInput,
-            estimatedInputCount,
-          ),
-        );
-        // No tools, no streaming to the operator: the compression turn produces
-        // a structured summary out of band, never rendered as reply text.
-        const { turn, recorded } = await observedProviderCall(
-          observedCallContext,
-          {
-            params: {
-              systemPrompt: COMPRESSION_SYSTEM_PROMPT,
-              prompt: "",
-              messages: compressionInput,
-              routing: { modelId: compressionModel.slug },
-              models,
-              abortSignal: runtimeInput.abortSignal,
-              sessionId,
-              ...ports.providerIo,
-            },
-            model: compressionModel,
-            order: ++providerCallOrder,
-            purpose: "context_compression",
-            authzBasis: "policy:local-compression",
-            recordUnparsedToolCallMarkup: false,
-          },
-        );
-        if (recorded) {
-          reasoningTokens += turn.usage.reasoning ?? 0;
-        }
-        return {
-          text: turn.text,
-          modelSlug: turn.model.slug,
-          stopReason: turn.stopReason,
-        };
-      };
-      const outcome = await compressElderTranscript(
-        elder,
-        runCompletion,
-        (msgs) => estimateRuntimeInputCount(transcriptEstimateText("", msgs)),
-        runtimeInput.abortSignal,
-      );
-      if (outcome.status !== "compressed") return outcome;
-      // Persist FIRST and durably. The live turn only uses the compressed
-      // transcript once the event that lets resume reconstruct it is written;
-      // a failed write DECLINES compression (fall back to uncompressed) so the
-      // live transcript can never diverge from what resume would rebuild. This
-      // is the one context event that is not best-effort — losing it would make
-      // resume silently inconsistent.
-      // The id is generated HERE, not inside writeEvent, so a rejected write can
-      // be probed for by id — see the ambiguity handling below.
-      const compressionEventId = generateULID();
-      try {
-        await writeEvent(contextCompressedEvent({
-          event_id: compressionEventId,
-          session_id: sessionId,
-          trace_id: traceId,
-          span_id: generateSpanId(),
-          parent_span_id: turnRootSpanId,
-          principal_id: principalId,
-          principal_type: "agent",
-          action: "compress",
-          resource: "conversation_context",
-          authz_basis: "policy:local-compression",
-          ...authnEventFields,
-          content: JSON.stringify({
-            summary: outcome.summary,
-            // LOAD-BEARING for replay: the count of turns kept verbatim at this
-            // event's boundary, counted per THE TURN-COUNTING INVARIANT (see
-            // countTurns). Trailing, so it needs no shared base — replay rebuilds
-            // the full history while the live seed is capped to the recent turns,
-            // and a leading count would mean different things to each.
-            // `turnsCompressed` below is observability only (the CLI status
-            // line); replay never keys on it.
-            turnsRetained,
-            turnsCompressed: outcome.turnsCompressed,
-            compressorModelSlug: outcome.compressorModelSlug,
-            trigger,
-            tokensBeforeEstimate: outcome.tokensBeforeEstimate,
-            tokensAfterEstimate: outcome.tokensAfterEstimate,
-          }),
-        }));
-      } catch (err) {
-        // Log the error CLASS, not its message: the failing write carries the
-        // conversation summary, and a DB/serialization error can quote it —
-        // this channel is content-free by convention. classifyErrorKind
-        // never reads a string OFF the candidate (.name and .constructor.name
-        // are both ordinary, attacker-shapeable properties — a crafted
-        // `{constructor: {name: "..."}}` spoofs constructor.name exactly like
-        // a plain object spoofs .name) — classification comes from instanceof
-        // against classes this codebase controls, full stop.
-        const kind = classifyErrorKind(err);
-        // A rejected INSERT does NOT mean "not persisted": the row may have
-        // committed and only the acknowledgment been lost. Continuing
-        // uncompressed on that assumption would let a durable event resurface on
-        // resume as a summary the live turn never used. Probe by id to resolve
-        // the three real cases.
-        let landed: boolean;
-        try {
-          landed = await eventExists(compressionEventId);
-        } catch (probeErr) {
-          // Genuinely ambiguous — we cannot learn whether the row is durable, so
-          // no choice here is safe: continuing uncompressed may diverge from a
-          // resume that applies the event, and adopting may pin a summary that
-          // was never stored. Ambiguity is the one case that fails the turn.
-          const probeKind = classifyErrorKind(probeErr);
-          throw new ContextCompressionPersistenceUncertainError(
-            kind,
-            probeKind,
-          );
-        }
-        if (!landed) {
-          // Genuinely not persisted: decline and let the caller continue on the
-          // uncompressed transcript — the designed graceful fallback.
-          console.warn(
-            `context compression event write failed (${kind}); declining`,
-          );
-          return {
-            status: "declined",
-            reason: "compression event not persisted",
-          };
-        }
-        // Rejected, but the row IS durable. Adopt the compression: resume will
-        // rebuild from this event, so the live transcript must match it.
-        console.warn(
-          `context compression event write reported ${kind} but the row is ` +
-            `durable; adopting the compressed transcript`,
-        );
-      }
-      // Durable now: surface it live — visible context source (receipt +
-      // inspector) and a runtime event, so compression is never invisible.
-      contextSourceLines.push(
-        `compressed conversation summary (${outcome.turnsCompressed} turns ` +
-          `→ ~${outcome.tokensAfterEstimate} tokens)`,
-      );
-      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-        type: "contextCompressed",
-        sessionId,
-        compressorModelSlug: outcome.compressorModelSlug,
-        trigger,
-        turnsCompressed: outcome.turnsCompressed,
-        tokensBeforeEstimate: outcome.tokensBeforeEstimate,
-        tokensAfterEstimate: outcome.tokensAfterEstimate,
-      });
-      return outcome;
-    };
-
-    // Reactive recovery: compress-then-retry. Used when a turn overflows the
-    // context window and the caller supplied no recoverContextOverflow of its
-    // own (tests inject theirs). The length-recovery machinery drives the retry
-    // and presents it via the superseding-retry contract; a declined compression
-    // returns null, which fails the turn with the existing structured
-    // ContextWindowOverflowError — never a corrupted transcript.
-    const defaultCompressionRecoverer: ContextOverflowRecoverer = async (
-      context,
-    ) => {
-      const { elder, tail } = partitionForCompression(
-        context.messages,
-        VERBATIM_TAIL_TURNS,
-      );
-      // No +1 here, unlike the proactive path: context.messages is the transcript
-      // that overflowed, which ALREADY ends with the current prompt, so the
-      // prompt is inside `tail` and counting it again would over-retain on
-      // resume.
-      const outcome = await compressTranscript(
-        elder,
-        countTurns(tail),
-        "context_overflow",
-      );
-      if (outcome.status !== "compressed") return null;
-      return { messages: [outcome.summaryMessage, ...tail] };
+    const routed: RoutedTurn = {
+      state,
+      input: runtimeInput,
+      ports,
+      route,
+      observed: observedCallContext,
     };
 
     log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
@@ -596,7 +329,7 @@ async function runNativeWorkbenchRuntime(
         await observedProviderCall(observedCallContext, {
           params,
           model: selected,
-          order: ++providerCallOrder,
+          order: ++state.providerCallOrder,
           purpose,
           authzBasis: "policy:local-default",
           recordUnparsedToolCallMarkup: true,
@@ -605,7 +338,7 @@ async function runNativeWorkbenchRuntime(
       if (recorded) {
         cacheReadTokens += turn.usage.cacheRead;
         cacheWriteTokens += turn.usage.cacheWrite;
-        reasoningTokens += turn.usage.reasoning ?? 0;
+        state.reasoningTokens += turn.usage.reasoning ?? 0;
         turnInputTokens += turn.usage.input;
         turnOutputTokens += turn.usage.output;
         turnCostUsd += turn.usage.cost.total;
@@ -722,7 +455,7 @@ async function runNativeWorkbenchRuntime(
           outputTokens,
         };
         const recover = runtimeInput.recoverContextOverflow ??
-          defaultCompressionRecoverer;
+          compressionRecoverer(routed);
         if (recover !== undefined && retryable) {
           let retried:
             | Awaited<ReturnType<typeof runWorkbenchTurn>>
@@ -911,53 +644,7 @@ async function runNativeWorkbenchRuntime(
         streamedText = true;
         runtimeInput.onTextDelta?.(delta);
       };
-    // Seed the conversation transcript: prior turns (companion mode only;
-    // one-shot ask/next-work carry no history) followed by the current user
-    // message. This is passed to the FIRST turn so resumed conversations carry
-    // their history as structured messages, and the agent loop appends to it.
-    let seededHistory: WorkbenchMessage[] = !usesRepoAskContext
-      ? runtimeInput.conversationMessages ?? []
-      : [];
-    // Proactive compression: when the seeded transcript would cross ~50% of the
-    // active model's context window, compress the elder turns before the first
-    // provider call, keeping the most recent turns verbatim. A declined
-    // compression leaves the transcript untouched and the turn runs uncompressed.
-    if (seededHistory.length > 0 && selected.contextWindow !== undefined) {
-      const prospective: WorkbenchMessage[] = [
-        ...seededHistory,
-        { role: "user", content: modelPrompt },
-      ];
-      const estimatedTokens = estimateRuntimeInputCount(
-        transcriptEstimateText(systemPrompt, prospective),
-      );
-      if (
-        estimatedTokens >=
-          selected.contextWindow * CONTEXT_COMPRESSION_TRIGGER_FRACTION
-      ) {
-        const { elder, tail } = partitionForCompression(
-          seededHistory,
-          VERBATIM_TAIL_TURNS,
-        );
-        // +1 for the current prompt: it was already persisted as a session_start
-        // BEFORE this compression event, and it is appended to the live
-        // transcript just below — so at this event's boundary the retained turns
-        // are `tail` plus that prompt. Partitioning `seededHistory` (which
-        // excludes the prompt) makes this off-by-one easy to miss; resume would
-        // silently drop the oldest retained turn.
-        const outcome = await compressTranscript(
-          elder,
-          countTurns(tail) + 1,
-          "proactive",
-        );
-        if (outcome.status === "compressed") {
-          seededHistory = [outcome.summaryMessage, ...tail];
-        }
-      }
-    }
-    const messages: WorkbenchMessage[] = [
-      ...seededHistory,
-      { role: "user", content: modelPrompt },
-    ];
+    const messages = await loadTranscript(routed);
     let turn = await runRecoveredTurn({
       systemPrompt,
       prompt: modelPrompt,
@@ -1601,7 +1288,7 @@ async function runNativeWorkbenchRuntime(
       totalTokensOutput: summary.totalTokensOutput,
       totalCacheReadTokens: cacheReadTokens,
       totalCacheWriteTokens: cacheWriteTokens,
-      totalReasoningTokens: reasoningTokens,
+      totalReasoningTokens: state.reasoningTokens,
       totalCalls: summary.totalCalls,
       contextBudget: state.contextBudget,
       contextProfile: state.contextProfile,
@@ -1678,7 +1365,7 @@ async function runNativeWorkbenchRuntime(
         output: summary.totalTokensOutput,
         cacheRead: cacheReadTokens,
         cacheWrite: cacheWriteTokens,
-        reasoning: reasoningTokens,
+        reasoning: state.reasoningTokens,
         totalCalls: summary.totalCalls,
       },
       context: {
