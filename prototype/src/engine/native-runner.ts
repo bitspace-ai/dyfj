@@ -15,33 +15,22 @@ import {
   updateWorkbenchSession,
 } from "../store/mod.ts";
 import {
-  modelStreamsToolCalls,
-  type WorkbenchMessage,
-  type WorkbenchToolCall,
-  type WorkbenchTurnResult,
-} from "../providers/mod.ts";
-import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
 } from "../budget/mod.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
-import { createCommandRegistry, invokeCommandWithEvent } from "../tools/mod.ts";
+import { createCommandRegistry } from "../tools/mod.ts";
 import {
   classifyErrorKind,
   PaidEscalationDeclinedError,
-  ToolStepLimitConclusionError,
   WorkspaceContextUnavailableError,
 } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
-import {
-  type ObservedCallContext,
-  observedProviderCall,
-} from "./observed-call.ts";
+import { type ObservedCallContext } from "./observed-call.ts";
 import { resolveRoute, routeReasonForMode } from "./route.ts";
 import type {
   ExternalAgentRunner,
   NativeWorkbenchRuntimeResult,
-  ToolResultSummary,
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
   WorkbenchRuntimeServices,
@@ -63,61 +52,7 @@ import {
 import { budgetGate } from "./budget-gate.ts";
 import type { RoutedTurn } from "./routed-turn.ts";
 import { loadTranscript } from "./load-transcript.ts";
-import {
-  estimateRuntimeInputCount,
-  transcriptEstimateText,
-} from "./transcript.ts";
-import { recoveredTurn } from "./recovered-turn.ts";
-import type { LoopTurnResult } from "./observed-turn.ts";
-
-function forcedConclusionSystemPrompt(
-  baseSystemPrompt: string,
-  reason: "limit" | "repeated_tool_calls",
-): string {
-  const reasonText = reason === "limit"
-    ? "tool use ended because the configured Workbench tool-step limit was reached"
-    : "tool use ended because the model repeated prior tool calls";
-  return baseSystemPrompt + "\n\n" +
-    `Workbench instruction: ${reasonText}. Answer the original operator prompt ` +
-    "from the transcript above. Do not request or call more tools.";
-}
-
-/**
- * Turn one agent-loop step into transcript messages: the assistant turn that
- * requested the tools (its text plus the tool-call intentions) followed by one
- * `tool` message per result, each linked back to its call by id. Appending these
- * to the running history is what lets the next step see the model's own prior
- * reasoning and the matching results — instead of a flattened summary string
- * that drops the trail and invites confabulation.
- */
-export function toolStepToMessages(
-  assistantText: string,
-  toolCalls: WorkbenchToolCall[] | undefined,
-  stepResults: ToolResultSummary[],
-): WorkbenchMessage[] {
-  const messages: WorkbenchMessage[] = [
-    { role: "assistant", content: assistantText, toolCalls },
-  ];
-  for (const result of stepResults) {
-    messages.push({
-      role: "tool",
-      toolCallId: result.callId,
-      name: result.commandId,
-      content: result.result,
-      ...(result.isError ? { isError: true } : {}),
-    });
-  }
-  return messages;
-}
-
-function commandResultText(
-  result: { isError: boolean; reason?: string; result?: unknown },
-): string {
-  if (result.isError) return result.reason ?? "command failed";
-  return typeof result.result === "string"
-    ? result.result
-    : JSON.stringify(result.result);
-}
+import { agentLoop } from "./agent-loop.ts";
 
 function requireExternalAgentRunner(
   services: WorkbenchRuntimeServices | undefined,
@@ -179,9 +114,6 @@ async function runNativeWorkbenchRuntime(
     event: EventInsert,
     options: { signal?: AbortSignal } = {},
   ): Promise<void> => commitEvent(store, event, options);
-  const eventExists = (eventId: string) => store.events.exists(eventId);
-  const { routingOptions, defaultCompanionModel, permissionLevel } =
-    runtimeInput;
 
   const session = await openSession(runtimeInput, ports);
   const state = newTurnState(session, createCommandRegistry());
@@ -193,13 +125,10 @@ async function runNativeWorkbenchRuntime(
     traceId,
     startedAt: sessionStart,
     principalId,
-    anomalyConfig,
-    fetchBaselines,
     budget,
     authContext,
     authnEventFields,
     isNextWork,
-    usesRepoAskContext,
     workletId,
     turnRootSpanId,
     maxToolSteps,
@@ -235,19 +164,12 @@ async function runNativeWorkbenchRuntime(
     onSkippedEventWrite: noteSkippedEventWrite,
   };
 
-  const captureTurnState = (turn: WorkbenchTurnResult): void => {
-    state.finalText = turn.text;
-    state.finalStopReason = turn.stopReason;
-    state.callTimings = turn.timings;
-  };
   try {
     await buildContext(state, runtimeInput, ports);
-    const { systemPrompt, modelPrompt, commandRegistry, commandTools } = state;
-    const contextSourceLines = state.contextSourceLines;
     await recordNewSession(state, ports);
 
     const route = await budgetGate(state, runtimeInput, ports);
-    const { models, selected, budgetCeilingGate, anomalyGate } = route;
+    const { selected } = route;
 
     const routed: RoutedTurn = {
       state,
@@ -259,284 +181,8 @@ async function runNativeWorkbenchRuntime(
 
     log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
     log(`Route:  ${state.routingReason}\n`);
-    let streamedText = false;
-    // The OpenAI-compatible wire path streams text AND captures tool calls from
-    // the same SSE stream, so tool-offering calls can stream live there; the
-    // Anthropic/Google readers cannot, so tool-offering calls stay buffered for
-    // them (tool calls are then captured from the buffered JSON instead).
-    const streamsToolCalls = modelStreamsToolCalls(selected);
-    const liveDelta = runtimeInput.onTextDelta === undefined
-      ? undefined
-      : (delta: string) => {
-        streamedText = true;
-        runtimeInput.onTextDelta?.(delta);
-      };
     const messages = await loadTranscript(routed);
-    let turn: LoopTurnResult = await recoveredTurn(routed, {
-      systemPrompt,
-      prompt: modelPrompt,
-      messages,
-      routing: routingOptions,
-      defaultModelId: defaultCompanionModel,
-      models,
-      jsonObject: isNextWork,
-      tools: commandTools,
-      abortSignal: runtimeInput.abortSignal,
-      ...ports.providerIo,
-      // Stream when not producing JSON and either no tools are offered or the
-      // provider can stream tool calls — this also restores live token
-      // streaming for ordinary companion replies (tools registered, none used).
-      onTextDelta: isNextWork
-        ? undefined
-        : (commandTools.length === 0 || streamsToolCalls)
-        ? liveDelta
-        : undefined,
-    }, {
-      modelSlug: selected.slug,
-      estimatedInputCount: estimateRuntimeInputCount(
-        transcriptEstimateText(systemPrompt, messages),
-      ),
-    }, "initial");
-    captureTurnState(turn);
-    // Agent loop: iterate model<->tools until the model stops requesting tools,
-    // repeats itself, or hits the step cap. On the OpenAI-compatible path each
-    // gather step streams live (text deltas + captured tool calls); elsewhere
-    // gather steps buffer and only the forced conclusion streams. Momentum is
-    // also surfaced via the per-step log and the tool_call events. Tools are
-    // dropped to force a concluding answer at the cap or when the model thrashes
-    // (a whole step of calls it already made this turn).
-    // `messages` (seeded above with prior conversation + the current user
-    // message, and passed to the first turn) now grows as the loop iterates:
-    // the model's own assistant turns (with tool-call intentions) and the
-    // matching tool results are appended each step and replayed on the next
-    // call, so multi-step turns stay coherent.
-    if (
-      runtimeInput.abortSignal?.aborted &&
-      turn.stopReason !== "error"
-    ) {
-      turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
-    }
-    const seenToolCalls = new Set<string>();
-    toolLoop:
-    while (
-      !isNextWork &&
-      !runtimeInput.abortSignal?.aborted &&
-      turn.toolCalls &&
-      turn.toolCalls.length > 0 &&
-      state.toolSteps < maxToolSteps
-    ) {
-      state.toolSteps++;
-      log(
-        `Step ${state.toolSteps}: running ${turn.toolCalls.length} tool call(s)...`,
-      );
-      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-        type: "toolStepStarted",
-        sessionId,
-        step: state.toolSteps,
-        toolCallCount: turn.toolCalls.length,
-      });
-      const stepSignatures = turn.toolCalls.map(
-        (toolCall) => `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`,
-      );
-      const allRepeats = stepSignatures.every((sig) => seenToolCalls.has(sig));
-      for (const sig of stepSignatures) seenToolCalls.add(sig);
-      const requestedToolCalls = turn.toolCalls;
-      const stepResults: ToolResultSummary[] = [];
-      for (const toolCall of requestedToolCalls) {
-        if (
-          runtimeInput.abortSignal?.aborted &&
-          turn.stopReason !== "error"
-        ) {
-          turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
-          break toolLoop;
-        }
-        const toolStartedAt = ports.clock.now();
-        const startedEvent = emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-          type: "toolCallStarted",
-          sessionId,
-          commandId: toolCall.name,
-          callId: toolCall.id,
-        });
-        let commandResult: Awaited<ReturnType<typeof invokeCommandWithEvent>>;
-        try {
-          // Starting event emission and invoking the command happen in the same
-          // event-loop turn, so an external signal delivered on a later turn
-          // cannot land between them. The emitter invocation itself is the
-          // boundary; a synchronously mutating observer does not undo it.
-          const commandOutcome = invokeCommandWithEvent(
-            commandRegistry,
-            {
-              commandId: toolCall.name,
-              callId: toolCall.id,
-              caller: {
-                principalId: "workbench",
-                principalType: "agent",
-              },
-              arguments: toolCall.arguments,
-            },
-            {
-              sessionId,
-              traceId,
-              parentSpanId: turn.providerSpanId ?? turnRootSpanId,
-              // Agent-loop tool calls (call + result) are audit-relevant, but
-              // BEST_EFFORT rather than integrity-required, unlike session_start
-              // and model_response: a tool result's size is bounded only by the
-              // model-facing tool cap (tools/builtin/file.ts), not by anything this loop
-              // controls, so the event copy (capped below the TEXT column limit
-              // in buildCommandToolCallEventPayload, but still one INSERT per
-              // tool call) can fail for reasons unrelated to whether the tool
-              // call itself succeeded. A per-tool-call event-write failure must
-              // not fail an otherwise-successful tool step or turn — the model
-              // already has the real result on the transcript either way.
-              writeEvent: (event) =>
-                writeMaybe(
-                  () => writeEvent(event),
-                  BEST_EFFORT,
-                  noteSkippedEventWrite,
-                ),
-            },
-            runtimeInput.confirmToolApproval,
-            {
-              // Operator permission profile: on a loopback turn with permissionLevel
-              // "operator", contained mutating tools auto-approve instead of prompting.
-              permissionLevel: permissionLevel ?? "strict",
-              loopback: authContext.transport === "loopback",
-            },
-          ).then(
-            (value) => ({ ok: true as const, value }),
-            (error) => ({ ok: false as const, error }),
-          );
-          // emitRuntimeEvent contains observer rejection, so this await cannot
-          // bypass the already-started command's settlement.
-          await startedEvent;
-          const outcome = await commandOutcome;
-          if (!outcome.ok) throw outcome.error;
-          commandResult = outcome.value;
-          await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-            type: "toolCallCompleted",
-            sessionId,
-            commandId: toolCall.name,
-            callId: toolCall.id,
-            isError: commandResult.isError,
-            durationMs: ports.clock.now() - toolStartedAt,
-          });
-        } catch (err) {
-          if (
-            runtimeInput.abortSignal?.aborted &&
-            err === runtimeInput.abortSignal.reason
-          ) {
-            turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
-            break toolLoop;
-          }
-          // errorMessage crosses the wire like turnFailed does — sanitized
-          // the same way. Tool RESULTS (the model-facing text on a completed
-          // call) are a separate, untouched product surface; this is only
-          // the runtime-event error field for a call that threw outright
-          // (invokeCommandWithEvent's own executors don't throw — see
-          // tools/invoke.ts — so anything reaching here is already unexpected).
-          await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-            type: "toolCallCompleted",
-            sessionId,
-            commandId: toolCall.name,
-            callId: toolCall.id,
-            isError: true,
-            durationMs: ports.clock.now() - toolStartedAt,
-            // Fixed literal from the class table — `.name` is a writable
-            // property a foreign error can shadow with a payload.
-            errorName: classifyErrorKind(err),
-            errorMessage: summarizeError(err),
-          });
-          throw err;
-        }
-        stepResults.push({
-          commandId: toolCall.name,
-          callId: toolCall.id,
-          isError: commandResult.isError,
-          result: commandResultText(commandResult),
-        });
-        if (
-          runtimeInput.abortSignal?.aborted &&
-          turn.stopReason !== "error"
-        ) {
-          turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
-          break toolLoop;
-        }
-      }
-
-      const atCap = state.toolSteps >= maxToolSteps;
-      const forceConclude = atCap || allRepeats;
-      if (forceConclude) {
-        log(
-          atCap
-            ? `Reached the ${maxToolSteps}-step tool limit; forcing a concluding answer.`
-            : "Model repeated prior tool calls; forcing a concluding answer.",
-        );
-        if (atCap) {
-          await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-            type: "toolStepLimitReached",
-            sessionId,
-            maxSteps: maxToolSteps,
-          });
-        }
-      }
-      // Append this step to the transcript: the assistant turn that requested
-      // the tools (text + tool-call intentions) and one tool message per result.
-      messages.push(
-        ...toolStepToMessages(turn.text, requestedToolCalls, stepResults),
-      );
-      // When forcing a conclusion (step cap or thrash), drop tools and nudge a
-      // final answer; otherwise the model continues naturally from the results.
-      if (atCap) state.toolStepLimitReached = true;
-      const followUpSystemPrompt = forceConclude
-        ? forcedConclusionSystemPrompt(
-          systemPrompt,
-          atCap ? "limit" : "repeated_tool_calls",
-        )
-        : systemPrompt;
-      const followUpInputCount = estimateRuntimeInputCount(
-        transcriptEstimateText(followUpSystemPrompt, messages),
-      );
-      streamedText = false;
-      turn = await recoveredTurn(
-        routed,
-        {
-          systemPrompt: followUpSystemPrompt,
-          prompt: modelPrompt,
-          messages,
-          routing: routingOptions,
-          defaultModelId: defaultCompanionModel,
-          models,
-          tools: forceConclude ? undefined : commandTools,
-          historyTools: forceConclude ? commandTools : undefined,
-          abortSignal: runtimeInput.abortSignal,
-          ...ports.providerIo,
-          // Stream the gather step when the provider streams tool calls, and
-          // always stream the forced no-tools conclusion.
-          onTextDelta: streamsToolCalls || forceConclude
-            ? liveDelta
-            : undefined,
-        },
-        {
-          modelSlug: selected.slug,
-          estimatedInputCount: followUpInputCount,
-        },
-        forceConclude ? "forced_conclusion" : "tool_followup",
-        atCap ? () => new ToolStepLimitConclusionError() : undefined,
-      );
-      captureTurnState(turn);
-      if (
-        runtimeInput.abortSignal?.aborted &&
-        turn.stopReason !== "error"
-      ) {
-        turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
-      }
-    }
-    if (
-      runtimeInput.abortSignal?.aborted &&
-      turn.stopReason !== "error"
-    ) {
-      turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
-    }
+    const { result: turn, streamedText } = await agentLoop(routed, messages);
     runtimeInput.onCancellationClosed?.();
     if (turn.stopReason === "aborted") {
       if (streamedText) {

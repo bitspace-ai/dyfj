@@ -52,7 +52,8 @@ export {
   buildContext,
   buildWorkspaceGrounding,
 } from "./build-context.ts";
-export { runWorkbenchRuntime, toolStepToMessages } from "./native-runner.ts";
+export { agentLoop, toolStepToMessages } from "./agent-loop.ts";
+export { runWorkbenchRuntime } from "./native-runner.ts";
 export {
   buildNextWorkBrief,
   type NextWorkBriefInput,

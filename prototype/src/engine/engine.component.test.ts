@@ -35,11 +35,6 @@ import type {
 import { createWorkbenchSession } from "../store/mod.ts";
 import { AGENTS_INSTRUCTIONS_TRUST_PREAMBLE } from "./build-context.ts";
 import { WorkspaceContextUnavailableError } from "./errors.ts";
-import { runWorkbenchRuntime } from "./native-runner.ts";
-import type {
-  NativeWorkbenchRuntimeResult,
-  WorkbenchRuntimeInput,
-} from "./runtime-types.ts";
 
 const RESUMED = "01TEST00000000000000000001";
 const REMOTE: WorkbenchAuthContext = {
