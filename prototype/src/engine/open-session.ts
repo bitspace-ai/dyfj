@@ -141,7 +141,7 @@ export async function openSession(
   ports: NativeTurnPorts,
 ): Promise<TurnSession> {
   const resumingSession = input.sessionId !== undefined;
-  const sessionId = input.sessionId ?? generateULID();
+  const sessionId = input.sessionId ?? input.newSessionId ?? generateULID();
   const traceId = generateTraceId();
   const startedAt = ports.clock.now();
   // Resolved before the BudgetTracker so its budget_summary event is

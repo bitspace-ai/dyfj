@@ -200,8 +200,9 @@ export function formatTurnSummaryLine(result: WorkbenchRuntimeResult): string {
 }
 
 /**
- * Run a resolved turn: per-session lock → resume reconstruction → env-derived
- * runtime config → the runtime, with the paid-escalation verdict bound to the
+ * Run a resolved turn: per-session lock (a new session's id is allocated at
+ * admission) → resume reconstruction → env-derived runtime config → the
+ * runtime, with the paid-escalation verdict bound to the
  * caller's transport + opt-in. Identical for every transport; the caller only
  * supplies the streaming/event callbacks and the auth context.
  */
@@ -209,12 +210,21 @@ export function executeTurn(
   resolved: ResolvedTurn,
   deps: ExecuteTurnDeps,
 ): Promise<WorkbenchRuntimeResult> {
-  return deps.owners.runTurn(resolved.sessionId, async () => {
+  return deps.owners.runTurn(resolved.sessionId, async (sessionId) => {
     const resume = await buildResume(
       resolved.sessionId,
       deps.fetchSessionEvents,
     );
-    const result = await runExecuteTurn(resolved, deps, resume);
+    // A turn that starts a new session runs under the id its owner was
+    // registered with at admission; the runtime uses it rather than
+    // generating one.
+    const newSession = resolved.sessionId === undefined
+      ? { newSessionId: sessionId }
+      : {};
+    const result = await runExecuteTurn(resolved, deps, {
+      ...resume,
+      ...newSession,
+    });
     console.error(formatTurnSummaryLine(result));
     return result;
   });
@@ -223,7 +233,9 @@ export function executeTurn(
 function runExecuteTurn(
   resolved: ResolvedTurn,
   deps: ExecuteTurnDeps,
-  resume: Awaited<ReturnType<typeof buildResume>>,
+  resume:
+    & Awaited<ReturnType<typeof buildResume>>
+    & Pick<WorkbenchRuntimeInput, "newSessionId">,
 ): Promise<WorkbenchRuntimeResult> {
   return deps.runRuntime({
     ...resolved.runtimeInput,

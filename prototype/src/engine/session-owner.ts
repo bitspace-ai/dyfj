@@ -9,8 +9,9 @@
  * - A `SessionOwner` serializes its session's turns: two concurrent turns on
  *   one session would each read the prior events and append their own,
  *   splitting the append-only log. A second turn runs after the first rather
- *   than being dropped. A turn with no session id targets a fresh session and
- *   runs immediately, unserialized.
+ *   than being dropped. A turn with no session id starts a new session: its id
+ *   is allocated when the turn is admitted, and its owner is registered under
+ *   that id before the turn runs, so a later turn naming it queues behind it.
  * - The budget scope is the session's budget-ceiling confirmations: an
  *   operator-confirmed overrun raises the envelope for its scope period
  *   instead of re-prompting every turn. The owners hold the confirmation
@@ -24,6 +25,7 @@ import {
   type BudgetCeilingConfirmations,
   CeilingConfirmationStore,
 } from "../budget/mod.ts";
+import { generateULID } from "../kernel/mod.ts";
 
 /** One admitted turn's cancel signal and its cancellation window. */
 export class TurnTicket {
@@ -118,25 +120,30 @@ export class SessionOwners implements BudgetScopes {
   /**
    * Run a turn under its session's lock. The owner is looked up and the turn
    * queued in the same synchronous step, so no two owners ever exist for one
-   * session.
+   * session. A turn with no session id starts a new session: its id is
+   * allocated here and its owner registered in that same step, and `run`
+   * receives the id the turn must use.
    */
-  runTurn<T>(sessionId: string | undefined, run: () => Promise<T>): Promise<T> {
-    if (sessionId === undefined) return run();
-    let owner = this.#owners.get(sessionId);
+  runTurn<T>(
+    sessionId: string | undefined,
+    run: (sessionId: string) => Promise<T>,
+  ): Promise<T> {
+    const id = sessionId ?? generateULID();
+    let owner = this.#owners.get(id);
     if (owner === undefined) {
       owner = new SessionOwner();
-      this.#owners.set(sessionId, owner);
+      this.#owners.set(id, owner);
     }
-    const queued = owner.enqueue(run);
+    const queued = owner.enqueue(() => run(id));
     const current = owner;
     void queued.settled.finally(() => {
       // Drop the owner once this turn is its last, so the registry does not
       // grow with every session ever served.
       if (
-        this.#owners.get(sessionId) === current &&
+        this.#owners.get(id) === current &&
         current.isTail(queued.settled)
       ) {
-        this.#owners.delete(sessionId);
+        this.#owners.delete(id);
       }
     });
     return queued.result;

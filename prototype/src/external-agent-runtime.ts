@@ -1178,7 +1178,8 @@ export async function runExternalAgentWorkbenchRuntime(
     throw error;
   }
 
-  const sessionId = input.sessionId ?? generateULID();
+  const sessionId = input.sessionId ?? input.newSessionId ??
+    generateULID();
   const traceId = generateTraceId();
   const rootSpanId = generateSpanId();
   const principalId = input.principalId ?? "user";
