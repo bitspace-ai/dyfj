@@ -1,4 +1,10 @@
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import {
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { CeilingConfirmationStore } from "../budget/mod.ts";
 import { SessionOwners, TurnTicket } from "./session-owner.ts";
@@ -63,7 +69,7 @@ Deno.test("a rejected turn releases the lock to the next same-session turn", asy
   assertEquals(await secondResult, "second");
 });
 
-Deno.test("turns without a session id, or on other sessions, are not serialized", async () => {
+Deno.test("new-session turns and turns on other sessions are not serialized", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   const held = heldTurn(log, "held");
@@ -74,16 +80,60 @@ Deno.test("turns without a session id, or on other sessions, are not serialized"
   const freshResult = owners.runTurn(undefined, fresh.run);
   const otherResult = owners.runTurn("01OTHER0000000000000000000", other.run);
   await drain();
-  // A fresh-session turn starts synchronously; queued turns start a
-  // microtask later. None waits on another.
+  // A new-session turn starts synchronously; queued turns start a microtask
+  // later. None waits on another.
   assertEquals(log, ["start fresh", "start held", "start other"]);
-  // A fresh-session turn never registers an owner.
-  assertEquals(owners.activeSessions, 2);
+  // The new session's owner is registered under its allocated id.
+  assertEquals(owners.activeSessions, 3);
 
   held.finish();
   fresh.finish();
   other.finish();
   await Promise.all([heldResult, freshResult, otherResult]);
+});
+
+Deno.test("a new session's id is allocated at admission, so a later turn naming it queues behind it", async () => {
+  const owners = new SessionOwners();
+  const log: string[] = [];
+  const first = heldTurn(log, "first");
+  const second = heldTurn(log, "second");
+  let allocated: string | undefined;
+
+  const firstResult = owners.runTurn(undefined, (sessionId) => {
+    allocated = sessionId;
+    return first.run();
+  });
+  await drain();
+  // The turn runs under a fresh ULID-shaped id.
+  assertMatch(allocated ?? "", /^[0-9A-HJKMNP-TV-Z]{26}$/);
+  assertEquals(owners.activeSessions, 1);
+
+  const secondResult = owners.runTurn(allocated, (sessionId) => {
+    log.push(`second on ${sessionId === allocated ? "same" : "other"}`);
+    return second.run();
+  });
+  await drain();
+  assertEquals(log, ["start first"]);
+
+  first.finish();
+  assertEquals(await firstResult, "first");
+  await drain();
+  assertEquals(log, ["start first", "second on same", "start second"]);
+  second.finish();
+  assertEquals(await secondResult, "second");
+  await drain();
+  assertEquals(owners.activeSessions, 0);
+});
+
+Deno.test("each new-session turn gets its own id", async () => {
+  const owners = new SessionOwners();
+  const ids: string[] = [];
+  await Promise.all([
+    owners.runTurn(undefined, (id) => Promise.resolve(ids.push(id))),
+    owners.runTurn(undefined, (id) => Promise.resolve(ids.push(id))),
+  ]);
+  assertEquals(ids.length, 2);
+  assertNotEquals(ids[0], ids[1]);
 });
 
 Deno.test("an owner is dropped once its last turn settles, and a later turn starts fresh", async () => {
