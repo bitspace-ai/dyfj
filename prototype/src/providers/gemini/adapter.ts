@@ -71,7 +71,7 @@ export const geminiAdapter: ProviderAdapter = {
     const now = () => io.clock.now();
     const onFrame = io.onFrame;
     const stream = onFrame !== undefined;
-    const base = model.baseUrl.replace(/\/$/, "");
+    const base = model.baseUrl.replace(/\/+$/, "");
     // The slug is one path segment: encoded, it cannot add path segments, a
     // query or a fragment to the request URL.
     const modelPath = `${base}/v1beta/models/${encodeURIComponent(model.slug)}`;

@@ -340,6 +340,7 @@ describe("Gemini base-URL contract and model path", () => {
     "https://generativelanguage.googleapis.com",
     "https://generativelanguage.googleapis.com/",
     "https://generativelanguage.googleapis.com:443",
+    "https://generativelanguage.googleapis.com//",
   ];
   const rejected = [
     "https://example.com",
@@ -422,6 +423,22 @@ describe("Gemini base-URL contract and model path", () => {
     );
     assertEquals(result.text, "ok");
     transport.assertDone();
+  });
+
+  it("builds the canonical request URL from any accepted base URL", async () => {
+    for (const baseUrl of accepted) {
+      const transport = new ScriptedHttpTransport([{
+        // Parsed, as fetch sends it: an explicit :443 is the default port.
+        expect: (request) =>
+          assertEquals(
+            new URL(request.url).href,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
+          ),
+        respond: { body: okBody },
+      }]);
+      await turn(withBaseUrl(baseUrl), transport);
+      transport.assertDone();
+    }
   });
 
   it("keeps the model slug inside one path segment", async () => {

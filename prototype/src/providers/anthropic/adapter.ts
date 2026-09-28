@@ -85,7 +85,7 @@ export const anthropicAdapter: ProviderAdapter = {
     const requestStarted = now();
     const response = await fetchWithHeaderTimeout(
       io.fetch,
-      `${model.baseUrl.replace(/\/$/, "")}/v1/messages`,
+      `${model.baseUrl.replace(/\/+$/, "")}/v1/messages`,
       {
         method: "POST",
         signal: io.signal,

@@ -370,7 +370,11 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
       "the redirect fixture must answer with a redirect status",
     );
     assert("error" in fixtures.redirect.expect);
-    assertEquals(run.transport.requests.length, 1, "the redirect was followed");
+    assertEquals(
+      run.transport.requests.length,
+      1,
+      "the redirect fixture must send exactly one request",
+    );
   });
 
   Deno.test(label("the plain-text model passes validateBaseUrl"), () => {

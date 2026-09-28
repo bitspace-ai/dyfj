@@ -232,6 +232,7 @@ describe("Anthropic base-URL contract", () => {
     "https://api.anthropic.com",
     "https://api.anthropic.com/",
     "https://api.anthropic.com:443",
+    "https://api.anthropic.com//",
   ];
   const rejected = [
     "https://example.com",
@@ -320,5 +321,34 @@ describe("Anthropic base-URL contract", () => {
     });
     assertEquals(result.text, "ok");
     transport.assertDone();
+  });
+
+  it("builds the canonical request URL from any accepted base URL", async () => {
+    for (const baseUrl of accepted) {
+      const transport = new ScriptedHttpTransport([{
+        // Parsed, as fetch sends it: an explicit :443 is the default port.
+        expect: (request) =>
+          assertEquals(
+            new URL(request.url).href,
+            "https://api.anthropic.com/v1/messages",
+          ),
+        respond: {
+          body: JSON.stringify({
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }),
+        },
+      }]);
+      await runWorkbenchTurn({
+        systemPrompt: "sys",
+        prompt: "hi",
+        routing: { modelId: anthropicModel.slug },
+        models: [withBaseUrl(baseUrl)],
+        fetchFn: transport.fetch,
+        getEnv,
+      });
+      transport.assertDone();
+    }
   });
 });
