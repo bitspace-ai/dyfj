@@ -76,7 +76,10 @@ export {
   type WorkbenchReceiptInput,
 } from "./receipt.ts";
 export type {
+  Approver,
+  CancellationWindow,
   ExternalAgentRunner,
+  FrameSink,
   NativeWorkbenchRuntimeResult,
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
