@@ -154,6 +154,12 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`openSession` is the native turn's first named pipeline stage**
+  (`engine/open-session.ts`): it fixes the turn's identity, principal, auth,
+  budget posture and tool-step limit as a `TurnSession`, announces the turn,
+  and writes `session_start`. Failed event writes are counted and kept by a
+  per-turn `TurnAudit` (`engine/turn-state.ts`). Event rows, receipts and the
+  golden suite are unchanged.
 - **The native runtime's helpers and types are separate engine modules**:
   receipt and tally formatting (`engine/receipt.ts`), the next-work worklet
   (`engine/next-work.ts`), runtime-event delivery (`engine/runtime-events.ts`)
