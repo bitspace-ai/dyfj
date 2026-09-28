@@ -1631,6 +1631,10 @@ Document revisions only. Code and behavior changes are tracked in
   host pin; a new API family is one adapter directory, one registry line, and
   the provider conformance kit. `specs/03-testing.md` §4 points the loopback
   base-URL rule at its new home in `prototype/src/providers/`.
+- 2026-09-27 - Specs decision D27 records the provider-dispatch contract as
+  built: the registry looks adapters up by the catalog `provider` column, and
+  `ProviderIO` carries `env` and a monotonic clock. Architecture §5.2 and the
+  add-provider recipe updated to match.
 - 2026-09-28 - `specs/recipes/add-tool.md` added: a tool served by an MCP
   server needs only configuration; a builtin tool is one module exporting its
   `define<Name>` beside its executor, one `BUILTIN_TOOLS` line, and the tool
