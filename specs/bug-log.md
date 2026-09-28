@@ -10,6 +10,22 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **Two ACP test files create their temp files in the working
+  directory, so an interrupted run leaves them in the tree.**
+  - **Location:** `prototype/src/acp-session-map.test.ts` (eleven
+    `Deno.makeTempFile({ dir: Deno.cwd() })` calls, from `:266`) and
+    `prototype/src/external-agent-runtime.test.ts:1196` and `:2263`.
+  - **Symptom:** the pid and method-log files these tests use are created in
+    `prototype/`, not a temp directory, and removed only when each test
+    finishes. A run stopped mid-test leaves zero-byte, hex-named files there.
+    No ignore rule covers them, so a broad `git add` commits them; eight were
+    committed this way and then removed.
+  - **Suspected cause:** the tests pick the working directory for their temp
+    files, probably so the fixture agent's paths stay inside the read grant.
+    Creating them under the system temp directory (or a per-test temp
+    directory removed on teardown) would keep an interrupted run from
+    touching the tree.
+  - **Found during:** WO-19.
 - 2026-09-28 — **`model_selected` names the environment's principal, not the
   turn's.**
   - **Location:** `prototype/src/utils.ts` (`writeModelSelectedEvent`, whose
