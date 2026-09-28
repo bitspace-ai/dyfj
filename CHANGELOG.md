@@ -154,6 +154,15 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The agent loop's provider calls are engine modules**: `observedTurn`
+  (`engine/observed-turn.ts`) is one budget-gated, recorded loop call — the
+  daily-spend refresh, the runaway-anomaly stop and the ceiling before the
+  call; the turn aggregates, frames and the fail-closed unparsed-markup
+  disclosure after it. `recoveredTurn` (`engine/recovered-turn.ts`) wraps it
+  with length-stop recovery: one continuation retry when the output budget
+  ran out, or one overflow-recovery retry, announced as a superseding retry,
+  when the context window overflowed. Event rows, receipts and the golden
+  suite are unchanged.
 - **`loadTranscript` is the native turn's fourth named pipeline stage**
   (`engine/load-transcript.ts`): it seeds the first call's conversation
   (prior turns for companion turns only, then the current prompt) and

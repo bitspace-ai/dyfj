@@ -3,9 +3,7 @@ import {
   type AcpRunnerSelection,
   DomainError,
   type ExternalAgentWorkbenchRuntimeResult,
-  type LengthRecoveryOutcome,
   summarizeError,
-  type UnparsedToolCallMarkupDetectedEvent,
 } from "../contract/mod.ts";
 import { processEnv } from "../config/mod.ts";
 import {
@@ -17,11 +15,7 @@ import {
   updateWorkbenchSession,
 } from "../store/mod.ts";
 import {
-  modelRequestedOutputCap,
   modelStreamsToolCalls,
-  modelSupportsTranscriptRetry,
-  runWorkbenchTurn,
-  type WorkbenchCallTimings,
   type WorkbenchMessage,
   type WorkbenchToolCall,
   type WorkbenchTurnResult,
@@ -30,13 +24,7 @@ import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
 } from "../budget/mod.ts";
-import {
-  buildContinuationMessages,
-  classifyLengthStop,
-  CONTEXT_OVERFLOW_WINDOW_FRACTION,
-  ContextWindowOverflowError,
-  isBudgetRefusal,
-} from "../context/mod.ts";
+import { ContextWindowOverflowError } from "../context/mod.ts";
 import { createCommandRegistry, invokeCommandWithEvent } from "../tools/mod.ts";
 import {
   classifyErrorKind,
@@ -57,7 +45,6 @@ import type {
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
   WorkbenchRuntimeServices,
-  WorkbenchValidationSummary,
 } from "./runtime-types.ts";
 import {
   buildBudgetTallyLine,
@@ -65,11 +52,7 @@ import {
   shouldPrintBudgetTally,
 } from "./receipt.ts";
 import { printNextWorkResult, validateNextWorkJson } from "./next-work.ts";
-import {
-  deliverSupersedingRetrySignal,
-  deliverUnparsedToolCallMarkupSignal,
-  emitRuntimeEvent,
-} from "./runtime-events.ts";
+import { emitRuntimeEvent } from "./runtime-events.ts";
 import { openSession, recordNewSession } from "./open-session.ts";
 import { buildContext } from "./build-context.ts";
 import {
@@ -80,11 +63,12 @@ import {
 import { budgetGate } from "./budget-gate.ts";
 import type { RoutedTurn } from "./routed-turn.ts";
 import { loadTranscript } from "./load-transcript.ts";
-import { compressionRecoverer } from "./compression.ts";
 import {
   estimateRuntimeInputCount,
   transcriptEstimateText,
 } from "./transcript.ts";
+import { recoveredTurn } from "./recovered-turn.ts";
+import type { LoopTurnResult } from "./observed-turn.ts";
 
 function forcedConclusionSystemPrompt(
   baseSystemPrompt: string,
@@ -251,23 +235,10 @@ async function runNativeWorkbenchRuntime(
     onSkippedEventWrite: noteSkippedEventWrite,
   };
 
-  let cacheReadTokens = 0;
-  let cacheWriteTokens = 0;
-  // Per-turn aggregates across every provider call the agent loop makes, so
-  // receipts/events count the whole turn, not just the final call.
-  let turnInputTokens = 0;
-  let turnOutputTokens = 0;
-  let turnCostUsd = 0;
-  let callTimings: WorkbenchCallTimings | undefined;
-  let validation: WorkbenchValidationSummary | undefined;
-  let toolSteps = 0;
-  let toolStepLimitReached = false;
-  let finalText = "";
-  let finalStopReason: WorkbenchTurnResult["stopReason"] = "error";
   const captureTurnState = (turn: WorkbenchTurnResult): void => {
-    finalText = turn.text;
-    finalStopReason = turn.stopReason;
-    callTimings = turn.timings;
+    state.finalText = turn.text;
+    state.finalStopReason = turn.stopReason;
+    state.callTimings = turn.timings;
   };
   try {
     await buildContext(state, runtimeInput, ports);
@@ -288,350 +259,6 @@ async function runNativeWorkbenchRuntime(
 
     log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
     log(`Route:  ${state.routingReason}\n`);
-    const runObservedTurn = async (
-      params: Parameters<typeof runWorkbenchTurn>[0],
-      request: { modelSlug: string; estimatedInputCount: number },
-      purpose: "initial" | "tool_followup" | "forced_conclusion" | "recovery",
-      onProviderError?: (error: unknown) => unknown,
-    ) => {
-      // Budget-gate and record EVERY provider call: the agent loop can make
-      // several calls in one turn, so per-call and session limits must be
-      // enforced before each one and usage recorded after each one (paid
-      // consent and ceiling confirmation are granted once per turn above;
-      // per-call + session limits and MAX_TOOL_STEPS bound loop spend).
-      if (selected.tier > 0) {
-        // Fresh cross-session daily figure before every paid call, so
-        // concurrent sessions see each other's completed spend (in-flight
-        // calls remain invisible; the overshoot shows in receipts).
-        const fresh = await fetchBaselines(sessionId);
-        budget.refreshDailyOtherSessions(fresh.dailyOtherSessionsUsd);
-      }
-      // Runaway-anomaly hard stop FIRST, on actual recorded spend — it holds
-      // where the estimate-based ceiling below is blind (multi-call turn
-      // accumulation, spend a scope confirmation already covered). An approval
-      // admits the spend level it was shown; recorded spend past it re-prompts.
-      await anomalyGate.ensureAllowed(
-        budget.checkAnomaly(selected.tier, anomalyConfig),
-      );
-      const callPre = budget.checkPreCall(
-        selected.tier,
-        selected.costInput,
-        request.estimatedInputCount,
-      );
-      await budgetCeilingGate.ensureAllowed(callPre);
-      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-        type: "beforeProviderRequest",
-        sessionId,
-        modelSlug: request.modelSlug,
-        estimatedInputCount: request.estimatedInputCount,
-      });
-      const { turn, providerSpanId, persisted, recorded } =
-        await observedProviderCall(observedCallContext, {
-          params,
-          model: selected,
-          order: ++state.providerCallOrder,
-          purpose,
-          authzBasis: "policy:local-default",
-          recordUnparsedToolCallMarkup: true,
-          mapProviderError: onProviderError,
-        });
-      if (recorded) {
-        cacheReadTokens += turn.usage.cacheRead;
-        cacheWriteTokens += turn.usage.cacheWrite;
-        state.reasoningTokens += turn.usage.reasoning ?? 0;
-        turnInputTokens += turn.usage.input;
-        turnOutputTokens += turn.usage.output;
-        turnCostUsd += turn.usage.cost.total;
-        await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-          type: "afterProviderResponse",
-          sessionId,
-          modelSlug: turn.model.slug,
-          inputCount: turn.usage.input,
-          outputCount: turn.usage.output,
-          totalMs: turn.timings.totalMs,
-        });
-        if (turn.unparsedToolCallMarkup) {
-          const warningEvent: UnparsedToolCallMarkupDetectedEvent = {
-            type: "unparsedToolCallMarkupDetected",
-            sessionId,
-            count: turn.unparsedToolCallMarkup.count,
-            countIsLowerBound: turn.unparsedToolCallMarkup.countIsLowerBound,
-          };
-          if (!runtimeInput.onRuntimeEvent) {
-            const amount = warningEvent.countIsLowerBound
-              ? `at least ${warningEvent.count}`
-              : String(warningEvent.count);
-            log(
-              `WARNING: unparsed tool-call markup was present (${amount} unmatched opening(s)); ` +
-                "no tools were executed from it",
-            );
-          }
-          await deliverUnparsedToolCallMarkupSignal(
-            runtimeInput.onRuntimeEvent,
-            warningEvent,
-          );
-        }
-      }
-      return {
-        ...turn,
-        ...(persisted ? { providerSpanId } : {}),
-      };
-    };
-    // Length-stop recovery around every provider call: classify a
-    // stopReason "length" result (catalog limits + reported usage), then
-    // either run ONE bounded continuation retry (output budget exhausted) or
-    // fail structured (context overflow) — with the overflow-recovery hook
-    // given one shot first when injected. All retries go back through
-    // runObservedTurn, so the budget gates and usage recording hold for them.
-    const runRecoveredTurn = async (
-      params: Parameters<typeof runWorkbenchTurn>[0],
-      request: { modelSlug: string; estimatedInputCount: number },
-      purpose: "initial" | "tool_followup" | "forced_conclusion" | "recovery",
-      onProviderError?: (error: unknown) => unknown,
-    ): Promise<
-      Awaited<ReturnType<typeof runWorkbenchTurn>> & { providerSpanId?: string }
-    > => {
-      const turn = await runObservedTurn(
-        params,
-        request,
-        purpose,
-        onProviderError,
-      );
-      if (turn.stopReason !== "length") return turn;
-      // Prompt-side total for window arithmetic: Anthropic's input_tokens
-      // excludes cache traffic, so the cached prompt must be added back.
-      const promptTokens = turn.usage.input + turn.usage.cacheRead +
-        turn.usage.cacheWrite;
-      // Output-side total must include reasoning/thinking tokens: they are
-      // drawn from the output budget and occupy the context window, but
-      // providers like Gemini report them separately from visible output. Both
-      // the cap check and the window arithmetic need the true consumption, or
-      // a thinking-heavy stop is misclassified (e.g. reported as overflow and
-      // hard-failed when the output cap was actually the cause).
-      const outputTokens = turn.usage.output + (turn.usage.reasoning ?? 0);
-      // Classify against the output cap the request actually carried — the
-      // Anthropic/Google adapters send fixed caps below what the catalog row
-      // says the model can do, and a stop at the requested cap is exhaustion.
-      const outputCap = modelRequestedOutputCap(turn.model);
-      const classification = classifyLengthStop(
-        { contextWindow: turn.model.contextWindow, maxOutputTokens: outputCap },
-        { input: promptTokens, output: outputTokens },
-      );
-      const emitRecovery = (
-        outcome: LengthRecoveryOutcome,
-        retriesUsed: number,
-      ) =>
-        emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-          type: "lengthRecoveryFinished",
-          sessionId,
-          modelSlug: turn.model.slug,
-          outcome,
-          retriesUsed,
-        });
-      await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-        type: "lengthStopDetected",
-        sessionId,
-        modelSlug: turn.model.slug,
-        classification,
-        severity: classification === "context_overflow" ? "error" : "warn",
-        inputTokens: promptTokens,
-        outputTokens,
-        contextWindow: turn.model.contextWindow,
-        maxOutputTokens: outputCap,
-      });
-      // A transcript retry only works where the adapter builds its request
-      // from `messages`; elsewhere (Google) it would replay the original
-      // request verbatim, so recovery must not attempt it. Tool calls on a
-      // length-stopped response are a cut-off plan — every path that delivers
-      // a truncated result strips them so the agent loop never executes a
-      // plan the model did not finish stating.
-      const retryable = modelSupportsTranscriptRetry(turn.model);
-
-      if (classification === "context_overflow") {
-        const details = {
-          modelSlug: turn.model.slug,
-          contextWindow: turn.model.contextWindow,
-          inputTokens: promptTokens,
-          outputTokens,
-        };
-        const recover = runtimeInput.recoverContextOverflow ??
-          compressionRecoverer(routed);
-        if (recover !== undefined && retryable) {
-          let retried:
-            | Awaited<ReturnType<typeof runWorkbenchTurn>>
-            | undefined;
-          let retriesUsed = 0;
-          try {
-            const plan = await recover({
-              sessionId,
-              modelSlug: turn.model.slug,
-              contextWindow: turn.model.contextWindow,
-              // Reasoning-inclusive, consistent with classification and every
-              // other "output" in this path: the compression consumer sizes
-              // its plan from true token pressure, not just visible output.
-              usage: { input: promptTokens, output: outputTokens },
-              systemPrompt: params.systemPrompt,
-              // Snapshot: the hook must not be able to mutate the live
-              // agent-loop transcript, even when it throws or returns null.
-              messages: structuredClone(params.messages ?? []),
-            });
-            if (plan !== null) {
-              // The retry's answer REPLACES the partial that already streamed
-              // — announce the supersede before any retry deltas (deltas and
-              // events share one ordered channel on every streaming transport)
-              // so a rendering consumer can reset its buffer. The log note is
-              // the same signal for the in-process presenter, which renders
-              // deltas but has no event channel.
-              //
-              // Fail-closed, and deliberately BEFORE retriesUsed is counted: if
-              // the signal cannot be delivered, the retry must not start at all,
-              // because its deltas would concatenate onto the stale ones the
-              // consumer still has on screen. The throw lands in the catch below,
-              // which closes the recovery trail — and no retry was consumed.
-              await deliverSupersedingRetrySignal(runtimeInput.onRuntimeEvent, {
-                type: "supersedingRetryStarted",
-                sessionId,
-                modelSlug: turn.model.slug,
-                reason: "context_overflow_recovery",
-              });
-              retriesUsed = 1;
-              log(
-                "\n[context recovered — retrying; the reply restarts below]",
-              );
-              retried = await runObservedTurn(
-                { ...params, messages: plan.messages },
-                {
-                  modelSlug: request.modelSlug,
-                  estimatedInputCount: estimateRuntimeInputCount(
-                    transcriptEstimateText(params.systemPrompt, plan.messages),
-                  ),
-                },
-                "recovery",
-                onProviderError,
-              );
-            }
-          } catch (err) {
-            // Close the recovery trail before the error surfaces as turnFailed.
-            await emitRecovery("retry_errored", retriesUsed);
-            throw err;
-          }
-          if (retried !== undefined) {
-            if (retried.stopReason !== "length") {
-              await emitRecovery("recovered", 1);
-              return retried;
-            }
-            // The retry itself length-stopped: reclassify against ITS OWN
-            // usage and caps, not the first attempt's. Compression can resolve
-            // the overflow while the fresh answer then hits its output cap —
-            // that must be reported as a bounded truncation, not another
-            // context overflow carrying the first attempt's stale usage.
-            const retryPromptTokens = retried.usage.input +
-              retried.usage.cacheRead + retried.usage.cacheWrite;
-            const retryOutputTokens = retried.usage.output +
-              (retried.usage.reasoning ?? 0);
-            const retryClass = classifyLengthStop(
-              {
-                contextWindow: retried.model.contextWindow,
-                maxOutputTokens: modelRequestedOutputCap(retried.model),
-              },
-              { input: retryPromptTokens, output: retryOutputTokens },
-            );
-            if (retryClass === "context_overflow") {
-              await emitRecovery("overflow_failed", 1);
-              throw new ContextWindowOverflowError({
-                modelSlug: retried.model.slug,
-                contextWindow: retried.model.contextWindow,
-                inputTokens: retryPromptTokens,
-                outputTokens: retryOutputTokens,
-              });
-            }
-            // Output-exhausted after a successful compression: bounded
-            // terminal outcome, no third call. Strip the cut-off tool plan.
-            await emitRecovery("still_truncated", 1);
-            return { ...retried, toolCalls: undefined };
-          }
-        }
-        await emitRecovery("overflow_failed", 0);
-        throw new ContextWindowOverflowError(details);
-      }
-
-      // Output budget exhausted: one continuation retry on a COPY of the
-      // transcript (the loop's live `messages` array stays untouched, so a
-      // refused/failed retry leaves turn state exactly as it was). The merged
-      // text keeps the streamed view consistent: the partial already went out
-      // through onTextDelta; the retry streams only its continuation.
-      if (!retryable) {
-        await emitRecovery("retry_unsupported", 0);
-        log(
-          "\n[response truncated at the output limit; this model's adapter " +
-            "cannot run a continuation retry]",
-        );
-        return { ...turn, toolCalls: undefined };
-      }
-      const continuation = buildContinuationMessages(
-        params.messages ?? [{ role: "user", content: params.prompt }],
-        turn.text,
-      );
-      const continuationInput = estimateRuntimeInputCount(
-        transcriptEstimateText(params.systemPrompt, continuation),
-      );
-      // Feasibility pre-check: when both the output cap AND the context window
-      // bind this stop, the continuation (original transcript + partial answer
-      // + nudge) no longer fits the window, so a retry would be a doomed
-      // over-window call (wasted spend + a provider error). Skip it and deliver
-      // the capped partial. Threshold reuses the classification's window-
-      // evidence fraction: at/above it there is no room left for a continuation.
-      if (
-        turn.model.contextWindow !== undefined &&
-        continuationInput >=
-          turn.model.contextWindow * CONTEXT_OVERFLOW_WINDOW_FRACTION
-      ) {
-        await emitRecovery("retry_would_overflow", 0);
-        log(
-          "\n[response truncated at the output limit; the continuation would " +
-            "exceed the context window, so it was not retried]",
-        );
-        return { ...turn, toolCalls: undefined };
-      }
-      let retried;
-      try {
-        retried = await runObservedTurn(
-          { ...params, messages: continuation },
-          {
-            modelSlug: request.modelSlug,
-            estimatedInputCount: continuationInput,
-          },
-          "recovery",
-        );
-      } catch (err) {
-        if (isBudgetRefusal(err)) {
-          // The envelope refused the retry, not the turn: the paid partial
-          // output already streamed to the operator, so deliver it truncated
-          // rather than discarding it. First-call budget errors — and a
-          // runaway-anomaly halt anywhere — still fail the turn.
-          await emitRecovery("retry_refused_budget", 0);
-          log(
-            `\n[response truncated at the output limit; retry skipped: ${
-              (err as Error).message
-            }]`,
-          );
-          return { ...turn, toolCalls: undefined };
-        }
-        await emitRecovery("retry_errored", 1);
-        throw err;
-      }
-      const merged = { ...retried, text: turn.text + retried.text };
-      if (retried.stopReason === "length") {
-        await emitRecovery("still_truncated", 1);
-        log(
-          "\n[response still truncated after one continuation retry; " +
-            "not retrying further]",
-        );
-        return { ...merged, toolCalls: undefined };
-      }
-      await emitRecovery("recovered", 1);
-      return merged;
-    };
     let streamedText = false;
     // The OpenAI-compatible wire path streams text AND captures tool calls from
     // the same SSE stream, so tool-offering calls can stream live there; the
@@ -645,7 +272,7 @@ async function runNativeWorkbenchRuntime(
         runtimeInput.onTextDelta?.(delta);
       };
     const messages = await loadTranscript(routed);
-    let turn = await runRecoveredTurn({
+    let turn: LoopTurnResult = await recoveredTurn(routed, {
       systemPrompt,
       prompt: modelPrompt,
       messages,
@@ -696,16 +323,16 @@ async function runNativeWorkbenchRuntime(
       !runtimeInput.abortSignal?.aborted &&
       turn.toolCalls &&
       turn.toolCalls.length > 0 &&
-      toolSteps < maxToolSteps
+      state.toolSteps < maxToolSteps
     ) {
-      toolSteps++;
+      state.toolSteps++;
       log(
-        `Step ${toolSteps}: running ${turn.toolCalls.length} tool call(s)...`,
+        `Step ${state.toolSteps}: running ${turn.toolCalls.length} tool call(s)...`,
       );
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
         type: "toolStepStarted",
         sessionId,
-        step: toolSteps,
+        step: state.toolSteps,
         toolCallCount: turn.toolCalls.length,
       });
       const stepSignatures = turn.toolCalls.map(
@@ -836,7 +463,7 @@ async function runNativeWorkbenchRuntime(
         }
       }
 
-      const atCap = toolSteps >= maxToolSteps;
+      const atCap = state.toolSteps >= maxToolSteps;
       const forceConclude = atCap || allRepeats;
       if (forceConclude) {
         log(
@@ -859,7 +486,7 @@ async function runNativeWorkbenchRuntime(
       );
       // When forcing a conclusion (step cap or thrash), drop tools and nudge a
       // final answer; otherwise the model continues naturally from the results.
-      if (atCap) toolStepLimitReached = true;
+      if (atCap) state.toolStepLimitReached = true;
       const followUpSystemPrompt = forceConclude
         ? forcedConclusionSystemPrompt(
           systemPrompt,
@@ -870,7 +497,8 @@ async function runNativeWorkbenchRuntime(
         transcriptEstimateText(followUpSystemPrompt, messages),
       );
       streamedText = false;
-      turn = await runRecoveredTurn(
+      turn = await recoveredTurn(
+        routed,
         {
           systemPrompt: followUpSystemPrompt,
           prompt: modelPrompt,
@@ -918,15 +546,15 @@ async function runNativeWorkbenchRuntime(
       }
     } else if (isNextWork) {
       const result = validateNextWorkJson(turn.text);
-      validation = { ok: result.ok, errors: result.errors };
+      state.validation = { ok: result.ok, errors: result.errors };
       printNextWorkResult(result, turn.text, log);
     } else if (streamedText) {
       log("");
     } else {
       log(turn.text);
     }
-    finalText = turn.text;
-    finalStopReason = turn.stopReason;
+    state.finalText = turn.text;
+    state.finalStopReason = turn.stopReason;
 
     state.selectedForReceipt = {
       displayName: turn.model.displayName,
@@ -940,7 +568,7 @@ async function runNativeWorkbenchRuntime(
       turn.model.tier,
       isNextWork,
     );
-    callTimings = turn.timings;
+    state.callTimings = turn.timings;
 
     const responseSpanId = generateSpanId();
     // Per-call budget.record() now happens inside runObservedTurn, so the
@@ -961,9 +589,9 @@ async function runNativeWorkbenchRuntime(
       log("");
       log(buildBudgetTallyLine({
         turn: {
-          tokensInput: turnInputTokens,
-          tokensOutput: turnOutputTokens,
-          costUsd: turnCostUsd,
+          tokensInput: state.turnInputTokens,
+          tokensOutput: state.turnOutputTokens,
+          costUsd: state.turnCostUsd,
           tier: turn.model.tier,
         },
         session: {
@@ -994,16 +622,16 @@ async function runNativeWorkbenchRuntime(
         // Aggregate across every provider call in this turn (the agent loop may
         // make several) so the audit event counts the whole turn, not just the
         // final call.
-        tokens_input: turnInputTokens,
-        tokens_output: turnOutputTokens,
-        tokens_cache_read: cacheReadTokens,
-        tokens_cache_write: cacheWriteTokens,
-        cost_total: turnCostUsd,
+        tokens_input: state.turnInputTokens,
+        tokens_output: state.turnOutputTokens,
+        tokens_cache_read: state.cacheReadTokens,
+        tokens_cache_write: state.cacheWriteTokens,
+        cost_total: state.turnCostUsd,
         ...authnEventFields,
         content: isNextWork
           ? JSON.stringify({
             worklet_id: workletId,
-            validation,
+            validation: state.validation,
             raw: turn.text,
           })
           : turn.text,
@@ -1056,7 +684,7 @@ async function runNativeWorkbenchRuntime(
     // straight past the whole policy. instanceof checks the real prototype
     // chain instead.
     if (cancelledAtApproval) {
-      finalStopReason = "aborted";
+      state.finalStopReason = "aborted";
       const cancelledSpanId = generateSpanId();
       await writeIntegrity(() =>
         writeEvent(modelResponseEvent({
@@ -1073,13 +701,13 @@ async function runNativeWorkbenchRuntime(
           model_id: state.selectedForEvents?.slug ?? null,
           provider: state.selectedForEvents?.provider ?? null,
           api: state.selectedForEvents?.api ?? null,
-          tokens_input: turnInputTokens,
-          tokens_output: turnOutputTokens,
-          tokens_cache_read: cacheReadTokens,
-          tokens_cache_write: cacheWriteTokens,
-          cost_total: turnCostUsd,
+          tokens_input: state.turnInputTokens,
+          tokens_output: state.turnOutputTokens,
+          tokens_cache_read: state.cacheReadTokens,
+          tokens_cache_write: state.cacheWriteTokens,
+          cost_total: state.turnCostUsd,
           ...authnEventFields,
-          content: finalText,
+          content: state.finalText,
           stop_reason: "aborted",
           duration_ms: ports.clock.now() - sessionStart,
         }))
@@ -1286,23 +914,23 @@ async function runNativeWorkbenchRuntime(
       totalCostUsd: summary.totalCostUsd,
       totalTokensInput: summary.totalTokensInput,
       totalTokensOutput: summary.totalTokensOutput,
-      totalCacheReadTokens: cacheReadTokens,
-      totalCacheWriteTokens: cacheWriteTokens,
+      totalCacheReadTokens: state.cacheReadTokens,
+      totalCacheWriteTokens: state.cacheWriteTokens,
       totalReasoningTokens: state.reasoningTokens,
       totalCalls: summary.totalCalls,
       contextBudget: state.contextBudget,
       contextProfile: state.contextProfile,
-      timings: callTimings,
+      timings: state.callTimings,
       contextSources: state.contextSourceLines,
       paidInferenceUsed,
       estimatedCostUsd: state.estimatedCostUsd,
       workletId,
       totalElapsedMs: ports.clock.now() - sessionStart,
-      validation,
+      validation: state.validation,
       agent: {
-        toolStepsUsed: toolSteps,
+        toolStepsUsed: state.toolSteps,
         maxToolSteps,
-        limitReached: toolStepLimitReached,
+        limitReached: state.toolStepLimitReached,
       },
       skippedEventWrites: state.audit.skippedEventWrites,
       historyOmission: state.historyOmission,
@@ -1342,8 +970,8 @@ async function runNativeWorkbenchRuntime(
     return {
       sessionId,
       traceId,
-      stopReason: finalStopReason,
-      text: finalText,
+      stopReason: state.finalStopReason,
+      text: state.finalText,
       receipt,
       model: {
         displayName: state.selectedForReceipt?.displayName ?? "none",
@@ -1363,8 +991,8 @@ async function runNativeWorkbenchRuntime(
       tokens: {
         input: summary.totalTokensInput,
         output: summary.totalTokensOutput,
-        cacheRead: cacheReadTokens,
-        cacheWrite: cacheWriteTokens,
+        cacheRead: state.cacheReadTokens,
+        cacheWrite: state.cacheWriteTokens,
         reasoning: state.reasoningTokens,
         totalCalls: summary.totalCalls,
       },
@@ -1377,11 +1005,11 @@ async function runNativeWorkbenchRuntime(
         ? {}
         : { historyOmission: state.historyOmission }),
       agent: {
-        toolStepsUsed: toolSteps,
+        toolStepsUsed: state.toolSteps,
         maxToolSteps,
-        limitReached: toolStepLimitReached,
+        limitReached: state.toolStepLimitReached,
       },
-      validation,
+      validation: state.validation,
     };
   }
 }
