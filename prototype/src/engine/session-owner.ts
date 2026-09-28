@@ -78,6 +78,24 @@ class SessionOwner {
     return { result, settled };
   }
 
+  /**
+   * Start `run` now, as this new owner's first turn. Later turns queue behind
+   * it as with `enqueue`.
+   */
+  start<T>(
+    run: () => Promise<T>,
+  ): { result: Promise<T>; settled: Promise<void> } {
+    let result: Promise<T>;
+    try {
+      result = run();
+    } catch (err: unknown) {
+      result = Promise.reject(err);
+    }
+    const settled = result.then(() => {}, () => {});
+    this.#tail = settled;
+    return { result, settled };
+  }
+
   /** Whether `settled` is the last turn queued, so the session is now idle. */
   isTail(settled: Promise<void>): boolean {
     return this.#tail === settled;
@@ -134,7 +152,11 @@ export class SessionOwners implements BudgetScopes {
       owner = new SessionOwner();
       this.#owners.set(id, owner);
     }
-    const queued = owner.enqueue(() => run(id));
+    // A new session's first turn starts at once; nothing can be queued on
+    // an id allocated in this step.
+    const queued = sessionId === undefined
+      ? owner.start(() => run(id))
+      : owner.enqueue(() => run(id));
     const current = owner;
     void queued.settled.finally(() => {
       // Drop the owner once this turn is its last, so the registry does not

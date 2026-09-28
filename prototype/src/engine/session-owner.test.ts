@@ -80,7 +80,9 @@ Deno.test("new-session turns and turns on other sessions are not serialized", as
   const freshResult = owners.runTurn(undefined, fresh.run);
   const otherResult = owners.runTurn("01OTHER0000000000000000000", other.run);
   await drain();
-  assertEquals(log, ["start held", "start fresh", "start other"]);
+  // A new-session turn starts synchronously; queued turns start a microtask
+  // later. None waits on another.
+  assertEquals(log, ["start fresh", "start held", "start other"]);
   // The new session's owner is registered under its allocated id.
   assertEquals(owners.activeSessions, 3);
 
