@@ -155,8 +155,9 @@ README are tracked separately in its Revision history section.
 ### Changed
 
 - **`web_fetch` refuses a target it cannot verify as public**: a hostname
-  passes the address check only when its A and AAAA lookups both answer, at
-  least one address comes back, and none is private, loopback or internal. A
+  passes the address check only when its A and AAAA lookups both answer
+  (either may have no records), together they return at least one address,
+  and none is private, loopback or internal. A
   lookup that fails or cannot be made, a name with no addresses, or a lookup
   that outlives the fetch deadline refuses the target before the upstream
   fetch tool is called. A public IP literal is accepted without a lookup, and

@@ -593,9 +593,10 @@ optional limit (1–10, default 5) and returns bounded snippets, each with a
 source ID (`s1`, `s2`, …) when it carries a URL. `web_fetch` takes either an
 HTTPS URL or a source ID from the current turn's latest search, refuses any
 target it cannot verify as public, and passes the canonical URL to the upstream
-fetch tool. A hostname passes only when its A and AAAA lookups both answer with
-at least one address and none of them is private, loopback or internal; a
-public IP literal needs no lookup. `dyfj start` grants the engine DNS access to
+fetch tool. A hostname passes only when its A and AAAA lookups both answer
+(either may have no records), together they return at least one address, and
+none of those is private, loopback or internal; a public IP literal needs no
+lookup. `dyfj start` grants the engine DNS access to
 the nameservers in `/etc/resolv.conf` for these lookups; an engine started
 directly with `deno task serve-unix` has no such grant, so `web_fetch` there
 refuses hostname targets. Per turn, at most 3 searches and 5 fetches run,

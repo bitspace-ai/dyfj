@@ -36,6 +36,16 @@ Deno.test("nameserverNetGrants ignores comments, duplicates and malformed entrie
   assertEquals(nameserverNetGrants(conf), ["1.1.1.1:53"]);
 });
 
+Deno.test("nameserverNetGrants gives a malformed IPv6 nameserver no grant", () => {
+  const conf = [
+    "nameserver 2001:::1",
+    "nameserver 1:2:3:4:5:6:7:8:9",
+    "nameserver [2001:db8::1]",
+    "nameserver 2001:DB8::53",
+  ].join("\n");
+  assertEquals(nameserverNetGrants(conf), ["[2001:db8::53]:53"]);
+});
+
 Deno.test("nameserverNetGrants gives a scoped IPv6 nameserver no grant", () => {
   assertEquals(
     nameserverNetGrants("nameserver fe80::1%eth0\nnameserver 9.9.9.9\n"),

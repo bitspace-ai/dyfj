@@ -284,8 +284,9 @@ function isIpLiteral(host: string): boolean {
 /**
  * Preflight address check with a bounded wait. A target passes only when it
  * is verified public: an IP literal outside the private, loopback and internal
- * ranges, or a hostname whose A and AAAA lookups both answer, return at least
- * one address, and return no private, loopback or internal address. A lookup
+ * ranges, or a hostname whose A and AAAA lookups both answer (either may have
+ * no records), together return at least one address, and return no private,
+ * loopback or internal address. A lookup
  * that fails, a resolver that is unavailable, a name with no addresses and a
  * lookup that outlives `signal` all reject the target.
  */

@@ -19,7 +19,16 @@ export const RESOLV_CONF_PATH = "/etc/resolv.conf";
 
 const IPV4 =
   /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
-const IPV6 = /^[0-9a-f:.]+$/i;
+
+/** The canonical form of an IPv6 literal, or undefined when it is not one. */
+function canonicalIpv6(address: string): string | undefined {
+  if (!address.includes(":") || /[\[\]\/?#@%]/.test(address)) return undefined;
+  try {
+    return new URL(`http://[${address}]/`).hostname;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Derive `<ip>:53` grants from resolv.conf text, in file order, deduplicated. */
 export function nameserverNetGrants(resolvConf: string): string[] {
@@ -30,11 +39,12 @@ export function nameserverNetGrants(resolvConf: string): string[] {
     if (keyword !== "nameserver" || address === undefined || rest.length > 0) {
       continue;
     }
+    const ipv6 = canonicalIpv6(address);
     let grant: string;
     if (IPV4.test(address)) {
       grant = `${address}:53`;
-    } else if (address.includes(":") && IPV6.test(address)) {
-      grant = `[${address.toLowerCase()}]:53`;
+    } else if (ipv6 !== undefined) {
+      grant = `${ipv6}:53`;
     } else {
       continue;
     }
