@@ -10,6 +10,19 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **`memory.read` built without a reader throws a plain `Error`
+  out of the invoke path.**
+  - **Location:** `prototype/src/tools/builtin/memory.ts:45-47`
+    (`defineMemoryRead`'s fallback reader).
+  - **Symptom:** invoking `memory.read` from a catalog built without
+    `readMemory` rejects out of `invokeCommandWithEvent` instead of returning
+    an error result, so no `tool_call` event is written for that call.
+    `invokeCommand` converts only `CommandExecutionError`. Not reachable
+    today: the runtime always supplies `readMemory`, and the catalogs built
+    without it (`tools/list`, `tools/inspect`, friction) never invoke it.
+  - **Suspected cause:** the fallback predates `CommandExecutionError`; it
+    moved unchanged from `commands.ts`.
+  - **Found during:** WO-15 (review of the moved builder).
 - 2026-09-28 — **A bounded regex's first match pays for the matcher worker's
   startup out of its matching budget.**
   - **Location:** `prototype/src/kernel/bounded-regex.ts:161-163`
