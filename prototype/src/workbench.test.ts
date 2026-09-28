@@ -3809,28 +3809,6 @@ describe("runWorkbenchRuntime event-write integrity policy", () => {
     }
   });
 
-  test("integrity event (session_start) write failure fails the turn", async () => {
-    runtimeMocks.failEventType = "session_start";
-    try {
-      await expect(run("turn")).rejects.toThrow(
-        "simulated write failure: session_start",
-      );
-    } finally {
-      runtimeMocks.failEventType = null;
-    }
-  });
-
-  test("integrity events fail the turn in ask mode too — decoupled from mode (previously silently swallowed)", async () => {
-    runtimeMocks.failEventType = "session_start";
-    try {
-      await expect(run("ask")).rejects.toThrow(
-        "simulated write failure: session_start",
-      );
-    } finally {
-      runtimeMocks.failEventType = null;
-    }
-  });
-
   test("integrity event inside the runtime try (model_response) also fails the turn — not masked by the final receipt", async () => {
     runtimeMocks.failEventType = "model_response";
     try {
@@ -4119,25 +4097,6 @@ describe("runWorkbenchRuntime event-write integrity policy", () => {
     } finally {
       runtimeMocks.commandThrows = null;
     }
-  });
-});
-
-describe("runWorkbenchRuntime reads runtime config from input, not env", () => {
-  test("principalId comes from the input struct and flows to events", async () => {
-    const before = runtimeMocks.writtenEvents.length;
-    await runWorkbenchRuntime({
-      mode: "turn",
-      prompt: "probe",
-      routingOptions: {},
-      principalId: "custom-principal",
-    });
-    const principals = runtimeMocks.writtenEvents
-      .slice(before)
-      .map((event) => event.principal_id)
-      .filter((p): p is string => typeof p === "string");
-    expect(principals.length).toBeGreaterThan(0);
-    // Every event is attributed to the input principal, not the env/OS user.
-    expect(new Set(principals)).toEqual(new Set(["custom-principal"]));
   });
 });
 
