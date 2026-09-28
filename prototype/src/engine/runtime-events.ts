@@ -1,6 +1,7 @@
 /**
- * Runtime-event delivery through the `onFrame` port. Status events are
- * best-effort; the two safety signals are fail-closed.
+ * Runtime-event delivery through the runtime input's `onRuntimeEvent`
+ * handler. Status events are best-effort; the two safety signals are
+ * fail-closed.
  */
 
 import {
