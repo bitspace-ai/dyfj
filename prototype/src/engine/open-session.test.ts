@@ -10,10 +10,19 @@ import {
   assertObjectMatch,
   assertRejects,
 } from "@std/assert";
-import { enginePorts } from "../../testing/builders/engine.ts";
+import { stub } from "@std/testing/mock";
+import {
+  chatReply,
+  enginePorts,
+  engineServices,
+  LOCAL_MODEL,
+  patchStore,
+} from "../../testing/builders/engine.ts";
+import { localDayStart } from "../budget/mod.ts";
 import { AGENT_DEFAULTS, BUDGET_DEFAULTS } from "../config/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import type { Store } from "../store/mod.ts";
+import { runWorkbenchRuntime } from "./native-runner.ts";
 import { MAX_TOOL_STEPS, openSession } from "./open-session.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
 
@@ -77,6 +86,34 @@ Deno.test("principalId comes from the input struct and flows to events", async (
   const rows = await sessionRows(fakes.store, session.sessionId);
   assertEquals(rows.map((row) => row.principal_id), ["custom-principal"]);
   assertEquals(session.principalId, "custom-principal");
+});
+
+Deno.test("the input's principalId attributes every row a whole turn writes", async () => {
+  const run = engineServices([chatReply({ content: "done" })]);
+  // The best-effort model_selected row resolves its principal from the
+  // process environment, not the input (a known gap); the unit lane has no
+  // env grant, so it is skipped here with a warning.
+  const warn = stub(console, "warn");
+  let sessionId: string;
+  try {
+    ({ sessionId } = await runWorkbenchRuntime({
+      mode: "turn",
+      prompt: "probe",
+      routingOptions: {},
+      defaultCompanionModel: LOCAL_MODEL.slug,
+      principalId: "custom-principal",
+      log: () => {},
+    }, run.services));
+  } finally {
+    warn.restore();
+  }
+  const rows = (await sessionRows(run.store, sessionId))
+    .filter((row) => row.event_type !== "model_selected");
+  assert(rows.length >= 4);
+  assertEquals(
+    new Set(rows.map((row) => row.principal_id)),
+    new Set(["custom-principal"]),
+  );
 });
 
 Deno.test("an integrity session_start write failure fails the turn before anything else", async () => {
@@ -181,4 +218,29 @@ Deno.test("openSession seeds the budget tracker with spend already on the books"
   );
   const precall = session.budget.checkPreCall(1, 0, 0);
   assertEquals(precall.sessionCostSoFar, 0.25);
+});
+
+Deno.test("openSession reads spend baselines for the local day of the injected clock", async () => {
+  const fakes = enginePorts({ start: Date.UTC(2020, 1, 29, 12) });
+  const reads: Array<{ sessionId: string; dayStart: string }> = [];
+  const store = patchStore(fakes.store, {
+    spend: {
+      baselines: (sessionId, dayStart) => {
+        reads.push({ sessionId, dayStart });
+        return Promise.resolve({
+          sessionSpentUsd: 0,
+          sessionSpentTodayUsd: 0,
+          dailyOtherSessionsUsd: 0,
+        });
+      },
+    },
+  });
+  await openSession(input({ sessionId: RESUMED }), {
+    ...fakes.ports,
+    store,
+  });
+  assertEquals(reads, [{
+    sessionId: RESUMED,
+    dayStart: localDayStart(new Date(Date.UTC(2020, 1, 29, 12))),
+  }]);
 });

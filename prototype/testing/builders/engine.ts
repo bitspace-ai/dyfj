@@ -127,7 +127,7 @@ export function chatReply(reply: ChatReply = {}): ScriptedExchange {
             }),
           },
           finish_reason: reply.finishReason ??
-            (reply.toolCalls ? "tool_calls" : "stop"),
+            (reply.toolCalls?.length ? "tool_calls" : "stop"),
         }],
         usage: reply.usage ?? { prompt_tokens: 42, completion_tokens: 7 },
       }),
@@ -142,7 +142,9 @@ export async function tempWorkspace(
 ): Promise<{ root: string; [Symbol.asyncDispose](): Promise<void> }> {
   const root = await Deno.makeTempDir({ prefix });
   for (const [path, content] of Object.entries(files)) {
-    await Deno.writeTextFile(`${root}/${path}`, content);
+    const file = `${root}/${path}`;
+    await Deno.mkdir(file.slice(0, file.lastIndexOf("/")), { recursive: true });
+    await Deno.writeTextFile(file, content);
   }
   return {
     root,

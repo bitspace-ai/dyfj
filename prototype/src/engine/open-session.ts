@@ -148,7 +148,7 @@ export async function openSession(
   // Seed the envelopes with spend already on the books: this session's prior
   // turns and today's spend across all sessions. Injectable for tests.
   const fetchBaselines = input.fetchSpendBaselines ??
-    ((id: string) => fetchSpendBaselines(ports.store.spend, id));
+    ((id: string) => fetchSpendBaselines(ports.store.spend, id, ports.clock));
   const budget = new BudgetTracker(
     sessionId,
     traceId,
