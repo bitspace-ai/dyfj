@@ -75,7 +75,9 @@ Deno.test("a companion turn runs open → context → route → loop → finaliz
   const frames: WorkbenchRuntimeEvent[] = [];
   const result = await runTurn(run, {
     rootOverride: root.root,
-    onRuntimeEvent: (event) => void frames.push(event),
+    frames: {
+      onRuntimeEvent: (event) => void frames.push(event),
+    },
   });
   run.transport.assertDone();
   assertEquals(result.text, "runtime response");
@@ -349,8 +351,10 @@ Deno.test("declining paid inference aborts before any provider call", async () =
         defaultCompanionModel: PRICED.slug,
         conversationMessages: [{ role: "user", content: "persisted prompt" }],
         historyOmission: GAP_OMISSION,
-        confirmPaidEscalation: () =>
-          Promise.resolve({ decision: "deny", reason: "operator declined" }),
+        approver: {
+          confirmPaidEscalation: () =>
+            Promise.resolve({ decision: "deny", reason: "operator declined" }),
+        },
       }),
     Error,
     "Paid inference consent declined",
@@ -377,8 +381,10 @@ Deno.test("confirms a budget ceiling overrun once per turn (preflight + per-call
     rootOverride: root.root,
     defaultCompanionModel: PRICED.slug,
     defaultPerCallBudgetUsd: 0.00001,
-    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-    confirmBudgetCeiling,
+    approver: {
+      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+      confirmBudgetCeiling,
+    },
   });
   assertSpyCalls(confirmBudgetCeiling, 1);
   assertEquals(run.transport.requests.length, 1);
@@ -395,9 +401,11 @@ Deno.test("declining a budget ceiling aborts before any provider call", async ()
         rootOverride: root.root,
         defaultCompanionModel: PRICED.slug,
         defaultPerCallBudgetUsd: 0.00001,
-        confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-        confirmBudgetCeiling: () =>
-          Promise.resolve({ decision: "deny", reason: "too much" }),
+        approver: {
+          confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+          confirmBudgetCeiling: () =>
+            Promise.resolve({ decision: "deny", reason: "too much" }),
+        },
       }),
     Error,
     "Budget ceiling confirmation declined",
@@ -418,12 +426,16 @@ Deno.test("cancelling a budget approval finalizes an aborted turn", async () => 
     turnId,
     abortSignal: abortController.signal,
     defaultPerCallBudgetUsd: 0.00001,
-    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-    confirmBudgetCeiling: () => {
-      abortController.abort();
-      throw abortController.signal.reason;
+    approver: {
+      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+      confirmBudgetCeiling: () => {
+        abortController.abort();
+        throw abortController.signal.reason;
+      },
     },
-    onRuntimeEvent: (event) => void frames.push(event),
+    frames: {
+      onRuntimeEvent: (event) => void frames.push(event),
+    },
   });
   assertObjectMatch(result, {
     text: "",
@@ -466,6 +478,8 @@ const SPENT_PAST_SCOPE = () =>
 Deno.test("scope hard-multiple halts even spend a ceiling confirmation already covered", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([], { models: [ANOMALY_MODEL] });
+  // Session lifetime spend already past 2× the $1 envelope.
+  run.services.fetchSpendBaselines = SPENT_PAST_SCOPE;
   const confirmBudgetCeiling = spy(() =>
     Promise.resolve({ decision: "approve" as const })
   );
@@ -478,13 +492,13 @@ Deno.test("scope hard-multiple halts even spend a ceiling confirmation already c
         defaultSessionBudgetUsd: 1.0,
         anomalyTurnMultiple: 3,
         anomalyScopeMultiple: 2,
-        // Session lifetime spend already past 2× the $1 envelope.
-        fetchSpendBaselines: SPENT_PAST_SCOPE,
-        confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-        // The ceiling handler approving is exactly the blind spot: the
-        // anomaly halt must fire regardless, and fail closed without its own
-        // handler.
-        confirmBudgetCeiling,
+        approver: {
+          confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+          // The ceiling handler approving is exactly the blind spot: the
+          // anomaly halt must fire regardless, and fail closed without its own
+          // handler.
+          confirmBudgetCeiling,
+        },
       }),
     Error,
     "Runaway spend anomaly",
@@ -501,6 +515,7 @@ Deno.test("an approved entry halt does not re-prompt the identical state at the 
     content: "done",
     usage: { prompt_tokens: 10, completion_tokens: 12 },
   })], { models: [ANOMALY_MODEL] });
+  run.services.fetchSpendBaselines = SPENT_PAST_SCOPE;
   const confirmRunawayAnomaly = spy(() =>
     Promise.resolve({ decision: "approve" as const })
   );
@@ -511,10 +526,11 @@ Deno.test("an approved entry halt does not re-prompt the identical state at the 
     defaultSessionBudgetUsd: 1.0,
     anomalyTurnMultiple: 3,
     anomalyScopeMultiple: 2,
-    fetchSpendBaselines: SPENT_PAST_SCOPE,
-    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-    confirmBudgetCeiling: () => Promise.resolve({ decision: "approve" }),
-    confirmRunawayAnomaly,
+    approver: {
+      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+      confirmBudgetCeiling: () => Promise.resolve({ decision: "approve" }),
+      confirmRunawayAnomaly,
+    },
   });
   assertEquals(result.text, "done");
   // Entry check and first-call check see identical actuals ($2.50): one
@@ -570,9 +586,16 @@ Deno.test("an approval verdict cannot start a new turn: a turn requested from in
       fetchSessionEvents: ({ sessionId }) =>
         fetchWorkbenchSessionEvents({ sessionId, events: run.store.events }),
       runRuntime: (input) =>
-        runWorkbenchRuntime({ ...input, log: () => {} }, run.services),
-      onRuntimeEvent: (event) => void frames.push(`${tag}:${event.type}`),
-      confirmToolApproval: approver,
+        runWorkbenchRuntime(
+          { ...input, frames: { ...input.frames, log: () => {} } },
+          run.services,
+        ),
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(`${tag}:${event.type}`),
+      },
+      approver: {
+        confirmToolApproval: approver,
+      },
     });
   };
 

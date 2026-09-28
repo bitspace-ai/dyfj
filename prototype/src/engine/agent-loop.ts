@@ -64,10 +64,10 @@ export async function agentLoop(
     streamsToolCalls: modelStreamsToolCalls(route.selected),
     liveDelta: undefined,
   };
-  if (input.onTextDelta !== undefined) {
+  if (input.frames?.onTextDelta !== undefined) {
     streaming.liveDelta = (delta) => {
       streaming.streamedText = true;
-      input.onTextDelta?.(delta);
+      input.frames?.onTextDelta?.(delta);
     };
   }
   let result = await recoveredTurn(turn, {
@@ -167,7 +167,7 @@ async function runToolStep(
   state.session.log(
     `Step ${state.toolSteps}: running ${requestedToolCalls.length} tool call(s)...`,
   );
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "toolStepStarted",
     sessionId: state.session.sessionId,
     step: state.toolSteps,
@@ -210,7 +210,7 @@ async function invokeTool(
     commandId: toolCall.name,
     callId: toolCall.id,
   };
-  const startedEvent = emitRuntimeEvent(input.onRuntimeEvent, {
+  const startedEvent = emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "toolCallStarted",
     sessionId: session.sessionId,
     commandId: toolCall.name,
@@ -231,7 +231,7 @@ async function invokeTool(
     const outcome = await commandOutcome;
     if (!outcome.ok) throw outcome.error;
     const commandResult = outcome.value;
-    await emitRuntimeEvent(input.onRuntimeEvent, {
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       ...completed,
       isError: commandResult.isError,
       durationMs: ports.clock.now() - toolStartedAt,
@@ -252,7 +252,7 @@ async function invokeTool(
     // error field for a call that threw outright (invokeCommandWithEvent's
     // own executors don't throw — see tools/invoke.ts — so anything reaching
     // here is already unexpected).
-    await emitRuntimeEvent(input.onRuntimeEvent, {
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       ...completed,
       isError: true,
       durationMs: ports.clock.now() - toolStartedAt,
@@ -300,7 +300,7 @@ function startCommand(
           state.audit.noteSkippedEventWrite,
         ),
     },
-    input.confirmToolApproval,
+    input.approver?.confirmToolApproval,
     {
       // Operator permission profile: on a loopback turn with permissionLevel
       // "operator", contained mutating tools auto-approve instead of
@@ -334,7 +334,7 @@ async function followUp(
         : "Model repeated prior tool calls; forcing a concluding answer.",
     );
     if (atCap) {
-      await emitRuntimeEvent(input.onRuntimeEvent, {
+      await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
         type: "toolStepLimitReached",
         sessionId: session.sessionId,
         maxSteps: session.maxToolSteps,

@@ -1397,111 +1397,115 @@ export function buildTurnHandlers(
           fetchSessionEvents,
           ...engineDeps,
           externalMcpCommands: options.externalMcpCommands,
-          // mid-turn approval over the duplex channel — the server asks
-          // the connected client to approve a mutating tool or budget ceiling;
-          // the client's response is the verdict. A failed request (no client
-          // approver, dropped connection) denies, fail-closed.
-          confirmToolApproval: (request, signal) =>
-            requestApproval(request, signal).then(
-              (response) => {
-                abortIfApprovalWasInterrupted(response);
-                rejectStaleApprovalAfterCancellation();
-                return toApprovalVerdict(response);
-              },
-              (): ToolApprovalVerdict => {
-                rejectStaleApprovalAfterCancellation();
-                return {
-                  decision: "deny",
-                  reason: "approval request failed (no client approver?)",
-                };
-              },
-            ),
-          confirmExternalAgentPermission: (prompt, signal) =>
-            requestApproval({
-              kind: "external_agent_permission",
-              title: prompt.toolCall.title,
-              arguments: {
-                "ACP tool": prompt.toolCall.name ?? "(not supplied)",
-                "ACP kind": terminalAcpToolKind(prompt.toolCall.kind),
-                "Requested input": prompt.toolCall.inputSummary,
-              },
-              options: prompt.options,
-            }, signal).then(
-              (response) => {
-                abortIfApprovalWasInterrupted(response);
-                rejectStaleApprovalAfterCancellation();
-                return toAcpPermissionSelection(response, prompt);
-              },
-              (): AcpPermissionSelection => {
-                rejectStaleApprovalAfterCancellation();
-                return rejectedAcpPermissionSelection(prompt);
-              },
-            ),
-          confirmBudgetCeiling: (warning) =>
-            requestApproval(budgetCeilingApprovalRequest(warning)).then(
-              (response) => {
-                abortIfApprovalWasInterrupted(response);
-                rejectStaleApprovalAfterCancellation();
-                return toBudgetCeilingVerdict(response);
-              },
-              (): BudgetCeilingVerdict => {
-                rejectStaleApprovalAfterCancellation();
-                return {
-                  decision: "deny",
-                  reason:
-                    "budget ceiling approval failed (no client approver?)",
-                };
-              },
-            ),
-          confirmRunawayAnomaly: (warning) =>
-            requestApproval(runawayAnomalyApprovalRequest(warning))
-              .then(
+          approver: {
+            // mid-turn approval over the duplex channel — the server asks
+            // the connected client to approve a mutating tool or budget ceiling;
+            // the client's response is the verdict. A failed request (no client
+            // approver, dropped connection) denies, fail-closed.
+            confirmToolApproval: (request, signal) =>
+              requestApproval(request, signal).then(
                 (response) => {
                   abortIfApprovalWasInterrupted(response);
                   rejectStaleApprovalAfterCancellation();
-                  return toBudgetCeilingVerdict(
-                    response,
-                    "operator declined the anomaly halt",
-                  );
+                  return toApprovalVerdict(response);
+                },
+                (): ToolApprovalVerdict => {
+                  rejectStaleApprovalAfterCancellation();
+                  return {
+                    decision: "deny",
+                    reason: "approval request failed (no client approver?)",
+                  };
+                },
+              ),
+            confirmExternalAgentPermission: (prompt, signal) =>
+              requestApproval({
+                kind: "external_agent_permission",
+                title: prompt.toolCall.title,
+                arguments: {
+                  "ACP tool": prompt.toolCall.name ?? "(not supplied)",
+                  "ACP kind": terminalAcpToolKind(prompt.toolCall.kind),
+                  "Requested input": prompt.toolCall.inputSummary,
+                },
+                options: prompt.options,
+              }, signal).then(
+                (response) => {
+                  abortIfApprovalWasInterrupted(response);
+                  rejectStaleApprovalAfterCancellation();
+                  return toAcpPermissionSelection(response, prompt);
+                },
+                (): AcpPermissionSelection => {
+                  rejectStaleApprovalAfterCancellation();
+                  return rejectedAcpPermissionSelection(prompt);
+                },
+              ),
+            confirmBudgetCeiling: (warning) =>
+              requestApproval(budgetCeilingApprovalRequest(warning)).then(
+                (response) => {
+                  abortIfApprovalWasInterrupted(response);
+                  rejectStaleApprovalAfterCancellation();
+                  return toBudgetCeilingVerdict(response);
                 },
                 (): BudgetCeilingVerdict => {
                   rejectStaleApprovalAfterCancellation();
                   return {
                     decision: "deny",
                     reason:
-                      "anomaly halt approval failed (no client approver?)",
+                      "budget ceiling approval failed (no client approver?)",
                   };
                 },
               ),
-          // Stream frames carry the shared TurnStreamFrame union — one wire
-          // shape for clients to consume. Deltas are
-          // best-effort: a dropped one costs some rendered text, not correctness,
-          // so the notify promise is observed (not left to reject unhandled) but
-          // its failure is only logged, never surfaced to the runtime.
-          onTextDelta: (text) => {
-            ctx.notify(
-              "stream",
-              { t: "delta", text } satisfies TurnStreamFrame,
-            ).catch(noteStreamNotifyFailure);
+            confirmRunawayAnomaly: (warning) =>
+              requestApproval(runawayAnomalyApprovalRequest(warning))
+                .then(
+                  (response) => {
+                    abortIfApprovalWasInterrupted(response);
+                    rejectStaleApprovalAfterCancellation();
+                    return toBudgetCeilingVerdict(
+                      response,
+                      "operator declined the anomaly halt",
+                    );
+                  },
+                  (): BudgetCeilingVerdict => {
+                    rejectStaleApprovalAfterCancellation();
+                    return {
+                      decision: "deny",
+                      reason:
+                        "anomaly halt approval failed (no client approver?)",
+                    };
+                  },
+                ),
           },
-          // Safety-critical signals are the events whose delivery the runtime
-          // must observe: a superseding retry resets rendered text, while an
-          // unparsed-markup warning prevents an unqualified success. Their send
-          // failures are returned so the runtime can fail closed. Every other
-          // runtime event is a fire-and-forget notification — a failed send is
-          // nothing to report, and returning its rejection would only make the
-          // runtime's best-effort emitter warn once per event (a flood on a
-          // tool-heavy turn after the client drops). So swallow those, logging once.
-          onRuntimeEvent: (event) => {
-            const sent = ctx.notify(
-              "stream",
-              { t: "event", event } satisfies TurnStreamFrame,
-            );
-            if (
-              isSupersedingRetryStarted(event) ||
-              event.type === "unparsedToolCallMarkupDetected"
-            ) return sent;
-            return sent.catch(noteStreamNotifyFailure);
+          frames: {
+            // Stream frames carry the shared TurnStreamFrame union — one wire
+            // shape for clients to consume. Deltas are
+            // best-effort: a dropped one costs some rendered text, not correctness,
+            // so the notify promise is observed (not left to reject unhandled) but
+            // its failure is only logged, never surfaced to the runtime.
+            onTextDelta: (text) => {
+              ctx.notify(
+                "stream",
+                { t: "delta", text } satisfies TurnStreamFrame,
+              ).catch(noteStreamNotifyFailure);
+            },
+            // Safety-critical signals are the events whose delivery the runtime
+            // must observe: a superseding retry resets rendered text, while an
+            // unparsed-markup warning prevents an unqualified success. Their send
+            // failures are returned so the runtime can fail closed. Every other
+            // runtime event is a fire-and-forget notification — a failed send is
+            // nothing to report, and returning its rejection would only make the
+            // runtime's best-effort emitter warn once per event (a flood on a
+            // tool-heavy turn after the client drops). So swallow those, logging once.
+            onRuntimeEvent: (event) => {
+              const sent = ctx.notify(
+                "stream",
+                { t: "event", event } satisfies TurnStreamFrame,
+              );
+              if (
+                isSupersedingRetryStarted(event) ||
+                event.type === "unparsedToolCallMarkupDetected"
+              ) return sent;
+              return sent.catch(noteStreamNotifyFailure);
+            },
           },
         });
       } finally {

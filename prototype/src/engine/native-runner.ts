@@ -76,6 +76,8 @@ export async function runWorkbenchRuntime(
         ? {}
         : { getEnv: (name: string) => services.env?.get(name) }),
     },
+    fetchSpendBaselines: services.fetchSpendBaselines,
+    recoverContextOverflow: services.recoverContextOverflow,
   });
 }
 

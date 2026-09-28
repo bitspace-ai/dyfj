@@ -150,7 +150,7 @@ export async function openSession(
   const posture = budgetPosture(input);
   // Seed the envelopes with spend already on the books: this session's prior
   // turns and today's spend across all sessions. Injectable for tests.
-  const fetchBaselines = input.fetchSpendBaselines ??
+  const fetchBaselines = ports.fetchSpendBaselines ??
     ((id: string) => fetchSpendBaselines(ports.store.spend, id, ports.clock));
   const budget = new BudgetTracker(
     sessionId,
@@ -198,7 +198,7 @@ export async function openSession(
     honoredWorkspace: workspace.honored,
     workspaceLookupFailed: workspace.lookupFailed,
     // Silent by default: narration renders only where a presenter is injected.
-    log: input.log ?? (() => {}),
+    log: input.frames?.log ?? (() => {}),
   };
   await announceTurn(session, input, ports);
   return session;
@@ -211,13 +211,13 @@ async function announceTurn(
   ports: NativeTurnPorts,
 ): Promise<void> {
   session.log("DYFJ Workbench\n");
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "sessionStart",
     sessionId: session.sessionId,
     traceId: session.traceId,
     mode: session.mode,
   });
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "inputReceived",
     sessionId: session.sessionId,
     promptLength: session.prompt.length,

@@ -101,7 +101,9 @@ Deno.test("resolveRoute returns an explicit fixture runner without consent or ca
     request({
       routingOptions,
       runner: { kind: "acp", profile: "fixture" },
-      confirmPaidEscalation: confirm,
+      approver: {
+        confirmPaidEscalation: confirm,
+      },
     }),
     failingCatalog,
   );
@@ -120,7 +122,9 @@ Deno.test("resolveRoute rejects an explicit Codex ChatGPT runner without workspa
         request({
           runner: { kind: "acp", profile: "codex-chatgpt" },
           trustWorkspaceInstructions: false,
-          confirmPaidEscalation: confirm,
+          approver: {
+            confirmPaidEscalation: confirm,
+          },
         }),
         catalog(LOCAL),
       ),
@@ -140,7 +144,9 @@ Deno.test("resolveRoute asks paid consent for an explicit Codex ChatGPT runner a
           trustWorkspaceInstructions: true,
           defaultSessionBudgetUsd: 2,
           defaultPerCallBudgetUsd: 0.25,
-          confirmPaidEscalation: confirm,
+          approver: {
+            confirmPaidEscalation: confirm,
+          },
         }),
         catalog(LOCAL),
       ),
@@ -180,7 +186,9 @@ Deno.test("resolveRoute returns an approved explicit Codex ChatGPT runner", asyn
     request({
       runner: { kind: "acp", profile: "codex-chatgpt" },
       trustWorkspaceInstructions: true,
-      confirmPaidEscalation: consent({ decision: "approve" }),
+      approver: {
+        confirmPaidEscalation: consent({ decision: "approve" }),
+      },
     }),
     catalog(LOCAL),
   );
@@ -196,7 +204,9 @@ Deno.test("resolveRoute returns an approved explicit Codex ChatGPT runner", asyn
 Deno.test("resolveRoute keeps a native catalog selection on the native runner", async () => {
   const confirm = consent({ decision: "deny" });
   const route = await resolveRoute(
-    request({ confirmPaidEscalation: confirm }),
+    request({
+      approver: { confirmPaidEscalation: confirm },
+    }),
     catalog(LOCAL, ACP_FIXTURE),
   );
   assertEquals(route, { runner: "native" });
@@ -234,7 +244,9 @@ Deno.test("resolveRoute rejects a selected Codex ChatGPT model without workspace
       resolveRoute(
         request({
           routingOptions: { modelId: CODEX_TERRA.slug },
-          confirmPaidEscalation: confirm,
+          approver: {
+            confirmPaidEscalation: confirm,
+          },
         }),
         catalog(LOCAL, CODEX_TERRA),
       ),
@@ -252,7 +264,9 @@ Deno.test("resolveRoute asks paid consent for a selected tier-2 ACP model with i
         request({
           routingOptions: { modelId: CODEX_TERRA.slug },
           trustWorkspaceInstructions: true,
-          confirmPaidEscalation: confirm,
+          approver: {
+            confirmPaidEscalation: confirm,
+          },
         }),
         catalog(LOCAL, CODEX_TERRA),
       ),
@@ -273,7 +287,9 @@ Deno.test("resolveRoute returns an approved selected Codex ChatGPT model", async
     request({
       routingOptions: { modelId: CODEX_TERRA.slug },
       trustWorkspaceInstructions: true,
-      confirmPaidEscalation: consent({ decision: "approve" }),
+      approver: {
+        confirmPaidEscalation: consent({ decision: "approve" }),
+      },
     }),
     catalog(LOCAL, CODEX_TERRA),
   );

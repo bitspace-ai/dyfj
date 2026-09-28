@@ -20,6 +20,7 @@ import type {
 } from "../contract/mod.ts";
 import type {
   AskContextProfile,
+  ContextOverflowRecoverer,
   PackedContextSummary,
   WorkspaceRootIdentity,
 } from "../context/mod.ts";
@@ -46,6 +47,10 @@ export interface NativeTurnPorts {
    * the platform `fetch` and the process environment.
    */
   providerIo: Pick<WorkbenchTurnParams, "fetchFn" | "getEnv">;
+  /** The session and daily spend rollup; the store's when absent. */
+  fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
+  /** The compressor seam for a context overflow; none when absent. */
+  recoverContextOverflow?: ContextOverflowRecoverer;
 }
 
 /** Write one event row through the store's journal. */

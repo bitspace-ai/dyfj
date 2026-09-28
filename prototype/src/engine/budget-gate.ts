@@ -69,13 +69,15 @@ export async function budgetGate(
     // (session marks per session id, the daily mark per local day) instead
     // of re-prompting next turn.
     budgetCeilingGate: createTurnBudgetCeilingGate(
-      input.confirmBudgetCeiling,
+      input.approver?.confirmBudgetCeiling,
       ports.budgetScopes.budgetScope(session.sessionId),
     ),
     // Turn-scoped: an approval covers the spend level it was shown (the entry
     // check and the first call's check see identical actuals); any recorded
     // increment re-prompts, and nothing survives the turn.
-    anomalyGate: createRunawayAnomalyGate(input.confirmRunawayAnomaly),
+    anomalyGate: createRunawayAnomalyGate(
+      input.approver?.confirmRunawayAnomaly,
+    ),
   };
   await gateEntry(state, input, route);
   await recordSelection(state, input, ports, route, selection.considered);
@@ -117,7 +119,7 @@ async function gateEntry(
     sessionCostSoFarUsd: preCall.sessionCostSoFar,
     sessionLimitUsd: preCall.sessionLimitUsd,
     perCallLimitUsd: preCall.perCallLimitUsd,
-  }, input.confirmPaidEscalation);
+  }, input.approver?.confirmPaidEscalation);
 }
 
 /** The best-effort `model_selected` event and the `modelSelected` frame. */
@@ -150,7 +152,7 @@ async function recordSelection(
     true,
     state.audit.noteSkippedEventWrite,
   );
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "modelSelected",
     sessionId: session.sessionId,
     modelSlug: selected.slug,

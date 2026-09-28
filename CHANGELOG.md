@@ -154,6 +154,19 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The engine calls back to its caller only through declared ports.** On the
+  runtime input (`WorkbenchRuntimeInput`), the five approval handlers
+  (`confirmPaidEscalation`, `confirmBudgetCeiling`, `confirmRunawayAnomaly`,
+  `confirmToolApproval`, `confirmExternalAgentPermission`) move under one
+  `approver` port, and the three output sinks (`onRuntimeEvent`,
+  `onTextDelta`, `log`) move under one `frames` port (`FrameSink`).
+  `onCancellationClosed` is replaced by `cancellationWindow`, the turn's
+  ticket, which the runtime closes by message. `fetchSpendBaselines` and
+  `recoverContextOverflow` move from the input to the runtime services
+  (`WorkbenchRuntimeServices`). `executeTurn`'s dependencies and the ACP
+  runner's input take the same `approver` and `frames` shapes. This changes
+  in-process call sites only: the wire protocol, event rows, receipts and the
+  golden suite are unchanged.
 - **`finalize` is the native turn's last named pipeline stage**
   (`engine/finalize.ts`), and `runNativeWorkbenchRuntime` is now only the
   composition of the six stages. `completeTurn` records a finished or

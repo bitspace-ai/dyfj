@@ -138,7 +138,7 @@ export interface RouteRequest {
   trustWorkspaceInstructions?: boolean;
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
-  confirmPaidEscalation?: ConfirmPaidEscalation;
+  approver?: { confirmPaidEscalation?: ConfirmPaidEscalation };
 }
 
 /**
@@ -279,7 +279,7 @@ export async function resolveRoute(
       sessionCostSoFarUsd: 0,
       sessionLimitUsd: request.defaultSessionBudgetUsd ?? 0,
       perCallLimitUsd: request.defaultPerCallBudgetUsd ?? 0,
-    }, request.confirmPaidEscalation);
+    }, request.approver?.confirmPaidEscalation);
   }
   return {
     runner: "acp",

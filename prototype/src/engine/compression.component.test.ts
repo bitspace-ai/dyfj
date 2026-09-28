@@ -115,8 +115,11 @@ async function compressionTurn(
     prompt: "new question",
     rootOverride: root,
     conversationMessages: BIG_HISTORY,
-    onRuntimeEvent: (event) => void frames.push(event),
     ...input,
+    frames: {
+      onRuntimeEvent: (event) => void frames.push(event),
+      ...input.frames,
+    },
   });
   try {
     await pending;

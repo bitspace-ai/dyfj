@@ -1,7 +1,8 @@
 /**
  * The native runtime's input, services, and result types. The input is the
- * contract request plus the in-process hooks and ports the engine consumes;
- * none of it crosses the wire.
+ * contract request plus the ports the engine calls back through (the
+ * `Approver`, the `FrameSink` and the ticket's cancellation window); none of
+ * it crosses the wire.
  */
 
 import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
@@ -42,49 +43,12 @@ export interface WorkbenchInvocation {
 }
 
 /**
- * The engine's runtime input: the plain-data request from contract/ plus the
- * in-process hooks and ports this engine consumes. Only the request half is a
- * contract; everything declared here stays inside the process.
+ * The engine's approval port (`specs/01-architecture.md` §5.6): each verdict a
+ * turn may need from its caller. A verdict answers the waiting stage; it never
+ * starts a turn or reaches another session. Each member is a standalone
+ * function, so a caller passes a plain object of handlers.
  */
-export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
-  routingOptions: WorkbenchRoutingOptions;
-  /** External-agent permission requests fail closed when this is absent. */
-  confirmExternalAgentPermission?: (
-    prompt: AcpPermissionPrompt,
-    signal: AbortSignal,
-  ) => Promise<AcpPermissionSelection>;
-  abortSignal?: AbortSignal;
-  onCancellationClosed?: () => void;
-  /**
-   * Earlier turns in the session as real conversation messages, assembled by
-   * the caller (e.g. from session_start/model_response events). Seeded into the
-   * agent loop ahead of the current user message so resumed conversations carry
-   * their history as structured user/assistant turns — not a flattened string.
-   * Companion turn mode only; ignored for one-shot ask/next-work modes.
-   */
-  conversationMessages?: WorkbenchMessage[];
-  onTextDelta?: (delta: string) => void;
-  /**
-   * Runtime lifecycle events. A streaming caller (one that renders `onTextDelta`)
-   * MUST consume this to honor the superseding-retry reset contract: the
-   * `supersedingRetryStarted` event is what tells it to discard the deltas it has
-   * shown before a superseding retry replaces them. A caller that streams deltas
-   * with overflow recovery enabled but supplies no event channel here (and does
-   * not surface the recovery `log` note) cannot be signaled, and would render the
-   * stale and replacement deltas concatenated. The same channel carries the
-   * required unparsed-markup disclosure. Delivery of either safety signal is
-   * fail-closed when this handler is present.
-   */
-  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
-  /**
-   * Presentation sink for human-readable turn narration: context loading,
-   * workspace/model/route lines, turn text, budget tally, and the receipt.
-   * An in-process caller (the verify-workbench-events check) injects console
-   * output; the UDS server leaves it unset so client presentation never
-   * renders on the server console.
-   * Default: silent — the runtime core does not narrate.
-   */
-  log?: (...parts: unknown[]) => void;
+export interface Approver {
   /**
    * Consent handler for paid-inference escalation. Returns a verdict
    * (approve | deny+reason | escalate), not void/throw — so a headless driver
@@ -113,6 +77,79 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    * duplex channel; HTTP has no such channel and so denies.
    */
   confirmToolApproval?: ConfirmToolApproval;
+  /** External-agent permission requests fail closed when this is absent. */
+  confirmExternalAgentPermission?: (
+    prompt: AcpPermissionPrompt,
+    signal: AbortSignal,
+  ) => Promise<AcpPermissionSelection>;
+}
+
+/**
+ * The engine's frame port, the `onFrame` sink of `specs/01-architecture.md`
+ * §5.7: output only, never re-entering the engine. Each member is a
+ * standalone function and each is optional: an absent member means the caller
+ * does not consume that kind of frame.
+ */
+export interface FrameSink {
+  /**
+   * Runtime lifecycle events. A streaming caller (one that renders `onTextDelta`)
+   * MUST consume this to honor the superseding-retry reset contract: the
+   * `supersedingRetryStarted` event is what tells it to discard the deltas it has
+   * shown before a superseding retry replaces them. A caller that streams deltas
+   * with overflow recovery enabled but supplies no event channel here (and does
+   * not surface the recovery `log` note) cannot be signaled, and would render the
+   * stale and replacement deltas concatenated. The same channel carries the
+   * required unparsed-markup disclosure. Delivery of either safety signal is
+   * fail-closed when this handler is present.
+   */
+  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
+  onTextDelta?: (delta: string) => void;
+  /**
+   * Presentation sink for human-readable turn narration: context loading,
+   * workspace/model/route lines, turn text, budget tally, and the receipt.
+   * An in-process caller (the verify-workbench-events check) injects console
+   * output; the UDS server leaves it unset so client presentation never
+   * renders on the server console.
+   * Default: silent — the runtime core does not narrate.
+   */
+  log?: (...parts: unknown[]) => void;
+}
+
+/** A turn ticket's cancellation window, as the runtime sees it. */
+export interface CancellationWindow {
+  /** The runtime has begun finalizing; later cancel requests are declined. */
+  closeCancellation(): void;
+}
+
+/**
+ * The engine's runtime input: the plain-data request from contract/ plus the
+ * in-process hooks and ports this engine consumes. Only the request half is a
+ * contract; everything declared here stays inside the process.
+ */
+export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
+  routingOptions: WorkbenchRoutingOptions;
+  /**
+   * The approval port: every verdict this turn may need from its caller.
+   * Absent verdicts fail closed.
+   */
+  approver?: Approver;
+  abortSignal?: AbortSignal;
+  /**
+   * The cancellation window of the turn's ticket. The runtime closes it when
+   * it begins finalizing, so later cancel requests are declined. Only a turn
+   * that can be cancelled by id carries one.
+   */
+  cancellationWindow?: CancellationWindow;
+  /**
+   * Earlier turns in the session as real conversation messages, assembled by
+   * the caller (e.g. from session_start/model_response events). Seeded into the
+   * agent loop ahead of the current user message so resumed conversations carry
+   * their history as structured user/assistant turns — not a flattened string.
+   * Companion turn mode only; ignored for one-shot ask/next-work modes.
+   */
+  conversationMessages?: WorkbenchMessage[];
+  /** The frame port: the turn's text deltas, runtime events and narration. */
+  frames?: FrameSink;
   /** Boot-discovered external MCP commands; filtered again by turn clearance. */
   externalMcpCommands?: readonly CommandDefinition[];
   /**
@@ -174,19 +211,6 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   sessionLimitUsd?: number;
   perCallLimitUsd?: number;
   dailyLimitUsd?: number;
-  /**
-   * Test seam for the events-table spend rollup that seeds the session/daily
-   * envelopes; the default reads the store's spend rollup (fetchSpendBaselines).
-   */
-  fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
-  /**
-   * Context-overflow recovery hook (the compressor seam). When a provider
-   * call length-stops and classifies as context overflow, the loop consults
-   * this before failing: a returned plan buys exactly one retry with the
-   * plan's transcript; absent/null — or a retry that still overflows — fails
-   * the turn with ContextWindowOverflowError. Never loops.
-   */
-  recoverContextOverflow?: ContextOverflowRecoverer;
 }
 
 export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
@@ -244,4 +268,17 @@ export interface WorkbenchRuntimeServices {
   env?: Env;
   /** Provider HTTP transport; the platform `fetch` when absent. */
   http?: HttpTransport;
+  /**
+   * Test seam for the events-table spend rollup that seeds the session/daily
+   * envelopes; the default reads the store's spend rollup (fetchSpendBaselines).
+   */
+  fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
+  /**
+   * Context-overflow recovery hook (the compressor seam). When a provider
+   * call length-stops and classifies as context overflow, the loop consults
+   * this before failing: a returned plan buys exactly one retry with the
+   * plan's transcript; absent/null — or a retry that still overflows — fails
+   * the turn with ContextWindowOverflowError. Never loops.
+   */
+  recoverContextOverflow?: ContextOverflowRecoverer;
 }

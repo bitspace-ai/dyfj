@@ -28,7 +28,10 @@ import type {
   AcpContinuityEvidence,
   AcpSessionHandleMap,
 } from "./acp-session-map.ts";
-import type { WorkbenchMessage, WorkbenchRoutingOptions } from "./providers/mod.ts";
+import type {
+  WorkbenchMessage,
+  WorkbenchRoutingOptions,
+} from "./providers/mod.ts";
 import {
   agentPermissionEvent,
   agentResponseEvent,
@@ -70,16 +73,21 @@ import {
 export interface ExternalAgentRuntimeInput extends WorkbenchRuntimeRequest {
   runner: AcpRunnerSelection;
   routingOptions: WorkbenchRoutingOptions;
-  /** External-agent permission requests fail closed when this is absent. */
-  confirmExternalAgentPermission?: (
-    prompt: AcpPermissionPrompt,
-    signal: AbortSignal,
-  ) => Promise<AcpPermissionSelection>;
+  approver?: {
+    /** External-agent permission requests fail closed when this is absent. */
+    confirmExternalAgentPermission?: (
+      prompt: AcpPermissionPrompt,
+      signal: AbortSignal,
+    ) => Promise<AcpPermissionSelection>;
+  };
   abortSignal?: AbortSignal;
-  onCancellationClosed?: () => void;
+  /** The turn ticket's window, closed once the agent's run settles. */
+  cancellationWindow?: { closeCancellation(): void };
   conversationMessages?: WorkbenchMessage[];
-  onTextDelta?: (delta: string) => void;
-  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
+  frames?: {
+    onTextDelta?: (delta: string) => void;
+    onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
+  };
 }
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
@@ -1089,7 +1097,7 @@ export function verifiedRouteFacts(
 }
 
 async function emitRuntimeEvent(
-  handler: ExternalAgentRuntimeInput["onRuntimeEvent"],
+  handler: NonNullable<ExternalAgentRuntimeInput["frames"]>["onRuntimeEvent"],
   event: WorkbenchRuntimeEvent,
 ): Promise<void> {
   if (handler === undefined) return;
@@ -1125,7 +1133,7 @@ export async function runExternalAgentWorkbenchRuntime(
     if (cancellationClosed) return;
     cancellationClosed = true;
     try {
-      input.onCancellationClosed?.();
+      input.cancellationWindow?.closeCancellation();
     } catch {
       // Cancellation registration cleanup is non-authoritative.
     }
@@ -1227,13 +1235,13 @@ export async function runExternalAgentWorkbenchRuntime(
   };
 
   try {
-    await emitRuntimeEvent(input.onRuntimeEvent, {
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "sessionStart",
       sessionId,
       traceId,
       mode: input.mode,
     });
-    await emitRuntimeEvent(input.onRuntimeEvent, {
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "inputReceived",
       sessionId,
       promptLength: input.prompt.length,
@@ -1270,7 +1278,7 @@ export async function runExternalAgentWorkbenchRuntime(
     }
 
     const onProgress = (progress: AcpProgressUpdate) =>
-      emitRuntimeEvent(input.onRuntimeEvent, {
+      emitRuntimeEvent(input.frames?.onRuntimeEvent, {
         type: "agentProgress",
         sessionId,
         kind: progress.kind,
@@ -1385,9 +1393,9 @@ export async function runExternalAgentWorkbenchRuntime(
           );
         },
         abortSignal: input.abortSignal,
-        onTextDelta: input.onTextDelta,
+        onTextDelta: input.frames?.onTextDelta,
         onProgress,
-        confirmPermission: input.confirmExternalAgentPermission,
+        confirmPermission: input.approver?.confirmExternalAgentPermission,
         onPermissionVerdict: writePermissionVerdict,
         onRouteVerified,
       })
@@ -1395,9 +1403,9 @@ export async function runExternalAgentWorkbenchRuntime(
         profile,
         prompt: directPrompt,
         abortSignal: input.abortSignal,
-        onTextDelta: input.onTextDelta,
+        onTextDelta: input.frames?.onTextDelta,
         onProgress,
-        confirmPermission: input.confirmExternalAgentPermission,
+        confirmPermission: input.approver?.confirmExternalAgentPermission,
         onPermissionVerdict: writePermissionVerdict,
         onRouteVerified,
       });
@@ -1557,7 +1565,7 @@ export async function runExternalAgentWorkbenchRuntime(
       });
     }
     await emitRuntimeEvent(
-      input.onRuntimeEvent,
+      input.frames?.onRuntimeEvent,
       result.stopReason === "aborted"
         ? {
           type: "turnAborted",
@@ -1727,7 +1735,7 @@ export async function runExternalAgentWorkbenchRuntime(
         console.warn("Failed session projection update skipped");
       }
     }
-    await emitRuntimeEvent(input.onRuntimeEvent, {
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "turnFailed",
       sessionId,
       traceId,

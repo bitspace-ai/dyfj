@@ -26,7 +26,10 @@ import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transpo
 import { LENGTH_CONTINUATION_NUDGE } from "../context/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
-import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
+import type {
+  WorkbenchRuntimeInput,
+  WorkbenchRuntimeServices,
+} from "./runtime-types.ts";
 
 /** A reply that stops at the output limit. */
 function lengthReply(
@@ -50,10 +53,16 @@ interface LengthRun {
 async function lengthTurn(
   exchanges: ScriptedExchange[],
   input: Partial<WorkbenchRuntimeInput> = {},
-  options: { models?: ModelSeed[]; env?: Record<string, string> } = {},
+  options: {
+    models?: ModelSeed[];
+    env?: Record<string, string>;
+    recoverContextOverflow?: WorkbenchRuntimeServices["recoverContextOverflow"];
+  } = {},
 ): Promise<LengthRun> {
   await using root = await tempWorkspace();
-  const run = engineServices(exchanges, options);
+  const { recoverContextOverflow, ...portOptions } = options;
+  const run = engineServices(exchanges, portOptions);
+  run.services.recoverContextOverflow = recoverContextOverflow;
   const frames: WorkbenchRuntimeEvent[] = [];
   let error: unknown = null;
   let text: string | undefined;
@@ -62,8 +71,11 @@ async function lengthTurn(
       prompt: "write a long report",
       rootOverride: root.root,
       defaultCompanionModel: (options.models?.[0] ?? LOCAL_MODEL).slug,
-      onRuntimeEvent: (event) => void frames.push(event),
       ...input,
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(event),
+        ...input.frames,
+      },
     });
     text = result.text;
   } catch (err) {
@@ -155,7 +167,9 @@ Deno.test("a retry the budget envelope refuses is skipped and the truncated turn
     // The first call's recorded $0.03 exceeds the $0.02 session envelope, so
     // the retry's pre-call gate fails closed (no ceiling handler).
     defaultSessionBudgetUsd: 0.02,
-    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    approver: {
+      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    },
   }, { models: [PENNY_OUTPUT] });
   assertEquals(run.transport.requests.length, 1);
   assertEquals(text, "truncated answer");
@@ -179,7 +193,9 @@ Deno.test("a runaway-anomaly halt on the retry fails the turn — never downgrad
   ], {
     defaultPerCallBudgetUsd: 0.01,
     anomalyTurnMultiple: 2,
-    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    approver: {
+      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    },
   }, { models: [PENNY_OUTPUT] });
   assert(error instanceof Error);
   assertEquals(run.transport.requests.length, 1);
@@ -362,9 +378,10 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
       } as never),
       chatReply({ content: "recovered answer" }),
     ],
-    { prompt: "one more question", recoverContextOverflow },
+    { prompt: "one more question" },
     {
       models: [SMALL_WINDOW],
+      recoverContextOverflow,
     },
   );
   assertEquals(text, "recovered answer");
@@ -405,9 +422,13 @@ Deno.test("the overflow-recovery retry announces the supersede before any retry 
     },
   ], {
     prompt: "one more question",
+    frames: {
+      onRuntimeEvent: (event) => void trail.push(event.type),
+    },
+  }, {
+    models: [SMALL_WINDOW],
     recoverContextOverflow: () => Promise.resolve({ messages: COMPRESSED }),
-    onRuntimeEvent: (event) => void trail.push(event.type),
-  }, { models: [SMALL_WINDOW] });
+  });
   assertEquals(text, "recovered answer");
   const supersedeAt = trail.indexOf("supersedingRetryStarted");
   assert(supersedeAt > trail.indexOf("lengthStopDetected"));
@@ -425,14 +446,18 @@ Deno.test("a failed supersede delivery aborts the retry instead of streaming an 
   const trail: string[] = [];
   const { run, error } = await lengthTurn([OVERFLOW], {
     prompt: "one more question",
-    recoverContextOverflow: () => Promise.resolve({ messages: COMPRESSED }),
-    onRuntimeEvent: (event) => {
-      if (event.type === "supersedingRetryStarted") {
-        throw new Error("event channel closed");
-      }
-      trail.push(event.type);
+    frames: {
+      onRuntimeEvent: (event) => {
+        if (event.type === "supersedingRetryStarted") {
+          throw new Error("event channel closed");
+        }
+        trail.push(event.type);
+      },
     },
-  }, { models: [SMALL_WINDOW] });
+  }, {
+    models: [SMALL_WINDOW],
+    recoverContextOverflow: () => Promise.resolve({ messages: COMPRESSED }),
+  });
   assert(error instanceof Error);
   assertEquals(error.message, "event channel closed");
   assertEquals(run.transport.requests.length, 1);
@@ -441,10 +466,12 @@ Deno.test("a failed supersede delivery aborts the retry instead of streaming an 
 Deno.test("a recovery hook that throws closes the recovery trail before the turn fails", async () => {
   const { frames, error } = await lengthTurn([OVERFLOW], {
     prompt: "one more question",
+  }, {
+    models: [SMALL_WINDOW],
     recoverContextOverflow: () => {
       throw new Error("compressor exploded");
     },
-  }, { models: [SMALL_WINDOW] });
+  });
   assert(error instanceof Error);
   assertEquals(error.message, "compressor exploded");
   assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
@@ -460,8 +487,7 @@ Deno.test("a recovery-plan retry that still overflows fails structured — the h
   );
   const { run, frames, error } = await lengthTurn([OVERFLOW, OVERFLOW], {
     prompt: "one more question",
-    recoverContextOverflow,
-  }, { models: [SMALL_WINDOW] });
+  }, { models: [SMALL_WINDOW], recoverContextOverflow });
   assert(error instanceof Error);
   assert(error.message.includes("Context window overflow"));
   assertEquals(run.transport.requests.length, 2);
@@ -486,9 +512,10 @@ Deno.test("compression resolves the overflow but the fresh answer hits its outpu
         [{ id: "c1", name: "list_files", arguments: {} }],
       ),
     ],
-    { prompt: "one more question", recoverContextOverflow },
+    { prompt: "one more question" },
     {
       models: [{ ...SMALL_WINDOW, max_output_tokens: 200 }],
+      recoverContextOverflow,
     },
   );
   // The retry is reclassified against its OWN usage (output 200 ≥ cap 200 →

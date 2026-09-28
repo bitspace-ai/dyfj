@@ -238,7 +238,7 @@ async function buildAskContext(
       prompt: session.prompt,
     });
   }
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "contextBuilt",
     sessionId: session.sessionId,
     sourceCount: repoContext.sources.length,
@@ -302,7 +302,7 @@ async function buildCompanionContext(
   // that backs the summary marker — even when no summary is present this
   // turn, so a later compression is always covered.
   state.systemPrompt += `\n\n${SUMMARY_TRUST_POLICY}`;
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "contextBuilt",
     sessionId: session.sessionId,
     sourceCount: coreMemories.length + memoryIndex.length +
@@ -328,8 +328,8 @@ function memoryRecall(
     : null;
   if (!recallConfig) return undefined;
   return buildMemorySearch(recallConfig, async (diagnostic) => {
-    if (input.onRuntimeEvent !== undefined) {
-      await emitRuntimeEvent(input.onRuntimeEvent, {
+    if (input.frames?.onRuntimeEvent !== undefined) {
+      await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
         type: "memoryRecallNegotiated",
         sessionId: session.sessionId,
         era: diagnostic.era,

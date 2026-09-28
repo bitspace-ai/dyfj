@@ -60,8 +60,11 @@ async function gatedTurn(
       prompt: "explore",
       rootOverride: root.root,
       defaultCompanionModel: model.slug,
-      onRuntimeEvent: (event) => void frames.push(event),
       ...input,
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(event),
+        ...input.frames,
+      },
     });
     return { run, frames, result, error: null };
   } catch (error) {
@@ -109,8 +112,10 @@ Deno.test("re-confirms budget ceiling when a later same-size call crosses the se
     {
       defaultPerCallBudgetUsd: 0.00001,
       defaultSessionBudgetUsd: 0.00003,
-      confirmPaidEscalation: APPROVE_PAID,
-      confirmBudgetCeiling,
+      approver: {
+        confirmPaidEscalation: APPROVE_PAID,
+        confirmBudgetCeiling,
+      },
     },
   );
   assertSpyCalls(confirmBudgetCeiling, 2);
@@ -131,7 +136,9 @@ Deno.test("rejects an over-budget follow-up call before invoking the provider (t
     PER_TOKEN,
     {
       defaultSessionBudgetUsd: 0.02,
-      confirmPaidEscalation: APPROVE_PAID,
+      approver: {
+        confirmPaidEscalation: APPROVE_PAID,
+      },
     },
   );
   assertEquals(result?.text, "");
@@ -150,7 +157,7 @@ const ANOMALY = {
   defaultPerCallBudgetUsd: 0.10,
   anomalyTurnMultiple: 3,
   anomalyScopeMultiple: 2,
-  confirmPaidEscalation: APPROVE_PAID,
+  approver: { confirmPaidEscalation: APPROVE_PAID },
 };
 const TWELVE_CENTS = { prompt_tokens: 10, completion_tokens: 12 };
 
@@ -187,7 +194,10 @@ Deno.test("an approval admits one call only — the next anomalous call prompts 
       chatReply({ content: "done", usage: TWELVE_CENTS }), // $0.48 → prompt 2
     ],
     PER_TOKEN,
-    { ...ANOMALY, confirmRunawayAnomaly },
+    {
+      ...ANOMALY,
+      approver: { ...ANOMALY.approver, confirmRunawayAnomaly },
+    },
   );
   assertEquals(result?.text, "done");
   assertEquals(run.transport.requests.length, 5);

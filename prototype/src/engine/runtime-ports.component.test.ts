@@ -69,7 +69,9 @@ async function turnWith(env: Record<string, string>) {
       prompt: "hello",
       routingOptions: {},
       defaultCompanionModel: HOSTED_FREE_MODEL.slug,
-      log: () => {},
+      frames: {
+        log: () => {},
+      },
     }, {
       store,
       budgetScopes: new SessionOwners(new CeilingConfirmationStore(clock)),

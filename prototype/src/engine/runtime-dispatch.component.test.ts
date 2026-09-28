@@ -184,7 +184,9 @@ Deno.test("allows an explicit Codex ChatGPT runner request when paid escalation 
   const result = await dispatch({
     runner: { kind: "acp", profile: "codex-chatgpt" },
     trustWorkspaceInstructions: true,
-    confirmPaidEscalation: APPROVE,
+    approver: {
+      confirmPaidEscalation: APPROVE,
+    },
   }, { runner });
   assertEquals(runner.calls.length, 1);
   assertObjectMatch(runner.calls[0], {
@@ -213,7 +215,9 @@ Deno.test("allows a tier-2 ACP request when paid escalation is confirmed", async
     prompt: "test approved paid",
     routingOptions: { modelId: CODEX_TERRA.slug },
     trustWorkspaceInstructions: true,
-    confirmPaidEscalation: APPROVE,
+    approver: {
+      confirmPaidEscalation: APPROVE,
+    },
   }, { models: [CODEX_TERRA], runner });
   assertEquals(runner.calls.length, 1);
   assertObjectMatch(runner.calls[0], {

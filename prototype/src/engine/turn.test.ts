@@ -237,14 +237,14 @@ Deno.test("the ticket's signal reaches the runtime, and only an identified turn 
   );
 
   assertStrictEquals(inputs[0].abortSignal, identified.signal);
-  inputs[0].onCancellationClosed?.();
+  inputs[0].cancellationWindow?.closeCancellation();
   assertStrictEquals(identified.cancel(), false);
 
   assertStrictEquals(inputs[1].abortSignal, anonymous.signal);
-  assertStrictEquals(inputs[1].onCancellationClosed, undefined);
+  assertStrictEquals(inputs[1].cancellationWindow, undefined);
 
   assertStrictEquals(inputs[2].abortSignal, undefined);
-  assertStrictEquals(inputs[2].onCancellationClosed, undefined);
+  assertStrictEquals(inputs[2].cancellationWindow, undefined);
 });
 
 Deno.test("a turn cancelled while queued behind its session's lock starts already aborted", async () => {
@@ -319,7 +319,7 @@ Deno.test("executeTurn binds boundary config and the transport's paid verdict", 
   assertEquals(captured?.maxToolSteps, 7);
   // Workspace trust is a loopback-only standing decision.
   assertStrictEquals(captured?.trustWorkspaceInstructions, false);
-  assertEquals(await captured?.confirmPaidEscalation?.("banner"), {
+  assertEquals(await captured?.approver?.confirmPaidEscalation?.("banner"), {
     decision: "deny",
     reason: "paid inference is not available to remote callers",
   });

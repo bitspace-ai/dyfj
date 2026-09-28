@@ -49,7 +49,9 @@ Deno.test("recall negotiation reaches the client as a structured frame", async (
       mode: "turn",
       prompt: "exercise recall",
       routingOptions: {},
-      onRuntimeEvent: (event) => void frames.push(event),
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(event),
+      },
     };
     const session = await openSession(input, fakes.ports);
     const state = newTurnState(session, createCommandRegistry());
