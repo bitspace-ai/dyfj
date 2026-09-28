@@ -329,9 +329,12 @@ Non-loopback callers cannot inherit or assert paid approval and fail closed.
 Each hosted provider reads its key from the process environment and fails closed
 when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`),
 OpenRouter (`OPENROUTER_API_KEY`), Google Gemini (`GEMINI_API_KEY`), and xAI
-(`XAI_API_KEY`). The **pointer** mechanism keeps secret values off the config
-file: for a declared secret env var you write a `[secrets.pointers]` _pointer_
-(an `op://` ref, etc.), never the value, and it is resolved at process start.
+(`XAI_API_KEY`). Each key is sent only to its provider's own https host, with
+redirects refused; a catalog row that pairs one of these providers with any
+other base URL fails closed before a request is made. The **pointer** mechanism
+keeps secret values off the config file: for a declared secret env var you write
+a `[secrets.pointers]` _pointer_ (an `op://` ref, etc.), never the value, and it
+is resolved at process start.
 (The separate `[secrets.env]` map, below, is a plaintext surface for
 _non-secret_ resolver env — do not put a credential there.)
 
@@ -1650,6 +1653,12 @@ Document revisions only. Code and behavior changes are tracked in
   resolution and the observed provider call into `prototype/src/engine/`: the
   swallowed model-registry load failure in route resolution, and the unparsed
   tool-call markup counts missing from compression `provider_call` rows.
+- 2026-09-28 - Hosted-provider keys: §5 states that each key is sent only to
+  its provider's own https host with redirects refused.
+  `specs/recipes/add-provider.md` documents the Anthropic and Gemini host and
+  path contracts and the rule to encode catalog values placed in a request
+  URL, and it and `specs/03-testing.md` §5 add the off-host base-URL and
+  redirect-response cases to the provider conformance kit.
 - 2026-09-28 - `specs/01-architecture.md` §5.6 adds the `DnsResolver` port and
   `specs/03-testing.md` §3 its `ScriptedDnsResolver` fake and conformance
   suite. The web tools section now states that `web_fetch` refuses a target

@@ -24,7 +24,7 @@ export function isAllowedLocalProviderBaseUrl(baseUrl: string): boolean {
 /**
  * Whether a hosted base URL is https — and, when the caller pins an expected
  * host and optional path allowlist, exactly that host on the default port and
- * an exact allowed path. The pin is what keeps a bearer key from traveling
+ * an exact allowed path. The pin is what keeps a credential from traveling
  * to a different (still-https) endpoint named by catalog data; `URL`
  * normalizes an explicit `:443` to an empty port, so the port check rejects
  * only genuinely non-default ports.
@@ -32,7 +32,7 @@ export function isAllowedLocalProviderBaseUrl(baseUrl: string): boolean {
 export function isAllowedHostedProviderBaseUrl(
   baseUrl: string,
   expectedHost?: string,
-  allowedPaths?: string[],
+  allowedPaths?: readonly string[],
 ): boolean {
   let parsed: URL;
   try {

@@ -19,7 +19,19 @@ import { normaliseGeminiStopReason } from "./stop-reason.ts";
 import { readGeminiJson, readGeminiStream } from "./stream.ts";
 import { geminiUsage } from "./usage.ts";
 
-const GEMINI_API_KEY_ENV_VAR = "GEMINI_API_KEY";
+/**
+ * The env var the Gemini key is read from, and the one https host and base
+ * paths that key may be sent to: the same key-to-host contract the hosted
+ * OpenAI-compatible providers declare in `openAIHostedProviderContracts`, so a
+ * catalog row cannot pair the key with any other endpoint. The host and paths
+ * are the canonical endpoint `getModelAccessModality` classifies as
+ * frontier-hosted.
+ */
+export const geminiHostedContract = {
+  keyEnvVar: "GEMINI_API_KEY",
+  host: "generativelanguage.googleapis.com",
+  paths: ["", "/"],
+} as const;
 
 export const geminiAdapter: ProviderAdapter = {
   api: "gemini",
@@ -29,18 +41,27 @@ export const geminiAdapter: ProviderAdapter = {
   supportsTranscriptRetry: false,
   defaultOutputTokens: () => GEMINI_DEFAULT_MAX_TOKENS,
   validateBaseUrl(model): BaseUrlCheck {
-    return isAllowedHostedProviderBaseUrl(model.baseUrl) ? { ok: true } : {
-      ok: false,
-      error: new WorkbenchHostedProviderBaseUrlError(model.slug, model.baseUrl),
-    };
+    return isAllowedHostedProviderBaseUrl(
+        model.baseUrl,
+        geminiHostedContract.host,
+        geminiHostedContract.paths,
+      )
+      ? { ok: true }
+      : {
+        ok: false,
+        error: new WorkbenchHostedProviderBaseUrlError(
+          model.slug,
+          model.baseUrl,
+        ),
+      };
   },
   async run(request, io) {
     const { model, selection } = request;
-    const apiKey = io.env.get(GEMINI_API_KEY_ENV_VAR);
+    const apiKey = io.env.get(geminiHostedContract.keyEnvVar);
     if (!apiKey) {
       throw new HostedProviderCredentialMissingError(
         model.slug,
-        GEMINI_API_KEY_ENV_VAR,
+        geminiHostedContract.keyEnvVar,
       );
     }
     if (io.signal?.aborted) {
@@ -50,10 +71,13 @@ export const geminiAdapter: ProviderAdapter = {
     const now = () => io.clock.now();
     const onFrame = io.onFrame;
     const stream = onFrame !== undefined;
-    const base = model.baseUrl.replace(/\/$/, "");
+    const base = model.baseUrl.replace(/\/+$/, "");
+    // The slug is one path segment: encoded, it cannot add path segments, a
+    // query or a fragment to the request URL.
+    const modelPath = `${base}/v1beta/models/${encodeURIComponent(model.slug)}`;
     const endpoint = stream
-      ? `${base}/v1beta/models/${model.slug}:streamGenerateContent?alt=sse`
-      : `${base}/v1beta/models/${model.slug}:generateContent`;
+      ? `${modelPath}:streamGenerateContent?alt=sse`
+      : `${modelPath}:generateContent`;
     const requestStarted = now();
     const response = await fetchWithHeaderTimeout(
       io.fetch,
@@ -61,6 +85,9 @@ export const geminiAdapter: ProviderAdapter = {
       {
         method: "POST",
         signal: io.signal,
+        // Refuse redirects, as every adapter does: the request goes only to
+        // the validated base URL.
+        redirect: "error",
         headers: {
           "content-type": "application/json",
           "x-goog-api-key": apiKey,

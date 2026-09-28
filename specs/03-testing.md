@@ -167,6 +167,9 @@ internal move.
     - header deadline
     - abort
     - base-URL rejection
+    - off-host https base-URL rejection
+    - redirect response
+  - Every request an adapter sends refuses redirects.
   - The kit asserts the adapter's `ProviderTurnResult` and emitted frames.
   - A new adapter is mergeable only when it passes the kit.
 - **Tool**
