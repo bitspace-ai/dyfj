@@ -1241,6 +1241,14 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **A new session's first turn is serialized with later turns that name it**:
+  a turn that started a new session previously ran outside that session's turn
+  lock, because its session id was generated only once the turn was running. A
+  second turn naming that id, sent from another connection while the first was
+  still running, could run alongside it: its resume read could see a partially
+  written first turn, and both turns appended to the same session. The id is
+  now allocated when the turn is admitted, so later turns naming it wait for
+  it.
 - **Anthropic and Gemini credentials pinned to their providers' hosts**: the
   Anthropic and Gemini adapters previously accepted any https base URL from the
   model catalog and followed redirects, so a catalog row naming another host, or
