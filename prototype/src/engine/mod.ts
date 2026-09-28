@@ -50,7 +50,6 @@ export {
 export {
   AGENTS_INSTRUCTIONS_TRUST_PREAMBLE,
   buildWorkspaceGrounding,
-  MAX_TOOL_STEPS,
   runWorkbenchRuntime,
   toolStepToMessages,
 } from "./native-runner.ts";
@@ -77,7 +76,12 @@ export type {
   WorkbenchRuntimeResult,
   WorkbenchRuntimeServices,
 } from "./runtime-types.ts";
-export type { NativeTurnPorts } from "./turn-state.ts";
+export { MAX_TOOL_STEPS, openSession } from "./open-session.ts";
+export {
+  type NativeTurnPorts,
+  TurnAudit,
+  type TurnSession,
+} from "./turn-state.ts";
 export { SessionOwners, TurnTicket } from "./session-owner.ts";
 export {
   engineConfigToTurnDeps,
