@@ -9,7 +9,7 @@ import {
   type PaidEscalationVerdict,
   SESSION_ID_SHAPE,
 } from "../contract/mod.ts";
-import type { WorkbenchRuntimeInput } from "./native-runner.ts";
+import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
 
 export interface TurnRequestBody {
   prompt?: unknown;

@@ -49,21 +49,35 @@ export {
 } from "./route.ts";
 export {
   AGENTS_INSTRUCTIONS_TRUST_PREAMBLE,
-  buildBudgetTallyLine,
-  buildNextWorkBrief,
-  buildWorkbenchReceipt,
   buildWorkspaceGrounding,
-  type ExternalAgentRunner,
   MAX_TOOL_STEPS,
-  type NativeWorkbenchRuntimeResult,
   runWorkbenchRuntime,
-  shouldPrintBudgetTally,
   toolStepToMessages,
-  validateNextWorkJson,
-  type WorkbenchRuntimeInput,
-  type WorkbenchRuntimeResult,
-  type WorkbenchRuntimeServices,
 } from "./native-runner.ts";
+export {
+  buildNextWorkBrief,
+  type NextWorkBriefInput,
+  type NextWorkResult,
+  type NextWorkValidationResult,
+  validateNextWorkJson,
+} from "./next-work.ts";
+export {
+  type BudgetTallyInput,
+  buildBudgetTallyLine,
+  buildWorkbenchReceipt,
+  formatContextBudgetLine,
+  formatTimingLine,
+  shouldPrintBudgetTally,
+  type WorkbenchReceiptInput,
+} from "./receipt.ts";
+export type {
+  ExternalAgentRunner,
+  NativeWorkbenchRuntimeResult,
+  WorkbenchRuntimeInput,
+  WorkbenchRuntimeResult,
+  WorkbenchRuntimeServices,
+} from "./runtime-types.ts";
+export type { NativeTurnPorts } from "./turn-state.ts";
 export { SessionOwners, TurnTicket } from "./session-owner.ts";
 export {
   engineConfigToTurnDeps,
