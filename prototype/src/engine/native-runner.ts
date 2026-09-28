@@ -18,7 +18,6 @@ import {
   updateWorkbenchSession,
 } from "../store/mod.ts";
 import {
-  estimateTextTokens,
   isLocalWorkbenchModel,
   modelRequestedOutputCap,
   modelStreamsToolCalls,
@@ -34,8 +33,6 @@ import {
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
-  createRunawayAnomalyGate,
-  createTurnBudgetCeilingGate,
 } from "../budget/mod.ts";
 import {
   buildContinuationMessages,
@@ -54,7 +51,6 @@ import {
   VERBATIM_TAIL_TURNS,
 } from "../context/mod.ts";
 import { createCommandRegistry, invokeCommandWithEvent } from "../tools/mod.ts";
-import { writeModelSelectedEvent } from "../utils.ts";
 import {
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
@@ -67,12 +63,7 @@ import {
   type ObservedCallContext,
   observedProviderCall,
 } from "./observed-call.ts";
-import {
-  confirmPaidRoute,
-  resolveRoute,
-  routeReasonForMode,
-  selectModelRoute,
-} from "./route.ts";
+import { resolveRoute, routeReasonForMode } from "./route.ts";
 import type {
   ExternalAgentRunner,
   NativeWorkbenchRuntimeResult,
@@ -100,6 +91,7 @@ import {
   type NativeTurnPorts,
   newTurnState,
 } from "./turn-state.ts";
+import { budgetGate } from "./budget-gate.ts";
 
 function forcedConclusionSystemPrompt(
   baseSystemPrompt: string,
@@ -208,7 +200,7 @@ export async function runWorkbenchRuntime(
 
   return await runNativeWorkbenchRuntime(runtimeInput, {
     store: services.store,
-    ceilingConfirmations: services.ceilingConfirmations,
+    budgetScopes: services.budgetScopes,
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,
     providerIo: {
@@ -286,20 +278,6 @@ async function runNativeWorkbenchRuntime(
     onSkippedEventWrite: noteSkippedEventWrite,
   };
 
-  let selectedForReceipt:
-    | {
-      displayName: string;
-      slug: string;
-      tier: 0 | 1 | 2;
-      provider?: string;
-      api?: string;
-    }
-    | null = null;
-  let selectedForEvents:
-    | { slug: string; provider: string; api: string }
-    | null = null;
-  let routingReason = "not_selected";
-  let estimatedCostUsd = 0;
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
   // Reasoning/thinking tokens are provider-reported when available. Streaming
@@ -329,93 +307,8 @@ async function runNativeWorkbenchRuntime(
     const contextSourceLines = state.contextSourceLines;
     await recordNewSession(state, ports);
 
-    const { models, selection, routingReason: selectedRoutingReason } =
-      await selectModelRoute(store.models, {
-        mode,
-        routingOptions,
-        defaultCompanionModel,
-      });
-    const selected = selection.selected;
-    selectedForReceipt = {
-      displayName: selected.displayName,
-      slug: selected.slug,
-      tier: selected.tier,
-      provider: selected.provider,
-      api: selected.api,
-    };
-    routingReason = selectedRoutingReason;
-    selectedForEvents = {
-      slug: selected.slug,
-      provider: selected.provider,
-      api: selected.api,
-    };
-    const estimatedInputTokens = estimateTextTokens(
-      `${systemPrompt}\n${modelPrompt}`,
-    );
-    const preCall = budget.checkPreCall(
-      selected.tier,
-      selected.costInput,
-      estimatedInputTokens,
-    );
-    // Scope-persistent store: a confirmed overrun raises the envelope for its
-    // scope (session marks per session id, the daily mark per local day)
-    // instead of re-prompting next turn.
-    const budgetCeilingGate = createTurnBudgetCeilingGate(
-      runtimeInput.confirmBudgetCeiling,
-      ports.ceilingConfirmations.for(sessionId),
-    );
-    // Turn-scoped: an approval covers the spend level it was shown (the entry
-    // check and the first call's check see identical actuals); any recorded
-    // increment re-prompts, and nothing survives the turn.
-    const anomalyGate = createRunawayAnomalyGate(
-      runtimeInput.confirmRunawayAnomaly,
-    );
-
-    // Hard stop BEFORE the soft ceiling confirm: a turn entered in an
-    // anomalous state must halt first — otherwise the ceiling prompt records
-    // its scope-period confirmation before the operator ever sees the halt,
-    // and an aborted turn leaves that confirmation behind.
-    await anomalyGate.ensureAllowed(
-      budget.checkAnomaly(selected.tier, anomalyConfig),
-    );
-    await budgetCeilingGate.ensureAllowed(preCall);
-    estimatedCostUsd = preCall.estimatedCost;
-
-    await confirmPaidRoute({
-      modelName: selected.displayName,
-      modelSlug: selected.slug,
-      tier: selected.tier,
-      routingReason,
-      estimatedCostUsd: preCall.estimatedCost,
-      sessionCostSoFarUsd: preCall.sessionCostSoFar,
-      sessionLimitUsd: preCall.sessionLimitUsd,
-      perCallLimitUsd: preCall.perCallLimitUsd,
-    }, runtimeInput.confirmPaidEscalation);
-
-    await writeMaybe(
-      () =>
-        writeModelSelectedEvent(store.journal, {
-          selected: selected.slug,
-          considered: selection.considered,
-          reason: routingReason,
-          sessionId,
-          traceId,
-          provider: selected.provider,
-          api: selected.api,
-          durationMs: ports.clock.now() - sessionStart,
-          parentSpanId: turnRootSpanId,
-          authnFields: authnEventFields,
-        }),
-      BEST_EFFORT,
-      noteSkippedEventWrite,
-    );
-    await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
-      type: "modelSelected",
-      sessionId,
-      modelSlug: selected.slug,
-      tier: selected.tier,
-      reason: routingReason,
-    });
+    const route = await budgetGate(state, runtimeInput, ports);
+    const { models, selected, budgetCeilingGate, anomalyGate } = route;
 
     // Compress elder conversation turns into a named-section summary. Routes
     // only to an on-machine local provider on a loopback endpoint (the session
@@ -661,7 +554,7 @@ async function runNativeWorkbenchRuntime(
     };
 
     log(`Model:  ${selected.displayName} (tier ${selected.tier})`);
-    log(`Route:  ${routingReason}\n`);
+    log(`Route:  ${state.routingReason}\n`);
     const runObservedTurn = async (
       params: Parameters<typeof runWorkbenchTurn>[0],
       request: { modelSlug: string; estimatedInputCount: number },
@@ -1348,14 +1241,14 @@ async function runNativeWorkbenchRuntime(
     finalText = turn.text;
     finalStopReason = turn.stopReason;
 
-    selectedForReceipt = {
+    state.selectedForReceipt = {
       displayName: turn.model.displayName,
       slug: turn.model.slug,
       tier: turn.model.tier,
       provider: turn.model.provider,
       api: turn.model.api,
     };
-    routingReason = routeReasonForMode(
+    state.routingReason = routeReasonForMode(
       turn.selection.reason,
       turn.model.tier,
       isNextWork,
@@ -1488,11 +1381,11 @@ async function runNativeWorkbenchRuntime(
           principal_id: principalId,
           principal_type: "agent",
           action: "invoke",
-          resource: selectedForEvents?.slug ?? "workbench_model",
+          resource: state.selectedForEvents?.slug ?? "workbench_model",
           authz_basis: "policy:local-default",
-          model_id: selectedForEvents?.slug ?? null,
-          provider: selectedForEvents?.provider ?? null,
-          api: selectedForEvents?.api ?? null,
+          model_id: state.selectedForEvents?.slug ?? null,
+          provider: state.selectedForEvents?.provider ?? null,
+          api: state.selectedForEvents?.api ?? null,
           tokens_input: turnInputTokens,
           tokens_output: turnOutputTokens,
           tokens_cache_read: cacheReadTokens,
@@ -1533,11 +1426,11 @@ async function runNativeWorkbenchRuntime(
             principal_id: principalId,
             principal_type: "agent",
             action: "invoke",
-            resource: selectedForEvents?.slug ?? "workbench_model",
+            resource: state.selectedForEvents?.slug ?? "workbench_model",
             authz_basis: "policy:local-default",
-            model_id: selectedForEvents?.slug ?? null,
-            provider: selectedForEvents?.provider ?? null,
-            api: selectedForEvents?.api ?? null,
+            model_id: state.selectedForEvents?.slug ?? null,
+            provider: state.selectedForEvents?.provider ?? null,
+            api: state.selectedForEvents?.api ?? null,
             ...authnEventFields,
             // summarizeError, not raw .message: a confirmed DomainError still
             // only gets the shared 500-byte cap, never an unbounded pass-through.
@@ -1561,11 +1454,11 @@ async function runNativeWorkbenchRuntime(
             principal_id: principalId,
             principal_type: "agent",
             action: "invoke",
-            resource: selectedForEvents?.slug ?? "workbench_context",
+            resource: state.selectedForEvents?.slug ?? "workbench_context",
             authz_basis: "policy:local-default",
-            model_id: selectedForEvents?.slug ?? null,
-            provider: selectedForEvents?.provider ?? null,
-            api: selectedForEvents?.api ?? null,
+            model_id: state.selectedForEvents?.slug ?? null,
+            provider: state.selectedForEvents?.provider ?? null,
+            api: state.selectedForEvents?.api ?? null,
             ...authnEventFields,
             content: summarizeError(err),
             stop_reason: "error",
@@ -1593,11 +1486,11 @@ async function runNativeWorkbenchRuntime(
             principal_id: principalId,
             principal_type: "agent",
             action: "invoke",
-            resource: selectedForEvents?.slug ?? "workbench_model",
+            resource: state.selectedForEvents?.slug ?? "workbench_model",
             authz_basis: "policy:local-default",
-            model_id: selectedForEvents?.slug ?? null,
-            provider: selectedForEvents?.provider ?? null,
-            api: selectedForEvents?.api ?? null,
+            model_id: state.selectedForEvents?.slug ?? null,
+            provider: state.selectedForEvents?.provider ?? null,
+            api: state.selectedForEvents?.api ?? null,
             ...authnEventFields,
             content: summarizeError(err),
             stop_reason: "length",
@@ -1629,11 +1522,11 @@ async function runNativeWorkbenchRuntime(
             principal_id: principalId,
             principal_type: "agent",
             action: "invoke",
-            resource: selectedForEvents?.slug ?? "workbench_model",
+            resource: state.selectedForEvents?.slug ?? "workbench_model",
             authz_basis: "policy:local-default",
-            model_id: selectedForEvents?.slug ?? null,
-            provider: selectedForEvents?.provider ?? null,
-            api: selectedForEvents?.api ?? null,
+            model_id: state.selectedForEvents?.slug ?? null,
+            provider: state.selectedForEvents?.provider ?? null,
+            api: state.selectedForEvents?.api ?? null,
             ...authnEventFields,
             // Sanitized, not the raw message: this branch also catches a failed
             // INTEGRITY write (e.g. model_response), whose driver error can
@@ -1697,12 +1590,12 @@ async function runNativeWorkbenchRuntime(
     const receipt = buildWorkbenchReceipt({
       sessionId,
       traceId,
-      modelName: selectedForReceipt?.displayName ?? "none",
-      modelSlug: selectedForReceipt?.slug ?? "none",
-      provider: selectedForReceipt?.provider,
-      api: selectedForReceipt?.api,
-      tier: selectedForReceipt?.tier ?? 0,
-      routingReason,
+      modelName: state.selectedForReceipt?.displayName ?? "none",
+      modelSlug: state.selectedForReceipt?.slug ?? "none",
+      provider: state.selectedForReceipt?.provider,
+      api: state.selectedForReceipt?.api,
+      tier: state.selectedForReceipt?.tier ?? 0,
+      routingReason: state.routingReason,
       totalCostUsd: summary.totalCostUsd,
       totalTokensInput: summary.totalTokensInput,
       totalTokensOutput: summary.totalTokensOutput,
@@ -1715,7 +1608,7 @@ async function runNativeWorkbenchRuntime(
       timings: callTimings,
       contextSources: state.contextSourceLines,
       paidInferenceUsed,
-      estimatedCostUsd,
+      estimatedCostUsd: state.estimatedCostUsd,
       workletId,
       totalElapsedMs: ports.clock.now() - sessionStart,
       validation,
@@ -1766,17 +1659,17 @@ async function runNativeWorkbenchRuntime(
       text: finalText,
       receipt,
       model: {
-        displayName: selectedForReceipt?.displayName ?? "none",
-        slug: selectedForReceipt?.slug ?? "none",
-        provider: selectedForReceipt?.provider,
-        api: selectedForReceipt?.api,
-        tier: selectedForReceipt?.tier ?? 0,
+        displayName: state.selectedForReceipt?.displayName ?? "none",
+        slug: state.selectedForReceipt?.slug ?? "none",
+        provider: state.selectedForReceipt?.provider,
+        api: state.selectedForReceipt?.api,
+        tier: state.selectedForReceipt?.tier ?? 0,
       },
       route: {
-        reason: routingReason,
+        reason: state.routingReason,
       },
       cost: {
-        estimatedUsd: estimatedCostUsd,
+        estimatedUsd: state.estimatedCostUsd,
         totalUsd: summary.totalCostUsd,
         paidInferenceUsed,
       },

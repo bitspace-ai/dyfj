@@ -16,6 +16,7 @@ import {
   type Store,
 } from "../../src/store/mod.ts";
 import { CeilingConfirmationStore } from "../../src/budget/mod.ts";
+import { SessionOwners } from "../../src/engine/mod.ts";
 import type {
   NativeTurnPorts,
   WorkbenchRuntimeServices,
@@ -33,6 +34,23 @@ export const LOCAL_MODEL: ModelSeed = {
   max_output_tokens: 4_096,
   capabilities: ["text", "code"],
 };
+
+/**
+ * A priced model on the same loopback endpoint: tier 1, so the paid path
+ * (consent, ceilings, anomaly stops) applies. Prices are per million tokens.
+ */
+export function pricedLocalModel(
+  price: { costInput: number; costOutput: number },
+): ModelSeed {
+  return {
+    ...LOCAL_MODEL,
+    slug: "local-priced",
+    display_name: "Local Priced",
+    tier: 1,
+    cost_input: price.costInput,
+    cost_output: price.costOutput,
+  };
+}
 
 /** One curated memory that loads as content and one that loads as index. */
 export const MEMORIES: readonly MemorySeed[] = [
@@ -92,7 +110,7 @@ export function enginePorts(options: EnginePortsOptions = {}): EngineFakes {
     env,
     ports: {
       store,
-      ceilingConfirmations: new CeilingConfirmationStore(clock),
+      budgetScopes: new SessionOwners(new CeilingConfirmationStore(clock)),
       clock,
       env,
       providerIo: {},
@@ -170,7 +188,7 @@ export function engineServices(
     transport,
     services: {
       store: fakes.store,
-      ceilingConfirmations: fakes.ports.ceilingConfirmations,
+      budgetScopes: fakes.ports.budgetScopes,
       clock: fakes.clock,
       env: fakes.env,
       http: transport.fetch,

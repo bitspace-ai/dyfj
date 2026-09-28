@@ -14,11 +14,13 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
+import { assertSpyCalls, spy } from "@std/testing/mock";
 import {
   chatReply,
   type EngineRun,
   engineServices,
   patchStore,
+  pricedLocalModel,
   tempWorkspace,
 } from "../../testing/builders/engine.ts";
 import type { RecordedRequest } from "../../testing/fakes/scripted-http-transport.ts";
@@ -130,17 +132,26 @@ Deno.test("a companion turn runs open → context → route → loop → finaliz
   assertEquals(frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("principalId from the input attributes every event of the turn", async () => {
+Deno.test("principalId from the input attributes every event of the turn except model_selected", async () => {
   await using root = await tempWorkspace();
-  const run = engineServices([chatReply({ content: "ok" })]);
+  const run = engineServices([chatReply({ content: "ok" })], {
+    env: { DYFJ_PRINCIPAL_ID: "env-principal" },
+  });
   const result = await runTurn(run, {
     rootOverride: root.root,
     principalId: "custom-principal",
   });
+  const rows = await eventRows(run, result.sessionId);
   const principals = new Set(
-    (await eventRows(run, result.sessionId)).map((row) => row.principal_id),
+    rows.filter((row) => row.event_type !== "model_selected").map((row) =>
+      row.principal_id
+    ),
   );
   assertEquals(principals, new Set(["custom-principal"]));
+  // model_selected has always named the environment's principal (logged in
+  // specs/bug-log.md); the engine reads it through its env port.
+  const selected = rows.find((row) => row.event_type === "model_selected");
+  assertEquals(selected?.principal_id, "env-principal");
 });
 
 // ─── workspace binding across stages ─────────────────────────────────────────
@@ -357,4 +368,192 @@ Deno.test("[follow-up N1] native companion failure before notice composition omi
   assertStringIncludes(content, "Workbench receipt");
   assertEquals(content.includes("Tool evidence withheld:"), false);
   assertEquals(content.includes("persisted tool history notice"), false);
+});
+
+// ─── budget gate ─────────────────────────────────────────────────────────────
+
+const PRICED = pricedLocalModel({ costInput: 15, costOutput: 75 });
+
+Deno.test("declining paid inference aborts before any provider call", async () => {
+  await using root = await tempWorkspace();
+  const run = engineServices([], { models: [PRICED] });
+  await assertRejects(
+    () =>
+      runTurn(run, {
+        prompt: "explore",
+        rootOverride: root.root,
+        defaultCompanionModel: PRICED.slug,
+        conversationMessages: [{ role: "user", content: "persisted prompt" }],
+        historyOmission: GAP_OMISSION,
+        confirmPaidEscalation: () =>
+          Promise.resolve({ decision: "deny", reason: "operator declined" }),
+      }),
+    Error,
+    "Paid inference consent declined",
+  );
+  assertEquals(run.transport.requests.length, 0);
+  const rows = await run.store.sessions.list({ limit: 5 });
+  const row = await run.store.sessions.detail({
+    sessionId: rows[0].session_id,
+  });
+  assertStringIncludes(row?.content ?? "", "notice composed for this request");
+  assertEquals((row?.content ?? "").includes("notice included yes"), false);
+});
+
+Deno.test("confirms a budget ceiling overrun once per turn (preflight + per-call gate)", async () => {
+  await using root = await tempWorkspace();
+  const run = engineServices([chatReply({ content: "done" })], {
+    models: [PRICED],
+  });
+  const confirmBudgetCeiling = spy(() =>
+    Promise.resolve({ decision: "approve" as const })
+  );
+  const result = await runTurn(run, {
+    prompt: "explore",
+    rootOverride: root.root,
+    defaultCompanionModel: PRICED.slug,
+    defaultPerCallBudgetUsd: 0.00001,
+    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    confirmBudgetCeiling,
+  });
+  assertSpyCalls(confirmBudgetCeiling, 1);
+  assertEquals(run.transport.requests.length, 1);
+  assertEquals(result.text, "done");
+});
+
+Deno.test("declining a budget ceiling aborts before any provider call", async () => {
+  await using root = await tempWorkspace();
+  const run = engineServices([], { models: [PRICED] });
+  await assertRejects(
+    () =>
+      runTurn(run, {
+        prompt: "explore",
+        rootOverride: root.root,
+        defaultCompanionModel: PRICED.slug,
+        defaultPerCallBudgetUsd: 0.00001,
+        confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+        confirmBudgetCeiling: () =>
+          Promise.resolve({ decision: "deny", reason: "too much" }),
+      }),
+    Error,
+    "Budget ceiling confirmation declined",
+  );
+  assertEquals(run.transport.requests.length, 0);
+});
+
+Deno.test("cancelling a budget approval finalizes an aborted turn", async () => {
+  await using root = await tempWorkspace();
+  const run = engineServices([], { models: [PRICED] });
+  const abortController = new AbortController();
+  const frames: WorkbenchRuntimeEvent[] = [];
+  const turnId = "123e4567-e89b-42d3-a456-426614174000";
+  const result = await runTurn(run, {
+    prompt: "explore",
+    rootOverride: root.root,
+    defaultCompanionModel: PRICED.slug,
+    turnId,
+    abortSignal: abortController.signal,
+    defaultPerCallBudgetUsd: 0.00001,
+    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    confirmBudgetCeiling: () => {
+      abortController.abort();
+      throw abortController.signal.reason;
+    },
+    onRuntimeEvent: (event) => void frames.push(event),
+  });
+  assertObjectMatch(result, {
+    text: "",
+    stopReason: "aborted",
+    tokens: { input: 0, output: 0, totalCalls: 0 },
+  });
+  assertEquals(run.transport.requests.length, 0);
+  const response = (await eventRows(run, result.sessionId)).find((row) =>
+    row.event_type === "model_response"
+  );
+  assertObjectMatch(response ?? {}, {
+    content: "",
+    stop_reason: "aborted",
+    tokens_input: "0",
+    tokens_output: "0",
+  });
+  assert(
+    frames.some((frame) =>
+      frame.type === "turnAborted" && frame.turnId === turnId
+    ),
+  );
+  assertEquals(
+    frames.some((frame) => frame.type === "afterProviderResponse"),
+    false,
+  );
+  assertEquals(frames.some((frame) => frame.type === "turnFailed"), false);
+});
+
+const ANOMALY_MODEL = pricedLocalModel({
+  costInput: 0.000001,
+  costOutput: 10_000,
+});
+const SPENT_PAST_SCOPE = () =>
+  Promise.resolve({
+    sessionSpentUsd: 2.5,
+    sessionSpentTodayUsd: 2.5,
+    dailyOtherSessionsUsd: 0,
+  });
+
+Deno.test("scope hard-multiple halts even spend a ceiling confirmation already covered", async () => {
+  await using root = await tempWorkspace();
+  const run = engineServices([], { models: [ANOMALY_MODEL] });
+  const confirmBudgetCeiling = spy(() =>
+    Promise.resolve({ decision: "approve" as const })
+  );
+  await assertRejects(
+    () =>
+      runTurn(run, {
+        prompt: "explore",
+        rootOverride: root.root,
+        defaultCompanionModel: ANOMALY_MODEL.slug,
+        defaultSessionBudgetUsd: 1.0,
+        anomalyTurnMultiple: 3,
+        anomalyScopeMultiple: 2,
+        // Session lifetime spend already past 2× the $1 envelope.
+        fetchSpendBaselines: SPENT_PAST_SCOPE,
+        confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+        // The ceiling handler approving is exactly the blind spot: the
+        // anomaly halt must fire regardless, and fail closed without its own
+        // handler.
+        confirmBudgetCeiling,
+      }),
+    Error,
+    "Runaway spend anomaly",
+  );
+  assertEquals(run.transport.requests.length, 0);
+  // The hard stop fires at turn entry BEFORE the soft ceiling confirm, so
+  // the aborted turn leaves no scope-period ceiling confirmation behind.
+  assertSpyCalls(confirmBudgetCeiling, 0);
+});
+
+Deno.test("an approved entry halt does not re-prompt the identical state at the first call", async () => {
+  await using root = await tempWorkspace();
+  const run = engineServices([chatReply({
+    content: "done",
+    usage: { prompt_tokens: 10, completion_tokens: 12 },
+  })], { models: [ANOMALY_MODEL] });
+  const confirmRunawayAnomaly = spy(() =>
+    Promise.resolve({ decision: "approve" as const })
+  );
+  const result = await runTurn(run, {
+    prompt: "explore",
+    rootOverride: root.root,
+    defaultCompanionModel: ANOMALY_MODEL.slug,
+    defaultSessionBudgetUsd: 1.0,
+    anomalyTurnMultiple: 3,
+    anomalyScopeMultiple: 2,
+    fetchSpendBaselines: SPENT_PAST_SCOPE,
+    confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    confirmBudgetCeiling: () => Promise.resolve({ decision: "approve" }),
+    confirmRunawayAnomaly,
+  });
+  assertEquals(result.text, "done");
+  // Entry check and first-call check see identical actuals ($2.50): one
+  // prompt, not two — the same-state dedupe, not scope-period coverage.
+  assertSpyCalls(confirmRunawayAnomaly, 1);
 });
