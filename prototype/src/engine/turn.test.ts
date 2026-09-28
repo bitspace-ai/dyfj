@@ -12,7 +12,7 @@ import type { WorkbenchSessionEvent } from "../contract/mod.ts";
 import type {
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
-} from "./native-runner.ts";
+} from "./runtime-types.ts";
 import { SessionOwners } from "./session-owner.ts";
 import {
   executeTurn,

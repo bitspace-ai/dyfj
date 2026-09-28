@@ -5,6 +5,107 @@ import {
   systemClock,
 } from "../kernel/mod.ts";
 import {
+  type AcpRunnerSelection,
+  buildHistoryOmissionNotice,
+  DomainError,
+  type ExternalAgentWorkbenchRuntimeResult,
+  historyOmissionForDelivery,
+  type HistoryOmissionReceipt,
+  type LengthRecoveryOutcome,
+  summarizeError,
+  type UnparsedToolCallMarkupDetectedEvent,
+  type WorkbenchAuthContext,
+  workspaceRootForTransport,
+} from "../contract/mod.ts";
+import {
+  AGENT_DEFAULTS,
+  ANOMALY_DEFAULTS,
+  BUDGET_DEFAULTS,
+  processEnv,
+} from "../config/mod.ts";
+import {
+  buildWorkbenchSessionContent,
+  buildWorkbenchSessionSlug,
+  contextCompressedEvent,
+  createWorkbenchSession,
+  errorEvent,
+  type EventInsert,
+  fetchWorkbenchSessionWorkspace,
+  memoryClearanceFor,
+  modelResponseEvent,
+  sessionEndEvent,
+  sessionStartEvent,
+  toolCallEvent,
+  updateWorkbenchSession,
+} from "../store/mod.ts";
+import {
+  estimateTextTokens,
+  isLocalWorkbenchModel,
+  modelRequestedOutputCap,
+  modelStreamsToolCalls,
+  modelSupportsTranscriptRetry,
+  runWorkbenchTurn,
+  selectWorkbenchModel,
+  type WorkbenchCallTimings,
+  type WorkbenchMessage,
+  type WorkbenchModel,
+  type WorkbenchToolCall,
+  type WorkbenchTurnResult,
+} from "../providers/mod.ts";
+import {
+  BudgetCeilingDeclinedError,
+  BudgetExceededError,
+  BudgetTracker,
+  createRunawayAnomalyGate,
+  createTurnBudgetCeilingGate,
+  fetchSpendBaselines,
+} from "../budget/mod.ts";
+import {
+  type AskContextProfile,
+  buildAskSystemPrompt,
+  buildContextSourceLines,
+  buildContinuationMessages,
+  classifyLengthStop,
+  compressElderTranscript,
+  COMPRESSION_SYSTEM_PROMPT,
+  type CompressionCompletion,
+  type CompressionOutcome,
+  CONTEXT_COMPRESSION_TRIGGER_FRACTION,
+  CONTEXT_OVERFLOW_WINDOW_FRACTION,
+  type ContextOverflowRecoverer,
+  ContextWindowOverflowError,
+  countTurns,
+  isBudgetRefusal,
+  loadAgentsInstructions,
+  loadAskRepoContext,
+  loadCompanionBasePrompt,
+  type PackedContextSummary,
+  partitionForCompression,
+  SUMMARY_TRUST_POLICY,
+  VERBATIM_TAIL_TURNS,
+  type WorkspaceRootIdentity,
+} from "../context/mod.ts";
+import {
+  buildToolCatalog,
+  type CommandRegistry,
+  createCommandRegistry,
+  executeReadMemory,
+  invokeCommandWithEvent,
+  type ToolCatalogPorts,
+} from "../tools/mod.ts";
+import {
+  buildMemoryContextSourceLines,
+  buildSystemPrompt,
+  loadIndexedMemories,
+  loadInjectedMemories,
+} from "../memory.ts";
+import { externalMcpCommandsForTransport } from "../mcp-tools.ts";
+import {
+  buildMemorySearch,
+  memorySearchConfigFromEnv,
+} from "../memory-search.ts";
+import { writeModelSelectedEvent } from "../utils.ts";
+import {
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
   PaidEscalationDeclinedError,
@@ -18,431 +119,36 @@ import {
 } from "./observed-call.ts";
 import {
   confirmPaidRoute,
-  formatMoney,
   isNextWorkMode,
   resolveRoute,
   routeReasonForMode,
   selectModelRoute,
 } from "./route.ts";
-import {
-  buildWorkbenchSessionContent,
-  buildWorkbenchSessionSlug,
-  contextCompressedEvent,
-  createWorkbenchSession,
-  errorEvent,
-  type EventInsert,
-  fetchWorkbenchSessionWorkspace,
-  memoryClearanceFor,
-  modelResponseEvent,
-  sessionEndEvent,
-  sessionStartEvent,
-  type Store,
-  toolCallEvent,
-  updateWorkbenchSession,
-} from "../store/mod.ts";
 import type {
-  ConfirmBudgetCeiling,
-  ConfirmRunawayAnomaly,
-  SpendBaselines,
-} from "../budget/mod.ts";
+  ExternalAgentRunner,
+  NativeWorkbenchRuntimeResult,
+  ToolResultSummary,
+  WorkbenchRuntimeInput,
+  WorkbenchRuntimeResult,
+  WorkbenchRuntimeServices,
+  WorkbenchValidationSummary,
+} from "./runtime-types.ts";
 import {
-  BudgetCeilingDeclinedError,
-  BudgetExceededError,
-  BudgetTracker,
-  type CeilingConfirmationStore,
-  createRunawayAnomalyGate,
-  createTurnBudgetCeilingGate,
-  fetchSpendBaselines,
-} from "../budget/mod.ts";
-import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
-import type { WorkbenchCallTimings } from "../providers/mod.ts";
-import type {
-  WorkbenchMessage,
-  WorkbenchModel,
-  WorkbenchToolCall,
-  WorkbenchTurnResult,
-} from "../providers/mod.ts";
+  buildBudgetTallyLine,
+  buildWorkbenchReceipt,
+  shouldPrintBudgetTally,
+} from "./receipt.ts";
 import {
-  estimateTextTokens,
-  isLocalWorkbenchModel,
-  modelRequestedOutputCap,
-  modelStreamsToolCalls,
-  modelSupportsTranscriptRetry,
-  runWorkbenchTurn,
-  selectWorkbenchModel,
-} from "../providers/mod.ts";
-import type {
-  AskContextProfile,
-  PackedContextSummary,
-  WorkspaceRootIdentity,
-} from "../context/mod.ts";
+  buildNextWorkBrief,
+  printNextWorkResult,
+  validateNextWorkJson,
+} from "./next-work.ts";
 import {
-  buildAskSystemPrompt,
-  buildContextSourceLines,
-  loadAgentsInstructions,
-  loadAskRepoContext,
-  loadCompanionBasePrompt,
-} from "../context/mod.ts";
-import {
-  buildToolCatalog,
-  type CommandDefinition,
-  type CommandRegistry,
-  type ConfirmToolApproval,
-  createCommandRegistry,
-  executeReadMemory,
-  invokeCommandWithEvent,
-  type ToolCatalogPorts,
-} from "../tools/mod.ts";
-import { writeModelSelectedEvent } from "../utils.ts";
-import { externalMcpCommandsForTransport } from "../mcp-tools.ts";
-import {
-  buildMemorySearch,
-  memorySearchConfigFromEnv,
-} from "../memory-search.ts";
-import {
-  buildMemoryContextSourceLines,
-  buildSystemPrompt,
-  loadIndexedMemories,
-  loadInjectedMemories,
-} from "../memory.ts";
-import type { BudgetTallyMode, PermissionLevel } from "../config/mod.ts";
-import type {
-  AcpPermissionPrompt,
-  AcpPermissionSelection,
-  AcpRunnerSelection,
-  ExternalAgentWorkbenchRuntimeResult,
-  HistoryOmissionReceipt,
-  LengthRecoveryOutcome,
-  NativeTurnReceipt,
-  PaidEscalationVerdict,
-  Runner,
-  SupersedingRetryStartedEvent,
-  UnparsedToolCallMarkupDetectedEvent,
-  WorkbenchAuthContext,
-  WorkbenchRuntimeEvent,
-  WorkbenchRuntimeMode,
-  WorkbenchRuntimeRequest,
-} from "../contract/mod.ts";
-import {
-  buildHistoryOmissionNotice,
-  DomainError,
-  formatHistoryOmissionSummary,
-  historyOmissionForDelivery,
-  summarizeError,
-  workspaceRootForTransport,
-} from "../contract/mod.ts";
-import type {
-  CompressionCompletion,
-  CompressionOutcome,
-} from "../context/mod.ts";
-import {
-  compressElderTranscript,
-  COMPRESSION_SYSTEM_PROMPT,
-  CONTEXT_COMPRESSION_TRIGGER_FRACTION,
-  countTurns,
-  partitionForCompression,
-  SUMMARY_TRUST_POLICY,
-  VERBATIM_TAIL_TURNS,
-} from "../context/mod.ts";
-import type { ContextOverflowRecoverer } from "../context/mod.ts";
-import {
-  buildContinuationMessages,
-  classifyLengthStop,
-  CONTEXT_OVERFLOW_WINDOW_FRACTION,
-  ContextWindowOverflowError,
-  isBudgetRefusal,
-} from "../context/mod.ts";
-import {
-  AGENT_DEFAULTS,
-  ANOMALY_DEFAULTS,
-  BUDGET_DEFAULTS,
-} from "../config/mod.ts";
-
-export interface WorkbenchReceiptInput {
-  sessionId: string;
-  traceId: string;
-  modelName: string;
-  modelSlug: string;
-  provider?: string;
-  api?: string;
-  tier: 0 | 1 | 2;
-  routingReason: string;
-  totalCostUsd: number;
-  totalTokensInput: number;
-  totalTokensOutput: number;
-  totalCacheReadTokens?: number;
-  totalCacheWriteTokens?: number;
-  /** Reported or abort-estimated reasoning/thinking tokens (else 0). */
-  totalReasoningTokens?: number;
-  totalCalls: number;
-  contextBudget?: PackedContextSummary;
-  contextProfile?: AskContextProfile;
-  timings?: WorkbenchCallTimings;
-  contextSources?: string[];
-  paidInferenceUsed?: boolean;
-  estimatedCostUsd?: number;
-  workletId?: string;
-  totalElapsedMs?: number;
-  validation?: WorkbenchValidationSummary;
-  agent: {
-    toolStepsUsed: number;
-    maxToolSteps: number;
-    limitReached: boolean;
-  };
-  /**
-   * Best-effort event writes that failed this session. Zero renders nothing;
-   * any other value renders a warning line — an audit-log gap must be
-   * visible on the receipt, not discoverable only by inspecting the event
-   * log.
-   */
-  skippedEventWrites?: number;
-  historyOmission?: HistoryOmissionReceipt;
-}
-
-export interface WorkbenchInvocation {
-  mode: WorkbenchRuntimeMode;
-  prompt: string;
-  routingOptions: WorkbenchRoutingOptions;
-}
-
-/**
- * The engine's runtime input: the plain-data request from contract/ plus the
- * in-process hooks and ports this engine consumes. Only the request half is a
- * contract; everything declared here stays inside the process.
- */
-export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
-  routingOptions: WorkbenchRoutingOptions;
-  /** External-agent permission requests fail closed when this is absent. */
-  confirmExternalAgentPermission?: (
-    prompt: AcpPermissionPrompt,
-    signal: AbortSignal,
-  ) => Promise<AcpPermissionSelection>;
-  abortSignal?: AbortSignal;
-  onCancellationClosed?: () => void;
-  /**
-   * Earlier turns in the session as real conversation messages, assembled by
-   * the caller (e.g. from session_start/model_response events). Seeded into the
-   * agent loop ahead of the current user message so resumed conversations carry
-   * their history as structured user/assistant turns — not a flattened string.
-   * Companion turn mode only; ignored for one-shot ask/next-work modes.
-   */
-  conversationMessages?: WorkbenchMessage[];
-  onTextDelta?: (delta: string) => void;
-  /**
-   * Runtime lifecycle events. A streaming caller (one that renders `onTextDelta`)
-   * MUST consume this to honor the superseding-retry reset contract: the
-   * `supersedingRetryStarted` event is what tells it to discard the deltas it has
-   * shown before a superseding retry replaces them. A caller that streams deltas
-   * with overflow recovery enabled but supplies no event channel here (and does
-   * not surface the recovery `log` note) cannot be signaled, and would render the
-   * stale and replacement deltas concatenated. The same channel carries the
-   * required unparsed-markup disclosure. Delivery of either safety signal is
-   * fail-closed when this handler is present.
-   */
-  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
-  /**
-   * Presentation sink for human-readable turn narration: context loading,
-   * workspace/model/route lines, turn text, budget tally, and the receipt.
-   * An in-process caller (the verify-workbench-events check) injects console
-   * output; the UDS server leaves it unset so client presentation never
-   * renders on the server console.
-   * Default: silent — the runtime core does not narrate.
-   */
-  log?: (...parts: unknown[]) => void;
-  /**
-   * Consent handler for paid-inference escalation. Returns a verdict
-   * (approve | deny+reason | escalate), not void/throw — so a headless driver
-   * can pre-approve or escalate. Drivers inject their own; the core defaults to
-   * deny and makes no TTY assumption. The UDS turn runner grants approval
-   * only to a loopback caller that set approvePaidInference for the turn.
-   */
-  confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
-  /**
-   * Warn-then-confirm handler when projected spend crosses a budget ceiling.
-   * Without it the runtime fails closed at the ceiling (same posture as the
-   * approval gate on non-interactive transports).
-   */
-  confirmBudgetCeiling?: ConfirmBudgetCeiling;
-  /**
-   * Confirm handler for a runaway-anomaly hard stop (actual spend past the
-   * anomaly multiples). Unlike the ceiling handler, an approval admits the
-   * next call only and never raises an envelope; without a handler the
-   * runtime fails closed at the halt.
-   */
-  confirmRunawayAnomaly?: ConfirmRunawayAnomaly;
-  /**
-   * Approval handler for mutating tools. When a tool's policy is
-   * "ask", the runtime calls this for an approve/deny verdict; the default (no
-   * handler) denies, fail-closed. The UDS transport asks the operator over the
-   * duplex channel; HTTP has no such channel and so denies.
-   */
-  confirmToolApproval?: ConfirmToolApproval;
-  /** Boot-discovered external MCP commands; filtered again by turn clearance. */
-  externalMcpCommands?: readonly CommandDefinition[];
-  /**
-   * Whether to print the end-of-turn budget tally — a presentation/driver
-   * concern. Lifted to the boundary: entrypoints resolve it from
-   * DYFJ_BUDGET_TALLY; the core reads only this field (default "paid").
-   */
-  budgetTallyMode?: BudgetTallyMode;
-  /**
-   * Default companion model slug, used when a turn specifies no model, tier, or
-   * hint (the "bare turn" default). Lifted to the boundary: entrypoints resolve
-   * it from config (~/.dyfj/config.toml) / DYFJ_WORKBENCH_MODEL via loadConfig();
-   * the core reads only this field and falls through to the registry local
-   * default when absent. A headless driver supplies its own.
-   */
-  defaultCompanionModel?: string | null;
-  /**
-   * Operator permission posture from config ("strict" | "operator"), resolved at
-   * the boundary. The core reads only this field (default "strict"); the command
-   * policy uses it together with the loopback transport to decide whether
-   * contained mutating tools auto-approve or prompt. A headless driver supplies
-   * its own.
-   */
-  permissionLevel?: PermissionLevel;
-  /**
-   * Maximum model↔tool loop steps in one turn, resolved at the boundary from
-   * startup config. The config loader accepts integers from 1 through 64; the
-   * runtime clamps direct integer inputs to that range and falls back to its
-   * valid default for non-integer or non-finite direct inputs.
-   */
-  maxToolSteps?: number;
-  /**
-   * Default budget limits (the engine's startup posture), resolved once at the
-   * boundary from the declared config surface (DYFJ_BUDGET_* via
-   * resolveBudgetDefaultsFromEnv) so the core reads no env. The core uses these
-   * as the per-session defaults; the per-turn overrides below take precedence,
-   * and the declared BUDGET_DEFAULTS are the final fallback. A headless driver
-   * supplies its own.
-   */
-  defaultSessionBudgetUsd?: number;
-  defaultPerCallBudgetUsd?: number;
-  defaultDailyBudgetUsd?: number;
-  /**
-   * Runaway-anomaly hard-stop multiples (startup posture), resolved at the
-   * boundary like the budget defaults. Deliberately config-only — no per-turn
-   * override field for the multiples themselves. The dollar thresholds they
-   * produce scale with the effective budget config, so an explicit loopback
-   * per-turn budget override moves them with the envelope it raises; the gate
-   * always binds at multiple × the envelope in force.
-   */
-  anomalyTurnMultiple?: number;
-  anomalyScopeMultiple?: number;
-  /**
-   * Per-turn budget-limit overrides. Absent → the default limits above
-   * apply. The HTTP boundary only sets these from a request on the LOOPBACK
-   * transport, so a remote caller can never raise the spend cap. The core just
-   * reads the fields; a headless driver supplies its own.
-   */
-  sessionLimitUsd?: number;
-  perCallLimitUsd?: number;
-  dailyLimitUsd?: number;
-  /**
-   * Test seam for the events-table spend rollup that seeds the session/daily
-   * envelopes; the default reads the store's spend rollup (fetchSpendBaselines).
-   */
-  fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
-  /**
-   * Context-overflow recovery hook (the compressor seam). When a provider
-   * call length-stops and classifies as context overflow, the loop consults
-   * this before failing: a returned plan buys exactly one retry with the
-   * plan's transcript; absent/null — or a retry that still overflows — fails
-   * the turn with ContextWindowOverflowError. Never loops.
-   */
-  recoverContextOverflow?: ContextOverflowRecoverer;
-}
-
-export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
-  context: {
-    profile?: AskContextProfile;
-    sources: string[];
-    budget?: PackedContextSummary;
-  };
-  agent: {
-    toolStepsUsed: number;
-    maxToolSteps: number;
-    limitReached: boolean;
-  };
-  validation?: WorkbenchValidationSummary;
-}
-
-export type WorkbenchRuntimeResult =
-  | NativeWorkbenchRuntimeResult
-  | ExternalAgentWorkbenchRuntimeResult;
-
-export interface WorkbenchValidationSummary {
-  ok: boolean;
-  errors: string[];
-}
-
-export interface NextWorkBriefInput {
-  workletId: string;
-  contextProfile: AskContextProfile;
-  prompt: string;
-}
-
-export interface NextWorkResult {
-  worklet_id: string;
-  context_profile: AskContextProfile;
-  recommendation: string;
-  rationale: string;
-  evidence: string[];
-  risks: string[];
-  next_commands: string[];
-  confidence: "low" | "medium" | "high";
-}
-
-export type NextWorkValidationResult =
-  | { ok: true; value: NextWorkResult; errors: [] }
-  | { ok: false; value?: undefined; errors: string[] };
-
-export interface BudgetTallyInput {
-  turn: {
-    tokensInput: number;
-    tokensOutput: number;
-    costUsd: number;
-    tier: 0 | 1 | 2;
-  };
-  session: {
-    totalCostUsd: number;
-    totalTokensInput: number;
-    totalTokensOutput: number;
-    paidCalls: number;
-    sessionLimitUsd: number;
-  };
-}
-
-export interface ToolResultSummary {
-  commandId: string;
-  callId: string;
-  isError: boolean;
-  result: string;
-}
-
-export function buildNextWorkBrief(input: NextWorkBriefInput): string {
-  return [
-    "Next-work worklet brief",
-    `worklet_id: ${input.workletId}`,
-    `context_profile: ${input.contextProfile}`,
-    `operator_prompt: ${input.prompt}`,
-    "",
-    "Return strict JSON only. Do not wrap it in Markdown. Do not include prose before or after the JSON.",
-    "Use only the supplied repo-local context. Do not infer from private operator, cockpit, or cross-repo strategy context.",
-    "",
-    "Required JSON shape:",
-    "{",
-    '  "worklet_id": "next-work.v0",',
-    '  "context_profile": "compact",',
-    '  "recommendation": "one concrete next work item",',
-    '  "rationale": "why this is next from the supplied context",',
-    '  "evidence": ["specific context source or evidence"],',
-    '  "risks": ["what could make this recommendation wrong"],',
-    '  "next_commands": ["small commands the operator can run"],',
-    '  "confidence": "low|medium|high"',
-    "}",
-  ].join("\n");
-}
+  deliverSupersedingRetrySignal,
+  deliverUnparsedToolCallMarkupSignal,
+  emitRuntimeEvent,
+} from "./runtime-events.ts";
+import { commitEvent, type NativeTurnPorts } from "./turn-state.ts";
 
 // Code-authored framing that precedes the injected AGENTS.md body in the
 // system prompt. Repository instructions enter the trusted channel only
@@ -577,319 +283,8 @@ function commandResultText(
     : JSON.stringify(result.result);
 }
 
-export function validateNextWorkJson(text: string): NextWorkValidationResult {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { ok: false, errors: ["model output was not strict JSON"] };
-  }
-
-  if (!isRecord(parsed)) {
-    return { ok: false, errors: ["model output JSON was not an object"] };
-  }
-
-  const errors: string[] = [];
-  for (
-    const field of [
-      "worklet_id",
-      "context_profile",
-      "recommendation",
-      "rationale",
-      "evidence",
-      "risks",
-      "next_commands",
-      "confidence",
-    ]
-  ) {
-    if (!(field in parsed)) errors.push(`missing required field: ${field}`);
-  }
-
-  if (
-    "context_profile" in parsed &&
-    parsed.context_profile !== "compact" &&
-    parsed.context_profile !== "full"
-  ) {
-    errors.push("context_profile must be compact or full");
-  }
-  for (const field of ["worklet_id", "recommendation", "rationale"] as const) {
-    if (field in parsed && typeof parsed[field] !== "string") {
-      errors.push(`${field} must be a string`);
-    }
-  }
-  for (const field of ["evidence", "risks", "next_commands"] as const) {
-    if (field in parsed && !isStringArray(parsed[field])) {
-      errors.push(`${field} must be an array of strings`);
-    }
-  }
-  if (
-    "confidence" in parsed &&
-    parsed.confidence !== "low" &&
-    parsed.confidence !== "medium" &&
-    parsed.confidence !== "high"
-  ) {
-    errors.push("confidence must be low, medium, or high");
-  }
-
-  if (errors.length > 0) return { ok: false, errors };
-
-  return {
-    ok: true,
-    value: {
-      worklet_id: parsed.worklet_id as string,
-      context_profile: parsed.context_profile as AskContextProfile,
-      recommendation: parsed.recommendation as string,
-      rationale: parsed.rationale as string,
-      evidence: parsed.evidence as string[],
-      risks: parsed.risks as string[],
-      next_commands: parsed.next_commands as string[],
-      confidence: parsed.confidence as "low" | "medium" | "high",
-    },
-    errors: [],
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) &&
-    value.every((item) => typeof item === "string");
-}
-
-export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
-  const lines = [
-    "Workbench receipt",
-    `Session: ${input.sessionId}`,
-    `Trace:   ${input.traceId}`,
-  ];
-  if (input.workletId) {
-    lines.push(`Worklet: ${input.workletId}`);
-  }
-  if (input.provider || input.api) {
-    lines.push(
-      `Provider: ${input.provider ?? "unknown"} / ${input.api ?? "unknown"}`,
-    );
-  }
-  lines.push(
-    `Model:   ${input.modelName} (${input.modelSlug}, tier ${input.tier})`,
-    `Route:   ${input.routingReason}`,
-    `Paid inference used: ${input.paidInferenceUsed ? "yes" : "no"}`,
-    `Estimated cost: ${formatMoney(input.estimatedCostUsd ?? 0)}`,
-    `Actual cost:    ${formatMoney(input.totalCostUsd)}`,
-    `Tokens:  ${input.totalTokensInput} in, ${input.totalTokensOutput} out` +
-      ((input.totalReasoningTokens ?? 0) > 0
-        ? `, ${input.totalReasoningTokens} reasoning`
-        : ""),
-    `Cache:   ${input.totalCacheReadTokens ?? 0} read, ${
-      input.totalCacheWriteTokens ?? 0
-    } written`,
-    `Calls:   ${input.totalCalls}`,
-    `Tool steps: ${input.agent.toolStepsUsed}/${input.agent.maxToolSteps}` +
-      (input.agent.limitReached ? " (limit reached)" : ""),
-  );
-  if ((input.skippedEventWrites ?? 0) > 0) {
-    lines.push(
-      `WARNING: ${input.skippedEventWrites} event write(s) failed — ` +
-        `the session's audit log has gaps`,
-    );
-  }
-  if (input.historyOmission !== undefined) {
-    lines.push(formatHistoryOmissionSummary(input.historyOmission));
-  }
-  if (input.totalElapsedMs !== undefined) {
-    lines.push(`Total elapsed: ${input.totalElapsedMs}ms`);
-  }
-  if (input.validation) {
-    lines.push(`Validation: ${input.validation.ok ? "passed" : "failed"}`);
-    for (const error of input.validation.errors) {
-      lines.push(`- ${error}`);
-    }
-  }
-  if (input.timings) {
-    lines.push(formatTimingLine(input.timings));
-  }
-  if (input.contextBudget) {
-    if (input.contextProfile) {
-      lines.push(`Context profile: ${input.contextProfile}`);
-    }
-    lines.push(formatContextBudgetLine(input.contextBudget));
-  }
-  if (input.contextSources && input.contextSources.length > 0) {
-    lines.push("Context sources:");
-    for (const source of input.contextSources) {
-      lines.push(`- ${source}`);
-    }
-  }
-  return lines.join("\n");
-}
-
-export function formatTimingLine(timings: WorkbenchCallTimings): string {
-  const parts = [
-    `headers ${timings.responseHeadersMs}ms`,
-  ];
-  if (timings.timeToFirstTokenMs !== undefined) {
-    parts.push(`TTFT ${timings.timeToFirstTokenMs}ms`);
-  }
-  if (timings.generationMs !== undefined) {
-    parts.push(`generation ${timings.generationMs}ms`);
-  }
-  if (timings.timePerOutputTokenMs !== undefined) {
-    parts.push(`TPOT ${timings.timePerOutputTokenMs}ms/token`);
-  }
-  parts.push(`total ${timings.totalMs}ms`);
-  return `Timings: ${parts.join(", ")}`;
-}
-
-export function formatContextBudgetLine(budget: PackedContextSummary): string {
-  return "Context budget: " +
-    `${budget.usedTokens}/${budget.totalTokens} tokens; ` +
-    `system ${budget.byBucket.system.usedTokens}/${budget.byBucket.system.limitTokens}, ` +
-    `active ${budget.byBucket.active_repo.usedTokens}/${budget.byBucket.active_repo.limitTokens}, ` +
-    `memory ${budget.byBucket.derived_memory.usedTokens}/${budget.byBucket.derived_memory.limitTokens}, ` +
-    `headroom ${budget.headroomTokens}`;
-}
-
-export function shouldPrintBudgetTally(
-  mode: BudgetTallyMode,
-  session: { paidCalls: number },
-): boolean {
-  if (mode === "off") return false;
-  if (mode === "on") return true;
-  return session.paidCalls > 0;
-}
-
-export function buildBudgetTallyLine(input: BudgetTallyInput): string {
-  const percentUsed = input.session.sessionLimitUsd > 0
-    ? (input.session.totalCostUsd / input.session.sessionLimitUsd) * 100
-    : 0;
-  return [
-    "Budget tally:",
-    `${
-      formatMoney(input.turn.costUsd)
-    } this turn (${input.turn.tokensInput} in, ${input.turn.tokensOutput} out)`,
-    "·",
-    `${formatMoney(input.session.totalCostUsd)} session ` +
-    `(${input.session.totalTokensInput} in, ${input.session.totalTokensOutput} out, ` +
-    `${percentUsed.toFixed(1)}% of ${
-      formatMoney(input.session.sessionLimitUsd)
-    })`,
-  ].join(" ");
-}
-
-function printNextWorkResult(
-  result: NextWorkValidationResult,
-  rawText: string,
-  log: (...parts: unknown[]) => void,
-): void {
-  if (!result.ok) {
-    log("Next-work validation failed");
-    for (const error of result.errors) {
-      log(`- ${error}`);
-    }
-    log("");
-    log("Raw model output:");
-    log(rawText);
-    return;
-  }
-
-  log("Next work");
-  log(`Recommendation: ${result.value.recommendation}`);
-  log(`Rationale: ${result.value.rationale}`);
-  log(`Confidence: ${result.value.confidence}`);
-  if (result.value.evidence.length > 0) {
-    log("Evidence:");
-    for (const item of result.value.evidence) {
-      log(`- ${item}`);
-    }
-  }
-  if (result.value.risks.length > 0) {
-    log("Risks:");
-    for (const item of result.value.risks) {
-      log(`- ${item}`);
-    }
-  }
-  if (result.value.next_commands.length > 0) {
-    log("Next commands:");
-    for (const command of result.value.next_commands) {
-      log(`- ${command}`);
-    }
-  }
-}
-
-async function emitRuntimeEvent(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
-  event: WorkbenchRuntimeEvent,
-): Promise<void> {
-  if (!handler) return;
-  try {
-    await handler(event);
-  } catch (err) {
-    // Provenance-summarized, never raw: an observer failure can wrap a
-    // foreign error whose message embeds payload content.
-    console.warn(`Runtime observer skipped: ${summarizeError(err)}`);
-  }
-}
-
-/**
- * Deliver the superseding-retry signal without the best-effort swallow used for
- * non-safety runtime events.
- *
- * Non-safety runtime events are status lines: losing one costs the consumer
- * some progress detail. This signal requires a consumer to *act* —
- * it is what tells a streaming client to discard the text it has already
- * rendered. If it is dropped, the replacement deltas concatenate onto the stale
- * ones and are presented as one answer, which is exactly the corruption this
- * contract exists to prevent. So delivery is fail-closed: a throwing handler
- * propagates, the caller's catch closes the recovery trail, and the turn fails
- * instead of streaming a replacement the consumer cannot distinguish.
- *
- * No handler means no event channel at all (the in-process presenter): there is
- * nothing to drop, and the recovery log note is that consumer's signal.
- */
-async function deliverSupersedingRetrySignal(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
-  event: SupersedingRetryStartedEvent,
-): Promise<void> {
-  if (!handler) return;
-  await handler(event);
-}
-
-/**
- * Deliver the unparsed-markup warning as a required safety signal. A turn must
- * not complete successfully when its client could not receive the disclosure.
- */
-async function deliverUnparsedToolCallMarkupSignal(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
-  event: UnparsedToolCallMarkupDetectedEvent,
-): Promise<void> {
-  if (!handler) return;
-  await handler(event);
-}
-
 function estimateRuntimeInputCount(text: string): number {
   return Math.ceil(text.length / 4);
-}
-
-/**
- * The external-agent (ACP) runner the engine delegates to. The composition
- * root binds the concrete runner; the engine never imports it.
- */
-export type ExternalAgentRunner = Runner<
-  WorkbenchRuntimeInput & { runner: AcpRunnerSelection },
-  ExternalAgentWorkbenchRuntimeResult
->;
-
-export interface WorkbenchRuntimeServices {
-  /** The store every native-turn read and write goes through. */
-  store: Store;
-  /**
-   * The engine's budget-ceiling confirmation store, built once at the
-   * composition root so confirmations persist for their scope periods.
-   */
-  ceilingConfirmations: CeilingConfirmationStore;
-  externalAgentRunner?: ExternalAgentRunner;
 }
 
 function requireExternalAgentRunner(
@@ -929,24 +324,29 @@ export async function runWorkbenchRuntime(
     });
   }
 
-  return await runNativeWorkbenchRuntime(
-    runtimeInput,
-    services.store,
-    services.ceilingConfirmations,
-  );
+  return await runNativeWorkbenchRuntime(runtimeInput, {
+    store: services.store,
+    ceilingConfirmations: services.ceilingConfirmations,
+    clock: services.clock ?? systemClock,
+    env: services.env ?? processEnv,
+    providerIo: {
+      ...(services.http === undefined ? {} : { fetchFn: services.http }),
+      ...(services.env === undefined
+        ? {}
+        : { getEnv: (name: string) => services.env?.get(name) }),
+    },
+  });
 }
 
 async function runNativeWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
-  store: Store,
-  ceilingConfirmations: CeilingConfirmationStore,
+  ports: NativeTurnPorts,
 ): Promise<NativeWorkbenchRuntimeResult> {
-  const writeEvent = async (
+  const { store } = ports;
+  const writeEvent = (
     event: EventInsert,
     options: { signal?: AbortSignal } = {},
-  ): Promise<void> => {
-    await store.journal.commit({ events: [event] }, options);
-  };
+  ): Promise<void> => commitEvent(store, event, options);
   const eventExists = (eventId: string) => store.events.exists(eventId);
 
   const {
@@ -965,7 +365,7 @@ async function runNativeWorkbenchRuntime(
   const sessionId = runtimeInput.sessionId ?? generateULID();
   const sessionSlug = buildWorkbenchSessionSlug(sessionId);
   const traceId = generateTraceId();
-  const sessionStart = Date.now();
+  const sessionStart = ports.clock.now();
   // env coupling lives at the boundary (resolveRuntimeEnvDefaults);
   // the core reads only the input field. Resolved before the BudgetTracker so
   // its budget_summary event is attributed to the same principal.
@@ -1104,7 +504,7 @@ async function runNativeWorkbenchRuntime(
   const observedCallContext: ObservedCallContext = {
     writeEvent: (event) => writeEvent(event),
     budget,
-    clock: systemClock,
+    clock: ports.clock,
     sessionId,
     traceId,
     principalId,
@@ -1251,6 +651,7 @@ async function runNativeWorkbenchRuntime(
         repoContext = await loadAskRepoContext({
           repoRoot: workspaceRoot,
           workspaceRootIdentity,
+          env: ports.env,
         });
       } catch (err) {
         console.warn(`Repo context unavailable: ${summarizeError(err)}`);
@@ -1286,7 +687,7 @@ async function runNativeWorkbenchRuntime(
             }),
             tool_is_error: false,
             content: JSON.stringify({ sources: contextSourceLines }),
-            duration_ms: Date.now() - sessionStart,
+            duration_ms: ports.clock.now() - sessionStart,
           })),
         BEST_EFFORT,
         noteSkippedEventWrite,
@@ -1335,7 +736,7 @@ async function runNativeWorkbenchRuntime(
       // endpoint configured (DYFJ_MEMORY_MCP_URL). A non-loopback consumer never
       // receives the tool, so the private external memory is unreachable off-box.
       const recallConfig = authContext.transport === "loopback"
-        ? memorySearchConfigFromEnv()
+        ? memorySearchConfigFromEnv(ports.env)
         : null;
       const toolPorts: ToolCatalogPorts = {
         readMemory: (slug) =>
@@ -1504,7 +905,7 @@ async function runNativeWorkbenchRuntime(
     // instead of re-prompting next turn.
     const budgetCeilingGate = createTurnBudgetCeilingGate(
       runtimeInput.confirmBudgetCeiling,
-      ceilingConfirmations.for(sessionId),
+      ports.ceilingConfirmations.for(sessionId),
     );
     // Turn-scoped: an approval covers the spend level it was shown (the entry
     // check and the first call's check see identical actuals); any recorded
@@ -1544,7 +945,7 @@ async function runNativeWorkbenchRuntime(
           traceId,
           provider: selected.provider,
           api: selected.api,
-          durationMs: Date.now() - sessionStart,
+          durationMs: ports.clock.now() - sessionStart,
           parentSpanId: turnRootSpanId,
           authnFields: authnEventFields,
         }),
@@ -1647,6 +1048,7 @@ async function runNativeWorkbenchRuntime(
               models,
               abortSignal: runtimeInput.abortSignal,
               sessionId,
+              ...ports.providerIo,
             },
             model: compressionModel,
             order: ++providerCallOrder,
@@ -2216,6 +1618,7 @@ async function runNativeWorkbenchRuntime(
       jsonObject: isNextWork,
       tools: commandTools,
       abortSignal: runtimeInput.abortSignal,
+      ...ports.providerIo,
       // Stream when not producing JSON and either no tools are offered or the
       // provider can stream tool calls — this also restores live token
       // streaming for ordinary companion replies (tools registered, none used).
@@ -2283,7 +1686,7 @@ async function runNativeWorkbenchRuntime(
           turn = { ...turn, stopReason: "aborted", toolCalls: undefined };
           break toolLoop;
         }
-        const toolStartedAt = Date.now();
+        const toolStartedAt = ports.clock.now();
         const startedEvent = emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
           type: "toolCallStarted",
           sessionId,
@@ -2351,7 +1754,7 @@ async function runNativeWorkbenchRuntime(
             commandId: toolCall.name,
             callId: toolCall.id,
             isError: commandResult.isError,
-            durationMs: Date.now() - toolStartedAt,
+            durationMs: ports.clock.now() - toolStartedAt,
           });
         } catch (err) {
           if (
@@ -2373,7 +1776,7 @@ async function runNativeWorkbenchRuntime(
             commandId: toolCall.name,
             callId: toolCall.id,
             isError: true,
-            durationMs: Date.now() - toolStartedAt,
+            durationMs: ports.clock.now() - toolStartedAt,
             // Fixed literal from the class table — `.name` is a writable
             // property a foreign error can shadow with a payload.
             errorName: classifyErrorKind(err),
@@ -2441,6 +1844,7 @@ async function runNativeWorkbenchRuntime(
           tools: forceConclude ? undefined : commandTools,
           historyTools: forceConclude ? commandTools : undefined,
           abortSignal: runtimeInput.abortSignal,
+          ...ports.providerIo,
           // Stream the gather step when the provider streams tool calls, and
           // always stream the forced no-tools conclusion.
           onTextDelta: streamsToolCalls || forceConclude
@@ -2640,7 +2044,7 @@ async function runNativeWorkbenchRuntime(
           ...authnEventFields,
           content: finalText,
           stop_reason: "aborted",
-          duration_ms: Date.now() - sessionStart,
+          duration_ms: ports.clock.now() - sessionStart,
         }))
       );
       await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
@@ -2682,7 +2086,7 @@ async function runNativeWorkbenchRuntime(
             // only gets the shared 500-byte cap, never an unbounded pass-through.
             content: summarizeError(err),
             stop_reason: "error",
-            duration_ms: Date.now() - sessionStart,
+            duration_ms: ports.clock.now() - sessionStart,
           })),
         BEST_EFFORT,
         noteSkippedEventWrite,
@@ -2708,7 +2112,7 @@ async function runNativeWorkbenchRuntime(
             ...authnEventFields,
             content: summarizeError(err),
             stop_reason: "error",
-            duration_ms: Date.now() - sessionStart,
+            duration_ms: ports.clock.now() - sessionStart,
           })),
         BEST_EFFORT,
         noteSkippedEventWrite,
@@ -2740,7 +2144,7 @@ async function runNativeWorkbenchRuntime(
             ...authnEventFields,
             content: summarizeError(err),
             stop_reason: "length",
-            duration_ms: Date.now() - sessionStart,
+            duration_ms: ports.clock.now() - sessionStart,
           })),
         BEST_EFFORT,
         noteSkippedEventWrite,
@@ -2782,7 +2186,7 @@ async function runNativeWorkbenchRuntime(
             // oversized/sensitive payload this issue exists to keep contained.
             content: summarizeError(err),
             stop_reason: "error",
-            duration_ms: Date.now() - sessionStart,
+            duration_ms: ports.clock.now() - sessionStart,
           })),
         BEST_EFFORT,
         noteSkippedEventWrite,
@@ -2811,7 +2215,7 @@ async function runNativeWorkbenchRuntime(
         resource: "workbench_session",
         authz_basis: authContext.authzBasis,
         ...authnEventFields,
-        duration_ms: Date.now() - sessionStart,
+        duration_ms: ports.clock.now() - sessionStart,
       })), INTEGRITY);
 
     // The count captured here reflects skips up to this point. If this
@@ -2856,7 +2260,7 @@ async function runNativeWorkbenchRuntime(
       paidInferenceUsed,
       estimatedCostUsd,
       workletId,
-      totalElapsedMs: Date.now() - sessionStart,
+      totalElapsedMs: ports.clock.now() - sessionStart,
       validation,
       agent: {
         toolStepsUsed: toolSteps,

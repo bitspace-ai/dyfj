@@ -10,7 +10,7 @@
 import type {
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
-} from "./native-runner.ts";
+} from "./runtime-types.ts";
 import { buildConversationMessages } from "../context/mod.ts";
 import type { CommandDefinition, ConfirmToolApproval } from "../tools/mod.ts";
 import type {

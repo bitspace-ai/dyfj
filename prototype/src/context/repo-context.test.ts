@@ -10,6 +10,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { assertSpyCall, assertSpyCalls, stub } from "@std/testing/mock";
+import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
   AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
   AGENTS_INSTRUCTIONS_TOKEN_LIMIT,
@@ -28,10 +29,12 @@ import {
   packContextSections,
 } from "./repo-context.ts";
 
-// `loadAskRepoContext` falls back to reading `DYFJ_WORKBENCH_CONTEXT_TOKENS`
-// from the process environment when no budget is passed, and it takes no `Env`
-// port. The unit lane grants no env access, so these tests pass the budget the
-// env fallback resolves to when that variable is unset: the profile's default.
+// When no profile or budget is passed, `loadAskRepoContext` reads their
+// defaults (`DYFJ_WORKBENCH_CONTEXT_PROFILE`, `DYFJ_WORKBENCH_CONTEXT_TOKENS`)
+// from its `env` option, or from the process environment when none is given.
+// The unit lane grants no env access, so these tests either pass the budget
+// the fallback resolves to when that variable is unset (the profile's
+// default) or inject a `MapEnv`.
 function defaultBudgetFor(profile: AskContextProfile): ContextBudget {
   return profile === "full" ? DEFAULT_CONTEXT_BUDGET : COMPACT_CONTEXT_BUDGET;
 }
@@ -160,6 +163,41 @@ Deno.test("loadAskRepoContext: loads generic README and manifest context from th
     );
     assertStringIncludes(rendered, "Music Rotater");
     assertStringIncludes(rendered, '"name":"music-rotater"');
+  } finally {
+    await Deno.remove(selectedRoot, { recursive: true });
+  }
+});
+
+Deno.test("loadAskRepoContext: reads the profile and token-budget defaults from the injected env", async () => {
+  const selectedRoot = await Deno.makeTempDir({
+    prefix: "ask-context-env-",
+  });
+  try {
+    await Deno.writeTextFile(
+      path.join(selectedRoot, "README.md"),
+      "# Music Rotater\n\nRotates a personal music library.\n",
+    );
+
+    const configured = await loadAskRepoContext({
+      repoRoot: selectedRoot,
+      env: new MapEnv({
+        DYFJ_WORKBENCH_CONTEXT_PROFILE: "full",
+        DYFJ_WORKBENCH_CONTEXT_TOKENS: "12345",
+      }),
+    });
+    assertEquals(configured.profile, "full");
+    assertEquals(configured.budget.totalTokens, 12345);
+
+    // An env without either variable yields the compact profile's default.
+    const unset = await loadAskRepoContext({
+      repoRoot: selectedRoot,
+      env: new MapEnv({}),
+    });
+    assertEquals(unset.profile, "compact");
+    assertEquals(
+      unset.budget.totalTokens,
+      COMPACT_CONTEXT_BUDGET.totalTokens,
+    );
   } finally {
     await Deno.remove(selectedRoot, { recursive: true });
   }

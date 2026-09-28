@@ -1,4 +1,4 @@
-import { processEnv } from "../config/mod.ts";
+import { type Env, processEnv } from "../config/mod.ts";
 import path from "node:path";
 import { summarizeError } from "../contract/mod.ts";
 
@@ -482,6 +482,8 @@ export async function loadAskRepoContext(options: {
   workspaceRootIdentity?: WorkspaceRootIdentity;
   budget?: ContextBudget;
   profile?: AskContextProfile;
+  /** Where the profile and token budget defaults are read. */
+  env?: Env;
 } = {}): Promise<LoadedRepoContext> {
   const selectedRoot = options.repoRoot ?? await findRepoRoot();
   const repoRoot = await Deno.realPath(selectedRoot);
@@ -499,7 +501,8 @@ export async function loadAskRepoContext(options: {
   ) {
     throw new Error("selected workspace identity is unavailable or changed");
   }
-  const profile = options.profile ?? askContextProfileFromEnv();
+  const env = options.env ?? processEnv;
+  const profile = options.profile ?? askContextProfileFromEnv(env);
   const sections: ContextSection[] = [];
 
   const agents = await loadAgentsInstructions(repoRoot, rootIdentity);
@@ -615,7 +618,7 @@ export async function loadAskRepoContext(options: {
 
   const packed = packContextSections(
     sections,
-    options.budget ?? contextBudgetFromEnv(profile),
+    options.budget ?? contextBudgetFromEnv(profile, env),
   );
   return {
     sources: packed.sources,
@@ -625,16 +628,21 @@ export async function loadAskRepoContext(options: {
   };
 }
 
-export function askContextProfileFromEnv(): AskContextProfile {
-  const rawProfile = processEnv.get("DYFJ_WORKBENCH_CONTEXT_PROFILE");
+export function askContextProfileFromEnv(
+  env: Env = processEnv,
+): AskContextProfile {
+  const rawProfile = env.get("DYFJ_WORKBENCH_CONTEXT_PROFILE");
   return rawProfile === "full" ? "full" : "compact";
 }
 
-function contextBudgetFromEnv(profile: AskContextProfile): ContextBudget {
+function contextBudgetFromEnv(
+  profile: AskContextProfile,
+  env: Env,
+): ContextBudget {
   const baseBudget = profile === "full"
     ? DEFAULT_CONTEXT_BUDGET
     : COMPACT_CONTEXT_BUDGET;
-  const rawTotal = processEnv.get("DYFJ_WORKBENCH_CONTEXT_TOKENS");
+  const rawTotal = env.get("DYFJ_WORKBENCH_CONTEXT_TOKENS");
   const totalTokens = rawTotal === undefined
     ? baseBudget.totalTokens
     : Number(rawTotal);
