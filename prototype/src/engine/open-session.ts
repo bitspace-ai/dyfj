@@ -5,8 +5,8 @@
  *
  * `session_start` is an integrity event: if it cannot be written the turn
  * fails before any other stage runs, with nothing further recorded. The
- * session row itself is written once the context sources it lists are
- * known.
+ * session row itself is written by `recordNewSession` once the context
+ * sources it lists are known.
  */
 import {
   generateSpanId,
@@ -14,7 +14,9 @@ import {
   generateULID,
 } from "../kernel/mod.ts";
 import {
+  buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
+  createWorkbenchSession,
   fetchWorkbenchSessionWorkspace,
   sessionStartEvent,
 } from "../store/mod.ts";
@@ -36,6 +38,7 @@ import {
   commitEvent,
   type NativeTurnPorts,
   type TurnSession,
+  type TurnState,
 } from "./turn-state.ts";
 
 // Hard ceiling for the startup-configured model<->tool iterations in a single
@@ -239,4 +242,32 @@ async function announceTurn(
         content: session.prompt,
       }),
     ), false);
+}
+
+/**
+ * Create the session row for a new session, bound to its workspace (honored
+ * only for loopback; resumes read it back instead of the client re-sending
+ * cwd). An integrity write: its failure fails the turn.
+ */
+export async function recordNewSession(
+  state: TurnState,
+  ports: NativeTurnPorts,
+): Promise<void> {
+  const { session } = state;
+  if (session.resumingSession) return;
+  await state.audit.writeIntegrity(() =>
+    createWorkbenchSession({
+      journal: ports.store.journal,
+      sessionId: session.sessionId,
+      slug: session.sessionSlug,
+      taskDescription: session.prompt,
+      workspace: session.honoredWorkspace,
+      content: buildWorkbenchSessionContent({
+        mode: session.mode,
+        prompt: session.prompt,
+        traceId: session.traceId,
+        contextSources: state.contextSourceLines,
+      }),
+    })
+  );
 }

@@ -154,6 +154,14 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`buildContext` is the native turn's second named pipeline stage**
+  (`engine/build-context.ts`): it resolves the transport-gated workspace root,
+  then assembles repo context for ask and next-work turns, or memory, tools,
+  elevated AGENTS.md instructions and the summary trust policy for companion
+  turns, and composes the persisted-history omission notice. It writes into
+  an engine-owned `TurnState` (`engine/turn-state.ts`), which the rest of the
+  turn and its receipt read whatever the stages reached. Event rows, receipts
+  and the golden suite are unchanged.
 - **`openSession` is the native turn's first named pipeline stage**
   (`engine/open-session.ts`): it fixes the turn's identity, principal, auth,
   budget posture and tool-step limit as a `TurnSession`, announces the turn,

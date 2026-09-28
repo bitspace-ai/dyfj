@@ -7,6 +7,7 @@ export const integrationTestAssignments = {
   ],
   deno: [
     "src/config/env.integration.test.ts",
+    "src/engine/build-context.integration.test.ts",
     "src/mcp-conformance.integration.test.ts",
     "src/mcp-tools.integration.test.ts",
     "src/memory.integration.test.ts",
