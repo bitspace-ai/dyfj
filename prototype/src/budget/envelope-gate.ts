@@ -129,7 +129,7 @@ export class BudgetCeilingDeclinedError extends DomainError {
   // itself is an operator/approval-peer-supplied decline comment, not
   // authored by this codebase, so it's capped and control-char-stripped
   // before either the message or the public `.reason` property (read
-  // directly by workbench.ts's log branch, not just via .message) can carry
+  // directly by the native runner's log branch, not just via .message) can carry
   // it.
   constructor(reason?: string) {
     const safeReason = reason === undefined

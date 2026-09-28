@@ -154,6 +154,18 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The turn entry and session ownership live in `prototype/src/engine/`**:
+  the shared turn core (`turn-runner.ts`) is now `engine/turn.ts`, with
+  request validation split into `engine/turn-request.ts`, and the native
+  runtime (`workbench.ts`) is now `engine/native-runner.ts`. A new
+  `SessionOwners` (`engine/session-owner.ts`), built once by the server, is
+  the single writer for each session's turn lock (previously module-level
+  state in `turn-runner.ts`) and for each admitted turn's cancel signal
+  (previously an `AbortController` and flag in the server's handler); the
+  server routes `turn/cancel` to the turn's ticket. The external-agent
+  permission prompt and selection types moved to `contract/`. Same-session
+  serialization, the one-turn-per-connection rule, and cancel semantics are
+  unchanged, and the golden suite passes with no snapshot change.
 - **Route resolution and the observed provider call live in
   `prototype/src/engine/`**: `resolveRoute` (`engine/route.ts`) is the one
   step that chooses the runner for a turn. It serves both the native engine

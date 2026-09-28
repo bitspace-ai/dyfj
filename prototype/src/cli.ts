@@ -669,7 +669,7 @@ export function formatPostureLine(posture: SessionPosture): string {
 // rejected event-log INSERT quoting the oversized value back in the driver
 // error), and dispatchRequest (jsonrpc.ts) forwards err.message verbatim to
 // the client. The server console already logs class-only for exactly this
-// reason (workbench.ts's [turn-error] line, and every joint that forwards a
+// reason (the native runner's [turn-error] line, and every joint that forwards a
 // turn error toward a client — see summarizeError in contract/turn.ts, the
 // shared discipline this client and the server both apply); the client had no
 // equivalent discipline, so an unbounded server message printed pages of raw

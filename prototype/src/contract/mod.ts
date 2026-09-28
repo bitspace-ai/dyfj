@@ -14,7 +14,11 @@
  * runtime layer (specs/01-architecture.md §3); the arch.imports lane enforces
  * the direction.
  */
-export type { Runner } from "./runner.ts";
+export type {
+  AcpPermissionPrompt,
+  AcpPermissionSelection,
+  Runner,
+} from "./runner.ts";
 export * from "./runtime.ts";
 export type { WorkbenchSessionEvent } from "./session-event.ts";
 export * from "./turn.ts";

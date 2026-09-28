@@ -3,7 +3,7 @@
  *
  * What a turn request carries, how its caller was authenticated, the lifecycle
  * events it emits, and the paid-escalation verdict. The engine's own runtime
- * input (`workbench.ts`) extends `WorkbenchRuntimeRequest` with the in-process
+ * input (`engine/native-runner.ts`) extends `WorkbenchRuntimeRequest` with the in-process
  * hooks and ports it needs (callbacks, tool registries, budget handlers);
  * those stay out of this module, because every type here must survive a
  * process seam as JSON (specs/01-architecture.md §10).

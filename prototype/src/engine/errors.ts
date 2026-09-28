@@ -34,7 +34,7 @@ export class PaidEscalationDeclinedError extends DomainError {
   // peer tomorrow. DomainError certifies the message THIS constructor builds,
   // not that field's content, so it's capped and control-char-stripped before it
   // reaches either the message or the stored `.verdict` (read directly by
-  // workbench.ts's log branch, not just via .message).
+  // the native runner's log branch, not just via .message).
   constructor(
     verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>,
   ) {

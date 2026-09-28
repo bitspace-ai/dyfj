@@ -28,7 +28,7 @@ import {
   type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
   type WorkbenchRuntimeServices,
-} from "./workbench.ts";
+} from "./engine/native-runner.ts";
 import {
   ContextCompressionPersistenceUncertainError,
   PaidEscalationDeclinedError,
@@ -2978,7 +2978,7 @@ describe("runWorkbenchRuntime observer events", () => {
 
       expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalled();
       const { AGENTS_INSTRUCTIONS_TRUST_PREAMBLE } = await import(
-        "./workbench.ts"
+        "./engine/native-runner.ts"
       );
       const params = runtimeMocks.runWorkbenchTurn.mock
         .calls[0][0] as Record<string, unknown>;
@@ -3021,7 +3021,7 @@ describe("runWorkbenchRuntime observer events", () => {
         source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
       };
       const { AGENTS_INSTRUCTIONS_TRUST_PREAMBLE } = await import(
-        "./workbench.ts"
+        "./engine/native-runner.ts"
       );
 
       const result = await runWorkbenchRuntime({

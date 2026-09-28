@@ -8,7 +8,7 @@ import {
 import { createDoltPool, DoltStore } from "../src/store/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../src/external-agent-runtime.ts";
 import { CeilingConfirmationStore } from "../src/budget/mod.ts";
-import { runWorkbenchRuntime } from "../src/workbench.ts";
+import { runWorkbenchRuntime } from "../src/engine/mod.ts";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
