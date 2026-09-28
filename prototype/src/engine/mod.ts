@@ -84,6 +84,7 @@ export type {
 export {
   type NativeTurnPorts,
   newTurnState,
+  TurnAudit,
   type TurnSession,
   type TurnState,
 } from "./turn-state.ts";

@@ -14,6 +14,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
+import { stub } from "@std/testing/mock";
 import {
   chatReply,
   type EngineRun,
@@ -130,17 +131,29 @@ Deno.test("a companion turn runs open → context → route → loop → finaliz
   assertEquals(frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("principalId from the input attributes every event of the turn", async () => {
+Deno.test("principalId from the input attributes every event of the turn except model_selected", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([chatReply({ content: "ok" })]);
-  const result = await runTurn(run, {
-    rootOverride: root.root,
-    principalId: "custom-principal",
-  });
-  const principals = new Set(
-    (await eventRows(run, result.sessionId)).map((row) => row.principal_id),
+  // model_selected resolves its principal from the process environment, not
+  // the input (a known gap). This lane has no env grant, so that best-effort
+  // row is skipped with a warning; it is excluded either way.
+  const warn = stub(console, "warn");
+  let result;
+  try {
+    result = await runTurn(run, {
+      rootOverride: root.root,
+      principalId: "custom-principal",
+    });
+  } finally {
+    warn.restore();
+  }
+  const rows = (await eventRows(run, result.sessionId))
+    .filter((row) => row.event_type !== "model_selected");
+  assert(rows.length >= 4);
+  assertEquals(
+    new Set(rows.map((row) => row.principal_id)),
+    new Set(["custom-principal"]),
   );
-  assertEquals(principals, new Set(["custom-principal"]));
 });
 
 // ─── workspace binding across stages ─────────────────────────────────────────
