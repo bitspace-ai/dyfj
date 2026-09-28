@@ -49,7 +49,7 @@ changes with a CHANGELOG `Fixed` entry.
   - **Found during:** WO-16 (step 2).
 - 2026-09-28 — **Compression `provider_call` rows omit the unparsed tool-call
   markup counts.**
-  - **Location:** `prototype/src/workbench.ts:1652`
+  - **Location:** `prototype/src/engine/compression.ts:208`
     (`recordUnparsedToolCallMarkup: false` on the compression call) and
     `prototype/src/engine/observed-call.ts:152`.
   - **Symptom:** an agent-loop call whose text carries unmatched tool-call
@@ -126,8 +126,9 @@ changes with a CHANGELOG `Fixed` entry.
   calls under their registry names, not their wire names.**
   - **Location:** `prototype/src/providers/anthropic/adapter.ts` (the
     `buildAnthropicMessagesRequest` call) and `anthropic/request.ts`
-    (`toAnthropicWireMessages`); the call site is `workbench.ts`, which sets
-    `historyTools` when a forced conclusion drops `tools`.
+    (`toAnthropicWireMessages`); the call site is
+    `prototype/src/engine/agent-loop.ts`, which sets `historyTools` when a
+    forced conclusion drops `tools`.
   - **Symptom:** when the agent loop forces a no-tools conclusion, the
     Anthropic request's history maps prior `tool_use` names through `tools`,
     which is now empty, so dotted command ids (`memory.read`) go out unmapped

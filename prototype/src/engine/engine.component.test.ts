@@ -14,13 +14,14 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "@std/assert";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import { assertSpyCalls, spy, stub } from "@std/testing/mock";
 import {
   chatReply,
   conversation,
   type EngineRun,
   engineServices,
   eventRows,
+  LOCAL_MODEL,
   patchStore,
   pricedLocalModel,
   runTurn,
@@ -32,9 +33,18 @@ import type {
   WorkbenchAuthContext,
   WorkbenchRuntimeEvent,
 } from "../contract/mod.ts";
-import { createWorkbenchSession } from "../store/mod.ts";
+import {
+  createWorkbenchSession,
+  fetchWorkbenchSessionEvents,
+} from "../store/mod.ts";
+import type { ConfirmToolApproval } from "../tools/mod.ts";
 import { AGENTS_INSTRUCTIONS_TRUST_PREAMBLE } from "./build-context.ts";
 import { WorkspaceContextUnavailableError } from "./errors.ts";
+import { runWorkbenchRuntime } from "./native-runner.ts";
+import type { NativeWorkbenchRuntimeResult } from "./runtime-types.ts";
+import { SessionOwners } from "./session-owner.ts";
+import { executeTurn } from "./turn.ts";
+import { resolveTurnFromBody } from "./turn-request.ts";
 
 const RESUMED = "01TEST00000000000000000001";
 const REMOTE: WorkbenchAuthContext = {
@@ -510,4 +520,94 @@ Deno.test("an approved entry halt does not re-prompt the identical state at the 
   // Entry check and first-call check see identical actuals ($2.50): one
   // prompt, not two — the same-state dedupe, not scope-period coverage.
   assertSpyCalls(confirmRunawayAnomaly, 1);
+});
+
+// ─── approvals cannot start turns ────────────────────────────────────────────
+
+Deno.test("an approval verdict cannot start a new turn: a turn requested from inside the approver waits for the approving turn to finalize", async () => {
+  await using root = await tempWorkspace({ "README.md": "# readme\n" });
+  const run = engineServices([
+    chatReply({ content: "seeded" }),
+    chatReply({
+      toolCalls: [{
+        id: "w1",
+        name: "write_file",
+        arguments: { path: "note.txt", content: "approved" },
+      }],
+    }),
+    chatReply({ content: "first done" }),
+    chatReply({ content: "second done" }),
+  ]);
+  const seeded = await runTurn(run, {
+    prompt: "seed",
+    workspaceRoot: root.root,
+  });
+  const owners = new SessionOwners();
+  const frames: string[] = [];
+  const turn = (
+    prompt: string,
+    tag: string,
+    approver?: ConfirmToolApproval,
+  ) => {
+    const resolved = resolveTurnFromBody({
+      prompt,
+      sessionId: seeded.sessionId,
+      workspace: root.root,
+    }, true);
+    if ("error" in resolved) throw new Error(resolved.error);
+    return executeTurn(resolved, {
+      owners,
+      env: run.env,
+      authContext: {
+        transport: "loopback",
+        authnStatus: "authenticated",
+        authnMechanism: "local_user",
+        authnIssuerRef: "local_os",
+        authzBasis: "user_consent",
+      },
+      loopback: true,
+      defaultCompanionModel: LOCAL_MODEL.slug,
+      fetchSessionEvents: ({ sessionId }) =>
+        fetchWorkbenchSessionEvents({ sessionId, events: run.store.events }),
+      runRuntime: (input) =>
+        runWorkbenchRuntime({ ...input, log: () => {} }, run.services),
+      onRuntimeEvent: (event) => void frames.push(`${tag}:${event.type}`),
+      confirmToolApproval: approver,
+    });
+  };
+
+  let second: Promise<unknown> | undefined;
+  let framesAtVerdict: string[] = [];
+  const error = stub(console, "error");
+  try {
+    const first = turn("write the note", "first", async () => {
+      // The approver asks for another turn on the same session, then
+      // returns its verdict.
+      second = turn("and then?", "second");
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      framesAtVerdict = [...frames];
+      return { decision: "approve" };
+    });
+    const firstResult = await first;
+    assertEquals(firstResult.text, "first done");
+    const secondResult = await second as NativeWorkbenchRuntimeResult;
+    assertEquals(secondResult.text, "second done");
+  } finally {
+    error.restore();
+  }
+  // Nothing of the second turn ran while the approver held its verdict...
+  assertEquals(framesAtVerdict.some((f) => f.startsWith("second:")), false);
+  // ...and the verdict resumed the approving turn, whose tool ran and which
+  // finalized before the second turn started.
+  assertEquals(
+    await Deno.readTextFile(`${root.root}/note.txt`),
+    "approved",
+  );
+  const firstEnd = frames.indexOf("first:turnCompleted");
+  const secondStart = frames.indexOf("second:sessionStart");
+  assert(firstEnd >= 0 && secondStart > firstEnd);
+  assertEquals(
+    frames.filter((f) => f.endsWith(":sessionStart")),
+    ["first:sessionStart", "second:sessionStart"],
+  );
 });

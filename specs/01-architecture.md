@@ -151,9 +151,9 @@ over an engine-owned `TurnState`.
   - Side effects go through ports only.
 - **Pipeline order:**
   1. `resolveRoute`: model selection, paid-escalation preflight, runner choice.
-     Native and ACP both use this one stage, which removes today's duplicate
-     preflight in `workbench.ts:1456-1491` and `1545-1589`. _Landing spot for
-     RouteSpec._
+     Native and ACP both use this one stage, which removed the duplicate
+     preflight each path used to run in the former `workbench.ts`. _Landing
+     spot for RouteSpec._
   2. `openSession`: create or continue a session, integrity checks,
      `session_start`.
   3. `buildContext`: workspace root, repo context, memory injection, system
@@ -167,14 +167,16 @@ over an engine-owned `TurnState`.
   7. `finalize`: receipt, `session_end`/summary events, error classification.
      _Landing spot for receipt reconciliation._
 - **`observedProviderCall`** is the single implementation of "call provider →
-  write `provider_call`/`model_response` events → `budget.record`". Today that
-  sequence is duplicated in `compressTranscript` (`workbench.ts:2354-2431`) and
-  `runObservedTurn` (`2620-2710`); after this change both call it.
+  write `provider_call`/`model_response` events → `budget.record`". That
+  sequence used to be duplicated in the former `workbench.ts`, once for
+  transcript compression and once for the agent loop's calls; both now call it
+  (`engine/compression.ts`, `engine/observed-turn.ts`).
 - **Runners.** `engine/` owns a `Runner` interface (`native`, `acp`). The ACP
   runner receives the resolved route and ports; it never imports `engine/`
   internals.
-- **Turn entry.** `turn-runner` logic (request resolution, session lock,
-  `executeTurn`) folds into `engine/` as its entry.
+- **Turn entry.** The former `turn-runner.ts` logic (request resolution,
+  session lock, `executeTurn`) is `engine/`'s entry: `engine/turn-request.ts`
+  and `engine/turn.ts`.
 
 ### 5.2 Provider adapters
 
@@ -236,7 +238,7 @@ is its projection and the legacy `ToolDefinition` is deleted.
 - **One catalog builder.** A single
   `buildToolCatalog(ports, config, extensions)` (`tools/catalog.ts`) replaced
   the three separate registry assemblies: the runtime's per-turn toolset in
-  `workbench.ts`, and the `tools/list`/`tools/inspect` listing and the friction
+  the former `workbench.ts`, and the `tools/list`/`tools/inspect` listing and the friction
   command set in `uds-server.ts`. An optional fourth argument, `entries`
   (default `BUILTIN_TOOLS`), selects the builtin lines: the friction set passes
   none, and the test-only example tool adds its line without touching the
@@ -276,7 +278,7 @@ This section implements AGENTS.md rules 2 and 3.
 
 - **Session owner.** One `SessionOwner` per active session, created and held by
   `engine/`. It is the single writer for that session's:
-  - turn lock (replaces the lock in `turn-runner.ts`);
+  - turn lock (replaced the lock in the former `turn-runner.ts`);
   - external-agent (ACP) handle and its idle lifecycle (replaces direct use of
     `acp-session-map` by callers);
   - budget scope (session-envelope accumulation);
@@ -342,7 +344,7 @@ No other module reads process-global state.
 
 ## 8. Approved deletions (the only surface removals in phase 1)
 
-1. **The standalone argv CLI in `workbench.ts`:** `resolveWorkbenchInvocation`,
+1. **The standalone argv CLI in the former `workbench.ts`:** `resolveWorkbenchInvocation`,
    `runWorkbench`, `promptPaidEscalationTty`, `main`. Also the `start` and
    `workbench` Deno tasks in both `deno.json` files, plus the root `workbench`
    task.

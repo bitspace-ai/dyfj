@@ -154,6 +154,17 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`finalize` is the native turn's last named pipeline stage**
+  (`engine/finalize.ts`), and `runNativeWorkbenchRuntime` is now only the
+  composition of the six stages. `completeTurn` records a finished or
+  cancelled turn, `failTurn` classifies a failure by its real class, and
+  `finalize` writes `session_end`, the budget summary, the receipt and the
+  session record before returning the result or rethrowing the turn's error.
+  Event rows, receipts and the golden suite are unchanged. The engine's last
+  Vitest file (`src/workbench.test.ts`, which mocked ten internal modules) is
+  gone; its cases run on `Deno.test` against the engine fakes, including a
+  new proof that a turn requested from inside a tool approval waits for the
+  approving turn to finish.
 - **`agentLoop` is the native turn's fifth named pipeline stage**
   (`engine/agent-loop.ts`): it drives model and tool steps until the model
   stops requesting tools, the model repeats prior tool calls, or the
