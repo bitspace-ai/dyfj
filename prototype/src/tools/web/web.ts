@@ -5,7 +5,6 @@ import type {
 } from "../definition.ts";
 import { CommandExecutionError } from "../definition.ts";
 import type { McpConfiguredTool, McpHttpServerConfig } from "../../config/mod.ts";
-import { injectMcpTraceContext } from "../../mcp-conformance.ts";
 import {
   boundedMcpFetch,
   type ExternalMcpDeps,
