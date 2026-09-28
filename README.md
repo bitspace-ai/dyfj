@@ -1631,3 +1631,9 @@ Document revisions only. Code and behavior changes are tracked in
   host pin; a new API family is one adapter directory, one registry line, and
   the provider conformance kit. `specs/03-testing.md` §4 points the loopback
   base-URL rule at its new home in `prototype/src/providers/`.
+- 2026-09-28 - `specs/recipes/add-tool.md` added: a tool served by an MCP
+  server needs only configuration; a builtin tool is one module exporting its
+  `define<Name>` beside its executor, one `BUILTIN_TOOLS` line, and the tool
+  conformance kit. `specs/01-architecture.md` §5.4 now names where the tool
+  builders and the catalog builder live, and `specs/bug-log.md` records two
+  findings from the move.

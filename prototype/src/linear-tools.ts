@@ -9,7 +9,7 @@ import {
   type CommandTraceContext,
   type JsonSchemaObject,
   type JsonSchemaProperty,
-} from "./commands.ts";
+} from "./tools/mod.ts";
 
 const CREATE_ISSUE_TOOL = "create_issue";
 export type LinearCreationUpstreamTool = "create_issue" | "save_issue";

@@ -14,7 +14,7 @@ import {
 } from "./transport/mod.ts";
 import type { TurnRuntime } from "./turn-runner.ts";
 import type { TurnStreamFrame } from "./contract/mod.ts";
-import type { CommandDefinition } from "./commands.ts";
+import type { CommandDefinition } from "./tools/mod.ts";
 import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
 
 const cleanups: Array<() => Promise<void>> = [];

@@ -40,7 +40,7 @@ Deno.test("BoundedMatcher starts with the full default budget", () => {
 });
 
 // A pattern that actually runs out its budget mid-match is exercised through
-// grep_files in file-tools.test.ts ("a catastrophic pattern is cut off instead
+// grep_files in tools/builtin/file.test.ts ("a catastrophic pattern is cut off instead
 // of hanging"). Here an exhausted budget is reached deterministically.
 Deno.test("BoundedMatcher with no budget left refuses to match and stays spent", async () => {
   const matcher = new BoundedMatcher("a", { budgetMs: 0 });

@@ -12,10 +12,8 @@
     "prototype/src/cli.ts -> prototype/src/memory-search.ts"
   ],
   "dynamic": [
-    "prototype/src/workbench.ts -> prototype/src/commands.ts",
     "prototype/src/workbench.ts -> prototype/src/mcp-tools.ts",
     "prototype/src/workbench.ts -> prototype/src/memory-search.ts",
-    "prototype/src/workbench.ts -> prototype/src/memory.ts",
     "prototype/src/workbench.ts -> prototype/src/utils.ts"
   ],
   "env": [],

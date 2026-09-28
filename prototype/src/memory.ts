@@ -23,8 +23,10 @@
  *   *_voice → *_steering → any additional identity slugs.
  *
  * Pure functions (buildSystemPrompt) are separated from I/O functions
- * (loadInjectedMemories, loadIndexedMemories, executeReadMemory) so they can be
- * unit tested without Dolt.
+ * (loadInjectedMemories, loadIndexedMemories) so they can be unit tested
+ * without Dolt. The read_memory tool itself (`memory.read`) lives in
+ * tools/builtin/memory.ts and formats its result with
+ * formatUntrustedMemoryRecord.
  */
 
 import type {
@@ -50,21 +52,6 @@ export interface MemoryIndexEntry {
   type: MemoryType;
   name: string;
   description: string;
-}
-
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-}
-
-export interface ToolResultMessage {
-  role: "toolResult";
-  toolCallId: string;
-  toolName: string;
-  content: Array<{ type: "text"; text: string }>;
-  isError: boolean;
-  timestamp: number;
 }
 
 export const UNTRUSTED_MEMORY_INSTRUCTIONS = [
@@ -107,7 +94,7 @@ export async function loadIndexedMemories(
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
 
-function rowToMemory(row: TextRow): Memory {
+export function rowToMemory(row: TextRow): Memory {
   return {
     memoryId: row["memory_id"] ?? "",
     slug: row["slug"] ?? "",
@@ -323,27 +310,4 @@ export function buildSystemPrompt(
   }
 
   return parts.join("\n");
-}
-
-// ── Tool execution (I/O) ──────────────────────────────────────────────────────
-
-/**
- * Execute a read_memory tool call. Returns formatted memory content, or a
- * helpful not-found message if the slug doesn't exist (graceful — the model
- * may occasionally hallucinate a slug) or is outside the turn's clearance.
- */
-export async function executeReadMemory(
-  memories: MemoryReader,
-  slug: string,
-  clearance: readonly MemoryVisibility[],
-): Promise<string> {
-  const row = await memories.bySlug(slug, clearance);
-  const memory = row === null ? null : rowToMemory(row);
-  if (!memory) {
-    return (
-      `Memory not found: '${slug}'. ` +
-      `Check the Context Index in your system prompt for valid slugs.`
-    );
-  }
-  return formatUntrustedMemoryRecord(memory);
 }

@@ -15,7 +15,8 @@
  * a real process.
  */
 
-import { processEnv } from "./config/mod.ts";
+import { type Env, processEnv } from "../../config/mod.ts";
+import type { CommandDefinition } from "../definition.ts";
 
 export interface BashResult {
   code: number;
@@ -55,18 +56,20 @@ const SAFE_ENV_KEYS = [
   "TMPDIR",
 ] as const;
 
-function readEnv(key: string): string | undefined {
+function readEnv(source: Env, key: string): string | undefined {
   try {
-    return processEnv.get(key);
+    return source.get(key);
   } catch {
     return undefined; // not granted to the runtime — treat as absent
   }
 }
 
-export function buildSafeBashEnv(): Record<string, string> {
+export function buildSafeBashEnv(
+  source: Env = processEnv,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of SAFE_ENV_KEYS) {
-    const value = readEnv(key);
+    const value = readEnv(source, key);
     if (value !== undefined) env[key] = value;
   }
   return env;
@@ -145,4 +148,52 @@ export async function executeBash(
     ? `exit by signal ${res.signal}`
     : `exit ${res.code}`;
   return `${status}\n${body}`.trimEnd();
+}
+
+// ── Command definition ───────────────────────────────────────────────────────
+
+export function defineBash(root: string): CommandDefinition<string> {
+  return {
+    id: "bash",
+    title: "Run Bash Command",
+    description:
+      "Run a shell command via `bash -c`. The working directory is the workspace " +
+      "root, but the command is NOT sandboxed — it can read and write anywhere on " +
+      "the machine and reach the network, exactly as if the operator ran it. " +
+      "Returns the exit status and combined stdout/stderr. Always requires " +
+      "explicit operator approval before it runs — it is never auto-approved.",
+    inputSchema: {
+      type: "object",
+      required: ["command"],
+      properties: {
+        command: {
+          type: "string",
+          description: "The shell command to run (executed as `bash -c`).",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      // run.process is an exec-class effect: the no-exec invariant in
+      // evaluateCommandPolicy keeps it out of operator auto-approval, so bash
+      // ALWAYS routes to "ask". The honest filesystem/network envelope (a shell
+      // command can read, write, and reach the network) is recorded for audit,
+      // but the run.process effect is what actually gates it.
+      effects: [
+        "run.process",
+        "read.filesystem",
+        "write.filesystem",
+        "emit.event",
+      ],
+      defaultDecision: "allow",
+      resources: ["process:run"],
+      network: "external",
+      filesystem: "write",
+      cost: "none",
+    },
+    // bash output can carry secrets the approver can't pre-screen (env dumps,
+    // file contents), so keep the raw result out of the durable event log.
+    redactResult: true,
+    executor: (call) => executeBash(root, String(call.arguments.command)),
+  };
 }

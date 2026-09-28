@@ -10,6 +10,30 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **A bounded regex's first match pays for the matcher worker's
+  startup out of its matching budget.**
+  - **Location:** `prototype/src/kernel/bounded-regex.ts:161-163`
+    (`BoundedMatcher`: `#ensureWorker()` then `started = performance.now()`).
+  - **Symptom:** `grep_files` can report a harmless pattern as too expensive
+    when the worker boots slowly, because the first call's elapsed time includes
+    the worker loading its module. Conversely, a test that relies on the budget
+    firing can pass on a slow worker start rather than on the pattern (seen
+    while migrating the `grep_files` resource-bounds test, whose fixture line
+    was too long to reach the matcher at all).
+  - **Suspected cause:** the budget clock starts when the match is posted, not
+    when the worker is ready to match.
+  - **Found during:** WO-15 (test migration of the file tools).
+- 2026-09-28 — **The file tools keep workspace-root anchors in module-level
+  mutable state.**
+  - **Location:** `prototype/src/tools/builtin/file.ts:93` (`rootAnchors`, with
+    `resetRootAnchor` as its test hook).
+  - **Symptom:** the anchors are a process-global `Map`, not state owned by an
+    object the composition root constructs; tests share it across cases and must
+    reset it by hand.
+  - **Suspected cause:** predates the doctrine; `01-architecture.md` §5.7 lists
+    the known module-level state (the Dolt pool, the idea/packet registry), and
+    this map is not on that list.
+  - **Found during:** WO-15 (moving `file-tools.ts`, unchanged).
 - 2026-09-27 — **An Anthropic forced-conclusion turn sends historical tool
   calls under their registry names, not their wire names.**
   - **Location:** `prototype/src/providers/anthropic/adapter.ts` (the

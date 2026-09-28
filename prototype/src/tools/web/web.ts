@@ -2,16 +2,16 @@ import type {
   CommandDefinition,
   CommandTraceContext,
   JsonSchemaObject,
-} from "./commands.ts";
-import { CommandExecutionError } from "./commands.ts";
-import type { McpConfiguredTool, McpHttpServerConfig } from "./config/mod.ts";
-import { injectMcpTraceContext } from "./mcp-conformance.ts";
+} from "../definition.ts";
+import { CommandExecutionError } from "../definition.ts";
+import type { McpConfiguredTool, McpHttpServerConfig } from "../../config/mod.ts";
+import { injectMcpTraceContext } from "../../mcp-conformance.ts";
 import {
   boundedMcpFetch,
   type ExternalMcpDeps,
   formatUntrustedMcpResult,
   type McpCallResult,
-} from "./tools/mcp/transport.ts";
+} from "../mcp/transport.ts";
 
 export const MAX_SEARCH_CALLS_PER_TURN = 3;
 export const MAX_FETCH_CALLS_PER_TURN = 5;
@@ -650,7 +650,7 @@ export function normalizeSearchResults(
 }
 
 /** Build standard `web_search` and `web_fetch` CommandDefinitions from a server configuration. */
-export function buildWebCommands(
+export function defineWebCommands(
   server: McpHttpServerConfig,
   token: string,
   deps: ExternalMcpDeps = {},
