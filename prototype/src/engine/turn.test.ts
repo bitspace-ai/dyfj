@@ -247,6 +247,53 @@ Deno.test("the ticket's signal reaches the runtime, and only an identified turn 
   assertStrictEquals(inputs[2].onCancellationClosed, undefined);
 });
 
+Deno.test("a turn cancelled while queued behind its session's lock starts already aborted", async () => {
+  const owners = new SessionOwners();
+  const log: string[] = [];
+  let releaseFirst!: () => void;
+  const firstHeld = new Promise<void>((resolve) => releaseFirst = resolve);
+  let queuedInput: WorkbenchRuntimeInput | undefined;
+  const queued = owners.admit();
+  await captureStderr(async () => {
+    const first = executeTurn(
+      resolved({ prompt: "first", sessionId: SESSION_ID }),
+      deps({
+        owners,
+        ticket: owners.admit(),
+        runRuntime: async () => {
+          log.push("first runs");
+          await firstHeld;
+          return RESULT;
+        },
+      }),
+    );
+    const second = executeTurn(
+      resolved({ prompt: "second", sessionId: SESSION_ID, turnId: TURN_ID }),
+      deps({
+        owners,
+        ticket: queued,
+        runRuntime: (input) => {
+          log.push("second runs");
+          queuedInput = input;
+          return Promise.resolve(RESULT);
+        },
+      }),
+    );
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    assertEquals(log, ["first runs"]);
+    // The queued turn's window is open before it runs: the cancel is honored
+    // once.
+    assertStrictEquals(queued.cancel(), true);
+    assertStrictEquals(queued.cancel(), false);
+    releaseFirst();
+    await Promise.all([first, second]);
+  });
+  // It keeps its place in the queue, and its runtime starts already aborted.
+  assertEquals(log, ["first runs", "second runs"]);
+  assertStrictEquals(queuedInput?.abortSignal, queued.signal);
+  assertStrictEquals(queuedInput?.abortSignal?.aborted, true);
+});
+
 Deno.test("executeTurn binds boundary config and the transport's paid verdict", async () => {
   let captured: WorkbenchRuntimeInput | undefined;
   const runRuntime = (input: WorkbenchRuntimeInput) => {
