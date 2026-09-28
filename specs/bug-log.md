@@ -10,6 +10,23 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **`model_selected` names the environment's principal, not the
+  turn's.**
+  - **Location:** `prototype/src/utils.ts` (`writeModelSelectedEvent`, whose
+    payload defaults `principal_id` to `resolvePrincipalId` over the process
+    environment), called from `prototype/src/engine/budget-gate.ts`.
+  - **Symptom:** every other event of a native turn carries the turn's
+    `principalId`; `model_selected` carries `DYFJ_PRINCIPAL_ID`, else `USER`,
+    else `user`. Through the served turn entry the two agree, because the
+    boundary resolves the turn's principal from the same environment. They
+    differ for a direct caller that passes its own `principalId`, or none (the
+    turn then defaults to `user` while the event names `USER`), so one turn's
+    audit rows can name two principals.
+  - **Suspected cause:** the helper predates principals on the runtime input
+    and was never given the turn's. The old runtime test mocked the helper, so
+    the difference was not visible. WO-17 keeps the value and reads it through
+    the engine's env port; the new component test pins it.
+  - **Found during:** WO-17 (budgetGate extraction).
 - 2026-09-28 — **Route resolution silently swallows a model-registry load
   failure.**
   - **Location:** `prototype/src/engine/route.ts:191-193` and `:224-233`

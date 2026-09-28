@@ -31,13 +31,13 @@ import type { EventInsert, Store } from "../store/mod.ts";
 import type { Clock } from "../kernel/mod.ts";
 import type { Env } from "../config/mod.ts";
 import type { WorkbenchTurnParams } from "../providers/mod.ts";
-import type { CeilingConfirmationStore } from "../budget/mod.ts";
+import type { BudgetScopes } from "./session-owner.ts";
 import type { WorkbenchValidationSummary } from "./runtime-types.ts";
 
 /** The ports a native turn's stages run against. */
 export interface NativeTurnPorts {
   store: Store;
-  ceilingConfirmations: CeilingConfirmationStore;
+  budgetScopes: BudgetScopes;
   clock: Clock;
   env: Env;
   /**

@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import {
-  CeilingConfirmationStore,
-  type RunawayAnomalyWarning,
-} from "./budget/mod.ts";
+import type { RunawayAnomalyWarning } from "./budget/mod.ts";
 import { AGENT_DEFAULTS } from "./config/mod.ts";
 import { LENGTH_CONTINUATION_NUDGE } from "./context/length-recovery.ts";
 import {
@@ -24,6 +21,7 @@ import {
 import {
   ContextCompressionPersistenceUncertainError,
   PaidEscalationDeclinedError,
+  SessionOwners,
 } from "./engine/mod.ts";
 import { MemoryStore, type Store } from "./store/mod.ts";
 import {
@@ -476,7 +474,7 @@ function recordEvent(event: Record<string, unknown>): void {
 }
 
 const baseStore = new MemoryStore();
-let testConfirmations = new CeilingConfirmationStore();
+let testConfirmations = new SessionOwners();
 
 const testStore: Store = {
   journal: {
@@ -530,7 +528,7 @@ function runWorkbenchRuntime(
 ): Promise<WorkbenchRuntimeResult> {
   return runtimeUnderTest(input, {
     store: testStore,
-    ceilingConfirmations: testConfirmations,
+    budgetScopes: testConfirmations,
     ...services,
   });
 }
@@ -541,7 +539,7 @@ const runWithExternalAgentRunner = (
 
 beforeEach(() => {
   // Ceiling confirmations persist per scope by design; tests need isolation.
-  testConfirmations = new CeilingConfirmationStore();
+  testConfirmations = new SessionOwners();
   runtimeMocks.supportsTranscriptRetry = true;
   runtimeMocks.commandResult = null;
   runtimeMocks.commandThrows = null;
@@ -686,46 +684,6 @@ describe("toolStepToMessages", () => {
       [{ commandId: "list_files", callId: "c2", isError: false, result: "a" }],
     );
     expect("isError" in ok[1]).toBe(false);
-  });
-});
-
-describe("paid escalation preflight", () => {
-  test("declining paid inference aborts before any provider call", async () => {
-    const prevTier = runtimeMocks.model.tier;
-    const prevCost = runtimeMocks.model.costInput;
-    (runtimeMocks.model as { tier: number }).tier = 2;
-    runtimeMocks.model.costInput = 15;
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      await expect(runWorkbenchRuntime({
-        mode: "turn",
-        prompt: "explore",
-        routingOptions: {},
-        conversationMessages: [{ role: "user", content: "persisted prompt" }],
-        historyOmission: {
-          detectedInHistory: 1,
-          malformedToolRecords: 0,
-          gapMarkers: 1,
-          callsUnknown: true,
-          withheldFromProjection: 1,
-          projectedPairs: 0,
-        },
-        confirmPaidEscalation: async () => ({
-          decision: "deny" as const,
-          reason: "operator declined",
-        }),
-      })).rejects.toThrow("Paid inference consent declined");
-      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
-      const persisted = JSON.parse(
-        String(runtimeMocks.sessionUpdates.at(-1)?.content),
-      ) as { receipt: string };
-      expect(persisted.receipt).toContain("notice composed for this request");
-      expect(persisted.receipt).not.toContain("notice included yes");
-    } finally {
-      (runtimeMocks.model as { tier: number }).tier = prevTier;
-      runtimeMocks.model.costInput = prevCost;
-      log.mockRestore();
-    }
   });
 });
 
@@ -2159,52 +2117,6 @@ describe("runWorkbenchRuntime observer events", () => {
     }
   });
 
-  test("confirms a budget ceiling overrun once per turn (preflight + per-call gate)", async () => {
-    const prevTier = runtimeMocks.model.tier;
-    const prevCost = runtimeMocks.model.costInput;
-    (runtimeMocks.model as { tier: number }).tier = 1;
-    runtimeMocks.model.costInput = 15;
-    const confirmBudgetCeiling = vi.fn(async () => ({
-      decision: "approve" as const,
-    }));
-    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
-      text: "done",
-      model: runtimeMocks.model,
-      selection: {
-        selected: runtimeMocks.model,
-        considered: [runtimeMocks.model.slug],
-        reason: "default",
-      },
-      usage: {
-        input: 10,
-        output: 2,
-        cost: { total: 0.001 },
-        cacheRead: 0,
-        cacheWrite: 0,
-      },
-      stopReason: "stop",
-      timings: { responseHeadersMs: 1, totalMs: 2 },
-    });
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      const result = await runWorkbenchRuntime({
-        mode: "turn",
-        prompt: "explore",
-        routingOptions: {},
-        defaultPerCallBudgetUsd: 0.00001,
-        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
-        confirmBudgetCeiling,
-      });
-      expect(confirmBudgetCeiling).toHaveBeenCalledTimes(1);
-      expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(1);
-      expect(result.text).toBe("done");
-    } finally {
-      (runtimeMocks.model as { tier: number }).tier = prevTier;
-      runtimeMocks.model.costInput = prevCost;
-      log.mockRestore();
-    }
-  });
-
   test("re-confirms budget ceiling when a later same-size call crosses the session limit", async () => {
     const prevTier = runtimeMocks.model.tier;
     const prevCost = runtimeMocks.model.costInput;
@@ -2255,87 +2167,6 @@ describe("runWorkbenchRuntime observer events", () => {
       expect(confirmBudgetCeiling).toHaveBeenCalledTimes(2);
       expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalledTimes(2);
       expect(result.text).toBe("done");
-    } finally {
-      (runtimeMocks.model as { tier: number }).tier = prevTier;
-      runtimeMocks.model.costInput = prevCost;
-      log.mockRestore();
-    }
-  });
-
-  test("declining a budget ceiling aborts before any provider call", async () => {
-    const prevTier = runtimeMocks.model.tier;
-    const prevCost = runtimeMocks.model.costInput;
-    (runtimeMocks.model as { tier: number }).tier = 1;
-    runtimeMocks.model.costInput = 15;
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      await expect(runWorkbenchRuntime({
-        mode: "turn",
-        prompt: "explore",
-        routingOptions: {},
-        defaultPerCallBudgetUsd: 0.00001,
-        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
-        confirmBudgetCeiling: async () => ({
-          decision: "deny" as const,
-          reason: "too much",
-        }),
-      })).rejects.toThrow("Budget ceiling confirmation declined");
-      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
-    } finally {
-      (runtimeMocks.model as { tier: number }).tier = prevTier;
-      runtimeMocks.model.costInput = prevCost;
-      log.mockRestore();
-    }
-  });
-
-  test("cancelling a budget approval finalizes an aborted turn", async () => {
-    const prevTier = runtimeMocks.model.tier;
-    const prevCost = runtimeMocks.model.costInput;
-    (runtimeMocks.model as { tier: number }).tier = 1;
-    runtimeMocks.model.costInput = 15;
-    const abortController = new AbortController();
-    const events: Record<string, unknown>[] = [];
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      const result = await runWorkbenchRuntime({
-        mode: "turn",
-        prompt: "explore",
-        routingOptions: {},
-        turnId: "123e4567-e89b-42d3-a456-426614174000",
-        abortSignal: abortController.signal,
-        defaultPerCallBudgetUsd: 0.00001,
-        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
-        confirmBudgetCeiling: async () => {
-          abortController.abort();
-          throw abortController.signal.reason;
-        },
-        onRuntimeEvent: (event) => void events.push(event),
-      });
-
-      expect(result).toMatchObject({
-        text: "",
-        stopReason: "aborted",
-        tokens: { input: 0, output: 0, totalCalls: 0 },
-      });
-      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
-      expect(runtimeMocks.writtenEvents).toContainEqual(
-        expect.objectContaining({
-          event_type: "model_response",
-          content: "",
-          stop_reason: "aborted",
-          tokens_input: 0,
-          tokens_output: 0,
-        }),
-      );
-      expect(events).toContainEqual({
-        type: "turnAborted",
-        sessionId: result.sessionId,
-        traceId: result.traceId,
-        turnId: "123e4567-e89b-42d3-a456-426614174000",
-      });
-      expect(events.some((event) => event.type === "afterProviderResponse"))
-        .toBe(false);
-      expect(events.some((event) => event.type === "turnFailed")).toBe(false);
     } finally {
       (runtimeMocks.model as { tier: number }).tier = prevTier;
       runtimeMocks.model.costInput = prevCost;
@@ -3665,88 +3496,6 @@ describe("runWorkbenchRuntime runaway anomaly gate", () => {
     }
   });
 
-  test("scope hard-multiple halts even spend a ceiling confirmation already covered", async () => {
-    const prevTier = runtimeMocks.model.tier;
-    const prevCost = runtimeMocks.model.costInput;
-    (runtimeMocks.model as { tier: number }).tier = 1;
-    runtimeMocks.model.costInput = 0;
-    const confirmBudgetCeiling = vi.fn(async () => ({
-      decision: "approve" as const,
-    }));
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      await expect(runWorkbenchRuntime({
-        mode: "turn",
-        prompt: "explore",
-        routingOptions: {},
-        defaultSessionBudgetUsd: 1.0,
-        anomalyTurnMultiple: 3,
-        anomalyScopeMultiple: 2,
-        // Session lifetime spend already past 2× the $1 envelope.
-        fetchSpendBaselines: async () => ({
-          sessionSpentUsd: 2.5,
-          sessionSpentTodayUsd: 2.5,
-          dailyOtherSessionsUsd: 0,
-        }),
-        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
-        // The ceiling handler approving is exactly the blind spot: the
-        // anomaly halt must fire regardless, and fail closed without its own
-        // handler.
-        confirmBudgetCeiling,
-      })).rejects.toThrow("Runaway spend anomaly");
-      expect(runtimeMocks.runWorkbenchTurn).not.toHaveBeenCalled();
-      // Ordering: the hard stop fires at turn entry BEFORE the soft ceiling
-      // confirm, so the aborted turn leaves no scope-period ceiling
-      // confirmation behind.
-      expect(confirmBudgetCeiling).not.toHaveBeenCalled();
-    } finally {
-      (runtimeMocks.model as { tier: number }).tier = prevTier;
-      runtimeMocks.model.costInput = prevCost;
-      log.mockRestore();
-    }
-  });
-
-  test("an approved entry halt does not re-prompt the identical state at the first call", async () => {
-    const prevTier = runtimeMocks.model.tier;
-    const prevCost = runtimeMocks.model.costInput;
-    (runtimeMocks.model as { tier: number }).tier = 1;
-    runtimeMocks.model.costInput = 0;
-    const confirmRunawayAnomaly = vi.fn(async () => ({
-      decision: "approve" as const,
-    }));
-    runtimeMocks.runWorkbenchTurn.mockResolvedValueOnce({
-      ...paidBase(),
-      text: "done",
-      stopReason: "stop",
-    });
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      const result = await runWorkbenchRuntime({
-        mode: "turn",
-        prompt: "explore",
-        routingOptions: {},
-        defaultSessionBudgetUsd: 1.0,
-        anomalyTurnMultiple: 3,
-        anomalyScopeMultiple: 2,
-        fetchSpendBaselines: async () => ({
-          sessionSpentUsd: 2.5,
-          sessionSpentTodayUsd: 2.5,
-          dailyOtherSessionsUsd: 0,
-        }),
-        confirmPaidEscalation: async () => ({ decision: "approve" as const }),
-        confirmBudgetCeiling: async () => ({ decision: "approve" as const }),
-        confirmRunawayAnomaly,
-      });
-      expect(result.text).toBe("done");
-      // Entry check and first-call check see identical actuals ($2.50): one
-      // prompt, not two — the same-state dedupe, not scope-period coverage.
-      expect(confirmRunawayAnomaly).toHaveBeenCalledTimes(1);
-    } finally {
-      (runtimeMocks.model as { tier: number }).tier = prevTier;
-      runtimeMocks.model.costInput = prevCost;
-      log.mockRestore();
-    }
-  });
 });
 
 describe("runWorkbenchRuntime proactive context compression", () => {

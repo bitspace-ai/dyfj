@@ -154,6 +154,16 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`budgetGate` is the native turn's third named pipeline stage**
+  (`engine/budget-gate.ts`): it selects the turn's model, runs the entry
+  checks in their existing order (runaway-anomaly hard stop, budget ceiling,
+  paid consent), and records `model_selected`. The ceiling and anomaly gates
+  it builds serve every later provider call of the turn. `SessionOwners` now
+  also holds the budget-ceiling confirmation store: a turn reaches its
+  session's scope only through `budgetScope`, and the runtime services take
+  `budgetScopes` (the owners) in place of `ceilingConfirmations`. The UDS
+  server builds one `SessionOwners` and shares it between the turn handlers
+  and the runtime. Event rows, receipts and the golden suite are unchanged.
 - **`buildContext` is the native turn's second named pipeline stage**
   (`engine/build-context.ts`): it resolves the transport-gated workspace root,
   then assembles repo context for ask and next-work turns, or memory, tools,

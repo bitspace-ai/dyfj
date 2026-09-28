@@ -19,6 +19,8 @@ export async function writeModelSelectedEvent(journal: Journal, params: {
   api?: string;
   durationMs?: number;
   parentSpanId?: string;
+  /** Default: the principal the process environment names. */
+  principalId?: string;
   authnFields?: AuthnEventFields;
 }): Promise<void> {
   await journal.commit({ events: [buildModelSelectedEventPayload(params)] });
