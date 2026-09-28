@@ -166,6 +166,30 @@ README are tracked separately in its Revision history section.
   permission prompt and selection types moved to `contract/`. Same-session
   serialization, the one-turn-per-connection rule, and cancel semantics are
   unchanged, and the golden suite passes with no snapshot change.
+- **`web_fetch` refuses a target it cannot verify as public**: a hostname
+  passes the address check only when its A and AAAA lookups both answer
+  (either may have no records), together they return at least one address,
+  and none is private, loopback or internal. A
+  lookup that fails or cannot be made, a name with no addresses, or a lookup
+  that outlives the fetch deadline refuses the target before the upstream
+  fetch tool is called. A public IP literal is accepted without a lookup, and
+  private-literal and localhost rejection is unchanged. For these lookups,
+  both `dyfj start` and `deno task serve-unix` grant the engine `<ip>:53` for
+  each `nameserver` in `/etc/resolv.conf` on its `--allow-net`
+  (`prototype/src/config/nameservers.ts`); the task gets its flag from
+  `prototype/scripts/serve-unix-net-flag.ts`, which repeats the profile's net
+  list, and falls back to the profile's own list when that cannot be read.
+- **The web tools look up hostnames through a `DnsResolver` port**
+  (`prototype/src/tools/web/dns.ts`): the web tools' address check resolves a
+  target's A and AAAA records through an injected resolver whose lookups never
+  throw and report either an answer or why none was obtained. The real adapter wraps `Deno.resolveDns`; tests use the
+  `ScriptedDnsResolver` fake (`prototype/testing/fakes/`) instead of replacing
+  the `Deno.resolveDns` global, and the address check gains direct tests. Both
+  pass the port's conformance suite
+  (`prototype/testing/conformance/dns-resolver.ts`): the fake in the unit
+  lane, the real adapter in the integration lane in whichever mode that lane's
+  net grant allows. The Deno integration lane now runs with `--no-prompt`, so
+  ungranted access fails locally as it does in CI instead of prompting.
 - **Anthropic and Gemini requests follow the same host and redirect rules as
   the hosted OpenAI-compatible providers**: each key is pinned to its
   provider's canonical https endpoint, the same one `getModelAccessModality`

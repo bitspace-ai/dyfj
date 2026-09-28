@@ -14,6 +14,7 @@ export const integrationTestAssignments = {
     "src/providers/http.integration.test.ts",
     "src/store/dolt-store.integration.test.ts",
     "src/tools/builtin/memory.integration.test.ts",
+    "src/tools/web/dns.integration.test.ts",
     "scripts/memory-recall-uat-fixture.integration.test.ts",
     "scripts/test-files.integration.test.ts",
     "src/transport/jsonrpc-peer.integration.test.ts",

@@ -3,7 +3,8 @@
  *
  * Responsibility: the env-key schema (every `DYFJ_*` key declared), the `Env`
  * port and its process adapter, the shared `.env` parser, TOML loading, and
- * secrets/MCP/budget/agent/anomaly config parsing. Nothing else in the runtime
+ * secrets/MCP/budget/agent/anomaly config parsing, and the launch-resolved
+ * nameserver net grants. Nothing else in the runtime
  * reads the process environment directly.
  *
  * Allowed dependencies: none outside this directory (and `@std/toml`, loaded
@@ -13,6 +14,11 @@
 export { type Env, type MutableEnv, processEnv } from "./env.ts";
 export { envFileVar, readLauncherEnvVar } from "./env-file.ts";
 export { type DoltConnectionConfig, resolveDoltConnection } from "./dolt.ts";
+export {
+  nameserverNetGrants,
+  readNameserverNetGrants,
+  RESOLV_CONF_PATH,
+} from "./nameservers.ts";
 export {
   CONFIG_SCHEMA,
   type ConfigDomain,
