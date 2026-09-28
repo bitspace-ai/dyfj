@@ -19,7 +19,6 @@ import type {
 } from "../contract/mod.ts";
 import type { WorkbenchMessage } from "../providers/mod.ts";
 import type {
-  CeilingConfirmationStore,
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,
   SpendBaselines,
@@ -34,6 +33,7 @@ import type {
 import type { Clock } from "../kernel/mod.ts";
 import type { HttpTransport } from "../providers/mod.ts";
 import type { Store } from "../store/mod.ts";
+import type { BudgetScopes } from "./session-owner.ts";
 
 export interface WorkbenchInvocation {
   mode: WorkbenchRuntimeMode;
@@ -232,10 +232,11 @@ export interface WorkbenchRuntimeServices {
   /** The store every native-turn read and write goes through. */
   store: Store;
   /**
-   * The engine's budget-ceiling confirmation store, built once at the
-   * composition root so confirmations persist for their scope periods.
+   * Where a turn finds its session's budget scope: the engine's
+   * `SessionOwners`, built once at the composition root so ceiling
+   * confirmations persist for their scope periods.
    */
-  ceilingConfirmations: CeilingConfirmationStore;
+  budgetScopes: BudgetScopes;
   externalAgentRunner?: ExternalAgentRunner;
   /** Wall clock for durations; the system clock when absent. */
   clock?: Clock;

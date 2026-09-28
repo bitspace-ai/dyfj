@@ -1667,3 +1667,6 @@ Document revisions only. Code and behavior changes are tracked in
   grant the engine the system nameservers for the lookups.
 - 2026-09-28 - Layer 1 runtime boundary names the engine's turn entry
   (`prototype/src/engine/turn.ts`), which replaces `turn-runner`.
+- 2026-09-28 - `specs/bug-log.md` records that `model_selected` names the
+  environment's principal rather than the turn's, found extracting the
+  `budgetGate` stage.

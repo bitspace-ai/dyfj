@@ -1,4 +1,6 @@
 import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import { ManualClock } from "../../testing/fakes/manual-clock.ts";
+import { CeilingConfirmationStore } from "../budget/mod.ts";
 import { SessionOwners, TurnTicket } from "./session-owner.ts";
 
 const SESSION = "01ABCDEF0123456789ABCDEF01";
@@ -139,4 +141,15 @@ Deno.test("each admitted turn gets its own cancel signal", () => {
   a.cancel();
   assertStrictEquals(a.signal.aborted, true);
   assertStrictEquals(b.signal.aborted, false);
+});
+
+Deno.test("a session's budget scope keeps its marks across turns; the daily mark is shared", () => {
+  const confirmations = new CeilingConfirmationStore(new ManualClock());
+  const owners = new SessionOwners(confirmations);
+  owners.budgetScope(SESSION).session_limit = 5;
+  owners.budgetScope(SESSION).daily_limit = 9;
+  assertEquals(owners.budgetScope(SESSION).session_limit, 5);
+  const other = owners.budgetScope("01OTHER0000000000000000000");
+  assertEquals(other.session_limit, undefined);
+  assertEquals(other.daily_limit, 9);
 });

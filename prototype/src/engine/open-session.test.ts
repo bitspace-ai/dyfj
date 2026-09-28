@@ -10,7 +10,6 @@ import {
   assertObjectMatch,
   assertRejects,
 } from "@std/assert";
-import { stub } from "@std/testing/mock";
 import {
   chatReply,
   enginePorts,
@@ -90,23 +89,17 @@ Deno.test("principalId comes from the input struct and flows to events", async (
 
 Deno.test("the input's principalId attributes every row a whole turn writes", async () => {
   const run = engineServices([chatReply({ content: "done" })]);
-  // The best-effort model_selected row resolves its principal from the
-  // process environment, not the input (a known gap); the unit lane has no
-  // env grant, so it is skipped here with a warning.
-  const warn = stub(console, "warn");
-  let sessionId: string;
-  try {
-    ({ sessionId } = await runWorkbenchRuntime({
-      mode: "turn",
-      prompt: "probe",
-      routingOptions: {},
-      defaultCompanionModel: LOCAL_MODEL.slug,
-      principalId: "custom-principal",
-      log: () => {},
-    }, run.services));
-  } finally {
-    warn.restore();
-  }
+  // model_selected names the environment's principal, read through the env
+  // port, not the input (a known gap, recorded in specs/bug-log.md), so it
+  // is excluded here.
+  const { sessionId } = await runWorkbenchRuntime({
+    mode: "turn",
+    prompt: "probe",
+    routingOptions: {},
+    defaultCompanionModel: LOCAL_MODEL.slug,
+    principalId: "custom-principal",
+    log: () => {},
+  }, run.services);
   const rows = (await sessionRows(run.store, sessionId))
     .filter((row) => row.event_type !== "model_selected");
   assert(rows.length >= 4);

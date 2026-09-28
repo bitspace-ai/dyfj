@@ -52,7 +52,6 @@ import {
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
-  CeilingConfirmationStore,
   runawayAnomalyApprovalRequest,
 } from "./budget/mod.ts";
 import type {
@@ -173,6 +172,12 @@ export interface WorkbenchUnixServerOptions {
    */
   store?: Store;
   runRuntime?: TurnRuntime;
+  /**
+   * The engine's session owners (turn locks, budget scopes, cancel signals).
+   * `serveWorkbenchUnix` builds one and shares it between the turn handlers
+   * and the runtime; a handler builder without one builds its own.
+   */
+  owners?: SessionOwners;
   loadModels?: () => Promise<WorkbenchModel[]>;
   listSessions?: (
     options: { project?: string; limit?: number },
@@ -1275,11 +1280,9 @@ function resolveEngineTurnDeps(
 // here, at the composition root, so the engine never imports the ACP runner.
 function composeTurnRuntime(
   store: () => Store,
+  owners: SessionOwners,
   acpSessions?: AcpSessionHandleMap,
 ): TurnRuntime {
-  // One confirmation store per engine: ceiling confirmations persist for
-  // their scope periods across this engine's turns.
-  const ceilingConfirmations = new CeilingConfirmationStore();
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
       runExternalAgentWorkbenchRuntime(input, {
@@ -1290,7 +1293,9 @@ function composeTurnRuntime(
   return (input) =>
     runWorkbenchRuntime(input, {
       store: store(),
-      ceilingConfirmations,
+      // The session owners hold each session's budget scope, so ceiling
+      // confirmations persist for their scope periods across turns.
+      budgetScopes: owners,
       externalAgentRunner,
     });
 }
@@ -1303,14 +1308,15 @@ export function buildTurnHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
   const store = () => requireStore(options);
-  const runRuntime = options.runRuntime ?? composeTurnRuntime(store);
+  // The engine's session owners: turn locks, budget scopes and cancel
+  // signals. The connection map below only records which turn each
+  // connection is running.
+  const owners = options.owners ?? new SessionOwners();
+  const runRuntime = options.runRuntime ?? composeTurnRuntime(store, owners);
   const fetchSessionEvents = options.fetchSessionEvents ??
     ((input: SessionEventsRequest) =>
       fetchWorkbenchSessionEvents({ ...input, events: store().events }));
   const engineDeps = resolveEngineTurnDeps(options);
-  // The engine's session owners: turn locks and cancel signals. The
-  // connection map below only records which turn each connection is running.
-  const owners = new SessionOwners();
   const activeTurns = new Map<RpcContext, Map<string, TurnTicket>>();
 
   return {
@@ -1533,10 +1539,14 @@ export async function serveWorkbenchUnix(
   options: WorkbenchUnixServerOptions & { store: Store },
 ): Promise<WorkbenchUnixServer> {
   const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
+  // One set of session owners per engine, shared by the turn handlers and
+  // the runtime they run.
+  const owners = options.owners ?? new SessionOwners();
   const serverOptions: WorkbenchUnixServerOptions = {
     ...options,
+    owners,
     runRuntime: options.runRuntime ??
-      composeTurnRuntime(() => options.store, acpSessions),
+      composeTurnRuntime(() => options.store, owners, acpSessions),
   };
   const handlers: RpcHandlers = {
     ...buildWorkbenchHandlers(serverOptions),
