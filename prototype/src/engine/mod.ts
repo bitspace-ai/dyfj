@@ -49,10 +49,10 @@ export {
 } from "./route.ts";
 export {
   AGENTS_INSTRUCTIONS_TRUST_PREAMBLE,
+  buildContext,
   buildWorkspaceGrounding,
-  runWorkbenchRuntime,
-  toolStepToMessages,
-} from "./native-runner.ts";
+} from "./build-context.ts";
+export { runWorkbenchRuntime, toolStepToMessages } from "./native-runner.ts";
 export {
   buildNextWorkBrief,
   type NextWorkBriefInput,
@@ -60,6 +60,11 @@ export {
   type NextWorkValidationResult,
   validateNextWorkJson,
 } from "./next-work.ts";
+export {
+  MAX_TOOL_STEPS,
+  openSession,
+  recordNewSession,
+} from "./open-session.ts";
 export {
   type BudgetTallyInput,
   buildBudgetTallyLine,
@@ -76,11 +81,12 @@ export type {
   WorkbenchRuntimeResult,
   WorkbenchRuntimeServices,
 } from "./runtime-types.ts";
-export { MAX_TOOL_STEPS, openSession } from "./open-session.ts";
 export {
   type NativeTurnPorts,
+  newTurnState,
   TurnAudit,
   type TurnSession,
+  type TurnState,
 } from "./turn-state.ts";
 export { SessionOwners, TurnTicket } from "./session-owner.ts";
 export {
