@@ -17,6 +17,7 @@ import {
 import { CeilingConfirmationStore } from "../budget/mod.ts";
 import { MemoryStore, type ModelSeed } from "../store/mod.ts";
 import { runWorkbenchRuntime } from "./native-runner.ts";
+import { SessionOwners } from "./session-owner.ts";
 
 /**
  * A free hosted row: tier 0 on the Anthropic endpoint, so its adapter needs
@@ -71,7 +72,7 @@ async function turnWith(env: Record<string, string>) {
       log: () => {},
     }, {
       store,
-      ceilingConfirmations: new CeilingConfirmationStore(clock),
+      budgetScopes: new SessionOwners(new CeilingConfirmationStore(clock)),
       clock,
       env: new MapEnv(env),
       http: transport.fetch,
