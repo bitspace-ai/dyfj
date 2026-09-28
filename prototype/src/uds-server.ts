@@ -6,14 +6,10 @@
 // `approval` requests carry mutating-tool, budget, and exact ACP permission
 // option decisions over the same duplex seam.
 
-import { generateTraceId, stripAnsiEscapes } from "./kernel/mod.ts";
+import { generateTraceId } from "./kernel/mod.ts";
 import {
   defaultLocalWorkbenchModels,
-  getModelAccessModality,
-  isLocalWorkbenchModel,
   loadWorkbenchModels,
-  modelHasCatalogPricing,
-  selectWorkbenchModel,
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
 } from "./providers/mod.ts";
@@ -23,11 +19,8 @@ import {
   formatWorkPacketMarkdown,
   type IdeaPacketRegistry,
   markWorkbenchIdea,
-  type WorkbenchIdea,
-  type WorkbenchWorkPacket,
 } from "./idea-packet.ts";
 import {
-  compareSessionActivity,
   countWorkbenchSessionEvents,
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionRecord,
@@ -44,11 +37,7 @@ import {
   serveUnixJsonRpc,
 } from "./transport/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
-import {
-  AGENT_DEFAULTS,
-  type PermissionLevel,
-  type WorkbenchConfig,
-} from "./config/mod.ts";
+import type { PermissionLevel, WorkbenchConfig } from "./config/mod.ts";
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
@@ -93,76 +82,21 @@ import {
   postFriction,
   requireFrictionIssueIdentifier,
 } from "./friction.ts";
+import type { EventInsert, Store } from "./store/mod.ts";
 import {
-  type EventInsert,
-  isValidAsOfTimestamp,
-  type Store,
-} from "./store/mod.ts";
-
-export interface WorkbenchToolSummary {
-  id: string;
-  title: string;
-  description: string;
-  inputSchema: CommandDefinition["inputSchema"];
-  permission: CommandDefinition["permission"];
-  redactResult: boolean;
-}
-
-export type WorkbenchMethodKind = "read" | "interactive";
-
-export interface WorkbenchMethodSummary {
-  id: string;
-  namespace: string;
-  kind: WorkbenchMethodKind;
-}
-
-/**
- * What a bare turn (no model/tier/hint) would route to right now — the same
- * selection the turn path runs, resolved server-side so an engine-free client
- * can render an honest posture line without reimplementing routing.
- */
-export interface WorkbenchDefaultTurnModel {
-  slug: string;
-  displayName: string;
-  tier: 0 | 1 | 2;
-  local: boolean;
-  reason: string;
-}
-
-export interface WorkbenchRuntimeStatus {
-  transport: "uds";
-  clearance: "loopback";
-  methods: string[];
-  methodCatalog: WorkbenchMethodSummary[];
-  defaultCompanionModel: string | null;
-  /** Resolved bare-turn route; null when no model is currently routable. */
-  defaultTurnModel: WorkbenchDefaultTurnModel | null;
-  permissionLevel: PermissionLevel;
-  approvePaidDefault: boolean;
-  trustWorkspaceInstructions: boolean;
-  defaultSessionBudgetUsd: number;
-  defaultPerCallBudgetUsd: number;
-  defaultDailyBudgetUsd: number;
-  maxToolSteps: number;
-  models: { total: number; local: number; hosted: number };
-  autostarted?: boolean;
-}
-
-export interface WorkbenchSurfaceSnapshot {
-  generatedAt: string;
-  runtime: WorkbenchRuntimeStatus;
-  models: WorkbenchModel[];
-  projects: WorkbenchProjectSessions[];
-  tools: WorkbenchToolSummary[];
-}
-
-interface SessionEventsRequest {
-  sessionId: string;
-  eventId?: string;
-  asOf?: string;
-  limit?: number;
-  order?: "asc" | "desc";
-}
+  asRecord,
+  sanitizeRpcIdentifier,
+  sanitizeRpcString,
+} from "./server/rpc/params.ts";
+import { buildRuntimeHandlers } from "./server/rpc/runtime.ts";
+import { buildSurfaceHandlers } from "./server/rpc/surface.ts";
+import { buildModelsHandlers } from "./server/rpc/models.ts";
+import { buildToolsHandlers } from "./server/rpc/tools.ts";
+import { buildSessionsHandlers } from "./server/rpc/sessions.ts";
+import {
+  buildEventsHandlers,
+  type SessionEventsRequest,
+} from "./server/rpc/events.ts";
 
 export interface WorkbenchUnixServerOptions {
   /**
@@ -257,230 +191,8 @@ async function loadPickerModels(
   }
 }
 
-function asRecord(params: unknown): Record<string, unknown> {
-  return typeof params === "object" && params !== null
-    ? params as Record<string, unknown>
-    : {};
-}
-
-function sanitizeRpcIdentifier(
-  val: unknown,
-  fieldName: string,
-  options: { required?: boolean; maxLen?: number } = {},
-): string | undefined {
-  const maxLen = options.maxLen ?? 256;
-  if (val === undefined || val === null) {
-    if (options.required) {
-      throw new RpcError(
-        RpcErrorCode.invalidParams,
-        `${fieldName} is required`,
-      );
-    }
-    return undefined;
-  }
-  if (typeof val !== "string") {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} must be a string`,
-    );
-  }
-  if (val.length === 0 || val.length > maxLen) {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} must be between 1 and ${maxLen} characters`,
-    );
-  }
-  if (val.trim().length === 0) {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} cannot be empty or whitespace-only`,
-    );
-  }
-  if (/[\s\x00-\x1F\x7F-\x9F\x1B]/.test(val)) {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} cannot contain control characters or whitespace`,
-    );
-  }
-  return val;
-}
-
-function sanitizeRpcString(
-  val: unknown,
-  fieldName: string,
-  options: { required?: boolean; maxLen?: number; singleLine?: boolean } = {},
-): string | undefined {
-  const maxLen = options.maxLen ?? 256;
-  if (val === undefined || val === null) {
-    if (options.required) {
-      throw new RpcError(
-        RpcErrorCode.invalidParams,
-        `${fieldName} is required`,
-      );
-    }
-    return undefined;
-  }
-  if (typeof val !== "string") {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} must be a string`,
-    );
-  }
-  if (val.length > maxLen * 2) {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} exceeds maximum length of ${maxLen} characters`,
-    );
-  }
-  let s = stripAnsiEscapes(val);
-  if (options.singleLine !== false) {
-    s = s.replace(/[\r\n\t\x00-\x1F\x7F-\x9F]/g, " ").replace(/\s+/g, " ");
-  } else {
-    s = s.replace(/\r\n|\r/g, "\n").replace(
-      /[\t\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g,
-      " ",
-    );
-  }
-  const trimmed = s.trim();
-  if (trimmed.length === 0) {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} cannot be empty or whitespace-only`,
-    );
-  }
-  if (trimmed.length > maxLen) {
-    throw new RpcError(
-      RpcErrorCode.invalidParams,
-      `${fieldName} exceeds maximum length of ${maxLen} characters`,
-    );
-  }
-  return trimmed;
-}
-
-const METHOD_CATALOG = [
-  { id: "runtime/liveness", namespace: "runtime", kind: "read" },
-  { id: "runtime/status", namespace: "runtime", kind: "read" },
-  { id: "runtime/stop", namespace: "runtime", kind: "interactive" },
-  { id: "surface/snapshot", namespace: "surface", kind: "read" },
-  { id: "models/list", namespace: "models", kind: "read" },
-  { id: "sessions/list", namespace: "sessions", kind: "read" },
-  { id: "sessions/inspect", namespace: "sessions", kind: "read" },
-  { id: "events/query", namespace: "events", kind: "read" },
-  { id: "friction/post", namespace: "friction", kind: "interactive" },
-  { id: "ideas/mark", namespace: "ideas", kind: "interactive" },
-  { id: "ideas/list", namespace: "ideas", kind: "read" },
-  { id: "ideas/get", namespace: "ideas", kind: "read" },
-  { id: "packets/draft", namespace: "packets", kind: "interactive" },
-  { id: "packets/list", namespace: "packets", kind: "read" },
-  { id: "packets/get", namespace: "packets", kind: "read" },
-  { id: "tools/list", namespace: "tools", kind: "read" },
-  { id: "tools/inspect", namespace: "tools", kind: "read" },
-  { id: "turn", namespace: "turn", kind: "interactive" },
-  { id: "turn/cancel", namespace: "turn", kind: "interactive" },
-] as const satisfies readonly WorkbenchMethodSummary[];
-
-const METHOD_IDS = METHOD_CATALOG.map((method) => method.id);
-
-function resolveDefaultTurnModel(
-  models: WorkbenchModel[],
-  defaultCompanionModel: string | null,
-): WorkbenchDefaultTurnModel | null {
-  try {
-    const { selected, reason } = selectWorkbenchModel(
-      models,
-      {},
-      defaultCompanionModel,
-    );
-    return {
-      slug: selected.slug,
-      displayName: selected.displayName,
-      tier: selected.tier,
-      local: isLocalWorkbenchModel(selected),
-      reason,
-    };
-  } catch {
-    try {
-      const { selected, reason } = selectWorkbenchModel(models, {}, null);
-      return {
-        slug: selected.slug,
-        displayName: selected.displayName,
-        tier: selected.tier,
-        local: isLocalWorkbenchModel(selected),
-        reason,
-      };
-    } catch {
-      // No routable bare-turn model (empty registry) — status must still answer.
-      return null;
-    }
-  }
-}
-
-function runtimeStatus(
-  options: WorkbenchUnixServerOptions,
-  models: WorkbenchModel[],
-): WorkbenchRuntimeStatus {
-  const defaultCompanionModel = options.engineConfig?.defaultCompanionModel ??
-    options.defaultCompanionModel ??
-    null;
-  return {
-    transport: "uds",
-    clearance: "loopback",
-    methods: [...METHOD_IDS],
-    methodCatalog: METHOD_CATALOG.map((method) => ({ ...method })),
-    defaultCompanionModel,
-    defaultTurnModel: resolveDefaultTurnModel(models, defaultCompanionModel),
-    permissionLevel: options.engineConfig?.permissionLevel ??
-      options.permissionLevel ??
-      "strict",
-    approvePaidDefault: options.engineConfig?.approvePaidDefault ?? false,
-    trustWorkspaceInstructions:
-      options.engineConfig?.trustWorkspaceInstructions ?? false,
-    defaultSessionBudgetUsd: options.engineConfig?.defaultSessionBudgetUsd ?? 1,
-    defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
-      0.1,
-    defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ?? 25,
-    maxToolSteps: options.engineConfig?.maxToolSteps ??
-      AGENT_DEFAULTS.maxToolSteps,
-    // Locality counts use the same provider+loopback classification as
-    // `models/list[].local` and the bare-turn route — never the tier label,
-    // which is catalog metadata a mis-tiered row can get wrong.
-    models: {
-      total: models.length,
-      local: models.filter(isLocalWorkbenchModel).length,
-      hosted: models.filter((model) => !isLocalWorkbenchModel(model)).length,
-    },
-    ...(options.autostarted !== undefined
-      ? { autostarted: options.autostarted }
-      : {}),
-  };
-}
-
-function projectCommand(command: CommandDefinition): WorkbenchToolSummary {
-  return {
-    id: command.id,
-    title: command.title,
-    description: command.description,
-    inputSchema: command.inputSchema,
-    permission: command.permission,
-    redactResult: command.redactResult === true,
-  };
-}
-
-function listToolCatalog(
-  params: unknown,
-  externalMcpCommands: readonly CommandDefinition[] = [],
-): WorkbenchToolSummary[] {
-  const record = asRecord(params);
-  const workspaceRoot = typeof record.workspace === "string"
-    ? record.workspace
-    : undefined;
-  return buildToolCatalog({}, { workspaceRoot }, externalMcpCommands)
-    .list()
-    .map(projectCommand);
-}
-
-// The cataloged method surface, reusing the shared runtime functions so the
-// UDS handlers stay the single transport seam.
+// The cataloged method surface: the default store-backed readers, resolved
+// once and handed to each namespace's RPC module under server/rpc/.
 export function buildWorkbenchHandlers(
   options: WorkbenchUnixServerOptions = {},
 ): RpcHandlers {
@@ -517,223 +229,17 @@ export function buildWorkbenchHandlers(
   };
 
   return {
-    "runtime/liveness": () => {
-      return {
-        status: "ok",
-        transport: "uds",
-        clearance: "loopback",
-      };
-    },
-
-    "runtime/status": async () => {
-      const models = await loadModels();
-      return { runtime: runtimeStatus(options, models) };
-    },
-
-    "runtime/stop": async () => {
-      if (!options.onShutdown) {
-        throw new RpcError(
-          RpcErrorCode.internalError,
-          "runtime shutdown is not configured on this server",
-        );
-      }
-      try {
-        await options.onShutdown();
-      } catch (error) {
-        throw new RpcError(
-          RpcErrorCode.internalError,
-          `runtime shutdown failed: ${summarizeError(error)}`,
-        );
-      }
-      return {
-        status: "stopping",
-      };
-    },
-
-    "surface/snapshot": async (params) => {
-      const record = asRecord(params);
-      const project = record.project;
-      const [models, projects] = await Promise.all([
-        loadModels(),
-        listSessions({
-          project: typeof project === "string" ? project : undefined,
-        }),
-      ]);
-      return {
-        generatedAt: new Date().toISOString(),
-        runtime: runtimeStatus(options, models),
-        models,
-        projects,
-        tools: listToolCatalog(params, options.externalMcpCommands),
-      } satisfies WorkbenchSurfaceSnapshot;
-    },
-
-    // `routable`, `local`, and `modality` are computed server-side (single sources:
-    // modelHasCatalogPricing, isLocalWorkbenchModel, getModelAccessModality) so clients
-    // can annotate rows without duplicating pricing, locality, or taxonomy rules.
-    "models/list": async () => ({
-      models: (await loadModels()).map((model) => ({
-        ...model,
-        routable: modelHasCatalogPricing(model),
-        local: isLocalWorkbenchModel(model),
-        modality: getModelAccessModality(model),
-      })),
+    ...buildRuntimeHandlers({ ...options, loadModels }),
+    ...buildSurfaceHandlers({ ...options, loadModels, listSessions }),
+    ...buildModelsHandlers({ loadModels }),
+    ...buildToolsHandlers(options),
+    ...buildSessionsHandlers({
+      listSessions,
+      fetchSessionRecord,
+      fetchSessionWorkspaceRecord,
+      countSessionEvents,
     }),
-
-    "tools/list": async (params) => ({
-      tools: listToolCatalog(params, options.externalMcpCommands),
-    }),
-
-    "tools/inspect": async (params) => {
-      const record = asRecord(params);
-      const commandId = record.commandId ?? record.id;
-      if (typeof commandId !== "string") {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "tools/inspect requires a string commandId",
-        );
-      }
-      const tool = listToolCatalog(params, options.externalMcpCommands).find((
-        candidate,
-      ) => candidate.id === commandId);
-      if (tool === undefined) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          `unknown tool: ${commandId}`,
-        );
-      }
-      return { tool };
-    },
-
-    "sessions/list": async (params) => {
-      const record = asRecord(params);
-      const project = sanitizeRpcString(record.project, "project", {
-        maxLen: 256,
-      });
-      if (
-        record.limit !== undefined &&
-        (typeof record.limit !== "number" ||
-          !Number.isInteger(record.limit) ||
-          record.limit <= 0)
-      ) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "sessions/list limit must be a positive integer",
-        );
-      }
-      const limit = typeof record.limit === "number" && record.limit > 0
-        ? Math.min(record.limit, 1000)
-        : 100;
-      const fetchLimit = Math.min(Math.max(limit * 4, 100), 1000);
-      const projects = await listSessions({
-        project,
-        limit: fetchLimit,
-      });
-      const topSessions: Array<{
-        projectIdx: number;
-        session: WorkbenchSessionSummary;
-      }> = [];
-      for (let i = 0; i < projects.length; i++) {
-        const p = projects[i];
-        if (Array.isArray(p.sessions)) {
-          for (let j = 0; j < p.sessions.length; j++) {
-            const s = p.sessions[j];
-            if (topSessions.length < limit) {
-              topSessions.push({ projectIdx: i, session: s });
-              topSessions.sort((a, b) =>
-                compareSessionActivity(a.session, b.session)
-              );
-            } else if (
-              compareSessionActivity(
-                s,
-                topSessions[topSessions.length - 1].session,
-              ) < 0
-            ) {
-              topSessions[topSessions.length - 1] = {
-                projectIdx: i,
-                session: s,
-              };
-              topSessions.sort((a, b) =>
-                compareSessionActivity(a.session, b.session)
-              );
-            }
-          }
-        }
-      }
-      const projectMap = new Map<number, WorkbenchSessionSummary[]>();
-      for (const item of topSessions) {
-        let list = projectMap.get(item.projectIdx);
-        if (!list) {
-          list = [];
-          projectMap.set(item.projectIdx, list);
-        }
-        list.push(item.session);
-      }
-      const boundedProjects: WorkbenchProjectSessions[] = [];
-      for (
-        let i = 0;
-        i < projects.length && boundedProjects.length < limit;
-        i++
-      ) {
-        const matching = projectMap.get(i);
-        if (matching && matching.length > 0) {
-          boundedProjects.push({
-            project: projects[i].project,
-            sessions: matching,
-          });
-        } else if (project !== undefined) {
-          boundedProjects.push({
-            project: projects[i].project,
-            sessions: [],
-          });
-        }
-      }
-      if (
-        boundedProjects.length === 0 && topSessions.length === 0 &&
-        projects.length > 0
-      ) {
-        return { projects: projects.slice(0, limit) };
-      }
-      return { projects: boundedProjects };
-    },
-
-    "events/query": async (params) => {
-      const record = asRecord(params);
-      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const asOf = sanitizeRpcString(record.asOf, "asOf", { maxLen: 64 });
-      if (asOf !== undefined && !isValidAsOfTimestamp(asOf)) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "events/query asOf must be a valid timestamp",
-        );
-      }
-      if (
-        record.limit !== undefined &&
-        (typeof record.limit !== "number" ||
-          !Number.isInteger(record.limit) ||
-          record.limit <= 0 ||
-          record.limit > 1000)
-      ) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "events/query limit must be a positive integer between 1 and 1000",
-        );
-      }
-      const limit = typeof record.limit === "number" && record.limit > 0
-        ? record.limit
-        : 500;
-      const fetched = await fetchSessionEvents({
-        sessionId,
-        asOf: typeof asOf === "string" ? asOf : undefined,
-        limit,
-      });
-      return {
-        events: Array.isArray(fetched) ? fetched.slice(0, limit) : [],
-      };
-    },
+    ...buildEventsHandlers({ fetchSessionEvents }),
 
     "friction/post": async (params, ctx) => {
       const record = asRecord(params);
@@ -936,25 +442,6 @@ export function buildWorkbenchHandlers(
           : `friction/post failed: ${summarizeError(error)}`;
         throw new RpcError(RpcErrorCode.internalError, message);
       }
-    },
-
-    "sessions/inspect": async (params) => {
-      const record = asRecord(params);
-      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const [session, workspaceRec, eventCount] = await Promise.all([
-        fetchSessionRecord({ sessionId }),
-        fetchSessionWorkspaceRecord({ sessionId }),
-        countSessionEvents({ sessionId }),
-      ]);
-      return {
-        session,
-        workspace: workspaceRec.workspace,
-        exists: session !== null || workspaceRec.exists,
-        eventCount,
-      };
     },
 
     "ideas/mark": async (params) => {
