@@ -154,6 +154,19 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Route resolution and the observed provider call live in
+  `prototype/src/engine/`**: `resolveRoute` (`engine/route.ts`) is the one
+  step that chooses the runner for a turn. It serves both the native engine
+  and the external-agent (ACP) runner, and replaces the two copies of the ACP
+  paid-escalation preflight in `workbench.ts`. The native turn selects its
+  model through `selectModelRoute`, and all three preflights now go through
+  one `confirmPaidRoute`. `observedProviderCall` (`engine/observed-call.ts`)
+  is the one implementation of "call the provider, write the `provider_call`
+  event, record the usage with the budget tracker"; the agent loop and
+  transcript compression both call it instead of each carrying a copy. The
+  engine's error classes and `classifyErrorKind` moved to `engine/errors.ts`.
+  Event rows, their order, receipts and cost accounting are unchanged, and the
+  golden suite passes with no snapshot change.
 - **Tools live in `prototype/src/tools/`, with one tool shape and one catalog
   builder**: `commands.ts` is split into the tool shape (`definition.ts`), the
   registry, argument validation, the call-shape policy, a shared redactor

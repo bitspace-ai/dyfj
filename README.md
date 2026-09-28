@@ -1641,3 +1641,7 @@ Document revisions only. Code and behavior changes are tracked in
   conformance kit. `specs/01-architecture.md` §5.4 now names where the tool
   builders and the catalog builder live, and `specs/bug-log.md` records five
   findings from the move and its review.
+- 2026-09-28 - `specs/bug-log.md` records two findings from extracting route
+  resolution and the observed provider call into `prototype/src/engine/`: the
+  swallowed model-registry load failure in route resolution, and the unparsed
+  tool-call markup counts missing from compression `provider_call` rows.
