@@ -9,7 +9,9 @@
  * `web/` and `mcp/`, each exporting a `define<Name>` beside its executor.
  *
  * Allowed dependencies: `kernel/`, `contract/`, `config/`, and `store/` (the
- * `tool_call` event builder and the memory reader). Every tool the catalog
+ * `tool_call` event builder and the memory reader), plus the not-yet-moved
+ * modules `scripts/arch-layers.json` maps into this unit (`memory.ts` for the
+ * memory record format, `mcp-conformance.ts` for MCP trace context). Every tool the catalog
  * can register passes the tool conformance kit
  * (`testing/conformance/tool.ts`); adding one follows
  * `specs/recipes/add-tool.md`.
