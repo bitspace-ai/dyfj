@@ -1149,6 +1149,20 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **Anthropic and Gemini credentials pinned to their providers' hosts**: the
+  Anthropic and Gemini adapters previously accepted any https base URL from the
+  model catalog and followed redirects, so a catalog row naming another host, or
+  a redirect from the provider, could send `ANTHROPIC_API_KEY` or
+  `GEMINI_API_KEY` and the request body to that host. Each key now goes only to
+  its provider's canonical endpoint, redirects are refused, and the Gemini model
+  slug is encoded as a single URL path segment.
+- **The web tools' private-address check fails closed**: the check that keeps
+  `web_fetch` away from private, loopback and internal addresses previously
+  passed a hostname whenever its DNS lookup failed or could not be made. Under
+  the engine's host-pinned network grant that was every lookup, so a hostname
+  resolving to a private address was not refused. Targets the check cannot
+  verify are now refused, lookups go through a `DnsResolver` port, and the
+  engine is granted its system nameservers so lookups can run.
 - **Value-free scan diagnostics**: the retired-surface scan reports path, line,
   and needle only — matched line content never reaches terminal or CI output.
   Paths are control-stripped and bounded, hit collection and reporting are
