@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
-  BudgetExceededError,
   CeilingConfirmationStore,
   type RunawayAnomalyWarning,
 } from "./budget/mod.ts";
@@ -12,26 +11,15 @@ import {
   CONVERSATION_SUMMARY_MARKER,
   SUMMARY_TRUST_POLICY,
 } from "./context/compression.ts";
-import {
-  type WorkbenchMessage,
-  WorkbenchModelFastSpeedUnsupportedError,
-} from "./providers/mod.ts";
+import type { WorkbenchMessage } from "./providers/mod.ts";
 import {
   type BudgetTallyInput,
   buildBudgetTallyLine,
   buildNextWorkBrief,
-  buildPaidEscalationPreflightBanner,
   buildWorkbenchReceipt,
   buildWorkspaceGrounding,
-  classifyErrorKind,
-  ContextCompressionPersistenceUncertainError,
   type ExternalAgentRunner,
-  formatMoney,
-  isNextWorkMode,
-  maybeBuildPaidEscalationPreflightBanner,
   type NativeWorkbenchRuntimeResult,
-  PaidEscalationDeclinedError,
-  type PaidEscalationPreflightInput,
   runWorkbenchRuntime as runtimeUnderTest,
   shouldPrintBudgetTally,
   toolStepToMessages,
@@ -40,13 +28,16 @@ import {
   type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
   type WorkbenchRuntimeServices,
-  WorkspaceContextUnavailableError,
 } from "./workbench.ts";
+import {
+  ContextCompressionPersistenceUncertainError,
+  PaidEscalationDeclinedError,
+  WorkspaceContextUnavailableError,
+} from "./engine/mod.ts";
 import { MemoryStore, type Store } from "./store/mod.ts";
 import {
   DomainError,
   type ExternalAgentWorkbenchRuntimeResult,
-  MAX_REASON_FIELD_BYTES,
 } from "./contract/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 
@@ -172,7 +163,7 @@ vi.mock("./utils.ts", () => ({
 
 vi.mock("./providers/mod.ts", async (importOriginal) => {
   const estimateExport = "estimateText" + "To" + "kens";
-  // Only the pure, side-effect-free error classes stay real — workbench.ts
+  // Only the pure, side-effect-free error classes stay real — engine/errors.ts
   // imports them statically to build classifyErrorKind's known-class table.
   // Deliberately no `...actual` spread: the full namespace would silently carry
   // network-capable exports (fetchWithHeaderTimeout) into the mock.
@@ -647,17 +638,6 @@ const BASE_RECEIPT: WorkbenchReceiptInput = {
   agent: { toolStepsUsed: 12, maxToolSteps: 32, limitReached: false },
 };
 
-const BASE_PREFLIGHT: PaidEscalationPreflightInput = {
-  modelName: "Claude Sonnet",
-  modelSlug: "claude-sonnet",
-  tier: 1,
-  routingReason: "explicit_tier",
-  estimatedCostUsd: 0.0123456,
-  sessionCostSoFarUsd: 0.05,
-  sessionLimitUsd: 1,
-  perCallLimitUsd: 0.1,
-};
-
 const BASE_TALLY: BudgetTallyInput = {
   turn: {
     tokensInput: 300,
@@ -673,16 +653,6 @@ const BASE_TALLY: BudgetTallyInput = {
     sessionLimitUsd: 1,
   },
 };
-
-describe("formatMoney", () => {
-  test("formats sub-cent model costs with six decimal places", () => {
-    expect(formatMoney(0.0001234)).toBe("$0.000123");
-  });
-
-  test("formats zero as an explicit dollar amount", () => {
-    expect(formatMoney(0)).toBe("$0.000000");
-  });
-});
 
 describe("buildWorkbenchReceipt", () => {
   test("includes session and trace audit pointers", () => {
@@ -1164,29 +1134,6 @@ describe("validateNextWorkJson", () => {
   });
 });
 
-describe("buildPaidEscalationPreflightBanner", () => {
-  test("shows paid escalation call shape before inference", () => {
-    const banner = buildPaidEscalationPreflightBanner(BASE_PREFLIGHT);
-
-    expect(banner).toContain("Paid inference preflight");
-    expect(banner).toContain("Model:           Claude Sonnet (claude-sonnet)");
-    expect(banner).toContain("Tier:            1");
-    expect(banner).toContain("Route:           explicit_tier");
-    expect(banner).toContain("Estimated cost:  $0.012346");
-    expect(banner).toContain("Session spent:   $0.050000 / $1.000000");
-    expect(banner).toContain("Session headroom: $0.950000");
-    expect(banner).toContain("Per-call limit:  $0.100000");
-  });
-
-  test("Tier 0 remains prompt-free", () => {
-    expect(maybeBuildPaidEscalationPreflightBanner({
-      ...BASE_PREFLIGHT,
-      tier: 0,
-      estimatedCostUsd: 0,
-    })).toBeNull();
-  });
-});
-
 describe("paid escalation preflight", () => {
   test("declining paid inference aborts before any provider call", async () => {
     const prevTier = runtimeMocks.model.tier;
@@ -1224,13 +1171,6 @@ describe("paid escalation preflight", () => {
       runtimeMocks.model.costInput = prevCost;
       log.mockRestore();
     }
-  });
-});
-
-describe("isNextWorkMode", () => {
-  test("keeps generic ask separate from the measured next-work worklet", () => {
-    expect(isNextWorkMode("ask")).toBe(false);
-    expect(isNextWorkMode("next-work")).toBe(true);
   });
 });
 
@@ -5722,127 +5662,6 @@ describe("runWorkbenchRuntime proactive context compression", () => {
       (runtimeMocks.model as { baseUrl: string }).baseUrl = prevBaseUrl;
       runtimeMocks.registry = prevRegistry;
     }
-  });
-});
-
-// ── PaidEscalationDeclinedError — reason field sanitization ──────────────────
-//
-// verdict.reason comes from the injected confirmPaidEscalation callback — an
-// operator's TTY answer today, potentially a remote approval peer tomorrow.
-// DomainError only certifies the message this constructor builds, so the
-// field is capped and control-char-stripped before it reaches either the
-// message or the stored `.verdict` (read directly by the catch block's log
-// branch, not just via .message).
-describe("PaidEscalationDeclinedError — verdict.reason sanitization", () => {
-  test("a short, ordinary reason passes through unchanged", () => {
-    const err = new PaidEscalationDeclinedError({
-      decision: "deny",
-      reason: "not now",
-    });
-    expect(err.verdict.reason).toBe("not now");
-    expect(err.message).toContain("not now");
-  });
-
-  test("caps an oversized reason, on both .message and the stored .verdict", () => {
-    const reason = "SELECT ".repeat(2_000);
-    const err = new PaidEscalationDeclinedError({
-      decision: "escalate",
-      reason,
-    });
-    expect(
-      new TextEncoder().encode(err.verdict.reason ?? "").byteLength,
-    ).toBeLessThanOrEqual(MAX_REASON_FIELD_BYTES);
-    expect(err.message).not.toContain(reason);
-  });
-
-  test("strips a terminal escape sequence from the reason", () => {
-    const esc = String.fromCharCode(27);
-    const err = new PaidEscalationDeclinedError({
-      decision: "deny",
-      reason: `${esc}[31mdanger${esc}[0m`,
-    });
-    expect(err.verdict.reason).not.toContain(esc);
-    expect(err.message).not.toContain(esc);
-  });
-});
-
-// ── classifyErrorKind ─────────────────────────────────────────────────────────
-//
-// Neither .name nor .constructor.name is safe to classify by: both are
-// ordinary, writable properties on any object (including a real Error, via
-// Object.defineProperty), so a crafted `{ constructor: { name: "..." } }`
-// reaches .constructor.name unchanged. classifyErrorKind never reads either
-// property; it classifies purely by instanceof against classes this codebase
-// controls.
-describe("classifyErrorKind", () => {
-  test("a real DomainError reports its own class", () => {
-    expect(
-      classifyErrorKind(new PaidEscalationDeclinedError({ decision: "deny" })),
-    ).toBe("PaidEscalationDeclinedError");
-    expect(
-      classifyErrorKind(
-        new WorkbenchModelFastSpeedUnsupportedError("test-model"),
-      ),
-    ).toBe("WorkbenchModelFastSpeedUnsupportedError");
-  });
-
-  test("a real DomainError subclass with a shadowed .constructor still classifies to its real class, not the shadowed payload", () => {
-    // The subtlest form of the bug: instanceof DomainError alone
-    // does not make .constructor.name safe to read — instanceof walks the
-    // prototype chain, but .constructor is an independently-writable own
-    // property. A real BudgetExceededError with .constructor reassigned
-    // still passes `instanceof DomainError` (and `instanceof
-    // BudgetExceededError`), so it must classify via the fixed table entry,
-    // never via the (now-shadowed) .constructor.name.
-    const err = new BudgetExceededError("session_limit", 0.5, 1, 0.9);
-    Object.defineProperty(err, "constructor", {
-      value: { name: "FOREIGN_PAYLOAD" },
-    });
-    expect(err instanceof DomainError).toBe(true);
-    expect(err instanceof BudgetExceededError).toBe(true);
-    expect(classifyErrorKind(err)).toBe("BudgetExceededError");
-    expect(classifyErrorKind(err)).not.toBe("FOREIGN_PAYLOAD");
-  });
-
-  test("an unrecognized DomainError subclass still classifies safely, to the generic literal", () => {
-    class UnlistedDomainError extends DomainError {}
-    expect(classifyErrorKind(new UnlistedDomainError("x"))).toBe(
-      "DomainError",
-    );
-  });
-
-  test('a plain Error reports the fixed literal "Error", not any object-derived string', () => {
-    expect(classifyErrorKind(new Error("boom"))).toBe("Error");
-  });
-
-  test('a non-Error throw reports "unknown"', () => {
-    expect(classifyErrorKind("bare string throw")).toBe("unknown");
-    expect(classifyErrorKind(null)).toBe("unknown");
-  });
-
-  test('a foreign Error with a spoofed .constructor.name is still classified as plain "Error"', () => {
-    // Reproduces the exact probe from review: a real Error instance whose
-    // .constructor own-property is overridden to look like a familiar class.
-    // instanceof still sees the real prototype chain (still Error, not
-    // DomainError), so classifyErrorKind never reaches the spoofed property
-    // at all.
-    const spoofed = new Error("driver detail that must not leak");
-    Object.defineProperty(spoofed, "constructor", {
-      value: { name: "FOREIGN_PAYLOAD" },
-    });
-    expect(spoofed instanceof Error).toBe(true);
-    expect(classifyErrorKind(spoofed)).toBe("Error");
-    expect(classifyErrorKind(spoofed)).not.toBe("FOREIGN_PAYLOAD");
-  });
-
-  test("a plain object shaped like an error (spoofed .name AND .constructor.name) is not even instanceof Error", () => {
-    const fake = {
-      name: "ContextWindowOverflowError",
-      constructor: { name: "ContextWindowOverflowError" },
-      message: "not a real error",
-    };
-    expect(fake instanceof Error).toBe(false);
-    expect(classifyErrorKind(fake)).toBe("unknown");
   });
 });
 

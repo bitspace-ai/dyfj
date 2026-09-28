@@ -10,6 +10,41 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **Route resolution silently swallows a model-registry load
+  failure.**
+  - **Location:** `prototype/src/engine/route.ts:191-193` and `:224-233`
+    (`selectedAcpRoute`, called by `resolveRoute`); before WO-16 this was the
+    pre-dispatch block of `runWorkbenchRuntime` in `prototype/src/workbench.ts`.
+  - **Symptom:** when the catalog cannot be loaded, route resolution falls back
+    to the static local defaults without a log line, and any error that is not a
+    domain or routing error is dropped. The turn then takes the native route,
+    which loads the catalog a second time: a companion turn fails there, and an
+    ask or next-work turn warns and runs on the local default. A registry outage
+    is reported only by that second load, and a turn whose request named an ACP
+    model takes the native path if the first load fails and the second
+    succeeds, where it fails because no provider adapter serves that model.
+  - **Suspected cause:** the pre-dispatch ACP check was added as a best-effort
+    probe in front of the native path rather than as the one place the route is
+    decided. Whether the failure should be logged, fail the turn, or be loaded
+    once and shared with the native selection is a behavior question, so WO-16
+    preserves it and pins it with
+    `prototype/src/engine/route.component.test.ts`.
+  - **Found during:** WO-16 (step 2).
+- 2026-09-28 — **Compression `provider_call` rows omit the unparsed tool-call
+  markup counts.**
+  - **Location:** `prototype/src/workbench.ts:1652`
+    (`recordUnparsedToolCallMarkup: false` on the compression call) and
+    `prototype/src/engine/observed-call.ts:152`.
+  - **Symptom:** an agent-loop call whose text carries unmatched tool-call
+    wrapper openings records `unparsed_tool_call_count` on its `provider_call`
+    row; a compression call with the same text does not, so the event log cannot
+    show that a summary was produced from degraded model output.
+  - **Suspected cause:** the compression call was written as a separate copy of
+    the agent-loop call before the counts existed and never gained them. WO-16
+    unified the two copies and kept the difference behind a flag, since adding
+    the columns changes event rows.
+  - **Found during:** WO-16 (step 3).
+
 - 2026-09-28 — **A command result of `undefined` is persisted as an undefined
   `tool_result`.**
   - **Location:** `prototype/src/tools/redaction.ts:102-104`

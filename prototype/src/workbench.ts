@@ -2,8 +2,24 @@ import {
   generateSpanId,
   generateTraceId,
   generateULID,
-  sanitizeBoundaryText,
+  systemClock,
 } from "./kernel/mod.ts";
+import {
+  classifyErrorKind,
+  confirmPaidRoute,
+  ContextCompressionPersistenceUncertainError,
+  formatMoney,
+  isNextWorkMode,
+  type ObservedCallContext,
+  observedProviderCall,
+  PaidEscalationDeclinedError,
+  resolveRoute,
+  routeReasonForMode,
+  selectModelRoute,
+  ToolStepLimitConclusionError,
+  WorkspaceContextUnavailableError,
+  writeMaybe,
+} from "./engine/mod.ts";
 import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
@@ -14,7 +30,6 @@ import {
   fetchWorkbenchSessionWorkspace,
   memoryClearanceFor,
   modelResponseEvent,
-  providerCallEvent,
   sessionEndEvent,
   sessionStartEvent,
   type Store,
@@ -34,7 +49,6 @@ import {
   createRunawayAnomalyGate,
   createTurnBudgetCeilingGate,
   fetchSpendBaselines,
-  RunawayAnomalyHaltError,
 } from "./budget/mod.ts";
 import type { WorkbenchRoutingOptions } from "./providers/mod.ts";
 import type { WorkbenchCallTimings } from "./providers/mod.ts";
@@ -45,25 +59,14 @@ import type {
   WorkbenchTurnResult,
 } from "./providers/mod.ts";
 import {
-  defaultLocalWorkbenchModels,
   estimateTextTokens,
-  HostedInferenceRequiresProviderError,
-  HostedProviderCredentialMissingError,
   isLocalWorkbenchModel,
-  loadWorkbenchModels,
   modelRequestedOutputCap,
   modelStreamsToolCalls,
   modelSupportsTranscriptRetry,
   runWorkbenchTurn,
   selectWorkbenchModel,
-  withDefaultLocalWorkbenchModels,
-  WorkbenchHostedProviderBaseUrlError,
-  WorkbenchLocalProviderBaseUrlError,
-  WorkbenchModelFastSpeedUnsupportedError,
-  WorkbenchModelNotFoundError,
-  WorkbenchModelNotRoutableError,
 } from "./providers/mod.ts";
-import { RpcError } from "./transport/mod.ts";
 import type {
   AskContextProfile,
   PackedContextSummary,
@@ -117,7 +120,6 @@ import {
   DomainError,
   formatHistoryOmissionSummary,
   historyOmissionForDelivery,
-  MAX_REASON_FIELD_BYTES,
   summarizeError,
   workspaceRootForTransport,
 } from "./contract/mod.ts";
@@ -187,17 +189,6 @@ export interface WorkbenchReceiptInput {
    */
   skippedEventWrites?: number;
   historyOmission?: HistoryOmissionReceipt;
-}
-
-export interface PaidEscalationPreflightInput {
-  modelName: string;
-  modelSlug: string;
-  tier: 0 | 1 | 2;
-  routingReason: string;
-  estimatedCostUsd: number;
-  sessionCostSoFarUsd: number;
-  sessionLimitUsd: number;
-  perCallLimitUsd: number;
 }
 
 export interface WorkbenchInvocation {
@@ -419,146 +410,6 @@ export interface ToolResultSummary {
   callId: string;
   isError: boolean;
   result: string;
-}
-
-export class PaidEscalationDeclinedError extends DomainError {
-  readonly verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>;
-  // verdict.reason comes from the injected confirmPaidEscalation callback —
-  // the turn runner's loopback posture today, potentially a remote approval
-  // peer tomorrow. DomainError certifies the message THIS constructor builds,
-  // not that field's content, so it's capped and control-char-stripped before it
-  // reaches either the message or the stored `.verdict` (read directly by
-  // workbench.ts's log branch, not just via .message).
-  constructor(
-    verdict: Exclude<PaidEscalationVerdict, { decision: "approve" }>,
-  ) {
-    const safeReason = verdict.reason === undefined
-      ? undefined
-      : sanitizeBoundaryText(verdict.reason, MAX_REASON_FIELD_BYTES);
-    super(
-      verdict.decision === "escalate"
-        ? `Paid inference escalation required${
-          safeReason ? `: ${safeReason}` : ""
-        }`
-        : `Paid inference consent declined${
-          safeReason ? `: ${safeReason}` : ""
-        }`,
-    );
-    this.verdict = { ...verdict, reason: safeReason };
-    this.name = "PaidEscalationDeclinedError";
-  }
-}
-
-/**
- * The compression event's write was rejected AND the follow-up probe that would
- * say whether the row is nonetheless durable also failed. Neither continuing
- * uncompressed nor adopting the summary is safe under that uncertainty — one
- * risks a resume that applies an event the live turn ignored, the other pins a
- * summary that may never have been stored — so the turn fails instead. Carries
- * only error CLASS names: this path handles a payload containing the summary,
- * and messages can quote it.
- */
-export class ContextCompressionPersistenceUncertainError extends DomainError {
-  constructor(
-    public readonly writeErrorKind: string,
-    public readonly probeErrorKind: string,
-  ) {
-    super(
-      "Context compression persistence is uncertain: the event write failed " +
-        `(${writeErrorKind}) and the durability probe also failed ` +
-        `(${probeErrorKind}); failing the turn rather than risking a live ` +
-        "transcript that diverges from resume",
-    );
-    this.name = "ContextCompressionPersistenceUncertainError";
-  }
-}
-
-/** A capped tool loop's no-tools conclusion failed before completion. */
-export class ToolStepLimitConclusionError extends DomainError {
-  constructor() {
-    super(
-      "The no-tools conclusion after the tool-step limit could not be completed.",
-    );
-    this.name = "ToolStepLimitConclusionError";
-  }
-}
-
-/** The selected workspace could not safely supply request-time repo context. */
-export class WorkspaceContextUnavailableError extends DomainError {
-  constructor() {
-    super(
-      "The selected workspace is unavailable; repository context was not loaded.",
-    );
-    this.name = "WorkspaceContextUnavailableError";
-  }
-}
-
-// Every DomainError subclass this codebase defines, paired with a fixed
-// string literal — one WE wrote, never one read off an instance — that
-// classifyErrorKind returns for it. `instanceof DomainError` alone is not
-// enough to safely read `.constructor.name`: instanceof walks the prototype
-// chain, but `.constructor` is an ordinary, independently-writable property
-// — a real DomainError subclass instance with `.constructor` reassigned
-// (`Object.defineProperty(e, "constructor", { value: { name: "..." } })`)
-// still passes `instanceof DomainError` and then yields the shadowed name.
-// So no branch anywhere in classifyErrorKind reads a string off the
-// candidate; every returned value is a literal, selected purely by which
-// instanceof check matched. Extend this table when a new DomainError
-// subclass is added — an unlisted one still classifies safely, to the
-// generic "DomainError" literal below, just without per-class fidelity.
-const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
-  // deno-lint-ignore no-explicit-any
-  readonly [new (...args: any[]) => DomainError, string]
-> = [
-  [BudgetExceededError, "BudgetExceededError"],
-  [BudgetCeilingDeclinedError, "BudgetCeilingDeclinedError"],
-  [RunawayAnomalyHaltError, "RunawayAnomalyHaltError"],
-  [ContextWindowOverflowError, "ContextWindowOverflowError"],
-  [PaidEscalationDeclinedError, "PaidEscalationDeclinedError"],
-  [
-    ContextCompressionPersistenceUncertainError,
-    "ContextCompressionPersistenceUncertainError",
-  ],
-  [ToolStepLimitConclusionError, "ToolStepLimitConclusionError"],
-  [WorkspaceContextUnavailableError, "WorkspaceContextUnavailableError"],
-  [RpcError, "RpcError"],
-  [WorkbenchModelNotFoundError, "WorkbenchModelNotFoundError"],
-  [
-    HostedInferenceRequiresProviderError,
-    "HostedInferenceRequiresProviderError",
-  ],
-  [
-    HostedProviderCredentialMissingError,
-    "HostedProviderCredentialMissingError",
-  ],
-  [WorkbenchHostedProviderBaseUrlError, "WorkbenchHostedProviderBaseUrlError"],
-  [WorkbenchLocalProviderBaseUrlError, "WorkbenchLocalProviderBaseUrlError"],
-  [
-    WorkbenchModelFastSpeedUnsupportedError,
-    "WorkbenchModelFastSpeedUnsupportedError",
-  ],
-  [WorkbenchModelNotRoutableError, "WorkbenchModelNotRoutableError"],
-];
-
-/**
- * Classify `candidate` for a content-free-by-convention diagnostic string
- * (e.g. ContextCompressionPersistenceUncertainError's writeErrorKind),
- * WITHOUT ever reading a string property off the candidate itself — see
- * KNOWN_DOMAIN_ERROR_CLASSES above for why `.constructor.name` is not safe
- * even behind an `instanceof DomainError` check. Every returned value is a
- * fixed literal this function selects; none is derived from the candidate.
- */
-export function classifyErrorKind(candidate: unknown): string {
-  for (const [cls, label] of KNOWN_DOMAIN_ERROR_CLASSES) {
-    if (candidate instanceof cls) return label;
-  }
-  if (candidate instanceof DomainError) return "DomainError";
-  if (candidate instanceof Error) return "Error";
-  return "unknown";
-}
-
-export function formatMoney(value: number): string {
-  return `$${value.toFixed(6)}`;
 }
 
 export function buildNextWorkBrief(input: NextWorkBriefInput): string {
@@ -892,34 +743,6 @@ export function formatContextBudgetLine(budget: PackedContextSummary): string {
     `headroom ${budget.headroomTokens}`;
 }
 
-export function buildPaidEscalationPreflightBanner(
-  input: PaidEscalationPreflightInput,
-): string {
-  const sessionHeadroom = Math.max(
-    0,
-    input.sessionLimitUsd - input.sessionCostSoFarUsd,
-  );
-  return [
-    "Paid inference preflight",
-    `Model:           ${input.modelName} (${input.modelSlug})`,
-    `Tier:            ${input.tier}`,
-    `Route:           ${input.routingReason}`,
-    `Estimated cost:  ${formatMoney(input.estimatedCostUsd)}`,
-    `Session spent:   ${formatMoney(input.sessionCostSoFarUsd)} / ${
-      formatMoney(input.sessionLimitUsd)
-    }`,
-    `Session headroom: ${formatMoney(sessionHeadroom)}`,
-    `Per-call limit:  ${formatMoney(input.perCallLimitUsd)}`,
-  ].join("\n");
-}
-
-export function maybeBuildPaidEscalationPreflightBanner(
-  input: PaidEscalationPreflightInput,
-): string | null {
-  if (input.tier === 0) return null;
-  return buildPaidEscalationPreflightBanner(input);
-}
-
 export function shouldPrintBudgetTally(
   mode: BudgetTallyMode,
   session: { paidCalls: number },
@@ -945,21 +768,6 @@ export function buildBudgetTallyLine(input: BudgetTallyInput): string {
       formatMoney(input.session.sessionLimitUsd)
     })`,
   ].join(" ");
-}
-
-function routeReasonForMode(
-  reason: string,
-  tier: 0 | 1 | 2,
-  isNextWork: boolean,
-): string {
-  if (isNextWork && tier === 0 && reason === "default") {
-    return "default_local_next_work";
-  }
-  return reason;
-}
-
-export function isNextWorkMode(mode: WorkbenchInvocation["mode"]): boolean {
-  return mode === "next-work";
 }
 
 function printNextWorkResult(
@@ -999,44 +807,6 @@ function printNextWorkResult(
     for (const command of result.value.next_commands) {
       log(`- ${command}`);
     }
-  }
-}
-
-/**
- * Default consent handler: deny. The core makes no TTY assumption —
- * drivers inject their own. A headless Workshop driver pre-approves or escalates
- * to an out-of-band operator.
- */
-function denyPaidEscalation(): Promise<PaidEscalationVerdict> {
-  return Promise.resolve({
-    decision: "deny",
-    reason: "no consent handler configured",
-  });
-}
-
-async function writeMaybe(
-  operation: () => Promise<void>,
-  bestEffort: boolean,
-  onSkip?: () => void,
-): Promise<void> {
-  try {
-    await operation();
-  } catch (err) {
-    if (!bestEffort) throw err;
-    // Best-effort is deliberately loud, never silent: every skipped write is
-    // counted by the session (surfaced on the receipt and in the budget
-    // summary) so an audit-log gap is visible instead of discoverable only
-    // by diffing the event log against reality.
-    onSkip?.();
-    // Class only, never the message: a rejected event INSERT (e.g. Dolt's
-    // "value too large for column" error) embeds the full offending value in
-    // its message, so logging it verbatim here would leak onto the server
-    // console exactly the payload this best-effort skip exists to keep durable
-    // (or not) without surfacing (CWE-532; mirrors the turn-error discipline
-    // at the [turn-error] console.error below). The label comes from the
-    // fixed-literal class table, never `.constructor.name` — that is an
-    // ordinary writable property a foreign error can shadow with a payload.
-    console.warn(`Event write skipped: ${classifyErrorKind(err)}`);
   }
 }
 
@@ -1142,123 +912,12 @@ export async function runWorkbenchRuntime(
   runtimeInput: WorkbenchRuntimeInput,
   services: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult> {
-  if (runtimeInput.runner?.kind === "acp") {
-    if (
-      runtimeInput.runner.profile === "codex-chatgpt" &&
-      runtimeInput.trustWorkspaceInstructions !== true
-    ) {
-      throw new DomainError(
-        "codex-chatgpt requires explicit workspace trust",
-      );
-    }
-    if (runtimeInput.runner.profile === "codex-chatgpt") {
-      const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
-        modelName: "GPT-5.6 Terra (Codex)",
-        modelSlug: "codex-chatgpt/gpt-5.6-terra",
-        tier: 2,
-        routingReason: "explicit_runner",
-        estimatedCostUsd: 0,
-        sessionCostSoFarUsd: 0,
-        sessionLimitUsd: runtimeInput.defaultSessionBudgetUsd ?? 0,
-        perCallLimitUsd: runtimeInput.defaultPerCallBudgetUsd ?? 0,
-      });
-      if (preflightBanner !== null) {
-        const verdict =
-          await (runtimeInput.confirmPaidEscalation ?? denyPaidEscalation)(
-            preflightBanner,
-          );
-        if (verdict.decision !== "approve") {
-          throw new PaidEscalationDeclinedError(verdict);
-        }
-      }
-    }
+  const route = await resolveRoute(runtimeInput, services.store.models);
+  if (route.runner === "acp") {
     return await requireExternalAgentRunner(services).run({
       ...runtimeInput,
-      runner: runtimeInput.runner,
-    });
-  }
-
-  let acpProfile: "codex-chatgpt" | "fixture" | null = null;
-  let acpSelectedModelSlug: string | null = null;
-  let acpSelectedModel: {
-    displayName: string;
-    slug: string;
-    tier: 0 | 1 | 2;
-  } | null = null;
-  let acpSelectionReason: string | null = null;
-  try {
-    const models = await loadWorkbenchModels(services.store.models).then(
-      withDefaultLocalWorkbenchModels,
-      () => defaultLocalWorkbenchModels(),
-    );
-    const selection = selectWorkbenchModel(
-      models,
-      runtimeInput.routingOptions ?? {},
-      runtimeInput.defaultCompanionModel,
-    );
-    if (selection.selected.api === "acp") {
-      acpSelectedModelSlug = selection.selected.slug;
-      acpSelectedModel = selection.selected;
-      acpSelectionReason = selection.reason;
-      if (selection.selected.provider === "codex-chatgpt") {
-        acpProfile = "codex-chatgpt";
-      } else if (selection.selected.slug === "fixture") {
-        acpProfile = "fixture";
-      } else {
-        throw new DomainError(
-          `Unsupported ACP runner: ${selection.selected.provider}`,
-        );
-      }
-    }
-  } catch (error) {
-    if (
-      error instanceof DomainError ||
-      error instanceof WorkbenchModelNotFoundError ||
-      error instanceof WorkbenchModelNotRoutableError
-    ) {
-      throw error;
-    }
-  }
-
-  if (acpProfile !== null) {
-    if (
-      acpProfile === "codex-chatgpt" &&
-      runtimeInput.trustWorkspaceInstructions !== true
-    ) {
-      throw new DomainError(
-        "codex-chatgpt requires explicit workspace trust",
-      );
-    }
-    if (acpSelectedModel !== null && acpSelectedModel.tier > 0) {
-      const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
-        modelName: acpSelectedModel.displayName,
-        modelSlug: acpSelectedModel.slug,
-        tier: acpSelectedModel.tier,
-        routingReason: acpSelectionReason ?? "explicit_model_id",
-        estimatedCostUsd: 0,
-        sessionCostSoFarUsd: 0,
-        sessionLimitUsd: runtimeInput.defaultSessionBudgetUsd ?? 0,
-        perCallLimitUsd: runtimeInput.defaultPerCallBudgetUsd ?? 0,
-      });
-      if (preflightBanner !== null) {
-        const verdict =
-          await (runtimeInput.confirmPaidEscalation ?? denyPaidEscalation)(
-            preflightBanner,
-          );
-        if (verdict.decision !== "approve") {
-          throw new PaidEscalationDeclinedError(verdict);
-        }
-      }
-    }
-    return await requireExternalAgentRunner(services).run({
-      ...runtimeInput,
-      routingOptions: {
-        ...runtimeInput.routingOptions,
-        ...(acpSelectedModelSlug !== null
-          ? { modelId: acpSelectedModelSlug }
-          : {}),
-      },
-      runner: { kind: "acp", profile: acpProfile },
+      routingOptions: route.routingOptions,
+      runner: route.selection,
     });
   }
 
@@ -1436,6 +1095,20 @@ async function runNativeWorkbenchRuntime(
   // provider calls, their requested tools, and terminal outcomes hang below it.
   const turnRootSpanId = generateSpanId();
   let providerCallOrder = 0;
+  // Shared by every provider call this turn makes (agent loop and
+  // compression): observedProviderCall writes each call's provider_call event
+  // under the turn root span and records its usage with this turn's tracker.
+  const observedCallContext: ObservedCallContext = {
+    writeEvent: (event) => writeEvent(event),
+    budget,
+    clock: systemClock,
+    sessionId,
+    traceId,
+    principalId,
+    turnRootSpanId,
+    authnEventFields,
+    onSkippedEventWrite: noteSkippedEventWrite,
+  };
   // Prior conversation now rides in the transcript as real messages (see the
   // seed below), so the prompt is just the current message — no flattened
   // "Conversation so far:" prepend.
@@ -1795,29 +1468,12 @@ async function runNativeWorkbenchRuntime(
       );
     }
 
-    let models;
-    try {
-      models = await loadWorkbenchModels(store.models);
-      if (usesRepoAskContext) {
-        models = withDefaultLocalWorkbenchModels(models);
-      }
-    } catch (err) {
-      if (!usesRepoAskContext) throw err;
-      // Provenance-summarized, never raw: a registry failure is typically a
-      // driver error, and driver messages can embed registry data or
-      // rejected values.
-      console.warn(
-        `Model registry unavailable; using static local Tier 0 default: ${
-          summarizeError(err)
-        }`,
-      );
-      models = defaultLocalWorkbenchModels();
-    }
-    const selection = selectWorkbenchModel(
-      models,
-      routingOptions,
-      defaultCompanionModel,
-    );
+    const { models, selection, routingReason: selectedRoutingReason } =
+      await selectModelRoute(store.models, {
+        mode,
+        routingOptions,
+        defaultCompanionModel,
+      });
     const selected = selection.selected;
     selectedForReceipt = {
       displayName: selected.displayName,
@@ -1826,11 +1482,7 @@ async function runNativeWorkbenchRuntime(
       provider: selected.provider,
       api: selected.api,
     };
-    routingReason = routeReasonForMode(
-      selection.reason,
-      selected.tier,
-      isNextWork,
-    );
+    routingReason = selectedRoutingReason;
     selectedForEvents = {
       slug: selected.slug,
       provider: selected.provider,
@@ -1868,7 +1520,7 @@ async function runNativeWorkbenchRuntime(
     await budgetCeilingGate.ensureAllowed(preCall);
     estimatedCostUsd = preCall.estimatedCost;
 
-    const preflightBanner = maybeBuildPaidEscalationPreflightBanner({
+    await confirmPaidRoute({
       modelName: selected.displayName,
       modelSlug: selected.slug,
       tier: selected.tier,
@@ -1877,16 +1529,7 @@ async function runNativeWorkbenchRuntime(
       sessionCostSoFarUsd: preCall.sessionCostSoFar,
       sessionLimitUsd: preCall.sessionLimitUsd,
       perCallLimitUsd: preCall.perCallLimitUsd,
-    });
-    if (preflightBanner !== null) {
-      const verdict =
-        await (runtimeInput.confirmPaidEscalation ?? denyPaidEscalation)(
-          preflightBanner,
-        );
-      if (verdict.decision !== "approve") {
-        throw new PaidEscalationDeclinedError(verdict);
-      }
-    }
+    }, runtimeInput.confirmPaidEscalation);
 
     await writeMaybe(
       () =>
@@ -1990,85 +1633,26 @@ async function runNativeWorkbenchRuntime(
         );
         // No tools, no streaming to the operator: the compression turn produces
         // a structured summary out of band, never rendered as reply text.
-        const providerSpanId = generateSpanId();
-        const order = ++providerCallOrder;
-        const startedAt = Date.now();
-        let turn: Awaited<ReturnType<typeof runWorkbenchTurn>>;
-        try {
-          turn = await runWorkbenchTurn({
-            systemPrompt: COMPRESSION_SYSTEM_PROMPT,
-            prompt: "",
-            messages: compressionInput,
-            routing: { modelId: compressionModel.slug },
-            models,
-            abortSignal: runtimeInput.abortSignal,
-            sessionId,
-          });
-        } catch (err) {
-          await writeMaybe(
-            () =>
-              writeEvent(providerCallEvent({
-                event_id: generateULID(),
-                session_id: sessionId,
-                trace_id: traceId,
-                span_id: providerSpanId,
-                parent_span_id: turnRootSpanId,
-                principal_id: principalId,
-                principal_type: "agent",
-                action: "invoke",
-                resource: compressionModel.slug,
-                authz_basis: "policy:local-compression",
-                model_id: compressionModel.slug,
-                provider: compressionModel.provider,
-                api: compressionModel.api,
-                provider_call_order: order,
-                provider_call_purpose: "context_compression",
-                provider_error_class: classifyErrorKind(err),
-                content: null,
-                thinking: null,
-                stop_reason: "error",
-                duration_ms: Date.now() - startedAt,
-                ...authnEventFields,
-              })),
-            BEST_EFFORT,
-            noteSkippedEventWrite,
-          );
-          throw err;
-        }
-        await writeMaybe(
-          () =>
-            writeEvent(providerCallEvent({
-              event_id: generateULID(),
-              session_id: sessionId,
-              trace_id: traceId,
-              span_id: providerSpanId,
-              parent_span_id: turnRootSpanId,
-              principal_id: principalId,
-              principal_type: "agent",
-              action: "invoke",
-              resource: turn.model.slug,
-              authz_basis: "policy:local-compression",
-              model_id: turn.model.slug,
-              provider: turn.model.provider,
-              api: turn.model.api,
-              tokens_input: turn.usage.input,
-              tokens_output: turn.usage.output,
-              tokens_cache_read: turn.usage.cacheRead,
-              tokens_cache_write: turn.usage.cacheWrite,
-              cost_total: turn.usage.cost.total,
-              stop_reason: turn.stopReason,
-              provider_call_order: order,
-              provider_call_purpose: "context_compression",
-              content: null,
-              thinking: null,
-              duration_ms: Date.now() - startedAt,
-              ...authnEventFields,
-            })),
-          BEST_EFFORT,
-          noteSkippedEventWrite,
+        const { turn, recorded } = await observedProviderCall(
+          observedCallContext,
+          {
+            params: {
+              systemPrompt: COMPRESSION_SYSTEM_PROMPT,
+              prompt: "",
+              messages: compressionInput,
+              routing: { modelId: compressionModel.slug },
+              models,
+              abortSignal: runtimeInput.abortSignal,
+              sessionId,
+            },
+            model: compressionModel,
+            order: ++providerCallOrder,
+            purpose: "context_compression",
+            authzBasis: "policy:local-compression",
+            recordUnparsedToolCallMarkup: false,
+          },
         );
-        if (turn.requestDispatched !== false) {
-          budget.record(turn.usage, turn.model.tier);
+        if (recorded) {
           reasoningTokens += turn.usage.reasoning ?? 0;
         }
         return {
@@ -2253,98 +1837,23 @@ async function runNativeWorkbenchRuntime(
         modelSlug: request.modelSlug,
         estimatedInputCount: request.estimatedInputCount,
       });
-      const providerSpanId = generateSpanId();
-      const order = ++providerCallOrder;
-      const startedAt = Date.now();
-      let turn: Awaited<ReturnType<typeof runWorkbenchTurn>>;
-      try {
-        turn = await runWorkbenchTurn({
-          ...params,
-          sessionId: params.sessionId ?? sessionId,
+      const { turn, providerSpanId, persisted, recorded } =
+        await observedProviderCall(observedCallContext, {
+          params,
+          model: selected,
+          order: ++providerCallOrder,
+          purpose,
+          authzBasis: "policy:local-default",
+          recordUnparsedToolCallMarkup: true,
+          mapProviderError: onProviderError,
         });
-      } catch (err) {
-        const safeError = onProviderError?.(err) ?? err;
-        await writeMaybe(
-          () =>
-            writeEvent(providerCallEvent({
-              event_id: generateULID(),
-              session_id: sessionId,
-              trace_id: traceId,
-              span_id: providerSpanId,
-              parent_span_id: turnRootSpanId,
-              principal_id: principalId,
-              principal_type: "agent",
-              action: "invoke",
-              resource: selected.slug,
-              authz_basis: "policy:local-default",
-              model_id: selected.slug,
-              provider: selected.provider,
-              api: selected.api,
-              provider_call_order: order,
-              provider_call_purpose: purpose,
-              provider_error_class: classifyErrorKind(safeError),
-              content: null,
-              thinking: null,
-              stop_reason: "error",
-              duration_ms: Date.now() - startedAt,
-              ...authnEventFields,
-            })),
-          BEST_EFFORT,
-          noteSkippedEventWrite,
-        );
-        throw safeError;
-      }
-      let providerCallPersisted = true;
-      await writeMaybe(
-        () =>
-          writeEvent(providerCallEvent({
-            event_id: generateULID(),
-            session_id: sessionId,
-            trace_id: traceId,
-            span_id: providerSpanId,
-            parent_span_id: turnRootSpanId,
-            principal_id: principalId,
-            principal_type: "agent",
-            action: "invoke",
-            resource: turn.model.slug,
-            authz_basis: "policy:local-default",
-            model_id: turn.model.slug,
-            provider: turn.model.provider,
-            api: turn.model.api,
-            tokens_input: turn.usage.input,
-            tokens_output: turn.usage.output,
-            tokens_cache_read: turn.usage.cacheRead,
-            tokens_cache_write: turn.usage.cacheWrite,
-            cost_total: turn.usage.cost.total,
-            stop_reason: turn.stopReason,
-            provider_call_order: order,
-            provider_call_purpose: purpose,
-            ...(turn.unparsedToolCallMarkup
-              ? {
-                unparsed_tool_call_count: turn.unparsedToolCallMarkup.count,
-                unparsed_tool_call_count_is_lower_bound:
-                  turn.unparsedToolCallMarkup.countIsLowerBound,
-              }
-              : {}),
-            content: null,
-            thinking: null,
-            duration_ms: Date.now() - startedAt,
-            ...authnEventFields,
-          })),
-        BEST_EFFORT,
-        () => {
-          providerCallPersisted = false;
-          noteSkippedEventWrite();
-        },
-      );
-      if (turn.requestDispatched !== false) {
+      if (recorded) {
         cacheReadTokens += turn.usage.cacheRead;
         cacheWriteTokens += turn.usage.cacheWrite;
         reasoningTokens += turn.usage.reasoning ?? 0;
         turnInputTokens += turn.usage.input;
         turnOutputTokens += turn.usage.output;
         turnCostUsd += turn.usage.cost.total;
-        budget.record(turn.usage, turn.model.tier);
         await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
           type: "afterProviderResponse",
           sessionId,
@@ -2377,7 +1886,7 @@ async function runNativeWorkbenchRuntime(
       }
       return {
         ...turn,
-        ...(providerCallPersisted ? { providerSpanId } : {}),
+        ...(persisted ? { providerSpanId } : {}),
       };
     };
     // Length-stop recovery around every provider call: classify a
