@@ -13,22 +13,15 @@ import {
 } from "./context/compression.ts";
 import type { WorkbenchMessage } from "./providers/mod.ts";
 import {
-  type BudgetTallyInput,
-  buildBudgetTallyLine,
-  buildNextWorkBrief,
-  buildWorkbenchReceipt,
   buildWorkspaceGrounding,
   type ExternalAgentRunner,
   type NativeWorkbenchRuntimeResult,
   runWorkbenchRuntime as runtimeUnderTest,
-  shouldPrintBudgetTally,
   toolStepToMessages,
-  validateNextWorkJson,
-  type WorkbenchReceiptInput,
   type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
   type WorkbenchRuntimeServices,
-} from "./engine/native-runner.ts";
+} from "./engine/mod.ts";
 import {
   ContextCompressionPersistenceUncertainError,
   PaidEscalationDeclinedError,
@@ -597,180 +590,6 @@ beforeEach(() => {
   });
 });
 
-const BASE_RECEIPT: WorkbenchReceiptInput = {
-  sessionId: "01TESTSESSION00000000000000",
-  traceId: "0123456789abcdef0123456789abcdef",
-  modelName: "Gemma 4 E2B",
-  modelSlug: "gemma4:e2b",
-  tier: 0,
-  routingReason: "default",
-  totalCostUsd: 0,
-  totalTokensInput: 1234,
-  totalTokensOutput: 567,
-  totalCalls: 1,
-  contextBudget: {
-    totalTokens: 5000,
-    usedTokens: 4000,
-    headroomTokens: 500,
-    byBucket: {
-      system: { limitTokens: 1000, usedTokens: 900 },
-      active_repo: { limitTokens: 2500, usedTokens: 2100 },
-      derived_memory: { limitTokens: 1000, usedTokens: 1000 },
-    },
-  },
-  contextProfile: "compact",
-  timings: {
-    responseHeadersMs: 10,
-    timeToFirstTokenMs: 42,
-    generationMs: 8,
-    timePerOutputTokenMs: 2,
-    totalMs: 50,
-  },
-  contextSources: [
-    "AGENTS.md <AGENTS.md>",
-    "README.md Section 1 <README.md#section-1>",
-    "notes/workbench-mvp-loop.md <notes/workbench-mvp-loop.md>",
-  ],
-  paidInferenceUsed: false,
-  estimatedCostUsd: 0,
-  workletId: "next-work.v0",
-  validation: { ok: true, errors: [] },
-  agent: { toolStepsUsed: 12, maxToolSteps: 32, limitReached: false },
-};
-
-const BASE_TALLY: BudgetTallyInput = {
-  turn: {
-    tokensInput: 300,
-    tokensOutput: 120,
-    costUsd: 0.0123456,
-    tier: 1,
-  },
-  session: {
-    totalCostUsd: 0.0345678,
-    totalTokensInput: 1300,
-    totalTokensOutput: 620,
-    paidCalls: 2,
-    sessionLimitUsd: 1,
-  },
-};
-
-describe("buildWorkbenchReceipt", () => {
-  test("includes session and trace audit pointers", () => {
-    const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
-
-    expect(receipt).toContain("Session: 01TESTSESSION00000000000000");
-    expect(receipt).toContain("Trace:   0123456789abcdef0123456789abcdef");
-  });
-
-  test("includes model, tier, and routing reason", () => {
-    const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
-
-    expect(receipt).toContain("Model:   Gemma 4 E2B (gemma4:e2b, tier 0)");
-    expect(receipt).toContain("Route:   default");
-  });
-
-  test("includes token and cost totals", () => {
-    const receipt = buildWorkbenchReceipt({
-      ...BASE_RECEIPT,
-      totalCostUsd: 0.0123456,
-      totalTokensInput: 3000,
-      totalTokensOutput: 1200,
-      totalCalls: 2,
-    });
-
-    expect(receipt).toContain("Actual cost:    $0.012346");
-    expect(receipt).toContain("Tokens:  3000 in, 1200 out");
-    expect(receipt).toContain("Calls:   2");
-  });
-
-  test("includes configured agent-step usage and limit status", () => {
-    expect(buildWorkbenchReceipt(BASE_RECEIPT)).toContain("Tool steps: 12/32");
-    expect(buildWorkbenchReceipt({
-      ...BASE_RECEIPT,
-      agent: { toolStepsUsed: 2, maxToolSteps: 2, limitReached: true },
-    })).toContain("Tool steps: 2/2 (limit reached)");
-  });
-
-  test("reports reasoning tokens only when the provider reported some", () => {
-    // Absent/zero: no reasoning fragment — most providers never report them.
-    expect(buildWorkbenchReceipt(BASE_RECEIPT)).not.toContain("reasoning");
-    expect(
-      buildWorkbenchReceipt({ ...BASE_RECEIPT, totalReasoningTokens: 0 }),
-    ).not.toContain("reasoning");
-
-    const receipt = buildWorkbenchReceipt({
-      ...BASE_RECEIPT,
-      totalTokensInput: 3000,
-      totalTokensOutput: 1200,
-      totalReasoningTokens: 256,
-    });
-    expect(receipt).toContain("Tokens:  3000 in, 1200 out, 256 reasoning");
-  });
-
-  test("includes model call timing breakdown when available", () => {
-    const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
-
-    expect(receipt).toContain(
-      "Timings: headers 10ms, TTFT 42ms, generation 8ms, TPOT 2ms/token, total 50ms",
-    );
-  });
-
-  test("includes context budget allocation", () => {
-    const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
-
-    expect(receipt).toContain("Context profile: compact");
-    expect(receipt).toContain(
-      "Context budget: 4000/5000 tokens; system 900/1000, active 2100/2500, memory 1000/1000, headroom 500",
-    );
-  });
-
-  test("includes context sources and paid inference posture", () => {
-    const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
-
-    expect(receipt).toContain("Context sources:");
-    expect(receipt).toContain("- AGENTS.md <AGENTS.md>");
-    expect(receipt).toContain("- README.md Section 1 <README.md#section-1>");
-    expect(receipt).toContain(
-      "- notes/workbench-mvp-loop.md <notes/workbench-mvp-loop.md>",
-    );
-    expect(receipt).toContain("Paid inference used: no");
-    expect(receipt).toContain("Estimated cost: $0.000000");
-    expect(receipt).toContain("Actual cost:    $0.000000");
-  });
-
-  test("includes next-work experiment routing and validation fields", () => {
-    const receipt = buildWorkbenchReceipt({
-      ...BASE_RECEIPT,
-      routingReason: "default_local_next_work",
-      validation: {
-        ok: false,
-        errors: ["missing required field: rationale"],
-      },
-    });
-
-    expect(receipt).toContain("Worklet: next-work.v0");
-    expect(receipt).toContain("Route:   default_local_next_work");
-    expect(receipt).toContain("Validation: failed");
-    expect(receipt).toContain("- missing required field: rationale");
-  });
-});
-
-describe("buildNextWorkBrief", () => {
-  test("requests strict JSON for the next-work worklet without private context", () => {
-    const brief = buildNextWorkBrief({
-      workletId: "next-work.v0",
-      contextProfile: "compact",
-      prompt: "what should I work on next here?",
-    });
-
-    expect(brief).toContain("worklet_id: next-work.v0");
-    expect(brief).toContain("context_profile: compact");
-    expect(brief).toContain("Return strict JSON only");
-    expect(brief).toContain('"recommendation"');
-    expect(brief).toContain('"confidence"');
-  });
-});
-
 describe("toolStepToMessages", () => {
   test("emits the assistant tool-call turn followed by linked tool results", () => {
     const toolCalls = [
@@ -1076,61 +895,6 @@ describe("buildWorkspaceGrounding", () => {
     // are introduced before bash.
     const [beforeBash] = grounding.split("bash");
     expect(beforeBash).toMatch(/cannot escape/i);
-  });
-});
-
-describe("validateNextWorkJson", () => {
-  test("accepts a complete strict JSON next-work result", () => {
-    const result = validateNextWorkJson(JSON.stringify({
-      worklet_id: "next-work.v0",
-      context_profile: "compact",
-      recommendation: "Work the next-work routing slice next.",
-      rationale: "It is the ready routing experiment slice.",
-      evidence: ["notes/workbench-model-routing-mvp.md"],
-      risks: ["Local model output may drift."],
-      next_commands: ["deno task test"],
-      confidence: "medium",
-    }));
-
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        worklet_id: "next-work.v0",
-        context_profile: "compact",
-        recommendation: "Work the next-work routing slice next.",
-        rationale: "It is the ready routing experiment slice.",
-        evidence: ["notes/workbench-model-routing-mvp.md"],
-        risks: ["Local model output may drift."],
-        next_commands: ["deno task test"],
-        confidence: "medium",
-      },
-      errors: [],
-    });
-  });
-
-  test("rejects prose or incomplete JSON before trusting the model result", () => {
-    expect(validateNextWorkJson("Work on the routing item next."))
-      .toMatchObject({
-        ok: false,
-        errors: ["model output was not strict JSON"],
-      });
-
-    const incomplete = validateNextWorkJson(JSON.stringify({
-      worklet_id: "next-work.v0",
-      context_profile: "compact",
-      recommendation: "Work the next-work routing slice next.",
-    }));
-
-    expect(incomplete).toMatchObject({
-      ok: false,
-      errors: [
-        "missing required field: rationale",
-        "missing required field: evidence",
-        "missing required field: risks",
-        "missing required field: next_commands",
-        "missing required field: confidence",
-      ],
-    });
   });
 });
 
@@ -2978,7 +2742,7 @@ describe("runWorkbenchRuntime observer events", () => {
 
       expect(runtimeMocks.runWorkbenchTurn).toHaveBeenCalled();
       const { AGENTS_INSTRUCTIONS_TRUST_PREAMBLE } = await import(
-        "./engine/native-runner.ts"
+        "./engine/mod.ts"
       );
       const params = runtimeMocks.runWorkbenchTurn.mock
         .calls[0][0] as Record<string, unknown>;
@@ -3021,7 +2785,7 @@ describe("runWorkbenchRuntime observer events", () => {
         source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
       };
       const { AGENTS_INSTRUCTIONS_TRUST_PREAMBLE } = await import(
-        "./engine/native-runner.ts"
+        "./engine/mod.ts"
       );
 
       const result = await runWorkbenchRuntime({
@@ -4028,39 +3792,6 @@ describe("runWorkbenchRuntime length-stop recovery", () => {
       (runtimeMocks.model as { maxOutputTokens?: number }).maxOutputTokens =
         prevMax;
     }
-  });
-});
-
-describe("buildBudgetTallyLine", () => {
-  test("shows turn and session cost and token totals", () => {
-    const tally = buildBudgetTallyLine(BASE_TALLY);
-
-    expect(tally).toBe(
-      "Budget tally: $0.012346 this turn (300 in, 120 out) · " +
-        "$0.034568 session (1300 in, 620 out, 3.5% of $1.000000)",
-    );
-  });
-});
-
-describe("shouldPrintBudgetTally", () => {
-  test("default paid mode stays quiet before paid usage", () => {
-    expect(
-      shouldPrintBudgetTally("paid", { ...BASE_TALLY.session, paidCalls: 0 }),
-    ).toBe(false);
-  });
-
-  test("default paid mode prints after paid usage", () => {
-    expect(shouldPrintBudgetTally("paid", BASE_TALLY.session)).toBe(true);
-  });
-
-  test("on mode prints even without paid usage", () => {
-    expect(
-      shouldPrintBudgetTally("on", { ...BASE_TALLY.session, paidCalls: 0 }),
-    ).toBe(true);
-  });
-
-  test("off mode always stays quiet", () => {
-    expect(shouldPrintBudgetTally("off", BASE_TALLY.session)).toBe(false);
   });
 });
 

@@ -154,6 +154,15 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The native runtime's helpers and types are separate engine modules**:
+  receipt and tally formatting (`engine/receipt.ts`), the next-work worklet
+  (`engine/next-work.ts`), runtime-event delivery (`engine/runtime-events.ts`)
+  and the runtime's input, services and result types
+  (`engine/runtime-types.ts`) moved out of `engine/native-runner.ts`. The
+  runtime services accept an optional clock, environment and provider
+  transport, and `loadAskRepoContext` an optional `env`; the defaults are the
+  system clock, the process environment and the platform `fetch`, as before.
+  Event rows, receipts and the golden suite are unchanged.
 - **The turn entry and session ownership live in `prototype/src/engine/`**:
   the shared turn core (`turn-runner.ts`) is now `engine/turn.ts`, with
   request validation split into `engine/turn-request.ts`, and the native
