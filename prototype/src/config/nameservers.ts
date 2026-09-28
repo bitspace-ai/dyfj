@@ -5,9 +5,10 @@
  * query, not against the name being looked up, so the engine can resolve a
  * hostname only when each configured nameserver is granted as `<ip>:53`. The
  * web tools' address check refuses a target it cannot resolve, so `dyfj start`
- * reads the nameservers from the resolver configuration at launch and appends
- * these grants to the engine's explicit `--allow-net`. They are machine-specific
- * and never belong in the committed permission profile.
+ * (and `deno task serve-unix`, through `scripts/serve-unix-net-flag.ts`) reads
+ * the nameservers from the resolver configuration at launch and appends these
+ * grants to the engine's explicit `--allow-net`. They are machine-specific and
+ * never belong in the committed permission profile.
  *
  * A `nameserver` entry that is not a plain IP literal (for example a scoped
  * IPv6 address such as `fe80::1%eth0`, which a Deno grant cannot express) gets

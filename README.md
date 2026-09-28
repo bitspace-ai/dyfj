@@ -596,12 +596,11 @@ target it cannot verify as public, and passes the canonical URL to the upstream
 fetch tool. A hostname passes only when its A and AAAA lookups both answer
 (either may have no records), together they return at least one address, and
 none of those is private, loopback or internal; a public IP literal needs no
-lookup. `dyfj start` grants the engine DNS access to
-the nameservers in `/etc/resolv.conf` for these lookups; an engine started
-directly with `deno task serve-unix` has no such grant, so `web_fetch` there
-refuses hostname targets. Per turn, at most 3 searches and 5 fetches run,
-returned text is capped at 40,000 characters per fetch and 100,000 per turn,
-and results are framed as untrusted external data.
+lookup. Both `dyfj start` and `deno task serve-unix` grant the engine DNS
+access to the nameservers in `/etc/resolv.conf` for these lookups. Per turn, at
+most 3 searches and 5 fetches run, returned text is capped at 40,000 characters
+per fetch and 100,000 per turn, and results are framed as untrusted external
+data.
 
 Which models exist, what they cost, and which tier they sit in is registry data,
 not code - see the current catalog in `schema/catalog/001_models.sql`. Catalog
@@ -1654,5 +1653,5 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-28 - `specs/01-architecture.md` §5.6 adds the `DnsResolver` port and
   `specs/03-testing.md` §3 its `ScriptedDnsResolver` fake and conformance
   suite. The web tools section now states that `web_fetch` refuses a target
-  it cannot verify as public, and that `dyfj start` grants the engine the
-  system nameservers for the lookups.
+  it cannot verify as public, and that `dyfj start` and `deno task serve-unix`
+  grant the engine the system nameservers for the lookups.

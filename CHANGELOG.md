@@ -162,10 +162,11 @@ README are tracked separately in its Revision history section.
   that outlives the fetch deadline refuses the target before the upstream
   fetch tool is called. A public IP literal is accepted without a lookup, and
   private-literal and localhost rejection is unchanged. For these lookups,
-  `dyfj start` grants the engine `<ip>:53` for each `nameserver` in
-  `/etc/resolv.conf` on its `--allow-net`
-  (`prototype/src/config/nameservers.ts`). An engine started directly with
-  `deno task serve-unix` has no such grant and refuses hostname targets.
+  both `dyfj start` and `deno task serve-unix` grant the engine `<ip>:53` for
+  each `nameserver` in `/etc/resolv.conf` on its `--allow-net`
+  (`prototype/src/config/nameservers.ts`); the task gets its flag from
+  `prototype/scripts/serve-unix-net-flag.ts`, which repeats the profile's net
+  list, and falls back to the profile's own list when that cannot be read.
 - **The web tools look up hostnames through a `DnsResolver` port**
   (`prototype/src/tools/web/dns.ts`): the web tools' address check resolves a
   target's A and AAAA records through an injected resolver whose lookups never
