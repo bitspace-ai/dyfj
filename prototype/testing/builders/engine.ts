@@ -307,3 +307,74 @@ export async function eventRows(run: EngineRun, sessionId: string) {
     order: "asc",
   });
 }
+
+/** A free Gemini row: its adapter cannot run a transcript retry. */
+export const GEMINI_FREE_MODEL: ModelSeed = {
+  slug: "gemini-free",
+  display_name: "Gemini Free",
+  provider: "google",
+  api: "google-generative-ai",
+  base_url: "https://generativelanguage.googleapis.com",
+  tier: 0,
+  context_window: 32_768,
+  max_output_tokens: 4_096,
+  capabilities: ["text", "code"],
+};
+
+export interface GeminiReply {
+  text: string;
+  finishReason?: string;
+  functionCalls?: ReadonlyArray<{ name: string; args: unknown }>;
+  usage?: {
+    promptTokenCount: number;
+    candidatesTokenCount: number;
+    thoughtsTokenCount?: number;
+  };
+}
+
+/** A non-streaming Gemini generateContent reply. */
+export function geminiReply(reply: GeminiReply): ScriptedExchange {
+  return {
+    respond: {
+      body: JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [
+              { text: reply.text },
+              ...(reply.functionCalls ?? []).map((call) => ({
+                functionCall: call,
+              })),
+            ],
+          },
+          finishReason: reply.finishReason ?? "STOP",
+        }],
+        usageMetadata: reply.usage ??
+          { promptTokenCount: 10, candidatesTokenCount: 5 },
+      }),
+    },
+  };
+}
+
+export interface AnthropicUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+/** A non-streaming Anthropic reply with its stop reason and usage. */
+export function anthropicStop(
+  text: string,
+  stopReason: string,
+  usage: AnthropicUsage,
+): ScriptedExchange {
+  return {
+    respond: {
+      body: JSON.stringify({
+        content: [{ type: "text", text }],
+        stop_reason: stopReason,
+        usage,
+      }),
+    },
+  };
+}
