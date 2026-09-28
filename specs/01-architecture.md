@@ -287,7 +287,10 @@ This section implements AGENTS.md rules 2 and 3.
 
   Other code sends it messages (`startTurn`, `cancel`, `release`); nothing else
   mutates these. Behavior is frozen: busy/concurrency semantics stay identical,
-  and the golden suite pins them.
+  and the golden suite pins them. One approved change: a turn that starts a new
+  session has its id allocated by the session owners when it is admitted, and
+  its owner is registered under that id before the runtime starts, so later
+  turns naming that id are serialized behind it.
 - **Upward communication.** Stages return outcomes. Events go through the
   journal. The only callbacks are the declared ports `Approver` and `onFrame`
   (the engine's `FrameSink`), both on the runtime input, and neither may

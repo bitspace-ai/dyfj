@@ -365,6 +365,42 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     ]);
   });
 
+  test("a new-session turn runs under the id allocated at admission", async () => {
+    const admitted = "01ADMITTEDSESSION000000000";
+    const started: string[] = [];
+    const result = await runExternalAgentWorkbenchRuntime({
+      mode: "turn",
+      prompt: "operator prompt only",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      newSessionId: admitted,
+      workspaceRoot: Deno.cwd(),
+      frames: {
+        onRuntimeEvent: (event) => {
+          if (event.type === "sessionStart") started.push(event.sessionId);
+        },
+      },
+    }, {
+      runAgent: () =>
+        Promise.resolve({
+          text: "done",
+          stopReason: "stop",
+          capabilities: [],
+          routeEvidence: { source: "profile_declared" },
+          elapsedMs: 1,
+        }),
+    });
+    expect(result.sessionId).toBe(admitted);
+    expect(started).toEqual([admitted]);
+    expect(state.events.map((event) => event.session_id)).toEqual([
+      admitted,
+      admitted,
+      admitted,
+    ]);
+    expect(state.createdSessions.map((session) => session.sessionId))
+      .toEqual([admitted]);
+  });
+
   test("labels optional ACP usage without converting it to native accounting", async () => {
     const result = await runExternalAgentWorkbenchRuntime({
       mode: "turn",
