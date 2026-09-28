@@ -10,6 +10,18 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **`read_file` declares `offset` and `limit` as `number`, not
+  `integer`.**
+  - **Location:** `prototype/src/tools/builtin/file.ts:1661` and `:1667`
+    (`defineReadFile` input schema); the executor check is at `:193-200`.
+  - **Symptom:** a fractional `offset` or `limit` (for example `1.5`) passes
+    schema validation and reaches `executeReadFile`, which rejects it with an
+    `error:` result the model can recover from. The schema should reject it
+    before execution, as the `git` tool's integer `limit` does.
+  - **Suspected cause:** the schema predates the `integer` type in the
+    validator. Changing it changes the schema sent to providers and listed by
+    `tools/list`, so it waits for a change that updates the golden snapshots.
+  - **Found during:** WO-15 (review of the moved builder).
 - 2026-09-28 — **`memory.read` built without a reader throws a plain `Error`
   out of the invoke path.**
   - **Location:** `prototype/src/tools/builtin/memory.ts:45-47`

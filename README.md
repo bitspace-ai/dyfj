@@ -1635,5 +1635,5 @@ Document revisions only. Code and behavior changes are tracked in
   server needs only configuration; a builtin tool is one module exporting its
   `define<Name>` beside its executor, one `BUILTIN_TOOLS` line, and the tool
   conformance kit. `specs/01-architecture.md` §5.4 now names where the tool
-  builders and the catalog builder live, and `specs/bug-log.md` records two
-  findings from the move.
+  builders and the catalog builder live, and `specs/bug-log.md` records four
+  findings from the move and its review.
