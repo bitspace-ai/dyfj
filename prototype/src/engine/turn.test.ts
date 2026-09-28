@@ -5,6 +5,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "@std/assert";
+import { stub } from "@std/testing/mock";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { type EventReader, fetchWorkbenchSessionEvents } from "../store/mod.ts";
 import type { WorkbenchSessionEvent } from "../contract/mod.ts";
@@ -58,17 +59,22 @@ function deps(overrides: Partial<ExecuteTurnDeps>): ExecuteTurnDeps {
   };
 }
 
-/** Run with `console.error` captured, returning what it printed. */
+/**
+ * Run with `console.error` stubbed, returning what it printed. Not
+ * reentrant: a test that runs turns concurrently wraps them all in one call.
+ */
 async function captureStderr<T>(
   run: () => Promise<T>,
 ): Promise<{ value: T; lines: string[] }> {
-  const lines: string[] = [];
-  const original = console.error;
-  console.error = (...parts: unknown[]) => lines.push(parts.join(" "));
+  const error = stub(console, "error");
   try {
-    return { value: await run(), lines };
+    const value = await run();
+    return {
+      value,
+      lines: error.calls.map((call) => call.args.join(" ")),
+    };
   } finally {
-    console.error = original;
+    error.restore();
   }
 }
 
@@ -166,8 +172,8 @@ Deno.test("a resumed turn reads its history only after the prior same-session tu
     log.push("fetch history");
     return Promise.resolve([]);
   };
-  const first = captureStderr(() =>
-    executeTurn(
+  await captureStderr(async () => {
+    const first = executeTurn(
       resolved({ prompt: "first", sessionId: SESSION_ID }),
       deps({
         owners,
@@ -179,10 +185,8 @@ Deno.test("a resumed turn reads its history only after the prior same-session tu
           return RESULT;
         },
       }),
-    )
-  );
-  const second = captureStderr(() =>
-    executeTurn(
+    );
+    const second = executeTurn(
       resolved({ prompt: "second", sessionId: SESSION_ID }),
       deps({
         owners,
@@ -192,12 +196,12 @@ Deno.test("a resumed turn reads its history only after the prior same-session tu
           return Promise.resolve(RESULT);
         },
       }),
-    )
-  );
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  assertEquals(log, ["fetch history", "first runs"]);
-  releaseFirst();
-  await Promise.all([first, second]);
+    );
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    assertEquals(log, ["fetch history", "first runs"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+  });
   assertEquals(log, [
     "fetch history",
     "first runs",
