@@ -14,7 +14,7 @@ import {
   formatUntrustedMcpResult,
   type McpCallResult,
 } from "../mcp/transport.ts";
-import { type DnsResolver, systemDnsResolver } from "./dns.ts";
+import { type DnsLookup, type DnsResolver, systemDnsResolver } from "./dns.ts";
 
 export const MAX_SEARCH_CALLS_PER_TURN = 3;
 export const MAX_FETCH_CALLS_PER_TURN = 5;
@@ -273,8 +273,21 @@ export function assertPublicHttpsUrl(
   return url;
 }
 
+/** Whether `host` is an IPv4 or IPv6 literal (brackets allowed) rather than a name. */
+function isIpLiteral(host: string): boolean {
+  const bare = host.startsWith("[") && host.endsWith("]")
+    ? host.slice(1, -1)
+    : host;
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(bare) || bare.includes(":");
+}
+
 /**
- * Best-effort preflight DNS resolution check rejecting resolved private A/AAAA records with bounded wait.
+ * Preflight address check with a bounded wait. A target passes only when it
+ * is verified public: an IP literal outside the private, loopback and internal
+ * ranges, or a hostname whose A and AAAA lookups both answer, return at least
+ * one address, and return no private, loopback or internal address. A lookup
+ * that fails, a resolver that is unavailable, a name with no addresses and a
+ * lookup that outlives `signal` all reject the target.
  */
 export async function assertPublicDnsResolution(
   hostname: string,
@@ -293,36 +306,56 @@ export async function assertPublicDnsResolution(
       `Target host '${hostname}' is an enumerated private or internal IP address`,
     );
   }
+  if (isIpLiteral(hostname)) return;
+  if (signal?.aborted) {
+    throw new CommandExecutionError("DNS lookup timed out");
+  }
+
+  // Listen for the deadline before starting the lookups, so a timeout
+  // settles the race ahead of any lookup the signal cancels.
+  const abortPromise = new Promise<never>((_, reject) => {
+    signal?.addEventListener("abort", () => {
+      reject(new CommandExecutionError("DNS lookup timed out"));
+    }, { once: true });
+  });
+  let results: DnsLookup[];
   try {
-    if (signal?.aborted) return;
-    // Listen for the deadline before starting the lookups, so a timeout
-    // settles the race ahead of any lookup the signal cancels.
-    const abortPromise = new Promise<never>((_, reject) => {
-      if (signal?.aborted) {
-        reject(new CommandExecutionError("DNS lookup timed out"));
-        return;
-      }
-      signal?.addEventListener("abort", () => {
-        reject(new CommandExecutionError("DNS lookup timed out"));
-      }, { once: true });
-    });
-    const lookups = Promise.all([
-      resolver.resolve(hostname, "A", signal),
-      resolver.resolve(hostname, "AAAA", signal),
+    results = await Promise.race([
+      Promise.all([
+        resolver.resolve(hostname, "A", signal),
+        resolver.resolve(hostname, "AAAA", signal),
+      ]),
+      abortPromise,
     ]);
-    const results = await Promise.race([lookups, abortPromise]);
-    for (const lookup of results) {
-      if (!lookup.ok) continue;
-      for (const ip of lookup.addresses) {
-        if (isPrivateOrLoopbackIp(ip)) {
-          throw new CommandExecutionError(
-            `Target host '${hostname}' resolves to private or internal IP address ${ip}`,
-          );
-        }
-      }
-    }
   } catch (err) {
     if (err instanceof CommandExecutionError) throw err;
+    throw new CommandExecutionError(
+      `Target host '${hostname}' could not be verified: DNS lookup failed`,
+    );
+  }
+
+  const addresses: string[] = [];
+  for (const lookup of results) {
+    if (!lookup.ok) {
+      throw new CommandExecutionError(
+        `Target host '${hostname}' could not be verified: DNS lookup ${
+          lookup.reason === "unavailable" ? "unavailable" : "failed"
+        }`,
+      );
+    }
+    addresses.push(...lookup.addresses);
+  }
+  if (addresses.length === 0) {
+    throw new CommandExecutionError(
+      `Target host '${hostname}' does not resolve to any address`,
+    );
+  }
+  for (const ip of addresses) {
+    if (isPrivateOrLoopbackIp(ip)) {
+      throw new CommandExecutionError(
+        `Target host '${hostname}' resolves to private or internal IP address ${ip}`,
+      );
+    }
   }
 }
 

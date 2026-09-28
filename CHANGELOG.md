@@ -154,6 +154,17 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`web_fetch` refuses a target it cannot verify as public**: a hostname
+  passes the address check only when its A and AAAA lookups both answer, at
+  least one address comes back, and none is private, loopback or internal. A
+  lookup that fails or cannot be made, a name with no addresses, or a lookup
+  that outlives the fetch deadline refuses the target before the upstream
+  fetch tool is called. A public IP literal is accepted without a lookup, and
+  private-literal and localhost rejection is unchanged. For these lookups,
+  `dyfj start` grants the engine `<ip>:53` for each `nameserver` in
+  `/etc/resolv.conf` on its `--allow-net`
+  (`prototype/src/config/nameservers.ts`). An engine started directly with
+  `deno task serve-unix` has no such grant and refuses hostname targets.
 - **The web tools look up hostnames through a `DnsResolver` port**
   (`prototype/src/tools/web/dns.ts`): the web tools' address check resolves a
   target's A and AAAA records through an injected resolver whose lookups never
@@ -164,8 +175,7 @@ README are tracked separately in its Revision history section.
   (`prototype/testing/conformance/dns-resolver.ts`): the fake in the unit
   lane, the real adapter in the integration lane in whichever mode that lane's
   net grant allows. The Deno integration lane now runs with `--no-prompt`, so
-  ungranted access fails locally as it does in CI instead of prompting. What
-  the web tools accept and refuse is unchanged.
+  ungranted access fails locally as it does in CI instead of prompting.
 
 - **Route resolution and the observed provider call live in
   `prototype/src/engine/`**: `resolveRoute` (`engine/route.ts`) is the one

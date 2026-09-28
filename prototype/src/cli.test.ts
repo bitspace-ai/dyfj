@@ -3063,6 +3063,22 @@ describe("runtime lifecycle commands", () => {
     );
   });
 
+  test("buildServeUnixArgs appends unique launch-resolved nameserver grants", () => {
+    const args = buildServeUnixArgs(
+      ["127.0.0.1:3306"],
+      "/run/wb.sock",
+      null,
+      null,
+      null,
+      false,
+      ["mcp.linear.app:443"],
+      ["127.0.0.53:53", "[2001:db8::53]:53", "127.0.0.53:53"],
+    );
+    expect(args[3]).toBe(
+      "--allow-net=127.0.0.1:3306,unix:/run/wb.sock,mcp.linear.app:443,127.0.0.53:53,[2001:db8::53]:53",
+    );
+  });
+
   test("buildServeUnixArgs rejects comma-bearing network grants", () => {
     expect(() =>
       buildServeUnixArgs(

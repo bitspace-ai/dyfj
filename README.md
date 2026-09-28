@@ -591,11 +591,16 @@ The first ready server that declares a discovered search tool supplies
 `web_search`, and likewise for `web_fetch`. `web_search` takes a query and an
 optional limit (1–10, default 5) and returns bounded snippets, each with a
 source ID (`s1`, `s2`, …) when it carries a URL. `web_fetch` takes either an
-HTTPS URL or a source ID from the current turn's latest search, refuses
-non-public hosts, and passes the canonical URL to the upstream fetch tool. Per
-turn, at most 3 searches and 5 fetches run, returned text is capped at 40,000
-characters per fetch and 100,000 per turn, and results are framed as untrusted
-external data.
+HTTPS URL or a source ID from the current turn's latest search, refuses any
+target it cannot verify as public, and passes the canonical URL to the upstream
+fetch tool. A hostname passes only when its A and AAAA lookups both answer with
+at least one address and none of them is private, loopback or internal; a
+public IP literal needs no lookup. `dyfj start` grants the engine DNS access to
+the nameservers in `/etc/resolv.conf` for these lookups; an engine started
+directly with `deno task serve-unix` has no such grant, so `web_fetch` there
+refuses hostname targets. Per turn, at most 3 searches and 5 fetches run,
+returned text is capped at 40,000 characters per fetch and 100,000 per turn,
+and results are framed as untrusted external data.
 
 Which models exist, what they cost, and which tier they sit in is registry data,
 not code - see the current catalog in `schema/catalog/001_models.sql`. Catalog
@@ -1645,3 +1650,8 @@ Document revisions only. Code and behavior changes are tracked in
   resolution and the observed provider call into `prototype/src/engine/`: the
   swallowed model-registry load failure in route resolution, and the unparsed
   tool-call markup counts missing from compression `provider_call` rows.
+- 2026-09-28 - `specs/01-architecture.md` §5.6 adds the `DnsResolver` port and
+  `specs/03-testing.md` §3 its `ScriptedDnsResolver` fake and conformance
+  suite. The web tools section now states that `web_fetch` refuses a target
+  it cannot verify as public, and that `dyfj start` grants the engine the
+  system nameservers for the lookups.

@@ -44,6 +44,7 @@ import {
   type McpHttpServerConfig,
   processEnv,
   readLauncherEnvVar,
+  readNameserverNetGrants,
   type SecretsConfig,
 } from "./config/mod.ts";
 import { mcpServerNetGrants } from "./mcp-net-grants.ts";
@@ -3265,8 +3266,9 @@ export function installRootFromModuleUrl(moduleUrl: string): string | null {
  * --allow-net that reproduces the profile's net list plus the one resolved
  * socket path — and, when an external memory endpoint is configured, its
  * launch-resolved host grant (same reasoning: an operator-private hostname
- * never belongs in the committed profile); -P still supplies every other
- * permission category.
+ * never belongs in the committed profile), plus `<ip>:53` for each system
+ * nameserver, which the web tools' address check needs to resolve a target;
+ * -P still supplies every other permission category.
  */
 export function buildServeUnixArgs(
   netGrants: string[],
@@ -3276,6 +3278,7 @@ export function buildServeUnixArgs(
   envGrants?: string[] | null,
   autostarted = false,
   externalMcpGrants: readonly string[] = [],
+  nameserverGrants: readonly string[] = [],
 ): string[] {
   if (runGrants?.some((grant) => grant.includes(","))) {
     throw new Error("Deno run grants cannot contain commas");
@@ -3284,7 +3287,7 @@ export function buildServeUnixArgs(
   if (
     [...netGrants, socketGrant, ...(memoryMcpGrant == null
       ? []
-      : [memoryMcpGrant]), ...externalMcpGrants]
+      : [memoryMcpGrant]), ...externalMcpGrants, ...nameserverGrants]
       .some((grant) => grant.includes(","))
   ) {
     throw new Error("Deno network grants cannot contain commas");
@@ -3295,7 +3298,7 @@ export function buildServeUnixArgs(
   if (memoryMcpGrant != null && !net.includes(memoryMcpGrant)) {
     net = [...net, memoryMcpGrant];
   }
-  for (const grant of externalMcpGrants) {
+  for (const grant of [...externalMcpGrants, ...nameserverGrants]) {
     if (!net.includes(grant)) net = [...net, grant];
   }
   return [
@@ -3583,6 +3586,7 @@ export async function startLocalRuntime(
   const externalMcpGrants = mcpServerNetGrants(
     await readLauncherMcpServersConfig(cwd, secretsCfg),
   );
+  const nameserverGrants = await readNameserverNetGrants();
   const resolverBin = secretsRunGrant(secretsCfg);
   const profileRun = await readServeUnixRunGrants(cwd);
   const nodeGrant = await nodeRunGrant();
@@ -3620,6 +3624,7 @@ export async function startLocalRuntime(
         envGrants,
         autostarted,
         externalMcpGrants,
+        nameserverGrants,
       ),
       cwd,
       stdin: "inherit",

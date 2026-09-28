@@ -334,6 +334,95 @@ describe("assertPublicDnsResolution", () => {
     );
   });
 
+  it("accepts a host with only an A answer", async () => {
+    const dns = new ScriptedDnsResolver({
+      "v4only.example": { A: ["93.184.216.34"] },
+    });
+    await assertPublicDnsResolution("v4only.example", false, undefined, dns);
+  });
+
+  it("rejects a host whose lookup cannot be made", async () => {
+    const dns = new ScriptedDnsResolver({}, { unavailable: true });
+    await assertRejectsMatching(
+      () => assertPublicDnsResolution("example.com", false, undefined, dns),
+      /could not be verified: DNS lookup unavailable/,
+    );
+  });
+
+  it("rejects a host whose lookup fails", async () => {
+    const dns = new ScriptedDnsResolver({ "down.example": "failed" });
+    await assertRejectsMatching(
+      () => assertPublicDnsResolution("down.example", false, undefined, dns),
+      /could not be verified: DNS lookup failed/,
+    );
+  });
+
+  it("rejects a host that resolves to no address", async () => {
+    const dns = new ScriptedDnsResolver();
+    await assertRejectsMatching(
+      () => assertPublicDnsResolution("nothing.example", false, undefined, dns),
+      /does not resolve to any address/,
+    );
+  });
+
+  it("rejects when the resolver itself throws", async () => {
+    const throwing = {
+      resolve: () => Promise.reject(new Error("resolver exploded")),
+    };
+    await assertRejectsMatching(
+      () =>
+        assertPublicDnsResolution("example.com", false, undefined, throwing),
+      /^Target host 'example\.com' could not be verified: DNS lookup failed$/,
+    );
+  });
+
+  it("rejects an already-expired deadline without a lookup", async () => {
+    const dns = publicDns();
+    await assertRejectsMatching(
+      () =>
+        assertPublicDnsResolution(
+          "example.com",
+          false,
+          AbortSignal.abort(),
+          dns,
+        ),
+      /DNS lookup timed out/,
+    );
+    assertEquals(dns.lookups, []);
+  });
+
+  it("rejects a lookup that outlives the deadline", async () => {
+    const controller = new AbortController();
+    const hanging = {
+      resolve: () => {
+        controller.abort();
+        return new Promise<never>(() => {});
+      },
+    };
+    await assertRejectsMatching(
+      () =>
+        assertPublicDnsResolution(
+          "example.com",
+          false,
+          controller.signal,
+          hanging,
+        ),
+      /DNS lookup timed out/,
+    );
+  });
+
+  it("accepts public IP literals without a lookup", async () => {
+    const dns = new ScriptedDnsResolver({}, { unavailable: true });
+    await assertPublicDnsResolution("93.184.216.34", false, undefined, dns);
+    await assertPublicDnsResolution(
+      "[2606:4700:4700::1111]",
+      false,
+      undefined,
+      dns,
+    );
+    assertEquals(dns.lookups, []);
+  });
+
   it("rejects a private IP literal before any lookup", async () => {
     const dns = publicDns();
     await assertRejectsMatching(
@@ -561,6 +650,34 @@ describe("defineWebCommands", () => {
       }, { authzBasis: "test" }), /forbidden|private/);
     // Rejected on the IP literal, before any DNS lookup.
     assertEquals(dns.lookups.length, 2);
+  });
+
+  it("refuses a web_fetch target it cannot verify without calling upstream", async () => {
+    let upstreamCalled = false;
+    const commands = defineWebCommands(
+      server,
+      "test_token",
+      {
+        call: () => {
+          upstreamCalled = true;
+          return Promise.resolve({ content: [] });
+        },
+      },
+      createWebToolsSessionState(),
+      false,
+      {},
+      new ScriptedDnsResolver({}, { unavailable: true }),
+    );
+    const fetchCmd = commands.find((c) => c.id === "web_fetch")!;
+
+    await assertRejectsMatching(() =>
+      fetchCmd.executor({
+        callId: "call_unverified",
+        commandId: "web_fetch",
+        caller: { principalId: "operator", principalType: "human" },
+        arguments: { url: "https://example.com/page" },
+      }, { authzBasis: "test" }), /could not be verified/);
+    assertStrictEquals(upstreamCalled, false);
   });
 
   it("empty search result clears prior source map", async () => {
