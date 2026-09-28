@@ -12,7 +12,7 @@ import type {
 import { type WorkbenchRoutingOptions } from "./providers/mod.ts";
 import { buildConversationMessages } from "./context/mod.ts";
 import type { WorkbenchSessionEvent } from "./contract/mod.ts";
-import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
+import type { CommandDefinition, ConfirmToolApproval } from "./tools/mod.ts";
 import type {
   ConfirmBudgetCeiling,
   ConfirmRunawayAnomaly,

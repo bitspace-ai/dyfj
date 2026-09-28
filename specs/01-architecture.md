@@ -230,13 +230,17 @@ There is exactly one tool shape, `CommandDefinition`. `WorkbenchToolDefinition`
 is its projection and the legacy `ToolDefinition` is deleted.
 
 - **One module per tool.** Each tool module exports
-  `define<Name>(deps): CommandDefinition`, with its executor colocated. Today
-  the builders for file, exec and git tools live in `commands.ts`; they move
-  next to their executors.
+  `define<Name>(deps): CommandDefinition`, with its executor colocated
+  (`tools/builtin/`, `tools/web/`). The builders for the file, exec and git
+  tools used to live in `commands.ts`, away from their executors.
 - **One catalog builder.** A single
-  `buildToolCatalog(ports, config, extensions)` replaces the three separate
-  registry assemblies (`workbench.ts:2026-2065`, `uds-server.ts:449`,
-  `uds-server.ts:796`).
+  `buildToolCatalog(ports, config, extensions)` (`tools/catalog.ts`) replaced
+  the three separate registry assemblies: the runtime's per-turn toolset in
+  `workbench.ts`, and the `tools/list`/`tools/inspect` listing and the friction
+  command set in `uds-server.ts`. An optional fourth argument, `entries`
+  (default `BUILTIN_TOOLS`), selects the builtin lines: the friction set passes
+  none, and the test-only example tool adds its line without touching the
+  product catalog.
 - **Adding a tool** means one module plus one catalog line, and passing the tool
   conformance kit.
 - **Redaction** goes through one shared redactor in `tools/`, which applies

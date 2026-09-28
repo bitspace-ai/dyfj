@@ -1,4 +1,4 @@
-import type { CommandDefinition } from "./commands.ts";
+import type { CommandDefinition } from "./tools/mod.ts";
 import { basename } from "node:path";
 
 export const FRICTION_SEVERITIES = [

@@ -3,8 +3,8 @@ import type {
   CommandDefinition,
   CommandTraceContext,
   JsonSchemaObject,
-} from "./commands.ts";
-import { CommandExecutionError } from "./commands.ts";
+} from "./tools/mod.ts";
+import { CommandExecutionError } from "./tools/mod.ts";
 import { injectMcpTraceContext } from "./mcp-conformance.ts";
 import {
   bearerAuthorizationHeader,
@@ -16,7 +16,7 @@ import {
   type McpCallResult,
   type McpDiscoveryResult,
 } from "./tools/mcp/transport.ts";
-import { buildWebCommands, createWebToolsSessionState } from "./web-tools.ts";
+import { defineWebCommands, createWebToolsSessionState } from "./tools/web/web.ts";
 import {
   buildBoundedLinearCreateIssueCommand,
   projectLinearCreationUpstreamSchema,
@@ -526,7 +526,7 @@ export async function buildExternalMcpCommands(
         }
       }
 
-      const searchCmds = buildWebCommands(
+      const searchCmds = defineWebCommands(
         searchEntry.server,
         searchEntry.token,
         resolvedDeps,
@@ -556,7 +556,7 @@ export async function buildExternalMcpCommands(
         }
       }
 
-      const fetchCmds = buildWebCommands(
+      const fetchCmds = defineWebCommands(
         fetchEntry.server,
         fetchEntry.token,
         resolvedDeps,

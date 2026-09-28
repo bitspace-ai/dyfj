@@ -25,7 +25,7 @@
  * Cumulative wall clock for regex *matching* across every file in one
  * `grep_files` call. It does not cover traversal, `stat`, reads, decoding, or
  * result assembly — those are bounded by the entry, size, and output ceilings
- * in file-tools.ts, not by this clock.
+ * in tools/builtin/file.ts, not by this clock.
  */
 export const DEFAULT_REGEX_BUDGET_MS = 2_000;
 

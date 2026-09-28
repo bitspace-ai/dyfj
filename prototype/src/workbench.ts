@@ -76,7 +76,22 @@ import {
   loadAskRepoContext,
   loadCompanionBasePrompt,
 } from "./context/mod.ts";
-import type { CommandDefinition, ConfirmToolApproval } from "./commands.ts";
+import {
+  buildToolCatalog,
+  type CommandDefinition,
+  type CommandRegistry,
+  type ConfirmToolApproval,
+  createCommandRegistry,
+  executeReadMemory,
+  invokeCommandWithEvent,
+  type ToolCatalogPorts,
+} from "./tools/mod.ts";
+import {
+  buildMemoryContextSourceLines,
+  buildSystemPrompt,
+  loadIndexedMemories,
+  loadInjectedMemories,
+} from "./memory.ts";
 import type {
   AcpPermissionPrompt,
   AcpPermissionSelection,
@@ -1267,18 +1282,6 @@ async function runNativeWorkbenchRuntime(
     await store.journal.commit({ events: [event] }, options);
   };
   const eventExists = (eventId: string) => store.events.exists(eventId);
-  const {
-    buildMemoryContextSourceLines,
-    loadInjectedMemories,
-    loadIndexedMemories,
-    buildSystemPrompt,
-    executeReadMemory,
-  } = await import("./memory.ts");
-  const {
-    createCommandRegistry,
-    invokeCommandWithEvent,
-    registerCoreCommands,
-  } = await import("./commands.ts");
   const { externalMcpCommandsForTransport } = await import("./mcp-tools.ts");
   const { memorySearchConfigFromEnv, buildMemorySearch } = await import(
     "./memory-search.ts"
@@ -1293,7 +1296,7 @@ async function runNativeWorkbenchRuntime(
   } = runtimeInput;
   // Silent by default: narration renders only where a presenter is injected.
   const log = runtimeInput.log ?? (() => {});
-  const commandRegistry = createCommandRegistry();
+  let commandRegistry: CommandRegistry = createCommandRegistry();
   let commandTools: ReturnType<typeof commandRegistry.projectTools> = [];
 
   const resumingSession = runtimeInput.sessionId !== undefined;
@@ -1658,10 +1661,9 @@ async function runNativeWorkbenchRuntime(
       const recallConfig = authContext.transport === "loopback"
         ? memorySearchConfigFromEnv()
         : null;
-      registerCoreCommands(commandRegistry, {
+      const toolPorts: ToolCatalogPorts = {
         readMemory: (slug) =>
           executeReadMemory(store.memories, slug, clearance),
-        allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
         searchMemory: recallConfig
           ? buildMemorySearch(recallConfig, async (diagnostic) => {
             if (runtimeInput.onRuntimeEvent !== undefined) {
@@ -1688,17 +1690,19 @@ async function runNativeWorkbenchRuntime(
             }
           })
           : undefined,
-        // Read-only workspace file tools, scoped to the resolved root.
-        workspaceRoot,
-      });
-      for (
-        const command of externalMcpCommandsForTransport(
+      };
+      commandRegistry = buildToolCatalog(
+        toolPorts,
+        {
+          allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
+          // Workspace file, exec and git tools, scoped to the resolved root.
+          workspaceRoot,
+        },
+        externalMcpCommandsForTransport(
           runtimeInput.externalMcpCommands ?? [],
           authContext.transport,
-        )
-      ) {
-        commandRegistry.register(command);
-      }
+        ),
+      );
       commandTools = commandRegistry.projectTools();
       systemPrompt = buildSystemPrompt(coreMemories, memoryIndex);
       // Gated on the operator's standing elevation (config, default off):
@@ -2798,7 +2802,7 @@ async function runNativeWorkbenchRuntime(
               // Agent-loop tool calls (call + result) are audit-relevant, but
               // BEST_EFFORT rather than integrity-required, unlike session_start
               // and model_response: a tool result's size is bounded only by the
-              // model-facing tool cap (file-tools.ts), not by anything this loop
+              // model-facing tool cap (tools/builtin/file.ts), not by anything this loop
               // controls, so the event copy (capped below the TEXT column limit
               // in buildCommandToolCallEventPayload, but still one INSERT per
               // tool call) can fail for reasons unrelated to whether the tool
@@ -2850,7 +2854,7 @@ async function runNativeWorkbenchRuntime(
           // call) are a separate, untouched product surface; this is only
           // the runtime-event error field for a call that threw outright
           // (invokeCommandWithEvent's own executors don't throw — see
-          // commands.ts — so anything reaching here is already unexpected).
+          // tools/invoke.ts — so anything reaching here is already unexpected).
           await emitRuntimeEvent(runtimeInput.onRuntimeEvent, {
             type: "toolCallCompleted",
             sessionId,

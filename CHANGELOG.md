@@ -154,6 +154,40 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Tools live in `prototype/src/tools/`, with one tool shape and one catalog
+  builder**: `commands.ts` is split into the tool shape (`definition.ts`), the
+  registry, argument validation, the call-shape policy, a shared redactor
+  (`redaction.ts`) and invoke-with-event. The redactor is now the one place a
+  tool call is reduced to its durable `tool_call` event: it applies each
+  definition's declared argument redaction (`redact` on a schema property,
+  `redactArguments`) and result redaction (`redactResult`), exactly as before.
+  The builtin tools moved beside their executors as `define<Name>` builders:
+  `tools/builtin/memory.ts` (`memory.read`, `memory.search`; `executeReadMemory`
+  moved from `memory.ts`), `tools/builtin/file.ts` (was `file-tools.ts`),
+  `tools/builtin/exec.ts` (was `exec-tools.ts`), `tools/builtin/git.ts` (was
+  `git-tools.ts`); the web tools moved to `tools/web/web.ts` (was
+  `web-tools.ts`). `buildToolCatalog` (`tools/catalog.ts`) replaces the three
+  registry assemblies (the runtime's per-turn toolset, the `tools/list` and
+  `tools/inspect` listing, and the friction command set), and `BUILTIN_TOOLS`
+  lists the builtins in their existing order. The legacy `ToolDefinition` and
+  `ToolResultMessage` types in `memory.ts` are gone. Tool names, schemas,
+  policy verdicts, events, the tool definitions sent to providers and the
+  `tools/list`/`tools/inspect` output are unchanged, and the golden suite
+  passes with no snapshot change; the engine now imports the tool and memory
+  modules statically. A tool conformance kit
+  (`prototype/testing/conformance/tool.ts`) runs over a catalog and checks every
+  command it holds: a valid schema that rejects invalid arguments before the
+  executor or any approver, a declared and coherent effect envelope, the
+  policy verdict under `strict` and `operator`, redaction reaching the event
+  payload, and exactly one `tool_call` event per invocation. It covers the
+  builtins and the MCP-derived commands (`src/tools/conformance.test.ts`), and
+  its own self-test covers every effect class. The tests of the moved modules
+  are `Deno.test` files in the unit lane beside the modules they cover;
+  `buildSafeBashEnv` takes the `Env` port so its test uses `MapEnv`.
+  `specs/recipes/add-tool.md` describes adding a tool, and a test-only
+  `text.stats` tool under `prototype/testing/tools/text-stats/`, written from
+  it, passes the kit.
+
 - **Model providers live in `prototype/src/providers/`, one adapter per API
   family behind a `ProviderAdapter` interface**: the 3,797-line
   `provider.ts` is split into `registry/` (catalog parsing from the store's

@@ -9,7 +9,7 @@ import {
   createCommandRegistry,
   invokeCommandWithEvent,
   type JsonSchemaObject,
-} from "./commands.ts";
+} from "./tools/mod.ts";
 import {
   boundedLinearCreateIssueSchema,
   buildBoundedLinearCreateIssueCommand,

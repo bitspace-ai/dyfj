@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import type { CommandDefinition } from "./commands.ts";
+import type { CommandDefinition } from "./tools/mod.ts";
 import {
   FrictionStageError,
   isLinearCommentCommandId,

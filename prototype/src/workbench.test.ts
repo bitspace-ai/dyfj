@@ -212,7 +212,8 @@ vi.mock("./providers/mod.ts", async (importOriginal) => {
       options?: { tier?: number; modelId?: string },
       _defaultCompanionModel?: string | null,
     ) => {
-      const candidates = models ?? (runtimeMocks.registry ?? [runtimeMocks.model]);
+      const candidates = models ??
+        (runtimeMocks.registry ?? [runtimeMocks.model]);
       if (options?.modelId !== undefined) {
         const found = candidates.find(
           (candidate) => candidate.slug === options.modelId,
@@ -342,8 +343,6 @@ vi.mock("./memory.ts", () => ({
     name: "Project Context",
     description: "test",
   }],
-  executeReadMemory: async (_memories: unknown, slug: string) =>
-    `memory ${slug}`,
 }));
 
 vi.mock("./memory-search.ts", () => ({
@@ -360,13 +359,21 @@ vi.mock("./memory-search.ts", () => ({
   },
 }));
 
-vi.mock("./commands.ts", () => ({
+vi.mock("./tools/mod.ts", () => ({
   createCommandRegistry: () => ({
     register: () => {},
     lookup: () => undefined,
     list: () => [],
     projectTools: () => [],
   }),
+  buildToolCatalog: () => ({
+    register: () => {},
+    lookup: () => undefined,
+    list: () => [],
+    projectTools: () => [],
+  }),
+  executeReadMemory: async (_memories: unknown, slug: string) =>
+    `memory ${slug}`,
   invokeCommandWithEvent: async (
     _registry: unknown,
     toolCall: { commandId: string; callId: string },
@@ -383,7 +390,7 @@ vi.mock("./commands.ts", () => ({
       isError: false,
       result: "ok",
     };
-    // Mirrors the real invokeCommandWithEvent (commands.ts): persists a
+    // Mirrors the real invokeCommandWithEvent (tools/invoke.ts): persists a
     // tool_call event through the caller-supplied writeEvent, so tests can
     // exercise the containment policy the agent loop applies to that write.
     await context.writeEvent?.({
@@ -396,7 +403,6 @@ vi.mock("./commands.ts", () => ({
     });
     return result;
   },
-  registerCoreCommands: () => {},
 }));
 
 vi.mock("./store/sessions.ts", () => ({

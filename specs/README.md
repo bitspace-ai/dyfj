@@ -14,16 +14,16 @@ do not amend Section 1.
 
 ## Reading order
 
-| File                      | Purpose                                                                            |
-| ------------------------- | ---------------------------------------------------------------------------------- |
-| `00-baseline-findings.md` | Observed state at the start: defects, drift, what to keep                          |
-| `01-architecture.md`      | Target layers, directories, seams, ports, extension interface, approved deletions  |
-| `02-data-layer.md`        | Store port, DDL-generated types, schema equivalence                                |
-| `03-testing.md`           | Test doctrine, tiers, golden suite, conformance kits, gate lanes                   |
-| `prd/PRD-10…14`           | Enabler requirements: problem, goals, requirements, metrics, risks                 |
-| `work-orders.md`          | Sequenced, one-PR-each instructions for agents                                     |
-| `bug-log.md`              | Bugs found during phase 1: logged, not fixed inline                                |
-| `recipes/`                | Step-by-step extension recipes, each validated by following it (`add-provider.md`) |
+| File                      | Purpose                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| `00-baseline-findings.md` | Observed state at the start: defects, drift, what to keep                                         |
+| `01-architecture.md`      | Target layers, directories, seams, ports, extension interface, approved deletions                 |
+| `02-data-layer.md`        | Store port, DDL-generated types, schema equivalence                                               |
+| `03-testing.md`           | Test doctrine, tiers, golden suite, conformance kits, gate lanes                                  |
+| `prd/PRD-10…14`           | Enabler requirements: problem, goals, requirements, metrics, risks                                |
+| `work-orders.md`          | Sequenced, one-PR-each instructions for agents                                                    |
+| `bug-log.md`              | Bugs found during phase 1: logged, not fixed inline                                               |
+| `recipes/`                | Step-by-step extension recipes, each validated by following it (`add-provider.md`, `add-tool.md`) |
 
 The structure, terminology and precedence rules are in _Structure and
 terminology_ below.

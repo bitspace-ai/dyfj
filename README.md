@@ -1635,3 +1635,9 @@ Document revisions only. Code and behavior changes are tracked in
   built: the registry looks adapters up by the catalog `provider` column, and
   `ProviderIO` carries `env` and a monotonic clock. Architecture §5.2 and the
   add-provider recipe updated to match.
+- 2026-09-28 - `specs/recipes/add-tool.md` added: a tool served by an MCP
+  server needs only configuration; a builtin tool is one module exporting its
+  `define<Name>` beside its executor, one `BUILTIN_TOOLS` line, and the tool
+  conformance kit. `specs/01-architecture.md` §5.4 now names where the tool
+  builders and the catalog builder live, and `specs/bug-log.md` records five
+  findings from the move and its review.

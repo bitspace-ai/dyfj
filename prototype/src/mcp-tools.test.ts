@@ -11,7 +11,7 @@ import {
   sanitizeMcpInputSchema,
   validateDoltPort,
 } from "./mcp-tools.ts";
-import { createCommandRegistry, invokeCommandWithEvent } from "./commands.ts";
+import { createCommandRegistry, invokeCommandWithEvent } from "./tools/mod.ts";
 
 const CONFIG_PATH = "/private/operator/.dyfj/config.toml";
 

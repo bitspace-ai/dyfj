@@ -2,7 +2,7 @@
  * MCP transport: the one place DYFJ talks to an MCP server over streamable
  * HTTP. It owns the byte-bounded fetch, the untrusted-result framing, bearer
  * header construction and the SDK client factory, plus the call-seam types
- * the tool adapters (`mcp-tools`, `web-tools`) share. Tool adapters and memory
+ * the tool adapters (`mcp-tools`, `tools/web/web.ts`) share. Tool adapters and memory
  * recall consume this module; it imports no tool adapter, so MCP-backed tools
  * can be added without import cycles.
  *
@@ -15,7 +15,7 @@ import type {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import type { McpHttpServerConfig } from "../../config/mod.ts";
-import type { CommandTraceContext, JsonSchemaObject } from "../../commands.ts";
+import type { CommandTraceContext, JsonSchemaObject } from "../definition.ts";
 import { utf8SafePrefix } from "../../kernel/mod.ts";
 
 const MAX_RESULT_BYTES = 60_000;

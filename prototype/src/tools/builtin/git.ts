@@ -45,13 +45,14 @@
  */
 
 import { relative, resolve } from "node:path";
-import { buildSafeBashEnv } from "./exec-tools.ts";
-import { clipToUtf8Bytes } from "./kernel/mod.ts";
+import { buildSafeBashEnv } from "./exec.ts";
+import { clipToUtf8Bytes } from "../../kernel/mod.ts";
+import type { CommandDefinition } from "../definition.ts";
 import {
   resolveWorkspacePath,
   sanitizeOutputText,
   toPosixPath,
-} from "./file-tools.ts";
+} from "./file.ts";
 
 export interface GitResult {
   code: number;
@@ -474,4 +475,100 @@ export async function executeGit(
     ? `exit by signal ${res.signal}`
     : `exit ${res.code}`;
   return `${notice}${status}\n${body}`.trimEnd();
+}
+
+// ── Command definition ───────────────────────────────────────────────────────
+
+export function defineGit(root: string): CommandDefinition<string> {
+  return {
+    id: "git",
+    title: "Run Git Operation",
+    description:
+      "Run one bounded git operation in the workspace: `status`, `diff`, " +
+      "`log`, `add`, or `commit`. Arguments are typed and the command line is " +
+      "built from them, so no flags, shell syntax, or git pathspec magic can " +
+      "be passed through. Network subcommands (push, pull, fetch, remote) and " +
+      "history-rewriting or working-tree-destroying ones (reset, rebase, " +
+      "checkout, clean, stash) are unavailable by design — publishing and " +
+      "recovery stay with the operator. Note that git still runs repository " +
+      "configuration: hooks and helpers execute, and can reach the network. A " +
+      "commit without paths records everything staged in the enclosing " +
+      "repository, not only the workspace subtree. Prefer this over running " +
+      "git through bash: the approval names the exact operation and paths. " +
+      "Always requires explicit operator approval before it runs.",
+    inputSchema: {
+      type: "object",
+      required: ["subcommand"],
+      properties: {
+        subcommand: {
+          type: "string",
+          enum: [...GIT_SUBCOMMANDS],
+          description: "Which git operation to run.",
+        },
+        paths: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 100,
+          description:
+            "Paths relative to the workspace root, treated as literal " +
+            "filenames rather than git pathspecs. Required for `add`. For " +
+            "`commit`, paths do not merely narrow the commit: git records the " +
+            "WORKING-TREE content of those paths, so a file staged as one " +
+            "version and since edited is committed as the edited version. " +
+            "For `status`, `diff` and `log` they narrow the output.",
+        },
+        message: {
+          type: "string",
+          description:
+            "Commit message. Required for `commit`, rejected otherwise.",
+        },
+        staged: {
+          type: "boolean",
+          description:
+            "For `diff` only: show staged changes instead of working-tree changes.",
+        },
+        limit: {
+          // integer, not number: a fractional value would pass schema
+          // validation, reach the approval prompt, and only then be rejected by
+          // the executor. Deny it before it costs the operator a decision.
+          type: "integer",
+          description:
+            "For `log` only: how many commits to return (default 20, at most 200).",
+        },
+      },
+      additionalProperties: false,
+    },
+    permission: {
+      // run.process is exec-class, so the no-exec invariant routes every git
+      // call to "ask" regardless of subcommand. network is "external", not
+      // "none": no network SUBCOMMAND is reachable here, but git executes
+      // repository configuration — hooks, credential helpers, textconv — and
+      // those can reach the network. The envelope states the ceiling of the
+      // process, not the intent of the tool.
+      effects: [
+        "run.process",
+        "read.filesystem",
+        "write.filesystem",
+        "emit.event",
+      ],
+      defaultDecision: "allow",
+      resources: ["process:run", "git:write"],
+      network: "external",
+      filesystem: "write",
+      cost: "none",
+    },
+    // Redacted for the same reason as bash: the result is not only git's own
+    // output. A hook or credential helper runs inside this process tree and
+    // can print anything it can read, which the approver cannot pre-screen, so
+    // the raw result stays out of the durable event log (CWE-532).
+    redactResult: true,
+    executor: (call) =>
+      executeGit(root, {
+        subcommand: call.arguments.subcommand,
+        paths: call.arguments.paths,
+        message: call.arguments.message,
+        staged: call.arguments.staged,
+        limit: call.arguments.limit,
+      }),
+  };
 }

@@ -71,13 +71,12 @@ import {
   type TurnRuntime,
 } from "./turn-runner.ts";
 import {
+  buildToolCatalog,
   type CommandDefinition,
   type ConfirmToolApproval,
-  createCommandRegistry,
   invokeCommandWithEvent,
-  registerCoreCommands,
   type ToolApprovalVerdict,
-} from "./commands.ts";
+} from "./tools/mod.ts";
 import type {
   AcpPermissionPrompt,
   AcpPermissionSelection,
@@ -459,7 +458,7 @@ function projectCommand(command: CommandDefinition): WorkbenchToolSummary {
   };
 }
 
-function buildToolCatalog(
+function listToolCatalog(
   params: unknown,
   externalMcpCommands: readonly CommandDefinition[] = [],
 ): WorkbenchToolSummary[] {
@@ -467,10 +466,9 @@ function buildToolCatalog(
   const workspaceRoot = typeof record.workspace === "string"
     ? record.workspace
     : undefined;
-  const registry = createCommandRegistry();
-  registerCoreCommands(registry, { workspaceRoot });
-  for (const command of externalMcpCommands) registry.register(command);
-  return registry.list().map(projectCommand);
+  return buildToolCatalog({}, { workspaceRoot }, externalMcpCommands)
+    .list()
+    .map(projectCommand);
 }
 
 // The cataloged method surface, reusing the shared runtime functions so the
@@ -558,7 +556,7 @@ export function buildWorkbenchHandlers(
         runtime: runtimeStatus(options, models),
         models,
         projects,
-        tools: buildToolCatalog(params, options.externalMcpCommands),
+        tools: listToolCatalog(params, options.externalMcpCommands),
       } satisfies WorkbenchSurfaceSnapshot;
     },
 
@@ -575,7 +573,7 @@ export function buildWorkbenchHandlers(
     }),
 
     "tools/list": async (params) => ({
-      tools: buildToolCatalog(params, options.externalMcpCommands),
+      tools: listToolCatalog(params, options.externalMcpCommands),
     }),
 
     "tools/inspect": async (params) => {
@@ -587,7 +585,7 @@ export function buildWorkbenchHandlers(
           "tools/inspect requires a string commandId",
         );
       }
-      const tool = buildToolCatalog(params, options.externalMcpCommands).find((
+      const tool = listToolCatalog(params, options.externalMcpCommands).find((
         candidate,
       ) => candidate.id === commandId);
       if (tool === undefined) {
@@ -834,11 +832,12 @@ export function buildWorkbenchHandlers(
           "create_comment/save_comment failed: configured Linear tool is unavailable",
         );
       }
-      const registry = createCommandRegistry([
+      // Only the three Linear commands friction invokes: no builtin tools.
+      const registry = buildToolCatalog({}, {}, [
         getIssueCommand,
         listCommentsCommand,
         createCommentCommand,
-      ]);
+      ], []);
       const traceId = generateTraceId();
       const invoke = async (
         command: CommandDefinition,

@@ -10,6 +10,66 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **A command result of `undefined` is persisted as an undefined
+  `tool_result`.**
+  - **Location:** `prototype/src/tools/redaction.ts:102-104`
+    (`formatCommandResult`).
+  - **Symptom:** a non-string result is serialized with `JSON.stringify`,
+    which returns `undefined` for `undefined`; the event then carries no
+    `tool_result` text. Not reachable today: every builtin and MCP-derived
+    command returns a string.
+  - **Suspected cause:** the helper assumes a JSON-serializable result; it
+    moved unchanged from `commands.ts`.
+  - **Found during:** WO-15 (review of the shared redactor).
+- 2026-09-28 — **`read_file` declares `offset` and `limit` as `number`, not
+  `integer`.**
+  - **Location:** `prototype/src/tools/builtin/file.ts:1661` and `:1667`
+    (`defineReadFile` input schema); the executor check is at `:193-200`.
+  - **Symptom:** a fractional `offset` or `limit` (for example `1.5`) passes
+    schema validation and reaches `executeReadFile`, which rejects it with an
+    `error:` result the model can recover from. The schema should reject it
+    before execution, as the `git` tool's integer `limit` does.
+  - **Suspected cause:** the schema predates the `integer` type in the
+    validator. Changing it changes the schema sent to providers and listed by
+    `tools/list`, so it waits for a change that updates the golden snapshots.
+  - **Found during:** WO-15 (review of the moved builder).
+- 2026-09-28 — **`memory.read` built without a reader throws a plain `Error`
+  out of the invoke path.**
+  - **Location:** `prototype/src/tools/builtin/memory.ts:45-47`
+    (`defineMemoryRead`'s fallback reader).
+  - **Symptom:** invoking `memory.read` from a catalog built without
+    `readMemory` rejects out of `invokeCommandWithEvent` instead of returning
+    an error result, so no `tool_call` event is written for that call.
+    `invokeCommand` converts only `CommandExecutionError`. Not reachable
+    today: the runtime always supplies `readMemory`, and the catalogs built
+    without it (`tools/list`, `tools/inspect`, friction) never invoke it.
+  - **Suspected cause:** the fallback predates `CommandExecutionError`; it
+    moved unchanged from `commands.ts`.
+  - **Found during:** WO-15 (review of the moved builder).
+- 2026-09-28 — **A bounded regex's first match pays for the matcher worker's
+  startup out of its matching budget.**
+  - **Location:** `prototype/src/kernel/bounded-regex.ts:161-163`
+    (`BoundedMatcher`: `#ensureWorker()` then `started = performance.now()`).
+  - **Symptom:** `grep_files` can report a harmless pattern as too expensive
+    when the worker boots slowly, because the first call's elapsed time includes
+    the worker loading its module. Conversely, a test that relies on the budget
+    firing can pass on a slow worker start rather than on the pattern (seen
+    while migrating the `grep_files` resource-bounds test, whose fixture line
+    was too long to reach the matcher at all).
+  - **Suspected cause:** the budget clock starts when the match is posted, not
+    when the worker is ready to match.
+  - **Found during:** WO-15 (test migration of the file tools).
+- 2026-09-28 — **The file tools keep workspace-root anchors in module-level
+  mutable state.**
+  - **Location:** `prototype/src/tools/builtin/file.ts:93` (`rootAnchors`, with
+    `resetRootAnchor` as its test hook).
+  - **Symptom:** the anchors are a process-global `Map`, not state owned by an
+    object the composition root constructs; tests share it across cases and must
+    reset it by hand.
+  - **Suspected cause:** predates the doctrine; `01-architecture.md` §5.7 lists
+    the known module-level state (the Dolt pool, the idea/packet registry), and
+    this map is not on that list.
+  - **Found during:** WO-15 (moving `file-tools.ts`, unchanged).
 - 2026-09-27 — **An Anthropic forced-conclusion turn sends historical tool
   calls under their registry names, not their wire names.**
   - **Location:** `prototype/src/providers/anthropic/adapter.ts` (the
