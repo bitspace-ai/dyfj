@@ -634,3 +634,105 @@ Deno.test("an approval verdict cannot start a new turn: a turn requested from in
     ["first:sessionStart", "second:sessionStart"],
   );
 });
+
+// ─── a new session's turn holds its lock from admission ──────────────────────
+
+Deno.test("a turn naming a new session's id, issued while that session's first turn runs, waits for it", async () => {
+  await using root = await tempWorkspace({ "README.md": "# readme\n" });
+  const run = engineServices([
+    chatReply({
+      toolCalls: [{
+        id: "w1",
+        name: "write_file",
+        arguments: { path: "note.txt", content: "approved" },
+      }],
+    }),
+    chatReply({ content: "first done" }),
+    chatReply({ content: "second done" }),
+  ]);
+  const owners = new SessionOwners();
+  const frames: string[] = [];
+  let newSessionId: string | undefined;
+  const turn = (
+    body: Record<string, unknown>,
+    tag: string,
+    approver?: ConfirmToolApproval,
+  ) => {
+    const resolved = resolveTurnFromBody(
+      { ...body, workspace: root.root },
+      true,
+    );
+    if ("error" in resolved) throw new Error(resolved.error);
+    return executeTurn(resolved, {
+      owners,
+      env: run.env,
+      authContext: {
+        transport: "loopback",
+        authnStatus: "authenticated",
+        authnMechanism: "local_user",
+        authnIssuerRef: "local_os",
+        authzBasis: "user_consent",
+      },
+      loopback: true,
+      defaultCompanionModel: LOCAL_MODEL.slug,
+      fetchSessionEvents: ({ sessionId }) =>
+        fetchWorkbenchSessionEvents({ sessionId, events: run.store.events }),
+      runRuntime: (input) =>
+        runWorkbenchRuntime(
+          { ...input, frames: { ...input.frames, log: () => {} } },
+          run.services,
+        ),
+      frames: {
+        onRuntimeEvent: (event) => {
+          frames.push(`${tag}:${event.type}`);
+          if (tag === "first" && event.type === "sessionStart") {
+            newSessionId = event.sessionId;
+          }
+        },
+      },
+      approver: {
+        confirmToolApproval: approver,
+      },
+    });
+  };
+
+  let second: Promise<unknown> | undefined;
+  let framesAtVerdict: string[] = [];
+  const error = stub(console, "error");
+  try {
+    // The first turn names no session; the approver learns the new id from
+    // the sessionStart frame and issues a second turn naming it.
+    const first = turn({ prompt: "write the note" }, "first", async () => {
+      assert(newSessionId !== undefined);
+      second = turn(
+        { prompt: "and then?", sessionId: newSessionId },
+        "second",
+      );
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      framesAtVerdict = [...frames];
+      return { decision: "approve" };
+    });
+    const firstResult = await first;
+    assertEquals(firstResult.sessionId, newSessionId);
+    const secondResult = await second as NativeWorkbenchRuntimeResult;
+    assertEquals(secondResult.sessionId, newSessionId);
+    assertEquals(secondResult.text, "second done");
+  } finally {
+    error.restore();
+  }
+  // Nothing of the second turn ran while the first held its session...
+  assertEquals(framesAtVerdict.some((f) => f.startsWith("second:")), false);
+  // ...and the second started only after the first finalized.
+  const firstEnd = frames.indexOf("first:turnCompleted");
+  const secondStart = frames.indexOf("second:sessionStart");
+  assert(firstEnd >= 0 && secondStart > firstEnd);
+  // Both turns appended to the one session, the second after the first.
+  const events = await fetchWorkbenchSessionEvents({
+    sessionId: newSessionId!,
+    events: run.store.events,
+  });
+  assertEquals(
+    events.filter((e) => e.eventType === "session_start").map((e) => e.content),
+    ["write the note", "and then?"],
+  );
+});

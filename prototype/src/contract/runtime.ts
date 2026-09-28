@@ -71,6 +71,12 @@ export interface WorkbenchRuntimeRequest {
    * row is updated rather than created. Omit for a fresh session.
    */
   sessionId?: string;
+  /**
+   * The id of the new session this turn starts, allocated when the turn was
+   * admitted so its session owner could be registered under it. Used only
+   * when `sessionId` is absent; absent too, the runtime generates one.
+   */
+  newSessionId?: string;
   /** Immutable-event omission facts computed by the resume projection. */
   historyOmission?: HistoryOmissionProjection;
   /**

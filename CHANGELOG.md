@@ -154,6 +154,15 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **A new session's id is allocated when its turn is admitted.** A turn that
+  names no session now gets its session id from the engine's session owners
+  (`SessionOwners.runTurn`) at admission, and its session owner is registered
+  under that id before the runtime starts, so a later turn naming that id is
+  serialized behind it. The runtime (native and ACP) uses the allocated id,
+  passed as the new `newSessionId` runtime input, instead of generating one.
+  The id format, the events, their order and the `sessionStart` frame are
+  unchanged.
+
 - **The engine calls back to its caller only through declared ports.** On the
   runtime input (`WorkbenchRuntimeInput`), the five approval handlers
   (`confirmPaidEscalation`, `confirmBudgetCeiling`, `confirmRunawayAnomaly`,

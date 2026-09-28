@@ -1,5 +1,6 @@
 import {
   assertEquals,
+  assertMatch,
   assertObjectMatch,
   assertRejects,
   assertStrictEquals,
@@ -209,6 +210,32 @@ Deno.test("a resumed turn reads its history only after the prior same-session tu
     "fetch history",
     "second runs",
   ]);
+});
+
+Deno.test("a new-session turn hands the runtime the id its owner holds; a resumed turn carries none", async () => {
+  const owners = new SessionOwners();
+  const inputs: WorkbenchRuntimeInput[] = [];
+  let activeDuringRun = 0;
+  const runRuntime = (input: WorkbenchRuntimeInput) => {
+    inputs.push(input);
+    activeDuringRun = owners.activeSessions;
+    return Promise.resolve(RESULT);
+  };
+  await captureStderr(async () => {
+    await executeTurn(
+      resolved({ prompt: "new" }),
+      deps({ owners, runRuntime }),
+    );
+    await executeTurn(
+      resolved({ prompt: "resumed", sessionId: SESSION_ID }),
+      deps({ owners, runRuntime }),
+    );
+  });
+  assertEquals(inputs[0].sessionId, undefined);
+  assertMatch(inputs[0].newSessionId ?? "", /^[0-9A-HJKMNP-TV-Z]{26}$/);
+  assertEquals(inputs[1].sessionId, SESSION_ID);
+  assertEquals(inputs[1].newSessionId, undefined);
+  assertEquals(activeDuringRun, 1);
 });
 
 Deno.test("the ticket's signal reaches the runtime, and only an identified turn reports its window closing", async () => {
