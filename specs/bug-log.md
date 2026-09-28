@@ -10,6 +10,17 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-28 — **A command result of `undefined` is persisted as an undefined
+  `tool_result`.**
+  - **Location:** `prototype/src/tools/redaction.ts:102-104`
+    (`formatCommandResult`).
+  - **Symptom:** a non-string result is serialized with `JSON.stringify`,
+    which returns `undefined` for `undefined`; the event then carries no
+    `tool_result` text. Not reachable today: every builtin and MCP-derived
+    command returns a string.
+  - **Suspected cause:** the helper assumes a JSON-serializable result; it
+    moved unchanged from `commands.ts`.
+  - **Found during:** WO-15 (review of the shared redactor).
 - 2026-09-28 — **`read_file` declares `offset` and `limit` as `number`, not
   `integer`.**
   - **Location:** `prototype/src/tools/builtin/file.ts:1661` and `:1667`
