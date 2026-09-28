@@ -1,6 +1,7 @@
 // Drive an RPC handler map the way the server dispatches a request, without a
-// socket: the same `dispatchRequest` the UDS listener runs, so a thrown
-// RpcError reaches the test as the error object a client would receive.
+// socket: the same `dispatchRequest` the UDS listener runs, so a handler's
+// thrown RpcError becomes the error response a client would receive.
+// `rpcFailure` returns that response's error object for inspection.
 
 import {
   dispatchRequest,
@@ -9,7 +10,10 @@ import {
   type RpcHandlers,
 } from "../../src/transport/mod.ts";
 
-/** The result of a successful call; throws the error object on failure. */
+/**
+ * The result of a successful call. On an error response it throws a plain
+ * `Error` naming the code and message; use `rpcFailure` to assert on them.
+ */
 export async function callRpc(
   handlers: RpcHandlers,
   method: string,
