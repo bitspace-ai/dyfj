@@ -63,9 +63,12 @@ async function runContext(
     mode: "turn",
     prompt: "hello",
     routingOptions: {},
-    onRuntimeEvent: (event) => void frames.push(event),
-    log: (...parts) => void logs.push(parts.join(" ")),
     ...input,
+    frames: {
+      onRuntimeEvent: (event) => void frames.push(event),
+      log: (...parts) => void logs.push(parts.join(" ")),
+      ...input.frames,
+    },
   };
   const session = await openSession(full, fakes.ports);
   const state = newTurnState(session, createCommandRegistry());

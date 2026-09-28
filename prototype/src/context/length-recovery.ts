@@ -132,7 +132,7 @@ export class ContextWindowOverflowError extends DomainError {
  * Hook seam for context-overflow recovery (the future context compressor
  * plugs in here — compress-then-retry). When the agent loop
  * classifies a length stop as overflow it consults this hook (when injected
- * via WorkbenchRuntimeInput.recoverContextOverflow) before failing: a returned
+ * via WorkbenchRuntimeServices.recoverContextOverflow) before failing: a returned
  * plan buys exactly one retry with the plan's (e.g. compressed) transcript;
  * null — or a retry that still overflows — falls through to the structured
  * ContextWindowOverflowError. The hook never loops. `messages` is a snapshot:

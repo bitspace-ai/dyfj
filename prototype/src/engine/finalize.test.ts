@@ -23,8 +23,11 @@ async function failWith(err: unknown) {
     mode: "turn",
     prompt: "probe",
     routingOptions: {},
-    onRuntimeEvent: (event) => void frames.push(event),
-    log: (...parts: unknown[]) => void logged.push(parts.map(String).join(" ")),
+    frames: {
+      onRuntimeEvent: (event) => void frames.push(event),
+      log: (...parts: unknown[]) =>
+        void logged.push(parts.map(String).join(" ")),
+    },
   };
   const state = newTurnState(
     await openSession(input, ports),

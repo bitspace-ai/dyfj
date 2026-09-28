@@ -12,8 +12,8 @@ import {
   formatReceipt,
   formatRuntimeEvent,
   formatRuntimeStatus,
-  handleReplFrictionCommand,
   handleReplFastCommand,
+  handleReplFrictionCommand,
   handleReplIdeaCommand,
   handleReplModelCommand,
   handleReplPacketCommand,
@@ -35,8 +35,8 @@ import {
   readServeUnixEnvGrants,
   readServeUnixNetGrants,
   readServeUnixRunGrants,
-  type ReplSessionState,
   replPrompt,
+  type ReplSessionState,
   resolveConfig,
   runExec,
   runModels,
@@ -782,8 +782,8 @@ describe("socketTurn over a real Unix socket (integration)", () => {
       // the test need not import the engine's runtime result type.
       // deno-lint-ignore no-explicit-any
       runRuntime: (async (input: any) => {
-        input.onTextDelta?.("Hello ");
-        input.onTextDelta?.("socket");
+        input.frames?.onTextDelta?.("Hello ");
+        input.frames?.onTextDelta?.("socket");
         return result({ text: "Hello socket" });
         // deno-lint-ignore no-explicit-any
       }) as any,

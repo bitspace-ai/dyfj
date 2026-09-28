@@ -62,7 +62,7 @@ export async function completeTurn(
 ): Promise<void> {
   const { session } = state;
   const { log, isNextWork } = session;
-  input.onCancellationClosed?.();
+  input.cancellationWindow?.closeCancellation();
   if (turn.stopReason === "aborted") {
     if (streamedText) {
       log("");
@@ -137,7 +137,7 @@ export async function completeTurn(
     )
   );
   await emitRuntimeEvent(
-    input.onRuntimeEvent,
+    input.frames?.onRuntimeEvent,
     turn.stopReason === "aborted"
       ? {
         type: "turnAborted",
@@ -200,7 +200,7 @@ export async function failTurn(
 ): Promise<void> {
   const { session } = state;
   const { log } = session;
-  input.onCancellationClosed?.();
+  input.cancellationWindow?.closeCancellation();
   const cancelledAtApproval = input.abortSignal?.aborted === true &&
     err === input.abortSignal.reason;
   // errorName crosses the wire too, so it gets the same discipline as
@@ -215,7 +215,7 @@ export async function failTurn(
   // the raw message — summarizeError applies the same cap the client side
   // enforces defensively, at the point of origin instead.
   if (!cancelledAtApproval) {
-    await emitRuntimeEvent(input.onRuntimeEvent, {
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "turnFailed",
       sessionId: session.sessionId,
       traceId: session.traceId,
@@ -326,7 +326,7 @@ async function recordCancelledTurn(
       }),
     )
   );
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "turnAborted",
     sessionId: session.sessionId,
     traceId: session.traceId,

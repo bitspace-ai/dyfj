@@ -76,8 +76,11 @@ async function loopTurn(
     const result = await runTurn(run, {
       prompt: "explore",
       rootOverride: root,
-      onRuntimeEvent: (event) => void frames.push(event),
       ...input,
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(event),
+        ...input.frames,
+      },
     });
     return { run, frames, result, error: null, root };
   } catch (error) {
@@ -263,14 +266,13 @@ Deno.test("contains a failed overflow-recovery call after the tool-step limit", 
         }),
         { respond: { status: 500, body: sentinel } },
       ],
-      {
-        prompt: "loop until the limit",
-        recoverContextOverflow: () =>
+      { prompt: "loop until the limit" },
+      (run) => {
+        run.services.recoverContextOverflow = () =>
           Promise.resolve({
             messages: [{ role: "user", content: "compressed history" }],
-          }),
+          });
       },
-      undefined,
       [{ ...LOCAL_MODEL, context_window: 100 }],
     )
   );
@@ -467,11 +469,13 @@ Deno.test("fails instead of completing when the unparsed-markup warning cannot b
   const loop = await quietly(() =>
     loopTurn([chatReply({ content: "<tool_call><tool_call>" })], {
       prompt: "make the change",
-      onRuntimeEvent: (event) => {
-        seen.push(event.type);
-        if (event.type === "unparsedToolCallMarkupDetected") {
-          throw new Error("client disconnected");
-        }
+      frames: {
+        onRuntimeEvent: (event) => {
+          seen.push(event.type);
+          if (event.type === "unparsedToolCallMarkupDetected") {
+            throw new Error("client disconnected");
+          }
+        },
       },
     })
   );
@@ -532,7 +536,9 @@ Deno.test("a tool call that throws sanitizes toolCallCompleted's errorMessage", 
   const loop = await quietly(() =>
     loopTurn([toolReply([WRITE("c1", "note.txt")])], {
       prompt: "write a note",
-      confirmToolApproval: () => Promise.reject(new Error(hugePayload)),
+      approver: {
+        confirmToolApproval: () => Promise.reject(new Error(hugePayload)),
+      },
     })
   );
   assert(loop.value.error instanceof Error);
@@ -571,9 +577,15 @@ Deno.test("an abort during a running tool lets it settle and starts no queued to
   ], {
     prompt: "inspect",
     abortSignal: abortController.signal,
-    confirmToolApproval,
-    onRuntimeEvent: (event) => {
-      if (event.type === "toolCallStarted") throw new Error("observer failed");
+    approver: {
+      confirmToolApproval,
+    },
+    frames: {
+      onRuntimeEvent: (event) => {
+        if (event.type === "toolCallStarted") {
+          throw new Error("observer failed");
+        }
+      },
     },
   });
   void pending.finally(() => turnSettled = true);
@@ -596,9 +608,11 @@ Deno.test("an approval cancellation does not report a tool failure", async () =>
     prompt: "write a note",
     turnId,
     abortSignal: abortController.signal,
-    confirmToolApproval: () => {
-      abortController.abort();
-      throw abortController.signal.reason;
+    approver: {
+      confirmToolApproval: () => {
+        abortController.abort();
+        throw abortController.signal.reason;
+      },
     },
   });
   assertEquals(result?.stopReason, "aborted");
@@ -627,14 +641,18 @@ Deno.test("tool invocation crosses the boundary in the same turn that start-even
   ], {
     prompt: "inspect",
     abortSignal: abortController.signal,
-    confirmToolApproval: (request) => {
-      approvals.push(request.callId);
-      return Promise.resolve({ decision: "deny", reason: "not now" });
+    approver: {
+      confirmToolApproval: (request) => {
+        approvals.push(request.callId);
+        return Promise.resolve({ decision: "deny", reason: "not now" });
+      },
     },
-    onRuntimeEvent: (event) => {
-      if (event.type !== "toolCallStarted") return;
-      markStartEmission();
-      return startEventReleased;
+    frames: {
+      onRuntimeEvent: (event) => {
+        if (event.type !== "toolCallStarted") return;
+        markStartEmission();
+        return startEventReleased;
+      },
     },
   });
   await startEmission;

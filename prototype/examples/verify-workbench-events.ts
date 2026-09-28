@@ -39,9 +39,11 @@ try {
     prompt,
     routingOptions: routingOptionsFromEnv(),
     ...resolveRuntimeEnvDefaults(),
-    log: console.log,
-    onTextDelta: (delta) => {
-      process.stdout.write(delta);
+    frames: {
+      log: console.log,
+      onTextDelta: (delta) => {
+        process.stdout.write(delta);
+      },
     },
   }, {
     store,

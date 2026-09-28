@@ -76,7 +76,7 @@ export async function compressTranscript(
     `compressed conversation summary (${outcome.turnsCompressed} turns ` +
       `→ ~${outcome.tokensAfterEstimate} tokens)`,
   );
-  await emitRuntimeEvent(turn.input.onRuntimeEvent, {
+  await emitRuntimeEvent(turn.input.frames?.onRuntimeEvent, {
     type: "contextCompressed",
     sessionId: turn.state.session.sessionId,
     compressorModelSlug: outcome.compressorModelSlug,

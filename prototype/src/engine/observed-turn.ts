@@ -62,7 +62,7 @@ export async function observedTurn(
     state.turnInputTokens += result.usage.input;
     state.turnOutputTokens += result.usage.output;
     state.turnCostUsd += result.usage.cost.total;
-    await emitRuntimeEvent(input.onRuntimeEvent, {
+    await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "afterProviderResponse",
       sessionId: state.session.sessionId,
       modelSlug: result.model.slug,
@@ -109,7 +109,7 @@ async function gateCall(
       request.estimatedInputCount,
     ),
   );
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "beforeProviderRequest",
     sessionId,
     modelSlug: request.modelSlug,
@@ -132,7 +132,7 @@ async function discloseUnparsedMarkup(
     count: markup.count,
     countIsLowerBound: markup.countIsLowerBound,
   };
-  if (!input.onRuntimeEvent) {
+  if (!input.frames?.onRuntimeEvent) {
     const amount = warningEvent.countIsLowerBound
       ? `at least ${warningEvent.count}`
       : String(warningEvent.count);
@@ -141,5 +141,8 @@ async function discloseUnparsedMarkup(
         "no tools were executed from it",
     );
   }
-  await deliverUnparsedToolCallMarkupSignal(input.onRuntimeEvent, warningEvent);
+  await deliverUnparsedToolCallMarkupSignal(
+    input.frames?.onRuntimeEvent,
+    warningEvent,
+  );
 }

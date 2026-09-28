@@ -70,8 +70,8 @@ import { MemoryStore, type Store } from "./store/mod.ts";
 import type { WorkbenchMessage } from "./providers/mod.ts";
 import {
   type AcpExecutionProfile,
-  type AcpSessionHandle,
   AcpProtocolMessageLimitError,
+  type AcpSessionHandle,
   AcpSessionUpdateLimitError,
 } from "./acp-client.ts";
 import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map.ts";
@@ -207,7 +207,9 @@ function stalledInitializeProfile(
 ): AcpExecutionProfile {
   const base = fixtureProfile(workspace);
   const script = base.args.at(-1);
-  if (script === undefined) throw new Error("fixture profile is missing a script");
+  if (script === undefined) {
+    throw new Error("fixture profile is missing a script");
+  }
   const home = Deno.env.get("HOME") ?? "/tmp";
   return {
     ...base,
@@ -318,8 +320,10 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onRuntimeEvent: (event) => {
-        runtimeEvents.push(event.type);
+      frames: {
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
       },
     }, {
       runAgent: async (agentInput) => {
@@ -492,7 +496,9 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         authnIssuerRef: "test",
         authzBasis: "policy",
       },
-      onCancellationClosed: () => cancellationClosed++,
+      cancellationWindow: {
+        closeCancellation: () => cancellationClosed++,
+      },
     })).rejects.toThrow("unavailable to remote callers");
     expect(cancellationClosed).toBe(1);
   });
@@ -563,7 +569,9 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       runner: { kind: "acp", profile: "fixture" },
       sessionId: "01UNKNOWNSESSION00000000000",
       workspaceRoot: Deno.cwd(),
-      onCancellationClosed: () => cancellationClosed++,
+      cancellationWindow: {
+        closeCancellation: () => cancellationClosed++,
+      },
     })).rejects.toThrow("Workbench session not found");
     expect(cancellationClosed).toBe(1);
     expect(state.events).toEqual([]);
@@ -802,18 +810,24 @@ describe("runExternalAgentWorkbenchRuntime", () => {
             args: [
               "run",
               `--allow-run=${shell}`,
-              `data:text/typescript,${encodeURIComponent(
-                `const output = await new Deno.Command(${JSON.stringify(shell)}, {
-  args: ["-lc", ${JSON.stringify(
-                  'printf "%s\\n" "$PATH"; command -v node; if command -v brew >/dev/null; then exit 23; fi',
-                )}],
+              `data:text/typescript,${
+                encodeURIComponent(
+                  `const output = await new Deno.Command(${
+                    JSON.stringify(shell)
+                  }, {
+  args: ["-lc", ${
+                    JSON.stringify(
+                      'printf "%s\\n" "$PATH"; command -v node; if command -v brew >/dev/null; then exit 23; fi',
+                    )
+                  }],
   stdout: "piped",
   stderr: "piped",
 }).output();
 await Deno.stdout.write(output.stdout);
 await Deno.stderr.write(output.stderr);
 Deno.exit(output.code);`,
-              )}`,
+                )
+              }`,
             ],
             env: profile.environment,
             clearEnv: true,
@@ -1389,7 +1403,9 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onCancellationClosed: () => cancellationClosed++,
+      cancellationWindow: {
+        closeCancellation: () => cancellationClosed++,
+      },
     })).rejects.toMatchObject({ phase: "prompt" });
     expect(cancellationClosed).toBe(1);
     expect(state.events).toEqual([]);
@@ -1406,9 +1422,13 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onCancellationClosed: () => cancellationClosed++,
-      onRuntimeEvent: (event) => {
-        runtimeEvents.push(event.type);
+      cancellationWindow: {
+        closeCancellation: () => cancellationClosed++,
+      },
+      frames: {
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
       },
     })).rejects.toThrow("failed session creation");
     expect(cancellationClosed).toBe(1);
@@ -1434,9 +1454,13 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onCancellationClosed: () => cancellationClosed++,
-      onRuntimeEvent: (event) => {
-        runtimeEvents.push(event.type);
+      cancellationWindow: {
+        closeCancellation: () => cancellationClosed++,
+      },
+      frames: {
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
       },
     })).rejects.toThrow("failed runner_selected");
     expect(cancellationClosed).toBe(1);
@@ -1463,8 +1487,10 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         workspaceRoot: Deno.cwd(),
-        onRuntimeEvent: (event) => {
-          runtimeEvents.push(event.type);
+        frames: {
+          onRuntimeEvent: (event) => {
+            runtimeEvents.push(event.type);
+          },
         },
       });
       expect(result.stopReason).toBe("stop");
@@ -1495,8 +1521,10 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onRuntimeEvent: (event) => {
-        runtimeEvents.push(event.type);
+      frames: {
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
       },
     })).rejects.toThrow("ACP agent sent malformed protocol data");
     expect(runtimeEvents).toEqual([
@@ -1520,8 +1548,10 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onRuntimeEvent: (event) => {
-        runtimeEvents.push(event.type);
+      frames: {
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
       },
     })).rejects.toThrow("failed agent_response");
     expect(state.updatedSessions).toEqual([
@@ -1549,10 +1579,12 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         workspaceRoot: Deno.cwd(),
-        onRuntimeEvent: (event) => {
-          if (event.type === "turnCompleted") {
-            throw new Error("disconnected observer");
-          }
+        frames: {
+          onRuntimeEvent: (event) => {
+            if (event.type === "turnCompleted") {
+              throw new Error("disconnected observer");
+            }
+          },
         },
       });
       expect(result.stopReason).toBe("stop");
@@ -1577,8 +1609,10 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onRuntimeEvent: (event) => {
-        runtimeEvents.push(event.type);
+      frames: {
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
       },
     })).rejects.toThrow("failed session_end");
     expect(state.updatedSessions).toEqual([
@@ -1605,8 +1639,10 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onRuntimeEvent: (event) => {
-        lengthEvents.push(event.type);
+      frames: {
+        onRuntimeEvent: (event) => {
+          lengthEvents.push(event.type);
+        },
       },
     });
     expect(length.stopReason).toBe("length");
@@ -1620,8 +1656,10 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onRuntimeEvent: (event) => {
-        refusalEvents.push(event.type);
+      frames: {
+        onRuntimeEvent: (event) => {
+          refusalEvents.push(event.type);
+        },
       },
     });
     expect(refusal.stopReason).toBe("error");
@@ -1692,8 +1730,10 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      onCancellationClosed: () => {
-        throw new Error("cleanup failed");
+      cancellationWindow: {
+        closeCancellation: () => {
+          throw new Error("cleanup failed");
+        },
       },
     });
     expect(result.stopReason).toBe("stop");
@@ -1733,7 +1773,9 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
-      confirmExternalAgentPermission: async () => ({ optionId: "allow" }),
+      approver: {
+        confirmExternalAgentPermission: async () => ({ optionId: "allow" }),
+      },
     })).rejects.toMatchObject({ phase: "permission" });
     expect(state.events.map((event) => event.event_type)).not.toContain(
       "agent_response",
@@ -1751,12 +1793,16 @@ Deno.exit(output.code);`,
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: Deno.cwd(),
       abortSignal: controller.signal,
-      onTextDelta: () => controller.abort(),
-      onCancellationClosed: () => {
-        cancellationClosed += 1;
+      frames: {
+        onTextDelta: () => controller.abort(),
+        onRuntimeEvent: (event) => {
+          runtimeEvents.push(event.type);
+        },
       },
-      onRuntimeEvent: (event) => {
-        runtimeEvents.push(event.type);
+      cancellationWindow: {
+        closeCancellation: () => {
+          cancellationClosed += 1;
+        },
       },
     });
     expect(first).toMatchObject({ text: "partial\n", stopReason: "aborted" });
@@ -1896,8 +1942,10 @@ Deno.exit(output.code);`,
         sessionId,
         workspaceRoot: Deno.cwd(),
         abortSignal: controller.signal,
-        onRuntimeEvent: (event) => {
-          runtimeEvents.push(event.type);
+        frames: {
+          onRuntimeEvent: (event) => {
+            runtimeEvents.push(event.type);
+          },
         },
       }, { sessionMap: map });
       expect(second.stopReason).toBe("aborted");
@@ -1940,8 +1988,10 @@ Deno.exit(output.code);`,
         sessionId,
         workspaceRoot: Deno.cwd(),
         abortSignal: controller.signal,
-        onRuntimeEvent: (event) => {
-          runtimeEvents.push(event.type);
+        frames: {
+          onRuntimeEvent: (event) => {
+            runtimeEvents.push(event.type);
+          },
         },
       }, { sessionMap: map });
       expect(second.stopReason).toBe("aborted");
@@ -1996,8 +2046,10 @@ Deno.exit(output.code);`,
         runner: { kind: "acp", profile: "fixture" },
         sessionId,
         workspaceRoot: workspace,
-        onRuntimeEvent: (event) => {
-          runtimeEvents.push(event.type);
+        frames: {
+          onRuntimeEvent: (event) => {
+            runtimeEvents.push(event.type);
+          },
         },
       }, {
         sessionMap: map,
@@ -2029,7 +2081,9 @@ Deno.exit(output.code);`,
         sessionId: "01ACPSESSION000000000000005",
         workspaceRoot: Deno.cwd(),
         abortSignal: controller.signal,
-        onTextDelta: () => controller.abort(),
+        frames: {
+          onTextDelta: () => controller.abort(),
+        },
       }, { sessionMap: map });
       expect(first.stopReason).toBe("aborted");
       expect(map.size).toBe(1);
@@ -2061,8 +2115,10 @@ Deno.exit(output.code);`,
         sessionId: "01ACPSESSION000000000000002",
         workspaceRoot: Deno.cwd(),
         abortSignal: controller.signal,
-        onTextDelta: () => {
-          sawPrompt = true;
+        frames: {
+          onTextDelta: () => {
+            sawPrompt = true;
+          },
         },
       }, { sessionMap: map });
       const occupied = Date.now() + 2_000;
@@ -2149,8 +2205,10 @@ Deno.exit(output.code);`,
         sessionId: "01ACPSESSION000000000000006",
         workspaceRoot: Deno.cwd(),
         abortSignal: controller.signal,
-        onRuntimeEvent: (event) => {
-          runtimeEvents.push(event.type);
+        frames: {
+          onRuntimeEvent: (event) => {
+            runtimeEvents.push(event.type);
+          },
         },
       }, { sessionMap: map });
       expect(result.stopReason).toBe("aborted");
@@ -2181,8 +2239,10 @@ Deno.exit(output.code);`,
         sessionId: "01ACPSESSION000000000000007",
         workspaceRoot: Deno.cwd(),
         abortSignal: controller.signal,
-        onRuntimeEvent: (event) => {
-          runtimeEvents.push(event.type);
+        frames: {
+          onRuntimeEvent: (event) => {
+            runtimeEvents.push(event.type);
+          },
         },
       }, {
         sessionMap: map,

@@ -86,7 +86,9 @@ Deno.test("emits the runtime spine event sequence without leaking full prompt or
   const frames: WorkbenchRuntimeEvent[] = [];
   const result = await runTurn(run, {
     prompt: "summarize this sensitive prompt body",
-    onRuntimeEvent: (event) => void frames.push(event),
+    frames: {
+      onRuntimeEvent: (event) => void frames.push(event),
+    },
   });
   assertEquals(result.text, "runtime response");
   assertEquals(frames.map((frame) => frame.type), [
@@ -140,8 +142,10 @@ Deno.test("treats observer failures as best-effort and preserves the turn result
   const { value: result, warnings } = await quietly(() =>
     runTurn(run, {
       prompt: "summarize",
-      onRuntimeEvent: () => {
-        throw new Error("observer sink down");
+      frames: {
+        onRuntimeEvent: () => {
+          throw new Error("observer sink down");
+        },
       },
     })
   );
@@ -170,9 +174,11 @@ Deno.test("an aborted turn finalizes partial text and usage without dispatching 
     prompt: "start",
     turnId: TURN_ID,
     abortSignal: abortController.signal,
-    onTextDelta: () => abortController.abort(),
-    onRuntimeEvent: (event) => void frames.push(event),
-    log: () => {},
+    frames: {
+      onTextDelta: () => abortController.abort(),
+      onRuntimeEvent: (event) => void frames.push(event),
+      log: () => {},
+    },
   });
   assertObjectMatch(first, {
     text: "partial answer",
@@ -222,7 +228,10 @@ Deno.test("an aborted next-work turn preserves partial text without validating i
     prompt: "what should I do next?",
     turnId: TURN_ID,
     abortSignal: abortController.signal,
-    log: (...parts: unknown[]) => void logged.push(parts.map(String).join(" ")),
+    frames: {
+      log: (...parts: unknown[]) =>
+        void logged.push(parts.map(String).join(" ")),
+    },
   });
   assertObjectMatch(result, { text: partial, stopReason: "aborted" });
   assertEquals(result.validation, undefined);
@@ -258,8 +267,10 @@ Deno.test("a provider terminal error outranks a concurrent cancellation", async 
   const result = await runTurn(run, {
     prompt: "start",
     abortSignal: abortController.signal,
-    onRuntimeEvent: (event) => void frames.push(event),
-    log: () => {},
+    frames: {
+      onRuntimeEvent: (event) => void frames.push(event),
+      log: () => {},
+    },
   });
   assertEquals(result.stopReason, "error");
   assertObjectMatch(
@@ -277,15 +288,19 @@ Deno.test("closes cancellation acceptance before terminal finalization", async (
   let closedAtCompletion: boolean | undefined;
   const result = await runTurn(run, {
     prompt: "finish",
-    onCancellationClosed: () => {
-      cancellationClosed = true;
+    cancellationWindow: {
+      closeCancellation: () => {
+        cancellationClosed = true;
+      },
     },
-    onRuntimeEvent: (event) => {
-      if (event.type === "turnCompleted") {
-        closedAtCompletion = cancellationClosed;
-      }
+    frames: {
+      onRuntimeEvent: (event) => {
+        if (event.type === "turnCompleted") {
+          closedAtCompletion = cancellationClosed;
+        }
+      },
+      log: () => {},
     },
-    log: () => {},
   });
   assertEquals(result.stopReason, "stop");
   assertEquals(closedAtCompletion, true);
@@ -308,8 +323,10 @@ Deno.test("surfaces the error and emits turnFailed when the provider request fai
       () =>
         runTurn(run, {
           prompt: "summarize",
-          onRuntimeEvent: (event) => void frames.push(event),
-          log: () => {},
+          frames: {
+            onRuntimeEvent: (event) => void frames.push(event),
+            log: () => {},
+          },
         }),
       Error,
       "local model unavailable",
@@ -370,7 +387,10 @@ Deno.test("provider_call write failure preserves aggregate accounting and the re
 
 Deno.test("a clean session's receipt carries no audit-gap warning", async () => {
   const run = engineServices([chatReply({ content: "hi" })]);
-  const result = await runTurn(run, { prompt: "hello", log: () => {} });
+  const result = await runTurn(run, {
+    prompt: "hello",
+    frames: { log: () => {} },
+  });
   assertEquals(result.receipt.includes("audit log has gaps"), false);
 });
 
@@ -394,9 +414,11 @@ Deno.test("a failed model_response integrity write sanitizes its message before 
     assertRejects(() =>
       runTurn(run, {
         prompt: "policy probe",
-        onRuntimeEvent: (event) => void frames.push(event),
-        log: (...parts: unknown[]) =>
-          void logged.push(parts.map(String).join(" ")),
+        frames: {
+          onRuntimeEvent: (event) => void frames.push(event),
+          log: (...parts: unknown[]) =>
+            void logged.push(parts.map(String).join(" ")),
+        },
       })
     )
   );

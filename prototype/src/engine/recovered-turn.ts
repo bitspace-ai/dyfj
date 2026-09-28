@@ -111,7 +111,7 @@ async function classifyStop(
     { contextWindow: result.model.contextWindow, maxOutputTokens: outputCap },
     { input: promptTokens, output: outputTokens },
   );
-  await emitRuntimeEvent(input.onRuntimeEvent, {
+  await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "lengthStopDetected",
     sessionId,
     modelSlug: result.model.slug,
@@ -128,7 +128,7 @@ async function classifyStop(
     outputTokens,
     classification,
     emitRecovery: (outcome, retriesUsed) =>
-      emitRuntimeEvent(input.onRuntimeEvent, {
+      emitRuntimeEvent(input.frames?.onRuntimeEvent, {
         type: "lengthRecoveryFinished",
         sessionId,
         modelSlug: result.model.slug,
@@ -153,7 +153,7 @@ async function recoverOverflow(
   onProviderError?: (error: unknown) => unknown,
 ): Promise<LoopTurnResult> {
   const { result, emitRecovery } = stop;
-  const recover = turn.input.recoverContextOverflow ??
+  const recover = turn.ports.recoverContextOverflow ??
     compressionRecoverer(turn);
   if (!retryable) {
     await emitRecovery("overflow_failed", 0);
@@ -186,7 +186,7 @@ async function recoverOverflow(
       // its deltas would concatenate onto the stale ones the consumer still
       // has on screen. The throw lands in the catch below, which closes the
       // recovery trail — and no retry was consumed.
-      await deliverSupersedingRetrySignal(turn.input.onRuntimeEvent, {
+      await deliverSupersedingRetrySignal(turn.input.frames?.onRuntimeEvent, {
         type: "supersedingRetryStarted",
         sessionId: turn.state.session.sessionId,
         modelSlug: result.model.slug,

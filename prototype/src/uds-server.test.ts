@@ -970,9 +970,11 @@ describe("serveWorkbenchUnix read methods", () => {
 describe("serveWorkbenchUnix turn method", () => {
   test("streams deltas + events and returns the receipt", async () => {
     const runRuntime: TurnRuntime = async (input) => {
-      input.onTextDelta?.("hello ");
-      input.onTextDelta?.("world");
-      input.onRuntimeEvent?.(anyVal({ kind: "tool-call", name: "noop" }));
+      input.frames?.onTextDelta?.("hello ");
+      input.frames?.onTextDelta?.("world");
+      input.frames?.onRuntimeEvent?.(
+        anyVal({ kind: "tool-call", name: "noop" }),
+      );
       return anyVal({ receiptId: "r1" });
     };
     const streamed: unknown[] = [];
@@ -1084,7 +1086,7 @@ describe("serveWorkbenchUnix turn method", () => {
       if (runtimeCalls > 1) return anyVal({ text: "next turn" });
       let matchedSignalReason = false;
       try {
-        const verdict = await input.confirmToolApproval?.({
+        const verdict = await input.approver?.confirmToolApproval?.({
           commandId: "write_file",
           callId: "c1",
           title: "Write File",
@@ -1143,7 +1145,7 @@ describe("serveWorkbenchUnix turn method", () => {
       finish = resolve;
     });
     const runRuntime: TurnRuntime = async (input) => {
-      input.onCancellationClosed?.();
+      input.cancellationWindow?.closeCancellation();
       markFinalizing();
       await finalized;
       return anyVal({ stopReason: "stop", text: "done" });
@@ -1251,9 +1253,9 @@ describe("serveWorkbenchUnix turn method", () => {
       reason: "context_overflow_recovery",
     };
     const runRuntime: TurnRuntime = async (input) => {
-      input.onTextDelta?.("stale partial");
-      await input.onRuntimeEvent?.(anyVal(supersede));
-      input.onTextDelta?.("replacement answer");
+      input.frames?.onTextDelta?.("stale partial");
+      await input.frames?.onRuntimeEvent?.(anyVal(supersede));
+      input.frames?.onTextDelta?.("replacement answer");
       return anyVal({ receiptId: "r1" });
     };
     const streamed: unknown[] = [];
@@ -1285,10 +1287,10 @@ describe("serveWorkbenchUnix turn method", () => {
     };
     let replacementProviderCalled = false;
     const runRuntime: TurnRuntime = async (input) => {
-      input.onTextDelta?.("stale partial");
-      await input.onRuntimeEvent?.(anyVal(supersede));
+      input.frames?.onTextDelta?.("stale partial");
+      await input.frames?.onRuntimeEvent?.(anyVal(supersede));
       replacementProviderCalled = true;
-      input.onTextDelta?.("replacement answer");
+      input.frames?.onTextDelta?.("replacement answer");
       return anyVal({ receiptId: "r1" });
     };
 
@@ -1325,7 +1327,7 @@ describe("serveWorkbenchUnix turn method", () => {
     };
     let completed = false;
     const runRuntime: TurnRuntime = async (input) => {
-      await input.onRuntimeEvent?.(anyVal(warning));
+      await input.frames?.onRuntimeEvent?.(anyVal(warning));
       completed = true;
       return anyVal({ receiptId: "r1" });
     };
@@ -1352,7 +1354,7 @@ describe("serveWorkbenchUnix turn method", () => {
     let afterEventReached = false;
     const runRuntime: TurnRuntime = async (input) => {
       // A plain status event, not either fail-closed safety signal.
-      await input.onRuntimeEvent?.(anyVal({ type: "toolCallStarted" }));
+      await input.frames?.onRuntimeEvent?.(anyVal({ type: "toolCallStarted" }));
       afterEventReached = true;
       return anyVal({ receiptId: "r1" });
     };
@@ -1384,7 +1386,7 @@ describe("serveWorkbenchUnix turn method", () => {
   // decided by the shared turn core. Same gate as the HTTP loopback path.
   test("loopback clearance: paid approved with the per-turn opt-in", async () => {
     const runRuntime: TurnRuntime = async (input) => {
-      const verdict = await input.confirmPaidEscalation?.("test");
+      const verdict = await input.approver?.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
     const client = await connectClient(
@@ -1400,7 +1402,7 @@ describe("serveWorkbenchUnix turn method", () => {
 
   test("paid denied without the per-turn opt-in", async () => {
     const runRuntime: TurnRuntime = async (input) => {
-      const verdict = await input.confirmPaidEscalation?.("test");
+      const verdict = await input.approver?.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
     const client = await connectClient(
@@ -1412,7 +1414,7 @@ describe("serveWorkbenchUnix turn method", () => {
 
   test("loopback inherits approvePaidDefault when the request omits opt-in", async () => {
     const runRuntime: TurnRuntime = async (input) => {
-      const verdict = await input.confirmPaidEscalation?.("test");
+      const verdict = await input.approver?.confirmPaidEscalation?.("test");
       return anyVal({ verdict });
     };
     const client = await connectClient(
@@ -1457,7 +1459,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
   // A runtime that asks to approve one mutating tool and reports the verdict.
   function approvalProbeRuntime(): TurnRuntime {
     return async (input) => {
-      const verdict = await input.confirmToolApproval?.({
+      const verdict = await input.approver?.confirmToolApproval?.({
         commandId: "write_file",
         callId: "c1",
         title: "Write File",
@@ -1469,7 +1471,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
 
   function acpPermissionProbeRuntime(): TurnRuntime {
     return async (input) => {
-      const selection = await input.confirmExternalAgentPermission?.({
+      const selection = await input.approver?.confirmExternalAgentPermission?.({
         sessionId: "external-session",
         toolCallId: "permission-1",
         toolCall: {
@@ -1498,7 +1500,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
 
   function emptyAllowOnlyPermissionProbeRuntime(): TurnRuntime {
     return async (input) => {
-      const selection = await input.confirmExternalAgentPermission?.({
+      const selection = await input.approver?.confirmExternalAgentPermission?.({
         sessionId: "external-session",
         toolCallId: "permission-1",
         toolCall: {
@@ -1629,7 +1631,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
     const runRuntime: TurnRuntime = async (input) => {
       let matchedSignalReason = false;
       try {
-        await input.confirmToolApproval?.({
+        await input.approver?.confirmToolApproval?.({
           commandId: "write_file",
           callId: "c1",
           title: "Write File",
@@ -1670,7 +1672,7 @@ describe("serveWorkbenchUnix turn approval round-trip", () => {
 
   test("a reasonless anomaly-halt denial names the anomaly gate, not the budget ceiling", async () => {
     const runRuntime: TurnRuntime = async (input) => {
-      const verdict = await input.confirmRunawayAnomaly?.({
+      const verdict = await input.approver?.confirmRunawayAnomaly?.({
         kind: "runaway_anomaly",
         trigger: "turn_spend",
         spentUsd: 0.35,

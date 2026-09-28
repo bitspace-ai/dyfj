@@ -43,7 +43,9 @@ Deno.test("openSession writes session_start under the turn root span, with the p
   const session = await openSession(
     input({
       prompt: "what changed?",
-      onRuntimeEvent: (event) => void frames.push(event),
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(event),
+      },
     }),
     fakes.ports,
   );
@@ -98,7 +100,9 @@ Deno.test("the input's principalId attributes every row a whole turn writes", as
     routingOptions: {},
     defaultCompanionModel: LOCAL_MODEL.slug,
     principalId: "custom-principal",
-    log: () => {},
+    frames: {
+      log: () => {},
+    },
   }, run.services);
   const rows = (await sessionRows(run.store, sessionId))
     .filter((row) => row.event_type !== "model_selected");
@@ -196,8 +200,9 @@ Deno.test("openSession pins a remote caller's requested workspace to the default
 Deno.test("openSession seeds the budget tracker with spend already on the books", async () => {
   const fakes = enginePorts();
   const session = await openSession(
-    input({
-      sessionId: RESUMED,
+    input({ sessionId: RESUMED }),
+    {
+      ...fakes.ports,
       fetchSpendBaselines: (id) => {
         assert(id === RESUMED);
         return Promise.resolve({
@@ -206,8 +211,7 @@ Deno.test("openSession seeds the budget tracker with spend already on the books"
           dailyOtherSessionsUsd: 1,
         });
       },
-    }),
-    fakes.ports,
+    },
   );
   const precall = session.budget.checkPreCall(1, 0, 0);
   assertEquals(precall.sessionCostSoFar, 0.25);

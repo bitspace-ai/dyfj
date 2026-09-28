@@ -67,7 +67,9 @@ Deno.test("budgetGate routes a free local turn and records the selection", async
   const { state, input } = await contextReady(
     {
       defaultCompanionModel: "local-chat",
-      onRuntimeEvent: (event) => void frames.push(event),
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(event),
+      },
     },
     fakes,
     root.root,
@@ -101,12 +103,14 @@ Deno.test("budgetGate asks paid consent with the preflight banner, and a decline
   const { state, input } = await contextReady(
     {
       defaultCompanionModel: PRICED.slug,
-      confirmPaidEscalation: (banner) => {
-        banners.push(banner);
-        return Promise.resolve({
-          decision: "deny",
-          reason: "operator declined",
-        });
+      approver: {
+        confirmPaidEscalation: (banner) => {
+          banners.push(banner);
+          return Promise.resolve({
+            decision: "deny",
+            reason: "operator declined",
+          });
+        },
       },
     },
     fakes,
@@ -132,9 +136,11 @@ Deno.test("budgetGate confirms a ceiling overrun before paid consent, and a decl
     {
       defaultCompanionModel: PRICED.slug,
       defaultPerCallBudgetUsd: 0.00001,
-      confirmPaidEscalation,
-      confirmBudgetCeiling: () =>
-        Promise.resolve({ decision: "deny", reason: "too much" }),
+      approver: {
+        confirmPaidEscalation,
+        confirmBudgetCeiling: () =>
+          Promise.resolve({ decision: "deny", reason: "too much" }),
+      },
     },
     fakes,
     root.root,
@@ -155,19 +161,21 @@ Deno.test("budgetGate halts an anomalous entry before the ceiling prompt can rec
   const confirmBudgetCeiling = spy(() =>
     Promise.resolve({ decision: "approve" as const })
   );
+  fakes.ports.fetchSpendBaselines = () =>
+    Promise.resolve({
+      sessionSpentUsd: 2.5,
+      sessionSpentTodayUsd: 2.5,
+      dailyOtherSessionsUsd: 0,
+    });
   const { state, input } = await contextReady(
     {
       defaultCompanionModel: "local-priced",
       defaultSessionBudgetUsd: 1,
       anomalyScopeMultiple: 2,
-      fetchSpendBaselines: () =>
-        Promise.resolve({
-          sessionSpentUsd: 2.5,
-          sessionSpentTodayUsd: 2.5,
-          dailyOtherSessionsUsd: 0,
-        }),
-      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-      confirmBudgetCeiling,
+      approver: {
+        confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+        confirmBudgetCeiling,
+      },
     },
     fakes,
     root.root,
@@ -190,9 +198,11 @@ Deno.test("an approved ceiling overrun persists for the session through its owne
     defaultCompanionModel: PRICED.slug,
     defaultPerCallBudgetUsd: 0.00001,
     sessionId: "01TEST00000000000000000001",
-    confirmPaidEscalation: () =>
-      Promise.resolve({ decision: "approve" as const }),
-    confirmBudgetCeiling,
+    approver: {
+      confirmPaidEscalation: () =>
+        Promise.resolve({ decision: "approve" as const }),
+      confirmBudgetCeiling,
+    },
   };
   const first = await contextReady(turn, fakes, root.root);
   await budgetGate(first.state, first.input, fakes.ports);

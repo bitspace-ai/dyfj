@@ -8,15 +8,13 @@
  * `session-owner.ts`.
  */
 import type {
+  Approver,
+  FrameSink,
   WorkbenchRuntimeInput,
   WorkbenchRuntimeResult,
 } from "./runtime-types.ts";
 import { buildConversationMessages } from "../context/mod.ts";
-import type { CommandDefinition, ConfirmToolApproval } from "../tools/mod.ts";
-import type {
-  ConfirmBudgetCeiling,
-  ConfirmRunawayAnomaly,
-} from "../budget/mod.ts";
+import type { CommandDefinition } from "../tools/mod.ts";
 import {
   type Env,
   type PermissionLevel,
@@ -27,7 +25,6 @@ import {
 import type {
   HistoryOmissionProjection,
   WorkbenchAuthContext,
-  WorkbenchRuntimeEvent,
   WorkbenchSessionEvent,
 } from "../contract/mod.ts";
 import type { SessionOwners, TurnTicket } from "./session-owner.ts";
@@ -102,23 +99,21 @@ export interface ExecuteTurnDeps {
   loopback: boolean;
   runRuntime: TurnRuntime;
   fetchSessionEvents: FetchSessionEvents;
-  onTextDelta?: (delta: string) => void;
-  // Matches WorkbenchRuntimeInput.onRuntimeEvent: a transport handler may return
-  // a promise (the UDS seam returns its notify), so the runtime can await
-  // delivery where that matters (the fail-closed safety signals).
-  onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   /**
-   * Mutating-tool approval handler. The UDS transport supplies a
-   * duplex round-trip; HTTP omits it, so the runtime defaults to deny.
+   * The transport's frame sink. A transport's `onRuntimeEvent` may return a
+   * promise (the UDS seam returns its notify), so the runtime can await
+   * delivery where that matters (the fail-closed safety signals).
    */
-  confirmToolApproval?: ConfirmToolApproval;
+  frames?: FrameSink;
+  /**
+   * The transport's approval handlers: the UDS transport supplies duplex
+   * round-trips for tool approval, ACP permission options, budget ceilings
+   * and runaway anomalies; HTTP omits them, so the runtime fails closed.
+   * Paid escalation is not the transport's to answer: `executeTurn` decides
+   * it from the transport's paid verdict.
+   */
+  approver?: Omit<Approver, "confirmPaidEscalation">;
   externalMcpCommands?: readonly CommandDefinition[];
-  /**
-   * ACP permission-option selector. Kept distinct from binary tool approval so
-   * the operator's exact protocol option survives the transport round-trip.
-   */
-  confirmExternalAgentPermission?:
-    WorkbenchRuntimeInput["confirmExternalAgentPermission"];
   /**
    * Engine default companion model (config ~/.dyfj/config.toml / env), loaded
    * once at the boundary and applied when a turn specifies no model/tier/hint.
@@ -142,17 +137,6 @@ export interface ExecuteTurnDeps {
   anomalyScopeMultiple?: number;
   /** Maximum model↔tool loop steps in one turn (config), resolved once at the boundary. */
   maxToolSteps?: number;
-  /**
-   * Warn-then-confirm handler when projected spend crosses a budget ceiling.
-   * The UDS transport supplies a duplex round-trip; HTTP omits it, so the
-   * runtime fails closed when a ceiling would be exceeded.
-   */
-  confirmBudgetCeiling?: ConfirmBudgetCeiling;
-  /**
-   * Confirm handler for a runaway-anomaly hard stop. UDS supplies a duplex
-   * round-trip; HTTP omits it, so the runtime fails closed at the halt.
-   */
-  confirmRunawayAnomaly?: ConfirmRunawayAnomaly;
 }
 
 /** Thread the loaded engine config into executeTurn deps. */
@@ -249,9 +233,9 @@ function runExecuteTurn(
     // closing.
     ...(deps.ticket === undefined ? {} : {
       abortSignal: deps.ticket.signal,
-      ...(resolved.runtimeInput.turnId === undefined ? {} : {
-        onCancellationClosed: () => deps.ticket?.closeCancellation(),
-      }),
+      ...(resolved.runtimeInput.turnId === undefined
+        ? {}
+        : { cancellationWindow: deps.ticket }),
     }),
     // env-derived runtime config resolved at the boundary, not in the
     // core. A future headless driver supplies these from its own config.
@@ -286,22 +270,22 @@ function runExecuteTurn(
       ? { maxToolSteps: deps.maxToolSteps }
       : {}),
     authContext: deps.authContext,
-    onTextDelta: deps.onTextDelta,
-    onRuntimeEvent: deps.onRuntimeEvent,
-    // mutating tools run only after operator approval; the transport
-    // supplies the approver (UDS = duplex round-trip), else the runtime denies.
-    confirmToolApproval: deps.confirmToolApproval,
+    frames: deps.frames,
     externalMcpCommands: deps.externalMcpCommands,
-    confirmExternalAgentPermission: deps.confirmExternalAgentPermission,
-    // budget ceiling warn-then-confirm; absent => fail closed at the ceiling.
-    confirmBudgetCeiling: deps.confirmBudgetCeiling,
-    // runaway-anomaly hard stop; absent => fail closed at the halt.
-    confirmRunawayAnomaly: deps.confirmRunawayAnomaly,
-    // paid inference is granted only to a loopback caller that
-    // explicitly opted in this turn; remote callers are always denied.
-    confirmPaidEscalation: () =>
-      Promise.resolve(
-        paidEscalationVerdict(deps.loopback, resolved.approvePaidInference),
-      ),
+    approver: {
+      // mutating tools, ACP permission options, budget ceilings and runaway
+      // anomalies go to the transport's handlers; absent => fail closed.
+      confirmToolApproval: deps.approver?.confirmToolApproval,
+      confirmExternalAgentPermission: deps.approver
+        ?.confirmExternalAgentPermission,
+      confirmBudgetCeiling: deps.approver?.confirmBudgetCeiling,
+      confirmRunawayAnomaly: deps.approver?.confirmRunawayAnomaly,
+      // paid inference is granted only to a loopback caller that
+      // explicitly opted in this turn; remote callers are always denied.
+      confirmPaidEscalation: () =>
+        Promise.resolve(
+          paidEscalationVerdict(deps.loopback, resolved.approvePaidInference),
+        ),
+    },
   });
 }

@@ -1,5 +1,5 @@
 /**
- * Runtime-event delivery through the runtime input's `onRuntimeEvent`
+ * Runtime-event delivery through the frame port's `onRuntimeEvent`
  * handler. Status events are best-effort; the two safety signals are
  * fail-closed.
  */
@@ -10,10 +10,10 @@ import {
   type UnparsedToolCallMarkupDetectedEvent,
   type WorkbenchRuntimeEvent,
 } from "../contract/mod.ts";
-import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
+import type { FrameSink } from "./runtime-types.ts";
 
 export async function emitRuntimeEvent(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  handler: FrameSink["onRuntimeEvent"],
   event: WorkbenchRuntimeEvent,
 ): Promise<void> {
   if (!handler) return;
@@ -43,7 +43,7 @@ export async function emitRuntimeEvent(
  * nothing to drop, and the recovery log note is that consumer's signal.
  */
 export async function deliverSupersedingRetrySignal(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  handler: FrameSink["onRuntimeEvent"],
   event: SupersedingRetryStartedEvent,
 ): Promise<void> {
   if (!handler) return;
@@ -55,7 +55,7 @@ export async function deliverSupersedingRetrySignal(
  * not complete successfully when its client could not receive the disclosure.
  */
 export async function deliverUnparsedToolCallMarkupSignal(
-  handler: WorkbenchRuntimeInput["onRuntimeEvent"],
+  handler: FrameSink["onRuntimeEvent"],
   event: UnparsedToolCallMarkupDetectedEvent,
 ): Promise<void> {
   if (!handler) return;
