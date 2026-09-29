@@ -1,11 +1,9 @@
 {
   "cycles": [],
   "layer": [
-    "prototype/src/mcp-tools.ts -> prototype/src/linear-tools.ts",
     "prototype/src/server/main.ts -> prototype/src/runtime-sigint.ts"
   ],
   "cli": [
-    "prototype/src/cli.ts -> prototype/src/friction.ts",
     "prototype/src/cli.ts -> prototype/src/mcp-net-grants.ts",
     "prototype/src/cli.ts -> prototype/src/memory-search.ts"
   ],

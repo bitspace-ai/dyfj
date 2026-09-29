@@ -165,6 +165,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Friction and Linear are extensions too; the core no longer imports any
+  extension.** `friction/post` now comes from `prototype/src/extensions/friction/`
+  and the Linear integration from `extensions/linear/`; `src/friction.ts`,
+  `src/linear-tools.ts` and `src/server/rpc/legacy-extensions.ts` are gone.
+  The linear extension resolves the Linear MCP commands friction calls once,
+  when the engine starts, instead of friction building a registry of them on
+  every post. MCP discovery (`buildExternalMcpCommands`) no longer builds the
+  bounded Linear `create_issue` command itself: it takes a
+  `buildIssueCreationCommand` port, which the engine fills with the linear
+  extension's builder. A caller that omits it gets configured `create_issue`
+  and `save_issue` tools withheld as unsupported. The `arch.imports` lane now
+  fails when anything other than `src/server/` or `src/cli/` imports
+  `extensions/`. `friction/post`'s payloads, numbering, approvals, receipts and
+  error messages, and the REPL's `/friction` command, are unchanged.
+
 - **Ideas and packets are an extension behind the new Extension interface.**
   `ideas/*` and `packets/*` now come from `prototype/src/extensions/ideas/`,
   which the engine's composition root builds and plugs in through

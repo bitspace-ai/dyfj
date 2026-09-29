@@ -1,7 +1,7 @@
 import type {
   LinearIssueCreationBinding,
   McpHttpServerConfig,
-} from "./config/mod.ts";
+} from "../../config/mod.ts";
 import {
   type CommandDefinition,
   CommandExecutionError,
@@ -9,7 +9,7 @@ import {
   type CommandTraceContext,
   type JsonSchemaObject,
   type JsonSchemaProperty,
-} from "./tools/mod.ts";
+} from "../../tools/mod.ts";
 
 const CREATE_ISSUE_TOOL = "create_issue";
 export type LinearCreationUpstreamTool = "create_issue" | "save_issue";

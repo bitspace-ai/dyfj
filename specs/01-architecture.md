@@ -337,6 +337,22 @@ interface Extension {
   `ideas` and `packets` share one directory, `extensions/ideas/`, and one
   factory, because they share one registry: a packet references its idea, and
   eviction crosses the two.
+- **Deps.** `ExtensionDeps` carries the store-backed session readers, the
+  Linear commands and `toolApprover`, which asks the connected client to
+  approve a tool call and fails closed. The linear extension resolves the
+  Linear commands once from the discovered MCP commands and invokes them
+  through one registry of exactly those commands; friction calls Linear only
+  through them and builds no registry of its own. Settings that belong to one
+  extension (friction's checkpoint issue, clock, receipt writer and permission
+  posture) go to its factory, not into `ExtensionDeps`.
+- **Linear issue creation enters through discovery.** The bounded
+  `create_issue` command needs the discovered schema, so the composition root
+  hands MCP discovery the linear extension's builder as a declared port
+  (`buildIssueCreationCommand`) instead of returning it from `commands`. No
+  phase-1 extension uses `commands`.
+- **Enforced.** The `arch.imports` lane fails when a unit other than
+  `server/` or `cli/` imports `extensions/` (`importOnlyFrom`), and on any
+  edge between two extensions.
 - **Ownership fix.** `sessions ⇄ idea-packet` is resolved by moving ideas and
   packets into `extensions/`, where they read sessions through store-backed
   readers passed in `ExtensionDeps`. The

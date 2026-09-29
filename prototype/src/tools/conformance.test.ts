@@ -8,7 +8,8 @@
 import { assertEquals } from "@std/assert";
 import { toolConformance } from "../../testing/conformance/tool.ts";
 import { parseMcpServersConfig } from "../config/mod.ts";
-import saveIssueSchema from "../linear-save-issue-schema.fixture.ts";
+import saveIssueSchema from "../extensions/linear/linear-save-issue-schema.fixture.ts";
+import { buildLinearIssueCreationCommand } from "../extensions/linear/mod.ts";
 import { buildExternalMcpCommands } from "../mcp-tools.ts";
 import { buildToolCatalog } from "./mod.ts";
 
@@ -79,6 +80,8 @@ const external = await buildExternalMcpCommands(
   }, "/kit/config.toml"),
   { linear_mcp: "kit-token", web_mcp: "kit-token" },
   {
+    // The Linear extension builds the bounded issue creation, as at boot.
+    buildIssueCreationCommand: buildLinearIssueCreationCommand,
     discover: ({ server }) =>
       Promise.resolve({
         revision: "2026-07-28",

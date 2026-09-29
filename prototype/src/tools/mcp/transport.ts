@@ -14,8 +14,15 @@ import type {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import type { McpHttpServerConfig } from "../../config/mod.ts";
-import type { CommandTraceContext, JsonSchemaObject } from "../definition.ts";
+import type {
+  LinearIssueCreationBinding,
+  McpHttpServerConfig,
+} from "../../config/mod.ts";
+import type {
+  CommandDefinition,
+  CommandTraceContext,
+  JsonSchemaObject,
+} from "../definition.ts";
 import { utf8SafePrefix } from "../../kernel/mod.ts";
 
 const MAX_RESULT_BYTES = 60_000;
@@ -42,15 +49,34 @@ export interface ExternalMcpDeps {
     server: McpHttpServerConfig;
     token: string;
   }) => Promise<McpDiscoveryResult>;
-  call?: (input: {
+  call?: ExternalMcpCall;
+  /**
+   * Builds the bounded command for a server's configured `create_issue` or
+   * `save_issue` tool from the operator's binding and the discovered schema,
+   * or returns `undefined` when that schema is unsupported. A declared port:
+   * the composition root supplies the Linear extension's builder, so
+   * discovery never imports it. Without it, those tools are withheld as
+   * unsupported.
+   */
+  buildIssueCreationCommand?: (input: {
     server: McpHttpServerConfig;
+    binding: LinearIssueCreationBinding;
     token: string;
-    tool: string;
-    arguments: Record<string, unknown>;
-    inputSchema: JsonSchemaObject;
-    traceContext?: CommandTraceContext;
-  }) => Promise<McpCallResult>;
+    revision: string;
+    discoveredSchema: unknown;
+    upstreamTool: "create_issue" | "save_issue";
+    call: ExternalMcpCall;
+  }) => CommandDefinition<string> | undefined;
 }
+
+export type ExternalMcpCall = (input: {
+  server: McpHttpServerConfig;
+  token: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+  inputSchema: JsonSchemaObject;
+  traceContext?: CommandTraceContext;
+}) => Promise<McpCallResult>;
 
 export type McpFetch = (
   input: string | URL | Request,

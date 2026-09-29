@@ -1,15 +1,19 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { callRpc } from "../../testing/builders/rpc.ts";
+import { createLinearExtension } from "../extensions/linear/mod.ts";
 import {
   buildExtensionHandlers,
   type Extension,
   type ExtensionDeps,
+  rpcToolApprover,
 } from "./extensions.ts";
 
 const deps: ExtensionDeps = {
   fetchSessionEvents: () => Promise.resolve([]),
   fetchSessionWorkspaceRecord: () =>
     Promise.resolve({ exists: false, workspace: null }),
+  linear: createLinearExtension([]).linear,
+  toolApprover: rpcToolApprover,
 };
 
 function extension(id: string, methods: string[]): Extension {
@@ -60,4 +64,26 @@ Deno.test("buildExtensionHandlers rejects a duplicate id or method", () => {
     Error,
     "extension b redefines RPC method shared/method",
   );
+});
+
+Deno.test("rpcToolApprover approves only an explicit approval", async () => {
+  const ask = (answer: Promise<unknown>) =>
+    rpcToolApprover({
+      notify: () => Promise.resolve(),
+      request: (method) => {
+        assertEquals(method, "approval");
+        return answer;
+      },
+    })({} as Parameters<ReturnType<typeof rpcToolApprover>>[0]);
+  assertEquals(await ask(Promise.resolve({ decision: "approve" })), {
+    decision: "approve",
+  });
+  assertEquals(await ask(Promise.resolve({ decision: "deny" })), {
+    decision: "deny",
+    reason: "operator denied the tool call",
+  });
+  assertEquals(await ask(Promise.reject(new Error("no client"))), {
+    decision: "deny",
+    reason: "approval request failed (no client approver?)",
+  });
 });

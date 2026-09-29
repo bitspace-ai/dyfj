@@ -14,7 +14,9 @@
  *   do not map fails the lane, so a new file cannot escape the rules.
  * - Violations: import cycles (Tarjan SCCs; every edge inside a strongly
  *   connected component, type-only edges included), upward or non-listed
- *   same-layer edges, `cli/` allow-list breaches, dynamic local imports,
+ *   same-layer edges, imports of a unit from outside its `importOnlyFrom`
+ *   importers (only `server/` and `cli/` import `extensions/`), `cli/`
+ *   allow-list breaches, dynamic local imports,
  *   direct `Deno.env`/`process.env` access outside `config/` and the
  *   entrypoints named in `arch-layers.json`, and `DYFJ_*` key literals in
  *   any scanned module (runtime, `mcp/` and the `scripts/` tooling) that
@@ -64,6 +66,13 @@ export interface LayerRules {
   units: UnitRule[];
   sameLayerEdges: { from: string; to: string; typesOnly?: boolean }[];
   cli: { unit: string; allowedUnits: string[]; allowedPaths: string[] };
+  /**
+   * Units only some units may import, whatever their layers (spec section
+   * 6: the core never imports `extensions/`; only `server/` and `cli/` do).
+   * `unit` and each importer are declared unit patterns. A breach is a
+   * layer violation.
+   */
+  importOnlyFrom?: { unit: string; importers: string[] }[];
   env: EnvRules;
   packages: PackageRule[];
   sqlWrites: SqlWriteRules;
@@ -536,6 +545,15 @@ export function analyze(input: AnalysisInput): AnalysisResult {
           layer.push(key);
         }
       }
+      const restricted = rules.importOnlyFrom?.find((r) =>
+        r.unit === b.pattern
+      );
+      if (
+        restricted !== undefined && !restricted.importers.includes(a.pattern) &&
+        layer[layer.length - 1] !== key
+      ) {
+        layer.push(key);
+      }
     }
     if (a.name === rules.cli.unit && b.name !== rules.cli.unit) {
       const ok = rules.cli.allowedUnits.includes(b.pattern) ||
@@ -564,6 +582,14 @@ export function analyze(input: AnalysisInput): AnalysisResult {
 
   // Direct process-environment access and undeclared DYFJ_* keys.
   errors.push(...validateEnvRules(rules, units));
+  const declaredUnits = new Set(rules.units.map((u) => u.dir));
+  for (const rule of rules.importOnlyFrom ?? []) {
+    for (const unit of [rule.unit, ...rule.importers]) {
+      if (!declaredUnits.has(unit)) {
+        errors.push(`importOnlyFrom rule: unit is not declared: ${unit}`);
+      }
+    }
+  }
   // A unit exempts only the modules that physically live in it: a legacy
   // module mapped into the unit by name (`files`) has not moved yet and gets
   // no exemption.
