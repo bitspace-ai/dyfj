@@ -177,11 +177,15 @@ README are tracked separately in its Revision history section.
   and the Vitest-only `grants.platform.test.ts` and
   `repo-context.platform.test.ts` became `grants.integration.test.ts` and
   `repo-context.integration.test.ts`. The fixtures now use the system temp
-  directory instead of the working tree, and create symlinks with `ln -s`.
-  The integration lane's `Deno.test` invocation gains only what these tests
-  use: run grants for `/bin/ps`, `/bin/sh`, `bash`, `/bin/bash` and `ln`, the
-  temp roots, and the `DENO_DIR` and `DYFJ_WORKBENCH_CONTEXT_TOKENS` env
-  names. Product behavior is unchanged.
+  directory instead of the working tree, and create symlinks with `ln -s`. The
+  integration lane's `Deno.test` invocation gains only what these tests use:
+  run grants for `/bin/ps`, `/bin/sh`, `bash`, `/bin/bash` and `ln`, the temp
+  roots, and the `DENO_DIR` and `DYFJ_WORKBENCH_CONTEXT_TOKENS` env names. The
+  aggregate gate now forwards a caller's `DENO_DIR` to its lanes, and the
+  integration lane passes it on to its children; when it is unset, the
+  launcher tests fall back to Deno's own per-platform cache (`~/.cache/deno`
+  off macOS) instead of the macOS path they used everywhere. Product behavior
+  is unchanged.
 
 - **Twelve more prototype test files run on `Deno.test` instead of Vitest**:
   `model-response-modes`, `runtime-sigint`, `workbench-events`, `secrets`,

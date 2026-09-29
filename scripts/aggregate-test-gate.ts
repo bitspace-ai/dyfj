@@ -60,11 +60,14 @@ export const REQUIRED_CHECK_IDS: readonly string[] = [
   "receipt.schema",
 ];
 
-const inheritedEnvironmentNames = [
+export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
   "PATH",
   "HOME",
   "CARGO_HOME",
   "RUSTUP_HOME",
+  // A caller's Deno cache, so nested Deno processes in the lanes reuse it
+  // instead of fetching modules again.
+  "DENO_DIR",
 ];
 
 // Subject and release-range bindings supplied by CI (or an operator) are the
@@ -129,7 +132,7 @@ function readOptionalEnv(name: string): string | undefined {
 
 function safeEnvironment(): Record<string, string> {
   return Object.fromEntries(
-    inheritedEnvironmentNames.flatMap((name) => {
+    INHERITED_ENVIRONMENT_NAMES.flatMap((name) => {
       const value = Deno.env.get(name);
       return value === undefined ? [] : [[name, value]];
     }),
@@ -431,7 +434,7 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "test",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DYFJ_AGGREGATE_SENTINEL,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_DIR,DYFJ_AGGREGATE_SENTINEL,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
         "--allow-read=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         `--allow-run=${denoExecutable},ln,git,/bin/bash`,
