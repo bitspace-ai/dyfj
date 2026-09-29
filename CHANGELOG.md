@@ -165,6 +165,25 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The ACP client, session-map, external-agent runtime and ACP runner tests
+  run on `Deno.test` instead of Vitest**, with every case kept. Each file is
+  split by tier: the pure cases stay in `acp-client.test.ts` (22),
+  `acp-session-map.test.ts` (30) and `external-agent-runtime.test.ts` (12) in
+  `test.unit`, and the cases that spawn the ACP fixture agent, read the
+  process environment or build symlinks move to `*.integration.test.ts` (71,
+  7 and 78). `acp-runner.integration.test.ts` moves from Vitest to the
+  integration lane's `Deno.test` invocation. The runtime tests no longer
+  mock `kernel/ids.ts` and `store/sessions.ts`; each test injects a
+  `MemoryStore` and injects write failures through the journal it hands the
+  runtime. That invocation now points `TMPDIR` at a directory of its own,
+  removed afterwards, and grants read and write on it alone. It also gains run
+  grants for `bash` and `/bin/bash`, `--allow-sys=uid` (the Codex profile
+  builder checks directory ownership), and the env names the ACP tests read or
+  set: `DENO_DIR`, `ACP_FIXTURE_AMBIENT_VALUE`, `ANTHROPIC_API_KEY`,
+  `DYFJ_MEMORY_MCP_TOKEN`, `SSH_AUTH_SOCK`, `DYFJ_NODE_PATH`,
+  `DYFJ_CODEX_TOOLCHAIN_PATH` and `DYFJ_CODEX_RUSTUP_HOME`. Product behavior
+  is unchanged.
+
 - **The `dyfj` client's turn code moved out of `src/cli.ts`, which is now the
   interactive REPL only.** The turn request and socket turn with its
   cancellation (`src/cli/turn-client.ts`), the interactive mid-turn approval
@@ -710,6 +729,13 @@ README are tracked separately in its Revision history section.
   HTTP-era name: `WorkbenchHttpRuntime` is now `TurnRuntime`.
 
 ### Fixed
+
+- **An interrupted ACP test run no longer leaves files in the working tree**:
+  the ACP client, session-map and external-agent runtime tests created their
+  pid files, method logs and scratch homes in `prototype/`, so a run stopped
+  mid-test left them behind, where a broad `git add` could commit them. They
+  now come from the system temp directory, and each test opens its cleanup
+  `try` as soon as the file exists.
 
 - **ACP agent stdout cancellation is handled cleanly**: when the ACP client
   closes its connection after the agent process exits but before the agent's
