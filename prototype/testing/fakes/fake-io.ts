@@ -1,9 +1,9 @@
-// Test fake for the CLI's terminal I/O (`Io` in `src/cli.ts`).
+// Test fake for the CLI's terminal I/O (`Io` in `src/cli/io.ts`).
 //
 // Output is captured per stream; `readLine` answers from a scripted queue
 // and records every prompt it was asked, returning null (EOF) once the queue
 // is empty or when the read's signal is already aborted.
-import type { Io } from "../../src/cli.ts";
+import type { Io } from "../../src/cli/io.ts";
 
 export interface FakeIoOptions {
   errIsTerminal?: boolean;

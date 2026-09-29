@@ -4,8 +4,8 @@
     "prototype/src/server/main.ts -> prototype/src/runtime-sigint.ts"
   ],
   "cli": [
-    "prototype/src/cli.ts -> prototype/src/mcp-net-grants.ts",
-    "prototype/src/cli.ts -> prototype/src/memory-search.ts"
+    "prototype/src/cli/launcher/grants.ts -> prototype/src/memory-search.ts",
+    "prototype/src/cli/launcher/runtime.ts -> prototype/src/mcp-net-grants.ts"
   ],
   "dynamic": [],
   "env": [],

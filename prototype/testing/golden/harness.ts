@@ -6,7 +6,7 @@
  *   golden model rows seeded against a loopback model server);
  * - the engine server (`src/server/main.ts`) as a child process on a temp
  *   socket, one per server profile (see profiles.ts);
- * - the `dyfj` CLI (`src/cli.ts`) as a child process with piped stdin, so it
+ * - the `dyfj` CLI (`src/cli/main.ts`) as a child process with piped stdin, so it
  *   is non-interactive (`exec`, `exec --json`, scripted REPL);
  * - a raw JSON-RPC client over the socket (rpc-client.ts).
  *
@@ -364,7 +364,7 @@ function spawnCli(
       "--allow-write",
       `--allow-run=${[...launch.cli.run, Deno.execPath()].join(",")}`,
       `--allow-net=unix:${socket}`,
-      `${prototypeRoot}/src/cli.ts`,
+      `${prototypeRoot}/src/cli/main.ts`,
       ...args,
       "--socket",
       socket,

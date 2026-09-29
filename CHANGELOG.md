@@ -165,6 +165,25 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `dyfj` client's entrypoint is `prototype/src/cli/main.ts`.** Argument
+  parsing, config resolution and help (`src/cli/args.ts`), the client's
+  terminal and socket ports (`src/cli/io.ts`), the `models`, `sessions`,
+  `status`, `stop` and `start` subcommands (`src/cli/commands/`), and the
+  runtime launch with its permission-grant computation (`src/cli/launcher/`)
+  moved out of `src/cli.ts`, which keeps the interactive REPL and the one-shot
+  turn and no longer runs as a program: `deno run src/cli.ts` does nothing.
+  `deno task compile-cli`, the `dyfj` launcher (`--parse-check`, the status
+  probe and the `deno run` route) and the golden harness run the new
+  entrypoint. The launcher now treats the compiled binary as stale when it is
+  older than any client source (`src/cli.ts` or a non-test module under
+  `src/cli/`), not only `src/cli.ts`, so an edit to a moved module still
+  routes through `deno run` until the binary is rebuilt. Commands, flags, exit
+  codes, output and the runtime's launch grants are unchanged; the golden
+  suite passes with no snapshot diff. The tests for the moved modules run on
+  `Deno.test` beside them, the real-socket `stop` and `status` cases in the
+  integration lane; the four launcher-grant cases that build symlink fixtures
+  stay on Vitest in `src/cli/launcher/grants.platform.test.ts`.
+
 - **Friction and Linear are extensions too; the core no longer imports any
   extension.** `friction/post` now comes from `prototype/src/extensions/friction/`
   and the Linear integration from `extensions/linear/`; `src/friction.ts`,

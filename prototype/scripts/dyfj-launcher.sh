@@ -15,7 +15,8 @@ SOCKET_FLAG_VALUE=""
 # interpolated into that list as `unix:<path>`. A comma inside the path would
 # smuggle extra grant entries past the UDS-only boundary, so every source
 # (--socket, DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME) is rejected here before any
-# grant is built — the same rule cli.ts applies to the runtime child's grant.
+# grant is built — the same rule src/cli/launcher/grants.ts applies to the
+# runtime child's grant.
 reject_grant_delimiters() {
   case "$1" in
     *,*)
@@ -113,7 +114,7 @@ LAUNCHER_SAW_PROMPT=0
 LAUNCHER_ARGS_INVALID=0
 SOCKET_FLAG_SET=0
 
-# Flags that consume the next argument — mirrors cli.ts's VALUE_FLAGS so the
+# Flags that consume the next argument — mirrors src/cli/args.ts's VALUE_FLAGS so the
 # parse below never reads a flag VALUE as launcher control input.
 is_value_flag() {
   case "$1" in
@@ -234,7 +235,7 @@ client_parse_check() {
     DYFJ_PROTOTYPE_ROOT="$proto" deno run \
       --allow-env="$(cli_env_allowlist)" \
       --allow-read \
-      "${proto}/src/cli.ts" \
+      "${proto}/src/cli/main.ts" \
       --parse-check ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} >/dev/null 2>&1
   fi
 }
@@ -296,7 +297,7 @@ probe_runtime() {
       --allow-write \
       --allow-run=deno \
       --allow-net="unix:${sock}" \
-      "${proto}/src/cli.ts" \
+      "${proto}/src/cli/main.ts" \
       ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
   fi
 }
@@ -481,16 +482,21 @@ compiled_bin() {
   fi
 }
 
+# The binary is stale when any client source is newer than it: the REPL
+# module (src/cli.ts) or a module under src/cli/, the entrypoint included.
+# Test files are not compiled in, so they never mark it stale.
 compiled_is_fresh() {
   local compiled proto source launcher
   compiled="$(compiled_bin)"
   proto="$(prototype_root)"
-  source="$proto/src/cli.ts"
   launcher="$proto/scripts/dyfj-launcher.sh"
   [[ -x "$compiled" ]] || return 1
-  if [[ -e "$source" && ! "$compiled" -nt "$source" ]]; then
-    return 1
-  fi
+  for source in "$proto/src/cli.ts" "$proto"/src/cli/*.ts "$proto"/src/cli/*/*.ts; do
+    [[ "$source" == *.test.ts ]] && continue
+    if [[ -e "$source" && ! "$compiled" -nt "$source" ]]; then
+      return 1
+    fi
+  done
   if [[ -e "$launcher" && ! "$compiled" -nt "$launcher" ]]; then
     return 1
   fi
@@ -620,7 +626,7 @@ run_deno_cli() {
     --allow-write \
     --allow-run=deno \
     --allow-net="unix:${sock}" \
-    "${proto}/src/cli.ts" \
+    "${proto}/src/cli/main.ts" \
     "$@"
 }
 

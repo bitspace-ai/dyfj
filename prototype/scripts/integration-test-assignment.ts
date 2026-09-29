@@ -4,6 +4,8 @@ export const integrationTestAssignments = {
     "src/acp-runner.integration.test.ts",
   ],
   deno: [
+    "src/cli/commands/status.integration.test.ts",
+    "src/cli/commands/stop.integration.test.ts",
     "src/config/env.integration.test.ts",
     "src/engine/build-context.integration.test.ts",
     "src/mcp-conformance.integration.test.ts",
