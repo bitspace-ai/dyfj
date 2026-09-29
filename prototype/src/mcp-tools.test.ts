@@ -1,4 +1,14 @@
-import { describe, expect, test, vi } from "vitest";
+import {
+  assertEquals,
+  assertFalse,
+  assertObjectMatch,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+  fail,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import { assertSpyCalls, spy } from "@std/testing/mock";
 import saveIssueSchema from "./extensions/linear/linear-save-issue-schema.fixture.ts";
 import { buildLinearIssueCreationCommand } from "./extensions/linear/mod.ts";
 import { parseMcpServersConfig, type SecretsConfig } from "./config/mod.ts";
@@ -15,6 +25,20 @@ import {
 import { createCommandRegistry, invokeCommandWithEvent } from "./tools/mod.ts";
 
 const CONFIG_PATH = "/private/operator/.dyfj/config.toml";
+
+type McpDeps = NonNullable<Parameters<typeof buildExternalMcpCommands>[2]>;
+type CallPort = NonNullable<McpDeps["call"]>;
+type DiscoverPort = NonNullable<McpDeps["discover"]>;
+
+// Recording ports the test expects to stay unused. Like a bare mock, each
+// returns nothing if it is called; the assertions on its calls catch that.
+function unusedCall() {
+  return spy((() => undefined) as unknown as CallPort);
+}
+
+function unusedDiscover() {
+  return spy((() => undefined) as unknown as DiscoverPort);
+}
 
 // The Linear extension's issue-creation builder, as the composition root
 // passes it to discovery.
@@ -64,7 +88,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
 }
 
 describe("external MCP command projection", () => {
-  test("never exposes generic create_issue without a bounded binding", async () => {
+  it("never exposes generic create_issue without a bounded binding", async () => {
     const table = serverTable({
       tools: [{
         name: "create_issue",
@@ -72,7 +96,7 @@ describe("external MCP command projection", () => {
         approval: "ask",
       }],
     });
-    const call = vi.fn();
+    const call = unusedCall();
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(table, CONFIG_PATH),
       { linear_mcp: "secret-value" },
@@ -85,8 +109,8 @@ describe("external MCP command projection", () => {
         call,
       },
     );
-    expect(built.commands).toEqual([]);
-    expect(built.diagnostics).toEqual([
+    assertEquals(built.commands, []);
+    assertEquals(built.diagnostics, [
       {
         serverId: "linear",
         status: "withheld",
@@ -100,63 +124,69 @@ describe("external MCP command projection", () => {
         toolCount: 0,
       },
     ]);
-    expect(call).not.toHaveBeenCalled();
+    assertSpyCalls(call, 0);
   });
 
-  test.each(["create_issue", "save_issue"])(
-    "withholds unserializable %s without losing another tool",
-    async (upstreamTool) => {
-      const schema: Record<string, unknown> = { type: "object" };
-      schema.properties = { optional: schema };
-      const call = vi.fn();
-      const built = await buildExternalMcpCommands(
-        parseMcpServersConfig(
-          linearCreationTable({
-            tools: [
-              { name: upstreamTool, effect: "write_external", approval: "ask" },
-              { name: "get_issue", effect: "read", approval: "allow" },
-            ],
-          }),
-          CONFIG_PATH,
-        ),
-        { linear_mcp: "secret-value" },
-        {
-          ...WITH_LINEAR,
-          discover: async () => ({
+  for (const upstreamTool of ["create_issue", "save_issue"] as const) {
+    it(
+      `withholds unserializable ${upstreamTool} without losing another tool`,
+      async () => {
+        const schema: Record<string, unknown> = { type: "object" };
+        schema.properties = { optional: schema };
+        const call = unusedCall();
+        const built = await buildExternalMcpCommands(
+          parseMcpServersConfig(
+            linearCreationTable({
+              tools: [
+                {
+                  name: upstreamTool,
+                  effect: "write_external",
+                  approval: "ask",
+                },
+                { name: "get_issue", effect: "read", approval: "allow" },
+              ],
+            }),
+            CONFIG_PATH,
+          ),
+          { linear_mcp: "secret-value" },
+          {
+            ...WITH_LINEAR,
+            discover: async () => ({
+              revision: "2026-07-28",
+              tools: [
+                { name: upstreamTool, inputSchema: schema },
+                {
+                  name: "get_issue",
+                  inputSchema: { type: "object", properties: {} },
+                },
+              ],
+            }),
+            call,
+          },
+        );
+        assertEquals(built.commands.map((command) => command.id), [
+          "mcp.linear.get_issue",
+        ]);
+        assertEquals(built.diagnostics, [
+          {
+            serverId: "linear",
+            status: "withheld",
+            tool: upstreamTool,
+            reason: "unsupported schema",
+          },
+          {
+            serverId: "linear",
+            status: "ready",
             revision: "2026-07-28",
-            tools: [
-              { name: upstreamTool, inputSchema: schema },
-              {
-                name: "get_issue",
-                inputSchema: { type: "object", properties: {} },
-              },
-            ],
-          }),
-          call,
-        },
-      );
-      expect(built.commands.map((command) => command.id)).toEqual([
-        "mcp.linear.get_issue",
-      ]);
-      expect(built.diagnostics).toEqual([
-        {
-          serverId: "linear",
-          status: "withheld",
-          tool: upstreamTool,
-          reason: "unsupported schema",
-        },
-        {
-          serverId: "linear",
-          status: "ready",
-          revision: "2026-07-28",
-          toolCount: 1,
-        },
-      ]);
-      expect(call).not.toHaveBeenCalled();
-    },
-  );
+            toolCount: 1,
+          },
+        ]);
+        assertSpyCalls(call, 0);
+      },
+    );
+  }
 
-  test("withholds bounded create_issue on a discovered schema mismatch", async () => {
+  it("withholds bounded create_issue on a discovered schema mismatch", async () => {
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
@@ -172,11 +202,11 @@ describe("external MCP command projection", () => {
             },
           }],
         }),
-        call: vi.fn(),
+        call: unusedCall(),
       },
     );
-    expect(built.commands).toEqual([]);
-    expect(built.diagnostics).toEqual([
+    assertEquals(built.commands, []);
+    assertEquals(built.diagnostics, [
       {
         serverId: "linear",
         status: "withheld",
@@ -192,40 +222,44 @@ describe("external MCP command projection", () => {
     ]);
   });
 
-  test.each(
-    [
+  for (
+    const [name, tools, reason] of [
       ["missing discovery", [], "tool not discovered"],
       ["invalid schema", [{
         name: "create_issue",
         inputSchema: "untrusted schema details",
       }], "unsupported schema"],
-    ] as const,
-  )("withholds with a fixed reason for %s", async (_name, tools, reason) => {
-    const call = vi.fn();
-    const built = await buildExternalMcpCommands(
-      parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
-      { linear_mcp: "secret-value" },
-      {
-        ...WITH_LINEAR,
-        discover: async () => ({ revision: "2026-07-28", tools: [...tools] }),
-        call,
-      },
-    );
-    expect(built.commands).toEqual([]);
-    expect(built.diagnostics[0]).toEqual({
-      serverId: "linear",
-      status: "withheld",
-      tool: "create_issue",
-      reason,
+    ] as const
+  ) {
+    it(`withholds with a fixed reason for ${name}`, async () => {
+      const call = unusedCall();
+      const built = await buildExternalMcpCommands(
+        parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
+        { linear_mcp: "secret-value" },
+        {
+          ...WITH_LINEAR,
+          discover: async () => ({ revision: "2026-07-28", tools: [...tools] }),
+          call,
+        },
+      );
+      assertEquals(built.commands, []);
+      assertEquals(built.diagnostics[0], {
+        serverId: "linear",
+        status: "withheld",
+        tool: "create_issue",
+        reason,
+      });
+      assertFalse(
+        (JSON.stringify(built.diagnostics)).includes(
+          "untrusted schema details",
+        ),
+      );
+      assertSpyCalls(call, 0);
     });
-    expect(JSON.stringify(built.diagnostics)).not.toContain(
-      "untrusted schema details",
-    );
-    expect(call).not.toHaveBeenCalled();
-  });
+  }
 
-  test("reserves create_issue on a non-Linear server without a binding", async () => {
-    const call = vi.fn();
+  it("reserves create_issue on a non-Linear server without a binding", async () => {
+    const call = unusedCall();
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(
         serverTable({
@@ -249,17 +283,17 @@ describe("external MCP command projection", () => {
         call,
       },
     );
-    expect(built.commands).toEqual([]);
-    expect(built.diagnostics[0]).toEqual({
+    assertEquals(built.commands, []);
+    assertEquals(built.diagnostics[0], {
       serverId: "other",
       status: "withheld",
       tool: "create_issue",
       reason: "binding missing",
     });
-    expect(call).not.toHaveBeenCalled();
+    assertSpyCalls(call, 0);
   });
 
-  test("registers save_issue only as bounded create_issue with a binding", async () => {
+  it("registers save_issue only as bounded create_issue with a binding", async () => {
     for (const withBinding of [false, true]) {
       const overrides = {
         tools: [{
@@ -268,7 +302,7 @@ describe("external MCP command projection", () => {
           approval: "ask",
         }],
       };
-      const call = vi.fn();
+      const call = unusedCall();
       const built = await buildExternalMcpCommands(
         parseMcpServersConfig(
           withBinding ? linearCreationTable(overrides) : serverTable(overrides),
@@ -284,29 +318,29 @@ describe("external MCP command projection", () => {
           call,
         },
       );
-      expect(built.commands.map((c) => c.id)).toEqual(
+      assertEquals(
+        built.commands.map((c) => c.id),
         withBinding ? ["mcp.linear.create_issue"] : [],
       );
-      expect(externalMcpCommandsForTransport(built.commands, "remote")).toEqual(
+      assertEquals(
+        externalMcpCommandsForTransport(built.commands, "remote"),
         [],
       );
       if (withBinding) {
-        expect(built.commands[0].inputSchema.properties).not.toHaveProperty(
-          "id",
-        );
-        expect(built.commands[0].permission.defaultDecision).toBe("ask");
+        assertFalse("id" in built.commands[0].inputSchema.properties!);
+        assertStrictEquals(built.commands[0].permission.defaultDecision, "ask");
       } else {
-        expect(built.diagnostics[0]).toMatchObject({
+        assertObjectMatch(built.diagnostics[0], {
           tool: "save_issue",
           reason: "binding missing",
         });
       }
-      expect(call).not.toHaveBeenCalled();
+      assertSpyCalls(call, 0);
     }
   });
 
-  test("withholds bounded creation when discovery gets no issue-creation builder", async () => {
-    const call = vi.fn();
+  it("withholds bounded creation when discovery gets no issue-creation builder", async () => {
+    const call = unusedCall();
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(
         linearCreationTable({
@@ -333,8 +367,8 @@ describe("external MCP command projection", () => {
         call,
       },
     );
-    expect(built.commands.map((c) => c.id)).toEqual(["mcp.linear.get_issue"]);
-    expect(built.diagnostics).toEqual([
+    assertEquals(built.commands.map((c) => c.id), ["mcp.linear.get_issue"]);
+    assertEquals(built.diagnostics, [
       {
         serverId: "linear",
         status: "withheld",
@@ -348,10 +382,10 @@ describe("external MCP command projection", () => {
         toolCount: 1,
       },
     ]);
-    expect(call).not.toHaveBeenCalled();
+    assertSpyCalls(call, 0);
   });
 
-  test("registers the bounded projection when binding and schema match", async () => {
+  it("registers the bounded projection when binding and schema match", async () => {
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
@@ -379,46 +413,45 @@ describe("external MCP command projection", () => {
             },
           }],
         }),
-        call: vi.fn(),
+        call: unusedCall(),
       },
     );
-    expect(built.commands.map((command) => command.id)).toEqual([
+    assertEquals(built.commands.map((command) => command.id), [
       "mcp.linear.create_issue",
     ]);
-    expect(built.commands[0].inputSchema.properties).not.toHaveProperty("team");
-    expect(built.commands[0].permission).toMatchObject({
+    assertFalse("team" in built.commands[0].inputSchema.properties!);
+    assertObjectMatch(built.commands[0].permission, {
       defaultDecision: "ask",
       network: "configured-external",
     });
-    expect(built.commands[0].minimumClearance).toBe("loopback");
-    expect(externalMcpCommandsForTransport(built.commands, "remote")).toEqual(
-      [],
-    );
-    expect(externalMcpCommandsForTransport(built.commands, "loopback")).toEqual(
+    assertStrictEquals(built.commands[0].minimumClearance, "loopback");
+    assertEquals(externalMcpCommandsForTransport(built.commands, "remote"), []);
+    assertEquals(
+      externalMcpCommandsForTransport(built.commands, "loopback"),
       built.commands,
     );
-    expect(built.diagnostics[0]).toMatchObject({ toolCount: 1 });
+    assertObjectMatch(built.diagnostics[0], { toolCount: 1 });
   });
 
-  test("an inherited credential property is unavailable", async () => {
+  it("an inherited credential property is unavailable", async () => {
     const credentials = Object.create({ linear_mcp: "inherited-secret" });
-    const discover = vi.fn();
+    const discover = unusedDiscover();
     const result = await buildExternalMcpCommands(
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       credentials,
       { ...WITH_LINEAR, discover },
     );
-    expect(result.commands).toEqual([]);
-    expect(result.diagnostics).toEqual([{
+    assertEquals(result.commands, []);
+    assertEquals(result.diagnostics, [{
       serverId: "linear",
       status: "unavailable",
       reason: "credential unavailable",
     }]);
-    expect(discover).not.toHaveBeenCalled();
+    assertSpyCalls(discover, 0);
   });
 
-  test("registers only the configured and discovered intersection", async () => {
-    const call = vi.fn(async () => ({
+  it("registers only the configured and discovered intersection", async () => {
+    const call = spy(async () => ({
       content: [{ type: "text", text: "issue" }],
       isError: false,
     }));
@@ -459,21 +492,20 @@ describe("external MCP command projection", () => {
       },
     );
 
-    expect(result.diagnostics).toEqual([{
+    assertEquals(result.diagnostics, [{
       serverId: "linear",
       status: "ready",
       revision: "2026-07-28",
       toolCount: 1,
     }]);
-    expect(result.commands.map((command: { id: string }) => command.id))
-      .toEqual([
-        "mcp.linear.get_issue",
-      ]);
-    expect(result.commands[0]?.permission).toMatchObject({
+    assertEquals(result.commands.map((command: { id: string }) => command.id), [
+      "mcp.linear.get_issue",
+    ]);
+    assertObjectMatch(result.commands[0]?.permission, {
       defaultDecision: "allow",
       network: "configured-external",
     });
-    expect(result.commands[0]?.minimumClearance).toBe("loopback");
+    assertStrictEquals(result.commands[0]?.minimumClearance, "loopback");
 
     const registry = createCommandRegistry(result.commands);
     const events: Record<string, unknown>[] = [];
@@ -500,30 +532,31 @@ describe("external MCP command projection", () => {
       { loopback: true },
     );
 
-    expect(invocation).toMatchObject({
+    assertObjectMatch(invocation, {
       decision: "allow",
       isError: false,
       authzBasis: "policy:allow:operator-configured-external-read",
     });
-    expect(call).toHaveBeenCalledTimes(1);
-    expect(String(invocation.isError ? "" : invocation.result)).toContain(
+    assertSpyCalls(call, 1);
+    assertStringIncludes(
+      String(invocation.isError ? "" : invocation.result),
       "<untrusted-mcp-result>",
     );
-    expect(events[0]).toMatchObject({
+    assertObjectMatch(events[0], {
       tool_name: "mcp.linear.get_issue",
       tool_arguments:
         '{"id":"[redacted]","labels":"[redacted]","filter":"[redacted]"}',
       tool_result: "[redacted]",
       span_kind: "client",
     });
-    expect(String(events[0]?.content)).toContain('"server":"linear"');
-    expect(String(events[0]?.content)).toContain('"revision":"2026-07-28"');
-    expect(JSON.stringify(events[0])).not.toContain("secret-value");
-    expect(JSON.stringify(events[0])).not.toContain("mcp.linear.app");
+    assertStringIncludes(String(events[0]?.content), '"server":"linear"');
+    assertStringIncludes(String(events[0]?.content), '"revision":"2026-07-28"');
+    assertFalse((JSON.stringify(events[0])).includes("secret-value"));
+    assertFalse((JSON.stringify(events[0])).includes("mcp.linear.app"));
   });
 
-  test("write tools always ask and preserve one operator-approved call", async () => {
-    const call = vi.fn(async () => ({
+  it("write tools always ask and preserve one operator-approved call", async () => {
+    const call = spy(async () => ({
       content: [{ type: "text", text: "created" }],
       isError: false,
     }));
@@ -552,7 +585,7 @@ describe("external MCP command projection", () => {
       },
     );
     const registry = createCommandRegistry(discovered.commands);
-    const approve = vi.fn(async () => ({ decision: "approve" as const }));
+    const approve = spy(async () => ({ decision: "approve" as const }));
     const result = await invokeCommandWithEvent(
       registry,
       {
@@ -569,31 +602,31 @@ describe("external MCP command projection", () => {
       approve,
       { permissionLevel: "operator", loopback: true },
     );
-    expect(result).toMatchObject({
+    assertObjectMatch(result, {
       decision: "allow",
       authzBasis: "policy:allow:operator-approved",
     });
-    expect(approve).toHaveBeenCalledTimes(1);
-    expect(call).toHaveBeenCalledTimes(1);
+    assertSpyCalls(approve, 1);
+    assertSpyCalls(call, 1);
   });
 
-  test("an unavailable credential disables only its server with a value-free diagnostic", async () => {
-    const discover = vi.fn();
+  it("an unavailable credential disables only its server with a value-free diagnostic", async () => {
+    const discover = unusedDiscover();
     const result = await buildExternalMcpCommands(
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       {},
-      { ...WITH_LINEAR, discover, call: vi.fn() },
+      { ...WITH_LINEAR, discover, call: unusedCall() },
     );
-    expect(result.commands).toEqual([]);
-    expect(result.diagnostics).toEqual([{
+    assertEquals(result.commands, []);
+    assertEquals(result.diagnostics, [{
       serverId: "linear",
       status: "unavailable",
       reason: "credential unavailable",
     }]);
-    expect(discover).not.toHaveBeenCalled();
+    assertSpyCalls(discover, 0);
   });
 
-  test("a call failure becomes one fixed tool error and one redacted receipt", async () => {
+  it("a call failure becomes one fixed tool error and one redacted receipt", async () => {
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
@@ -634,54 +667,61 @@ describe("external MCP command projection", () => {
       undefined,
       { loopback: true },
     );
-    expect(result).toEqual({
+    assertEquals(result, {
       decision: "allow",
       authzBasis: "policy:allow:operator-configured-external-read",
       isError: true,
       reason: "External MCP tool call failed",
     });
-    expect(events[0]).toMatchObject({
+    assertObjectMatch(events[0], {
       action: "invoke",
       tool_is_error: true,
       tool_result: "External MCP tool call failed",
     });
-    expect(String(events[0]?.content)).toContain('"outcome":"error"');
-    expect(JSON.stringify(events[0])).not.toContain("secret-value");
-    expect(JSON.stringify(result)).not.toContain("secret-value");
+    assertStringIncludes(String(events[0]?.content), '"outcome":"error"');
+    assertFalse((JSON.stringify(events[0])).includes("secret-value"));
+    assertFalse((JSON.stringify(result)).includes("secret-value"));
   });
 });
 
 describe("MCP HTTP containment", () => {
-  test("preserves supported additionalProperties semantics", () => {
+  it("preserves supported additionalProperties semantics", () => {
     const omitted = sanitizeMcpInputSchema({
       type: "object",
       properties: { query: { type: "string" } },
     });
-    expect(omitted.additionalProperties).toBeUndefined();
-    expect(
+    assertStrictEquals(omitted.additionalProperties, undefined);
+    assertStrictEquals(
       sanitizeMcpInputSchema({
         type: "object",
         additionalProperties: true,
       }).additionalProperties,
-    ).toBe(true);
-    expect(() =>
-      sanitizeMcpInputSchema({
-        type: "object",
-        additionalProperties: { type: "string" },
-      })
-    ).toThrow("schema-valued additionalProperties are not supported");
+      true,
+    );
+    assertThrows(
+      () =>
+        sanitizeMcpInputSchema({
+          type: "object",
+          additionalProperties: { type: "string" },
+        }),
+      Error,
+      "schema-valued additionalProperties are not supported",
+    );
   });
 
-  test("retains an own __proto__ property without invoking a prototype setter", () => {
+  it("retains an own __proto__ property without invoking a prototype setter", () => {
     const schema = sanitizeMcpInputSchema(JSON.parse(
       '{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"]}',
     ));
-    expect(Object.hasOwn(schema.properties ?? {}, "__proto__")).toBe(true);
-    expect(Object.getPrototypeOf(schema.properties ?? {})).toBeNull();
+    assertStrictEquals(
+      Object.hasOwn(schema.properties ?? {}, "__proto__"),
+      true,
+    );
+    assertStrictEquals(Object.getPrototypeOf(schema.properties ?? {}), null);
   });
 
-  test("retains only configured tools from an aggregated discovery result", () => {
-    expect(
+  it("retains only configured tools from an aggregated discovery result", () => {
+    assertEquals(
       retainConfiguredMcpTools(
         [{ name: "keep" }, { name: "also_keep" }],
         [
@@ -690,11 +730,12 @@ describe("MCP HTTP containment", () => {
           { name: "keep", inputSchema: { type: "object" } },
         ],
       ).map((tool: { name: string }) => tool.name),
-    ).toEqual(["keep"]);
+      ["keep"],
+    );
   });
 
-  test("preserves integer schemas and rejects fractional arguments locally", async () => {
-    const call = vi.fn();
+  it("preserves integer schemas and rejects fractional arguments locally", async () => {
+    const call = unusedCall();
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
@@ -715,7 +756,8 @@ describe("MCP HTTP containment", () => {
         call,
       },
     );
-    expect(built.commands[0].inputSchema.properties?.count?.type).toBe(
+    assertStrictEquals(
+      built.commands[0].inputSchema.properties?.count?.type,
       "integer",
     );
     const result = await invokeCommandWithEvent(
@@ -734,29 +776,33 @@ describe("MCP HTTP containment", () => {
       undefined,
       { loopback: true },
     );
-    expect(result).toMatchObject({ decision: "deny", isError: true });
-    expect(call).not.toHaveBeenCalled();
+    assertObjectMatch(result, { decision: "deny", isError: true });
+    assertSpyCalls(call, 0);
   });
 
-  test("accepts only the observed pinned protocol revision", () => {
-    const matching = vi.fn(() => "2026-07-28");
-    expect(
+  it("accepts only the observed pinned protocol revision", () => {
+    const matching = spy(() => "2026-07-28");
+    assertStrictEquals(
       requireNegotiatedMcpRevision({
         getNegotiatedProtocolVersion: matching,
       }),
-    ).toBe("2026-07-28");
-    expect(matching).toHaveBeenCalledTimes(1);
+      "2026-07-28",
+    );
+    assertSpyCalls(matching, 1);
 
     for (const revision of [undefined, "unsupported-2020-01-01"]) {
-      expect(() =>
-        requireNegotiatedMcpRevision({
-          getNegotiatedProtocolVersion: () => revision,
-        })
-      ).toThrow("external MCP protocol revision mismatch");
+      assertThrows(
+        () =>
+          requireNegotiatedMcpRevision({
+            getNegotiatedProtocolVersion: () => revision,
+          }),
+        Error,
+        "external MCP protocol revision mismatch",
+      );
     }
   });
 
-  test("withholds loopback-only commands from remote turns", () => {
+  it("withholds loopback-only commands from remote turns", () => {
     const loopbackOnly = {
       id: "mcp.linear.get_issue",
       minimumClearance: "loopback",
@@ -765,21 +811,23 @@ describe("MCP HTTP containment", () => {
       id: "mcp.public.search",
       minimumClearance: "remote",
     } as never;
-    expect(
+    assertEquals(
       externalMcpCommandsForTransport(
         [loopbackOnly, remoteEligible],
         "remote",
       ).map((command: { id: string }) => command.id),
-    ).toEqual(["mcp.public.search"]);
-    expect(
+      ["mcp.public.search"],
+    );
+    assertEquals(
       externalMcpCommandsForTransport(
         [loopbackOnly, remoteEligible],
         "loopback",
       ).map((command: { id: string }) => command.id),
-    ).toEqual(["mcp.linear.get_issue", "mcp.public.search"]);
+      ["mcp.linear.get_issue", "mcp.public.search"],
+    );
   });
 
-  test("derives unique launch grants without retaining endpoints", () => {
+  it("derives unique launch grants without retaining endpoints", () => {
     const configs = [
       ...parseMcpServersConfig(serverTable(), CONFIG_PATH),
       ...parseMcpServersConfig(
@@ -791,7 +839,7 @@ describe("MCP HTTP containment", () => {
         CONFIG_PATH,
       ),
     ];
-    expect(mcpServerNetGrants(configs)).toEqual([
+    assertEquals(mcpServerNetGrants(configs), [
       "mcp.linear.app:443",
       "127.0.0.1:43137",
     ]);
@@ -799,26 +847,35 @@ describe("MCP HTTP containment", () => {
 });
 
 describe("validateDoltPort & buildDoltAllowNetGrant", () => {
-  test("accepts valid boundary and ordinary port numbers and strings", () => {
-    expect(validateDoltPort()).toBe(3306);
-    expect(validateDoltPort(undefined)).toBe(3306);
-    expect(validateDoltPort(null)).toBe(3306);
-    expect(validateDoltPort("3306")).toBe(3306);
-    expect(validateDoltPort("3316")).toBe(3316);
-    expect(validateDoltPort("1")).toBe(1);
-    expect(validateDoltPort("65535")).toBe(65535);
-    expect(validateDoltPort(3306)).toBe(3306);
-    expect(validateDoltPort(1)).toBe(1);
-    expect(validateDoltPort(65535)).toBe(65535);
+  it("accepts valid boundary and ordinary port numbers and strings", () => {
+    assertStrictEquals(validateDoltPort(), 3306);
+    assertStrictEquals(validateDoltPort(undefined), 3306);
+    assertStrictEquals(validateDoltPort(null), 3306);
+    assertStrictEquals(validateDoltPort("3306"), 3306);
+    assertStrictEquals(validateDoltPort("3316"), 3316);
+    assertStrictEquals(validateDoltPort("1"), 1);
+    assertStrictEquals(validateDoltPort("65535"), 65535);
+    assertStrictEquals(validateDoltPort(3306), 3306);
+    assertStrictEquals(validateDoltPort(1), 1);
+    assertStrictEquals(validateDoltPort(65535), 65535);
 
-    expect(buildDoltAllowNetGrant()).toBe("--allow-net=127.0.0.1:3306");
-    expect(buildDoltAllowNetGrant("3306")).toBe("--allow-net=127.0.0.1:3306");
-    expect(buildDoltAllowNetGrant("1")).toBe("--allow-net=127.0.0.1:1");
-    expect(buildDoltAllowNetGrant("65535")).toBe("--allow-net=127.0.0.1:65535");
-    expect(buildDoltAllowNetGrant(3316)).toBe("--allow-net=127.0.0.1:3316");
+    assertStrictEquals(buildDoltAllowNetGrant(), "--allow-net=127.0.0.1:3306");
+    assertStrictEquals(
+      buildDoltAllowNetGrant("3306"),
+      "--allow-net=127.0.0.1:3306",
+    );
+    assertStrictEquals(buildDoltAllowNetGrant("1"), "--allow-net=127.0.0.1:1");
+    assertStrictEquals(
+      buildDoltAllowNetGrant("65535"),
+      "--allow-net=127.0.0.1:65535",
+    );
+    assertStrictEquals(
+      buildDoltAllowNetGrant(3316),
+      "--allow-net=127.0.0.1:3316",
+    );
   });
 
-  test("rejects malformed, delimiter-bearing, signed, whitespace, and out-of-range ports", () => {
+  it("rejects malformed, delimiter-bearing, signed, whitespace, and out-of-range ports", () => {
     const invalidInputs = [
       // Delimiters / network injection attempts
       "3306,0.0.0.0",
@@ -866,23 +923,23 @@ describe("validateDoltPort & buildDoltAllowNetGrant", () => {
     ];
 
     for (const input of invalidInputs) {
-      expect(
+      assertThrows(
         () => validateDoltPort(input),
-        `expected validateDoltPort(${JSON.stringify(input)}) to throw`,
-      ).toThrow(
+        Error,
         "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+        `expected validateDoltPort(${JSON.stringify(input)}) to throw`,
       );
 
-      expect(
+      assertThrows(
         () => buildDoltAllowNetGrant(input),
-        `expected buildDoltAllowNetGrant(${JSON.stringify(input)}) to throw`,
-      ).toThrow(
+        Error,
         "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+        `expected buildDoltAllowNetGrant(${JSON.stringify(input)}) to throw`,
       );
     }
   });
 
-  test("rejection diagnostic is path-free and credential-free", () => {
+  it("rejection diagnostic is path-free and credential-free", () => {
     const sensitiveInputs = [
       "3306,SECRET_KEY_VALUE",
       "/private/keys/dolt:3306",
@@ -893,15 +950,16 @@ describe("validateDoltPort & buildDoltAllowNetGrant", () => {
     for (const input of sensitiveInputs) {
       try {
         buildDoltAllowNetGrant(input);
-        expect.unreachable("should have thrown");
+        fail("should have thrown");
       } catch (err: any) {
-        expect(err.message).toBe(
+        assertStrictEquals(
+          err.message,
           "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
         );
-        expect(err.message).not.toContain("SECRET_KEY_VALUE");
-        expect(err.message).not.toContain("/private/keys");
-        expect(err.message).not.toContain("op://");
-        expect(err.message).not.toContain("password123");
+        assertFalse(err.message.includes("SECRET_KEY_VALUE"));
+        assertFalse(err.message.includes("/private/keys"));
+        assertFalse(err.message.includes("op://"));
+        assertFalse(err.message.includes("password123"));
       }
     }
   });

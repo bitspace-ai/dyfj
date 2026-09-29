@@ -153,10 +153,15 @@ try {
     // Ungranted access throws instead of prompting, as it does in CI, so a
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
-    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE`,
-    `--allow-read=.,${mcpTestTempDir},${udsTestSocketDir}`,
-    `--allow-write=${mcpTestTempDir},${udsTestSocketDir}`,
-    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill`,
+    // The isolated Dolt fixture's own tests start throwaway fixtures: they
+    // read the fixture environment (TMPDIR, TEMP, TMP), the schema, and the
+    // system temp roots, create and remove temp roots there, and run `dolt`.
+    // The secrets resolver tests run `bash` and set one ambient variable
+    // (LEAKY_AMBIENT) to prove the resolver child does not inherit it.
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT`,
+    `--allow-read=.,../schema,/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir}`,
+    `--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir}`,
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,dolt,bash`,
     `--allow-net=${
       ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
     }`,
