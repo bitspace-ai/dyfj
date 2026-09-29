@@ -239,7 +239,7 @@ is its projection and the legacy `ToolDefinition` is deleted.
   `buildToolCatalog(ports, config, extensions)` (`tools/catalog.ts`) replaced
   the three separate registry assemblies: the runtime's per-turn toolset in
   the former `workbench.ts`, and the `tools/list`/`tools/inspect` listing and the friction
-  command set in `uds-server.ts`. An optional fourth argument, `entries`
+  command set in the former `uds-server.ts`. An optional fourth argument, `entries`
   (default `BUILTIN_TOOLS`), selects the builtin lines: the friction set passes
   none, and the test-only example tool adds its line without touching the
   product catalog.

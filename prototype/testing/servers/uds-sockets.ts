@@ -1,6 +1,6 @@
 /**
  * Unix socket paths for `Deno.test` integration tests that bind or dial a real
- * socket (the `src/transport/` integration tests).
+ * socket (the `src/transport/` and `src/server/` integration tests).
  *
  * Deno grants Unix-socket access per exact path (`--allow-net=unix:<path>`);
  * a directory grant does not cover the sockets inside it. The integration
@@ -22,6 +22,12 @@ export const UDS_TEST_SOCKETS = [
   "listener-live",
   "listener-stale",
   "listener-file",
+  "server-acp-close",
+  "server-sigint",
+  "server-stop",
+  "server-unknown-method",
+  "server-console-canary",
+  "server-events-asof",
 ] as const;
 
 export type UdsTestSocket = typeof UDS_TEST_SOCKETS[number];

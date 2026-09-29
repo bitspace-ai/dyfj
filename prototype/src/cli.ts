@@ -3320,7 +3320,7 @@ export function buildServeUnixArgs(
     // committed profile — only launch-resolved from the operator's config.
     ...(envGrants != null ? [`--allow-env=${envGrants.join(",")}`] : []),
     "--env-file=.env",
-    "src/uds-serve.ts",
+    "src/server/main.ts",
     ...(autostarted ? ["--autostarted"] : []),
   ];
 }

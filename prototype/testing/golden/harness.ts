@@ -4,7 +4,7 @@
  * Stands up the whole system at process level and drives it from outside:
  * - an isolated Dolt fixture (schema applied, catalog models deactivated, the
  *   golden model rows seeded against a loopback model server);
- * - the engine server (`src/uds-serve.ts`) as a child process on a temp
+ * - the engine server (`src/server/main.ts`) as a child process on a temp
  *   socket, one per server profile (see profiles.ts);
  * - the `dyfj` CLI (`src/cli.ts`) as a child process with piped stdin, so it
  *   is non-interactive (`exec`, `exec --json`, scripted REPL);
@@ -311,7 +311,7 @@ async function startEngineServer(
       }`,
       `--allow-sys=${(launch.server.sys ?? []).join(",")}`,
       `--allow-net=127.0.0.1,unix:${socket}`,
-      `${prototypeRoot}/src/uds-serve.ts`,
+      `${prototypeRoot}/src/server/main.ts`,
     ],
     cwd: dir,
     clearEnv: true,

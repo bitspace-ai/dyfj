@@ -2,8 +2,8 @@
  * Turn seam contract.
  *
  * The single typed definition of what a turn receipt carries over the
- * JSON-RPC/UDS boundary, shared by the Unix server (`uds-server.ts`, which
- * produces it) and every client (`cli.ts` today, any future headless Workshop
+ * JSON-RPC/UDS boundary, shared by the Unix server (`server/rpc/turn.ts`,
+ * which returns it) and every client (`cli.ts` today, any future headless Workshop
  * driver tomorrow, which consume it). This is the migration firewall's
  * contract: the runtime may change behind it, but the receipt a turn carries over the wire is pinned here.
  *
@@ -12,8 +12,9 @@
  * missing `context`, so `context.sources` could never reach it). One definition
  * makes such drift a compile error instead of a silent wire regression.
  *
- * The server asserts its `WorkbenchRuntimeResult` satisfies `TurnReceipt`
- * (see `uds-server.ts`), so dropping or renaming a receipt field stops compiling.
+ * The engine's `WorkbenchRuntimeResult` types extend these receipts (see
+ * `engine/runtime-types.ts`), so dropping or renaming a receipt field stops
+ * compiling.
  */
 
 import { utf8SafePrefix } from "../kernel/mod.ts";

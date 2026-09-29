@@ -154,6 +154,15 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The engine server's entrypoint is `prototype/src/server/main.ts`.** It
+  replaces `src/uds-serve.ts` and `src/uds-server.ts`, which are gone. It is the
+  composition root: it builds the store, the session owners, the turn runtime
+  and the ACP session map, and it binds the socket. The RPC methods live in one
+  module per namespace under `src/server/rpc/`. `deno task serve-unix` and
+  `dyfj start` launch the new file with the same permission grants. Anything
+  that ran `src/uds-serve.ts` directly must use the new path. The method set,
+  payloads, stream frames and error messages are unchanged.
+
 - **A new session's id is allocated when its turn is admitted.** A turn that
   names no session now gets its session id from the engine's session owners
   (`SessionOwners.runTurn`) at admission, and its session owner is registered
