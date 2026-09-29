@@ -5,8 +5,9 @@
  * `deno task serve-unix` and `dyfj start` run this file. It is the only place
  * that reads the resolved config, resolves secrets, builds the store, the
  * external MCP commands, the session owners, the turn runtime and the ACP
- * session map, wires the RPC method modules under `rpc/` (one per
- * namespace), and binds the socket. `serveWorkbenchUnix` is the composition
+ * session map, builds the static extension list (`extensions.ts`), wires the
+ * RPC method modules under `rpc/` (one per namespace) and the extensions'
+ * methods, and binds the socket. `serveWorkbenchUnix` is the composition
  * without the boot: the tests build a server from it over their own store.
  *
  * UDS is the canonical `loopback` transport: full clearance, gated by
@@ -24,7 +25,6 @@ import {
   withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
 } from "../providers/mod.ts";
-import type { IdeaPacketRegistry } from "../idea-packet.ts";
 import {
   checkColumnsAtBoot,
   countWorkbenchSessionEvents,
@@ -68,6 +68,8 @@ import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { resolveSecrets } from "../secrets.ts";
 import { buildExternalMcpCommands } from "../mcp-tools.ts";
 import { installRuntimeSigintHandler } from "../runtime-sigint.ts";
+import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";
+import { buildExtensionHandlers, type Extension } from "./extensions.ts";
 import { buildLegacyExtensionHandlers } from "./rpc/legacy-extensions.ts";
 import { buildRuntimeHandlers } from "./rpc/runtime.ts";
 import { buildSurfaceHandlers } from "./rpc/surface.ts";
@@ -109,7 +111,6 @@ export interface WorkbenchUnixServerOptions {
   fetchSessionWorkspaceRecord?: (
     input: { sessionId: string },
   ) => Promise<{ exists: boolean; workspace: string | null }>;
-  ideaPacketRegistry?: IdeaPacketRegistry;
   onParseError?: (detail: string) => void;
   /** Callback invoked when a client sends a runtime/stop RPC request. */
   onShutdown?: () => Promise<void> | void;
@@ -177,9 +178,17 @@ async function loadPickerModels(
   }
 }
 
+// The static extension list (specs/01-architecture.md §6), every extension
+// enabled by default. Built once per server, so each engine owns its
+// extensions' state (the idea/packet registry lives in memory for its life).
+function composeExtensions(): Extension[] {
+  return [...createIdeaPacketExtensions()];
+}
+
 // The cataloged method surface: the default store-backed readers, resolved
-// once and handed to each namespace's RPC module under server/rpc/, with the
-// turn methods bound to the engine's session owners and turn runtime.
+// once and handed to each namespace's RPC module under server/rpc/ and to each
+// extension, with the turn methods bound to the engine's session owners and
+// turn runtime.
 function buildHandlers(
   options: WorkbenchUnixServerOptions,
   owners: SessionOwners,
@@ -222,12 +231,11 @@ function buildHandlers(
     }),
     ...buildEventsHandlers({ fetchSessionEvents }),
 
-    ...buildLegacyExtensionHandlers({
-      ...options,
+    ...buildExtensionHandlers(composeExtensions(), {
       fetchSessionEvents,
       fetchSessionWorkspaceRecord,
-      frictionEventWriter,
     }),
+    ...buildLegacyExtensionHandlers({ ...options, frictionEventWriter }),
     ...buildTurnHandlers({
       ...options,
       owners,

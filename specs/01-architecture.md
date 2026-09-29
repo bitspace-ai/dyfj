@@ -63,7 +63,7 @@ checked rule.
 | L2    | `tools/`             | Command primitive: definition type, registry, call-shape policy, argument validation, redaction, invoke-with-event. Subdirs: `builtin/` (memory, file, exec, git), `mcp/` (transport, client factory, adapter), `web/`                                                                                                              | `commands`, `file-tools`, `exec-tools`, `git-tools`, `mcp-tools`, `mcp-conformance`, `mcp-net-grants`, `web-tools`, `memory-search`, tool parts of `memory`                                                            |
 | L2    | `budget/`            | Tracker, envelope gates, anomaly gate. Writes events through the store port                                                                                                                                                                                                                                                         | `budget.ts`                                                                                                                                                                                                            |
 | L2    | `context/`           | Workspace/repo context packing, prompt composition, transcript compression, length recovery, conversation projection from events                                                                                                                                                                                                    | `repo-context`, `prompts`, `context-compression`, `length-recovery`, projection half of `sessions`                                                                                                                     |
-| L2    | `transport/`         | JSON-RPC codec, framing, dispatcher, duplex peer, UDS path/bind/connect                                                                                                                                                                                                                                                             | `jsonrpc`, `jsonrpc-peer`, `uds-path`, `uds-client`, socket half of `uds-server`                                                                                                                                       |
+| L2    | `transport/`         | JSON-RPC codec, framing, dispatcher, duplex peer, UDS path/bind/connect, request-parameter sanitizers                                                                                                                                                                                                                               | `jsonrpc`, `jsonrpc-peer`, `uds-path`, `uds-client`, socket half of `uds-server`                                                                                                                                       |
 | L3    | `engine/`            | Turn pipeline (§5.1), agent loop, route resolution, observed provider call, session turn lock                                                                                                                                                                                                                                       | `workbench.ts` runtime, `turn-runner.ts`                                                                                                                                                                               |
 | L3    | `runners/acp/`       | ACP client, session map, ACP turn runtime, history reconstruction                                                                                                                                                                                                                                                                   | `acp-client`, `acp-session-map`, `external-agent-runtime` (runtime half)                                                                                                                                               |
 | L3    | `runners/acp/codex/` | Codex ChatGPT profile provisioning (an installer, not runtime)                                                                                                                                                                                                                                                                      | `external-agent-runtime.ts:50-497`                                                                                                                                                                                     |
@@ -316,7 +316,7 @@ This section implements AGENTS.md rules 2 and 3.
 interface Extension {
   id: string; // "ideas" | "packets" | "friction" | "linear"
   commands?(deps: ExtensionDeps): CommandDefinition[];
-  rpc?(deps: ExtensionDeps): RpcMethodModule; // method descriptors + handlers
+  rpc?(deps: ExtensionDeps): RpcHandlers; // method name -> handler
 }
 // Client side: REPL slash-command logic stays in the interactive REPL for now;
 // the interactive client is being replaced separately (D23).
@@ -328,9 +328,18 @@ interface Extension {
 - **Behavior freeze.** All four extensions stay enabled by default, so method
   names and REPL commands are unchanged.
 - **Boundaries.** Extensions may depend on L0–L3 `mod.ts` APIs. Core may not
-  import extensions; only `server/` and `cli/` do.
+  import extensions; only `server/` and `cli/` do. No extension imports
+  another, and none imports `server/`: each declares the deps it needs and
+  satisfies `Extension` structurally. `cli/` reaches an extension only through
+  its `client.ts`.
+- **One factory per directory.** An extension is built by its own factory in
+  the composition root, and any state it keeps belongs to that instance.
+  `ideas` and `packets` share one directory, `extensions/ideas/`, and one
+  factory, because they share one registry: a packet references its idea, and
+  eviction crosses the two.
 - **Ownership fix.** `sessions ⇄ idea-packet` is resolved by moving ideas and
-  packets into `extensions/`, where they read sessions through `store/`. The
+  packets into `extensions/`, where they read sessions through store-backed
+  readers passed in `ExtensionDeps`. The
   registry becomes state owned by the extension instance. It stays in-memory in
   phase 1 (behavior freeze); making it durable is roadmap durable-state work.
 

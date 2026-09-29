@@ -1,10 +1,10 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { RpcError, RpcErrorCode } from "../../transport/mod.ts";
+import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
 import {
   asRecord,
   sanitizeRpcIdentifier,
   sanitizeRpcString,
-} from "./params.ts";
+} from "./rpc-params.ts";
 
 function invalidParams(run: () => unknown, message: string): void {
   const error = assertThrows(run, RpcError);

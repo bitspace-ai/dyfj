@@ -1,21 +1,11 @@
-// The extension methods that have not moved behind the Extension interface
-// yet: `friction/post`, `ideas/*` and `packets/*`. They stay together here,
-// unchanged, until the extension layer (specs/01-architecture.md §6) gives
-// each its own module; this file is then deleted.
+// The extension method that has not moved behind the Extension interface
+// yet: `friction/post`. It stays here, unchanged, until it moves to
+// `extensions/friction/` (specs/01-architecture.md §6); this file is then
+// deleted.
 
 import { generateTraceId } from "../../kernel/mod.ts";
 import type { PermissionLevel, WorkbenchConfig } from "../../config/mod.ts";
-import {
-  summarizeError,
-  type WorkbenchSessionEvent,
-} from "../../contract/mod.ts";
-import {
-  defaultIdeaPacketRegistry,
-  draftWorkPacketFromContext,
-  formatWorkPacketMarkdown,
-  type IdeaPacketRegistry,
-  markWorkbenchIdea,
-} from "../../idea-packet.ts";
+import { summarizeError } from "../../contract/mod.ts";
 import {
   FRICTION_SEVERITIES,
   type FrictionContext,
@@ -33,22 +23,16 @@ import {
   invokeCommandWithEvent,
 } from "../../tools/mod.ts";
 import {
+  asRecord,
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
-} from "../../transport/mod.ts";
-import { toApprovalVerdict } from "./approval.ts";
-import type { FetchSessionEvents } from "./events.ts";
-import {
-  asRecord,
   sanitizeRpcIdentifier,
   sanitizeRpcString,
-} from "./params.ts";
-import type { FetchSessionWorkspaceRecord } from "./sessions.ts";
+} from "../../transport/mod.ts";
+import { toApprovalVerdict } from "./approval.ts";
 
 export interface LegacyExtensionHandlerDeps {
-  fetchSessionEvents: FetchSessionEvents;
-  fetchSessionWorkspaceRecord: FetchSessionWorkspaceRecord;
   /** Boot-discovered external MCP commands; friction uses the Linear ones. */
   externalMcpCommands?: readonly CommandDefinition[];
   /** Configured operator friction-checkpoint issue identifier. */
@@ -60,8 +44,6 @@ export interface LegacyExtensionHandlerDeps {
   /** Operator permission posture for friction's tool calls. */
   engineConfig?: Pick<WorkbenchConfig, "permissionLevel">;
   permissionLevel?: PermissionLevel;
-  /** Idea/packet registry; the process-wide default when omitted. */
-  ideaPacketRegistry?: IdeaPacketRegistry;
 }
 
 export function buildLegacyExtensionHandlers(
@@ -278,218 +260,6 @@ export function buildLegacyExtensionHandlers(
           ? error.message
           : `friction/post failed: ${summarizeError(error)}`;
         throw new RpcError(RpcErrorCode.internalError, message);
-      }
-    },
-
-    "ideas/mark": async (params) => {
-      const record = asRecord(params);
-      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const label = sanitizeRpcString(record.label, "label", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const eventId = sanitizeRpcIdentifier(record.eventId, "eventId", {
-        maxLen: 256,
-      });
-      const description = sanitizeRpcString(
-        record.description,
-        "description",
-        { maxLen: 2000, singleLine: false },
-      );
-      let events: WorkbenchSessionEvent[] | undefined;
-      try {
-        events = eventId
-          ? await deps.fetchSessionEvents({ sessionId, eventId })
-          : await deps.fetchSessionEvents({ sessionId, limit: 20 });
-      } catch (e) {
-        if (eventId) {
-          throw new RpcError(
-            RpcErrorCode.invalidParams,
-            summarizeError(e),
-          );
-        }
-        events = undefined;
-      }
-      try {
-        const idea = markWorkbenchIdea({
-          sessionId,
-          label,
-          eventId,
-          description,
-          events,
-          registry: deps.ideaPacketRegistry ?? defaultIdeaPacketRegistry,
-        });
-        return { idea };
-      } catch (e) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          summarizeError(e),
-        );
-      }
-    },
-
-    "ideas/list": async (params) => {
-      const record = asRecord(params);
-      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const reg = deps.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      try {
-        return { ideas: reg.listIdeas(sessionId) };
-      } catch (e) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          summarizeError(e),
-        );
-      }
-    },
-
-    "ideas/get": async (params) => {
-      const record = asRecord(params);
-      const ideaId = sanitizeRpcIdentifier(record.ideaId, "ideaId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const reg = deps.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      try {
-        const idea = reg.getIdea(ideaId);
-        return { idea };
-      } catch (e) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          summarizeError(e),
-        );
-      }
-    },
-
-    "packets/draft": async (params) => {
-      const record = asRecord(params);
-      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const ideaId = sanitizeRpcIdentifier(record.ideaId, "ideaId", {
-        maxLen: 256,
-      });
-      const eventId = sanitizeRpcIdentifier(record.eventId, "eventId", {
-        maxLen: 256,
-      });
-      if (ideaId && eventId) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          "packets/draft cannot specify both ideaId and eventId",
-        );
-      }
-      const issueId = sanitizeRpcIdentifier(record.issueId, "issueId", {
-        maxLen: 256,
-      });
-      const title = sanitizeRpcString(record.title, "title", { maxLen: 256 });
-      const operatorIntent = sanitizeRpcString(
-        record.operatorIntent,
-        "operatorIntent",
-        { maxLen: 2000, singleLine: false },
-      );
-      const reg = deps.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      const idea = ideaId ? reg.getIdea(ideaId) : null;
-      if (ideaId && !idea) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          `idea "${ideaId}" not found`,
-        );
-      }
-      if (idea && idea.sessionId !== sessionId) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          `idea "${ideaId}" belongs to session "${idea.sessionId}", not requested session "${sessionId}"`,
-        );
-      }
-      const referencedEventId = eventId ?? idea?.eventId ?? undefined;
-      let events: WorkbenchSessionEvent[] | undefined;
-      try {
-        events = referencedEventId
-          ? await deps.fetchSessionEvents({
-            sessionId,
-            eventId: referencedEventId,
-          })
-          : await deps.fetchSessionEvents({ sessionId, limit: 50 });
-      } catch (e) {
-        if (referencedEventId) {
-          throw new RpcError(
-            RpcErrorCode.invalidParams,
-            summarizeError(e),
-          );
-        }
-        events = undefined;
-      }
-      let workspace: string | null = null;
-      try {
-        const workspaceRec = await deps.fetchSessionWorkspaceRecord({
-          sessionId,
-        });
-        workspace = workspaceRec.workspace;
-      } catch {
-        workspace = null;
-      }
-      try {
-        const packet = draftWorkPacketFromContext({
-          sessionId,
-          idea,
-          ideaId,
-          eventId,
-          issueId,
-          title,
-          operatorIntent,
-          events,
-          workspace,
-          registry: reg,
-        });
-        const markdown = formatWorkPacketMarkdown(packet);
-        return { packet, markdown };
-      } catch (e) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          summarizeError(e),
-        );
-      }
-    },
-
-    "packets/list": async (params) => {
-      const record = asRecord(params);
-      const sessionId = sanitizeRpcIdentifier(record.sessionId, "sessionId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const reg = deps.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      try {
-        return { packets: reg.listPackets(sessionId) };
-      } catch (e) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          summarizeError(e),
-        );
-      }
-    },
-
-    "packets/get": async (params) => {
-      const record = asRecord(params);
-      const packetId = sanitizeRpcIdentifier(record.packetId, "packetId", {
-        required: true,
-        maxLen: 256,
-      })!;
-      const reg = deps.ideaPacketRegistry ?? defaultIdeaPacketRegistry;
-      try {
-        const packet = reg.getPacket(packetId);
-        const markdown = packet ? formatWorkPacketMarkdown(packet) : null;
-        return { packet, markdown };
-      } catch (e) {
-        throw new RpcError(
-          RpcErrorCode.invalidParams,
-          summarizeError(e),
-        );
       }
     },
   };

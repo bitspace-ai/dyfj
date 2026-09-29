@@ -3,11 +3,11 @@
 
 import { buildToolCatalog, type CommandDefinition } from "../../tools/mod.ts";
 import {
+  asRecord,
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
 } from "../../transport/mod.ts";
-import { asRecord } from "./params.ts";
 
 export interface WorkbenchToolSummary {
   id: string;

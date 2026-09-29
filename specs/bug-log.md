@@ -352,8 +352,9 @@ changes with a CHANGELOG `Fixed` entry.
   - **Found during:** baseline analysis. WO-16 must preserve the current
     behavior.
 - 2026-09-25 — **Ideas and packets are lost on server restart.**
-  - **Location:** `prototype/src/idea-packet.ts:809`
-    (`defaultIdeaPacketRegistry`, a module-level in-memory singleton).
+  - **Location:** `prototype/src/extensions/ideas/mod.ts`
+    (`createIdeaPacketExtensions`: the registry is owned by the extension
+    pair each engine builds, and held only in memory).
   - **Symptom:** marked ideas and drafted packets disappear when the engine
     server restarts. They never reach the event log.
   - **Status:** scheduled in roadmap durable-state work. Phase 1 only moves

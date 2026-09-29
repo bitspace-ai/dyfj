@@ -7,15 +7,13 @@ import {
   type WorkbenchSessionSummary,
 } from "../../store/mod.ts";
 import {
+  asRecord,
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
-} from "../../transport/mod.ts";
-import {
-  asRecord,
   sanitizeRpcIdentifier,
   sanitizeRpcString,
-} from "./params.ts";
+} from "../../transport/mod.ts";
 
 export type ListSessions = (
   options: { project?: string; limit?: number },

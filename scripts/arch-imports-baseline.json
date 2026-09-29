@@ -6,7 +6,6 @@
   ],
   "cli": [
     "prototype/src/cli.ts -> prototype/src/friction.ts",
-    "prototype/src/cli.ts -> prototype/src/idea-packet.ts",
     "prototype/src/cli.ts -> prototype/src/mcp-net-grants.ts",
     "prototype/src/cli.ts -> prototype/src/memory-search.ts"
   ],

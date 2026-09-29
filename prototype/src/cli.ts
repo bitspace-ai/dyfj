@@ -52,18 +52,14 @@ import { secretsRunGrant } from "./secrets.ts";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown.ts";
 import { type BusySpinner, createBusySpinner } from "./busy-spinner.ts";
 import {
-  defaultIdeaPacketRegistry,
   draftWorkPacketFromContext,
   formatWorkPacketMarkdown,
-  getWorkbenchIdea,
-  getWorkbenchPacket,
-  listWorkbenchIdeas,
-  listWorkbenchPackets,
+  IdeaPacketRegistry,
   markWorkbenchIdea,
   stripOuterQuotes,
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
-} from "./idea-packet.ts";
+} from "./extensions/ideas/client.ts";
 import { type FrictionPostResult, normalizeFrictionContext } from "./friction.ts";
 
 // ── Seam contract (shared with the server) ──────────────────────────
@@ -1771,6 +1767,14 @@ export interface ReplSessionState {
   lastModelSlug?: string;
   lastReplCommand?: string;
   lastFriction?: FrictionPostResult;
+  /** The in-process idea/packet registry of the `unix: false` path. */
+  ideaRegistry?: IdeaPacketRegistry;
+}
+
+// The `unix: false` path keeps ideas and packets in a registry this REPL
+// session owns, created on first use.
+function localIdeaRegistry(state: ReplSessionState): IdeaPacketRegistry {
+  return state.ideaRegistry ??= new IdeaPacketRegistry();
 }
 
 function formatShellArg(arg: string): string {
@@ -2253,6 +2257,7 @@ export async function handleReplIdeaCommand(
           eventId,
           label,
           events: sessionState.events,
+          registry: localIdeaRegistry(sessionState),
         });
         const cleanId = (idea.ideaId ?? "")
           .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
@@ -2309,7 +2314,9 @@ export async function handleReplIdeaCommand(
         io.err(`dyfj: failed to list ideas: ${summarizeError(e)}`);
       }
     } else {
-      const ideas = listWorkbenchIdeas({ sessionId: sessionState.sessionId });
+      const ideas = localIdeaRegistry(sessionState).listIdeas(
+        sessionState.sessionId,
+      );
       if (ideas.length === 0) {
         io.err(`no ideas marked for session ${sessionState.sessionId}`);
       } else {
@@ -2374,7 +2381,7 @@ export async function handleReplIdeaCommand(
       }
     } else {
       try {
-        const idea = getWorkbenchIdea(ideaId);
+        const idea = localIdeaRegistry(sessionState).getIdea(ideaId);
         if (!idea) {
           io.err(`idea not found: ${ideaId}`);
         } else {
@@ -2586,7 +2593,9 @@ export async function handleReplPacketCommand(
           }
         } else {
           try {
-            const matchingIdea = defaultIdeaPacketRegistry.getIdea(targetRef);
+            const matchingIdea = localIdeaRegistry(sessionState).getIdea(
+              targetRef,
+            );
             if (matchingIdea && matchingIdea.sessionId === sessionState.sessionId) {
               ideaExists = true;
             }
@@ -2651,6 +2660,7 @@ export async function handleReplPacketCommand(
           issueId,
           title,
           events: sessionState.events,
+          registry: localIdeaRegistry(sessionState),
         });
         const cleanPacketId = (packet.packetId ?? "")
           .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
@@ -2711,9 +2721,9 @@ export async function handleReplPacketCommand(
       }
     } else {
       try {
-        const packets = listWorkbenchPackets({
-          sessionId: sessionState.sessionId,
-        });
+        const packets = localIdeaRegistry(sessionState).listPackets(
+          sessionState.sessionId,
+        );
         if (packets.length === 0) {
           io.err(`no work packets drafted for session ${sessionState.sessionId}`);
         } else {
@@ -2769,7 +2779,7 @@ export async function handleReplPacketCommand(
       }
     } else {
       try {
-        const packet = getWorkbenchPacket(packetId);
+        const packet = localIdeaRegistry(sessionState).getPacket(packetId);
         if (!packet) {
           io.err(`work packet not found: ${packetId}`);
         } else {

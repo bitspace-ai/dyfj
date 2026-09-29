@@ -4,8 +4,7 @@
 
 import type { WorkbenchModel } from "../../providers/mod.ts";
 import type { WorkbenchProjectSessions } from "../../store/mod.ts";
-import type { RpcHandlers } from "../../transport/mod.ts";
-import { asRecord } from "./params.ts";
+import { asRecord, type RpcHandlers } from "../../transport/mod.ts";
 import {
   type RuntimePosture,
   runtimeStatus,

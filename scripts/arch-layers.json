@@ -93,7 +93,6 @@
     "prototype/src/acp-client.ts": "runners/acp",
     "prototype/src/acp-session-map.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
-    "prototype/src/idea-packet.ts": "extensions/ideas",
     "prototype/src/friction.ts": "extensions/friction",
     "prototype/src/linear-tools.ts": "extensions/linear",
     "prototype/src/cli.ts": "cli",

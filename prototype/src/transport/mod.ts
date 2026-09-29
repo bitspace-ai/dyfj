@@ -5,10 +5,12 @@
  * codes, newline-delimited framing, message classification), request
  * dispatch, the duplex connection peer, socket-path resolution, and the two
  * socket ends: the client connect (`connectUnixClient`) and the server
- * bind/accept loop (`serveUnixJsonRpc`). Method handlers are supplied by the
- * caller; nothing here knows what a method does. The wire format is also
- * spoken by the Rust REPL client in `core/dyfj-repl`, so framing, method
- * names, error codes and socket-path resolution must stay byte-identical.
+ * bind/accept loop (`serveUnixJsonRpc`), and the request-parameter
+ * sanitizers every method module runs its params through. Method handlers are
+ * supplied by the caller; nothing here knows what a method does. The wire
+ * format is also spoken by the Rust REPL client in `core/dyfj-repl`, so
+ * framing, method names, error codes and socket-path resolution must stay
+ * byte-identical.
  *
  * Allowed dependencies: `kernel/`, `contract/`, `config/` (the `Env` port).
  */
@@ -39,6 +41,11 @@ export {
   type RpcHandlers,
   success,
 } from "./jsonrpc.ts";
+export {
+  asRecord,
+  sanitizeRpcIdentifier,
+  sanitizeRpcString,
+} from "./rpc-params.ts";
 export { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 export { ensureSocketDir, resolveSocketPath } from "./uds-path.ts";
 export {
