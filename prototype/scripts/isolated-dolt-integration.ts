@@ -139,8 +139,12 @@ try {
   // The Deno.test files' own temp files (the ACP fixture's pid files and
   // method logs, scratch operator homes, an outside workspace) go through
   // Deno.makeTempDir/makeTempFile, which honor TMPDIR: pointing it at this
-  // directory keeps their read and write grants to it alone.
-  denoTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-deno-test-" });
+  // directory keeps their read and write grants to it alone. Its real path is
+  // what is granted and exported: the code under test resolves real paths, and
+  // on macOS the temp root /tmp is a symlink to /private/tmp.
+  denoTestTempDir = await Deno.realPath(
+    await Deno.makeTempDir({ prefix: "dyfj-deno-test-" }),
+  );
   await runChecked(denoExecutable, [
     "run",
     "-P=test",
