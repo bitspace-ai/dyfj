@@ -165,6 +165,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Eleven more prototype test files run on `Deno.test` instead of Vitest**:
+  `model-response-modes`, `runtime-sigint`, `workbench-events`, `secrets`,
+  `memory-search`, `mcp-conformance`, `mcp-tools`, `context-size-response`,
+  `structured-output`, `scripts/add-import-extensions` and
+  `scripts/deno-executable`, with every case kept. Pure cases run in
+  `test.unit`. The seven secret-resolver cases that spawn `bash` moved to
+  `src/secrets.integration.test.ts`, and the redirect case that binds a
+  loopback socket moved into `src/memory-search.integration.test.ts`.
+  `scripts/isolated-dolt-fixture.integration.test.ts` now runs under the
+  integration lane's `Deno.test` invocation instead of Vitest. That invocation
+  gains only what these tests use: `dolt` and `bash` run grants, the temp
+  roots, `../schema`, and the `TMPDIR`/`TEMP`/`TMP` and `LEAKY_AMBIENT` env
+  names. Product behavior is unchanged.
+
 - **The `dyfj` client's turn code moved out of `src/cli.ts`, which is now the
   interactive REPL only.** The turn request and socket turn with its
   cancellation (`src/cli/turn-client.ts`), the interactive mid-turn approval
