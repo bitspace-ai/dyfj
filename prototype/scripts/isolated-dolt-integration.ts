@@ -117,6 +117,7 @@ Deno.addSignalListener("SIGTERM", onSigterm);
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
 let mcpTestTempDir: string | undefined;
 let udsTestSocketDir: string | undefined;
+let denoTestTempDir: string | undefined;
 try {
   fixture = await startIsolatedDoltFixture({
     repoRoot,
@@ -135,6 +136,11 @@ try {
   // Deno grants Unix sockets per exact path, so the Deno.test files that bind
   // real sockets get this directory and a grant for each socket they name.
   udsTestSocketDir = await Deno.makeTempDir({ prefix: "dyfj-uds-" });
+  // The Deno.test files' own temp files (the ACP fixture's pid files and
+  // method logs, scratch operator homes, an outside workspace) go through
+  // Deno.makeTempDir/makeTempFile, which honor TMPDIR: pointing it at this
+  // directory keeps their read and write grants to it alone.
+  denoTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-deno-test-" });
   await runChecked(denoExecutable, [
     "run",
     "-P=test",
@@ -153,10 +159,18 @@ try {
     // Ungranted access throws instead of prompting, as it does in CI, so a
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
-    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE`,
-    `--allow-read=.,${mcpTestTempDir},${udsTestSocketDir}`,
-    `--allow-write=${mcpTestTempDir},${udsTestSocketDir}`,
-    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill`,
+    // The ACP files read DENO_DIR for the fixture agent's cache, set and
+    // restore the representative ambient secrets they prove are not
+    // forwarded, and read the Codex profile inputs (DYFJ_NODE_PATH and the
+    // toolchain directories), which stay unset here.
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME`,
+    `--allow-read=.,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    `--allow-write=${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    // bash and /bin/bash: the ACP files' process probes, symlink setup and
+    // a stdout-holding wrapper around the fixture agent.
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,bash,/bin/bash`,
+    // The Codex profile builder checks directory ownership with Deno.uid().
+    "--allow-sys=uid",
     `--allow-net=${
       ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
     }`,
@@ -167,6 +181,7 @@ try {
       ...env,
       DYFJ_MCP_TEST_TEMP_DIR: mcpTestTempDir,
       [UDS_TEST_SOCKET_DIR_ENV]: udsTestSocketDir,
+      TMPDIR: denoTestTempDir,
     },
     signal: abortController.signal,
   });
@@ -189,6 +204,9 @@ try {
   }
   if (udsTestSocketDir !== undefined) {
     await Deno.remove(udsTestSocketDir, { recursive: true });
+  }
+  if (denoTestTempDir !== undefined) {
+    await Deno.remove(denoTestTempDir, { recursive: true });
   }
   Deno.removeSignalListener("SIGINT", onSigint);
   Deno.removeSignalListener("SIGTERM", onSigterm);

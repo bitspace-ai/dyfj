@@ -1,14 +1,17 @@
 export const integrationTestAssignments = {
   vitest: [
     "scripts/isolated-dolt-fixture.integration.test.ts",
-    "src/acp-runner.integration.test.ts",
   ],
   deno: [
+    "src/acp-client.integration.test.ts",
+    "src/acp-runner.integration.test.ts",
+    "src/acp-session-map.integration.test.ts",
     "src/cli/commands/status.integration.test.ts",
     "src/cli/commands/stop.integration.test.ts",
     "src/cli/turn-client.integration.test.ts",
     "src/config/env.integration.test.ts",
     "src/engine/build-context.integration.test.ts",
+    "src/external-agent-runtime.integration.test.ts",
     "src/mcp-conformance.integration.test.ts",
     "src/mcp-tools.integration.test.ts",
     "src/memory.integration.test.ts",
