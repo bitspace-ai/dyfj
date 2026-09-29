@@ -6,6 +6,7 @@ import { integrationTestAssignments } from "./integration-test-assignment.ts";
 import { resolveEsbuildBinary } from "./esbuild-binary.ts";
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
+import { TEMP_ROOTS } from "./run-unit-tests.ts";
 import { fileURLToPath } from "node:url";
 import {
   UDS_TEST_SOCKET_DIR_ENV,
@@ -102,6 +103,7 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
   "",
 );
 const denoExecutable = selectedDenoExecutable();
+const tempRoots = TEMP_ROOTS.join(",");
 const abortController = new AbortController();
 let interruptedExitCode: number | undefined;
 const interrupt = (exitCode: number) => {
@@ -154,14 +156,22 @@ try {
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
     // The isolated Dolt fixture's own tests start throwaway fixtures: they
-    // read the fixture environment (TMPDIR, TEMP, TMP), the schema, and the
-    // system temp roots, create and remove temp roots there, and run `dolt`.
-    // The secrets resolver tests run `bash` and set one ambient variable
-    // (LEAKY_AMBIENT) to prove the resolver child does not inherit it.
-    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT`,
-    `--allow-read=.,../schema,/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir}`,
-    `--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir}`,
-    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,dolt,bash`,
+    // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, and run
+    // `dolt`. The secrets resolver tests run `bash` and set one ambient
+    // variable (LEAKY_AMBIENT) to prove the resolver child does not inherit
+    // it. DENO_DIR: the launcher test pins its children's Deno cache.
+    // DYFJ_WORKBENCH_CONTEXT_TOKENS: the repo-context budget fallback case.
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,DYFJ_WORKBENCH_CONTEXT_TOKENS`,
+    // The temp roots are where the fixtures make their temp directories
+    // (`Deno.makeTempDir` with the system default), as the unit lane's tests
+    // do.
+    `--allow-read=.,../schema,${tempRoots},${mcpTestTempDir},${udsTestSocketDir}`,
+    `--allow-write=${tempRoots},${mcpTestTempDir},${udsTestSocketDir}`,
+    // bash, /bin/bash, /bin/sh: the launcher script, the secrets resolver and
+    // the `deno.json` task strings under test. ln: symlink fixtures
+    // (`Deno.symlink` needs unscoped read and write). /bin/ps: reaping a
+    // launcher-started runtime by socket. dolt: the fixture tests.
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln`,
     `--allow-net=${
       ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
     }`,
