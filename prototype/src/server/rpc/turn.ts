@@ -32,6 +32,7 @@ import type {
   ToolApprovalVerdict,
 } from "../../tools/mod.ts";
 import {
+  asRecord,
   type RpcContext,
   RpcError,
   RpcErrorCode,
@@ -46,7 +47,6 @@ import {
   toBudgetCeilingVerdict,
 } from "./approval.ts";
 import type { FetchSessionEvents } from "./events.ts";
-import { asRecord } from "./params.ts";
 
 /** The engine posture a turn inherits when its request does not set it. */
 export interface TurnPosture {

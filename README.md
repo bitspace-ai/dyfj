@@ -1670,3 +1670,9 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-28 - `specs/bug-log.md` records that `model_selected` names the
   environment's principal rather than the turn's, found extracting the
   `budgetGate` stage.
+- 2026-09-29 - `specs/01-architecture.md` §6 settles the Extension interface's
+  `rpc` return type (`RpcHandlers`), that no extension imports another or
+  `server/`, and that `ideas` and `packets` share `extensions/ideas/` and one
+  factory because they share one registry; §3 places the RPC parameter
+  sanitizers in `transport/`. The bug-log entry on ideas and packets being
+  lost on restart points at their new location.

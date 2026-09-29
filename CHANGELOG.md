@@ -154,6 +154,19 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Ideas and packets are an extension behind the new Extension interface.**
+  `ideas/*` and `packets/*` now come from `prototype/src/extensions/ideas/`,
+  which the engine's composition root builds and plugs in through
+  `src/server/extensions.ts`. The idea/packet registry is owned by that
+  extension instance, one per engine, instead of a process-wide singleton:
+  two engines in one process (as some tests build) no longer share ideas and
+  packets. It is still in memory only, so ideas and packets are still lost
+  when the engine restarts. The REPL's in-process path (`unix: false`, used
+  only by tests) keeps its own registry per REPL session. Method names,
+  payloads, error messages and the REPL's `/idea` and `/packet` commands are
+  unchanged. The shared RPC parameter sanitizers moved from
+  `src/server/rpc/params.ts` to `src/transport/rpc-params.ts`.
+
 - **The engine server's entrypoint is `prototype/src/server/main.ts`.** It
   replaces `src/uds-serve.ts` and `src/uds-server.ts`, which are gone. It is the
   composition root: it builds the store, the session owners, the turn runtime

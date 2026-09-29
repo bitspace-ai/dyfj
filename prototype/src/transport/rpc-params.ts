@@ -1,10 +1,11 @@
-// Parameter parsing shared by the RPC method modules: the loose record view
+// Parameter parsing shared by the RPC method modules (server/rpc/ and the
+// extensions' RPC): the loose record view
 // of a request's params, and the two sanitizers every identifier and
 // free-text field passes through before a handler uses it. Each rejection is
 // an `invalidParams` RpcError whose message names the field.
 
-import { stripAnsiEscapes } from "../../kernel/mod.ts";
-import { RpcError, RpcErrorCode } from "../../transport/mod.ts";
+import { stripAnsiEscapes } from "../kernel/mod.ts";
+import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
 
 export function asRecord(params: unknown): Record<string, unknown> {
   return typeof params === "object" && params !== null

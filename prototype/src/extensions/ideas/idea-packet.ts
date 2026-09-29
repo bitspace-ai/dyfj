@@ -1,8 +1,8 @@
 // Idea marking and Work Packet drafting domain model for Workbench.
 // Enriches candidate ideas and draft work packets with supplied session context.
 
-import { generateULID, stripAnsiEscapes } from "./kernel/mod.ts";
-import type { WorkbenchSessionEvent } from "./contract/mod.ts";
+import { generateULID, stripAnsiEscapes } from "../../kernel/mod.ts";
+import type { WorkbenchSessionEvent } from "../../contract/mod.ts";
 
 export interface WorkbenchIdea {
   ideaId: string;
@@ -798,40 +798,6 @@ export class IdeaPacketRegistry {
   }
 }
 
-export const defaultIdeaPacketRegistry = new IdeaPacketRegistry();
-
-export function listWorkbenchIdeas(options?: {
-  sessionId?: string;
-  registry?: IdeaPacketRegistry;
-}): WorkbenchIdea[] {
-  const reg = options?.registry ?? defaultIdeaPacketRegistry;
-  return reg.listIdeas(options?.sessionId);
-}
-
-export function getWorkbenchIdea(
-  ideaId: string,
-  options?: { registry?: IdeaPacketRegistry },
-): WorkbenchIdea | null {
-  const reg = options?.registry ?? defaultIdeaPacketRegistry;
-  return reg.getIdea(ideaId);
-}
-
-export function listWorkbenchPackets(options?: {
-  sessionId?: string;
-  registry?: IdeaPacketRegistry;
-}): WorkbenchWorkPacket[] {
-  const reg = options?.registry ?? defaultIdeaPacketRegistry;
-  return reg.listPackets(options?.sessionId);
-}
-
-export function getWorkbenchPacket(
-  packetId: string,
-  options?: { registry?: IdeaPacketRegistry },
-): WorkbenchWorkPacket | null {
-  const reg = options?.registry ?? defaultIdeaPacketRegistry;
-  return reg.getPacket(packetId);
-}
-
 export function markWorkbenchIdea(input: {
   sessionId: string;
   label: string;
@@ -840,7 +806,7 @@ export function markWorkbenchIdea(input: {
   events?: WorkbenchSessionEvent[];
   ideaId?: string;
   createdAt?: string;
-  registry?: IdeaPacketRegistry;
+  registry: IdeaPacketRegistry;
 }): WorkbenchIdea {
   const sessionId = validateIdentifier(input.sessionId, "sessionId");
   if (typeof input.label !== "string") {
@@ -924,7 +890,7 @@ export function markWorkbenchIdea(input: {
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
 
-  const reg = input.registry ?? defaultIdeaPacketRegistry;
+  const reg = input.registry;
   reg.registerIdea(idea);
   return reg.getIdea(idea.ideaId)!;
 }
@@ -943,10 +909,10 @@ export function draftWorkPacketFromContext(input: {
   events?: WorkbenchSessionEvent[];
   createdAt?: string;
   packetId?: string;
-  registry?: IdeaPacketRegistry;
+  registry: IdeaPacketRegistry;
 }): WorkbenchWorkPacket {
   const sessionId = validateIdentifier(input.sessionId, "sessionId");
-  const reg = input.registry ?? defaultIdeaPacketRegistry;
+  const reg = input.registry;
 
   let idea = input.idea;
   if (!idea && input.ideaId) {
