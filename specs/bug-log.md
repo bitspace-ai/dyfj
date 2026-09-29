@@ -271,7 +271,10 @@ changes with a CHANGELOG `Fixed` entry.
     (`prototype/src/server/rpc/turn.ts`) no longer build a default runtime:
     they take the runtime as a required dependency, and the composition root
     builds the one runtime, bound to its ACP session map. The served runtime
-    was never affected.
+    was never affected. Fixed within WO-19 rather than in a dedicated change,
+    as an exception the maintainer approved: keeping the default would have
+    left adapter construction in an RPC module, against the composition-root
+    rule.
 
 - 2026-09-27 — **Terminal escape sequences are recognized three different
   ways.**
