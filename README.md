@@ -1692,5 +1692,5 @@ Document revisions only. Code and behavior changes are tracked in
   `server/` and `cli/` import `extensions/`.
 - 2026-09-29 - `specs/notes/test-supervision-evidence.md` records, per leak
   class, what the `Deno.test` suite catches without the Vitest supervisor, and
-  proposes retaining the wall-clock bound and removing the lock, reaper and
+  decides on retaining the wall-clock bound and removing the lock, reaper and
   manifest sweep.
