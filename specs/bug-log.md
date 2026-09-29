@@ -10,6 +10,21 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-09-29 — **`dyfj exec` or `dyfj ask` without a prompt reports the usage
+  error, then runs a turn anyway.**
+  - **Location:** `prototype/src/cli/main.ts` (`main`, which returns early on
+    a parse error only for `command: "help"`), with `prototype/src/cli/args.ts`
+    (`parseArgs` returns `command: "exec"` plus `error` for a missing prompt).
+  - **Symptom:** `dyfj exec` prints `dyfj: exec requires a prompt`, then calls
+    `runExec` with an undefined prompt: against a live runtime it sends a turn,
+    and with none it prints the unreachable-runtime message. It exits 1 (or 0
+    for a turn that succeeds), not the usage exit 2 other parse errors get.
+    `--parse-check` already reports these as invalid (exit 2), so the launcher
+    does not autostart for them.
+  - **Suspected cause:** `main` treats a parse error as fatal only when the
+    command is `help`; the `exec` and `ask` missing-prompt branches keep their
+    command. Returning 2 on any `parsed.error` before dispatch would fix it.
+  - **Found during:** WO-21 (moved unchanged from `src/cli.ts`).
 - 2026-09-28 — **Two ACP test files create their temp files in the working
   directory, so an interrupted run leaves them in the tree.**
   - **Location:** `prototype/src/acp-session-map.test.ts` (eleven

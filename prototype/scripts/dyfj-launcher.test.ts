@@ -12,18 +12,39 @@ async function hasCompiledBin(): Promise<boolean> {
   return await Deno.stat(COMPILED_BIN).then(() => true).catch(() => false);
 }
 
+// The client sources the launcher's freshness check compares: src/cli.ts and
+// the non-test modules under src/cli/.
+async function clientSources(): Promise<string[]> {
+  const sources = [new URL("../src/cli.ts", import.meta.url).pathname];
+  const walk = async (dir: URL, depth: number): Promise<void> => {
+    for await (const entry of Deno.readDir(dir)) {
+      const url = new URL(entry.name + (entry.isDirectory ? "/" : ""), dir);
+      if (entry.isDirectory && depth === 0) await walk(url, 1);
+      else if (
+        entry.isFile && entry.name.endsWith(".ts") &&
+        !entry.name.endsWith(".test.ts")
+      ) sources.push(url.pathname);
+    }
+  };
+  await walk(new URL("../src/cli/", import.meta.url), 0);
+  return sources;
+}
+
 async function hasFreshCompiledBin(): Promise<boolean> {
-  const source = new URL("../src/cli.ts", import.meta.url).pathname;
-  const [compiledStat, sourceStat, launcherStat] = await Promise.all([
+  const [compiledStat, sourceStats, launcherStat] = await Promise.all([
     Deno.stat(COMPILED_BIN).catch(() => null),
-    Deno.stat(source).catch(() => null),
+    clientSources().then((sources) =>
+      Promise.all(sources.map((source) => Deno.stat(source).catch(() => null)))
+    ),
     Deno.stat(LAUNCHER).catch(() => null),
   ]);
   if (!compiledStat) return false;
   const compiledMtime = compiledStat.mtime?.getTime();
   if (compiledMtime === undefined) return false;
-  const sourceMtime = sourceStat?.mtime?.getTime();
-  if (sourceMtime !== undefined && compiledMtime <= sourceMtime) return false;
+  for (const sourceStat of sourceStats) {
+    const sourceMtime = sourceStat?.mtime?.getTime();
+    if (sourceMtime !== undefined && compiledMtime <= sourceMtime) return false;
+  }
   const launcherMtime = launcherStat?.mtime?.getTime();
   if (launcherMtime !== undefined && compiledMtime <= launcherMtime) {
     return false;

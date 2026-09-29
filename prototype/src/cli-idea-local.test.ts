@@ -2,9 +2,9 @@
 // keeps ideas and packets in a registry the REPL session owns instead of
 // asking the engine.
 import { assertEquals, assertStringIncludes } from "@std/assert";
+import type { CliConfig } from "./cli/args.ts";
+import type { ConnectFn } from "./cli/io.ts";
 import {
-  type CliConfig,
-  type ConnectFn,
   handleReplIdeaCommand,
   handleReplPacketCommand,
   type ReplSessionState,
