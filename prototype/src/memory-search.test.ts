@@ -2,12 +2,20 @@
  * Unit tests for the recall config resolver (src/memory-search.ts).
  *
  * The live transport path (buildMemorySearch → MCP client → external endpoint)
- * is exercised by a hermetic Deno integration test; these cover the pure,
- * vendor-neutral config surface.
+ * and the live redirect refusal are exercised by
+ * memory-search.integration.test.ts; these cover the pure, vendor-neutral
+ * config surface.
  */
 
+import {
+  assertEquals,
+  assertFalse,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { MapEnv } from "../testing/fakes/map-env.ts";
-import { describe, expect, test } from "vitest";
 import {
   memoryAuthHeaders,
   memorySearchConfigFromEnv,
@@ -15,56 +23,75 @@ import {
 } from "./memory-search.ts";
 
 describe("memorySearchConfigFromEnv", () => {
-  test("returns null when no endpoint is configured (capability disabled)", () => {
-    expect(memorySearchConfigFromEnv(new MapEnv({}))).toBeNull();
-    expect(memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: "" }))).toBeNull();
+  it("returns null when no endpoint is configured (capability disabled)", () => {
+    assertStrictEquals(memorySearchConfigFromEnv(new MapEnv({})), null);
+    assertStrictEquals(
+      memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: "" })),
+      null,
+    );
   });
 
-  test("defaults the tool to 'search' and omits the token when only URL is set", () => {
-    expect(
-      memorySearchConfigFromEnv(new MapEnv({
+  it("defaults the tool to 'search' and omits the token when only URL is set", () => {
+    assertEquals(
+      memorySearchConfigFromEnv(
+        new MapEnv({
+          DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
+        }),
+      ),
+      {
+        url: "https://memory.example/mcp",
+        tool: "search",
+        token: undefined,
+        tokenHeader: undefined,
+      },
+    );
+  });
+
+  it("honors tool + token overrides — backend vocabulary stays config", () => {
+    const cfg = memorySearchConfigFromEnv(
+      new MapEnv({
         DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
-      })),
-    ).toEqual({
-      url: "https://memory.example/mcp",
-      tool: "search",
-      token: undefined,
-      tokenHeader: undefined,
-    });
+        DYFJ_MEMORY_MCP_TOOL: "search_thoughts",
+        DYFJ_MEMORY_MCP_TOKEN: "fixture-token",
+      }),
+    );
+    assertStrictEquals(cfg?.url, "https://memory.example/mcp");
+    assertStrictEquals(cfg?.tool, "search_thoughts");
+    assertStrictEquals(cfg?.token, "fixture-token");
   });
 
-  test("honors tool + token overrides — backend vocabulary stays config", () => {
-    const cfg = memorySearchConfigFromEnv(new MapEnv({
-      DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
-      DYFJ_MEMORY_MCP_TOOL: "search_thoughts",
-      DYFJ_MEMORY_MCP_TOKEN: "fixture-token",
-    }));
-    expect(cfg?.url).toBe("https://memory.example/mcp");
-    expect(cfg?.tool).toBe("search_thoughts");
-    expect(cfg?.token).toBe("fixture-token");
-  });
-
-  test("refuses an endpoint that would carry the token in cleartext", () => {
+  it("refuses an endpoint that would carry the token in cleartext", () => {
     // https anywhere; plain http only to loopback. Fail-closed at config
     // resolution, before any request could ship the token.
-    expect(() =>
-      memorySearchConfigFromEnv(new MapEnv({
-        DYFJ_MEMORY_MCP_URL: "http://memory.example/mcp",
-      }))
-    ).toThrow("https");
-    expect(
-      memorySearchConfigFromEnv(new MapEnv({
-        DYFJ_MEMORY_MCP_URL: "http://127.0.0.1:8080/mcp",
-      }))?.url,
-    ).toBe("http://127.0.0.1:8080/mcp");
-    expect(
-      memorySearchConfigFromEnv(new MapEnv({
-        DYFJ_MEMORY_MCP_URL: "http://localhost:8080/mcp",
-      }))?.url,
-    ).toBe("http://localhost:8080/mcp");
+    assertThrows(
+      () =>
+        memorySearchConfigFromEnv(
+          new MapEnv({
+            DYFJ_MEMORY_MCP_URL: "http://memory.example/mcp",
+          }),
+        ),
+      Error,
+      "https",
+    );
+    assertStrictEquals(
+      memorySearchConfigFromEnv(
+        new MapEnv({
+          DYFJ_MEMORY_MCP_URL: "http://127.0.0.1:8080/mcp",
+        }),
+      )?.url,
+      "http://127.0.0.1:8080/mcp",
+    );
+    assertStrictEquals(
+      memorySearchConfigFromEnv(
+        new MapEnv({
+          DYFJ_MEMORY_MCP_URL: "http://localhost:8080/mcp",
+        }),
+      )?.url,
+      "http://localhost:8080/mcp",
+    );
   });
 
-  test("rejects credentials embedded in https and loopback http URLs", () => {
+  it("rejects credentials embedded in https and loopback http URLs", () => {
     for (
       const url of [
         "https://fixture-user:fixture-pass@memory.example/mcp",
@@ -72,12 +99,16 @@ describe("memorySearchConfigFromEnv", () => {
         "https://fixture-user@memory.example/mcp",
       ]
     ) {
-      expect(() => memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: url })))
-        .toThrow("DYFJ_MEMORY_MCP_URL must not include credentials");
+      assertThrows(
+        () =>
+          memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: url })),
+        Error,
+        "DYFJ_MEMORY_MCP_URL must not include credentials",
+      );
     }
   });
 
-  test("credential diagnostic does not echo the URL or its userinfo", () => {
+  it("credential diagnostic does not echo the URL or its userinfo", () => {
     const username = "fixture-user";
     const password = "fixture-pass";
     const url = `https://${username}:${password}@memory.example/mcp`;
@@ -89,13 +120,13 @@ describe("memorySearchConfigFromEnv", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("DYFJ_MEMORY_MCP_URL");
-    expect(message).not.toContain(username);
-    expect(message).not.toContain(password);
-    expect(message).not.toContain(url);
+    assertStringIncludes(message, "DYFJ_MEMORY_MCP_URL");
+    assertFalse(message.includes(username));
+    assertFalse(message.includes(password));
+    assertFalse(message.includes(url));
   });
 
-  test("a DNS name that merely starts with 127. is not loopback", () => {
+  it("a DNS name that merely starts with 127. is not loopback", () => {
     // 127/8 must be a strict IPv4 parse — 127.attacker.example is a routable
     // hostname, and classifying it loopback would license cleartext transport.
     for (
@@ -105,113 +136,95 @@ describe("memorySearchConfigFromEnv", () => {
         "127.0.0.1.evil.example",
       ]
     ) {
-      expect(() =>
-        memorySearchConfigFromEnv(new MapEnv({
-          DYFJ_MEMORY_MCP_URL: `http://${host}/mcp`,
-        }))
-      ).toThrow("https");
+      assertThrows(
+        () =>
+          memorySearchConfigFromEnv(
+            new MapEnv({
+              DYFJ_MEMORY_MCP_URL: `http://${host}/mcp`,
+            }),
+          ),
+        Error,
+        "https",
+      );
     }
-    expect(
-      memorySearchConfigFromEnv(new MapEnv({
-        DYFJ_MEMORY_MCP_URL: "http://127.1.2.3:9/mcp",
-      }))?.url,
-    ).toBe("http://127.1.2.3:9/mcp");
+    assertStrictEquals(
+      memorySearchConfigFromEnv(
+        new MapEnv({
+          DYFJ_MEMORY_MCP_URL: "http://127.1.2.3:9/mcp",
+        }),
+      )?.url,
+      "http://127.1.2.3:9/mcp",
+    );
   });
 
-  test("resolves the token header name; empty means unset", () => {
-    const named = memorySearchConfigFromEnv(new MapEnv({
-      DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
-      DYFJ_MEMORY_MCP_TOKEN: "fixture-token",
-      DYFJ_MEMORY_MCP_TOKEN_HEADER: "x-fixture-key",
-    }));
-    expect(named?.tokenHeader).toBe("x-fixture-key");
-    const empty = memorySearchConfigFromEnv(new MapEnv({
-      DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
-      DYFJ_MEMORY_MCP_TOKEN_HEADER: "",
-    }));
-    expect(empty?.tokenHeader).toBeUndefined();
+  it("resolves the token header name; empty means unset", () => {
+    const named = memorySearchConfigFromEnv(
+      new MapEnv({
+        DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
+        DYFJ_MEMORY_MCP_TOKEN: "fixture-token",
+        DYFJ_MEMORY_MCP_TOKEN_HEADER: "x-fixture-key",
+      }),
+    );
+    assertStrictEquals(named?.tokenHeader, "x-fixture-key");
+    const empty = memorySearchConfigFromEnv(
+      new MapEnv({
+        DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
+        DYFJ_MEMORY_MCP_TOKEN_HEADER: "",
+      }),
+    );
+    assertStrictEquals(empty?.tokenHeader, undefined);
   });
 });
 
 describe("memoryAuthHeaders", () => {
   const base = { url: "https://memory.example/mcp", tool: "search" };
 
-  test("no token → no auth headers (header name alone is meaningless)", () => {
-    expect(memoryAuthHeaders(base)).toBeUndefined();
-    expect(memoryAuthHeaders({ ...base, token: "" })).toBeUndefined();
-    expect(
+  it("no token → no auth headers (header name alone is meaningless)", () => {
+    assertStrictEquals(memoryAuthHeaders(base), undefined);
+    assertStrictEquals(memoryAuthHeaders({ ...base, token: "" }), undefined);
+    assertStrictEquals(
       memoryAuthHeaders({ ...base, tokenHeader: "x-fixture-key" }),
-    ).toBeUndefined();
+      undefined,
+    );
   });
 
-  test("token without a header name → standard Authorization: Bearer", () => {
-    expect(memoryAuthHeaders({ ...base, token: "fixture-token" })).toEqual({
+  it("token without a header name → standard Authorization: Bearer", () => {
+    assertEquals(memoryAuthHeaders({ ...base, token: "fixture-token" }), {
       Authorization: "Bearer fixture-token",
     });
   });
 
-  test("token with a header name → raw token under the named header", () => {
-    expect(
+  it("token with a header name → raw token under the named header", () => {
+    assertEquals(
       memoryAuthHeaders({
         ...base,
         token: "fixture-token",
         tokenHeader: "x-fixture-key",
       }),
-    ).toEqual({ "x-fixture-key": "fixture-token" });
+      { "x-fixture-key": "fixture-token" },
+    );
   });
 });
 
 describe("recallRequestInit", () => {
   const base = { url: "https://memory.example/mcp", tool: "search" };
 
-  test("always refuses redirects, with or without a token", () => {
+  it("always refuses redirects, with or without a token", () => {
     // fetch preserves CUSTOM headers across redirects (only Authorization is
     // stripped cross-origin), so following a 307/308 https→http downgrade
     // would ship the token header and query body in cleartext. Every recall
     // request must carry redirect: "error".
-    expect(recallRequestInit(base).redirect).toBe("error");
-    expect(
+    assertStrictEquals(recallRequestInit(base).redirect, "error");
+    assertEquals(
       recallRequestInit({
         ...base,
         token: "fixture-token",
         tokenHeader: "x-fixture-key",
       }),
-    ).toEqual({
-      redirect: "error",
-      headers: { "x-fixture-key": "fixture-token" },
-    });
-  });
-
-  test("a redirecting endpoint rejects instead of being followed (live fetch)", async () => {
-    // Regression for the https→http 307 downgrade: a loopback server answers
-    // 307 to a same-host http URL; a fetch carrying the exact init recall
-    // sends must reject rather than follow. (The full SDK transport path can't
-    // run here — npm: specifiers don't resolve under the node-based runner —
-    // but the redirect policy is enforced by fetch itself, which this
-    // exercises for real.)
-    const server = Deno.serve(
-      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-      (req) =>
-        new Response(null, {
-          status: 307,
-          headers: { location: new URL(req.url).href },
-        }),
+      {
+        redirect: "error",
+        headers: { "x-fixture-key": "fixture-token" },
+      },
     );
-    const { port } = server.addr as Deno.NetAddr;
-    try {
-      await expect(
-        fetch(`http://127.0.0.1:${port}/mcp`, {
-          ...recallRequestInit({
-            ...base,
-            token: "fixture-token",
-            tokenHeader: "x-fixture-key",
-          }),
-          method: "POST",
-          body: JSON.stringify({ query: "fixture" }),
-        }),
-      ).rejects.toThrow();
-    } finally {
-      await server.shutdown();
-    }
   });
 });

@@ -1,5 +1,6 @@
 // add-import-extensions: ignore-file
-import { describe, expect, test } from "vitest";
+import { assertEquals, assertStrictEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { addImportExtensions, IGNORE_MARKER } from "./add-import-extensions.ts";
 
 const FILES = new Set([
@@ -15,7 +16,7 @@ function rewrite(source: string) {
 }
 
 describe("addImportExtensions", () => {
-  test("adds the resolved extension to static, type, and re-export forms", () => {
+  it("adds the resolved extension to static, type, and re-export forms", () => {
     const source = [
       'import { a } from "./utils";',
       "import type { B } from './utils';",
@@ -23,7 +24,7 @@ describe("addImportExtensions", () => {
       'import "../scripts/tool";',
       'import View from "./view";',
     ].join("\n");
-    expect(rewrite(source)).toEqual({
+    assertEquals(rewrite(source), {
       source: [
         'import { a } from "./utils.ts";',
         "import type { B } from './utils.ts';",
@@ -35,14 +36,15 @@ describe("addImportExtensions", () => {
     });
   });
 
-  test("covers dynamic imports split across lines and typeof import", () => {
+  it("covers dynamic imports split across lines and typeof import", () => {
     const source = [
       "const m = await import(",
       '  "./utils"',
       ");",
       'type T = typeof import("./utils");',
     ].join("\n");
-    expect(rewrite(source).source).toBe(
+    assertStrictEquals(
+      rewrite(source).source,
       [
         "const m = await import(",
         '  "./utils.ts"',
@@ -52,14 +54,15 @@ describe("addImportExtensions", () => {
     );
   });
 
-  test("covers Vitest module helpers, including a generic argument", () => {
+  it("covers Vitest module helpers, including a generic argument", () => {
     const source = [
       'vi.mock("./utils", () => ({}));',
       "await vi.importActual<",
       '  typeof import("./utils")',
       '>("./utils");',
     ].join("\n");
-    expect(rewrite(source).source).toBe(
+    assertStrictEquals(
+      rewrite(source).source,
       [
         'vi.mock("./utils.ts", () => ({}));',
         "await vi.importActual<",
@@ -69,7 +72,7 @@ describe("addImportExtensions", () => {
     );
   });
 
-  test("leaves explicit extensions, packages, and non-import strings alone", () => {
+  it("leaves explicit extensions, packages, and non-import strings alone", () => {
     const source = [
       'import { a } from "./utils.ts";',
       'import data from "./data.json";',
@@ -77,16 +80,16 @@ describe("addImportExtensions", () => {
       'const path = "./utils";',
       'new URL("./tool", import.meta.url);',
     ].join("\n");
-    expect(rewrite(source)).toEqual({ source, unresolved: [] });
+    assertEquals(rewrite(source), { source, unresolved: [] });
   });
 
-  test("reports a specifier that resolves to no file and leaves it as is", () => {
+  it("reports a specifier that resolves to no file and leaves it as is", () => {
     const source = 'import { gone } from "./missing";';
-    expect(rewrite(source)).toEqual({ source, unresolved: ["./missing"] });
+    assertEquals(rewrite(source), { source, unresolved: ["./missing"] });
   });
 
-  test("skips a file carrying the ignore marker", () => {
+  it("skips a file carrying the ignore marker", () => {
     const source = `${IGNORE_MARKER}\nimport { a } from "./utils";`;
-    expect(rewrite(source)).toEqual({ source, unresolved: [] });
+    assertEquals(rewrite(source), { source, unresolved: [] });
   });
 });

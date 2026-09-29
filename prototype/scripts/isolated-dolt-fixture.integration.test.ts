@@ -1,11 +1,37 @@
-import { describe, expect, test } from "vitest";
-import { startIsolatedDoltFixture, waitForSql } from "./isolated-dolt-fixture.ts";
+import {
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import {
+  startIsolatedDoltFixture,
+  waitForSql,
+} from "./isolated-dolt-fixture.ts";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url)).replace(
   /[\\\/]$/,
   "",
 );
+
+// Deno.test has no per-test timeout, so the two fixture-setup cases carry the
+// 30s bound they had under Vitest themselves: the deadline aborts setup
+// through the fixture's own signal, which fails the case instead of letting a
+// stalled `dolt` child hang the lane.
+const FIXTURE_CASE_DEADLINE_MS = 30_000;
+
+async function withDeadline<T>(
+  run: (deadline: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FIXTURE_CASE_DEADLINE_MS);
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function portIsClosed(port: number): Promise<boolean> {
   try {
@@ -19,7 +45,7 @@ async function portIsClosed(port: number): Promise<boolean> {
 }
 
 describe("isolated Dolt fixture", () => {
-  test("interrupts a readiness probe stalled after TCP accept", async () => {
+  it("interrupts a readiness probe stalled after TCP accept", async () => {
     const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
     const port = (listener.addr as Deno.NetAddr).port;
     const connections: Deno.Conn[] = [];
@@ -34,19 +60,22 @@ describe("isolated Dolt fixture", () => {
     const abortTimer = setTimeout(() => abortController.abort(), 50);
 
     try {
-      await expect(
-        waitForSql(
-          {
-            DOLT_HOST: "127.0.0.1",
-            DOLT_PORT: String(port),
-            DOLT_USER: "root",
-            DOLT_PASSWORD: "",
-            DOLT_DATABASE: "stalled",
-          },
-          abortController.signal,
-          5_000,
-        ),
-      ).rejects.toThrow("isolated Dolt fixture setup interrupted");
+      await assertRejects(
+        () =>
+          waitForSql(
+            {
+              DOLT_HOST: "127.0.0.1",
+              DOLT_PORT: String(port),
+              DOLT_USER: "root",
+              DOLT_PASSWORD: "",
+              DOLT_DATABASE: "stalled",
+            },
+            abortController.signal,
+            5_000,
+          ),
+        Error,
+        "isolated Dolt fixture setup interrupted",
+      );
     } finally {
       clearTimeout(abortTimer);
       listener.close();
@@ -55,57 +84,58 @@ describe("isolated Dolt fixture", () => {
     }
   });
 
-  test(
-    "cleans the child and temporary root when setup fails after readiness",
-    async () => {
-      let failedRoot = "";
-      let failedPort = 0;
-      await expect(
-        startIsolatedDoltFixture({
-          repoRoot,
-          prefix: "dyfj_fixture_failure_",
-          afterReady: async ({ root, port }) => {
-            failedRoot = root;
-            failedPort = port;
-            throw new Error("forced fixture setup failure");
-          },
-        }),
-      ).rejects.toThrow("forced fixture setup failure");
+  it("cleans the child and temporary root when setup fails after readiness", async () => {
+    let failedRoot = "";
+    let failedPort = 0;
+    await withDeadline((deadline) =>
+      assertRejects(
+        () =>
+          startIsolatedDoltFixture({
+            repoRoot,
+            prefix: "dyfj_fixture_failure_",
+            signal: deadline,
+            afterReady: async ({ root, port }) => {
+              failedRoot = root;
+              failedPort = port;
+              throw new Error("forced fixture setup failure");
+            },
+          }),
+        Error,
+        "forced fixture setup failure",
+      )
+    );
 
-      expect(failedRoot).not.toBe("");
-      await expect(Deno.stat(failedRoot)).rejects.toBeInstanceOf(
-        Deno.errors.NotFound,
-      );
-      expect(await portIsClosed(failedPort)).toBe(true);
-    },
-    30_000,
-  );
+    assertNotStrictEquals(failedRoot, "");
+    await assertRejects(() => Deno.stat(failedRoot), Deno.errors.NotFound);
+    assertStrictEquals(await portIsClosed(failedPort), true);
+  });
 
-  test(
-    "cleans the child and temporary root when setup is interrupted",
-    async () => {
-      const abortController = new AbortController();
-      let interruptedRoot = "";
-      let interruptedPort = 0;
-      await expect(
-        startIsolatedDoltFixture({
-          repoRoot,
-          prefix: "dyfj_fixture_interrupt_",
-          signal: abortController.signal,
-          afterReady: async ({ root, port }) => {
-            interruptedRoot = root;
-            interruptedPort = port;
-            abortController.abort();
-          },
-        }),
-      ).rejects.toThrow("isolated Dolt fixture setup interrupted");
+  it("cleans the child and temporary root when setup is interrupted", async () => {
+    const abortController = new AbortController();
+    let interruptedRoot = "";
+    let interruptedPort = 0;
+    await withDeadline((deadline) =>
+      assertRejects(
+        () =>
+          startIsolatedDoltFixture({
+            repoRoot,
+            prefix: "dyfj_fixture_interrupt_",
+            signal: AbortSignal.any([abortController.signal, deadline]),
+            afterReady: async ({ root, port }) => {
+              interruptedRoot = root;
+              interruptedPort = port;
+              abortController.abort();
+            },
+          }),
+        Error,
+        "isolated Dolt fixture setup interrupted",
+      )
+    );
 
-      expect(interruptedRoot).not.toBe("");
-      await expect(Deno.stat(interruptedRoot)).rejects.toBeInstanceOf(
-        Deno.errors.NotFound,
-      );
-      expect(await portIsClosed(interruptedPort)).toBe(true);
-    },
-    30_000,
-  );
+    // A deadline abort rejects with the same message, but only before
+    // afterReady has run, so the root check below still fails that case.
+    assertNotStrictEquals(interruptedRoot, "");
+    await assertRejects(() => Deno.stat(interruptedRoot), Deno.errors.NotFound);
+    assertStrictEquals(await portIsClosed(interruptedPort), true);
+  });
 });
