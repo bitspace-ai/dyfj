@@ -41,7 +41,7 @@ function defaultBudgetFor(profile: AskContextProfile): ContextBudget {
 
 // The symlink case and a no-budget (env fallback) case need subprocess and
 // env grants, which this lane does not give; they run from
-// repo-context.platform.test.ts on the Vitest lane.
+// repo-context.integration.test.ts in the integration lane.
 
 Deno.test("extractReadmeSection1: returns only README Section 1", () => {
   const section = extractReadmeSection1([

@@ -1,16 +1,23 @@
-// The two repo-context cases that need process grants the `Deno.test` unit
-// lane does not give (no subprocess, no environment): they stay on the Vitest
-// lane until the test sweep decides where process-granted cases run.
-// - The symlink fixture is built with `/bin/sh -c 'ln -s ...'`, because
-//   `Deno.symlink` needs unscoped read and write.
+// The two repo-context cases that need grants the unit lane does not give (no
+// subprocess, no environment), so they run in the integration lane.
+// - The symlink fixture is built with `ln -s`, because `Deno.symlink` needs
+//   unscoped read and write.
 // - Calling `loadAskRepoContext` without a budget exercises its fallback read
 //   of `DYFJ_WORKBENCH_CONTEXT_TOKENS` from the process environment.
 import path from "node:path";
-import { describe, expect, test, vi } from "vitest";
+import {
+  assert,
+  assertEquals,
+  assertLess,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import { stub } from "@std/testing/mock";
 import { buildAskSystemPrompt, loadAskRepoContext } from "./repo-context.ts";
 
 describe("loadAskRepoContext", () => {
-  test("with no budget, resolves it from the process environment and loads generic README and manifest context", async () => {
+  it("with no budget, resolves it from the process environment and loads generic README and manifest context", async () => {
     const selectedRoot = await Deno.makeTempDir({
       prefix: "ask-context-selected-",
     });
@@ -30,57 +37,56 @@ describe("loadAskRepoContext", () => {
       });
       const rendered = buildAskSystemPrompt("test companion", context);
 
-      expect(context.sources).toEqual([
+      assertEquals(context.sources, [
         { kind: "file", label: "README.md", path: "README.md" },
         { kind: "file", label: "package.json", path: "package.json" },
       ]);
-      expect(rendered.indexOf("untrusted workspace context")).toBeLessThan(
+      assertLess(
+        rendered.indexOf("untrusted workspace context"),
         rendered.indexOf("Music Rotater"),
       );
-      expect(rendered).toContain("Music Rotater");
-      expect(rendered).toContain('"name":"music-rotater"');
+      assertStringIncludes(rendered, "Music Rotater");
+      assertStringIncludes(rendered, '"name":"music-rotater"');
     } finally {
       await Deno.remove(selectedRoot, { recursive: true });
     }
   });
 
-  test("does not follow a symlinked notes directory outside the selected workspace", async () => {
+  it("does not follow a symlinked notes directory outside the selected workspace", async () => {
     const selectedRoot = await Deno.makeTempDir({
       prefix: "ask-context-notes-root-",
     });
     const outsideRoot = await Deno.makeTempDir({
       prefix: "ask-context-notes-outside-",
     });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = stub(console, "warn");
     try {
       await Deno.writeTextFile(
         path.join(outsideRoot, "workbench-mvp-loop.md"),
         "outside instructions must not load\n",
       );
-      // the existing test profile permits /bin/sh for POSIX fixture setup.
-      const linked = await new Deno.Command("/bin/sh", {
-        args: [
-          "-c",
-          'ln -s -- "$1" "$2"',
-          "bash",
-          outsideRoot,
-          path.join(selectedRoot, "notes"),
-        ],
+      const linked = await new Deno.Command("ln", {
+        args: ["-s", "--", outsideRoot, path.join(selectedRoot, "notes")],
       }).output();
-      expect(linked.success).toBe(true);
+      assertStrictEquals(linked.success, true);
 
       const context = await loadAskRepoContext({
         repoRoot: selectedRoot,
         profile: "full",
       });
 
-      expect(context.sources).toEqual([]);
-      expect(context.sections).toEqual([]);
-      expect(warn).toHaveBeenCalledWith(
-        "notes/workbench-mvp-loop.md context skipped: path escapes the workspace root",
+      assertEquals(context.sources, []);
+      assertEquals(context.sections, []);
+      const skipped =
+        "notes/workbench-mvp-loop.md context skipped: path escapes the workspace root";
+      assert(
+        warn.calls.some((call) =>
+          call.args.length === 1 && call.args[0] === skipped
+        ),
+        `console.warn was not called with: ${skipped}`,
       );
     } finally {
-      warn.mockRestore();
+      warn.restore();
       await Deno.remove(selectedRoot, { recursive: true });
       await Deno.remove(outsideRoot, { recursive: true });
     }
