@@ -16,8 +16,8 @@ import type { ConnectFn } from "./io.ts";
 // The receipt and stream frame shapes are defined once in contract/turn.ts and
 // imported by both sides, so this thin client can never silently drift from
 // what the server sends. Type imports are erased at compile, and the one value
-// import (the superseding-retry guard) comes from that dependency-free
-// contract module, keeping the binary engine-free.
+// import (`DomainError`, the base of the cancellation error) comes from that
+// dependency-free contract module, keeping the binary engine-free.
 
 /** The receipt a turn carries. Canonical definition: the shared seam contract. */
 export type TurnResult = TurnReceipt;
