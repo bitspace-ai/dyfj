@@ -752,8 +752,9 @@ README are tracked separately in its Revision history section.
   the ACP client, session-map and external-agent runtime tests created their
   pid files, method logs and scratch homes in `prototype/`, so a run stopped
   mid-test left them behind, where a broad `git add` could commit them. They
-  now come from the system temp directory, and each test opens its cleanup
-  `try` as soon as the file exists.
+  now come from the system temp directory, which the integration lane points
+  at a per-run directory it removes afterwards, so nothing lands in the
+  working tree.
 
 - **ACP agent stdout cancellation is handled cleanly**: when the ACP client
   closes its connection after the agent process exits but before the agent's

@@ -384,8 +384,8 @@ changes with a CHANGELOG `Fixed` entry.
     (`acp-session-map.integration.test.ts` and
     `external-agent-runtime.integration.test.ts`, with their pure cases in
     unit files). Every temp file and directory now comes from the system temp
-    directory, which the integration lane points at a directory of its own,
-    and each test opens its cleanup `try` as soon as the file exists. The
+    directory, which the integration lane points at a per-run directory it
+    removes afterwards, so an interrupted run leaves nothing in the tree. The
     ACP client file, which did the same, moved with them.
 - 2026-09-26 — **A test swaps the process-wide `PATH`, racing tests that spawn
   commands by name.**
