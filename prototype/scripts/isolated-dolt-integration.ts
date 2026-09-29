@@ -158,14 +158,19 @@ try {
     // it. The ACP files read DENO_DIR for the fixture agent's cache, set and
     // restore the representative ambient secrets they prove are not
     // forwarded, and read the Codex profile inputs (DYFJ_NODE_PATH and the
-    // toolchain directories), which stay unset here.
-    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME`,
+    // toolchain directories), which stay unset here. The launcher test pins
+    // its children's Deno cache through DENO_DIR too.
+    // DYFJ_WORKBENCH_CONTEXT_TOKENS: the repo-context budget fallback case.
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME,DYFJ_WORKBENCH_CONTEXT_TOKENS`,
     `--allow-read=.,../schema,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
     `--allow-write=${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
-    // bash and /bin/bash: the ACP files' process probes, symlink setup and a
-    // stdout-holding wrapper around the fixture agent, and the secrets
-    // resolver. dolt: the fixture tests.
-    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,dolt,bash,/bin/bash`,
+    // bash, /bin/bash: the ACP files' process probes, symlink setup and a
+    // stdout-holding wrapper around the fixture agent, the launcher script
+    // and the secrets resolver. /bin/sh: the `deno.json` task strings under
+    // test. ln: symlink fixtures (`Deno.symlink` needs unscoped read and
+    // write). /bin/ps: reaping a launcher-started runtime by socket. dolt:
+    // the fixture tests.
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln`,
     // The Codex profile builder checks directory ownership with Deno.uid().
     "--allow-sys=uid",
     `--allow-net=${

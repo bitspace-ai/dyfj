@@ -77,7 +77,7 @@ Deno.test("the prototype tree classifies as expected", () => {
   const denoTests = discoverDenoTestSources(".");
   // Deno.test unit files run in test.unit; Vitest files never do.
   assertEquals(unit.includes("testing/fakes/map-env.test.ts"), true);
-  assertEquals(unit.includes("src/cli.test.ts"), false);
+  assertEquals(unit.includes("scripts/run-vitest.test.ts"), false);
   // Golden and integration Deno.test files stay out of the unit lane but
   // are still excluded from Vitest.
   assertEquals(unit.some((path) => path.startsWith("testing/golden/")), false);
@@ -86,5 +86,5 @@ Deno.test("the prototype tree classifies as expected", () => {
     denoTests.includes("scripts/test-files.integration.test.ts"),
     true,
   );
-  assertEquals(denoTests.includes("src/cli.test.ts"), false);
+  assertEquals(denoTests.includes("scripts/run-vitest.test.ts"), false);
 });
