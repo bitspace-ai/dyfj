@@ -11,6 +11,14 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **The CI gate can be run manually**: `.github/workflows/gate.yml` accepts
+  `workflow_dispatch` on any branch, with a required `range_base` input that
+  binds the release range a manual run has no push or pull-request base for.
+  It runs the same `deno task test` jobs with the same read-only token and no
+  secrets. This lets repeated-run evidence (such as a count of consecutive
+  gate runs without timeout-class failures) come from real CI runners without
+  pushing commits to a pull request.
+
 - **Git hooks against AI-tool attribution**: `.githooks/commit-msg` refuses a
   commit whose author or committer is an AI tool identity (including one given
   with `--author`, and merge commits), since GitHub turns each distinct commit

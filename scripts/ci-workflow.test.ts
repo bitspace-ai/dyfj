@@ -94,6 +94,17 @@ Deno.test("gate workflow triggers on pull requests and main-branch pushes", asyn
   assertIncludes(text, "push:\n    branches: [main]");
 });
 
+Deno.test("gate workflow can be dispatched only with an explicit range base", async () => {
+  const text = await workflowText();
+  // A manual run has no push or pull-request base, so the caller must name
+  // one; the range lanes still fail closed on a base they cannot resolve.
+  assertIncludes(
+    text,
+    "workflow_dispatch:\n    inputs:\n      range_base:",
+  );
+  assertIncludes(text, "required: true");
+});
+
 Deno.test("gate workflow bounds runtime and separates cancellation from failure", async () => {
   const text = await workflowText();
   assertIncludes(text, "timeout-minutes:");
@@ -123,7 +134,7 @@ Deno.test("gate workflow binds the exact subject and release range", async () =>
   assertIncludes(
     text,
     "DYFJ_GATE_RANGE_BASE: " +
-      "${{ github.event.pull_request.base.sha || github.event.before }}",
+      "${{ github.event.pull_request.base.sha || github.event.before || inputs.range_base }}",
   );
   // The bound range base must be resolvable from the checkout.
   assertIncludes(text, "fetch-depth: 0");

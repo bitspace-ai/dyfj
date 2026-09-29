@@ -1083,7 +1083,10 @@ baseline with
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
 on pull requests and pushes to `main`, with a read-only token, no secrets, and
-the subject/range binding described above. Its stable check name, `full-gate`,
+the subject/range binding described above. It can also be dispatched manually
+on any branch (`workflow_dispatch`) with the same token and no secrets; a
+manual run has no push or pull-request base, so the caller supplies the
+release-range base as the required `range_base` input. Its stable check name, `full-gate`,
 is the intended branch-protection required check. A second job,
 `macos-portability`, runs the same command on a macOS runner so process,
 filesystem, and runtime portability are observable. The workflow pins its one

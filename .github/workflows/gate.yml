@@ -36,6 +36,17 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual runs of the same gate on any branch, for repeated-run evidence
+  # (for example, counting consecutive runs without timeout-class failures).
+  # It runs the chosen ref's code with the same read-only token and no
+  # secrets, so it grants nothing a pull request does not. There is no push or
+  # pull-request base to bind, so the caller names the release-range base.
+  workflow_dispatch:
+    inputs:
+      range_base:
+        description: "Full 40-hex commit id the release range starts from (for example, the merge base with main)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -59,7 +70,7 @@ jobs:
       # check exactly what the release range introduces. Missing or
       # mismatched bindings fail closed inside the repository-owned command.
       DYFJ_GATE_SUBJECT: ${{ github.sha }}
-      DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || inputs.range_base }}
     steps:
       # The only third-party action; pinned by full commit digest, with
       # Dependabot watching for digest updates.
@@ -115,7 +126,7 @@ jobs:
     timeout-minutes: 60
     env:
       DYFJ_GATE_SUBJECT: ${{ github.sha }}
-      DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || inputs.range_base }}
     steps:
       - name: Check out the subject commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
