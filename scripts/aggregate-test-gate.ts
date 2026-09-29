@@ -647,7 +647,7 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DYFJ_ROOT",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT",
         "--allow-read=.,..",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
         `--allow-run=${denoExecutable},dolt,cargo`,

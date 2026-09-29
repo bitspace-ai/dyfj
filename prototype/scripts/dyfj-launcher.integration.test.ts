@@ -39,6 +39,19 @@ async function symlink(target: string, path: string): Promise<boolean> {
   return success;
 }
 
+// The Deno cache the children should reuse: DENO_DIR when the caller sets it,
+// else Deno's own default for this platform (~/Library/Caches/deno on macOS,
+// ~/.cache/deno elsewhere), resolved from the real HOME before the tests swap
+// in a fake one.
+function realDenoDir(): string {
+  const explicit = Deno.env.get("DENO_DIR");
+  if (explicit !== undefined && explicit !== "") return explicit;
+  const realHome = Deno.env.get("HOME") ?? "";
+  return Deno.build.os === "darwin"
+    ? `${realHome}/Library/Caches/deno`
+    : `${realHome}/.cache/deno`;
+}
+
 async function hasCompiledBin(): Promise<boolean> {
   return await Deno.stat(COMPILED_BIN).then(() => true).catch(() => false);
 }
@@ -96,9 +109,7 @@ async function dryRun(
   // parse-check spawns a deno child that derives its cache dir from HOME;
   // with the fake HOME these tests set, pin DENO_DIR to the real cache so
   // validity — not cache writability — is what the child reports.
-  const realHome = Deno.env.get("HOME") ?? "";
-  const denoDir = Deno.env.get("DENO_DIR") ??
-    `${realHome}/Library/Caches/deno`;
+  const denoDir = realDenoDir();
   const proc = new Deno.Command(BASH, {
     args: [LAUNCHER, ...args],
     env: {
@@ -1294,9 +1305,7 @@ describe("compile-cli grant construction", () => {
   ): Promise<{ code: number; err: string }> {
     const cwd = new URL("..", import.meta.url).pathname;
     const denoBin = Deno.env.get("DENO_BIN");
-    const realHome = Deno.env.get("HOME") ?? "";
-    const denoDir = Deno.env.get("DENO_DIR") ??
-      `${realHome}/Library/Caches/deno`;
+    const denoDir = realDenoDir();
     if (!denoBin) {
       throw new Error("DENO_BIN must name the selected Deno executable");
     }
