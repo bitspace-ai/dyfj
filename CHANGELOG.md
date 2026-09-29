@@ -19,76 +19,76 @@ README are tracked separately in its Revision history section.
   and "Generated with/by Claude Code" footers from commit messages.
   `.githooks/pre-push` checks the commits being pushed for the same identities
   and message lines, catching commits that skipped `commit-msg`. Tools are
-  recognized by exact name or address, so a person whose name contains a tool's
-  name is unaffected. Enable them per clone with
+  recognized by exact name or address, so a person whose name contains a
+  tool's name is unaffected. Enable them per clone with
   `git config core.hooksPath .githooks`.
 - **Row types generated from the DDL, with two schema gate lanes**:
   `schema/codegen.ts` applies `schema/current/` then `schema/catalog/` to a
   disposable Dolt repository, reads `information_schema`, and writes
   `prototype/src/store/generated/rows.ts`: per table a `<Table>Row` (as the
   driver decodes it) and `<Table>Insert` (NOT NULL columns without a default
-  required), the column-name tuple, each column's declaration, and the SQL enum
-  unions (`EventType`, `MemoryVisibility`, `MemoryInject`, ...). The
+  required), the column-name tuple, each column's declaration, and the SQL
+  enum unions (`EventType`, `MemoryVisibility`, `MemoryInject`, ...). The
   `schema.codegen` lane regenerates it and fails when the committed file
   differs, so a DDL change without `deno task schema:codegen` fails the gate.
   The `schema.equivalence` lane (`deno task schema:equivalence`) applies
-  `current/` + `catalog/` and `history/` + `migrations/` to two repositories and
-  fails on any difference in tables, columns, types, nullability, defaults, ON
-  UPDATE clauses, indexes, enums, constraints (with their key columns and, for
-  foreign keys, the referenced table, columns and rules) or check constraints.
-  Catalog data is not compared.
+  `current/` + `catalog/` and `history/` + `migrations/` to two repositories
+  and fails on any difference in tables, columns, types, nullability,
+  defaults, ON UPDATE clauses, indexes, enums, constraints (with their key
+  columns and, for foreign keys, the referenced table, columns and rules) or
+  check constraints. Catalog data is not compared.
 - **Typed event writes**: `journal.commit` takes the generated `EventInsert`,
   and every event the runtime appends is built by its per-type constructor in
   `prototype/src/store/events/builders.ts` (`sessionStartEvent`,
   `toolCallEvent`, `providerCallEvent`, ...), which requires the fields that
-  type always carries. A misspelled column, a wrong value type or a missing NOT
-  NULL field is now a compile error instead of a rejected INSERT. The builders
-  only set `event_type`; the rows written are unchanged.
+  type always carries. A misspelled column, a wrong value type or a missing
+  NOT NULL field is now a compile error instead of a rejected INSERT. The
+  builders only set `event_type`; the rows written are unchanged.
 
 - **Rust REPL front-end (`core/dyfj-repl`)**: an interactive client that owns
-  the terminal and speaks the existing Workbench UDS protocol. The agent loop is
-  untouched — it stays server-side in `prototype/`, and this is a second client
-  of it.
+  the terminal and speaks the existing Workbench UDS protocol. The agent loop
+  is untouched — it stays server-side in `prototype/`, and this is a second
+  client of it.
 
-  It exists to make a pasted prompt behave like a typed one. The TypeScript REPL
-  borrows Node's `readline` through Deno's compatibility layer, which splits a
-  multi-line paste into one turn per line; the layer also lacks the
+  It exists to make a pasted prompt behave like a typed one. The TypeScript
+  REPL borrows Node's `readline` through Deno's compatibility layer, which
+  splits a multi-line paste into one turn per line; the layer also lacks the
   bracketed-paste markers Node added in 2023, so enabling them there corrupts
   input rather than fixing it. Owning the terminal in Rust gets paste, line
   editing and history from `rustyline` instead of reimplementing them.
 
-  At startup it prints a posture line from `runtime/status`: the default model,
-  its tier and locality, whether paid inference is approved or off (hosted turns
-  fail closed), the permission level and the tool-step limit.
+  At startup it prints a posture line from `runtime/status`: the default
+  model, its tier and locality, whether paid inference is approved or off
+  (hosted turns fail closed), the permission level and the tool-step limit.
 
   An approval is read only when both the question and the answer are on an
   interactive terminal. Without terminal input there is no operator and a
   prewritten line on a pipe would answer the request; without terminal output
   the request's details go somewhere the answering operator cannot see, so
   redirecting output would collect consent for a command, an amount and a limit
-  that were never displayed. A line typed at the terminal while a turn is
-  running does not answer a later prompt either: pending input is discarded
-  first, and if that discard fails the prompt is not read at all and the request
-  is denied, because a warning would not stop the queued keystroke from
-  answering. Approval arguments are shown in full rather than clipped, and
-  control characters are replaced in the runtime-supplied text that reaches the
-  terminal — approval titles and arguments, streamed answers, receipt text, tool
-  names, error messages and the posture line — so neither truncation nor an
-  escape sequence can hide what is being approved. Sanitising only the approval
-  would leave a streamed answer, or an error, able to change terminal state
-  before the prompt appears. Answer text keeps its newlines and tabs so
-  paragraphs and code blocks render; carriage returns are dropped from it, and
-  everywhere else newlines and tabs become spaces.
+  that were never displayed. A line typed at the terminal while a turn is running does not answer
+  a later prompt either: pending input is discarded first, and if that discard
+  fails the prompt is not read at all and the request is denied, because a
+  warning would not stop the queued keystroke from answering. Approval arguments are shown in full rather than
+  clipped, and control characters are replaced in the runtime-supplied text
+  that reaches the terminal — approval titles and arguments, streamed answers,
+  receipt text, tool names, error messages and the posture line — so neither
+  truncation nor an escape sequence can hide what is being approved. Sanitising
+  only the approval would leave a streamed answer, or an error, able to change
+  terminal state before the prompt appears. Answer text keeps its newlines and
+  tabs so paragraphs and code blocks render; carriage returns are dropped from
+  it, and everywhere else newlines and tabs become spaces.
 
   A budget request is not a tool call and is not rendered as one. Its amounts,
   limits and crossed scopes arrive in named fields with a preformatted warning
-  rather than in `arguments`, so it is shown with that warning and a line naming
-  what approving authorises. A spending request whose warning cannot be read is
-  denied rather than reduced to a bare question: an approval nobody could read
-  is not consent. A request that offers options is refused unless every option
-  can be read, as the TypeScript CLI requires: each needs an id, a name and a
-  known kind, ids are unique, and there are at most 16. It does not fall back to
-  yes/no, where `y` would grant broader consent than any option offered.
+  rather than in `arguments`, so it is shown with that warning and a line
+  naming what approving authorises. A spending request whose warning cannot be
+  read is denied rather than reduced to a bare question: an approval nobody
+  could read is not consent. A request that offers options is refused unless
+  every option can be read, as the TypeScript CLI requires: each needs an id, a
+  name and a known kind, ids are unique, and there are at most 16. It does not
+  fall back to yes/no, where `y` would grant broader consent than any option
+  offered.
 
   Ctrl-C cancels an in-flight turn through `turn/cancel` and leaves the session
   alive; a second press abandons the wait. Inside an approval prompt Ctrl-C
@@ -104,25 +104,25 @@ README are tracked separately in its Revision history section.
   turn can still be presented during a later one; tagging them is a protocol
   change rather than a client fix.
 
-  When the runtime abandons an attempt and starts again, the answer shown so far
-  is marked as abandoned and the turn is treated as having displayed nothing
-  authoritative — otherwise a replacement that arrives only in the receipt would
-  be suppressed, leaving the abandoned attempt on screen as the answer.
-  Tool-call markup that executed nothing is reported rather than left to read as
-  tool activity.
+  When the runtime abandons an attempt and starts again, the answer shown so
+  far is marked as abandoned and the turn is treated as having displayed
+  nothing authoritative — otherwise a replacement that arrives only in the
+  receipt would be suppressed, leaving the abandoned attempt on screen as the
+  answer. Tool-call markup that executed nothing is reported rather than left
+  to read as tool activity.
 
   Known limits are recorded in the source where they are met, not left to be
   rediscovered: approvals and frames carry no turn id, so a delayed one from an
   abandoned turn can appear during a later turn; a dropped write can leave a
-  partial frame; no closed state is recorded after the reader ends; one pending
-  entry leaks per abandoned turn; and the submission ceiling bounds what is
-  remembered rather than what is allocated.
+  partial frame; no closed state is recorded after the reader
+  ends; one pending entry leaks per abandoned turn; and the submission ceiling
+  bounds what is remembered rather than what is allocated.
 
-  Frames from the runtime are capped at 16 MiB, the TypeScript peer's ceiling; a
-  larger one, or a stream that passes the ceiling without a newline, closes the
-  connection and fails the requests waiting on it. So does a frame that is not
-  valid JSON, which could be the response a request is waiting for; skipping it
-  would leave that request waiting with nothing on screen.
+  Frames from the runtime are capped at 16 MiB, the TypeScript peer's
+  ceiling; a larger one, or a stream that passes the ceiling without a newline,
+  closes the connection and fails the requests waiting on it. So does a frame
+  that is not valid JSON, which could be the response a request is waiting
+  for; skipping it would leave that request waiting with nothing on screen.
 
   Not yet: model switching, session resume and the other interactive commands
   remain in the TypeScript CLI, which is unchanged and still the entry point.
@@ -143,25 +143,25 @@ README are tracked separately in its Revision history section.
   imports reach `vitest`, directly or through a helper module, stay under
   Vitest, which now excludes every other `*.test.ts`.
 - **`arch.imports` gate lane (ratchet mode)**: `scripts/arch-imports.ts` builds
-  the module graph of `prototype/src`, `prototype/mcp`, `prototype/scripts`, and
-  `prototype/diagnostics` (once it exists) with `deno info --json`, plus a
+  the module graph of `prototype/src`, `prototype/mcp`, `prototype/scripts`,
+  and `prototype/diagnostics` (once it exists) with `deno info --json`, plus a
   `deno lint` plugin that reports every dynamic `import()`, and checks it
-  against the layer rules in `specs/01-architecture.md` §3–4, kept as data in
-  `scripts/arch-layers.json`. It detects import cycles (type-only edges
+  against the layer rules in `specs/01-architecture.md` §3–4, kept as
+  data in `scripts/arch-layers.json`. It detects import cycles (type-only edges
   included), upward and non-listed same-layer edges, `cli/` imports outside its
   allow-list, and dynamic local imports. Today's violations are committed in
   `scripts/arch-imports-baseline.json` — three cycles (`mcp-tools` ⇄
   `web-tools`, `workbench` ⇄ `external-agent-runtime`, `sessions` ⇄
   `idea-packet`) and 32 entries in all. The lane fails on any violation not in
-  the baseline and on any baseline entry that no longer occurs, so the count can
-  only go down. Intentional cycles need a named entry in
+  the baseline and on any baseline entry that no longer occurs, so the count
+  can only go down. Intentional cycles need a named entry in
   `scripts/arch-cycles.json` with exact edges inside an import cycle, a
   justification, and an existing test file; an entry exempts those edges from
   the cycle and dynamic-import rules only. The list starts empty. Deep imports
   that bypass a `mod.ts` and a size report (modules over 600 lines, functions
   over 150 lines) are printed without failing. The lane runs in both
-  `deno task test` and `deno task test:fast` under the existing `test.aggregate`
-  check id.
+  `deno task test` and `deno task test:fast` under the existing
+  `test.aggregate` check id.
 
 ### Changed
 
@@ -170,79 +170,78 @@ README are tracked separately in its Revision history section.
   `memory-search`, `mcp-conformance`, `mcp-tools`, `context-size-response`,
   `structured-output`, `scripts/add-import-extensions`,
   `scripts/deno-executable` and `scripts/isolated-dolt-fixture.integration`,
-  with every case kept. Pure cases run in `test.unit`. The seven secret-resolver
-  cases that spawn `bash` moved to `src/secrets.integration.test.ts`, and the
-  redirect case that binds a loopback socket moved into
-  `src/memory-search.integration.test.ts`.
+  with every case kept. Pure cases run in `test.unit`. The seven
+  secret-resolver cases that spawn `bash` moved to
+  `src/secrets.integration.test.ts`, and the redirect case that binds a
+  loopback socket moved into `src/memory-search.integration.test.ts`.
   `scripts/isolated-dolt-fixture.integration.test.ts` now runs under the
   integration lane's `Deno.test` invocation instead of Vitest; its two
   fixture-setup cases keep their 30-second bound by aborting setup through the
   fixture's own signal, since `Deno.test` has no per-test timeout. That
-  invocation gains only what these tests use: `dolt` and `bash` run grants, the
-  temp roots, `../schema`, and the `TMPDIR`/`TEMP`/`TMP` and `LEAKY_AMBIENT` env
-  names. Product behavior is unchanged.
+  invocation gains only what these tests use: `dolt` and `bash` run grants,
+  the temp roots, `../schema`, and the `TMPDIR`/`TEMP`/`TMP` and
+  `LEAKY_AMBIENT` env names. Product behavior is unchanged.
 
 - **The `dyfj` client's turn code moved out of `src/cli.ts`, which is now the
   interactive REPL only.** The turn request and socket turn with its
   cancellation (`src/cli/turn-client.ts`), the interactive mid-turn approval
   prompt (`src/cli/approval.ts`, shared by `exec` and the REPL), the one-shot
-  `exec` command (`src/cli/commands/exec.ts`), and the turn's terminal rendering
-  (`src/cli/render/`: streaming markdown and runtime-event lines, the busy
-  spinner and its label sanitizing, the receipt line) are separate modules.
-  `src/busy-spinner.ts` and `src/streaming-markdown.ts` moved into
+  `exec` command (`src/cli/commands/exec.ts`), and the turn's terminal
+  rendering (`src/cli/render/`: streaming markdown and runtime-event lines,
+  the busy spinner and its label sanitizing, the receipt line) are separate
+  modules. `src/busy-spinner.ts` and `src/streaming-markdown.ts` moved into
   `src/cli/render/` unchanged. Turns, approvals, cancellation, output and exit
   codes are unchanged; the golden suite passes with no snapshot diff. Their
   tests moved to `Deno.test` beside them, with the shared turn fixtures in
-  `prototype/testing/builders/turn-client.ts`; the real-socket turn round trip
-  runs in the integration lane.
+  `prototype/testing/builders/turn-client.ts`; the real-socket turn round
+  trip runs in the integration lane.
 
 - **The `dyfj` client's entrypoint is `prototype/src/cli/main.ts`.** Argument
-  parsing, config resolution and help (`src/cli/args.ts`), the client's terminal
-  and socket ports (`src/cli/io.ts`), the `models`, `sessions`, `status`, `stop`
-  and `start` subcommands (`src/cli/commands/`), and the runtime launch with its
-  permission-grant computation (`src/cli/launcher/`) moved out of `src/cli.ts`,
-  which keeps the interactive REPL and the one-shot turn and no longer runs as a
-  program: `deno run src/cli.ts` does nothing. `deno task compile-cli`, the
-  `dyfj` launcher (`--parse-check`, the status probe and the `deno run` route)
-  and the golden harness run the new entrypoint. The launcher now treats the
-  compiled binary as stale when it is older than any client source (`src/cli.ts`
-  or a non-test module under `src/cli/`), not only `src/cli.ts`, so an edit to a
-  moved module still routes through `deno run` until the binary is rebuilt.
-  Commands, flags, exit codes, output and the runtime's launch grants are
-  unchanged; the golden suite passes with no snapshot diff. The tests for the
-  moved modules run on `Deno.test` beside them, the real-socket `stop` and
-  `status` cases in the integration lane; the four launcher-grant cases that
-  build symlink fixtures stay on Vitest in
-  `src/cli/launcher/grants.platform.test.ts`.
+  parsing, config resolution and help (`src/cli/args.ts`), the client's
+  terminal and socket ports (`src/cli/io.ts`), the `models`, `sessions`,
+  `status`, `stop` and `start` subcommands (`src/cli/commands/`), and the
+  runtime launch with its permission-grant computation (`src/cli/launcher/`)
+  moved out of `src/cli.ts`, which keeps the interactive REPL and the one-shot
+  turn and no longer runs as a program: `deno run src/cli.ts` does nothing.
+  `deno task compile-cli`, the `dyfj` launcher (`--parse-check`, the status
+  probe and the `deno run` route) and the golden harness run the new
+  entrypoint. The launcher now treats the compiled binary as stale when it is
+  older than any client source (`src/cli.ts` or a non-test module under
+  `src/cli/`), not only `src/cli.ts`, so an edit to a moved module still
+  routes through `deno run` until the binary is rebuilt. Commands, flags, exit
+  codes, output and the runtime's launch grants are unchanged; the golden
+  suite passes with no snapshot diff. The tests for the moved modules run on
+  `Deno.test` beside them, the real-socket `stop` and `status` cases in the
+  integration lane; the four launcher-grant cases that build symlink fixtures
+  stay on Vitest in `src/cli/launcher/grants.platform.test.ts`.
 
 - **Friction and Linear are extensions too; the core no longer imports any
-  extension.** `friction/post` now comes from
-  `prototype/src/extensions/friction/` and the Linear integration from
-  `extensions/linear/`; `src/friction.ts`, `src/linear-tools.ts` and
-  `src/server/rpc/legacy-extensions.ts` are gone. The linear extension resolves
-  the Linear MCP commands friction calls once, when the engine starts, instead
-  of friction building a registry of them on every post. MCP discovery
-  (`buildExternalMcpCommands`) no longer builds the bounded Linear
-  `create_issue` command itself: it takes a `buildIssueCreationCommand` port,
-  which the engine fills with the linear extension's builder. A caller that
-  omits it gets configured `create_issue` and `save_issue` tools withheld as
-  unsupported. The `arch.imports` lane now fails when anything other than
-  `src/server/` or `src/cli/` imports `extensions/`. `friction/post`'s payloads,
-  numbering, approvals, receipts and error messages, and the REPL's `/friction`
-  command, are unchanged.
+  extension.** `friction/post` now comes from `prototype/src/extensions/friction/`
+  and the Linear integration from `extensions/linear/`; `src/friction.ts`,
+  `src/linear-tools.ts` and `src/server/rpc/legacy-extensions.ts` are gone.
+  The linear extension resolves the Linear MCP commands friction calls once,
+  when the engine starts, instead of friction building a registry of them on
+  every post. MCP discovery (`buildExternalMcpCommands`) no longer builds the
+  bounded Linear `create_issue` command itself: it takes a
+  `buildIssueCreationCommand` port, which the engine fills with the linear
+  extension's builder. A caller that omits it gets configured `create_issue`
+  and `save_issue` tools withheld as unsupported. The `arch.imports` lane now
+  fails when anything other than `src/server/` or `src/cli/` imports
+  `extensions/`. `friction/post`'s payloads, numbering, approvals, receipts and
+  error messages, and the REPL's `/friction` command, are unchanged.
 
 - **Ideas and packets are an extension behind the new Extension interface.**
   `ideas/*` and `packets/*` now come from `prototype/src/extensions/ideas/`,
   which the engine's composition root builds and plugs in through
   `src/server/extensions.ts`. The idea/packet registry is owned by that
-  extension instance, one per engine, instead of a process-wide singleton: two
-  engines in one process (as some tests build) no longer share ideas and
-  packets. It is still in memory only, so ideas and packets are still lost when
-  the engine restarts. The REPL's in-process path (`unix: false`, used only by
-  tests) keeps its own registry per REPL session. Method names, payloads, error
-  messages and the REPL's `/idea` and `/packet` commands are unchanged. The
-  shared RPC parameter sanitizers moved from `src/server/rpc/params.ts` to
-  `src/transport/rpc-params.ts`.
+  extension instance, one per engine, instead of a process-wide singleton:
+  two engines in one process (as some tests build) no longer share ideas and
+  packets. It is still in memory only, so ideas and packets are still lost
+  when the engine restarts. The REPL's in-process path (`unix: false`, used
+  only by tests) keeps its own registry per REPL session. Method names,
+  payloads, error messages and the REPL's `/idea` and `/packet` commands are
+  unchanged. The shared RPC parameter sanitizers moved from
+  `src/server/rpc/params.ts` to `src/transport/rpc-params.ts`.
 
 - **The engine server's entrypoint is `prototype/src/server/main.ts`.** It
   replaces `src/uds-serve.ts` and `src/uds-server.ts`, which are gone. It is the
@@ -258,90 +257,93 @@ README are tracked separately in its Revision history section.
   (`SessionOwners.runTurn`) at admission, and its session owner is registered
   under that id before the runtime starts, so a later turn naming that id is
   serialized behind it. The runtime (native and ACP) uses the allocated id,
-  passed as the new `newSessionId` runtime input, instead of generating one. The
-  id format, the events, their order and the `sessionStart` frame are unchanged.
+  passed as the new `newSessionId` runtime input, instead of generating one.
+  The id format, the events, their order and the `sessionStart` frame are
+  unchanged.
 
 - **The engine calls back to its caller only through declared ports.** On the
   runtime input (`WorkbenchRuntimeInput`), the five approval handlers
   (`confirmPaidEscalation`, `confirmBudgetCeiling`, `confirmRunawayAnomaly`,
   `confirmToolApproval`, `confirmExternalAgentPermission`) move under one
-  `approver` port, and the three output sinks (`onRuntimeEvent`, `onTextDelta`,
-  `log`) move under one `frames` port (`FrameSink`). `onCancellationClosed` is
-  replaced by `cancellationWindow`, the turn's ticket, which the runtime closes
-  by message. `fetchSpendBaselines` and `recoverContextOverflow` move from the
-  input to the runtime services (`WorkbenchRuntimeServices`). `executeTurn`'s
-  dependencies and the ACP runner's input take the same `approver` and `frames`
-  shapes. This changes in-process call sites only: the wire protocol, event
-  rows, receipts and the golden suite are unchanged.
+  `approver` port, and the three output sinks (`onRuntimeEvent`,
+  `onTextDelta`, `log`) move under one `frames` port (`FrameSink`).
+  `onCancellationClosed` is replaced by `cancellationWindow`, the turn's
+  ticket, which the runtime closes by message. `fetchSpendBaselines` and
+  `recoverContextOverflow` move from the input to the runtime services
+  (`WorkbenchRuntimeServices`). `executeTurn`'s dependencies and the ACP
+  runner's input take the same `approver` and `frames` shapes. This changes
+  in-process call sites only: the wire protocol, event rows, receipts and the
+  golden suite are unchanged.
 - **`finalize` is the native turn's last named pipeline stage**
   (`engine/finalize.ts`), and `runNativeWorkbenchRuntime` is now only the
-  composition of the six stages. `completeTurn` records a finished or cancelled
-  turn, `failTurn` classifies a failure by its real class, and `finalize` writes
-  `session_end`, the budget summary, the receipt and the session record before
-  returning the result or rethrowing the turn's error. Event rows, receipts and
-  the golden suite are unchanged. The engine's last Vitest file
-  (`src/workbench.test.ts`, which mocked ten internal modules) is gone; its
-  cases run on `Deno.test` against the engine fakes, including a new proof that
-  a turn requested from inside a tool approval waits for the approving turn to
-  finish.
+  composition of the six stages. `completeTurn` records a finished or
+  cancelled turn, `failTurn` classifies a failure by its real class, and
+  `finalize` writes `session_end`, the budget summary, the receipt and the
+  session record before returning the result or rethrowing the turn's error.
+  Event rows, receipts and the golden suite are unchanged. The engine's last
+  Vitest file (`src/workbench.test.ts`, which mocked ten internal modules) is
+  gone; its cases run on `Deno.test` against the engine fakes, including a
+  new proof that a turn requested from inside a tool approval waits for the
+  approving turn to finish.
 - **`agentLoop` is the native turn's fifth named pipeline stage**
-  (`engine/agent-loop.ts`): it drives model and tool steps until the model stops
-  requesting tools, the model repeats prior tool calls, or the tool-step limit
-  forces a no-tools conclusion. Each step runs its requested tools in order,
-  stops starting new ones once the turn is cancelled, and replays the
-  assistant's tool-call turn with its linked results into the next call. Event
-  rows, receipts and the golden suite are unchanged.
+  (`engine/agent-loop.ts`): it drives model and tool steps until the model
+  stops requesting tools, the model repeats prior tool calls, or the
+  tool-step limit forces a no-tools conclusion. Each step runs its requested
+  tools in order, stops starting new ones once the turn is cancelled, and
+  replays the assistant's tool-call turn with its linked results into the
+  next call. Event rows, receipts and the golden suite are unchanged.
 - **The agent loop's provider calls are engine modules**: `observedTurn`
   (`engine/observed-turn.ts`) is one budget-gated, recorded loop call — the
-  daily-spend refresh, the runaway-anomaly stop and the ceiling before the call;
-  the turn aggregates, frames and the fail-closed unparsed-markup disclosure
-  after it. `recoveredTurn` (`engine/recovered-turn.ts`) wraps it with
-  length-stop recovery: one continuation retry when the output budget ran out,
-  or one overflow-recovery retry, announced as a superseding retry, when the
-  context window overflowed. Event rows, receipts and the golden suite are
-  unchanged.
+  daily-spend refresh, the runaway-anomaly stop and the ceiling before the
+  call; the turn aggregates, frames and the fail-closed unparsed-markup
+  disclosure after it. `recoveredTurn` (`engine/recovered-turn.ts`) wraps it
+  with length-stop recovery: one continuation retry when the output budget
+  ran out, or one overflow-recovery retry, announced as a superseding retry,
+  when the context window overflowed. Event rows, receipts and the golden
+  suite are unchanged.
 - **`loadTranscript` is the native turn's fourth named pipeline stage**
-  (`engine/load-transcript.ts`): it seeds the first call's conversation (prior
-  turns for companion turns only, then the current prompt) and compresses elder
-  turns first when the transcript would cross half the model's context window.
-  Transcript compression is its own module (`engine/compression.ts`), shared by
-  that proactive trigger and the agent loop's overflow recovery: on-machine
-  model choice, the gated and recorded compression call, and the durable
-  `context_compressed` write with its by-id durability probe. Event rows,
-  receipts and the golden suite are unchanged.
+  (`engine/load-transcript.ts`): it seeds the first call's conversation
+  (prior turns for companion turns only, then the current prompt) and
+  compresses elder turns first when the transcript would cross half the
+  model's context window. Transcript compression is its own module
+  (`engine/compression.ts`), shared by that proactive trigger and the agent
+  loop's overflow recovery: on-machine model choice, the gated and recorded
+  compression call, and the durable `context_compressed` write with its
+  by-id durability probe. Event rows, receipts and the golden suite are
+  unchanged.
 - **`budgetGate` is the native turn's third named pipeline stage**
-  (`engine/budget-gate.ts`): it selects the turn's model, runs the entry checks
-  in their existing order (runaway-anomaly hard stop, budget ceiling, paid
-  consent), and records `model_selected`. The ceiling and anomaly gates it
-  builds serve every later provider call of the turn. `SessionOwners` now also
-  holds the budget-ceiling confirmation store: a turn reaches its session's
-  scope only through `budgetScope`, and the runtime services take `budgetScopes`
-  (the owners) in place of `ceilingConfirmations`. The UDS server builds one
-  `SessionOwners` and shares it between the turn handlers and the runtime. Event
-  rows, receipts and the golden suite are unchanged.
+  (`engine/budget-gate.ts`): it selects the turn's model, runs the entry
+  checks in their existing order (runaway-anomaly hard stop, budget ceiling,
+  paid consent), and records `model_selected`. The ceiling and anomaly gates
+  it builds serve every later provider call of the turn. `SessionOwners` now
+  also holds the budget-ceiling confirmation store: a turn reaches its
+  session's scope only through `budgetScope`, and the runtime services take
+  `budgetScopes` (the owners) in place of `ceilingConfirmations`. The UDS
+  server builds one `SessionOwners` and shares it between the turn handlers
+  and the runtime. Event rows, receipts and the golden suite are unchanged.
 - **`buildContext` is the native turn's second named pipeline stage**
   (`engine/build-context.ts`): it resolves the transport-gated workspace root,
   then assembles repo context for ask and next-work turns, or memory, tools,
   elevated AGENTS.md instructions and the summary trust policy for companion
-  turns, and composes the persisted-history omission notice. It writes into an
-  engine-owned `TurnState` (`engine/turn-state.ts`), which the rest of the turn
-  and its receipt read whatever the stages reached. Event rows, receipts and the
-  golden suite are unchanged.
+  turns, and composes the persisted-history omission notice. It writes into
+  an engine-owned `TurnState` (`engine/turn-state.ts`), which the rest of the
+  turn and its receipt read whatever the stages reached. Event rows, receipts
+  and the golden suite are unchanged.
 - **`openSession` is the native turn's first named pipeline stage**
   (`engine/open-session.ts`): it fixes the turn's identity, principal, auth,
-  budget posture and tool-step limit as a `TurnSession`, announces the turn, and
-  writes `session_start`. Failed event writes are counted and kept by a per-turn
-  `TurnAudit` (`engine/turn-state.ts`). Event rows, receipts and the golden
-  suite are unchanged.
+  budget posture and tool-step limit as a `TurnSession`, announces the turn,
+  and writes `session_start`. Failed event writes are counted and kept by a
+  per-turn `TurnAudit` (`engine/turn-state.ts`). Event rows, receipts and the
+  golden suite are unchanged.
 - **The native runtime's helpers and types are separate engine modules**:
   receipt and tally formatting (`engine/receipt.ts`), the next-work worklet
   (`engine/next-work.ts`), runtime-event delivery (`engine/runtime-events.ts`)
-  and the runtime's input, services and result types (`engine/runtime-types.ts`)
-  moved out of `engine/native-runner.ts`. The runtime services accept an
-  optional clock, environment and provider transport, and `loadAskRepoContext`
-  an optional `env`; the defaults are the system clock, the process environment
-  and the platform `fetch`, as before. Event rows, receipts and the golden suite
-  are unchanged.
+  and the runtime's input, services and result types
+  (`engine/runtime-types.ts`) moved out of `engine/native-runner.ts`. The
+  runtime services accept an optional clock, environment and provider
+  transport, and `loadAskRepoContext` an optional `env`; the defaults are the
+  system clock, the process environment and the platform `fetch`, as before.
+  Event rows, receipts and the golden suite are unchanged.
 - **The turn entry and session ownership live in `prototype/src/engine/`**: the
   shared turn core (`turn-runner.ts`) is now `engine/turn.ts`, with request
   validation split into `engine/turn-request.ts`, and the native runtime
@@ -354,58 +356,58 @@ README are tracked separately in its Revision history section.
   permission prompt and selection types moved to `contract/`. Same-session
   serialization, the one-turn-per-connection rule, and cancel semantics are
   unchanged, and the golden suite passes with no snapshot change.
-- **`web_fetch` refuses a target it cannot verify as public**: a hostname passes
-  the address check only when its A and AAAA lookups both answer (either may
-  have no records), together they return at least one address, and none is
-  private, loopback or internal. A lookup that fails or cannot be made, a name
-  with no addresses, or a lookup that outlives the fetch deadline refuses the
-  target before the upstream fetch tool is called. A public IP literal is
-  accepted without a lookup, and private-literal and localhost rejection is
-  unchanged. For these lookups, both `dyfj start` and `deno task serve-unix`
-  grant the engine `<ip>:53` for each `nameserver` in `/etc/resolv.conf` on its
-  `--allow-net` (`prototype/src/config/nameservers.ts`); the task gets its flag
-  from `prototype/scripts/serve-unix-net-flag.ts`, which repeats the profile's
-  net list, and falls back to the profile's own list when that cannot be read.
+- **`web_fetch` refuses a target it cannot verify as public**: a hostname
+  passes the address check only when its A and AAAA lookups both answer
+  (either may have no records), together they return at least one address,
+  and none is private, loopback or internal. A
+  lookup that fails or cannot be made, a name with no addresses, or a lookup
+  that outlives the fetch deadline refuses the target before the upstream
+  fetch tool is called. A public IP literal is accepted without a lookup, and
+  private-literal and localhost rejection is unchanged. For these lookups,
+  both `dyfj start` and `deno task serve-unix` grant the engine `<ip>:53` for
+  each `nameserver` in `/etc/resolv.conf` on its `--allow-net`
+  (`prototype/src/config/nameservers.ts`); the task gets its flag from
+  `prototype/scripts/serve-unix-net-flag.ts`, which repeats the profile's net
+  list, and falls back to the profile's own list when that cannot be read.
 - **The web tools look up hostnames through a `DnsResolver` port**
   (`prototype/src/tools/web/dns.ts`): the web tools' address check resolves a
   target's A and AAAA records through an injected resolver whose lookups never
-  throw and report either an answer or why none was obtained. The real adapter
-  wraps `Deno.resolveDns`; tests use the `ScriptedDnsResolver` fake
-  (`prototype/testing/fakes/`) instead of replacing the `Deno.resolveDns`
-  global, and the address check gains direct tests. Both pass the port's
-  conformance suite (`prototype/testing/conformance/dns-resolver.ts`): the fake
-  in the unit lane, the real adapter in the integration lane in whichever mode
-  that lane's net grant allows. The Deno integration lane now runs with
-  `--no-prompt`, so ungranted access fails locally as it does in CI instead of
-  prompting.
-- **Anthropic and Gemini requests follow the same host and redirect rules as the
-  hosted OpenAI-compatible providers**: each key is pinned to its provider's
-  canonical https endpoint, the same one `getModelAccessModality` classifies as
-  frontier-hosted. `ANTHROPIC_API_KEY` goes only to `https://api.anthropic.com`
-  and `GEMINI_API_KEY` only to `https://generativelanguage.googleapis.com`, on
-  the default port with an empty base path. A catalog row for `anthropic` or
-  `google` that names any other base URL fails with
-  `WorkbenchHostedProviderBaseUrlError` before any request is sent. Both
-  adapters now refuse redirects (`redirect: "error"`), as the OpenAI-compatible
-  adapter already did, and the Gemini adapter encodes the model slug as a single
-  path segment of the request URL. The provider conformance kit gains two
-  required fixtures, an off-host https base URL (rejected before any request)
-  and a redirect response (the turn fails), and checks that every request an
-  adapter sends refuses redirects. Requests for the canonical endpoints are
-  unchanged.
+  throw and report either an answer or why none was obtained. The real adapter wraps `Deno.resolveDns`; tests use the
+  `ScriptedDnsResolver` fake (`prototype/testing/fakes/`) instead of replacing
+  the `Deno.resolveDns` global, and the address check gains direct tests. Both
+  pass the port's conformance suite
+  (`prototype/testing/conformance/dns-resolver.ts`): the fake in the unit
+  lane, the real adapter in the integration lane in whichever mode that lane's
+  net grant allows. The Deno integration lane now runs with `--no-prompt`, so
+  ungranted access fails locally as it does in CI instead of prompting.
+- **Anthropic and Gemini requests follow the same host and redirect rules as
+  the hosted OpenAI-compatible providers**: each key is pinned to its
+  provider's canonical https endpoint, the same one `getModelAccessModality`
+  classifies as frontier-hosted. `ANTHROPIC_API_KEY` goes only to
+  `https://api.anthropic.com` and `GEMINI_API_KEY` only to
+  `https://generativelanguage.googleapis.com`, on the default port with an
+  empty base path. A catalog row for `anthropic` or `google` that names any
+  other base URL fails with `WorkbenchHostedProviderBaseUrlError` before any
+  request is sent. Both adapters now refuse redirects (`redirect: "error"`),
+  as the OpenAI-compatible adapter already did, and the Gemini adapter encodes
+  the model slug as a single path segment of the request URL. The provider
+  conformance kit gains two required fixtures, an off-host https base URL
+  (rejected before any request) and a redirect response (the turn fails), and
+  checks that every request an adapter sends refuses redirects. Requests for
+  the canonical endpoints are unchanged.
 - **Route resolution and the observed provider call live in
-  `prototype/src/engine/`**: `resolveRoute` (`engine/route.ts`) is the one step
-  that chooses the runner for a turn. It serves both the native engine and the
-  external-agent (ACP) runner, and replaces the two copies of the ACP
-  paid-escalation preflight in `workbench.ts`. The native turn selects its model
-  through `selectModelRoute`, and all three preflights now go through one
-  `confirmPaidRoute`. `observedProviderCall` (`engine/observed-call.ts`) is the
-  one implementation of "call the provider, write the `provider_call` event,
-  record the usage with the budget tracker"; the agent loop and transcript
-  compression both call it instead of each carrying a copy. The engine's error
-  classes and `classifyErrorKind` moved to `engine/errors.ts`. Event rows, their
-  order, receipts and cost accounting are unchanged, and the golden suite passes
-  with no snapshot change.
+  `prototype/src/engine/`**: `resolveRoute` (`engine/route.ts`) is the one
+  step that chooses the runner for a turn. It serves both the native engine
+  and the external-agent (ACP) runner, and replaces the two copies of the ACP
+  paid-escalation preflight in `workbench.ts`. The native turn selects its
+  model through `selectModelRoute`, and all three preflights now go through
+  one `confirmPaidRoute`. `observedProviderCall` (`engine/observed-call.ts`)
+  is the one implementation of "call the provider, write the `provider_call`
+  event, record the usage with the budget tracker"; the agent loop and
+  transcript compression both call it instead of each carrying a copy. The
+  engine's error classes and `classifyErrorKind` moved to `engine/errors.ts`.
+  Event rows, their order, receipts and cost accounting are unchanged, and the
+  golden suite passes with no snapshot change.
 - **Tools live in `prototype/src/tools/`, with one tool shape and one catalog
   builder**: `commands.ts` is split into the tool shape (`definition.ts`), the
   registry, argument validation, the call-shape policy, a shared redactor
@@ -422,50 +424,52 @@ README are tracked separately in its Revision history section.
   registry assemblies (the runtime's per-turn toolset, the `tools/list` and
   `tools/inspect` listing, and the friction command set), and `BUILTIN_TOOLS`
   lists the builtins in their existing order. The legacy `ToolDefinition` and
-  `ToolResultMessage` types in `memory.ts` are gone. Tool names, schemas, policy
-  verdicts, events, the tool definitions sent to providers and the
-  `tools/list`/`tools/inspect` output are unchanged, and the golden suite passes
-  with no snapshot change; the engine now imports the tool and memory modules
-  statically. A tool conformance kit (`prototype/testing/conformance/tool.ts`)
-  runs over a catalog and checks every command it holds: a valid schema that
-  rejects invalid arguments before the executor or any approver, a declared and
-  coherent effect envelope, the policy verdict under `strict` and `operator`,
-  redaction reaching the event payload, and exactly one `tool_call` event per
-  invocation. It covers the builtins and the MCP-derived commands
-  (`src/tools/conformance.test.ts`), and its own self-test covers every effect
-  class. The tests of the moved modules are `Deno.test` files in the unit lane
-  beside the modules they cover; `buildSafeBashEnv` takes the `Env` port so its
-  test uses `MapEnv`. `specs/recipes/add-tool.md` describes adding a tool, and a
-  test-only `text.stats` tool under `prototype/testing/tools/text-stats/`,
-  written from it, passes the kit.
+  `ToolResultMessage` types in `memory.ts` are gone. Tool names, schemas,
+  policy verdicts, events, the tool definitions sent to providers and the
+  `tools/list`/`tools/inspect` output are unchanged, and the golden suite
+  passes with no snapshot change; the engine now imports the tool and memory
+  modules statically. A tool conformance kit
+  (`prototype/testing/conformance/tool.ts`) runs over a catalog and checks every
+  command it holds: a valid schema that rejects invalid arguments before the
+  executor or any approver, a declared and coherent effect envelope, the
+  policy verdict under `strict` and `operator`, redaction reaching the event
+  payload, and exactly one `tool_call` event per invocation. It covers the
+  builtins and the MCP-derived commands (`src/tools/conformance.test.ts`), and
+  its own self-test covers every effect class. The tests of the moved modules
+  are `Deno.test` files in the unit lane beside the modules they cover;
+  `buildSafeBashEnv` takes the `Env` port so its test uses `MapEnv`.
+  `specs/recipes/add-tool.md` describes adding a tool, and a test-only
+  `text.stats` tool under `prototype/testing/tools/text-stats/`, written from
+  it, passes the kit.
 
 - **Model providers live in `prototype/src/providers/`, one adapter per API
-  family behind a `ProviderAdapter` interface**: the 3,797-line `provider.ts` is
-  split into `registry/` (catalog parsing from the store's model reader,
-  routing, the built-in local defaults, and dispatch), `http.ts` (the
-  `HttpTransport` port and the header deadline), `shared/` (SSE line reading,
-  text tool-call extraction, token estimates, wire-safe tool names, base-URL
-  rules) and the `openai-compatible/`, `anthropic/` and `gemini/` adapters, each
-  with its request, stream, usage and stop-reason code. `runWorkbenchTurn`
-  selects the model and dispatches to the adapter serving its provider; a
-  provider no adapter serves still fails closed before any request. Text
-  tool-call extraction moved verbatim. Request bodies, headers, streams,
-  results, errors and receipts are unchanged, and the golden suite passes with
-  no snapshot change. The engine now imports the provider API statically. A
-  provider conformance kit (`prototype/testing/conformance/provider-adapter.ts`)
-  runs every adapter through recorded request/response fixtures (plain text,
-  native and text-markup tool calls, usage and cost, a length stop, a mid-stream
-  error, an abort, a base-URL rejection, plus the header deadline in both
-  request modes and an abort before dispatch), replayed by a scripted
-  `HttpTransport` fake. That fake passes the port's conformance suite
-  (`prototype/testing/conformance/http-transport.ts`) in the unit lane, and real
-  `fetch` passes the same suite against a loopback server in the isolated-Dolt
-  integration lane. `provider.test.ts` (Vitest) is gone: its cases are kit
-  fixtures or `Deno.test` unit tests beside the modules they cover, using the
-  scripted transport and the `MapEnv` and `ManualClock` fakes.
-  `specs/recipes/add-provider.md` describes adding a provider, and a test-only
-  synthetic adapter under `prototype/testing/providers/synthetic/`, written from
-  it, passes the kit.
+  family behind a `ProviderAdapter` interface**: the 3,797-line
+  `provider.ts` is split into `registry/` (catalog parsing from the store's
+  model reader, routing, the built-in local defaults, and dispatch),
+  `http.ts` (the `HttpTransport` port and the header deadline), `shared/`
+  (SSE line reading, text tool-call extraction, token estimates, wire-safe
+  tool names, base-URL rules) and the `openai-compatible/`, `anthropic/` and
+  `gemini/` adapters, each with its request, stream, usage and stop-reason
+  code. `runWorkbenchTurn` selects the model and dispatches to the adapter
+  serving its provider; a provider no adapter serves still fails closed
+  before any request. Text tool-call extraction moved verbatim. Request
+  bodies, headers, streams, results, errors and receipts are unchanged, and
+  the golden suite passes with no snapshot change. The engine now imports the
+  provider API statically. A provider conformance kit
+  (`prototype/testing/conformance/provider-adapter.ts`) runs every adapter
+  through recorded request/response fixtures (plain text, native and
+  text-markup tool calls, usage and cost, a length stop, a mid-stream error,
+  an abort, a base-URL rejection, plus the header deadline in both request
+  modes and an abort before dispatch), replayed by a scripted `HttpTransport`
+  fake. That fake passes the port's conformance suite
+  (`prototype/testing/conformance/http-transport.ts`) in the unit lane, and
+  real `fetch` passes the same suite against a loopback server in the
+  isolated-Dolt integration lane. `provider.test.ts` (Vitest) is gone: its
+  cases are kit fixtures or `Deno.test` unit tests beside the modules they
+  cover, using the scripted transport and the `MapEnv` and `ManualClock`
+  fakes. `specs/recipes/add-provider.md` describes adding a provider, and a
+  test-only synthetic adapter under `prototype/testing/providers/synthetic/`,
+  written from it, passes the kit.
 
 - **Budget and context code live in `prototype/src/budget/` and
   `prototype/src/context/`**, with no change in behavior. `budget.ts` is split
@@ -476,22 +480,23 @@ README are tracked separately in its Revision history section.
   module-level maps: the composition root builds one `CeilingConfirmationStore`
   per engine and passes it to the runtime with its services, so confirmations
   still last for their scope periods across the engine's turns. `context/`
-  gathers repo-context packing, companion prompt loading, transcript compression
-  (`context-compression.ts` is now `compression.ts`), length recovery, and the
-  conversation projection that rebuilds prior turns from session events
-  (`conversation.ts`). `sessions.ts` is gone: its session-record helpers moved
-  to `store/sessions.ts`, and the `WorkbenchSessionEvent` read shape moved to
-  `contract/`, so the CLI and the ideas extension take it from the contract.
-  Reading wall-clock time for the budget's local day now goes through a `Clock`
-  port (`kernel/clock.ts`), which the system clock and the `ManualClock` fake
-  both pass a shared conformance suite against; the budget's session-envelope
-  warn-then-confirm and anomaly hard stop gain component tests over
-  `ManualClock` and `MemoryStore`. The moved tests run under `Deno.test`, except
-  two repo-context cases that need a subprocess and the process environment,
-  which the `Deno.test` unit lane does not grant; they stay on the Vitest lane
-  in `repo-context.platform.test.ts`. The engine now imports these modules
-  statically rather than through `await import()`, and the `arch.imports`
-  baseline shrinks from 23 entries to 13.
+  gathers repo-context packing, companion prompt loading, transcript
+  compression (`context-compression.ts` is now `compression.ts`), length
+  recovery, and the conversation projection that
+  rebuilds prior turns from session events (`conversation.ts`). `sessions.ts`
+  is gone: its session-record helpers moved to `store/sessions.ts`, and the
+  `WorkbenchSessionEvent` read shape moved to `contract/`, so the CLI and the
+  ideas extension take it from the contract. Reading wall-clock time for the
+  budget's local day now goes through a `Clock` port (`kernel/clock.ts`),
+  which the system clock and the `ManualClock` fake both pass a shared
+  conformance suite against; the budget's session-envelope warn-then-confirm
+  and anomaly hard stop gain component tests over `ManualClock` and
+  `MemoryStore`. The moved tests run under `Deno.test`, except two
+  repo-context cases that need a subprocess and the process environment,
+  which the `Deno.test` unit lane does not grant; they stay on the Vitest
+  lane in `repo-context.platform.test.ts`. The engine now imports
+  these modules statically rather than through `await import()`, and the
+  `arch.imports` baseline shrinks from 23 entries to 13.
 
 - **The engine refuses to start against an un-migrated database**: at boot,
   `serve-unix` compares the Dolt database's columns for the canonical tables
@@ -504,73 +509,75 @@ README are tracked separately in its Revision history section.
   within 5 seconds) is left to fail on first use, as before; any other failure
   of the check fails the boot. Extra columns are not reported.
 - **One schema apply-order rule in the docs**: a fresh install applies
-  `schema/current/` then `schema/catalog/`; an existing database replays forward
-  through `schema/migrations/` on top of the structure `schema/history/` ends
-  with. `schema/README.md`, `schema/migrations/README.md` and the README's
+  `schema/current/` then `schema/catalog/`; an existing database replays
+  forward through `schema/migrations/` on top of the structure `schema/history/`
+  ends with. `schema/README.md`, `schema/migrations/README.md` and the README's
   "Initialize Dolt" section now all state it.
 
 - **Every database read and write goes through one store port
   (`prototype/src/store/`), and every write through `journal.commit`**: the
   store is the only code that issues SQL. `Store` exposes `journal` (the one
-  mutation path) and read-only readers for events, sessions, memories, the model
-  catalog, prompts and spend baselines; each reader is one of the queries the
-  runtime and the memory MCP server issued before, with the same SQL.
-  `DoltStore` runs over one `mysql2` pool that the composition root builds and
-  passes in: the engine server, the memory MCP server and the
+  mutation path) and read-only readers for events, sessions, memories, the
+  model catalog, prompts and spend baselines; each reader is one of the
+  queries the runtime and the memory MCP server issued before, with the same
+  SQL. `DoltStore` runs over one `mysql2` pool that the composition root
+  builds and passes in: the engine server, the memory MCP server and the
   `verify-workbench-events` diagnostic each build theirs from the `DOLT_*`
   settings (`config/dolt.ts`; names and defaults unchanged). The module-level
   pool in `utils.ts`, the MCP server's private pool, `mcp/dolt-config.ts`, and
   the second raw connection that cancellable event writes opened are gone; a
   cancellable write now runs in a transaction on a pooled connection.
-  `journal.commit` applies a batch's events, their projections and its declared
-  mutations in one transaction. The writes that have no event type yet (session
-  inserts and updates, from the runtime and from the MCP server's
-  `start_session`/`update_session`, and the MCP `write_memory` upsert) pass
-  through it as the three `UnjournaledMutation` kinds listed, each with its
-  reason, in `store/unjournaled.ts`; `commit` rejects any other kind. The
-  projector mechanism is in place with no phase-1 projectors, because no event
-  written today reproduces a session or memory row. Memory clearance for
-  loopback, non-loopback and standalone MCP stdio consumers is computed in one
-  place, `store/memories.ts`. Rows, receipts, event sequences and MCP tool
-  output are unchanged, and the golden suite passes with no snapshot change.
-  `MemoryStore` holds the same port in memory for tests. A store conformance
-  suite (`prototype/testing/conformance/store.ts`) runs against it in the unit
-  lane and against `DoltStore` in the isolated Dolt integration lane, each case
-  in its own database. It covers every reader, memory clearance for the three
-  consumers, and the journal cases: atomicity (including a failing projector),
-  no update or delete path for events, rejection of an undeclared mutation kind,
-  and projector determinism. The `arch.imports` lane gains two rules, both
-  starting with no baselined violations: `mysql2` may be imported only from
-  `store/` (and the isolated-Dolt test fixture), and a string literal that
-  begins with an SQL write statement may appear only in the store's journal (and
-  that fixture). The second rule sees SQL written as literals. The `mysql2`
-  confinement keeps any other SQL inside `store/`, and inside it the readers get
-  only a handle that runs a single `SELECT` (checked on every call), so only the
-  journal holds a write-capable connection.
+  `journal.commit` applies a batch's events, their projections and its
+  declared mutations in one transaction. The writes that have no event type
+  yet (session inserts and updates, from the runtime and from the MCP
+  server's `start_session`/`update_session`, and the MCP `write_memory`
+  upsert) pass through it as the three `UnjournaledMutation` kinds listed,
+  each with its reason, in `store/unjournaled.ts`; `commit` rejects any other
+  kind. The projector mechanism is in place with no phase-1 projectors,
+  because no event written today reproduces a session or memory row. Memory
+  clearance for loopback, non-loopback and standalone MCP stdio consumers is
+  computed in one place, `store/memories.ts`. Rows, receipts, event sequences
+  and MCP tool output are unchanged, and the golden suite passes with no
+  snapshot change. `MemoryStore` holds the same port in memory for tests. A
+  store conformance suite (`prototype/testing/conformance/store.ts`) runs
+  against it in the unit lane and against `DoltStore` in the isolated Dolt
+  integration lane, each case in its own database. It covers every reader,
+  memory clearance for the three consumers, and the journal cases: atomicity
+  (including a failing projector), no update or delete path for events,
+  rejection of an undeclared mutation kind, and projector determinism. The
+  `arch.imports` lane gains two rules, both starting with no baselined
+  violations: `mysql2` may be imported only from `store/` (and the
+  isolated-Dolt test fixture), and a string literal that begins with an SQL
+  write statement may appear only in the store's journal (and that fixture).
+  The second rule sees SQL written as literals. The `mysql2` confinement keeps
+  any other SQL inside `store/`, and inside it the readers get only a handle
+  that runs a single `SELECT` (checked on every call), so only the journal
+  holds a write-capable connection.
 
-- **The JSON-RPC/UDS transport lives in `prototype/src/transport/`**: the codec,
-  request dispatch and duplex peer (`jsonrpc.ts`, `jsonrpc-peer.ts`),
+- **The JSON-RPC/UDS transport lives in `prototype/src/transport/`**: the
+  codec, request dispatch and duplex peer (`jsonrpc.ts`, `jsonrpc-peer.ts`),
   socket-path resolution (`uds-path.ts`), the client connect (`uds-client.ts`)
-  and the server's socket bind/accept/close loop, split out of `uds-server.ts`
-  into `uds-listener.ts`, sit behind `transport/mod.ts`. The CLI reaches the
-  engine only through it, and `uds-server.ts` keeps the method handlers and
-  calls the listener. The peer now builds its request frames with the codec's
-  new `request()` envelope builder instead of an object literal; the bytes on
-  the wire are unchanged (framing, method names, error codes and socket-path
-  resolution included), which the Rust REPL client relies on, and unit tests pin
-  the request, notification and response frames byte for byte. The transport
-  tests moved to `Deno.test` beside their modules: protocol cases run in the
-  unit lane over in-memory connections, and `uds-client`, which had no tests,
-  gains unit and real-socket cases. The real-socket cases, including the
-  stale-socket and bind-refusal checks that were in `uds-server.test.ts`, run in
-  the isolated-Dolt integration lane, which now grants `unix:` access to the
-  exact socket paths listed in `prototype/testing/servers/uds-sockets.ts` inside
-  a lane-created directory passed as `DYFJ_UDS_TEST_SOCKET_DIR` (declared in
-  `CONFIG_SCHEMA`'s `test` domain; no runtime permission profile grants it).
+  and the server's socket bind/accept/close loop, split out of
+  `uds-server.ts` into `uds-listener.ts`, sit behind `transport/mod.ts`. The
+  CLI reaches the engine only through it, and `uds-server.ts` keeps the method
+  handlers and calls the listener. The peer now builds its request frames with
+  the codec's new `request()` envelope builder instead of an object literal;
+  the bytes on the wire are unchanged (framing, method names, error codes and
+  socket-path resolution included), which the Rust REPL client relies on, and
+  unit tests pin the request, notification and response frames byte for byte.
+  The transport tests moved to `Deno.test` beside their modules: protocol
+  cases run in the unit lane over in-memory connections, and `uds-client`,
+  which had no tests, gains unit and real-socket cases. The real-socket cases,
+  including the stale-socket and bind-refusal checks that were in
+  `uds-server.test.ts`, run in the isolated-Dolt integration lane, which now
+  grants `unix:` access to the exact socket paths listed in
+  `prototype/testing/servers/uds-sockets.ts` inside a lane-created directory
+  passed as `DYFJ_UDS_TEST_SOCKET_DIR` (declared in `CONFIG_SCHEMA`'s `test`
+  domain; no runtime permission profile grants it).
 
 - **Configuration lives in `prototype/src/config/`, and runtime code reads the
-  environment only through an `Env` port**: `config.ts` is split into the
-  env-key schema (`schema.ts`), TOML loading (`toml.ts`), the engine config
+  environment only through an `Env` port**: `config.ts` is split into the env-key
+  schema (`schema.ts`), TOML loading (`toml.ts`), the engine config
   (`workbench.ts`), the `[secrets]` and `[mcp]` parsers, and the
   budget/agent/anomaly resolvers (`defaults.ts`), behind `config/mod.ts`. The
   port (`config/env.ts`) is the only runtime module that touches `Deno.env` or
@@ -580,24 +587,23 @@ README are tracked separately in its Revision history section.
   messages are unchanged. The launcher's `.env` parser moved out of `cli.ts`
   into `config/env-file.ts`, together with the ambient-before-`.env` rule the
   launcher shares with the spawned runtime. `CONFIG_SCHEMA` now also declares
-  `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH`, `DYFJ_CODEX_RUSTUP_HOME`
-  (engine and client), `DYFJ_PROTOTYPE_ROOT` (client), `DYFJ_TEST_RUN_DIR` and
-  `DYFJ_MCP_TEST_TEMP_DIR` (a new `test` domain) and the test harness's
-  `DYFJ_TEST_BOUND_SEC`, `DYFJ_LOCK_TMP`, `DYFJ_LOCK_FILE` and
-  `DYFJ_LOCK_RESULT` (a new `tooling` domain); no runtime permission profile
-  grants a `test` or `tooling` key, and none changed. The `arch.imports` lane
-  gains two rules: direct environment access outside `config/` and the
-  entrypoints named in `scripts/arch-layers.json` (today only the
-  `prototype/scripts` tooling), and a `DYFJ_*` key (a string literal, object key
-  or member name) anywhere under the lane's `prototype/` roots (runtime, `mcp/`
-  and `scripts/`) that the schema does not declare. Only modules that physically
-  live in `config/` are exempt from the first rule; a legacy module mapped into
-  the config unit by name is not. The root gate's own `DYFJ_GATE_*` keys are
-  outside `prototype/` and out of scope. Both start with no baselined
-  violations. The config tests moved to `Deno.test` next to the modules they
-  cover, and an `Env` conformance suite (`prototype/testing/conformance/env.ts`)
-  runs against the `MapEnv` fake in the unit lane and against the process
-  adapter in the integration lane.
+  `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH`, `DYFJ_CODEX_RUSTUP_HOME` (engine
+  and client), `DYFJ_PROTOTYPE_ROOT` (client), `DYFJ_TEST_RUN_DIR` and
+  `DYFJ_MCP_TEST_TEMP_DIR` (a new `test` domain) and the test harness's `DYFJ_TEST_BOUND_SEC`, `DYFJ_LOCK_TMP`,
+  `DYFJ_LOCK_FILE` and `DYFJ_LOCK_RESULT` (a new `tooling` domain); no runtime
+  permission profile grants a `test` or `tooling` key, and none changed. The `arch.imports` lane gains two rules: direct
+  environment access outside `config/` and the entrypoints named in
+  `scripts/arch-layers.json` (today only the `prototype/scripts` tooling), and
+  a `DYFJ_*` key (a string literal, object key or member name) anywhere
+  under the lane's `prototype/` roots (runtime, `mcp/` and `scripts/`) that
+  the schema does not declare. Only modules that physically live in
+  `config/` are exempt from the first rule; a legacy module mapped into the
+  config unit by name is not. The root
+  gate's own `DYFJ_GATE_*` keys are outside `prototype/` and out of scope.
+  Both start with no baselined violations. The config tests moved to
+  `Deno.test` next to the modules they cover, and an `Env` conformance suite
+  (`prototype/testing/conformance/env.ts`) runs against the `MapEnv` fake in
+  the unit lane and against the process adapter in the integration lane.
 
 - **Typecheck file lists are derived, not hand-maintained**: the prototype
   `check` task and the aggregate gate's source typecheck each carried their own
@@ -611,25 +617,25 @@ README are tracked separately in its Revision history section.
 
 - **Local imports carry explicit extensions; `--sloppy-imports` is gone**: every
   local import under `prototype/` now names its file (`./utils.ts`), and the
-  inline `npm:` specifiers for the MCP SDK, `zod`, `ulid` and `mysql2` moved
-  into the `prototype/deno.json` import map. `--sloppy-imports` is no longer
-  passed by any task (`compile-cli` included), by the CLI when it autostarts the
-  server, by the launcher's `deno run` fallback, or by the typecheck,
-  integration and golden lanes. Runtime behavior is unchanged. An extensionless
-  local import now fails the typecheck instead of being guessed, which keeps
-  file moves grep-safe. `prototype/scripts/add-import-extensions.ts` rewrites
-  extensionless imports in bulk.
+  inline `npm:` specifiers for the MCP SDK, `zod`, `ulid` and `mysql2` moved into
+  the `prototype/deno.json` import map. `--sloppy-imports` is no longer passed by
+  any task (`compile-cli` included), by the CLI when it autostarts the server,
+  by the launcher's `deno run` fallback, or by the typecheck, integration and golden
+  lanes. Runtime behavior is unchanged. An extensionless local import now fails
+  the typecheck instead of being guessed, which keeps file moves grep-safe.
+  `prototype/scripts/add-import-extensions.ts` rewrites extensionless imports in
+  bulk.
 - **Vitest test and hook timeouts are sized to the suite**: the suite ran on
   Vitest's defaults of 5 seconds per test and 10 seconds per hook. Neither was
   chosen for a suite whose workers spawn and reap real processes. Measured on an
   idle machine with every test passing, the slowest single test takes 3.65
   seconds and the five next-slowest all exceed 2.3 seconds, leaving the 5-second
-  default about 1.4x headroom. Separately, four files were seen failing under
-  the full parallel run in one afternoon — one on the hook timeout, one on the
-  test timeout, two on late timers during initialize — every one a timeout
-  rather than a failed assertion, and every one green when the file ran on its
-  own. Those failing files are not the same set as the slow tests measured
-  above. The timeouts are now 30 seconds per test and 45 seconds per hook. The
+  default about 1.4x headroom. Separately, four files were seen failing under the full
+  parallel run in one afternoon — one on the hook timeout, one on the test
+  timeout, two on late timers during initialize — every one a timeout rather
+  than a failed assertion, and every one green when the file ran on its own.
+  Those failing files are not the same set as the slow tests measured above.
+  The timeouts are now 30 seconds per test and 45 seconds per hook. The
   durations, the failures and the full-run results are recorded with their
   method in `prototype/VERIFICATION-2026-09-22.md`.
 
@@ -657,19 +663,19 @@ README are tracked separately in its Revision history section.
   30-second budget.
 
   What this does not do: the timer is cleared once headers arrive, in both
-  modes, so body consumption afterwards remains unbounded exactly as before. The
-  larger budget covers generation only because those endpoints withhold headers
-  until they have a body — an observed property of the endpoints, not a
-  guarantee this code enforces.
+  modes, so body consumption afterwards remains unbounded exactly as before.
+  The larger budget covers generation only because those endpoints withhold
+  headers until they have a body — an observed property of the endpoints, not
+  a guarantee this code enforces.
 
   The cost of the split is stated rather than hidden: before the first byte, a
   buffered request that is silent because the route is dead and one that is
-  silent because it is generating look the same, so a buffered call left pending
-  without headers can now wait up to 300 seconds before failing. A connection
-  error the runtime reports promptly, such as a refused connection, still fails
-  promptly. Streaming calls keep the tight budget. Both timeout messages now
-  name the mode and the budget that elapsed, which the timer can observe, and
-  offer a cause as a possibility rather than a finding.
+  silent because it is generating look the same, so a buffered call left
+  pending without headers can now wait up to 300 seconds before failing. A
+  connection error the runtime reports promptly, such as a refused connection,
+  still fails promptly. Streaming calls keep the tight budget. Both timeout
+  messages now name the mode and the budget that elapsed, which the timer can
+  observe, and offer a cause as a possibility rather than a finding.
 
 - **Friction capture follows the Linear MCP tool set it actually finds**:
   `friction/post` posts through either `linear.create_comment` or
@@ -690,25 +696,26 @@ README are tracked separately in its Revision history section.
 
 ### Removed
 
-- **Schema-drift fallbacks removed**: `events.bySession` (behind `events/query`
-  and session history) no longer retries with NULL placeholders when a column
-  from migrations 003-007 is missing, and the model catalog reader no longer
-  falls back to the query without the hardware-profile columns. A live database
-  is covered by the boot-time column check; an `events/query` read `AS OF` a
-  snapshot that predates one of those migrations now fails with the driver's
-  unknown-column error instead of returning NULLs for the missing columns.
+- **Schema-drift fallbacks removed**: `events.bySession` (behind
+  `events/query` and session history) no longer retries with NULL placeholders
+  when a column from migrations 003-007 is missing, and the model catalog
+  reader no longer falls back to the query without the hardware-profile
+  columns. A live database is covered by the boot-time column check; an
+  `events/query` read `AS OF` a snapshot that predates one of those migrations
+  now fails with the driver's unknown-column error instead of returning NULLs
+  for the missing columns.
 
 - **Standalone in-process workbench CLI removed**: `deno task workbench` (root
   and `prototype/`), `deno task start` (`prototype/`), the `workbench`
-  permission profile they ran under, and the argv CLI in `src/workbench.ts` (its
-  entrypoint, `runWorkbench`, `resolveWorkbenchInvocation`,
+  permission profile they ran under, and the argv CLI in `src/workbench.ts`
+  (its entrypoint, `runWorkbench`, `resolveWorkbenchInvocation`,
   `buildWorkbenchRuntimeInput`, and the TTY consent prompt
   `promptPaidEscalationTty`) are gone. Run turns through the `dyfj` launcher
   over the UDS JSON-RPC seam (`dyfj exec`, or `deno task serve-unix` for the
   engine alone). `deno task verify-workbench-events` now calls the runtime
   directly with its routing read from `DYFJ_WORKBENCH_MODEL`, `_HINT` and
-  `_TIER` as before; it no longer prompts for paid-inference consent, so a turn
-  routed to a paid model is declined rather than asked about.
+  `_TIER` as before; it no longer prompts for paid-inference consent, so a
+  turn routed to a paid model is declined rather than asked about.
 - **Unused helpers removed**: the CSV parsers (`parseCSVRows`, `parseCsvRow`),
   `extractText`, `extractThinking` and their `MessageContent` type, and
   `normaliseStopReason` (`utils.ts`); the `read_memory` definition and result
@@ -723,39 +730,39 @@ README are tracked separately in its Revision history section.
 
 - **ACP agent stdout cancellation is handled cleanly**: when the ACP client
   closes its connection after the agent process exits but before the agent's
-  stdout has closed (for example, a descendant still holds the pipe), the client
-  now cancels its view of stdout by closing the underlying pipe directly instead
-  of forwarding the cancel reason into Deno's Node-stream adapter.
-  `prototype/src/acp-client.test.ts` covers the case with an agent launched
-  behind a backgrounded descendant that keeps stdout open.
+  stdout has closed (for example, a descendant still holds the pipe), the
+  client now cancels its view of stdout by closing the underlying pipe
+  directly instead of forwarding the cancel reason into Deno's Node-stream
+  adapter. `prototype/src/acp-client.test.ts` covers the case with an agent
+  launched behind a backgrounded descendant that keeps stdout open.
 - **A prototype unit test no longer changes the process environment under the
   parallel run**: tests in `prototype/src/external-agent-runtime.test.ts` set
   `PATH`, `HOME`, `DENO_DIR`, `DYFJ_*`, and credential-shaped marker variables
-  through `Deno.env.set` and restored them after an `await`. Vitest's worker
-  threads share one process environment, so tests running at the same time in
-  other files could see the temporary values; one intermittently failed to spawn
-  `bash` by name. Those tests now overlay the values on the reads of their own
-  worker only, with assertions unchanged. Test-only; runtime behavior is
-  unchanged.
+  through `Deno.env.set` and restored them after an `await`. Vitest's worker threads share one process
+  environment, so tests running at the same time in other files could see the
+  temporary values; one intermittently failed to spawn `bash` by name. Those
+  tests now overlay the values on the reads of their own worker only, with
+  assertions unchanged. Test-only; runtime behavior is unchanged.
 
 ### Added
 
-- **Golden characterization suite and its gate lane (`test.golden`)**: twelve
-  black-box scenarios now pin the engine's observable behavior before the
-  restructuring starts. They cover one-shot and multi-step turns, approval under
-  both permission postures, session resume, the budget ceiling and paid consent
-  gates, the runaway-anomaly hard stop, an ACP fixture turn, mid-stream
-  cancellation, the read and extension RPC methods, and transcript compression.
-  Each scenario drives the real engine server and `dyfj` CLI as child processes
-  against an isolated Dolt fixture, a loopback OpenAI-compatible model server
-  and a loopback Linear MCP server, and compares stream frames, RPC responses,
-  rendered CLI output, and every `events` and `sessions` row it writes with
-  committed snapshots. Only generated IDs, timestamps, durations, temp paths,
-  PIDs and the fixtures' loopback endpoints are normalized; timestamps keep
-  their format, so a change of wire format still fails the lane. The aggregate
-  gate runs the lane under `test.aggregate`, and `deno task test:golden` (in
-  `prototype/`) runs it alone. Three pre-existing defects it surfaced are
-  recorded in `specs/bug-log.md` and are not fixed here.
+- **Golden characterization suite and its gate lane (`test.golden`)**:
+  twelve black-box scenarios now pin the engine's observable behavior before
+  the restructuring starts. They cover one-shot and multi-step turns, approval
+  under both permission postures, session resume, the budget ceiling and paid
+  consent gates, the runaway-anomaly hard stop, an ACP fixture turn,
+  mid-stream cancellation, the read and extension RPC methods, and transcript
+  compression. Each scenario drives the real engine server and `dyfj` CLI as
+  child processes against an isolated Dolt fixture, a loopback
+  OpenAI-compatible model server and a loopback Linear MCP server, and compares
+  stream frames, RPC responses, rendered CLI output, and every `events` and
+  `sessions` row it writes with committed snapshots. Only generated IDs,
+  timestamps, durations, temp paths, PIDs and the fixtures' loopback endpoints
+  are normalized; timestamps keep their format, so a change of wire format
+  still fails the lane. The aggregate gate runs the lane under `test.aggregate`,
+  and `deno task test:golden` (in `prototype/`) runs it alone. Three
+  pre-existing defects it surfaced are recorded in `specs/bug-log.md` and are
+  not fixed here.
 
 - **DeepSeek V4.1 Flash and Gemini 3.8 Flash in the model catalog**: both are
   routable, on the fresh-install path and the upgrade path alike. DeepSeek
@@ -763,12 +770,12 @@ README are tracked separately in its Revision history section.
 
   Their prices carry more caveats than a catalog row can hold, so
   `schema/catalog/VERIFICATION-2026-09-19.md` records the source, capture date
-  and figure for each field beside the SQL. Two are worth knowing before relying
-  on a cost estimate. DeepSeek V4.1 Flash is priced by time of day — half rate
-  at most hours and all weekend, double for seven hours of every weekday — and
-  the row stores the peak, so off-peak turns cost half what the catalog
-  predicts. Gemini's rates are promotional and double on 2027-01-01, after which
-  the row understates cost until someone updates it.
+  and figure for each field beside the SQL. Two are worth knowing before
+  relying on a cost estimate. DeepSeek V4.1 Flash is priced by time of day —
+  half rate at most hours and all weekend, double for seven hours of every
+  weekday — and the row stores the peak, so off-peak turns cost half what the
+  catalog predicts. Gemini's rates are promotional and double on 2027-01-01,
+  after which the row understates cost until someone updates it.
 
   The Gemini row omits the `tools` capability although the model supports
   function calling, because this codebase's Google adapter sends no tool
@@ -791,47 +798,48 @@ README are tracked separately in its Revision history section.
   — `status`, `diff`, `log`, `add`, `commit`. Arguments are typed and the
   process argv is built from them, so no flags or shell syntax pass through;
   `--literal-pathspecs` and a leading-`:` rejection keep a path argument a
-  filename rather than a pathspec expression, so magic prefixes such as `:(top)`
-  cannot reach outside a nested workspace. The tool exposes only those five
+  filename rather than a pathspec expression, so magic prefixes such as
+  `:(top)` cannot reach outside a nested workspace. The tool exposes only those five
   subcommands, so network ones (`push`, `pull`, `fetch`, `remote`) and
   history-rewriting or working-tree-destroying ones (`reset`, `rebase`,
   `checkout`, `clean`, `stash`) are rejected as invalid arguments before the
   approval prompt rather than costing an operator decision; the reason each is
-  absent is recorded in the module for callers that bypass the schema. Like
-  `bash`, it carries an exec-class effect and therefore always requires per-call
-  operator approval, and its result is kept out of the durable event log; unlike
-  `bash`, the approval names the exact operation and paths. The permission
-  envelope declares `network: "external"` because git executes repository
-  configuration — hooks, credential helpers, textconv — which the tool
-  deliberately leaves enabled so an operator's own pre-commit checks still run.
-  A `commit` without paths is a repository operation: when the workspace is a
-  subdirectory, a best-effort probe says so in the result. Supplying paths to
-  `commit` records their working-tree content rather than narrowing the staged
-  snapshot. Output is collected in full and then clipped to a byte cap, and the
-  timeout kills git but not descendants it spawned — the same two limits `bash`
-  has. The `workbench` and `serve-unix` permission profiles now grant `run`
-  access to `git`, which the runtime needs to execute the tool at all.
+  absent is recorded in the module for callers that bypass the schema. Like `bash`, it carries an
+  exec-class effect and therefore always requires per-call operator approval,
+  and its result is kept out of the durable event log; unlike `bash`, the
+  approval names the exact operation and paths. The permission envelope
+  declares `network: "external"` because git executes repository configuration
+  — hooks, credential helpers, textconv — which the tool deliberately leaves
+  enabled so an operator's own pre-commit checks still run. A `commit` without
+  paths is a repository operation: when the workspace is a subdirectory, a
+  best-effort probe says so in the result. Supplying paths to `commit` records
+  their working-tree content rather than narrowing the staged snapshot. Output is collected in full and then clipped to a byte cap,
+  and the timeout kills git but not descendants it spawned — the same two
+  limits `bash` has. The `workbench` and `serve-unix` permission profiles now
+  grant `run` access to `git`, which the runtime needs to execute the tool at
+  all.
 
 - **Bounded native Linear issue creation**: A configured external MCP
   `save_issue` (or legacy `create_issue`) can now back a create-only local tool
-  on native loopback turns with a fixed team, an exact project-name-to-ID
-  allowlist, strict local argument limits, and per-call operator approval before
-  a connector write. Relation count is checked before item validation and
-  approval; duplicate relations are rejected before the connector call.
-  Workbench withholds unbound or schema-mismatched creation tools across
-  configured servers, excludes update IDs and patch inputs, projects supported
-  creation fields, reports fixed withholding reasons at boot, withholds creation
-  tools when schema serialization fails, never retries ambiguous failures,
-  validates returned team/project evidence, and returns and durably records only
-  the validated issue identifier while retaining generic MCP argument/result
-  redaction. Receipts accept issue-style `id` aliases and distinguish display
-  labels from explicit association IDs. Malformed or conflicting values in
-  explicit `teamId`, `team_id`, `projectId`, `project_id`, `team.id`, or
-  `project.id` fields produce an indeterminate outcome even when another ID
-  matches. In the streaming CLI and interactive REPL, failed creation calls
+  on native loopback turns with a fixed team,
+  an exact project-name-to-ID allowlist, strict local argument limits, and
+  per-call operator approval before a connector write. Relation count is checked
+  before item validation and approval; duplicate relations are rejected before
+  the connector call. Workbench withholds unbound or schema-mismatched
+  creation tools across configured servers, excludes update IDs and patch inputs,
+  projects supported creation fields, reports fixed withholding reasons
+  at boot, withholds creation tools when schema serialization fails,
+  never retries ambiguous failures, validates returned
+  team/project evidence, and returns and durably records only the validated
+  issue identifier while retaining generic MCP argument/result redaction. Receipts
+  accept issue-style `id` aliases and distinguish display labels from explicit
+  association IDs. Malformed or conflicting values in explicit `teamId`, `team_id`,
+  `projectId`, `project_id`, `team.id`, or `project.id` fields produce an
+  indeterminate outcome even when another ID matches. In the streaming CLI and
+  interactive REPL, failed creation calls
   display reconciliation guidance independently of model prose. Durable trace
-  evidence requires the OTel event migration. This does not add the capability
-  to bare ACP sessions or add a REPL command.
+  evidence requires the OTel event migration. This
+  does not add the capability to bare ACP sessions or add a REPL command.
 - <!-- closure-claim: semantic-contract-behavior --> **Workbench first-product
   semantic contract package**: A new versioned package at
   `contracts/workbench/first-product/v1/` states the first-product room,
@@ -932,10 +940,10 @@ README are tracked separately in its Revision history section.
   prompt bounds still apply to the final decorated ACP request, including the
   existing acquired-handle close behavior on an oversized prompt; persisted
   events are not changed or deleted.
-- **Read-only closure comparison**: The deterministic gate compares the
-  generated report in memory with the committed bytes, with writes denied. It no
-  longer writes through a predictable temporary filename. Comparison rejects an
-  output path; explicit report generation remains a separate write operation.
+- **Read-only closure comparison**: The deterministic gate compares the generated
+  report in memory with the committed bytes, with writes denied. It no longer
+  writes through a predictable temporary filename. Comparison rejects an output
+  path; explicit report generation remains a separate write operation.
 - **Event-family omission evidence**: The closure report removes each required
   family from a copy of the schema inventory and checks that the same inventory
   predicate rejects it before reporting the omission witness as passing.
@@ -952,12 +960,12 @@ README are tracked separately in its Revision history section.
   declared mutation class, runs internal report mutations, supports
   residual-bearing `blocked` and `not-applicable` results, and maps public
   claims to their supporting invariant results.
-- **Bounded-field byte sizing fails closed on a short encoder read**: The UTF-8
-  byte-limit helper that bounds ACP continuity history and tool fields now
-  documents the invariant it relies on (a 4,096-code-unit chunk fits a
+- **Bounded-field byte sizing fails closed on a short encoder read**: The
+  UTF-8 byte-limit helper that bounds ACP continuity history and tool fields
+  now documents the invariant it relies on (a 4,096-code-unit chunk fits a
   12,288-byte buffer because UTF-8 needs at most three bytes per UTF-16 code
-  unit), advances by the encoder's reported read count, and treats a short read
-  as an overflow so the caller refuses the field instead of undercounting.
+  unit), advances by the encoder's reported read count, and treats a short
+  read as an overflow so the caller refuses the field instead of undercounting.
   Non-ASCII bound tests cover three-byte characters, four-byte emoji, lone
   surrogates, a surrogate pair straddling the chunk boundary, exact-limit and
   one-byte-over inputs, and a forced short read.
@@ -979,18 +987,18 @@ README are tracked separately in its Revision history section.
   before model work instead of silently losing the exchange. Prior tool work
   travels as bounded, quoted historical evidence that preserves request/result
   pairing, ordering, and outcome status — labelled as Workbench's record of an
-  expired session rather than as something the receiving agent did or may repeat
-  — and no recorded call is re-executed. The `dyfj` footer exposes the
+  expired session rather than as something the receiving agent did or may
+  repeat — and no recorded call is re-executed. The `dyfj` footer exposes the
   continuity state, native-session disposition, and tool-evidence counts. Tool
-  metadata uses an inert ASCII grammar; quotation protects the transcript
-  structure but is not claimed as a semantic prompt-injection boundary. A
-  reconstruction is refused before any prompt reaches the agent when it would
-  exceed the prompt, 32-message, per-message, per-field, or tool-argument
-  complexity bounds, or when persisted tool history is unpaired, malformed, or
-  matches an explicitly checked credential shape. At the Dolt read boundary,
-  persisted JSON tool arguments are projected as text and then validated by the
-  session decoder. Malformed persisted tool history from any runner kind is
-  rejected before reconstruction.
+  metadata uses an inert ASCII grammar;
+  quotation protects the transcript structure but is not claimed as a semantic
+  prompt-injection boundary. A reconstruction is refused before any prompt
+  reaches the agent when it would exceed the prompt, 32-message, per-message,
+  per-field, or tool-argument complexity bounds, or when persisted tool history
+  is unpaired, malformed, or matches an explicitly checked credential shape.
+  At the Dolt read boundary, persisted JSON tool arguments are projected as
+  text and then validated by the session decoder. Malformed persisted tool
+  history from any runner kind is rejected before reconstruction.
 - **Portable process-group signaling**: Test-process cleanup now separates
   `/bin/kill` options from process targets explicitly. GNU/Linux therefore
   treats a negative process-group ID as the intended target instead of parsing
@@ -1191,20 +1199,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
-- **Dependency updates**: Bumped `@david/dax` 0.42.0 → 0.50.0, `@std/toml` 1.0.8
-  → 1.0.11, `mysql2` 3.22.3 → 3.24.4, and `ulid` 2.4.0 → 3.0.2 in the prototype,
-  and `anyhow` 1.0.102 → 1.0.104, `rand` 0.10.1 → 0.10.2, and `thiserror` 2.0.18
-  → 2.0.20 in `core`.
+- **Dependency updates**: Bumped `@david/dax` 0.42.0 → 0.50.0, `@std/toml`
+  1.0.8 → 1.0.11, `mysql2` 3.22.3 → 3.24.4, and `ulid` 2.4.0 → 3.0.2 in the
+  prototype, and `anyhow` 1.0.102 → 1.0.104, `rand` 0.10.1 → 0.10.2, and
+  `thiserror` 2.0.18 → 2.0.20 in `core`.
 - **Current Codex ACP adapter**: Upgraded the pinned `codex-chatgpt` adapter to
   `@agentclientprotocol/codex-acp` 1.11.0 and refreshed its locked compatible
   Codex CLI dependency.
 - **Dependency refresh configuration**: Dependabot now targets the Deno
-  workspace at `prototype/` (its dependency manifest and lockfile) and the Rust
-  crate set at `core/`, instead of the repo-root `deno.json` (which declares
-  only deno tasks). The weekly GitHub Actions digest lane is unchanged. The Rust
-  toolchain pin and the Deno/Dolt archive pins in `.github/workflows/gate.yml`
-  are not Dependabot-covered; applying a change to them is intended to be a
-  manual, operator-inspected step.
+  workspace at `prototype/` (its dependency manifest and lockfile) and the
+  Rust crate set at `core/`, instead of the repo-root `deno.json` (which
+  declares only deno tasks). The weekly GitHub Actions digest lane is
+  unchanged. The Rust toolchain pin and the Deno/Dolt archive pins in
+  `.github/workflows/gate.yml` are not Dependabot-covered; applying a change
+  to them is intended to be a manual, operator-inspected step.
 - **Exact Rust toolchain pin**: `core/rust-toolchain.toml` now pins `1.98.0`
   instead of the floating `stable` channel, so local builds and clean-checkout
   CI compile with the same verified toolchain; the new `dependency.policy` check
@@ -1331,13 +1339,14 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
-- **A new session's first turn is serialized with later turns that name it**: a
-  turn that started a new session previously ran outside that session's turn
+- **A new session's first turn is serialized with later turns that name it**:
+  a turn that started a new session previously ran outside that session's turn
   lock, because its session id was generated only once the turn was running. A
   second turn naming that id, sent from another connection while the first was
   still running, could run alongside it: its resume read could see a partially
-  written first turn, and both turns appended to the same session. The id is now
-  allocated when the turn is admitted, so later turns naming it wait for it.
+  written first turn, and both turns appended to the same session. The id is
+  now allocated when the turn is admitted, so later turns naming it wait for
+  it.
 - **Anthropic and Gemini credentials pinned to their providers' hosts**: the
   Anthropic and Gemini adapters previously accepted any https base URL from the
   model catalog and followed redirects, so a catalog row naming another host, or
