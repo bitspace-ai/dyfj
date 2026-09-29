@@ -8,6 +8,7 @@ import {
   FAST_LANE_LABELS,
   fastLanes,
   type GateLane,
+  INHERITED_ENVIRONMENT_NAMES,
   type LaneOutcome,
   parseGateArguments,
   productionLanes,
@@ -517,6 +518,29 @@ Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", (
       RUSTUP_HOME: "/custom/rustup",
       SQLX_OFFLINE: "true",
     },
+  );
+});
+
+Deno.test("a caller's DENO_DIR reaches the integration lane's children", () => {
+  // The gate forwards it into the lane's cleared environment, the lane may
+  // read it, and the lane passes it on to the Deno.test children.
+  if (!INHERITED_ENVIRONMENT_NAMES.includes("DENO_DIR")) {
+    throw new Error("the gate does not forward DENO_DIR to lanes");
+  }
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "Isolated Dolt integration lane");
+  if (!lane) throw new Error("isolated Dolt integration lane is missing");
+  assertStringIncludes(
+    lane.args.find((argument) => argument.startsWith("--allow-env=")) ?? "",
+    "DENO_DIR",
+  );
+  assertEquals(
+    integrationChildEnvironment(
+      {},
+      (name) => ({ DENO_DIR: "/custom/deno-cache" })[name],
+    ),
+    { DENO_DIR: "/custom/deno-cache" },
   );
 });
 

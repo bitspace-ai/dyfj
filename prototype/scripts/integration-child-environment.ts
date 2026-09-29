@@ -6,6 +6,8 @@ const inheritedEnvironmentNames = [
   "TMP",
   "CARGO_HOME",
   "RUSTUP_HOME",
+  // Nested Deno processes reuse the caller's cache rather than fetching again.
+  "DENO_DIR",
 ];
 
 export function integrationChildEnvironment(
