@@ -151,7 +151,8 @@ try {
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
     // The isolated Dolt fixture's own tests start throwaway fixtures: they
-    // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, and run
+    // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, make
+    // their temp roots under TMPDIR (the per-run directory below), and run
     // `dolt`. The secrets resolver tests run `bash` and set one ambient
     // variable (LEAKY_AMBIENT) to prove the resolver child does not inherit
     // it. The ACP files read DENO_DIR for the fixture agent's cache, set and
@@ -159,8 +160,8 @@ try {
     // forwarded, and read the Codex profile inputs (DYFJ_NODE_PATH and the
     // toolchain directories), which stay unset here.
     `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME`,
-    `--allow-read=.,../schema,/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
-    `--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    `--allow-read=.,../schema,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    `--allow-write=${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
     // bash and /bin/bash: the ACP files' process probes, symlink setup and a
     // stdout-holding wrapper around the fixture agent, and the secrets
     // resolver. dolt: the fixture tests.

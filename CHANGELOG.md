@@ -177,13 +177,15 @@ README are tracked separately in its Revision history section.
   tests no longer mock `kernel/ids.ts` and `store/sessions.ts`; each test
   injects a `MemoryStore` and injects write failures through the journal it
   hands the runtime. That invocation now points `TMPDIR` at a directory of its
-  own, removed afterwards, and grants read and write on it alone. It also
-  gains run grants for `bash` and `/bin/bash`, `--allow-sys=uid` (the Codex
-  profile builder checks directory ownership), and the env names the ACP tests
-  read or set: `DENO_DIR`, `ACP_FIXTURE_AMBIENT_VALUE`, `ANTHROPIC_API_KEY`,
-  `DYFJ_MEMORY_MCP_TOKEN`, `SSH_AUTH_SOCK`, `DYFJ_NODE_PATH`,
-  `DYFJ_CODEX_TOOLCHAIN_PATH` and `DYFJ_CODEX_RUSTUP_HOME`. Product behavior
-  is unchanged.
+  own, removed afterwards, and grants read and write on it alone; the grants
+  on the whole system temp roots, which the Dolt fixture and secret-resolver
+  tests had used, are dropped, since those tests now make their temp
+  directories there too. It also gains run grants for `bash` and `/bin/bash`,
+  `--allow-sys=uid` (the Codex profile builder checks directory ownership),
+  and the env names the ACP tests read or set: `DENO_DIR`,
+  `ACP_FIXTURE_AMBIENT_VALUE`, `ANTHROPIC_API_KEY`, `DYFJ_MEMORY_MCP_TOKEN`,
+  `SSH_AUTH_SOCK`, `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH` and
+  `DYFJ_CODEX_RUSTUP_HOME`. Product behavior is unchanged.
 
 - **Twelve more prototype test files run on `Deno.test` instead of Vitest**:
   `model-response-modes`, `runtime-sigint`, `workbench-events`, `secrets`,
