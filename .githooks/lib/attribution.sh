@@ -11,7 +11,7 @@ tool_identity() {
     sed -e 's/[[:space:]]*<.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
   ti_email=$(printf '%s\n' "$ti_ident" | sed -n 's/^[^<]*<\([^>]*\)>.*$/\1/p')
   case $ti_name in
-    claude | "cursor agent" | copilot) return 0 ;;
+    claude | "cursor agent" | composer | copilot) return 0 ;;
   esac
   # Addresses are compared as local part and domain; the tree's public-safety
   # scan admits only reserved-domain addresses written out whole.
@@ -30,7 +30,7 @@ tool_identity() {
 
 # attribution_line LINE: succeeds when a message line is tool attribution: a
 # Co-authored-by trailer naming a tool identity, a Claude-Session trailer, or
-# a "Generated with Claude Code" footer.
+# a "Generated with/by Claude Code" footer.
 attribution_line() {
   al_lower=$(printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]')
   case $al_lower in
@@ -40,7 +40,7 @@ attribution_line() {
       ;;
     claude-session:*) return 0 ;;
   esac
-  printf '%s\n' "$al_lower" | grep -Eq '^[^[:alnum:]]*generated with \[?claude code'
+  printf '%s\n' "$al_lower" | grep -Eq '^[^[:alnum:]]*generated (with|by) \[?claude code'
 }
 
 # ident_without_date "Name <email> 1700000000 +0000": drops git's timestamp.

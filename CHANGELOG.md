@@ -16,7 +16,7 @@ README are tracked separately in its Revision history section.
   with `--author`, and merge commits), since GitHub turns each distinct commit
   author into a `Co-authored-by` trailer when a pull request is squash-merged,
   and strips `Co-authored-by` trailers naming a tool, `Claude-Session` trailers
-  and the "Generated with Claude Code" footer from commit messages.
+  and "Generated with/by Claude Code" footers from commit messages.
   `.githooks/pre-push` checks the commits being pushed for the same identities
   and message lines, catching commits that skipped `commit-msg`. Tools are
   recognized by exact name or address, so a person whose name contains a
