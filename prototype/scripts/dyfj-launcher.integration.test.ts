@@ -1051,14 +1051,16 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
         stderr: "piped",
       }).spawn();
 
+      const reader = proc.stderr.getReader();
       try {
-        const reader = proc.stderr.getReader();
         const errText = await readUntilStderr(reader, "already in flight");
         assertStringIncludes(errText, "already in flight");
         assertFalse(errText.includes("runtime not running at"));
         const lockContent = await Deno.readTextFile(lockFile);
         assertStrictEquals(lockContent.trim(), `${nowSec}`);
       } finally {
+        // Release the piped stderr so the child's stream is not left open.
+        await reader.cancel().catch(() => {});
         try {
           proc.kill("SIGTERM");
           await proc.status;
@@ -1115,8 +1117,8 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
         stderr: "piped",
       }).spawn();
 
+      const reader = proc.stderr.getReader();
       try {
-        const reader = proc.stderr.getReader();
         const errText = await readUntilStderr(reader, "runtime not running at");
         assertStringIncludes(errText, "runtime not running at");
         assertFalse(errText.includes("already in flight"));
@@ -1139,6 +1141,8 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
           assertGreater(spawnedPid, 0);
         }
       } finally {
+        // Release the piped stderr so the child's stream is not left open.
+        await reader.cancel().catch(() => {});
         try {
           proc.kill("SIGTERM");
           await proc.status;
@@ -1198,12 +1202,14 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
         stderr: "piped",
       }).spawn();
 
+      const reader = proc.stderr.getReader();
       try {
-        const reader = proc.stderr.getReader();
         const errText = await readUntilStderr(reader, "already in flight");
         assertStringIncludes(errText, "already in flight");
         assertFalse(errText.includes("runtime not running at"));
       } finally {
+        // Release the piped stderr so the child's stream is not left open.
+        await reader.cancel().catch(() => {});
         try {
           proc.kill("SIGTERM");
           await proc.status;
