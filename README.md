@@ -269,9 +269,11 @@ cp .env.example .env
 git config core.hooksPath .githooks
 ```
 
-The last line enables the repository's `commit-msg` hook, which refuses commits
-authored or committed under an AI tool's identity and strips tool-attribution
-trailers from commit messages (see `AGENTS.md`, Documentation Discipline).
+The last line enables the repository's git hooks, which keep AI-tool
+attribution out of history (see `AGENTS.md`, Documentation Discipline):
+`commit-msg` refuses a commit authored or committed under an AI tool's identity
+and strips tool-attribution trailers from its message, and `pre-push` refuses
+to publish commits that still carry either.
 
 The prototype uses Deno tasks defined in `deno.json`. See `deno task` for the
 list of entry points.
@@ -1675,3 +1677,5 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-28 - `specs/bug-log.md` records that `model_selected` names the
   environment's principal rather than the turn's, found extracting the
   `budgetGate` stage.
+- 2026-09-29 - Prototype setup enables the repository's git hooks
+  (`git config core.hooksPath .githooks`).

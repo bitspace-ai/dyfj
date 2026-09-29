@@ -2,26 +2,26 @@
 # commit-msg: keep AI-tool attribution out of git history (AGENTS.md,
 # Documentation Discipline).
 #
-# 1. Refuses a commit whose author or committer is an AI tool identity. GitHub
-#    turns every distinct commit author into a Co-authored-by trailer when a
-#    PR is squash-merged, so a commit authored as a tool resurfaces as
-#    attribution on main even with a clean message.
-# 2. Strips tool-attribution trailers and footers from the message:
-#    Co-authored-by lines naming a tool, Claude-Session trailers, and the
-#    "Generated with Claude Code" footer.
+# 1. Refuses a commit whose configured author or committer is an AI tool
+#    identity. GitHub turns every distinct commit author into a
+#    Co-authored-by trailer when a pull request is squash-merged, so a commit
+#    authored as a tool resurfaces as attribution on main even with a clean
+#    message. git exports the pending author to hooks, so this covers
+#    `git commit --author` too. `--no-verify` skips this hook; pre-push checks
+#    the commits themselves.
+# 2. Strips tool-attribution lines from the message (see lib/attribution.sh).
 #
 # Enable once per clone: git config core.hooksPath .githooks
 
 set -eu
 
+. "$(dirname "$0")/lib/attribution.sh"
+
 msg_file=$1
 
-tool_ident='(^|[^[:alnum:]])(claude|anthropic|cursor|composer|copilot)([^[:alnum:]]|$)'
-
 for ident in "$(git var GIT_AUTHOR_IDENT)" "$(git var GIT_COMMITTER_IDENT)"; do
-  # Drop the trailing "<timestamp> <tz>" before matching.
-  who=$(printf '%s\n' "$ident" | sed 's/ [0-9][0-9]* [-+][0-9][0-9]*$//')
-  if printf '%s\n' "$who" | grep -Eiq "$tool_ident"; then
+  who=$(ident_without_date "$ident")
+  if tool_identity "$who"; then
     echo "commit-msg: refusing a commit attributed to '$who'." >&2
     echo "Commits carry the maintainer's identity, never an AI tool's. Set it with" >&2
     echo "  git config user.name 'Your Name'; git config user.email you@example.com" >&2
@@ -32,10 +32,8 @@ done
 
 tmp="$msg_file.tmp.$$"
 trap 'rm -f "$tmp"' EXIT
-grep -Eiv \
-  -e "^co-authored-by:.*$tool_ident" \
-  -e '^claude-session:' \
-  -e '^[^[:alnum:]]*generated with \[?claude code' \
-  "$msg_file" >"$tmp" || true
-# Drop the blank lines the removed trailers leave at the end of the message.
+while IFS= read -r line || [ -n "$line" ]; do
+  attribution_line "$line" || printf '%s\n' "$line"
+done <"$msg_file" >"$tmp"
+# Drop the blank lines the removed lines leave at the end of the message.
 sed -e ':a' -e '/^[[:space:]]*$/{$d;N;ba' -e '}' "$tmp" >"$msg_file"

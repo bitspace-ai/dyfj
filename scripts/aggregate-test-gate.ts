@@ -442,6 +442,7 @@ export function productionLanes(
         "scripts/range-checks.test.ts",
         "scripts/dependency-policy.test.ts",
         "scripts/arch-imports.test.ts",
+        "scripts/git-hooks.test.ts",
       ],
       cwd: root,
       // Lane children run with a cleared environment, so the temp root the
