@@ -10,10 +10,14 @@
  * deps it needs and returns handlers of the transport's `RpcHandlers` shape,
  * so it satisfies this interface structurally.
  *
- * Allowed dependencies: `transport/` (types), the RPC readers' types.
+ * Allowed dependencies: `tools/` and `transport/` (types), the approval
+ * mapping and RPC readers' types under `rpc/`, the linear extension's types.
  */
 
-import type { RpcHandlers } from "../transport/mod.ts";
+import type { LinearCommands } from "../extensions/linear/mod.ts";
+import type { ConfirmToolApproval, ToolApprovalVerdict } from "../tools/mod.ts";
+import type { RpcContext, RpcHandlers } from "../transport/mod.ts";
+import { toApprovalVerdict } from "./rpc/approval.ts";
 import type { FetchSessionEvents } from "./rpc/events.ts";
 import type { FetchSessionWorkspaceRecord } from "./rpc/sessions.ts";
 
@@ -21,6 +25,30 @@ import type { FetchSessionWorkspaceRecord } from "./rpc/sessions.ts";
 export interface ExtensionDeps {
   fetchSessionEvents: FetchSessionEvents;
   fetchSessionWorkspaceRecord: FetchSessionWorkspaceRecord;
+  /**
+   * The Linear commands the linear extension resolved from the discovered
+   * MCP commands, and their invoker. Other extensions call Linear only
+   * through these; none builds its own registry.
+   */
+  linear: LinearCommands;
+  /** The tool approver for one request's client: see `rpcToolApprover`. */
+  toolApprover(ctx: RpcContext): ConfirmToolApproval;
+}
+
+/**
+ * Ask the client behind `ctx` to approve a tool call with a server-initiated
+ * `approval` request. Anything but an explicit approval denies, and a failed
+ * request (no client approver, dropped connection) denies too: fail-closed.
+ */
+export function rpcToolApprover(ctx: RpcContext): ConfirmToolApproval {
+  return (request) =>
+    ctx.request("approval", request).then(
+      toApprovalVerdict,
+      (): ToolApprovalVerdict => ({
+        decision: "deny",
+        reason: "approval request failed (no client approver?)",
+      }),
+    );
 }
 
 export interface Extension {

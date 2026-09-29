@@ -68,9 +68,18 @@ import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { resolveSecrets } from "../secrets.ts";
 import { buildExternalMcpCommands } from "../mcp-tools.ts";
 import { installRuntimeSigintHandler } from "../runtime-sigint.ts";
+import { createFrictionExtension } from "../extensions/friction/mod.ts";
 import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";
-import { buildExtensionHandlers, type Extension } from "./extensions.ts";
-import { buildLegacyExtensionHandlers } from "./rpc/legacy-extensions.ts";
+import {
+  buildLinearIssueCreationCommand,
+  createLinearExtension,
+  type LinearCommands,
+} from "../extensions/linear/mod.ts";
+import {
+  buildExtensionHandlers,
+  type Extension,
+  rpcToolApprover,
+} from "./extensions.ts";
 import { buildRuntimeHandlers } from "./rpc/runtime.ts";
 import { buildSurfaceHandlers } from "./rpc/surface.ts";
 import { buildModelsHandlers } from "./rpc/models.ts";
@@ -180,9 +189,28 @@ async function loadPickerModels(
 
 // The static extension list (specs/01-architecture.md §6), every extension
 // enabled by default. Built once per server, so each engine owns its
-// extensions' state (the idea/packet registry lives in memory for its life).
-function composeExtensions(): Extension[] {
-  return [...createIdeaPacketExtensions()];
+// extensions' state (the idea/packet registry lives in memory for its life,
+// and friction's post queue). The linear extension resolves the Linear
+// commands the others reach through `ExtensionDeps.linear`.
+function composeExtensions(
+  options: WorkbenchUnixServerOptions,
+  frictionEventWriter: (event: EventInsert) => Promise<void> | void,
+): { extensions: Extension[]; linear: LinearCommands } {
+  const linear = createLinearExtension(options.externalMcpCommands ?? []);
+  return {
+    extensions: [
+      ...createIdeaPacketExtensions(),
+      createFrictionExtension({
+        issueId: options.frictionIssueId,
+        now: options.frictionNow,
+        writeEvent: frictionEventWriter,
+        permissionLevel: options.engineConfig?.permissionLevel ??
+          options.permissionLevel ?? "strict",
+      }),
+      linear,
+    ],
+    linear: linear.linear,
+  };
 }
 
 // The cataloged method surface: the default store-backed readers, resolved
@@ -218,6 +246,10 @@ function buildHandlers(
     (async (event: EventInsert) => {
       await store().journal.commit({ events: [event] });
     });
+  const { extensions, linear } = composeExtensions(
+    options,
+    frictionEventWriter,
+  );
   return {
     ...buildRuntimeHandlers({ ...options, loadModels }),
     ...buildSurfaceHandlers({ ...options, loadModels, listSessions }),
@@ -231,11 +263,12 @@ function buildHandlers(
     }),
     ...buildEventsHandlers({ fetchSessionEvents }),
 
-    ...buildExtensionHandlers(composeExtensions(), {
+    ...buildExtensionHandlers(extensions, {
       fetchSessionEvents,
       fetchSessionWorkspaceRecord,
+      linear,
+      toolApprover: rpcToolApprover,
     }),
-    ...buildLegacyExtensionHandlers({ ...options, frictionEventWriter }),
     ...buildTurnHandlers({
       ...options,
       owners,
@@ -345,6 +378,8 @@ async function main(): Promise<void> {
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
+    // The Linear extension builds the bounded issue-creation command.
+    { buildIssueCreationCommand: buildLinearIssueCreationCommand },
   );
   for (const diagnostic of externalMcp.diagnostics) {
     console.error(

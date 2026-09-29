@@ -60,7 +60,10 @@ import {
   type WorkbenchIdea,
   type WorkbenchWorkPacket,
 } from "./extensions/ideas/client.ts";
-import { type FrictionPostResult, normalizeFrictionContext } from "./friction.ts";
+import {
+  type FrictionPostResult,
+  normalizeFrictionContext,
+} from "./extensions/friction/client.ts";
 
 // ── Seam contract (shared with the server) ──────────────────────────
 // The receipt and stream frame shapes are defined once in contract/turn.ts and

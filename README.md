@@ -1685,3 +1685,8 @@ Document revisions only. Code and behavior changes are tracked in
   factory because they share one registry; §3 places the RPC parameter
   sanitizers in `transport/`. The bug-log entry on ideas and packets being
   lost on restart points at their new location.
+- 2026-09-29 - `specs/01-architecture.md` §6 records what `ExtensionDeps`
+  carries (the session readers, the Linear commands, the tool approver), that
+  Linear issue creation enters through the MCP discovery port rather than
+  `commands`, and that the `arch.imports` lane now enforces that only
+  `server/` and `cli/` import `extensions/`.

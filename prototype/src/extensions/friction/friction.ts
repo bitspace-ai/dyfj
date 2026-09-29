@@ -1,4 +1,4 @@
-import type { CommandDefinition } from "./tools/mod.ts";
+import type { CommandDefinition } from "../../tools/mod.ts";
 import { basename } from "node:path";
 
 export const FRICTION_SEVERITIES = [
@@ -70,17 +70,6 @@ export class FrictionStageError extends Error {
     super(`${stage} failed: ${publicReason}`);
     this.name = "FrictionStageError";
   }
-}
-
-export const LINEAR_COMMENT_UPSTREAM_TOOLS = [
-  "create_comment",
-  "save_comment",
-] as const;
-
-export function isLinearCommentCommandId(id: string): boolean {
-  return LINEAR_COMMENT_UPSTREAM_TOOLS.some((tool) =>
-    id === `mcp.linear.${tool}`
-  );
 }
 
 export interface FrictionLinearInvoker {

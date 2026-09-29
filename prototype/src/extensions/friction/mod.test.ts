@@ -7,15 +7,27 @@ import type { EventInsert } from "../../store/mod.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import { type RpcContext, RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
-import {
-  buildLegacyExtensionHandlers,
-  type LegacyExtensionHandlerDeps,
-} from "./legacy-extensions.ts";
+import { rpcToolApprover } from "../../server/extensions.ts";
+import { createLinearExtension } from "../linear/mod.ts";
+import { createFrictionExtension } from "./mod.ts";
 
-function handlers(overrides: Partial<LegacyExtensionHandlerDeps> = {}) {
-  return buildLegacyExtensionHandlers({
-    frictionEventWriter: () => {},
-    ...overrides,
+// friction/post as the composition root wires it: over the commands the
+// linear extension resolved from `externalMcpCommands`, with the server's
+// client approver.
+function handlers(overrides: {
+  frictionIssueId?: string;
+  frictionNow?: () => Date;
+  frictionEventWriter?: (event: EventInsert) => Promise<void> | void;
+  externalMcpCommands?: readonly CommandDefinition[];
+} = {}) {
+  return createFrictionExtension({
+    issueId: overrides.frictionIssueId,
+    now: overrides.frictionNow,
+    writeEvent: overrides.frictionEventWriter ?? (() => {}),
+    permissionLevel: "strict",
+  }).rpc({
+    linear: createLinearExtension(overrides.externalMcpCommands ?? []).linear,
+    toolApprover: rpcToolApprover,
   });
 }
 
@@ -272,3 +284,31 @@ Deno.test("friction/post names create_comment failure", async () => {
   );
   assertStringIncludes(error.message, "create_comment failed");
 });
+
+for (
+  const [missing, message] of [
+    ["mcp.linear.get_issue", "get_issue failed"],
+    ["mcp.linear.list_comments", "list_comments failed"],
+    ["mcp.linear.create_comment", "create_comment/save_comment failed"],
+  ]
+) {
+  Deno.test(`friction/post refuses when ${missing} was not discovered`, async () => {
+    const createdBodies: string[] = [];
+    const error = await rpcFailure(
+      handlers({
+        frictionIssueId: "CHECKPOINT-1",
+        externalMcpCommands: frictionCommands({ createdBodies }).filter(
+          (command) => command.id !== missing,
+        ),
+      }),
+      "friction/post",
+      { severity: "minor", escaped: false, text: "moment" },
+      approvingClient(),
+    );
+    assertEquals(error, {
+      code: RpcErrorCode.internalError,
+      message: `${message}: configured Linear tool is unavailable`,
+    });
+    assertEquals(createdBodies, []);
+  });
+}

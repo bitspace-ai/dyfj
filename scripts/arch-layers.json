@@ -44,6 +44,13 @@
     { "from": "tools", "to": "store" },
     { "from": "context", "to": "store" }
   ],
+  "importOnlyFrom": [
+    {
+      "$comment": "specs/01-architecture.md section 6: the core never imports extensions; only the server composition root and the CLI (through each extension's client.ts, see cli below) do.",
+      "unit": "extensions/*",
+      "importers": ["server", "cli"]
+    }
+  ],
   "cli": {
     "unit": "cli",
     "allowedUnits": ["kernel", "contract", "config", "transport"],
@@ -93,8 +100,6 @@
     "prototype/src/acp-client.ts": "runners/acp",
     "prototype/src/acp-session-map.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
-    "prototype/src/friction.ts": "extensions/friction",
-    "prototype/src/linear-tools.ts": "extensions/linear",
     "prototype/src/cli.ts": "cli",
     "prototype/src/busy-spinner.ts": "cli",
     "prototype/src/streaming-markdown.ts": "cli",

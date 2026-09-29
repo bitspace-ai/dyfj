@@ -48,12 +48,14 @@ const RULES: LayerRules = {
     { dir: "extensions/*", layer: 4 },
     { dir: "server", layer: 5 },
     { dir: "cli", layer: 5 },
+    { dir: "mcp", layer: 5, path: "prototype/mcp" },
     { dir: "tooling", layer: 6, outside: true, path: "prototype/scripts" },
   ],
   sameLayerEdges: [
     { from: "context", to: "providers", typesOnly: true },
     { from: "tools", to: "store" },
   ],
+  importOnlyFrom: [{ unit: "extensions/*", importers: ["server", "cli"] }],
   cli: {
     unit: "cli",
     allowedUnits: ["kernel", "contract"],
@@ -395,6 +397,42 @@ Deno.test("cli/ may import only its allow-list", async () => {
     `${S}/cli/main.ts -> ${S}/tools/t.ts`,
   ]);
   assertEquals(result.current.layer, []);
+});
+
+Deno.test("only server/ and cli/ may import extensions/, whatever the layer", async () => {
+  const result = await run({
+    [`${S}/extensions/ideas/mod.ts`]: "export const i = 1;",
+    [`${S}/extensions/ideas/client.ts`]: "export const c = 1;",
+    [`${S}/extensions/linear/mod.ts`]: 'import { i } from "../ideas/mod.ts";',
+    [`${S}/server/main.ts`]: 'import { i } from "../extensions/ideas/mod.ts";',
+    [`${S}/cli/main.ts`]: 'import { c } from "../extensions/ideas/client.ts";',
+    [`${S}/tools/t.ts`]: 'import { i } from "../extensions/ideas/mod.ts";',
+    ["prototype/mcp/server.ts"]:
+      'import { i } from "../src/extensions/ideas/mod.ts";',
+    ["prototype/scripts/tool.ts"]:
+      'import { i } from "../src/extensions/ideas/mod.ts";',
+  });
+  assertEquals(result.current.layer, [
+    // Same layer as server/, but not a listed importer.
+    `prototype/mcp/server.ts -> ${S}/extensions/ideas/mod.ts`,
+    // Tooling may import the runtime, but not extensions/.
+    `prototype/scripts/tool.ts -> ${S}/extensions/ideas/mod.ts`,
+    // One extension may not import another.
+    `${S}/extensions/linear/mod.ts -> ${S}/extensions/ideas/mod.ts`,
+    // Upward and restricted: reported once.
+    `${S}/tools/t.ts -> ${S}/extensions/ideas/mod.ts`,
+  ]);
+  assertEquals(result.current.cli, []);
+});
+
+Deno.test("an importOnlyFrom rule must name declared units", async () => {
+  const result = await run({}, {
+    rules: {
+      ...RULES,
+      importOnlyFrom: [{ unit: "extensions/*", importers: ["servr"] }],
+    },
+  });
+  assertSome(result.errors, "importOnlyFrom rule: unit is not declared: servr");
 });
 
 Deno.test("dynamic local imports are violations; package imports are not", async () => {

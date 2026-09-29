@@ -17,10 +17,6 @@ import {
   type McpDiscoveryResult,
 } from "./tools/mcp/transport.ts";
 import { defineWebCommands, createWebToolsSessionState } from "./tools/web/web.ts";
-import {
-  buildBoundedLinearCreateIssueCommand,
-  projectLinearCreationUpstreamSchema,
-} from "./linear-tools.ts";
 export {
   buildDoltAllowNetGrant,
   mcpServerNetGrants,
@@ -376,16 +372,13 @@ export async function buildExternalMcpCommands(
       const discovered = discoveredByName.get(upstreamTool);
       if (upstreamTool === "create_issue" || upstreamTool === "save_issue") {
         const binding = server.linearIssueCreation;
-        const schema = binding && discovered
-          ? projectLinearCreationUpstreamSchema(discovered.inputSchema, binding)
-          : undefined;
-        const command = binding && schema
-          ? buildBoundedLinearCreateIssueCommand({
+        const command = binding && discovered
+          ? deps.buildIssueCreationCommand?.({
             server,
             binding,
             token,
             revision: discovery.revision,
-            upstreamSchema: schema,
+            discoveredSchema: discovered.inputSchema,
             upstreamTool,
             call,
           })

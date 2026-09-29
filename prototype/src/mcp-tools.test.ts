@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import saveIssueSchema from "./linear-save-issue-schema.fixture.ts";
+import saveIssueSchema from "./extensions/linear/linear-save-issue-schema.fixture.ts";
+import { buildLinearIssueCreationCommand } from "./extensions/linear/mod.ts";
 import { parseMcpServersConfig, type SecretsConfig } from "./config/mod.ts";
 import {
   buildDoltAllowNetGrant,
@@ -14,6 +15,12 @@ import {
 import { createCommandRegistry, invokeCommandWithEvent } from "./tools/mod.ts";
 
 const CONFIG_PATH = "/private/operator/.dyfj/config.toml";
+
+// The Linear extension's issue-creation builder, as the composition root
+// passes it to discovery.
+const WITH_LINEAR = {
+  buildIssueCreationCommand: buildLinearIssueCreationCommand,
+};
 
 function serverTable(overrides: Record<string, unknown> = {}) {
   return {
@@ -70,6 +77,7 @@ describe("external MCP command projection", () => {
       parseMcpServersConfig(table, CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [{ name: "create_issue", inputSchema: { type: "object" } }],
@@ -113,6 +121,7 @@ describe("external MCP command projection", () => {
         ),
         { linear_mcp: "secret-value" },
         {
+          ...WITH_LINEAR,
           discover: async () => ({
             revision: "2026-07-28",
             tools: [
@@ -152,6 +161,7 @@ describe("external MCP command projection", () => {
       parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [{
@@ -196,6 +206,7 @@ describe("external MCP command projection", () => {
       parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({ revision: "2026-07-28", tools: [...tools] }),
         call,
       },
@@ -230,6 +241,7 @@ describe("external MCP command projection", () => {
       ),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [{ name: "create_issue", inputSchema: { type: "object" } }],
@@ -264,6 +276,7 @@ describe("external MCP command projection", () => {
         ),
         { linear_mcp: "secret-value" },
         {
+          ...WITH_LINEAR,
           discover: async () => ({
             revision: "2026-07-28",
             tools: [{ name: "save_issue", inputSchema: saveIssueSchema }],
@@ -292,11 +305,58 @@ describe("external MCP command projection", () => {
     }
   });
 
+  test("withholds bounded creation when discovery gets no issue-creation builder", async () => {
+    const call = vi.fn();
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(
+        linearCreationTable({
+          tools: [
+            { name: "save_issue", effect: "write_external", approval: "ask" },
+            { name: "get_issue", effect: "read", approval: "allow" },
+          ],
+        }),
+        CONFIG_PATH,
+      ),
+      { linear_mcp: "secret-value" },
+      {
+        // No buildIssueCreationCommand: the binding and schema are valid.
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [
+            { name: "save_issue", inputSchema: saveIssueSchema },
+            {
+              name: "get_issue",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        }),
+        call,
+      },
+    );
+    expect(built.commands.map((c) => c.id)).toEqual(["mcp.linear.get_issue"]);
+    expect(built.diagnostics).toEqual([
+      {
+        serverId: "linear",
+        status: "withheld",
+        tool: "save_issue",
+        reason: "unsupported schema",
+      },
+      {
+        serverId: "linear",
+        status: "ready",
+        revision: "2026-07-28",
+        toolCount: 1,
+      },
+    ]);
+    expect(call).not.toHaveBeenCalled();
+  });
+
   test("registers the bounded projection when binding and schema match", async () => {
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(linearCreationTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [{
@@ -346,7 +406,7 @@ describe("external MCP command projection", () => {
     const result = await buildExternalMcpCommands(
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       credentials,
-      { discover },
+      { ...WITH_LINEAR, discover },
     );
     expect(result.commands).toEqual([]);
     expect(result.diagnostics).toEqual([{
@@ -366,6 +426,7 @@ describe("external MCP command projection", () => {
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [
@@ -470,6 +531,7 @@ describe("external MCP command projection", () => {
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [{
@@ -520,7 +582,7 @@ describe("external MCP command projection", () => {
     const result = await buildExternalMcpCommands(
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       {},
-      { discover, call: vi.fn() },
+      { ...WITH_LINEAR, discover, call: vi.fn() },
     );
     expect(result.commands).toEqual([]);
     expect(result.diagnostics).toEqual([{
@@ -536,6 +598,7 @@ describe("external MCP command projection", () => {
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [{
@@ -636,6 +699,7 @@ describe("MCP HTTP containment", () => {
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
       {
+        ...WITH_LINEAR,
         discover: async () => ({
           revision: "2026-07-28",
           tools: [{
