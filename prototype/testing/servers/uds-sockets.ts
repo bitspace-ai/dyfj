@@ -38,6 +38,7 @@ export const UDS_TEST_SOCKETS = [
   "cli-status-mute",
   "cli-connect-aborted",
   "cli-connect-inflight",
+  "cli-turn-roundtrip",
 ] as const;
 
 export type UdsTestSocket = typeof UDS_TEST_SOCKETS[number];

@@ -260,8 +260,9 @@ changes with a CHANGELOG `Fixed` entry.
     catalog rows may diverge the same way; this is the one observed.
   - **Found during:** WO-06.
 - 2026-09-27 — **`dyfj --help` omits several working REPL commands.**
-  - **Location:** `prototype/src/cli.ts:3962` (the `REPL commands:` block of
-    `HELP`), against the dispatch at `prototype/src/cli.ts:863` and `:869`.
+  - **Location:** `prototype/src/cli/args.ts:322` (the `REPL commands:` block
+    of `HELP`), against the dispatch in `runRepl` at `prototype/src/cli.ts:156`
+    and `:168`.
   - **Symptom:** the help text lists `/model`, `/fast`, `/session`, `/friction`,
     and `/exit`/`/quit`, but not `/idea mark|list|show`,
     `/packet draft|list|show`, the `/session list` and `/session switch`
@@ -295,9 +296,10 @@ changes with a CHANGELOG `Fixed` entry.
   ways.**
   - **Location:** `prototype/src/kernel/ansi.ts` (`stripAnsiEscapes`, used by
     the idea/packet renderer and the RPC string sanitizer);
-    `prototype/src/streaming-markdown.ts:39` (`visibleWidth`) with its paired
-    scanner at `:308` (`ansiSequenceEnd`); and `prototype/src/cli.ts:254`
-    (`sanitizeSpinnerLabel` and its `skip*` helpers at `:318`–`:361`).
+    `prototype/src/cli/render/streaming-markdown.ts:39` (`visibleWidth`) with
+    its paired scanner at `:308` (`ansiSequenceEnd`); and
+    `prototype/src/cli/render/turn-spinner.ts:31` (`sanitizeSpinnerLabel` and
+    its `skip*` helpers at `:95`–`:138`).
   - **Symptom:** the same input is treated differently depending on where it
     is shown. `visibleWidth` removes only CSI and OSC sequences and accepts CSI
     parameter bytes (`<`, `=`, `>`, `:`) that `stripAnsiEscapes` does not. It
@@ -316,8 +318,8 @@ changes with a CHANGELOG `Fixed` entry.
     recognizer the surfaces should share.
 
 - 2026-09-26 — **Piped REPL input runs only its first line.**
-  - **Location:** `prototype/src/cli.ts:4035` (`readLineOrNull`) and
-    `prototype/src/cli.ts:813` (`runRepl`).
+  - **Location:** `prototype/src/cli/io.ts:80` (`readLineOrNull`) and
+    `prototype/src/cli.ts:116` (`runRepl`).
   - **Symptom:** when the REPL's stdin delivers several lines and then EOF in
     one go (for example `printf 'a\nb\n' | dyfj`), only the first line runs as
     a turn. The REPL then exits with status 0 without running the remaining

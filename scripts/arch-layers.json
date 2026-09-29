@@ -101,8 +101,6 @@
     "prototype/src/acp-session-map.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
     "prototype/src/cli.ts": "cli",
-    "prototype/src/busy-spinner.ts": "cli",
-    "prototype/src/streaming-markdown.ts": "cli",
     "prototype/src/runtime-sigint.ts": "cli",
     "prototype/src/model-response-modes.ts": "diagnostics",
     "prototype/src/context-size-response.ts": "diagnostics",

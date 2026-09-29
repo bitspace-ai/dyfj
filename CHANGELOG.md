@@ -165,6 +165,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `dyfj` client's turn code moved out of `src/cli.ts`, which is now the
+  interactive REPL only.** The turn request and socket turn with its
+  cancellation (`src/cli/turn-client.ts`), the interactive mid-turn approval
+  prompt (`src/cli/approval.ts`, shared by `exec` and the REPL), the one-shot
+  `exec` command (`src/cli/commands/exec.ts`), and the turn's terminal
+  rendering (`src/cli/render/`: streaming markdown and runtime-event lines,
+  the busy spinner and its label sanitizing, the receipt line) are separate
+  modules. `src/busy-spinner.ts` and `src/streaming-markdown.ts` moved into
+  `src/cli/render/` unchanged. Turns, approvals, cancellation, output and exit
+  codes are unchanged; the golden suite passes with no snapshot diff. Their
+  tests moved to `Deno.test` beside them, with the shared turn fixtures in
+  `prototype/testing/builders/turn-client.ts`; the real-socket turn round
+  trip runs in the integration lane.
+
 - **The `dyfj` client's entrypoint is `prototype/src/cli/main.ts`.** Argument
   parsing, config resolution and help (`src/cli/args.ts`), the client's
   terminal and socket ports (`src/cli/io.ts`), the `models`, `sessions`,
