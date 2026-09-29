@@ -266,7 +266,12 @@ git clone https://github.com/bitspace-ai/dyfj
 cd dyfj/prototype
 deno install
 cp .env.example .env
+git config core.hooksPath .githooks
 ```
+
+The last line enables the repository's `commit-msg` hook, which refuses commits
+authored or committed under an AI tool's identity and strips tool-attribution
+trailers from commit messages (see `AGENTS.md`, Documentation Discipline).
 
 The prototype uses Deno tasks defined in `deno.json`. See `deno task` for the
 list of entry points.
