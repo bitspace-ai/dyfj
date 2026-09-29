@@ -165,6 +165,24 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The REPL, launcher, launch-grant, repo-context and `deno.json` task tests
+  run on `Deno.test` instead of Vitest**, with every case kept.
+  `src/cli.test.ts` (the REPL) stays a unit test. Its `deno.json` task cases
+  moved out: the one that only reads the committed task strings to
+  `scripts/deno-tasks.test.ts` (unit), and the three that run
+  `codex-chatgpt-login` through `/bin/sh` to
+  `scripts/deno-tasks.integration.test.ts`. Three files moved to the
+  integration tier because they spawn processes or build symlink fixtures:
+  `scripts/dyfj-launcher.test.ts` became `dyfj-launcher.integration.test.ts`,
+  and the Vitest-only `grants.platform.test.ts` and
+  `repo-context.platform.test.ts` became `grants.integration.test.ts` and
+  `repo-context.integration.test.ts`. The fixtures now use the system temp
+  directory instead of the working tree, and create symlinks with `ln -s`.
+  The integration lane's `Deno.test` invocation gains only what these tests
+  use: run grants for `/bin/ps`, `/bin/sh`, `bash`, `/bin/bash` and `ln`, the
+  temp roots, and the `DENO_DIR` and `DYFJ_WORKBENCH_CONTEXT_TOKENS` env
+  names. Product behavior is unchanged.
+
 - **The `dyfj` client's turn code moved out of `src/cli.ts`, which is now the
   interactive REPL only.** The turn request and socket turn with its
   cancellation (`src/cli/turn-client.ts`), the interactive mid-turn approval
