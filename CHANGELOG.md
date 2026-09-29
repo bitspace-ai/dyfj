@@ -11,6 +11,17 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Git hooks against AI-tool attribution**: `.githooks/commit-msg` refuses a
+  commit whose author or committer is an AI tool identity (including one given
+  with `--author`, and merge commits), since GitHub turns each distinct commit
+  author into a `Co-authored-by` trailer when a pull request is squash-merged,
+  and strips `Co-authored-by` trailers naming a tool, `Claude-Session` trailers
+  and "Generated with/by Claude Code" footers from commit messages.
+  `.githooks/pre-push` checks the commits being pushed for the same identities
+  and message lines, catching commits that skipped `commit-msg`. Tools are
+  recognized by exact name or address, so a person whose name contains a
+  tool's name is unaffected. Enable them per clone with
+  `git config core.hooksPath .githooks`.
 - **Row types generated from the DDL, with two schema gate lanes**:
   `schema/codegen.ts` applies `schema/current/` then `schema/catalog/` to a
   disposable Dolt repository, reads `information_schema`, and writes
