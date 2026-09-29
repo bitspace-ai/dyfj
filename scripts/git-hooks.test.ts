@@ -211,6 +211,29 @@ Deno.test("pre-push refuses a tool trailer committed with --no-verify", () =>
     );
   }));
 
+Deno.test("pre-push ignores history merged in from an already-pushed branch", () =>
+  withFixture(async (dir) => {
+    await commitWithMessage(dir, "topic work\n");
+    assertEquals(
+      (await git(dir, ["push", "-q", "origin", "topic"])).success,
+      true,
+    );
+    // main gains a commit carrying a tool trailer, published before the hooks
+    // existed (simulated with --no-verify on both commit and push).
+    await gitOk(dir, ["checkout", "-q", "main"]);
+    await commitWithMessage(
+      dir,
+      `old\n\nCo-authored-by: Claude <${claudeEmail}>\n`,
+      human,
+      ["--no-verify"],
+    );
+    await gitOk(dir, ["push", "-q", "--no-verify", "origin", "main"]);
+    await gitOk(dir, ["checkout", "-q", "topic"]);
+    await gitOk(dir, ["merge", "-q", "--no-ff", "-m", "Merge main", "main"]);
+    const push = await git(dir, ["push", "-q", "origin", "topic"]);
+    assertEquals(push.success, true);
+  }));
+
 Deno.test("pre-push publishes clean commits, new branch and update alike", () =>
   withFixture(async (dir) => {
     await commitWithMessage(dir, "first\n");

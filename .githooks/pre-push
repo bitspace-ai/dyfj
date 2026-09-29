@@ -20,14 +20,12 @@ all_zero() {
 }
 
 found=0
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
   # A deleted ref publishes nothing.
   all_zero "$local_sha" && continue
-  if all_zero "$remote_sha"; then
-    commits=$(git rev-list "$local_sha" --not --remotes)
-  else
-    commits=$(git rev-list "$remote_sha..$local_sha")
-  fi
+  # Only commits no remote-tracking ref already has are newly published, so
+  # merging main (whose history predates these hooks) never trips the check.
+  commits=$(git rev-list "$local_sha" --not --remotes)
   for commit in $commits; do
     short=$(git rev-parse --short "$commit")
     for ident in "$(git log -1 --format='%an <%ae>' "$commit")" \
