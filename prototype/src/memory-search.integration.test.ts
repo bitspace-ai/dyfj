@@ -4,9 +4,11 @@ import {
   McpServer,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { assertRejects } from "@std/assert";
 import {
   buildMemorySearch,
   type MemorySearchDiagnostic,
+  recallRequestInit,
 } from "./memory-search.ts";
 import {
   type LoopbackHttp,
@@ -745,5 +747,41 @@ Deno.test(
 
     assertEquals(diagnostics.length, 1);
     assertEquals(diagnostics[0]?.extensions, []);
+  },
+);
+
+Deno.test(
+  "recallRequestInit: a redirecting endpoint rejects instead of being followed (live fetch)",
+  async () => {
+    // Regression for the https→http 307 downgrade: a loopback server answers
+    // 307 to a same-host http URL; a fetch carrying the exact init recall
+    // sends must reject rather than follow. The redirect policy is enforced by
+    // fetch itself, which this exercises for real; the full SDK transport path
+    // is covered by the recall tests above.
+    const base = { url: "https://memory.example/mcp", tool: "search" };
+    const server = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      (req) =>
+        new Response(null, {
+          status: 307,
+          headers: { location: new URL(req.url).href },
+        }),
+    );
+    const { port } = server.addr as Deno.NetAddr;
+    try {
+      await assertRejects(() =>
+        fetch(`http://127.0.0.1:${port}/mcp`, {
+          ...recallRequestInit({
+            ...base,
+            token: "fixture-token",
+            tokenHeader: "x-fixture-key",
+          }),
+          method: "POST",
+          body: JSON.stringify({ query: "fixture" }),
+        })
+      );
+    } finally {
+      await server.shutdown();
+    }
   },
 );

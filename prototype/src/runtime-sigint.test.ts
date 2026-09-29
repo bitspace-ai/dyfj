@@ -1,12 +1,14 @@
-import { describe, expect, test, vi } from "vitest";
+import { assertStrictEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
 import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
 
 describe("runtime SIGINT handling", () => {
-  test("an autostarted runtime ignores terminal SIGINT", async () => {
+  it("an autostarted runtime ignores terminal SIGINT", async () => {
     let handler: () => void | Promise<void> = () => {};
-    const close = vi.fn(() => Promise.resolve());
-    const exit = vi.fn();
-    const add = vi.fn((next: () => void) => handler = next);
+    const close = spy(() => Promise.resolve());
+    const exit = spy((_code: number) => {});
+    const add = spy((next: () => void) => handler = next);
 
     installRuntimeSigintHandler(
       true,
@@ -16,15 +18,15 @@ describe("runtime SIGINT handling", () => {
     );
     await handler();
 
-    expect(add).toHaveBeenCalledOnce();
-    expect(close).not.toHaveBeenCalled();
-    expect(exit).not.toHaveBeenCalled();
+    assertSpyCalls(add, 1);
+    assertSpyCalls(close, 0);
+    assertSpyCalls(exit, 0);
   });
 
-  test("a foreground runtime closes and exits on SIGINT", async () => {
+  it("a foreground runtime closes and exits on SIGINT", async () => {
     let handler: () => void | Promise<void> = () => {};
-    const close = vi.fn(() => Promise.resolve());
-    const exit = vi.fn();
+    const close = spy(() => Promise.resolve());
+    const exit = spy((_code: number) => {});
 
     installRuntimeSigintHandler(
       false,
@@ -34,18 +36,18 @@ describe("runtime SIGINT handling", () => {
     );
     await handler();
 
-    expect(close).toHaveBeenCalledOnce();
-    expect(exit).toHaveBeenCalledWith(0);
+    assertSpyCalls(close, 1);
+    assertSpyCall(exit, 0, { args: [0] });
   });
 
-  test("foreground SIGINT waits for startup to supply runtime cleanup", async () => {
+  it("foreground SIGINT waits for startup to supply runtime cleanup", async () => {
     let handler: () => void | Promise<void> = () => {};
     let resolveClose!: (close: () => Promise<void>) => void;
     const closeReady = new Promise<() => Promise<void>>((resolve) => {
       resolveClose = resolve;
     });
-    const close = vi.fn(() => Promise.resolve());
-    const exit = vi.fn();
+    const close = spy(() => Promise.resolve());
+    const exit = spy((_code: number) => {});
 
     installRuntimeSigintHandler(
       false,
@@ -56,18 +58,18 @@ describe("runtime SIGINT handling", () => {
     const pending = handler();
     await Promise.resolve();
 
-    expect(exit).not.toHaveBeenCalled();
+    assertSpyCalls(exit, 0);
     resolveClose(close);
     await pending;
 
-    expect(close).toHaveBeenCalledOnce();
-    expect(exit).toHaveBeenCalledWith(0);
+    assertSpyCalls(close, 1);
+    assertSpyCall(exit, 0, { args: [0] });
   });
 
-  test("a foreground runtime exits when graceful shutdown rejects", async () => {
+  it("a foreground runtime exits when graceful shutdown rejects", async () => {
     let handler: () => void | Promise<void> = () => {};
-    const close = vi.fn(() => Promise.reject(new Error("close failed")));
-    const exit = vi.fn();
+    const close = spy(() => Promise.reject(new Error("close failed")));
+    const exit = spy((_code: number) => {});
 
     installRuntimeSigintHandler(
       false,
@@ -75,9 +77,9 @@ describe("runtime SIGINT handling", () => {
       { add: (next) => handler = next },
       exit,
     );
-    await expect(handler()).resolves.toBeUndefined();
+    assertStrictEquals(await handler(), undefined);
 
-    expect(close).toHaveBeenCalledOnce();
-    expect(exit).toHaveBeenCalledWith(1);
+    assertSpyCalls(close, 1);
+    assertSpyCall(exit, 0, { args: [1] });
   });
 });

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { assertEquals, assertStrictEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import {
   compareStreamingStructuredOutputModes,
@@ -21,7 +22,7 @@ const models: WorkbenchModel[] = [{
 }];
 
 describe("compareStructuredOutputModes", () => {
-  test("reports validation for prompt-only and JSON-object provider modes", async () => {
+  it("reports validation for prompt-only and JSON-object provider modes", async () => {
     const report = await compareStructuredOutputModes({
       systemPrompt: "Return JSON with answer and confidence.",
       prompt: "Say ok.",
@@ -31,7 +32,7 @@ describe("compareStructuredOutputModes", () => {
       fetchFn: buildFakeStructuredOutputFetch(),
     });
 
-    expect(report.map(summary)).toEqual([
+    assertEquals(report.map(summary), [
       {
         mode: "prompt-only",
         provider: "ollama",
@@ -51,7 +52,7 @@ describe("compareStructuredOutputModes", () => {
         total_latency_ms: 40,
       },
     ]);
-    expect(report[1].parsed).toEqual({
+    assertEquals(report[1].parsed, {
       answer: "ok",
       confidence: "high",
     });
@@ -59,7 +60,7 @@ describe("compareStructuredOutputModes", () => {
 });
 
 describe("compareStreamingStructuredOutputModes", () => {
-  test("reports streamed timing and validation for loose and rigid output", async () => {
+  it("reports streamed timing and validation for loose and rigid output", async () => {
     const report = await compareStreamingStructuredOutputModes({
       systemPrompt: "Return answer and confidence.",
       loosePrompt: "Say ok with confidence.",
@@ -70,7 +71,7 @@ describe("compareStreamingStructuredOutputModes", () => {
       fetchFn: buildFakeStreamingStructuredOutputFetch(),
     });
 
-    expect(report.map(streamingSummary)).toEqual([
+    assertEquals(report.map(streamingSummary), [
       {
         mode: "loose-streaming",
         streamed: true,
@@ -92,7 +93,7 @@ describe("compareStreamingStructuredOutputModes", () => {
         output_tokens: 4,
       },
     ]);
-    expect(report[1].parsed).toEqual({
+    assertEquals(report[1].parsed, {
       answer: "ok",
       confidence: "high",
     });
@@ -130,7 +131,7 @@ function buildFakeStructuredOutputFetch(): typeof fetch {
     call += 1;
     const body = JSON.parse(String(init?.body));
     if (call === 1) {
-      expect(body.response_format).toBeUndefined();
+      assertStrictEquals(body.response_format, undefined);
       return Response.json({
         choices: [{
           message: { content: "The answer is ok." },
@@ -140,7 +141,7 @@ function buildFakeStructuredOutputFetch(): typeof fetch {
       });
     }
 
-    expect(body.response_format).toEqual({ type: "json_object" });
+    assertEquals(body.response_format, { type: "json_object" });
     return Response.json({
       choices: [{
         message: {

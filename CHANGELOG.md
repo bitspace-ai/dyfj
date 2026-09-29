@@ -170,19 +170,37 @@ README are tracked separately in its Revision history section.
   split by tier: the pure cases stay in `acp-client.test.ts` (22),
   `acp-session-map.test.ts` (30) and `external-agent-runtime.test.ts` (12) in
   `test.unit`, and the cases that spawn the ACP fixture agent, read the
-  process environment or build symlinks move to `*.integration.test.ts` (71,
-  7 and 78). `acp-runner.integration.test.ts` moves from Vitest to the
-  integration lane's `Deno.test` invocation. The runtime tests no longer
-  mock `kernel/ids.ts` and `store/sessions.ts`; each test injects a
-  `MemoryStore` and injects write failures through the journal it hands the
-  runtime. That invocation now points `TMPDIR` at a directory of its own,
-  removed afterwards, and grants read and write on it alone. It also gains run
-  grants for `bash` and `/bin/bash`, `--allow-sys=uid` (the Codex profile
-  builder checks directory ownership), and the env names the ACP tests read or
-  set: `DENO_DIR`, `ACP_FIXTURE_AMBIENT_VALUE`, `ANTHROPIC_API_KEY`,
+  process environment or build symlinks move to `*.integration.test.ts` (71, 7
+  and 78). `acp-runner.integration.test.ts` moves from Vitest to the
+  integration lane's `Deno.test` invocation, the last integration file on
+  Vitest, so the integration lane no longer starts Vitest at all. The runtime
+  tests no longer mock `kernel/ids.ts` and `store/sessions.ts`; each test
+  injects a `MemoryStore` and injects write failures through the journal it
+  hands the runtime. That invocation now points `TMPDIR` at a directory of its
+  own, removed afterwards, and grants read and write on it alone. It also
+  gains run grants for `bash` and `/bin/bash`, `--allow-sys=uid` (the Codex
+  profile builder checks directory ownership), and the env names the ACP tests
+  read or set: `DENO_DIR`, `ACP_FIXTURE_AMBIENT_VALUE`, `ANTHROPIC_API_KEY`,
   `DYFJ_MEMORY_MCP_TOKEN`, `SSH_AUTH_SOCK`, `DYFJ_NODE_PATH`,
   `DYFJ_CODEX_TOOLCHAIN_PATH` and `DYFJ_CODEX_RUSTUP_HOME`. Product behavior
   is unchanged.
+
+- **Twelve more prototype test files run on `Deno.test` instead of Vitest**:
+  `model-response-modes`, `runtime-sigint`, `workbench-events`, `secrets`,
+  `memory-search`, `mcp-conformance`, `mcp-tools`, `context-size-response`,
+  `structured-output`, `scripts/add-import-extensions`,
+  `scripts/deno-executable` and `scripts/isolated-dolt-fixture.integration`,
+  with every case kept. Pure cases run in `test.unit`. The seven
+  secret-resolver cases that spawn `bash` moved to
+  `src/secrets.integration.test.ts`, and the redirect case that binds a
+  loopback socket moved into `src/memory-search.integration.test.ts`.
+  `scripts/isolated-dolt-fixture.integration.test.ts` now runs under the
+  integration lane's `Deno.test` invocation instead of Vitest; its two
+  fixture-setup cases keep their 30-second bound by aborting setup through the
+  fixture's own signal, since `Deno.test` has no per-test timeout. That
+  invocation gains only what these tests use: `dolt` and `bash` run grants,
+  the temp roots, `../schema`, and the `TMPDIR`/`TEMP`/`TMP` and
+  `LEAKY_AMBIENT` env names. Product behavior is unchanged.
 
 - **The `dyfj` client's turn code moved out of `src/cli.ts`, which is now the
   interactive REPL only.** The turn request and socket turn with its

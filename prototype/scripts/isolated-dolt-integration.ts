@@ -146,33 +146,25 @@ try {
     await Deno.makeTempDir({ prefix: "dyfj-deno-test-" }),
   );
   await runChecked(denoExecutable, [
-    "run",
-    "-P=test",
-    "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
-    `--allow-run=bash,${denoExecutable},dolt,${esbuildBinary}`,
-    "npm:vitest@3.2.6",
-    "run",
-    "--root",
-    ".",
-    "--pool=forks",
-    "--poolOptions.forks.singleFork",
-    ...integrationTestAssignments.vitest,
-  ], { cwd: prototypeRoot, env, signal: abortController.signal });
-  await runChecked(denoExecutable, [
     "test",
     // Ungranted access throws instead of prompting, as it does in CI, so a
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
-    // The ACP files read DENO_DIR for the fixture agent's cache, set and
+    // The isolated Dolt fixture's own tests start throwaway fixtures: they
+    // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, and run
+    // `dolt`. The secrets resolver tests run `bash` and set one ambient
+    // variable (LEAKY_AMBIENT) to prove the resolver child does not inherit
+    // it. The ACP files read DENO_DIR for the fixture agent's cache, set and
     // restore the representative ambient secrets they prove are not
     // forwarded, and read the Codex profile inputs (DYFJ_NODE_PATH and the
     // toolchain directories), which stay unset here.
-    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME`,
-    `--allow-read=.,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
-    `--allow-write=${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
-    // bash and /bin/bash: the ACP files' process probes, symlink setup and
-    // a stdout-holding wrapper around the fixture agent.
-    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,bash,/bin/bash`,
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME`,
+    `--allow-read=.,../schema,/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    `--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    // bash and /bin/bash: the ACP files' process probes, symlink setup and a
+    // stdout-holding wrapper around the fixture agent, and the secrets
+    // resolver. dolt: the fixture tests.
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,dolt,bash,/bin/bash`,
     // The Codex profile builder checks directory ownership with Deno.uid().
     "--allow-sys=uid",
     `--allow-net=${
