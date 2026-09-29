@@ -155,18 +155,23 @@ try {
     // Ungranted access throws instead of prompting, as it does in CI, so a
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
-    // DENO_DIR: the launcher test pins its children's Deno cache.
+    // The isolated Dolt fixture's own tests start throwaway fixtures: they
+    // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, and run
+    // `dolt`. The secrets resolver tests run `bash` and set one ambient
+    // variable (LEAKY_AMBIENT) to prove the resolver child does not inherit
+    // it. DENO_DIR: the launcher test pins its children's Deno cache.
     // DYFJ_WORKBENCH_CONTEXT_TOKENS: the repo-context budget fallback case.
-    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,DYFJ_WORKBENCH_CONTEXT_TOKENS`,
-    // The temp roots are where the process and symlink fixtures make their
-    // temp directories (`Deno.makeTempDir` with the system default), as the
-    // unit lane's tests do.
-    `--allow-read=.,${mcpTestTempDir},${udsTestSocketDir},${tempRoots}`,
-    `--allow-write=${mcpTestTempDir},${udsTestSocketDir},${tempRoots}`,
-    // bash, /bin/bash, /bin/sh: the launcher script and the `deno.json` task
-    // strings under test. ln: symlink fixtures (`Deno.symlink` needs unscoped
-    // read and write). /bin/ps: reaping a launcher-started runtime by socket.
-    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/ps,/bin/sh,bash,/bin/bash,ln`,
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,DYFJ_WORKBENCH_CONTEXT_TOKENS`,
+    // The temp roots are where the fixtures make their temp directories
+    // (`Deno.makeTempDir` with the system default), as the unit lane's tests
+    // do.
+    `--allow-read=.,../schema,${tempRoots},${mcpTestTempDir},${udsTestSocketDir}`,
+    `--allow-write=${tempRoots},${mcpTestTempDir},${udsTestSocketDir}`,
+    // bash, /bin/bash, /bin/sh: the launcher script, the secrets resolver and
+    // the `deno.json` task strings under test. ln: symlink fixtures
+    // (`Deno.symlink` needs unscoped read and write). /bin/ps: reaping a
+    // launcher-started runtime by socket. dolt: the fixture tests.
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln`,
     `--allow-net=${
       ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
     }`,

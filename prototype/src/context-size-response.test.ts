@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import {
   compareContextPayloads,
@@ -19,7 +20,7 @@ const models: WorkbenchModel[] = [{
 }];
 
 describe("compareContextPayloads", () => {
-  test("reports timing and token fields for small and large context payloads", async () => {
+  it("reports timing and token fields for small and large context payloads", async () => {
     const report = await compareContextPayloads({
       prompt: "Return ok.",
       routing: { modelId: "gemma4:e2b" },
@@ -32,7 +33,7 @@ describe("compareContextPayloads", () => {
       fetchFn: buildFakeStreamingFetch(),
     });
 
-    expect(report.map(summary)).toEqual([
+    assertEquals(report.map(summary), [
       {
         label: "small",
         provider: "ollama",

@@ -1,10 +1,18 @@
-import { describe, expect, test } from "vitest";
+import {
+  assertEquals,
+  assertFalse,
+  assertMatch,
+  assertNotStrictEquals,
+  assertObjectMatch,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import {
   buildResolverEnv,
   resolveSecrets,
   resolveSecretsIntoEnv,
   type RunSecretCommand,
-  runSecretCommand,
   type SecretCommandResult,
   secretsRunGrant,
 } from "./secrets.ts";
@@ -38,11 +46,8 @@ function cfg(
   };
 }
 
-/** A real PATH so a `clearEnv` child can still find external binaries. */
-const PATH_ENV = { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" };
-
 describe("resolveSecretsIntoEnv", () => {
-  test("null config resolves nothing (no [secrets] section)", async () => {
+  it("null config resolves nothing (no [secrets] section)", async () => {
     const env = fakeEnv();
     const run: RunSecretCommand = () => {
       throw new Error("must not run");
@@ -52,11 +57,11 @@ describe("resolveSecretsIntoEnv", () => {
       run,
       log: () => {},
     });
-    expect(results).toEqual([]);
-    expect(env.store).toEqual({});
+    assertEquals(results, []);
+    assertEquals(env.store, {});
   });
 
-  test("resolves a pointer and sets the value into env", async () => {
+  it("resolves a pointer and sets the value into env", async () => {
     const env = fakeEnv();
     const calls: Array<{ pointer: string }> = [];
     const run: RunSecretCommand = (_command, pointer) => {
@@ -67,15 +72,15 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ ANTHROPIC_API_KEY: "op://v/anthropic/credential" }),
       { env, run, log: () => {} },
     );
-    expect(calls).toEqual([{ pointer: "op://v/anthropic/credential" }]);
-    expect(env.store.ANTHROPIC_API_KEY).toBe("sk-secret");
-    expect(results).toEqual([{
+    assertEquals(calls, [{ pointer: "op://v/anthropic/credential" }]);
+    assertStrictEquals(env.store.ANTHROPIC_API_KEY, "sk-secret");
+    assertEquals(results, [{
       envVar: "ANTHROPIC_API_KEY",
       status: "resolved",
     }]);
   });
 
-  test("env WINS: an already-set var is never overwritten or consulted", async () => {
+  it("env WINS: an already-set var is never overwritten or consulted", async () => {
     const env = fakeEnv({ ANTHROPIC_API_KEY: "ambient" });
     let ran = false;
     const run: RunSecretCommand = () => {
@@ -86,12 +91,12 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ ANTHROPIC_API_KEY: "op://v/anthropic/credential" }),
       { env, run, log: () => {} },
     );
-    expect(ran).toBe(false);
-    expect(env.store.ANTHROPIC_API_KEY).toBe("ambient");
-    expect(results[0].status).toBe("already-set");
+    assertStrictEquals(ran, false);
+    assertStrictEquals(env.store.ANTHROPIC_API_KEY, "ambient");
+    assertStrictEquals(results[0].status, "already-set");
   });
 
-  test("an empty env var does not count as set (still resolves)", async () => {
+  it("an empty env var does not count as set (still resolves)", async () => {
     const env = fakeEnv({ OPENAI_API_KEY: "" });
     const run: RunSecretCommand = () =>
       Promise.resolve({ ok: true, value: "sk-openai" });
@@ -99,10 +104,10 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ OPENAI_API_KEY: "op://v/openai/credential" }),
       { env, run, log: () => {} },
     );
-    expect(env.store.OPENAI_API_KEY).toBe("sk-openai");
+    assertStrictEquals(env.store.OPENAI_API_KEY, "sk-openai");
   });
 
-  test("a failed resolution leaves the var unset (provider fails closed)", async () => {
+  it("a failed resolution leaves the var unset (provider fails closed)", async () => {
     const env = fakeEnv();
     const run: RunSecretCommand = () =>
       Promise.resolve({
@@ -113,15 +118,15 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ GEMINI_API_KEY: "op://v/gemini/credential" }),
       { env, run, log: () => {} },
     );
-    expect(env.store.GEMINI_API_KEY).toBeUndefined();
-    expect(results[0]).toEqual({
+    assertStrictEquals(env.store.GEMINI_API_KEY, undefined);
+    assertEquals(results[0], {
       envVar: "GEMINI_API_KEY",
       status: "unavailable",
       reason: "timed out after 1000ms (locked or unavailable)",
     });
   });
 
-  test("one degraded provider does not block the others", async () => {
+  it("one degraded provider does not block the others", async () => {
     const env = fakeEnv();
     const run: RunSecretCommand = (_command, pointer) =>
       Promise.resolve(
@@ -137,17 +142,17 @@ describe("resolveSecretsIntoEnv", () => {
       }),
       { env, run, log: () => {} },
     );
-    expect(env.store.ANTHROPIC_API_KEY).toBeDefined();
-    expect(env.store.OPENAI_API_KEY).toBeDefined();
-    expect(env.store.GEMINI_API_KEY).toBeUndefined();
-    expect(results.map((r) => r.status)).toEqual([
+    assertNotStrictEquals(env.store.ANTHROPIC_API_KEY, undefined);
+    assertNotStrictEquals(env.store.OPENAI_API_KEY, undefined);
+    assertStrictEquals(env.store.GEMINI_API_KEY, undefined);
+    assertEquals(results.map((r) => r.status), [
       "resolved",
       "unavailable",
       "resolved",
     ]);
   });
 
-  test("presence-only logging: the secret value never appears in any log line", async () => {
+  it("presence-only logging: the secret value never appears in any log line", async () => {
     const logs: string[] = [];
     const env = fakeEnv({ OPENAI_API_KEY: "ambient-value-xyz" });
     const run: RunSecretCommand = () =>
@@ -160,15 +165,15 @@ describe("resolveSecretsIntoEnv", () => {
       { env, run, log: (m) => logs.push(m) },
     );
     const joined = logs.join("\n");
-    expect(joined).not.toContain("super-secret-token-abc");
-    expect(joined).not.toContain("ambient-value-xyz");
-    expect(joined).toContain("ANTHROPIC_API_KEY: resolved");
-    expect(joined).toContain("OPENAI_API_KEY: already-set");
+    assertFalse(joined.includes("super-secret-token-abc"));
+    assertFalse(joined.includes("ambient-value-xyz"));
+    assertStringIncludes(joined, "ANTHROPIC_API_KEY: resolved");
+    assertStringIncludes(joined, "OPENAI_API_KEY: already-set");
   });
 });
 
 describe("resolveSecrets named credentials", () => {
-  test("returns named values only in the private result map", async () => {
+  it("returns named values only in the private result map", async () => {
     const env = fakeEnv();
     const logs: string[] = [];
     const resolved = await resolveSecrets(
@@ -179,17 +184,17 @@ describe("resolveSecrets named credentials", () => {
         log: (message) => logs.push(message),
       },
     );
-    expect(resolved.named).toEqual({ linear_mcp: "linear-secret-value" });
-    expect(resolved.namedResolutions).toEqual([{
+    assertEquals(resolved.named, { linear_mcp: "linear-secret-value" });
+    assertEquals(resolved.namedResolutions, [{
       name: "linear_mcp",
       status: "resolved",
     }]);
-    expect(env.store).toEqual({});
-    expect(logs.join("\n")).not.toContain("linear-secret-value");
-    expect(logs.join("\n")).not.toContain("op://v/linear/credential");
+    assertEquals(env.store, {});
+    assertFalse((logs.join("\n")).includes("linear-secret-value"));
+    assertFalse((logs.join("\n")).includes("op://v/linear/credential"));
   });
 
-  test("shares the session-first probe across env and named pointers", async () => {
+  it("shares the session-first probe across env and named pointers", async () => {
     const env = fakeEnv();
     const spawned: string[] = [];
     const resolved = await resolveSecrets(
@@ -206,10 +211,10 @@ describe("resolveSecrets named credentials", () => {
         log: () => {},
       },
     );
-    expect(spawned).toEqual(["op://v/openai/credential"]);
-    expect(env.store.OPENAI_API_KEY).toBeUndefined();
-    expect(resolved.named).toEqual({});
-    expect(resolved.namedResolutions[0]).toMatchObject({
+    assertEquals(spawned, ["op://v/openai/credential"]);
+    assertStrictEquals(env.store.OPENAI_API_KEY, undefined);
+    assertEquals(resolved.named, {});
+    assertObjectMatch(resolved.namedResolutions[0], {
       name: "linear_mcp",
       status: "unavailable",
     });
@@ -217,20 +222,24 @@ describe("resolveSecrets named credentials", () => {
 });
 
 describe("secretsRunGrant", () => {
-  test("null config → no run grant", () => {
-    expect(secretsRunGrant(null)).toBeNull();
+  it("null config → no run grant", () => {
+    assertStrictEquals(secretsRunGrant(null), null);
   });
 
-  test("returns command[0] as the binary to grant --allow-run", () => {
-    expect(secretsRunGrant(cfg({}, { command: ["op", "read"] }))).toBe("op");
-    expect(
+  it("returns command[0] as the binary to grant --allow-run", () => {
+    assertStrictEquals(
+      secretsRunGrant(cfg({}, { command: ["op", "read"] })),
+      "op",
+    );
+    assertStrictEquals(
       secretsRunGrant(cfg({}, { command: ["/usr/local/bin/vault", "get"] })),
-    ).toBe("/usr/local/bin/vault");
+      "/usr/local/bin/vault",
+    );
   });
 });
 
 describe("resolveSecretsIntoEnv — staging and concurrency", () => {
-  test("stages writes: no resolver sees a value this pass resolved", async () => {
+  it("stages writes: no resolver sees a value this pass resolved", async () => {
     const env = fakeEnv();
     const snapshotsAtRun: number[] = [];
     const run: RunSecretCommand = (_command, pointer) => {
@@ -246,13 +255,13 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
       }),
       { env, run, log: () => {} },
     );
-    expect(snapshotsAtRun).toEqual([0, 0]);
+    assertEquals(snapshotsAtRun, [0, 0]);
     // Both are applied after the pass.
-    expect(env.store.ANTHROPIC_API_KEY).toBe("v-op://v/a/credential");
-    expect(env.store.OPENAI_API_KEY).toBe("v-op://v/o/credential");
+    assertStrictEquals(env.store.ANTHROPIC_API_KEY, "v-op://v/a/credential");
+    assertStrictEquals(env.store.OPENAI_API_KEY, "v-op://v/o/credential");
   });
 
-  test("session-first: probes one pointer alone, then bursts the rest", async () => {
+  it("session-first: probes one pointer alone, then bursts the rest", async () => {
     const env = fakeEnv();
     let inFlight = 0;
     const inFlightAtEachStart: number[] = [];
@@ -274,11 +283,11 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
     );
     // Probe runs alone (in-flight 1), then the two followers burst together
     // (in-flight peaks at 2).
-    expect(inFlightAtEachStart[0]).toBe(1);
-    expect(Math.max(...inFlightAtEachStart)).toBe(2);
+    assertStrictEquals(inFlightAtEachStart[0], 1);
+    assertStrictEquals(Math.max(...inFlightAtEachStart), 2);
   });
 
-  test("bounds the successful session's follower concurrency", async () => {
+  it("bounds the successful session's follower concurrency", async () => {
     const env = fakeEnv();
     let inFlight = 0;
     let peak = 0;
@@ -314,12 +323,12 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
     const peakBeforeRelease = peak;
     releaseFollowers();
     const result = await resolving;
-    expect(Object.keys(result.named)).toHaveLength(17);
-    expect(peakBeforeRelease).toBe(8);
-    expect(peak).toBe(8);
+    assertEquals((Object.keys(result.named)).length, 17);
+    assertStrictEquals(peakBeforeRelease, 8);
+    assertStrictEquals(peak, 8);
   });
 
-  test("logging order follows pointer declaration order", async () => {
+  it("logging order follows pointer declaration order", async () => {
     const logs: string[] = [];
     const env = fakeEnv();
     const run: RunSecretCommand = (_c, pointer) =>
@@ -331,95 +340,13 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
       }),
       { env, run, log: (m) => logs.push(m) },
     );
-    expect(logs[0]).toContain("ANTHROPIC_API_KEY");
-    expect(logs[1]).toContain("OPENAI_API_KEY");
-  });
-});
-
-describe("runSecretCommand (real subprocess)", () => {
-  test("a spawn failure reason leaks neither the resolver path nor the pointer", async () => {
-    // Assembled at runtime so the public-boundary scan never matches this
-    // fixture as a home-directory path in tracked source.
-    const privatePath = ["", "Users", "private-user", "secret-vault-tool", "op"]
-      .join("/");
-    const pointer = "op://PrivateVault/SecretItem/credential";
-    const res = await runSecretCommand([privatePath, "read"], pointer, 2000);
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe(
-      "cannot run the resolver command (not found or not permitted)",
-    );
-    // The operator-private path and the pointer must not appear in the reason.
-    expect(res.reason).not.toContain("private-user");
-    expect(res.reason).not.toContain("secret-vault-tool");
-    expect(res.reason).not.toContain("PrivateVault");
-    expect(res.reason).not.toContain(pointer);
-  });
-
-  test("times out without hanging on a slow resolver", async () => {
-    const res = await runSecretCommand(
-      ["bash", "-c", "sleep 5; printf LEAK"],
-      "op://v/x/credential",
-      150,
-      PATH_ENV,
-    );
-    expect(res.ok).toBe(false);
-    expect(res.reason).toMatch(/timed out/);
-  });
-
-  test("returns the trimmed stdout on a clean exit", async () => {
-    const res = await runSecretCommand(
-      ["bash", "-c", "printf 'resolved-value\n'"],
-      "op://v/x/credential",
-      2000,
-      PATH_ENV,
-    );
-    expect(res).toEqual({ ok: true, value: "resolved-value" });
-  });
-
-  test("treats empty stdout as unavailable", async () => {
-    const res = await runSecretCommand(
-      ["bash", "-c", "true"],
-      "op://v/x/credential",
-      2000,
-      PATH_ENV,
-    );
-    expect(res.ok).toBe(false);
-    expect(res.reason).toMatch(/empty/);
-  });
-
-  test("reports the exit code on a non-zero exit (no captured output)", async () => {
-    const res = await runSecretCommand(
-      ["bash", "-c", "printf SHOULD_NOT_LEAK >&2; exit 4"],
-      "op://v/x/credential",
-      2000,
-      PATH_ENV,
-    );
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("resolver exited with code 4");
-    expect(res.reason).not.toContain("SHOULD_NOT_LEAK");
-  });
-
-  test("clearEnv isolates the child: an ambient var NOT in the passed env is absent", async () => {
-    // Prove the resolver child does not inherit an ambient secret. bash echoes
-    // $LEAKY_AMBIENT; the child is spawned clearEnv with only PATH, so it prints
-    // the empty marker even though the parent process has the var set.
-    Deno.env.set("LEAKY_AMBIENT", "super-secret");
-    try {
-      const res = await runSecretCommand(
-        ["bash", "-c", 'printf "[%s]" "${LEAKY_AMBIENT-}"'],
-        "op://v/x/credential",
-        2000,
-        PATH_ENV,
-      );
-      expect(res).toEqual({ ok: true, value: "[]" });
-    } finally {
-      Deno.env.delete("LEAKY_AMBIENT");
-    }
+    assertStringIncludes(logs[0], "ANTHROPIC_API_KEY");
+    assertStringIncludes(logs[1], "OPENAI_API_KEY");
   });
 });
 
 describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
-  test("probe TIMES OUT → remaining pointers skipped without spawning", async () => {
+  it("probe TIMES OUT → remaining pointers skipped without spawning", async () => {
     const env = fakeEnv();
     const spawned: string[] = [];
     const run: RunSecretCommand = (_command, pointer) => {
@@ -437,24 +364,26 @@ describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
       }),
       { env, run, log: () => {} },
     );
-    expect(spawned).toEqual(["op://v/a/credential"]);
-    expect(results.map((r) => r.status)).toEqual([
+    assertEquals(spawned, ["op://v/a/credential"]);
+    assertEquals(results.map((r) => r.status), [
       "unavailable",
       "unavailable",
       "unavailable",
     ]);
     // The probe reads distinctly from the skipped followers (which name it).
-    expect(results[0].reason).toMatch(/session probe failed: timed out/);
-    expect(results[1].reason).toMatch(
+    assertMatch(results[0].reason ?? "", /session probe failed: timed out/);
+    assertMatch(
+      results[1].reason ?? "",
       /skipped: session probe ANTHROPIC_API_KEY did not resolve/,
     );
-    expect(results[2].reason).toMatch(
+    assertMatch(
+      results[2].reason ?? "",
       /skipped: session probe ANTHROPIC_API_KEY did not resolve/,
     );
-    expect(Object.keys(env.store)).toHaveLength(0);
+    assertEquals((Object.keys(env.store)).length, 0);
   });
 
-  test("probe fails (non-timeout, e.g. bad first ref) → followers skipped, not spawned", async () => {
+  it("probe fails (non-timeout, e.g. bad first ref) → followers skipped, not spawned", async () => {
     // Only a SUCCESSFUL probe proves the session is warm; a fast non-zero exit
     // is indistinguishable from a declined unlock, so we fail closed rather than
     // risk a prompt-storm. A bad FIRST ref therefore skips the rest.
@@ -479,23 +408,25 @@ describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
       { env, run, log: () => {} },
     );
     // Only the probe spawned; followers were skipped fail-closed.
-    expect(spawned).toEqual(["op://v/a/credential"]);
-    expect(results.map((r) => r.status)).toEqual([
+    assertEquals(spawned, ["op://v/a/credential"]);
+    assertEquals(results.map((r) => r.status), [
       "unavailable",
       "unavailable",
       "unavailable",
     ]);
     // The probe names its own raw failure; followers name the probe to fix.
-    expect(results[0].reason).toMatch(
+    assertMatch(
+      results[0].reason ?? "",
       /session probe failed: resolver exited with code 1/,
     );
-    expect(results[1].reason).toMatch(
+    assertMatch(
+      results[1].reason ?? "",
       /skipped: session probe ANTHROPIC_API_KEY did not resolve/,
     );
-    expect(Object.keys(env.store)).toHaveLength(0);
+    assertEquals((Object.keys(env.store)).length, 0);
   });
 
-  test("an already-set first pointer is not the probe (env wins, next pending probes)", async () => {
+  it("an already-set first pointer is not the probe (env wins, next pending probes)", async () => {
     const env = fakeEnv({ ANTHROPIC_API_KEY: "ambient" });
     const spawned: string[] = [];
     const run: RunSecretCommand = (_command, pointer) => {
@@ -513,8 +444,8 @@ describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
       }),
       { env, run, log: () => {} },
     );
-    expect(spawned).toEqual(["op://v/o/credential"]);
-    expect(results.map((r) => r.status)).toEqual([
+    assertEquals(spawned, ["op://v/o/credential"]);
+    assertEquals(results.map((r) => r.status), [
       "already-set",
       "unavailable",
       "unavailable",
@@ -522,20 +453,8 @@ describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
   });
 });
 
-describe("runSecretCommand — env passthrough", () => {
-  test("sets the passed env vars on the spawned resolver command", async () => {
-    const res = await runSecretCommand(
-      ["bash", "-c", 'printf %s "$RESOLVER_MARKER"'],
-      "op://v/x/credential",
-      2000,
-      { ...PATH_ENV, RESOLVER_MARKER: "from-secrets-env" },
-    );
-    expect(res).toEqual({ ok: true, value: "from-secrets-env" });
-  });
-});
-
 describe("buildResolverEnv (isolated resolver environment)", () => {
-  test("forwards base + inherit_env from ambient, merges [secrets.env], excludes other secrets", () => {
+  it("forwards base + inherit_env from ambient, merges [secrets.env], excludes other secrets", () => {
     // Assembled at runtime so the public-boundary scan never matches this
     // fixture as a home-directory path in tracked source.
     const fakeHome = ["", "home", "x"].join("/");
@@ -560,7 +479,7 @@ describe("buildResolverEnv (isolated resolver environment)", () => {
       ambient,
     );
     // Base (present ones) + forwarded inherit_env + [secrets.env] literal.
-    expect(resolverEnv).toEqual({
+    assertEquals(resolverEnv, {
       PATH: "/bin",
       HOME: fakeHome,
       USER: "x",
@@ -568,12 +487,12 @@ describe("buildResolverEnv (isolated resolver environment)", () => {
       OP_ACCOUNT: "my.1password.com",
     });
     // The runtime's other secrets are absent.
-    expect(resolverEnv).not.toHaveProperty("DOLT_PASSWORD");
-    expect(resolverEnv).not.toHaveProperty("ANTHROPIC_API_KEY");
+    assertFalse("DOLT_PASSWORD" in resolverEnv);
+    assertFalse("ANTHROPIC_API_KEY" in resolverEnv);
   });
 
-  test("a base var absent from ambient is simply not set", () => {
+  it("a base var absent from ambient is simply not set", () => {
     const resolverEnv = buildResolverEnv(cfg({}), fakeEnv({ PATH: "/bin" }));
-    expect(resolverEnv).toEqual({ PATH: "/bin" });
+    assertEquals(resolverEnv, { PATH: "/bin" });
   });
 });
