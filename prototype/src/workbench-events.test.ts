@@ -1,4 +1,9 @@
-import { describe, expect, test } from "vitest";
+import {
+  assertArrayIncludes,
+  assertEquals,
+  assertStrictEquals,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
@@ -16,7 +21,7 @@ function row(eventType: string): WorkbenchEventRow {
 }
 
 describe("verifyWorkbenchEventSequence", () => {
-  test("accepts the current no-tool Workbench success sequence", () => {
+  it("accepts the current no-tool Workbench success sequence", () => {
     const result = verifyWorkbenchEventSequence([
       row("session_start"),
       row("model_selected"),
@@ -25,10 +30,10 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    expect(result.ok).toBe(true);
-    expect(result.sessionId).toBe(SESSION_ID);
-    expect(result.traceId).toBe(TRACE_ID);
-    expect(result.eventTypes).toEqual([
+    assertStrictEquals(result.ok, true);
+    assertStrictEquals(result.sessionId, SESSION_ID);
+    assertStrictEquals(result.traceId, TRACE_ID);
+    assertEquals(result.eventTypes, [
       "session_start",
       "model_selected",
       "model_response",
@@ -37,7 +42,7 @@ describe("verifyWorkbenchEventSequence", () => {
     ]);
   });
 
-  test("accepts an error event instead of a model response", () => {
+  it("accepts an error event instead of a model response", () => {
     const result = verifyWorkbenchEventSequence([
       row("session_start"),
       row("model_selected"),
@@ -46,10 +51,10 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    expect(result.ok).toBe(true);
+    assertStrictEquals(result.ok, true);
   });
 
-  test("rejects mixed session ids", () => {
+  it("rejects mixed session ids", () => {
     const result = verifyWorkbenchEventSequence([
       row("session_start"),
       { ...row("model_selected"), session_id: "01OTHERSESSION0000000000000" },
@@ -58,11 +63,13 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    expect(result.ok).toBe(false);
-    expect(result.errors).toContain("events span multiple session_id values");
+    assertStrictEquals(result.ok, false);
+    assertArrayIncludes(result.errors, [
+      "events span multiple session_id values",
+    ]);
   });
 
-  test("rejects a missing model_selected event", () => {
+  it("rejects a missing model_selected event", () => {
     const result = verifyWorkbenchEventSequence([
       row("session_start"),
       row("model_response"),
@@ -70,7 +77,7 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    expect(result.ok).toBe(false);
-    expect(result.errors).toContain("missing event_type: model_selected");
+    assertStrictEquals(result.ok, false);
+    assertArrayIncludes(result.errors, ["missing event_type: model_selected"]);
   });
 });

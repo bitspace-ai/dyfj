@@ -1,6 +1,5 @@
 export const integrationTestAssignments = {
   vitest: [
-    "scripts/isolated-dolt-fixture.integration.test.ts",
     "src/acp-runner.integration.test.ts",
   ],
   deno: [
@@ -14,12 +13,14 @@ export const integrationTestAssignments = {
     "src/memory.integration.test.ts",
     "src/memory-search.integration.test.ts",
     "src/providers/http.integration.test.ts",
+    "src/secrets.integration.test.ts",
     "src/server/console-canary.integration.test.ts",
     "src/server/events-asof.integration.test.ts",
     "src/server/main.integration.test.ts",
     "src/store/dolt-store.integration.test.ts",
     "src/tools/builtin/memory.integration.test.ts",
     "src/tools/web/dns.integration.test.ts",
+    "scripts/isolated-dolt-fixture.integration.test.ts",
     "scripts/memory-recall-uat-fixture.integration.test.ts",
     "scripts/test-files.integration.test.ts",
     "src/transport/jsonrpc-peer.integration.test.ts",

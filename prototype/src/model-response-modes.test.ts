@@ -1,4 +1,5 @@
-import { describe, expect, test } from "vitest";
+import { assertEquals, assertStrictEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import {
   compareResponseModes,
@@ -19,7 +20,7 @@ const models: WorkbenchModel[] = [{
 }];
 
 describe("compareResponseModes", () => {
-  test("reports non-streaming and streaming timings through the provider path", async () => {
+  it("reports non-streaming and streaming timings through the provider path", async () => {
     const report = await compareResponseModes({
       systemPrompt: "system",
       prompt: "Say hello.",
@@ -29,7 +30,7 @@ describe("compareResponseModes", () => {
       fetchFn: buildFakeResponseModeFetch(),
     });
 
-    expect(report.map(summary)).toEqual([
+    assertEquals(report.map(summary), [
       {
         mode: "non-streaming",
         provider: "ollama",
@@ -49,7 +50,7 @@ describe("compareResponseModes", () => {
         output_tokens: 2,
       },
     ]);
-    expect(report[1].text).toBe("hello world");
+    assertStrictEquals(report[1].text, "hello world");
   });
 });
 
