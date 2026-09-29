@@ -1693,3 +1693,5 @@ Document revisions only. Code and behavior changes are tracked in
   Linear issue creation enters through the MCP discovery port rather than
   `commands`, and that the `arch.imports` lane now enforces that only
   `server/` and `cli/` import `extensions/`.
+- 2026-09-29 - The remote-gate description covers manual `workflow_dispatch`
+  runs and their required `range_base` input.

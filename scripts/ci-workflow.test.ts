@@ -131,11 +131,13 @@ Deno.test("gate workflow names explicit Linux and macOS runner versions", async 
 Deno.test("gate workflow binds the exact subject and release range", async () => {
   const text = await workflowText();
   assertIncludes(text, "DYFJ_GATE_SUBJECT: ${{ github.sha }}");
-  assertIncludes(
-    text,
-    "DYFJ_GATE_RANGE_BASE: " +
-      "${{ github.event.pull_request.base.sha || github.event.before || inputs.range_base }}",
-  );
+  // Both jobs (Linux and macOS) bind the same subject and range, including
+  // the manual-dispatch fallback.
+  const binding = "DYFJ_GATE_RANGE_BASE: " +
+    "${{ github.event.pull_request.base.sha || github.event.before || inputs.range_base }}";
+  if (text.split(binding).length - 1 !== 2) {
+    throw new Error("both gate jobs must bind the release-range base");
+  }
   // The bound range base must be resolvable from the checkout.
   assertIncludes(text, "fetch-depth: 0");
 });

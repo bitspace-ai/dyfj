@@ -2,7 +2,8 @@
  * Release-range resolution for range-scoped checks.
  *
  * In CI (`GITHUB_ACTIONS=true`) the workflow binds the release range through
- * `DYFJ_GATE_RANGE_BASE`: the pull-request base commit or the pre-push tip.
+ * `DYFJ_GATE_RANGE_BASE`: the pull-request base commit, the pre-push tip, or,
+ * for a manually dispatched run, the `range_base` commit its caller supplies.
  * A missing, zero, non-immutable, or unresolvable base fails closed — a
  * range check that cannot know its range must not pass. The bound range is
  * `<base>...HEAD`, i.e. exactly what the subject introduces relative to the
