@@ -3,7 +3,7 @@
  *
  * The single typed definition of what a turn receipt carries over the
  * JSON-RPC/UDS boundary, shared by the Unix server (`server/rpc/turn.ts`,
- * which returns it) and every client (`cli.ts` today, any future headless Workshop
+ * which returns it) and every client (`cli/turn-client.ts` today, any future headless Workshop
  * driver tomorrow, which consume it). This is the migration firewall's
  * contract: the runtime may change behind it, but the receipt a turn carries over the wire is pinned here.
  *
@@ -448,7 +448,7 @@ export class DomainError extends Error {}
 // error printer that forwards `err.message` verbatim risks leaking whatever
 // that message contains — safe for a DomainError (bounded by construction),
 // unsafe for anything else. Shared here (not duplicated per side) because the
-// server (engine/native-runner.ts) and every client (cli.ts) need the identical
+// server (engine/native-runner.ts) and every client (cli/render/errors.ts) need the identical
 // discipline.
 export const MAX_ERROR_SUMMARY_BYTES = 500;
 

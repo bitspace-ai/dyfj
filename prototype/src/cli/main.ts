@@ -16,7 +16,8 @@
 
 import { processEnv } from "../config/mod.ts";
 import { connectUnixClient } from "../transport/mod.ts";
-import { runExec, runRepl } from "../cli.ts";
+import { runRepl } from "../cli.ts";
+import { runExec } from "./commands/exec.ts";
 import { HELP, parseArgs, resolveConfig } from "./args.ts";
 import { type Io, realIo } from "./io.ts";
 import { runModels } from "./commands/models.ts";

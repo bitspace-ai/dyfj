@@ -1,4 +1,9 @@
-import { describe, expect, test } from "vitest";
+import {
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { type BusySpinnerOptions, createBusySpinner } from "./busy-spinner.ts";
 
 const ERASE = "\r\x1b[2K";
@@ -22,135 +27,137 @@ function harness(overrides: Partial<BusySpinnerOptions> = {}) {
 }
 
 describe("createBusySpinner", () => {
-  test("paints the first frame immediately on start", () => {
+  it("paints the first frame immediately on start", () => {
     const { spinner, writes } = harness();
     spinner.start();
-    expect(writes).toEqual([`${ERASE}⠋ working… 0s`]);
+    assertEquals(writes, [`${ERASE}⠋ working… 0s`]);
   });
 
-  test("advances through the frames on each timer tick", () => {
+  it("advances through the frames on each timer tick", () => {
     const { spinner, writes, ticks } = harness();
     spinner.start();
     ticks[0]();
     ticks[0]();
-    expect(writes).toEqual([
+    assertEquals(writes, [
       `${ERASE}⠋ working… 0s`,
       `${ERASE}⠙ working… 0s`,
       `${ERASE}⠹ working… 0s`,
     ]);
     // Every repaint starts with erase + carriage return: one line, rewritten.
-    for (const write of writes) expect(write.startsWith(ERASE)).toBe(true);
+    for (const write of writes) {
+      assertStrictEquals(write.startsWith(ERASE), true);
+    }
   });
 
-  test("stop erases the line, clears the timer, and is idempotent", () => {
+  it("stop erases the line, clears the timer, and is idempotent", () => {
     const { spinner, writes, cleared } = harness();
     spinner.start();
     spinner.stop();
     spinner.stop();
-    expect(cleared).toHaveLength(1);
-    expect(writes).toEqual([`${ERASE}⠋ working… 0s`, ERASE]);
+    assertEquals(cleared.length, 1);
+    assertEquals(writes, [`${ERASE}⠋ working… 0s`, ERASE]);
   });
 
-  test("stop before start disables the spinner permanently", () => {
+  it("stop before start disables the spinner permanently", () => {
     const { spinner, writes, ticks } = harness();
     spinner.stop();
     spinner.start();
-    expect(writes).toEqual([]);
-    expect(ticks).toEqual([]);
+    assertEquals(writes, []);
+    assertEquals(ticks, []);
   });
 
-  test("pause erases the line and start resumes without resetting elapsed time", () => {
+  it("pause erases the line and start resumes without resetting elapsed time", () => {
     let now = 0;
     const { spinner, writes, ticks, cleared } = harness({ nowMs: () => now });
     spinner.start();
     now = 2_500;
     spinner.pause();
     spinner.start();
-    expect(cleared).toEqual([1]);
-    expect(ticks).toHaveLength(2);
-    expect(writes).toEqual([
+    assertEquals(cleared, [1]);
+    assertEquals(ticks.length, 2);
+    assertEquals(writes, [
       `${ERASE}⠋ working… 0s`,
       ERASE,
       `${ERASE}⠙ working… 2s`,
     ]);
   });
 
-  test("start after terminal stop stays a no-op", () => {
+  it("start after terminal stop stays a no-op", () => {
     const { spinner, writes } = harness();
     spinner.start();
     spinner.stop();
     spinner.start();
-    expect(writes).toEqual([`${ERASE}⠋ working… 0s`, ERASE]);
+    assertEquals(writes, [`${ERASE}⠋ working… 0s`, ERASE]);
   });
 
-  test("double start does not stack timers", () => {
+  it("double start does not stack timers", () => {
     const { spinner, ticks } = harness();
     spinner.start();
     spinner.start();
-    expect(ticks).toHaveLength(1);
+    assertEquals(ticks.length, 1);
   });
 
-  test("disabled spinner never writes or schedules", () => {
+  it("disabled spinner never writes or schedules", () => {
     const { spinner, writes, ticks } = harness({ enabled: false });
     spinner.start();
     spinner.stop();
-    expect(writes).toEqual([]);
-    expect(ticks).toEqual([]);
+    assertEquals(writes, []);
+    assertEquals(ticks, []);
   });
 
-  test("color mode dims the spinner line only", () => {
+  it("color mode dims the spinner line only", () => {
     const { spinner, writes } = harness({ color: true });
     spinner.start();
-    expect(writes).toEqual([`${ERASE}\x1b[2m⠋ working… 0s\x1b[0m`]);
+    assertEquals(writes, [`${ERASE}\x1b[2m⠋ working… 0s\x1b[0m`]);
   });
 
-  test("custom label is rendered", () => {
+  it("custom label is rendered", () => {
     const { spinner, writes } = harness({ label: "routing…" });
     spinner.start();
-    expect(writes[0]).toContain("routing… 0s");
+    assertStringIncludes(writes[0], "routing… 0s");
   });
 
-  test("updateLabel repaints immediately without stacking another timer", () => {
+  it("updateLabel repaints immediately without stacking another timer", () => {
     const { spinner, writes, ticks } = harness();
     spinner.start();
     spinner.updateLabel("thinking…");
-    expect(writes).toEqual([
+    assertEquals(writes, [
       `${ERASE}⠋ working… 0s`,
       `${ERASE}⠙ thinking… 0s`,
     ]);
-    expect(ticks).toHaveLength(1);
+    assertEquals(ticks.length, 1);
     ticks[0]();
-    expect(writes[2]).toBe(`${ERASE}⠹ thinking… 0s`);
+    assertStrictEquals(writes[2], `${ERASE}⠹ thinking… 0s`);
   });
 
-  test("updateLabel does not restart the elapsed-time counter", () => {
+  it("updateLabel does not restart the elapsed-time counter", () => {
     let now = 0;
     const { spinner, writes, ticks } = harness({ nowMs: () => now });
     spinner.start();
     now = 2_500;
     spinner.updateLabel("thinking…");
-    expect(writes.at(-1)).toBe(`${ERASE}⠙ thinking… 2s`);
+    assertStrictEquals(writes.at(-1), `${ERASE}⠙ thinking… 2s`);
     now = 5_000;
     ticks[0]();
-    expect(writes.at(-1)).toBe(`${ERASE}⠹ thinking… 5s`);
-    expect(ticks).toHaveLength(1);
+    assertStrictEquals(writes.at(-1), `${ERASE}⠹ thinking… 5s`);
+    assertEquals(ticks.length, 1);
   });
 
-  test("updateLabel is a no-op after stop", () => {
+  it("updateLabel is a no-op after stop", () => {
     const { spinner, writes } = harness();
     spinner.start();
     spinner.stop();
     const countBefore = writes.length;
     spinner.updateLabel("thinking…");
-    expect(writes.length).toBe(countBefore);
+    assertStrictEquals(writes.length, countBefore);
   });
 
-  test("updateLabel while paused is applied when animation resumes", () => {
+  it("updateLabel while paused is applied when animation resumes", () => {
     const { spinner, writes } = harness();
     spinner.start();
     spinner.pause();
     spinner.updateLabel("inspecting…");
     spinner.start();
-    expect(writes.at(-1)).toBe(`${ERASE}⠙ inspecting… 0s`);
+    assertStrictEquals(writes.at(-1), `${ERASE}⠙ inspecting… 0s`);
   });
 });
