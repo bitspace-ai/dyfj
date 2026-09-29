@@ -6,9 +6,10 @@
  * `friction/post`, numbers and posts a friction note as a comment on the
  * operator's checkpoint issue (`friction.ts`). It calls Linear only through
  * the commands the linear extension resolved, which arrive in its deps
- * (`linear`), and asks the connected client to approve each call through the
- * deps' `toolApprover`. The instance owns the queue that runs posts one at a
- * time. The interactive REPL imports this directory only through `client.ts`.
+ * (`linear`). Only a call the call-shape policy marks as needing approval
+ * asks the connected client, through the deps' `toolApprover`. The instance
+ * owns the queue that runs posts one at a time. The interactive REPL imports
+ * this directory only through `client.ts`.
  *
  * Allowed dependencies: `kernel/`, `contract/`, `config/`, `store/` (types),
  * `tools/` (types), `transport/`.

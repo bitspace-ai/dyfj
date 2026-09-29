@@ -339,7 +339,7 @@ interface Extension {
   eviction crosses the two.
 - **Deps.** `ExtensionDeps` carries the store-backed session readers, the
   Linear commands and `toolApprover`, which asks the connected client to
-  approve a tool call and fails closed. The linear extension resolves the
+  approve a tool call the call-shape policy gates, and fails closed. The linear extension resolves the
   Linear commands once from the discovered MCP commands and invokes them
   through one registry of exactly those commands; friction calls Linear only
   through them and builds no registry of its own. Settings that belong to one
