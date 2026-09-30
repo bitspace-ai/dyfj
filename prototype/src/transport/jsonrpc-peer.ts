@@ -61,6 +61,8 @@ export class JsonRpcPeer {
   #nextId = 0;
   #closed = false;
   #writeChain: Promise<void> = Promise.resolve();
+  // Inbound messages still being handled; see settled().
+  readonly #inflight = new Set<Promise<void>>();
   #rpcContext?: RpcContext;
 
   constructor(conn: Deno.Conn, options: JsonRpcPeerOptions = {}) {
@@ -177,12 +179,16 @@ export class JsonRpcPeer {
       // Handle concurrently: never block the read loop on a slow handler, or
       // a long-running `turn` would wedge `turn/cancel` and every other
       // request on the connection. Writes stay serialized via #write.
-      void this.#handle(frame.message as JsonRpcMessage).catch((err) => {
-        // Provenance-summarized, never raw: a handler throw can be a foreign
-        // error whose message embeds payload content, and onParseError is an
-        // operational channel, not a debugger.
-        this.#onParseError?.(`handler error: ${summarizeError(err)}`);
-      });
+      const handled = this.#handle(frame.message as JsonRpcMessage).catch(
+        (err) => {
+          // Provenance-summarized, never raw: a handler throw can be a foreign
+          // error whose message embeds payload content, and onParseError is an
+          // operational channel, not a debugger.
+          this.#onParseError?.(`handler error: ${summarizeError(err)}`);
+        },
+      );
+      this.#inflight.add(handled);
+      void handled.finally(() => this.#inflight.delete(handled));
     }
   }
 
@@ -290,6 +296,18 @@ export class JsonRpcPeer {
         this.#onParseError?.("invalid message");
         return;
     }
+  }
+
+  /**
+   * Resolves once every inbound message received so far has been handled and
+   * every write queued so far has been flushed (or has failed). A client that
+   * sends a request and then half-closes its side still gets the response.
+   */
+  async settled(): Promise<void> {
+    while (this.#inflight.size > 0) {
+      await Promise.allSettled([...this.#inflight]);
+    }
+    await this.#writeChain;
   }
 
   close(): void {
