@@ -28,7 +28,6 @@ import {
   matchesGlobPath,
   newGlobBudget,
   newWalkBudget,
-  resetRootAnchor,
   safeErrorReason,
   sameFileVersion,
   sanitizeOutputPathField,
@@ -36,6 +35,13 @@ import {
   toPosixPath,
   walkNotes,
 } from "./file.ts";
+import { RootAnchors } from "./root-anchors.ts";
+
+// The file tools verify each root against the anchors it is bound to. One
+// set per file keeps the old process-wide semantics; tests that move a temp
+// root away start a fresh set, as the old reset hook did.
+let anchors = new RootAnchors();
+const at = (root: string) => anchors.root(root);
 
 let sroot: string;
 
@@ -71,7 +77,7 @@ function useSearchRoot(): void {
   afterAll(async () => {
     if (sroot) {
       await Deno.remove(sroot, { recursive: true });
-      resetRootAnchor(sroot);
+      anchors = new RootAnchors();
     }
   });
 }
@@ -87,19 +93,23 @@ describe("ancestor replacement cannot leak a file out of the workspace", () => {
   const outside = (_p: string) => Promise.resolve("/elsewhere/decoy.ts");
 
   it("grep_files refuses content whose canonical path escapes", async () => {
-    const out = await executeGrepFiles(sroot, "needle", { realPath: outside });
+    const out = await executeGrepFiles(at(sroot), "needle", {
+      realPath: outside,
+    });
     assertFalse(out.includes("alpha.ts:"));
     assertStringIncludes(out, "(no matches)");
   });
 
   it("glob_files refuses names whose canonical path escapes", async () => {
-    const out = await executeGlobFiles(sroot, "**/*.ts", { realPath: outside });
+    const out = await executeGlobFiles(at(sroot), "**/*.ts", {
+      realPath: outside,
+    });
     assertFalse(out.includes("alpha.ts"));
     assertStringIncludes(out, "resolved outside the workspace root");
   });
 
   it("the normal canonicalizer still returns in-root files", async () => {
-    const out = await executeGlobFiles(sroot, "**/*.ts");
+    const out = await executeGlobFiles(at(sroot), "**/*.ts");
     assertStringIncludes(out, "alpha.ts");
   });
 });
@@ -122,13 +132,13 @@ describe("an incomplete walk is never reported as a complete one", () => {
   });
 
   it("grep_files flags content omitted by the depth cap", async () => {
-    const out = await executeGrepFiles(droot, "needle");
+    const out = await executeGrepFiles(at(droot), "needle");
     assertStringIncludes(out, "(no matches)");
     assertStringIncludes(out, "directory depth limit");
   });
 
   it("glob_files flags content omitted by the depth cap", async () => {
-    const out = await executeGlobFiles(droot, "**/*.txt");
+    const out = await executeGlobFiles(at(droot), "**/*.txt");
     assertStringIncludes(out, "(no matches)");
     assertStringIncludes(out, "directory depth limit");
   });
@@ -147,7 +157,7 @@ describe("omissions are disclosed, not dropped", () => {
   });
 
   it("a binary-only tree cannot return a bare (no matches)", async () => {
-    const out = await executeGrepFiles(oroot, "needle");
+    const out = await executeGrepFiles(at(oroot), "needle");
     assertNotStrictEquals(out, "(no matches)");
     assertStringIncludes(out, "binary file(s) skipped");
   });
@@ -161,14 +171,18 @@ describe("a raced alias into an excluded directory returns nothing", () => {
   // the exclusions too; the seam stands in for the swap the sandbox cannot make.
   it("grep_files drops content canonically inside .git", async () => {
     const intoGit = (_p: string) => Deno.realPath(`${sroot}/.git/config`);
-    const out = await executeGrepFiles(sroot, "needle", { realPath: intoGit });
+    const out = await executeGrepFiles(at(sroot), "needle", {
+      realPath: intoGit,
+    });
     assertFalse(out.includes("alpha.ts:"));
     assertStringIncludes(out, "resolved into an excluded directory");
   });
 
   it("glob_files drops names canonically inside .git", async () => {
     const intoGit = (_p: string) => Deno.realPath(`${sroot}/.git/config`);
-    const out = await executeGlobFiles(sroot, "**/*.ts", { realPath: intoGit });
+    const out = await executeGlobFiles(at(sroot), "**/*.ts", {
+      realPath: intoGit,
+    });
     assertFalse(out.includes("alpha.ts"));
     assertStringIncludes(out, "resolved into an excluded directory");
   });
@@ -209,7 +223,7 @@ describe("glob matching is bounded across the whole call", () => {
       const adversarial = "**/*" + "s".repeat(500) + "t";
       assertLessOrEqual(adversarial.length, 512);
       const started = performance.now();
-      const out = await executeGlobFiles(groot, adversarial);
+      const out = await executeGlobFiles(at(groot), adversarial);
       const elapsed = performance.now() - started;
       // Without the aggregate budget this workload runs for minutes.
       assertLess(elapsed, 10_000);
@@ -218,7 +232,7 @@ describe("glob matching is bounded across the whole call", () => {
   );
 
   it("grep_files bounds its include glob the same way", async () => {
-    const out = await executeGrepFiles(groot, "zzz-absent", {
+    const out = await executeGrepFiles(at(groot), "zzz-absent", {
       include: "**/*" + "s".repeat(500) + "t",
     });
     assertStringIncludes(out, "include-glob matching budget exhausted");
@@ -268,7 +282,7 @@ describe("every non-scope omission reaches the completeness note", () => {
   it("contract-excluded directories are not reported as omissions", async () => {
     // sroot contains .git; searching it must still read as complete, or the
     // note fires on every repository and stops carrying information.
-    const out = await executeGlobFiles(sroot, "**/*.ts");
+    const out = await executeGlobFiles(at(sroot), "**/*.ts");
     assertFalse(out.includes(".git"));
     assertFalse(out.includes("["));
   });
@@ -283,7 +297,7 @@ describe("glob character classes are charged to the budget", () => {
     const classPattern = "**/*[" + "b".repeat(495) + "c]";
     assertLessOrEqual(classPattern.length, 512);
     const started = performance.now();
-    const out = await executeGlobFiles(sroot, classPattern);
+    const out = await executeGlobFiles(at(sroot), classPattern);
     assertLess(performance.now() - started, 10_000);
     assertStrictEquals(typeof out, "string");
   });
@@ -317,7 +331,7 @@ describe("dense short-line files stay bounded", () => {
     "a million matching lines return promptly and within the row cap",
     async () => {
       const started = performance.now();
-      const out = await executeGrepFiles(droot, "a", {
+      const out = await executeGrepFiles(at(droot), "a", {
         maxBytes: 4 * 1024 * 1024,
       });
       const elapsed = performance.now() - started;
@@ -329,7 +343,7 @@ describe("dense short-line files stay bounded", () => {
   );
 
   it("the per-file line cap is disclosed when nothing matches", async () => {
-    const out = await executeGrepFiles(droot, "zzz-absent", {
+    const out = await executeGrepFiles(at(droot), "zzz-absent", {
       maxBytes: 4 * 1024 * 1024,
     });
     assertStringIncludes(out, "(no matches)");
@@ -396,7 +410,7 @@ describe("a ranged read costs file size, not line count", () => {
     "a small window out of a newline-dense file returns promptly",
     async () => {
       const started = performance.now();
-      const out = await executeReadFile(rroot, "dense.txt", undefined, {
+      const out = await executeReadFile(at(rroot), "dense.txt", undefined, {
         offset: 1_000_000,
         limit: 20,
       });
@@ -408,7 +422,7 @@ describe("a ranged read costs file size, not line count", () => {
   );
 
   it("the window still matches the whole-file line numbering", async () => {
-    const out = await executeReadFile(sroot, "many.txt", undefined, {
+    const out = await executeReadFile(at(sroot), "many.txt", undefined, {
       offset: 3,
       limit: 2,
     });
@@ -419,7 +433,7 @@ describe("a ranged read costs file size, not line count", () => {
   });
 
   it("an offset past the end still reports the true total", async () => {
-    const out = await executeReadFile(sroot, "many.txt", undefined, {
+    const out = await executeReadFile(at(sroot), "many.txt", undefined, {
       offset: 999,
     });
     assertStringIncludes(out, "past end");
@@ -471,7 +485,7 @@ describe("errors never carry an absolute path to the model", () => {
     async () => {
       const throwsWithPath = (_p: string) =>
         Promise.reject(new Error(`boom at ${sroot}/secret/path`));
-      const out = await executeGrepFiles(sroot, "needle", {
+      const out = await executeGrepFiles(at(sroot), "needle", {
         realPath: throwsWithPath,
       });
       assertFalse(out.includes(sroot));
@@ -479,7 +493,7 @@ describe("errors never carry an absolute path to the model", () => {
     },
   );
   it("a missing search root reports the relative path only", async () => {
-    const out = await executeGrepFiles(sroot, "needle", {
+    const out = await executeGrepFiles(at(sroot), "needle", {
       path: "no-such-dir",
     });
     assertStrictEquals(out.startsWith("error:"), true);
@@ -487,7 +501,7 @@ describe("errors never carry an absolute path to the model", () => {
     assertFalse(out.includes(sroot));
   });
   it("a missing file read reports the relative path only", async () => {
-    const out = await executeReadFile(sroot, "no-such-file.ts");
+    const out = await executeReadFile(at(sroot), "no-such-file.ts");
     assertStrictEquals(out.startsWith("error:"), true);
     assertFalse(out.includes("/Users"));
   });
@@ -506,7 +520,7 @@ describe("a file changed mid-read is reported, not returned torn", () => {
 
   it("a stable file reads normally", async () => {
     await Deno.writeTextFile(`${croot}/stable.txt`, "needle\n");
-    const out = await executeGrepFiles(croot, "needle");
+    const out = await executeGrepFiles(at(croot), "needle");
     assertStringIncludes(out, "stable.txt:1:needle");
     assertFalse(out.includes("changed while being read"));
   });
@@ -556,7 +570,7 @@ describe("post-containment failures stay path-free", () => {
     // the read itself is what fails — the window this finding is about.
     await Deno.realPath(gone);
     await Deno.remove(gone);
-    const out = await executeReadFile(root, "vanishes.txt");
+    const out = await executeReadFile(at(root), "vanishes.txt");
     assertStrictEquals(out.startsWith("error:"), true);
     assertFalse(out.includes(root));
     assertFalse(out.includes("/Users"));
@@ -582,14 +596,14 @@ describe("a filename cannot forge a result row", () => {
   });
 
   it("glob_files emits one row per entry", async () => {
-    const out = await executeGlobFiles(froot, "**/*");
+    const out = await executeGlobFiles(at(froot), "**/*");
     assertStrictEquals(out.split("\n").length, 1);
     assertFalse(out.includes("[nothing skipped]\n"));
     assertStringIncludes(out, "\\x0a");
   });
 
   it("grep_files emits one row per match", async () => {
-    const out = await executeGrepFiles(froot, "needle");
+    const out = await executeGrepFiles(at(froot), "needle");
     const rows = out.split("\n").filter((l) => l.includes("planted"));
     assertStrictEquals(rows.length, 1);
     assertStringIncludes(rows[0], "\\x0a");
@@ -602,17 +616,17 @@ describe("the matcher worker is not a file the workspace can rewrite", () => {
   it("the worker runs from an immutable in-memory snapshot", async () => {
     // grep_files is auto-approved and write_file is workspace-scoped. If the
     // worker were a module on disk and the workspace were this source tree,
-    // an approved edit would become execution on the next search. A blob URL
-    // has no path for a write to reach.
+    // an approved edit would become execution on the next search. A `data:`
+    // URL has no path for a write to reach.
     const sources = await executeGlobFiles(
-      `${Deno.cwd()}/src`,
+      at(`${Deno.cwd()}/src`),
       "**/regex-worker.ts",
     );
     assertStrictEquals(sources, "(no matches)");
   });
 
   it("matching still works, so the snapshot is the live path", async () => {
-    const out = await executeGrepFiles(sroot, "needle");
+    const out = await executeGrepFiles(at(sroot), "needle");
     assertStringIncludes(out, "alpha.ts:2:needle here");
   });
 });
@@ -634,7 +648,7 @@ describe("matched text cannot rewrite what the reader sees", () => {
   });
 
   it("control characters in the matched line are escaped", async () => {
-    const out = await executeGrepFiles(mroot, "needle");
+    const out = await executeGrepFiles(at(mroot), "needle");
     assertFalse(out.includes("\r"));
     assertFalse(out.includes("\u001b"));
     assertStringIncludes(out, "\\x0d");
@@ -686,7 +700,7 @@ describe("one call cannot read without limit by staying under per-file caps", ()
 
   it("the shared read budget stops the call and says so", async () => {
     // The ceiling is not model-reachable; the option exists for this test.
-    const out = await executeGrepFiles(troot, "zzz-absent", {
+    const out = await executeGrepFiles(at(troot), "zzz-absent", {
       maxTotalReadBytes: 15_000,
     });
     assertStringIncludes(out, "(no matches)");
@@ -694,7 +708,7 @@ describe("one call cannot read without limit by staying under per-file caps", ()
   });
 
   it("under the budget there is no such note", async () => {
-    const out = await executeGrepFiles(troot, "zzz-absent");
+    const out = await executeGrepFiles(at(troot), "zzz-absent");
     assertFalse(out.includes("total read budget"));
   });
 });
@@ -703,7 +717,7 @@ describe("error results get the same structural escaping as rows", () => {
   useSearchRoot();
 
   it("a control character in a requested path is escaped in the error", async () => {
-    const out = await executeReadFile(sroot, "no\nsuch.txt");
+    const out = await executeReadFile(at(sroot), "no\nsuch.txt");
     assertStrictEquals(out.startsWith("error:"), true);
     assertStrictEquals(out.split("\n").length, 1);
     assertStringIncludes(out, "\\x0a");
@@ -711,7 +725,9 @@ describe("error results get the same structural escaping as rows", () => {
   it(
     "a control character in a search path is escaped in the error",
     async () => {
-      const out = await executeGrepFiles(sroot, "needle", { path: "no\rdir" });
+      const out = await executeGrepFiles(at(sroot), "needle", {
+        path: "no\rdir",
+      });
       assertStrictEquals(out.startsWith("error:"), true);
       assertFalse(out.includes("\r"));
       assertStringIncludes(out, "\\x0d");
@@ -719,7 +735,7 @@ describe("error results get the same structural escaping as rows", () => {
   );
   it("an invalid pattern's engine message is escaped too", async () => {
     // The engine echoes the pattern back inside its message.
-    const out = await executeGrepFiles(sroot, "(\u001b");
+    const out = await executeGrepFiles(at(sroot), "(\u001b");
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "invalid pattern");
     assertFalse(out.includes("\u001b"));
@@ -750,16 +766,20 @@ describe("a backslash filename cannot redirect a read (POSIX)", () => {
   it(
     "grep of public/ returns the decoy's content, not the secret's",
     async () => {
-      const out = await executeGrepFiles(proot, "decoy-content|the-secret", {
-        path: "public",
-      });
+      const out = await executeGrepFiles(
+        at(proot),
+        "decoy-content|the-secret",
+        {
+          path: "public",
+        },
+      );
       assertStringIncludes(out, "decoy-content");
       assertFalse(out.includes("the-secret"));
     },
   );
 
   it("glob of public/ attributes the entry to public/", async () => {
-    const out = await executeGlobFiles(proot, "**/*", { path: "public" });
+    const out = await executeGlobFiles(at(proot), "**/*", { path: "public" });
     // The display path is escaped, so the backslashes are visible as \\ and
     // the row cannot be mistaken for a traversal.
     assertStringIncludes(out, "public/..\\\\private\\\\secret.txt");
@@ -772,7 +792,7 @@ describe("a backslash filename cannot redirect a read (POSIX)", () => {
   it(
     "a search rooted at the whole tree finds the real secret at its real path",
     async () => {
-      const out = await executeGrepFiles(proot, "the-secret");
+      const out = await executeGrepFiles(at(proot), "the-secret");
       assertStringIncludes(out, "private/secret.txt:1:the-secret");
     },
   );
@@ -808,23 +828,29 @@ describe("an in-root absolute path never reaches a tool result", () => {
   // the test independent of how the fixture root is spelled.)
   const absRoot = () => resolvePath(sroot);
   it("read_file refuses it without echoing the workspace root", async () => {
-    const out = await executeReadFile(sroot, `${absRoot()}/alpha.ts`);
+    const out = await executeReadFile(at(sroot), `${absRoot()}/alpha.ts`);
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "must be relative");
     assertFalse(out.includes(absRoot()));
   });
   it("grep_files refuses an absolute search path the same way", async () => {
-    const out = await executeGrepFiles(sroot, "needle", { path: absRoot() });
+    const out = await executeGrepFiles(at(sroot), "needle", {
+      path: absRoot(),
+    });
     assertStrictEquals(out.startsWith("error:"), true);
     assertFalse(out.includes(absRoot()));
   });
   it("glob_files refuses an absolute search path the same way", async () => {
-    const out = await executeGlobFiles(sroot, "**/*", { path: absRoot() });
+    const out = await executeGlobFiles(at(sroot), "**/*", { path: absRoot() });
     assertStrictEquals(out.startsWith("error:"), true);
     assertFalse(out.includes(absRoot()));
   });
   it("write_file refuses it without echoing", async () => {
-    const out = await executeWriteFile(sroot, `${absRoot()}/x.txt`, "content");
+    const out = await executeWriteFile(
+      at(sroot),
+      `${absRoot()}/x.txt`,
+      "content",
+    );
     assertStrictEquals(out.startsWith("error:"), true);
     assertFalse(out.includes(absRoot()));
   });
@@ -840,7 +866,7 @@ describe("a replaced workspace root is refused, not adopted", () => {
     await Deno.writeTextFile(`${root}/a.txt`, "needle\n");
     // First use anchors the root's canonical path and directory identity.
     assertStringIncludes(
-      await executeGrepFiles(root, "needle"),
+      await executeGrepFiles(at(root), "needle"),
       "a.txt:1:needle",
     );
     // Replace the directory at the same pathname — the attack shape: the
@@ -848,15 +874,15 @@ describe("a replaced workspace root is refused, not adopted", () => {
     await Deno.rename(root, `${base}/moved-away`);
     await Deno.mkdir(root);
     await Deno.writeTextFile(`${root}/planted.txt`, "needle\n");
-    const out = await executeGrepFiles(root, "needle");
+    const out = await executeGrepFiles(at(root), "needle");
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "workspace root identity changed");
     assertFalse(out.includes("planted"));
     // read_file goes through the same anchor.
-    const read = await executeReadFile(root, "planted.txt");
+    const read = await executeReadFile(at(root), "planted.txt");
     assertStrictEquals(read.startsWith("error:"), true);
     await Deno.remove(base, { recursive: true });
-    resetRootAnchor(root);
+    anchors = new RootAnchors();
   });
 
   it(
@@ -879,7 +905,7 @@ describe("a replaced workspace root is refused, not adopted", () => {
         }
         return await Deno.realPath(q);
       };
-      const out = await executeGlobFiles(root, "**/*", {
+      const out = await executeGlobFiles(at(root), "**/*", {
         realPath: swapMidCall,
       });
       assertStrictEquals(out.startsWith("error:"), true);
@@ -887,13 +913,13 @@ describe("a replaced workspace root is refused, not adopted", () => {
       assertFalse(out.includes("planted"));
       await Deno.remove(base, { recursive: true });
       await Deno.remove(`${base}`, { recursive: true }).catch(() => {});
-      resetRootAnchor(root);
+      anchors = new RootAnchors();
     },
   );
 
   it("an unchanged root keeps working across calls", async () => {
-    const out1 = await executeGrepFiles(sroot, "needle");
-    const out2 = await executeGrepFiles(sroot, "needle");
+    const out1 = await executeGrepFiles(at(sroot), "needle");
+    const out2 = await executeGrepFiles(at(sroot), "needle");
     assertStringIncludes(out1, "alpha.ts:2:needle here");
     assertStringIncludes(out2, "alpha.ts:2:needle here");
   });
@@ -914,7 +940,7 @@ describe("reserved control-record forms cannot be impersonated", () => {
   });
 
   it("glob rows never collide with the reserved whole-line forms", async () => {
-    const out = await executeGlobFiles(rroot2, "**/*");
+    const out = await executeGlobFiles(at(rroot2), "**/*");
     const lines = out.split("\n");
     assertFalse(lines.includes("(no matches)"));
     assertFalse(lines.includes("[entry limit 5000 reached]"));
@@ -944,18 +970,18 @@ describe("every post-work return path honors the exit verification", () => {
       await Deno.writeTextFile(`${root}/f.txt`, "one\ntwo\n");
       // Anchor, then replace, then request a past-end window: the content-derived
       // line count must not come back from the replacement root.
-      assertStringIncludes(await executeReadFile(root, "f.txt"), "one");
+      assertStringIncludes(await executeReadFile(at(root), "f.txt"), "one");
       await Deno.rename(root, `${base}/away`);
       await Deno.mkdir(root);
       await Deno.writeTextFile(`${root}/f.txt`, "a\n".repeat(50));
-      const out = await executeReadFile(root, "f.txt", undefined, {
+      const out = await executeReadFile(at(root), "f.txt", undefined, {
         offset: 999,
       });
       assertStrictEquals(out.startsWith("error:"), true);
       assertStringIncludes(out, "workspace root identity changed");
       assertFalse(out.includes("lines"));
       await Deno.remove(base, { recursive: true });
-      resetRootAnchor(root);
+      anchors = new RootAnchors();
     },
   );
 });

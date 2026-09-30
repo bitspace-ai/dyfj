@@ -10,6 +10,7 @@ import { describe, it } from "@std/testing/bdd";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import type { CommandCall } from "../definition.ts";
 import { buildToolCatalog } from "../catalog.ts";
+import { RootAnchors } from "./root-anchors.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import {
   type BashRunner,
@@ -168,7 +169,9 @@ describe("operator permission profile", () => {
 
 describe("buildCommandToolCallEventPayload", () => {
   it("the real bash command marks its result for redaction", () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
     assertStrictEquals(registry.lookup("bash")!.redactResult, true);
   });
 });

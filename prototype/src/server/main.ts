@@ -63,11 +63,11 @@ import {
   SessionOwners,
   type TurnRuntime,
 } from "../engine/mod.ts";
-import type { CommandDefinition } from "../tools/mod.ts";
+import { type CommandDefinition, RootAnchors } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { resolveSecrets } from "../secrets.ts";
 import { buildExternalMcpCommands } from "../mcp-tools.ts";
-import { installRuntimeSigintHandler } from "../runtime-sigint.ts";
+import { installRuntimeSigintHandler } from "./sigint.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
 import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";
 import {
@@ -293,12 +293,16 @@ function composeTurnRuntime(
         sessionMap: acpSessions,
       }),
   };
+  // One set of workspace-root anchors per engine: a root anchored by the
+  // first turn that touches it stays pinned for the engine's lifetime.
+  const rootAnchors = new RootAnchors();
   return (input) =>
     runWorkbenchRuntime(input, {
       store: store(),
       // The session owners hold each session's budget scope, so ceiling
       // confirmations persist for their scope periods across turns.
       budgetScopes: owners,
+      rootAnchors,
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
     });

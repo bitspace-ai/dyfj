@@ -1,7 +1,11 @@
 // The `tools` namespace: the tool catalog a turn in a given workspace would
 // see, projected to its public summary. Listing never executes a tool.
 
-import { buildToolCatalog, type CommandDefinition } from "../../tools/mod.ts";
+import {
+  buildToolCatalog,
+  type CommandDefinition,
+  RootAnchors,
+} from "../../tools/mod.ts";
 import {
   asRecord,
   RpcError,
@@ -42,7 +46,12 @@ export function listToolCatalog(
   const workspaceRoot = typeof record.workspace === "string"
     ? record.workspace
     : undefined;
-  return buildToolCatalog({}, { workspaceRoot }, externalMcpCommands)
+  // A listing never executes a tool, so throwaway anchors are enough here.
+  return buildToolCatalog(
+    { rootAnchors: new RootAnchors() },
+    { workspaceRoot },
+    externalMcpCommands,
+  )
     .list()
     .map(projectCommand);
 }

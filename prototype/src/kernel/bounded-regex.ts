@@ -70,8 +70,8 @@ export class RegexUnavailable extends Error {
  * loaded module, so what runs here is fixed once the runtime has started and no
  * workspace write can reach it.
  *
- * Plain JavaScript on purpose — a Blob URL gets no TypeScript transform. Keep
- * it small enough to read in one sitting; it should never grow past matching.
+ * Plain JavaScript on purpose — a `data:` URL gets no TypeScript transform.
+ * Keep it small enough to read in one sitting; it should never grow past matching.
  */
 const WORKER_SOURCE = `
 let compiled = null;
@@ -93,17 +93,13 @@ self.onmessage = (event) => {
 };
 `;
 
-let cachedWorkerUrl: string | null = null;
-
-/** Blob URL for the embedded source, created once and reused. */
-function defaultWorkerSpecifier(): string {
-  if (cachedWorkerUrl === null) {
-    cachedWorkerUrl = URL.createObjectURL(
-      new Blob([WORKER_SOURCE], { type: "application/javascript" }),
-    );
-  }
-  return cachedWorkerUrl;
-}
+/**
+ * A `data:` URL for the embedded source, fixed at module load. It needs no
+ * read or net grant, and as a constant it keeps the module free of mutable
+ * state.
+ */
+const DEFAULT_WORKER_SPECIFIER = "data:application/javascript," +
+  encodeURIComponent(WORKER_SOURCE);
 
 export class BoundedMatcher {
   readonly #pattern: string;
@@ -210,7 +206,7 @@ export class BoundedMatcher {
   #ensureWorker(): Worker {
     if (this.#worker !== null) return this.#worker;
     try {
-      const specifier = this.#explicitSpecifier ?? defaultWorkerSpecifier();
+      const specifier = this.#explicitSpecifier ?? DEFAULT_WORKER_SPECIFIER;
       this.#worker = new Worker(specifier, { type: "module" });
     } catch (err) {
       this.#dead = true;

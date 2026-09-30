@@ -8,6 +8,7 @@
 
 import { hasDotPathComponent } from "../../kernel/mod.ts";
 import {
+  assertSecureMemoryUrl,
   type Env,
   loadMcpServersConfig,
   loadSecretsConfig,
@@ -16,7 +17,6 @@ import {
   readLauncherEnvVar,
   type SecretsConfig,
 } from "../../config/mod.ts";
-import { assertSecureMemoryUrl } from "../../memory-search.ts";
 
 /**
  * Build the `deno run` args for foregrounding the runtime. The serve-unix

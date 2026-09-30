@@ -6,11 +6,13 @@ import {
   assertExists,
   assertObjectMatch,
   assertStrictEquals,
+  assertThrows,
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "./definition.ts";
 import { evaluateCommandPolicy } from "./policy.ts";
 import { buildToolCatalog } from "./catalog.ts";
+import { RootAnchors } from "./builtin/root-anchors.ts";
 
 function call(
   args: Record<string, unknown> = { slug: "project_dyfj" },
@@ -31,8 +33,18 @@ describe("buildToolCatalog", () => {
     assertEquals(registry.list().map((c) => c.id), ["memory.read"]);
   });
 
+  it("refuses to register the file tools without root anchors", () => {
+    assertThrows(
+      () => buildToolCatalog({}, { workspaceRoot: "/work" }),
+      Error,
+      "tool catalog: the workspace file tools need root anchors",
+    );
+  });
+
   it("registers the file tools when a workspace root is set", () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
     assertEquals(registry.list().map((c) => c.id).sort(), [
       "bash",
       "edit_file",
@@ -47,7 +59,9 @@ describe("buildToolCatalog", () => {
   });
 
   it("the registered file tools are read-only (auto-allowed)", () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
     const readFile = registry.lookup("read_file")!;
     const result = evaluateCommandPolicy(
       readFile,
@@ -99,7 +113,9 @@ describe("buildToolCatalog wiring", () => {
   // policy tests cannot: that the tools reach the MODEL, and that they
   // auto-approve once registered.
   it("the search tools reach the model as projected tools", () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
 
     const names = registry.projectTools().map((t) => t.name);
     assertArrayIncludes(names, ["grep_files"]);
@@ -107,7 +123,9 @@ describe("buildToolCatalog wiring", () => {
   });
 
   it("registered search tools auto-approve; bash still asks", () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
 
     for (const id of ["grep_files", "glob_files"]) {
       const cmd = registry.lookup(id)!;

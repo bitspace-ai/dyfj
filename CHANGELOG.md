@@ -193,6 +193,44 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `arch.imports` lane fails at the runtime size limits.** A runtime module
+  over 1,000 lines, or a function in one over 200 lines, now fails the gate
+  unless `scripts/arch-size-exceptions.json` names it with its reason and the
+  size it may not exceed. An excepted module or function may shrink but not
+  grow, and an exception for one back under its limit must be removed. The
+  file starts with 22 entries: the ACP runner (deferred with its
+  restructuring), the interactive REPL (being replaced by the Rust client),
+  and the file tools, web tools, idea/packet domain, OpenAI-compatible stream
+  and adapter, MCP and secrets config parsers, external MCP commands and the
+  memory MCP server, whose splits are deferred past phase 1. The 600- and
+  150-line targets stay a non-failing report.
+
+- **A Markdown-only pull request runs only the gate's policy lanes and the lanes
+  that read Markdown.** When every path a pull request's release range changes
+  is Markdown (deletions included; a rename to a `.md` name does not count),
+  `deno task test` runs `subject.resolve`, `subject.digest`, the retired-surface
+  scan, both public-safety tree scans, `secret.diff`, `diff.whitespace`,
+  `markdown.links`, `shell.parse`, `dependency.policy` and `receipt.schema`,
+  plus the two contract lanes, whose closure report reads `closure-claim`
+  markers in the Markdown. It names each lane it skips (unit, integration,
+  golden, schema, `arch.imports`, typecheck, orchestration and Rust lanes)
+  before it starts. Its `gate-status` line reports `"mode":"docs-only"` and it
+  makes its own success claim, not the full green bar's. The decision is made
+  inside the gate (`scripts/change-scope.ts`), not by a workflow path filter, so
+  both CI jobs still report a status. A push to `main`, a manual dispatch and
+  every local run keep the full gate. The `test` task now reads
+  `GITHUB_EVENT_NAME`.
+
+- **The aggregate gate reports every failing lane.** A failing lane no longer
+  stops `deno task test` or `deno task test:fast`: every remaining lane still
+  runs, and the gate ends by listing each lane that failed (`✗ N of M lanes
+  failed:`, one lane per line) before its `gate-status` line. The exit code is
+  unchanged: it is still the first failing lane's code (124 past a deadline,
+  127 for a lane that could not start). Only an interruption stops the gate
+  early; one that arrives after a failure keeps that failure's code, and the
+  `gate-status` result reads `interrupted` because the run is incomplete,
+  with the failed check still reading `fail`.
+
 - **The isolated-Dolt integration lane runs with the op and resource
   sanitizers**, so a test there that leaks an op, a timer, a resource or a
   child process fails at that test. The two test-side leaks this found are
@@ -831,6 +869,15 @@ README are tracked separately in its Revision history section.
   HTTP-era name: `WorkbenchHttpRuntime` is now `TurnRuntime`.
 
 ### Fixed
+
+- **The file tools' workspace-root anchors are owned by the engine, not held
+  in a process-global map.** `RootAnchors` (`tools/builtin/root-anchors.ts`)
+  holds them; the composition root builds one per engine and hands it to each
+  turn, so a root pinned on its first use stays pinned for the engine's
+  lifetime, as before. A tool catalog that registers the file tools without
+  anchors now fails closed. The regex worker's memoized Blob URL is now a
+  constant `data:` URL. No runtime (non-test) module in `prototype/src/` holds
+  module-level mutable state.
 
 - **An interrupted ACP test run no longer leaves files in the working tree**:
   the ACP client, session-map and external-agent runtime tests created their

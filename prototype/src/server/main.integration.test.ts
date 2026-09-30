@@ -5,7 +5,7 @@ import {
 } from "../../testing/servers/uds-sockets.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import type { WorkbenchRuntimeResult } from "../engine/mod.ts";
-import { installRuntimeSigintHandler } from "../runtime-sigint.ts";
+import { installRuntimeSigintHandler } from "./sigint.ts";
 import { MemoryStore } from "../store/mod.ts";
 import { JsonRpcPeer, RpcErrorCode } from "../transport/mod.ts";
 import {

@@ -65,3 +65,4 @@ export {
   type ToolCatalogPorts,
 } from "./catalog.ts";
 export { executeReadMemory } from "./builtin/memory.ts";
+export { RootAnchors } from "./builtin/root-anchors.ts";

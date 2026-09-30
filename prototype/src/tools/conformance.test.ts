@@ -11,11 +11,12 @@ import { parseMcpServersConfig } from "../config/mod.ts";
 import saveIssueSchema from "../extensions/linear/linear-save-issue-schema.fixture.ts";
 import { buildLinearIssueCreationCommand } from "../extensions/linear/mod.ts";
 import { buildExternalMcpCommands } from "../mcp-tools.ts";
-import { buildToolCatalog } from "./mod.ts";
+import { buildToolCatalog, RootAnchors } from "./mod.ts";
 
 const builtins = buildToolCatalog({
   readMemory: () => "memory",
   searchMemory: () => "recall",
+  rootAnchors: new RootAnchors(),
 }, {
   allowedMemorySlugs: ["kit-memory"],
   workspaceRoot: "/kit-workspace",
