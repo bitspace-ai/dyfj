@@ -143,6 +143,96 @@ Deno.test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connect
   assertEquals(await client.peer.request("ping"), "pong");
 });
 
+Deno.test({
+  name:
+    "serveUnixJsonRpc closes its side of a connection when the client disconnects",
+  // The lane runs both sanitizers; this case also names them, so a server-side
+  // connection left open after the client goes fails it wherever it runs.
+  sanitizeOps: true,
+  sanitizeResources: true,
+  async fn() {
+    await using served = await serve("listener-client-eof", {
+      ping: () => "pong",
+    });
+    const conn = await Deno.connect({
+      transport: "unix",
+      path: served.server.socketPath,
+    });
+    try {
+      // Half-close: the server's read loop sees end-of-file, while this side
+      // can still read. The server must answer with end-of-file of its own.
+      await conn.closeWrite();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const read = await Promise.race([
+        conn.read(new Uint8Array(16)),
+        new Promise<"timeout">((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), 2_000);
+        }),
+      ]);
+      clearTimeout(timer);
+      assertEquals(read, null);
+    } finally {
+      conn.close();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "serveUnixJsonRpc answers a request sent just before the client half-closes",
+  sanitizeOps: true,
+  sanitizeResources: true,
+  async fn() {
+    await using served = await serve("listener-half-close", {
+      late: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return "answered";
+      },
+    });
+    const conn = await Deno.connect({
+      transport: "unix",
+      path: served.server.socketPath,
+    });
+    try {
+      // write() may send fewer bytes than asked; send the whole frame before
+      // half-closing.
+      const request = new TextEncoder().encode(
+        '{"jsonrpc":"2.0","id":1,"method":"late"}\n',
+      );
+      for (let offset = 0; offset < request.length;) {
+        offset += await conn.write(request.subarray(offset));
+      }
+      await conn.closeWrite();
+      // Read to end-of-file: the response arrives first, then the server
+      // closes its side.
+      const decoder = new TextDecoder();
+      const buf = new Uint8Array(4096);
+      let text = "";
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), 2_000);
+      });
+      try {
+        for (;;) {
+          const n = await Promise.race([conn.read(buf), timedOut]);
+          if (n === "timeout") throw new Error("server never closed its side");
+          if (n === null) break;
+          text += decoder.decode(buf.subarray(0, n), { stream: true });
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      assertEquals(JSON.parse(text.trim()), {
+        jsonrpc: "2.0",
+        id: 1,
+        result: "answered",
+      });
+    } finally {
+      conn.close();
+    }
+  },
+});
+
 Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () => {
   const errors: string[] = [];
   let markReported: () => void = () => {};

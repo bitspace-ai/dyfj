@@ -1678,6 +1678,12 @@ Document revisions only. Code and behavior changes are tracked in
   `server/` and `cli/` import `extensions/`.
 - 2026-09-29 - The remote-gate description covers manual `workflow_dispatch`
   runs and their required `range_base` input.
+- 2026-09-30 - `specs/notes/test-supervision-evidence.md` records, per leak
+  class, what the `Deno.test` suite catches without the Vitest supervisor, and
+  the approved decision: keep the wall-clock bound, as a per-lane deadline in
+  the gate with a backstop in each test-lane runner; move the end-of-run
+  process-group stop into those runners and saved-group recovery into the gate;
+  and remove the lock, the detached reaper and the manifest sweep.
 - 2026-09-30 - Engineering posture names `Deno.test` as the only test
   framework, and the gate description drops the retired unit-suite lane and its
   supervisor, finds integration files by name with sanitizers on, and states

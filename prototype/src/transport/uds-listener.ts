@@ -86,7 +86,13 @@ export async function serveUnixJsonRpc(
         onRequestSettled: options.onRequestSettled,
       });
       peers.add(peer);
-      peer.run().finally(() => peers.delete(peer));
+      // The read loop ends when the client disconnects. Once the requests it
+      // already sent are answered, close this side too, so a finished
+      // connection releases its resources when it ends.
+      peer.run().then(() => peer.settled()).finally(() => {
+        peers.delete(peer);
+        peer.close();
+      });
     }
   })();
 

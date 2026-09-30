@@ -25,22 +25,6 @@ changes with a CHANGELOG `Fixed` entry.
     command is `help`; the `exec` and `ask` missing-prompt branches keep their
     command. Returning 2 on any `parsed.error` before dispatch would fix it.
   - **Found during:** WO-21 (moved unchanged from `src/cli.ts`).
-- 2026-09-28 — **Two ACP test files create their temp files in the working
-  directory, so an interrupted run leaves them in the tree.**
-  - **Location:** `prototype/src/acp-session-map.test.ts` (eleven
-    `Deno.makeTempFile({ dir: Deno.cwd() })` calls, from `:266`) and
-    `prototype/src/external-agent-runtime.test.ts:1196` and `:2263`.
-  - **Symptom:** the pid and method-log files these tests use are created in
-    `prototype/`, not a temp directory, and removed only when each test
-    finishes. A run stopped mid-test leaves zero-byte, hex-named files there.
-    No ignore rule covers them, so a broad `git add` commits them; eight were
-    committed this way and then removed.
-  - **Suspected cause:** the tests pick the working directory for their temp
-    files, probably so the fixture agent's paths stay inside the read grant.
-    Creating them under the system temp directory (or a per-test temp
-    directory removed on teardown) would keep an interrupted run from
-    touching the tree.
-  - **Found during:** WO-19.
 - 2026-09-28 — **`model_selected` names the environment's principal, not the
   turn's.**
   - **Location:** `prototype/src/utils.ts` (`writeModelSelectedEvent`, whose
@@ -380,6 +364,29 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Fixed
 
+- 2026-09-28 — **Two ACP test files create their temp files in the working
+  directory, so an interrupted run leaves them in the tree.**
+  - **Location:** `prototype/src/acp-session-map.test.ts` (eleven
+    `Deno.makeTempFile({ dir: Deno.cwd() })` calls, from `:266`) and
+    `prototype/src/external-agent-runtime.test.ts:1196` and `:2263`.
+  - **Symptom:** the pid and method-log files these tests use are created in
+    `prototype/`, not a temp directory, and removed only when each test
+    finishes. A run stopped mid-test leaves zero-byte, hex-named files there.
+    No ignore rule covers them, so a broad `git add` commits them; eight were
+    committed this way and then removed.
+  - **Suspected cause:** the tests pick the working directory for their temp
+    files, probably so the fixture agent's paths stay inside the read grant.
+    Creating them under the system temp directory (or a per-test temp
+    directory removed on teardown) would keep an interrupted run from
+    touching the tree.
+  - **Found during:** WO-19.
+  - **Fixed:** 2026-09-30, in the move of these files to `Deno.test`
+    (`acp-session-map.integration.test.ts` and
+    `external-agent-runtime.integration.test.ts`, with their pure cases in
+    unit files). Every temp file and directory now comes from the system temp
+    directory, which the integration lane points at a per-run directory it
+    removes afterwards, so an interrupted run leaves nothing in the tree. The
+    ACP client file, which did the same, moved with them.
 - 2026-09-26 — **A test swaps the process-wide `PATH`, racing tests that spawn
   commands by name.**
   - **Location:** `prototype/src/external-agent-runtime.test.ts:699`, which sets
