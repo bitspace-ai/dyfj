@@ -8,6 +8,7 @@ import {
   laneTokenArgument,
   MAX_TIMER_DELAY_MS,
 } from "../prototype/scripts/lane-supervision.ts";
+import type { ChangeScope } from "./change-scope.ts";
 
 export interface GateLane {
   label: string;
@@ -36,9 +37,13 @@ export interface LaneOutcome {
   result: LaneResult;
 }
 
+// `docs-only` is a pull-request run whose release range changes Markdown
+// only, so only the policy lanes ran (`planGate`).
+export type GateMode = "full" | "fast" | "docs-only";
+
 export interface GateStatus {
   schema: "dyfj.gate.status/v1";
-  mode: "full" | "fast";
+  mode: GateMode;
   checks: { id: string; result: LaneResult }[];
   result: "pass" | "fail" | "interrupted";
 }
@@ -51,8 +56,11 @@ export interface RunGateOptions {
   // Truthful final claim: a lane subset must not report itself as the full
   // green bar.
   successMessage?: string;
-  mode?: "full" | "fast";
+  mode?: GateMode;
   requiredCheckIds?: readonly string[];
+  // Lanes this run leaves out, and why. The gate names each one before it
+  // starts, so a subset run never skips a lane silently.
+  skipped?: { reason: string; labels: readonly string[] };
   // Where the gate records each running test lane's process group, so a later
   // run can recover a group left behind when the gate and its runner were both
   // killed. Undefined keeps no records and recovers nothing.
@@ -703,6 +711,7 @@ export function productionLanes(
         "scripts/arch-imports.test.ts",
         "scripts/git-hooks.test.ts",
         "scripts/lane-supervision.test.ts",
+        "scripts/change-scope.test.ts",
       ],
       cwd: root,
       // Lane children run with a cleared environment, so the temp root the
@@ -931,20 +940,161 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Prototype unit Deno.test suite (test.unit)",
 ];
 
-export function fastLanes(
-  root = Deno.cwd(),
-  denoExecutable = selectedDenoExecutable(),
+function laneSubset(
+  labels: readonly string[],
+  root: string,
+  denoExecutable: string,
 ): GateLane[] {
   const byLabel = new Map(
     productionLanes(root, denoExecutable).map((lane) => [lane.label, lane]),
   );
-  return FAST_LANE_LABELS.map((label) => {
+  return labels.map((label) => {
     const lane = byLabel.get(label);
     if (!lane) {
-      throw new Error(`fast lane is not a production lane: ${label}`);
+      throw new Error(`subset lane is not a production lane: ${label}`);
     }
     return lane;
   });
+}
+
+export function fastLanes(
+  root = Deno.cwd(),
+  denoExecutable = selectedDenoExecutable(),
+): GateLane[] {
+  return laneSubset(FAST_LANE_LABELS, root, denoExecutable);
+}
+
+// A pull request whose release range changes Markdown files only runs these
+// lanes and skips the rest (`planGate`): the policy lanes, which together
+// report every required check id so the status can still compose to `pass`,
+// plus every lane that reads this repository's own Markdown. The
+// retired-surface scan reads it, and both contract lanes do: the closure
+// report checks the `closure-claim` markers in `README.md`, `CHANGELOG.md`
+// and the contract package README. No skipped lane reads it, so none can
+// change result on such a change. The push to main runs the full gate, so
+// anything a docs-only pull request skipped is still checked there.
+export const DOCS_ONLY_LANE_LABELS: readonly string[] = [
+  "Subject resolution",
+  "Subject digest recomputation",
+  "Retired-surface scan",
+  "Public-safety tree scan (secret.tree)",
+  "Public-safety tree scan (public.boundary)",
+  "Release-range secret scan",
+  "Release-range whitespace check",
+  "Changed-Markdown link check",
+  "Changed-shell parse check",
+  "Dependency policy check",
+  "Receipt schema validation",
+  "Contract closure report generation",
+  "Contract package tests",
+];
+
+export function docsOnlyLanes(
+  root = Deno.cwd(),
+  denoExecutable = selectedDenoExecutable(),
+): GateLane[] {
+  return laneSubset(DOCS_ONLY_LANE_LABELS, root, denoExecutable);
+}
+
+// Only a pull-request run of the CI gate may take the docs-only path. A push
+// to main, a manual dispatch and every local run keep the full gate.
+export function docsOnlyEligible(
+  env: (name: string) => string | undefined,
+): boolean {
+  return env("GITHUB_ACTIONS") === "true" &&
+    env("GITHUB_EVENT_NAME") === "pull_request";
+}
+
+// Classification runs in a short-lived child of the selected Deno, which
+// holds the git grant the gate itself does not. Its only output is one
+// code-authored word; anything else, a failure included, reads as `other`
+// and keeps the full gate.
+export async function releaseChangeScope(
+  root: string,
+  denoExecutable: string,
+): Promise<ChangeScope> {
+  try {
+    const output = await new Deno.Command(denoExecutable, {
+      args: [
+        "run",
+        "--allow-env=DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
+        `--allow-read=${root}`,
+        "--allow-run=git",
+        "scripts/change-scope.ts",
+      ],
+      cwd: root,
+      env: { ...safeEnvironment(), ...bindingEnvironment() },
+      clearEnv: true,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (
+      output.success &&
+      new TextDecoder().decode(output.stdout).trim() === "markdown-only"
+    ) {
+      return "markdown-only";
+    }
+  } catch {
+    // Not runnable: keep the full gate.
+  }
+  return "other";
+}
+
+export interface GatePlan {
+  lanes: GateLane[];
+  mode: GateMode;
+  requiredCheckIds?: readonly string[];
+  successMessage?: string;
+  skipped?: { reason: string; labels: readonly string[] };
+}
+
+export interface PlanGateOptions {
+  fast: boolean;
+  env: (name: string) => string | undefined;
+  root?: string;
+  denoExecutable?: string;
+  // Injected by tests; defaults to `releaseChangeScope`.
+  changeScope?: () => Promise<ChangeScope>;
+}
+
+export async function planGate(options: PlanGateOptions): Promise<GatePlan> {
+  const root = options.root ?? Deno.cwd();
+  const denoExecutable = options.denoExecutable ?? selectedDenoExecutable();
+  if (options.fast) {
+    return {
+      lanes: fastLanes(root, denoExecutable),
+      mode: "fast",
+      successMessage:
+        "✓ fast gate subset passed (not the full green bar; run `deno task test`)",
+    };
+  }
+  const production = productionLanes(root, denoExecutable);
+  if (docsOnlyEligible(options.env)) {
+    const scope = await (options.changeScope ??
+      (() => releaseChangeScope(root, denoExecutable)))();
+    if (scope === "markdown-only") {
+      const lanes = docsOnlyLanes(root, denoExecutable);
+      return {
+        lanes,
+        mode: "docs-only",
+        requiredCheckIds: REQUIRED_CHECK_IDS,
+        successMessage:
+          "✓ docs-only gate passed (the lanes a Markdown-only change can affect; the push to main runs the full gate)",
+        skipped: {
+          reason:
+            "every path this pull request changes is Markdown, so only the policy and Markdown-reading lanes run",
+          labels: production
+            .map((lane) => lane.label)
+            .filter((label) => !DOCS_ONLY_LANE_LABELS.includes(label)),
+        },
+      };
+    }
+  }
+  return {
+    lanes: production,
+    mode: "full",
+    requiredCheckIds: REQUIRED_CHECK_IDS,
+  };
 }
 
 // Fail closed on anything unrecognized: an unknown flag must not silently run
@@ -975,7 +1125,7 @@ export function parseGateArguments(
 // authority.
 export function composeGateStatus(
   outcomes: readonly LaneOutcome[],
-  mode: "full" | "fast",
+  mode: GateMode,
   requiredCheckIds: readonly string[],
 ): GateStatus {
   const severity: Record<LaneResult, number> = {
@@ -1003,10 +1153,14 @@ export function composeGateStatus(
   const anyFail = all.some((r) => r === "fail" || r === "unavailable");
   const anyInterrupted = all.some((r) => r === "interrupted");
   const anySkipped = all.some((r) => r === "skipped");
-  const result = anyFail
-    ? "fail"
-    : anyInterrupted
+  // An interrupted run is incomplete, so it reads `interrupted` even when an
+  // earlier lane failed: every lane runs past a failure, and only an
+  // interruption can leave later lanes unrun. The failed check still reads
+  // `fail` in `checks`, and the exit code is still the failure's.
+  const result = anyInterrupted
     ? "interrupted"
+    : anyFail
+    ? "fail"
     : anySkipped
     ? "fail"
     : "pass";
@@ -1032,12 +1186,28 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
     checkId: lane.checkId,
     result: "skipped",
   }));
+  // A failing lane does not stop the gate: every later lane still runs, so
+  // one run reports every failure. Only interruption stops it early. The
+  // first failing lane's code is kept, so the process exit code is the one a
+  // stop-at-first-failure gate would have returned.
+  const failedLabels: string[] = [];
+  let firstFailureCode = 0;
+  const laneFailed = (label: string, code: number): void => {
+    failedLabels.push(label);
+    if (firstFailureCode === 0) firstFailureCode = code;
+  };
   // The composed status is the authority on the process result: a lane exit
   // code alone can read zero while a required check is missing, failed,
   // unavailable, or skipped. The first concrete nonzero lane code is
   // preserved when there is one; composition-only gaps fall back to the
   // deterministic codes above. Only a composed `pass` can return zero.
   const finish = (laneCode: number): number => {
+    if (failedLabels.length > 0) {
+      out.error(
+        `✗ ${failedLabels.length} of ${lanes.length} lanes failed:`,
+      );
+      for (const label of failedLabels) out.error(`  - ${label}`);
+    }
     const status = composeGateStatus(outcomes, mode, required);
     out.log(`gate-status ${JSON.stringify(status)}`);
     if (status.result === "pass") return laneCode === 0 ? 0 : laneCode;
@@ -1049,12 +1219,18 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
   if (options.laneRecordDir !== undefined) {
     await recoverOrphanedLaneGroups(options.laneRecordDir, out);
   }
+  if (options.skipped !== undefined && options.skipped.labels.length > 0) {
+    out.log(
+      `▷ ${options.skipped.reason}; skipping ${options.skipped.labels.length} lanes:`,
+    );
+    for (const label of options.skipped.labels) out.log(`  - ${label}`);
+  }
   for (let index = 0; index < lanes.length; index++) {
     const lane = lanes[index]!;
     const outcome = outcomes[index]!;
     if (options.signal?.aborted) {
       outcome.result = "interrupted";
-      return finish(interruptedExitCode(options.signal));
+      return finish(firstFailureCode || interruptedExitCode(options.signal));
     }
     const commandLabel = laneCommandLabel(lane);
     const start = performance.now();
@@ -1102,12 +1278,13 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
             Math.round(lane.deadlineMs! / 1000)
           } s deadline)`,
         );
-        return finish(LANE_DEADLINE_EXIT_CODE);
+        laneFailed(lane.label, LANE_DEADLINE_EXIT_CODE);
+        continue;
       }
       if (result.aborted) {
         outcome.result = "interrupted";
         out.error(`✗ ${lane.label}: interrupted (${elapsedMs}ms)`);
-        return finish(interruptedExitCode(options.signal!));
+        return finish(firstFailureCode || interruptedExitCode(options.signal!));
       }
       const status = result.status!;
       // The leader's real status is already captured above; an ordinary exit
@@ -1119,7 +1296,8 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
         out.error(
           `✗ ${lane.label}: failure (${elapsedMs}ms, exit ${status.code})`,
         );
-        return finish(status.code || 1);
+        laneFailed(lane.label, status.code || 1);
+        continue;
       }
       outcome.result = "pass";
       out.log(`✓ ${lane.label}: success (${elapsedMs}ms)`);
@@ -1132,7 +1310,7 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
         `✗ ${lane.label}: failure (${elapsedMs}ms, unavailable: ` +
           "command-not-runnable; check that the tool is installed and permitted)",
       );
-      return finish(127);
+      laneFailed(lane.label, 127);
     } finally {
       if (recordPath !== undefined) {
         await Deno.remove(recordPath).catch(() => undefined);
@@ -1141,9 +1319,9 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
   }
   if (options.signal?.aborted) {
     outcomes.push({ result: "interrupted" });
-    return finish(interruptedExitCode(options.signal));
+    return finish(firstFailureCode || interruptedExitCode(options.signal));
   }
-  const code = finish(0);
+  const code = finish(firstFailureCode);
   // The success claim is made only when the composed status itself passed.
   if (code === 0) {
     out.log(options.successMessage ?? "✓ aggregate test gate passed");
@@ -1166,14 +1344,14 @@ if (import.meta.main) {
   Deno.addSignalListener("SIGTERM", onSigterm);
   let exitCode: number;
   try {
+    const plan = await planGate({ fast, env: readOptionalEnv });
     exitCode = await runGate({
       signal: abortController.signal,
-      lanes: fast ? fastLanes() : undefined,
-      mode: fast ? "fast" : "full",
-      requiredCheckIds: fast ? undefined : REQUIRED_CHECK_IDS,
-      successMessage: fast
-        ? "✓ fast gate subset passed (not the full green bar; run `deno task test`)"
-        : undefined,
+      lanes: plan.lanes,
+      mode: plan.mode,
+      requiredCheckIds: plan.requiredCheckIds,
+      successMessage: plan.successMessage,
+      skipped: plan.skipped,
       laneRecordDir: defaultLaneRecordDir(readOptionalEnv("HOME")),
     });
   } finally {
