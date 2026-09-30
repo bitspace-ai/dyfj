@@ -12,6 +12,7 @@ import {
   LANE_DEADLINES_MS,
   laneDeadlineMs,
   type LaneOutcome,
+  MAX_TEST_BOUND_SEC,
   orphanedLaneGroup,
   parseGateArguments,
   parseProcessList,
@@ -145,7 +146,12 @@ Deno.test("the three test lanes carry deadlines and grant the lane names", () =>
 Deno.test("DYFJ_TEST_BOUND_SEC overrides a lane deadline with whole seconds", () => {
   assertEquals(laneDeadlineMs(120_000, undefined), 120_000);
   assertEquals(laneDeadlineMs(120_000, "30"), 30_000);
-  for (const bad of ["0", "-5", "1.5", "abc", "", "99999999"]) {
+  // The largest bound whose backstop still fits a Deno timer, and one past it.
+  assertEquals(MAX_TEST_BOUND_SEC, 2_147_423);
+  assertEquals(laneDeadlineMs(120_000, "2147423"), 2_147_423_000);
+  for (
+    const bad of ["0", "-5", "1.5", "abc", "", "99999999", "2147424", "3000000"]
+  ) {
     assertEquals(laneDeadlineMs(120_000, bad), 120_000);
   }
 });

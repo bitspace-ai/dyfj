@@ -1014,10 +1014,10 @@ signals only the lane leader and a lane's descendants are not covered. The
 three test lanes (`test.unit`, the isolated-Dolt integration lane and
 `test.golden`) are also supervised, as `specs/notes/test-supervision-evidence.md`
 decides. Each has a deadline (120 s, 900 s and 900 s; `DYFJ_TEST_BOUND_SEC`
-overrides all three in whole seconds): past it the gate tears the lane down as
-on an interruption and fails it with a message naming the deadline. The gate
-starts each test-lane runner directly as its group's leader and hands it a
-backstop 60 s past that deadline and a lane token. When all of its work is
+overrides all three in whole seconds, up to 2147423): past it the gate tears
+the lane down as on an interruption and fails it with a message naming the
+deadline. The gate starts each test-lane runner directly as its group's leader
+and hands it a backstop 60 s past that deadline and a lane token. When all of its work is
 done, the runner stops its own process group, so a same-group descendant does
 not outlive the lane even if the gate was killed. If the gate is gone and a
 test hangs, the runner's backstop kills the child it is waiting on and then

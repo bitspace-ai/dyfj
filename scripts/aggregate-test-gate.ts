@@ -6,6 +6,7 @@ import {
   LANE_ENV_NAMES,
   LANE_TOKEN_ENV,
   laneTokenArgument,
+  MAX_TIMER_DELAY_MS,
 } from "../prototype/scripts/lane-supervision.ts";
 
 export interface GateLane {
@@ -124,6 +125,11 @@ export const LANE_DEADLINES_MS = {
 // The runner's own backstop sits this far past the gate's deadline, so it
 // fires only when the gate is no longer there to enforce the deadline.
 export const LANE_BACKSTOP_MARGIN_MS = 60_000;
+// The largest DYFJ_TEST_BOUND_SEC whose deadline and backstop both fit a Deno
+// timer (about 24 days). A larger value is ignored, as a malformed one is.
+export const MAX_TEST_BOUND_SEC = Math.floor(
+  (MAX_TIMER_DELAY_MS - LANE_BACKSTOP_MARGIN_MS) / 1000,
+);
 // Exit code for a lane stopped at its deadline (as `timeout(1)` reports).
 export const LANE_DEADLINE_EXIT_CODE = 124;
 
@@ -131,7 +137,10 @@ export function laneDeadlineMs(
   defaultMs: number,
   bound: string | undefined,
 ): number {
-  if (bound !== undefined && /^[1-9][0-9]{0,6}$/.test(bound)) {
+  if (
+    bound !== undefined && /^[1-9][0-9]{0,6}$/.test(bound) &&
+    Number(bound) <= MAX_TEST_BOUND_SEC
+  ) {
     return Number(bound) * 1000;
   }
   return defaultMs;

@@ -31,6 +31,10 @@ export const LANE_ENV_NAMES = [
   LANE_TOKEN_ENV,
 ] as const;
 
+// The longest delay a Deno timer honours. A longer one fires after about 1 ms
+// instead, so a supervision value past it is malformed.
+export const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 const LANE_TOKEN_ARG_PREFIX = "--dyfj-lane=";
 const LANE_TOKEN_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -53,7 +57,8 @@ function readGrantedEnv(name: string): string | undefined {
 
 function positiveInteger(value: string | undefined): number | undefined {
   if (value === undefined || !/^[1-9][0-9]{0,9}$/.test(value)) return undefined;
-  return Number(value);
+  const parsed = Number(value);
+  return parsed <= MAX_TIMER_DELAY_MS ? parsed : undefined;
 }
 
 export function isLaneToken(token: string): boolean {

@@ -14,8 +14,8 @@ README are tracked separately in its Revision history section.
 - **Test lanes have deadlines and outlive neither a hang nor a killed gate.**
   The aggregate gate stops `test.unit` at 120 s and the isolated-Dolt
   integration and golden lanes at 900 s (`DYFJ_TEST_BOUND_SEC` overrides all
-  three, in whole seconds), tearing the lane down as on an interruption and
-  failing it with a message naming the deadline. The gate starts each of the
+  three, in whole seconds up to 2147423), tearing the lane down as on an
+  interruption and failing it with a message naming the deadline. The gate starts each of the
   three runners directly as the leader of its lane's process group and hands
   it a backstop 60 s past that deadline and a random lane token, which the
   runner passes to `deno test` on its command line. When its work is done the

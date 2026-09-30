@@ -7,6 +7,7 @@ import {
   laneScriptArgs,
   laneSupervision,
   laneTokenArgument,
+  MAX_TIMER_DELAY_MS,
 } from "./lane-supervision.ts";
 
 const TOKEN = "0f8b7c2e-5a41-4d7e-9c3b-2e1f0a9d8c7b";
@@ -32,6 +33,14 @@ Deno.test("a gate lane reads its deadline, backstop and token", () => {
     })),
     { deadlineMs: 120000, backstopMs: 180000, token: TOKEN },
   );
+  assertEquals(
+    laneSupervision(reader({
+      [LANE_DEADLINE_ENV]: "1",
+      [LANE_BACKSTOP_ENV]: String(MAX_TIMER_DELAY_MS),
+      [LANE_TOKEN_ENV]: TOKEN,
+    }))?.backstopMs,
+    MAX_TIMER_DELAY_MS,
+  );
 });
 
 Deno.test("malformed supervision values leave the run unsupervised", () => {
@@ -40,6 +49,8 @@ Deno.test("malformed supervision values leave the run unsupervised", () => {
       { deadline: "0", backstop: "1", token: TOKEN },
       { deadline: "1", backstop: "-5", token: TOKEN },
       { deadline: "1", backstop: "1.5", token: TOKEN },
+      // Past the longest delay a Deno timer honours.
+      { deadline: "1", backstop: "2147483648", token: TOKEN },
       { deadline: "1", backstop: "1", token: "not-a-token" },
       { deadline: "1", backstop: "1", token: `${TOKEN} extra` },
     ]
