@@ -1695,7 +1695,7 @@ Document revisions only. Code and behavior changes are tracked in
   `server/` and `cli/` import `extensions/`.
 - 2026-09-29 - The remote-gate description covers manual `workflow_dispatch`
   runs and their required `range_base` input.
-- 2026-09-29 - `specs/notes/test-supervision-evidence.md` records, per leak
+- 2026-09-30 - `specs/notes/test-supervision-evidence.md` records, per leak
   class, what the `Deno.test` suite catches without the Vitest supervisor, and
   the approved decision: keep the wall-clock bound, as a per-lane deadline in
   the gate; move the end-of-run process-group stop into each test-lane runner;
