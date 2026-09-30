@@ -1317,9 +1317,11 @@ Things that exist as boxes on a diagram.
   Rust REPL in `core/dyfj-repl`. Every transport runs the identical turn
   through the engine's turn entry (`prototype/src/engine/turn.ts`), not a
   per-transport copy. `prototype/src/server/main.ts` is the single
-  composition root. It builds the store, the tool catalog, the provider
-  registry, the session owners and the extensions, and wires one RPC module
-  per namespace (`server/rpc/`). A native turn runs as staged steps over an
+  composition root. It builds the store, the external MCP commands, the
+  session owners, the workspace-root anchors, the turn runtime (binding the
+  ACP runner) and the extensions, and wires one RPC module per namespace
+  (`server/rpc/`); each turn assembles its tool catalog from these. A native
+  turn runs as staged steps over an
   engine-owned turn state: `openSession`, `buildContext`, `budgetGate`,
   `loadTranscript`, `agentLoop`, `finalize`. Each session's turn lock, budget
   scope and cancel signal have one writer (`SessionOwners`). A turn calls
