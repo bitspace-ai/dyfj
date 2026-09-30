@@ -155,7 +155,8 @@ What moves rather than goes:
 - The Vitest supervisor's end-of-run group stop moves into each test-lane
   runner: the unit, isolated-Dolt integration and golden runners. When all of
   its work is done, the runner sends TERM to its own process group, handling
-  that TERM itself so it survives to report its result. "Done" means every child
+  that TERM itself so it survives to report its result, then, after a bounded
+  wait, KILL to each member still running, by pid, so it does not kill itself. "Done" means every child
   the runner starts has exited and its own cleanup has run, not merely that
   `deno test` has exited: the integration runner goes on to run the Cargo schema
   round-trip against the same Dolt fixture, whose server is a same-group child,
@@ -172,8 +173,8 @@ What moves rather than goes:
     other processes.
 
   A gate orchestration test covers it: a lane whose test leaves a same-group
-  grandchild, run with the gate SIGKILLed partway through, leaves no survivor
-  once the lane finishes.
+  grandchild that ignores TERM, run with the gate SIGKILLed partway through,
+  leaves no survivor once the lane finishes.
 
 - Each test-lane runner also carries a backstop deadline: the lane's bound plus
   60 s. It matters only when the gate is gone (L12 during an L6 hang), because
@@ -184,13 +185,19 @@ What moves rather than goes:
   then runs its own cleanup, stops its own group as at the end of a run, and
   exits failing with a message that names the backstop. Stopping the child by
   pid keeps every process in the lane group, so the gate's teardown still
-  reaches it. A gate orchestration test covers it: a runner with no gate above
-  it, during a hang, ends at the backstop and leaves no survivor.
+  reaches it. Work that does not observe the stop, such as a fixture query or a
+  cleanup step that hangs, cannot hold the runner: 30 s past the backstop it
+  stops its own group and exits failing, whatever it was waiting on. Gate
+  orchestration tests cover both: a runner with no gate above it, during a
+  hang, ends at the backstop and leaves no survivor; a runner whose own work
+  stalls past the backstop still stops its group and exits.
 - The Vitest supervisor's saved-group recovery moves into the gate, for the case
   where the gate and the runner are both SIGKILLed (L13):
-  - When the gate starts a test lane, it gives the runner a random lane token,
-    which the runner passes to `deno test` as a trailing script argument, so the
-    test process's command line identifies its lane. The gate writes a record
+  - When the gate starts a test lane, it gives the runner a random lane token.
+    The runner starts a token carrier: an idle process in the lane group whose
+    command line ends with the token, from the runner's start until its group
+    is stopped. So the group carries its lane's token in every step of the run,
+    `deno test`, Cargo or cleanup. The gate writes a record
     naming its own pid, the lane's group id and the token to an operator-scoped
     place under HOME (`$HOME/.dyfj/run/gate-lanes/`), as the Vitest lock was,
     and removes it when the lane ends.
@@ -201,15 +208,16 @@ What moves rather than goes:
     line, the gate sends TERM to the group, waits, then sends KILL. If not, it
     leaves the numeric group alone. Either way it drops the record, so a reused
     process or group id is never signalled: the token is random per lane, so
-    only the lane's own test process can carry it, and requiring it inside the
+    only the lane's own carrier can carry it, and requiring it inside the
     recorded group means a child that left the group cannot vouch for an
     unrelated group that reused the id. This is the Vitest supervisor's recovery
     rule, with the gate in the supervisor's place and the lane token in place of
     a recorded start time.
   - Gate orchestration tests cover it: with the gate and the runner both
     SIGKILLed during a hang, the next gate run stops the orphaned test process
-    and its same-group grandchild; a record whose group no longer carries its
-    token is dropped without a signal.
+    and its same-group grandchild; the same holds when they are killed in a
+    later step that carries no token of its own; a record whose group no longer
+    carries its token is dropped without a signal.
 
 ## Residual risk accepted
 
@@ -221,20 +229,11 @@ What moves rather than goes:
   that starts a detached process and has no parent-death check would outlive a
   SIGKILLed runner (L3, L4 `setsid`). The ACP fixture agent is the pattern to
   follow. Nothing in the suite does this today.
-- **A TERM-ignoring grandchild after a SIGKILLed gate.** The test-lane runner's
-  end-of-run group stop (see Decision) sends TERM only: the runner cannot send
-  KILL to its own group without killing itself. A same-group grandchild that
-  ignores TERM therefore outlives a lane whose gate was SIGKILLed (L12). With
-  the gate alive, its lane-group teardown still sends KILL. No test in the suite
-  leaves such a process today. The Vitest supervisor, which ran Vitest in a
-  group it did not belong to, could send KILL as well.
 - **Between a double crash and the next gate run.** With the gate and the runner
   both SIGKILLed (L13), the orphaned group runs until the next gate run recovers
-  it; a hung test runs that long. If `deno test` has already exited by then,
-  what is left in the group is not recovered, because nothing still proves the
-  group is the lane's: a grandchild `deno test` left, or, for the integration
-  runner killed during its Cargo step, the Dolt server and Cargo. The Vitest
-  supervisor's recovery had the same limit. A local Ctrl-C never leaves this
+  it; a hung test runs that long. A double crash in the brief window between
+  the runner's start and its token carrier's start leaves a group that nothing
+  proves is the lane's, so it is not recovered. A local Ctrl-C never leaves this
   state: it reaches the gate, whose interruption teardown stops every lane
   group. In CI the hosted runner is discarded when the job ends.
 - **Runs outside the gate.** A direct `deno test` run, not through the gate, has

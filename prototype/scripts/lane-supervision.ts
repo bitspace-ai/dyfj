@@ -10,17 +10,22 @@
 //
 // - A backstop deadline. The gate enforces its own, shorter deadline; the
 //   runner's backstop matters only when the gate itself is gone. On expiry
-//   the runner kills the child it is waiting on by pid, which keeps every
-//   process in the lane group the gate owns.
-// - A lane token. The runner passes it to `deno test` as a trailing script
-//   argument, so the child's command line identifies its lane. A later gate
-//   run uses it to recognise an orphaned lane group after the gate and the
-//   runner were both killed, without trusting a numeric id alone.
+//   the runner ends the step it is waiting on (the unit and golden runners
+//   kill their child by pid, which keeps every process in the lane group the
+//   gate owns). A runner still running a bounded time after that stops its
+//   group and exits, so a hang in its own awaited work cannot outlive it.
+// - A lane token. The runner starts a token carrier: an idle same-group
+//   process whose command line ends with the token, from the runner's start
+//   until its group is stopped. A later gate run uses it to recognise an
+//   orphaned lane group after the gate and the runner were both killed, in
+//   whatever step the lane was, without trusting a numeric id alone.
 // - The deadline itself, for the runner's messages.
 //
-// When all of its work is done, the runner stops its own process group with
-// TERM, which it ignores itself, so a same-group grandchild does not outlive
-// the lane even when the gate is no longer there to tear the group down.
+// When all of its work is done, the runner stops its own process group: TERM,
+// which it ignores itself, then, after a bounded wait, KILL to each member
+// still running. So a same-group descendant, even one that ignores TERM, does
+// not outlive the lane when the gate is no longer there to tear the group
+// down.
 
 export const LANE_DEADLINE_ENV = "DYFJ_LANE_DEADLINE_MS";
 export const LANE_BACKSTOP_ENV = "DYFJ_LANE_BACKSTOP_MS";
@@ -30,6 +35,12 @@ export const LANE_ENV_NAMES = [
   LANE_BACKSTOP_ENV,
   LANE_TOKEN_ENV,
 ] as const;
+
+// How long a runner past its backstop may keep running before it stops its
+// group and exits regardless.
+export const BACKSTOP_EXIT_GRACE_MS = 30_000;
+// How long the group stop waits after TERM before it KILLs what is left.
+export const GROUP_STOP_GRACE_MS = 2_000;
 
 // The longest delay a Deno timer honours. A longer one fires after about 1 ms
 // instead, so a supervision value past it is malformed.
@@ -53,6 +64,11 @@ function readGrantedEnv(name: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function pathEnvironment(): Record<string, string> {
+  const path = readGrantedEnv("PATH");
+  return path === undefined ? {} : { PATH: path };
 }
 
 function positiveInteger(value: string | undefined): number | undefined {
@@ -89,20 +105,35 @@ export function laneSupervision(
   return { deadlineMs, backstopMs, token };
 }
 
+// The carrier's program. Its own text says what it is to anyone reading a
+// process list; the token follows it as a script argument.
+const TOKEN_CARRIER_PROGRAM =
+  "// dyfj test-lane token carrier: idle until its lane's process group is stopped\n" +
+  "setInterval(() => {}, 2 ** 30);";
+
 /**
- * Script arguments for a `deno test` child: the caller's own arguments, plus
- * the lane token when the gate supervises this run. Returned with the leading
- * `--`, or empty when there is nothing to pass.
+ * Starts the lane's token carrier in this process's group, for a gate lane
+ * only. It runs until the group is stopped and does not keep this process
+ * alive. `deno` is the selected Deno executable the runner may already run.
  */
-export function laneScriptArgs(
+export function startTokenCarrier(
   supervision: LaneSupervision | undefined,
-  scriptArgs: readonly string[] = [],
-): string[] {
-  const args = [
-    ...scriptArgs,
-    ...(supervision ? [laneTokenArgument(supervision.token)] : []),
-  ];
-  return args.length > 0 ? ["--", ...args] : [];
+  deno: string,
+): void {
+  if (supervision === undefined) return;
+  const carrier = new Deno.Command(deno, {
+    args: [
+      "eval",
+      TOKEN_CARRIER_PROGRAM,
+      "--",
+      laneTokenArgument(supervision.token),
+    ],
+    clearEnv: true,
+    stdin: "null",
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  carrier.unref();
 }
 
 export interface Backstop {
@@ -111,14 +142,30 @@ export interface Backstop {
   clear(): void;
 }
 
-/** Calls `onExpire` once the backstop passes, unless cleared first. */
+/**
+ * Calls `onExpire` once the backstop passes, unless cleared first. Once it has
+ * passed, clearing no longer helps: if this process is still running
+ * `exitGraceMs` later, it stops its own group and exits 1, whatever it was
+ * waiting on. `deno` is the selected Deno executable, for the group stop.
+ */
 export function startBackstop(
   supervision: LaneSupervision | undefined,
+  deno: string,
   onExpire: () => void,
+  exitGraceMs = BACKSTOP_EXIT_GRACE_MS,
 ): Backstop {
   let expired = false;
   const timer = supervision === undefined ? undefined : setTimeout(() => {
     expired = true;
+    const exit = setTimeout(async () => {
+      console.error(
+        `dyfj: the lane was still running ${exitGraceMs} ms past its backstop deadline (${supervision.backstopMs} ms); stopping it`,
+      );
+      await stopOwnGroup(supervision, deno);
+      Deno.exit(1);
+    }, exitGraceMs);
+    // The exit timer never keeps the runner alive on its own.
+    Deno.unrefTimer(exit);
     onExpire();
   }, supervision.backstopMs);
   return {
@@ -140,13 +187,54 @@ export function killChild(child: Deno.ChildProcess): void {
   }
 }
 
+// Run by a short-lived same-group child: TERM to the group (which the child
+// and the runner ignore), then, once the other members are gone or the grace
+// has passed, KILL to each member still running, by pid, so neither the
+// runner nor the child is killed. A zombie counts as gone. While the runner
+// is alive it leads the group, so the group id cannot name another group.
+function groupStopProgram(runnerPid: number, graceMs: number): string {
+  return `
+Deno.addSignalListener("SIGTERM", () => {});
+const group = ${runnerPid};
+const spared = new Set([${runnerPid}, Deno.pid]);
+try { Deno.kill(-group, "SIGTERM"); } catch { Deno.exit(0); }
+async function members() {
+  try {
+    const out = await new Deno.Command("ps", {
+      args: ["-A", "-o", "pid=,pgid=,stat="], stdout: "piped", stderr: "null",
+    }).output();
+    return new TextDecoder().decode(out.stdout).split("\\n").flatMap((line) => {
+      const [pid, pgid, stat] = line.trim().split(/\\s+/);
+      return Number(pgid) === group && !spared.has(Number(pid)) &&
+          stat !== undefined && !stat.startsWith("Z")
+        ? [Number(pid)]
+        : [];
+    });
+  } catch {
+    return [];
+  }
+}
+const deadline = Date.now() + ${graceMs};
+let left = await members();
+while (left.length > 0 && Date.now() < deadline) {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  left = await members();
+}
+for (const pid of left) {
+  try { Deno.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+}
+Deno.exit(0);
+`;
+}
+
 /**
- * Sends TERM to this process's own group once the lane's work is done, and
- * ignores that TERM itself. Only a gate lane does this, and only outside
+ * Stops this process's own group once the lane's work is done: TERM, which
+ * this process ignores, then KILL to whatever is left after
+ * `GROUP_STOP_GRACE_MS`. Only a gate lane does this, and only outside
  * Windows. `deno` is the selected Deno executable the runner may already run:
  * signalling a group needs unscoped run permission, so a short-lived child
- * carries the signal. If this process does not lead a group, the signal names
- * no group and reaches nothing.
+ * carries the signals. If this process does not lead a group, the signal
+ * names no group and reaches nothing.
  */
 export async function stopOwnGroup(
   supervision: LaneSupervision | undefined,
@@ -160,9 +248,11 @@ export async function stopOwnGroup(
       args: [
         "eval",
         "--allow-run",
-        `try { Deno.kill(${-Deno.pid}, "SIGTERM"); } catch { /* no group */ }`,
+        groupStopProgram(Deno.pid, GROUP_STOP_GRACE_MS),
       ],
       clearEnv: true,
+      // PATH, to find `ps`, when this runner may read it.
+      env: pathEnvironment(),
       stdout: "null",
       stderr: "null",
     }).output();

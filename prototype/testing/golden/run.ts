@@ -8,17 +8,17 @@
  * reach the suite (for example `-- --update`).
  *
  * Under the aggregate gate it is also supervised as a test lane
- * (`scripts/lane-supervision.ts`): a backstop deadline, the lane token on the
- * test command line, and a stop of its own process group once done.
+ * (`scripts/lane-supervision.ts`): a backstop deadline, a lane token carrier,
+ * and a stop of its own process group once done.
  */
 
 import { selectedDenoExecutable } from "../../scripts/deno-executable.ts";
 import { SERVER_PROFILES, socketPathFor } from "./profiles.ts";
 import {
   killChild,
-  laneScriptArgs,
   laneSupervision,
   startBackstop,
+  startTokenCarrier,
   stopOwnGroup,
 } from "../../scripts/lane-supervision.ts";
 
@@ -33,6 +33,7 @@ for (const name of forwarded) {
 }
 
 const supervision = laneSupervision();
+startTokenCarrier(supervision, deno);
 let code = 1;
 let backstopExpired = false;
 try {
@@ -55,7 +56,7 @@ try {
         ].join(",")
       }`,
       "testing/golden/",
-      ...laneScriptArgs(supervision, Deno.args),
+      ...(Deno.args.length > 0 ? ["--", ...Deno.args] : []),
     ],
     cwd: new URL("../..", import.meta.url),
     clearEnv: true,
@@ -63,7 +64,11 @@ try {
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const backstop = startBackstop(supervision, () => killChild(child));
+  const backstop = startBackstop(
+    supervision,
+    deno,
+    () => killChild(child),
+  );
   code = (await child.status).code;
   backstop.clear();
   backstopExpired = backstop.expired;

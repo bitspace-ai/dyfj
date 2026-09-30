@@ -6,9 +6,9 @@ import { integrationChildEnvironment } from "./integration-child-environment.ts"
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import { discoverIntegrationTests } from "./test-files.ts";
 import {
-  laneScriptArgs,
   laneSupervision,
   startBackstop,
+  startTokenCarrier,
   stopOwnGroup,
 } from "./lane-supervision.ts";
 import { fileURLToPath } from "node:url";
@@ -118,10 +118,17 @@ const onSigint = () => interrupt(130);
 const onSigterm = () => interrupt(143);
 Deno.addSignalListener("SIGINT", onSigint);
 Deno.addSignalListener("SIGTERM", onSigterm);
-// Under the gate: past the backstop, stop the step in progress (its child is
-// signalled by pid) and clean up as on an interruption.
+// Under the gate: a token carrier for the whole run, and past the backstop,
+// stop the step in progress (its child is signalled by pid) and clean up as
+// on an interruption. A step or cleanup that does not observe the abort is
+// ended by the backstop's own exit.
 const supervision = laneSupervision();
-const backstop = startBackstop(supervision, () => abortController.abort());
+startTokenCarrier(supervision, denoExecutable);
+const backstop = startBackstop(
+  supervision,
+  denoExecutable,
+  () => abortController.abort(),
+);
 let failure: unknown;
 
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
@@ -190,7 +197,6 @@ try {
     }`,
     // Every `*.integration.test.ts`, found by name: the tier is the file name.
     ...discoverIntegrationTests(prototypeRoot),
-    ...laneScriptArgs(supervision),
   ], {
     cwd: prototypeRoot,
     env: {
@@ -214,7 +220,6 @@ try {
 } catch (error) {
   if (!abortController.signal.aborted) failure = error;
 } finally {
-  backstop.clear();
   try {
     await fixture?.cleanup();
     if (mcpTestTempDir !== undefined) {
@@ -229,6 +234,7 @@ try {
     Deno.removeSignalListener("SIGINT", onSigint);
     Deno.removeSignalListener("SIGTERM", onSigterm);
   } finally {
+    backstop.clear();
     // Every step has ended, and the fixture is stopped or its cleanup failed:
     // either way a gate lane now stops its own process group, so a same-group
     // descendant does not outlive the lane.

@@ -3,7 +3,8 @@
 // the runner's end-of-run group stop and backstop, and the gate's recovery of
 // a lane group left behind when the gate and its runner were both killed.
 // The lanes are stand-ins (`lane-runner.fixture.ts`) whose child leaves a
-// same-group `sleep` grandchild, the leak class each mechanism must clean up.
+// same-group `sleep` grandchild that ignores TERM, the leak class each
+// mechanism must clean up.
 import {
   LANE_BACKSTOP_ENV,
   LANE_DEADLINE_ENV,
@@ -84,23 +85,69 @@ async function grandchildPid(dir: string): Promise<number> {
   );
 }
 
-async function withDir(run: (dir: string) => Promise<void>): Promise<void> {
+// Live processes whose command line carries `token`: the lane's carrier.
+async function tokenCarriers(token: string): Promise<number[]> {
+  const lines = await sh("ps -A -ww -o pid=,stat=,command= || true");
+  return lines.split("\n").flatMap((line) => {
+    const match = line.match(/^\s*(\d+)\s+(\S+)\s+(.*)$/);
+    return match && !match[2].startsWith("Z") &&
+        match[3].includes(laneTokenArgument(token))
+      ? [Number(match[1])]
+      : [];
+  });
+}
+
+// The token of the one lane record left in `<dir>/records`.
+async function recordedToken(dir: string): Promise<string> {
+  const name = await waitFor(
+    async () => {
+      try {
+        return (await Array.fromAsync(Deno.readDir(`${dir}/records`)))[0]
+          ?.name;
+      } catch {
+        return undefined;
+      }
+    },
+    5_000,
+    "the lane record",
+  );
+  return JSON.parse(await Deno.readTextFile(`${dir}/records/${name}`)).token;
+}
+
+async function withDir(
+  run: (dir: string, tokens: Set<string>) => Promise<void>,
+): Promise<void> {
   const dir = await Deno.realPath(
     await Deno.makeTempDir({ prefix: "dyfj-lane-supervision-" }),
   );
+  const tokens = new Set<string>();
   try {
-    await run(dir);
+    await run(dir, tokens);
   } finally {
-    // Cleanup that holds when an assertion failed mid-test: the grandchild,
-    // and every process whose command line names this test's directory (the
-    // gate driver, the stand-in runner and its child).
-    const pid = await readFile(`${dir}/grandchild.pid`);
-    if (pid !== undefined) {
-      await sh(`kill -9 ${Number(pid)} 2>/dev/null || true`);
+    // Cleanup that holds when an assertion failed mid-test: the grandchild
+    // and second step, every process whose command line names this test's
+    // directory (the gate driver, the stand-in runner and its child), and the
+    // carrier of every token the test used or a record names.
+    for (const file of ["grandchild.pid", "second-step.pid"]) {
+      const pid = await readFile(`${dir}/${file}`);
+      if (pid !== undefined) {
+        await sh(`kill -9 ${Number(pid)} 2>/dev/null || true`);
+      }
     }
+    try {
+      for (const entry of Deno.readDirSync(`${dir}/records`)) {
+        tokens.add(entry.name.replace(/\.json$/, ""));
+      }
+    } catch {
+      // No records.
+    }
+    const markers = [dir, ...[...tokens].map(laneTokenArgument)];
     for (const line of (await sh("ps -A -ww -o pid=,command=")).split("\n")) {
       const match = line.match(/^\s*(\d+)\s+(.*)$/);
-      if (match && match[2].includes(dir) && Number(match[1]) !== Deno.pid) {
+      if (
+        match && markers.some((marker) => match[2].includes(marker)) &&
+        Number(match[1]) !== Deno.pid
+      ) {
         await sh(`kill -9 ${Number(match[1])} 2>/dev/null || true`);
       }
     }
@@ -108,7 +155,9 @@ async function withDir(run: (dir: string) => Promise<void>): Promise<void> {
   }
 }
 
-function runnerArgs(mode: "exit" | "hang", dir: string): string[] {
+type RunnerMode = "exit" | "hang" | "stall" | "second-step";
+
+function runnerArgs(mode: RunnerMode, dir: string): string[] {
   return [
     "run",
     "--allow-env",
@@ -182,6 +231,11 @@ Deno.test({
         5_000,
         "the grandchild to be stopped",
       );
+      const token = await recordedToken(dir);
+      assert(
+        (await tokenCarriers(token)).length === 0,
+        "the token carrier survived the group stop",
+      );
     });
   },
 });
@@ -190,13 +244,15 @@ Deno.test({
   name: "with no gate, the runner's backstop ends a hang and stops its group",
   ignore: !posix,
   async fn() {
-    await withDir(async (dir) => {
+    await withDir(async (dir, tokens) => {
+      const token = crypto.randomUUID();
+      tokens.add(token);
       const runner = new Deno.Command(Deno.execPath(), {
         args: runnerArgs("hang", dir),
         env: {
           [LANE_DEADLINE_ENV]: "500",
           [LANE_BACKSTOP_ENV]: "1500",
-          [LANE_TOKEN_ENV]: crypto.randomUUID(),
+          [LANE_TOKEN_ENV]: token,
         },
         // Its own group, as the gate starts a lane.
         detached: true,
@@ -215,80 +271,145 @@ Deno.test({
         5_000,
         "the grandchild to be stopped",
       );
+      assert(
+        (await tokenCarriers(token)).length === 0,
+        "the token carrier survived the group stop",
+      );
     });
   },
 });
+
+// Runs the gate driver over a supervised stand-in lane, waits for `ready`
+// (the pids the test expects to be stopped), SIGKILLs the gate and the runner,
+// then runs a later gate's recovery and checks the orphaned group is gone.
+async function doubleCrashIsRecovered(
+  dir: string,
+  mode: RunnerMode,
+  ready: () => Promise<number[]>,
+): Promise<void> {
+  const gate = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "--allow-env",
+      "--allow-read",
+      "--allow-write",
+      "--allow-run",
+      DRIVER,
+      dir,
+      mode,
+      "60000",
+    ],
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  const pids = await ready();
+  const token = await recordedToken(dir);
+  const record = JSON.parse(
+    await Deno.readTextFile(`${dir}/records/${token}.json`),
+  );
+  // The double crash: gate and runner both killed outright.
+  gate.kill("SIGKILL");
+  await gate.status;
+  await sh(`kill -9 ${Number(record.group)} 2>/dev/null || true`);
+  for (const pid of pids) {
+    assert(await alive(pid), `${pid} should outlive the gate and runner`);
+  }
+  assert(
+    (await liveGroupMembers(record.group)).length > 0,
+    "the orphaned group should still have members",
+  );
+  // The carrier's token trails a command line wider than a terminal's
+  // default 80 columns, which a truncating `ps` would cut off.
+  const carrier = (await sh("ps -A -ww -o command=")).split("\n")
+    .find((line) => line.includes(laneTokenArgument(token)));
+  assert(
+    carrier !== undefined && carrier.indexOf(laneTokenArgument(token)) > 80,
+    "the lane token should sit past column 80",
+  );
+
+  await recoverOrphanedLaneGroups(`${dir}/records`, quiet);
+
+  await waitFor(
+    async () =>
+      (await liveGroupMembers(record.group)).length === 0 ? true : undefined,
+    5_000,
+    "the orphaned group to be stopped",
+  );
+  for (const pid of pids) {
+    assert(!(await alive(pid)), `${pid} survived recovery`);
+  }
+  assert(
+    [...Deno.readDirSync(`${dir}/records`)].length === 0,
+    "the record was not dropped",
+  );
+}
 
 Deno.test({
   name:
     "a later gate run stops a lane group whose gate and runner were both killed",
   ignore: !posix,
   async fn() {
-    await withDir(async (dir) => {
-      const gate = new Deno.Command(Deno.execPath(), {
-        args: [
-          "run",
-          "--allow-env",
-          "--allow-read",
-          "--allow-write",
-          "--allow-run",
-          DRIVER,
-          dir,
-          "hang",
-          "60000",
-        ],
+    await withDir((dir) =>
+      doubleCrashIsRecovered(dir, "hang", async () => [
+        await grandchildPid(dir),
+      ])
+    );
+  },
+});
+
+Deno.test({
+  name:
+    "recovery also stops a lane killed in a later step that carries no token",
+  ignore: !posix,
+  async fn() {
+    await withDir((dir) =>
+      doubleCrashIsRecovered(dir, "second-step", async () => [
+        await grandchildPid(dir),
+        Number(
+          await waitFor(
+            () => readFile(`${dir}/second-step.pid`),
+            10_000,
+            "the second step",
+          ),
+        ),
+      ])
+    );
+  },
+});
+
+Deno.test({
+  name: "a runner stalled past its backstop still stops its group and exits",
+  ignore: !posix,
+  async fn() {
+    await withDir(async (dir, tokens) => {
+      const token = crypto.randomUUID();
+      tokens.add(token);
+      const runner = new Deno.Command(Deno.execPath(), {
+        args: runnerArgs("stall", dir),
+        env: {
+          [LANE_DEADLINE_ENV]: "2000",
+          [LANE_BACKSTOP_ENV]: "3000",
+          [LANE_TOKEN_ENV]: token,
+        },
+        detached: true,
         stdout: "null",
         stderr: "null",
       }).spawn();
       const pid = await grandchildPid(dir);
-      const recordName = await waitFor(
-        async () => {
-          try {
-            return (await Array.fromAsync(Deno.readDir(`${dir}/records`)))[0]
-              ?.name;
-          } catch {
-            return undefined;
-          }
-        },
-        5_000,
-        "the lane record",
-      );
-      const record = JSON.parse(
-        await Deno.readTextFile(`${dir}/records/${recordName}`),
-      );
-      // The double crash: gate and runner both killed outright.
-      gate.kill("SIGKILL");
-      await gate.status;
-      await sh(`kill -9 ${Number(record.group)} 2>/dev/null || true`);
-      assert(await alive(pid), "the grandchild should outlive both");
+      const status = await runner.status;
+      assert(status.code === 1, `stalled runner exit code: ${status.code}`);
       assert(
-        (await liveGroupMembers(record.group)).length > 0,
-        "the orphaned group should still hold the test child",
+        (await readFile(`${dir}/runner.done`)) === undefined,
+        "a stalled runner should not reach its normal exit",
       );
-      // The token trails a command line wider than a terminal's default 80
-      // columns, which a truncating `ps` would cut off.
-      const carrier = (await sh("ps -A -ww -o command=")).split("\n")
-        .find((line) => line.includes(laneTokenArgument(record.token)));
-      assert(
-        carrier !== undefined &&
-          carrier.indexOf(laneTokenArgument(record.token)) > 80,
-        "the lane token should sit past column 80",
-      );
-
-      await recoverOrphanedLaneGroups(`${dir}/records`, quiet);
-
       await waitFor(
-        async () =>
-          (await liveGroupMembers(record.group)).length === 0
-            ? true
-            : undefined,
+        async () => (await alive(pid)) ? undefined : true,
         5_000,
-        "the orphaned group to be stopped",
+        "the grandchild to be stopped",
       );
-      assert(!(await alive(pid)), "the grandchild survived recovery");
       assert(
-        [...Deno.readDirSync(`${dir}/records`)].length === 0,
-        "the record was not dropped",
+        (await tokenCarriers(token)).length === 0,
+        "the token carrier survived the group stop",
       );
     });
   },

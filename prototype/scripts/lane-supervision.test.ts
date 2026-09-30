@@ -4,7 +4,6 @@ import {
   LANE_BACKSTOP_ENV,
   LANE_DEADLINE_ENV,
   LANE_TOKEN_ENV,
-  laneScriptArgs,
   laneSupervision,
   laneTokenArgument,
   MAX_TIMER_DELAY_MS,
@@ -67,19 +66,8 @@ Deno.test("malformed supervision values leave the run unsupervised", () => {
   }
 });
 
-Deno.test("the lane token rides after the caller's own script arguments", () => {
-  const supervision = { deadlineMs: 1, backstopMs: 2, token: TOKEN };
-  assertEquals(laneScriptArgs(undefined), []);
-  assertEquals(laneScriptArgs(undefined, ["--update"]), ["--", "--update"]);
-  assertEquals(laneScriptArgs(supervision), [
-    "--",
-    laneTokenArgument(TOKEN),
-  ]);
-  assertEquals(laneScriptArgs(supervision, ["--update"]), [
-    "--",
-    "--update",
-    `--dyfj-lane=${TOKEN}`,
-  ]);
+Deno.test("a lane token is a lowercase UUID carried as --dyfj-lane", () => {
+  assertEquals(laneTokenArgument(TOKEN), `--dyfj-lane=${TOKEN}`);
   assertStrictEquals(isLaneToken(TOKEN), true);
   assertStrictEquals(isLaneToken(TOKEN.toUpperCase()), false);
 });

@@ -15,18 +15,21 @@ README are tracked separately in its Revision history section.
   The aggregate gate stops `test.unit` at 120 s and the isolated-Dolt
   integration and golden lanes at 900 s (`DYFJ_TEST_BOUND_SEC` overrides all
   three, in whole seconds up to 2147423), tearing the lane down as on an
-  interruption and failing it with a message naming the deadline. The gate starts each of the
-  three runners directly as the leader of its lane's process group and hands
-  it a backstop 60 s past that deadline and a random lane token, which the
-  runner passes to `deno test` on its command line. When its work is done the
-  runner stops its own process group, so a same-group descendant does not
-  outlive the lane even when the gate was killed; if the gate is gone and a
+  interruption and failing it with a message naming the deadline. The gate
+  starts each of the three runners directly as the leader of its lane's
+  process group and hands it a backstop 60 s past that deadline and a random
+  lane token, which an idle same-group token carrier holds on its command line
+  for the whole run. When its work is done the runner stops its own process
+  group (TERM, then KILL to whatever is left), so a same-group descendant does
+  not outlive the lane even when the gate was killed; if the gate is gone and a
   test hangs, the backstop stops the child the runner is waiting on and then
-  its group. The gate records each running test lane's group and token under
-  `$HOME/.dyfj/run/gate-lanes/` and, at its next start, stops a group left by a
-  gate that is no longer running, only when a live member of that group still
-  carries the lane token. New gate orchestration tests cover each case with a
-  lane whose test leaves a same-group grandchild.
+  its group, and a runner still running 30 s past its backstop stops its group
+  and exits regardless. The gate records each running test lane's group and
+  token under `$HOME/.dyfj/run/gate-lanes/` and, at its next start, stops a
+  group left by a gate that is no longer running, only when a live member of
+  that group still carries the lane token. New gate orchestration tests cover
+  each case with a lane whose test leaves a same-group grandchild that ignores
+  TERM.
 
 - **The CI gate can be run manually**: `.github/workflows/gate.yml` accepts
   `workflow_dispatch` on any branch, with a required `range_base` input that

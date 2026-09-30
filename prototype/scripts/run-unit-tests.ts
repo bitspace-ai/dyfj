@@ -19,9 +19,9 @@ import { selectedDenoExecutable } from "./deno-executable.ts";
 import { discoverUnitTests, isTestSource } from "./test-files.ts";
 import {
   killChild,
-  laneScriptArgs,
   laneSupervision,
   startBackstop,
+  startTokenCarrier,
   stopOwnGroup,
 } from "./lane-supervision.ts";
 
@@ -101,11 +101,9 @@ if (import.meta.main) {
   }
   const deno = selectedDenoExecutable();
   const supervision = laneSupervision();
+  startTokenCarrier(supervision, deno);
   const child = new Deno.Command(deno, {
-    args: [
-      ...unitTestArgs(selection.files, selection.filter),
-      ...laneScriptArgs(supervision),
-    ],
+    args: unitTestArgs(selection.files, selection.filter),
     cwd: root,
     clearEnv: true,
     env: Object.fromEntries(
@@ -117,7 +115,11 @@ if (import.meta.main) {
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const backstop = startBackstop(supervision, () => killChild(child));
+  const backstop = startBackstop(
+    supervision,
+    deno,
+    () => killChild(child),
+  );
   const status = await child.status;
   backstop.clear();
   await stopOwnGroup(supervision, deno);
