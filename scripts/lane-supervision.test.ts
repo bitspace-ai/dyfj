@@ -388,7 +388,9 @@ Deno.test({
           DRIVER,
           dir,
           "hang",
-          "1500",
+          // Long enough that the lane is fully set up, carrier included,
+          // before its TERM: a TERM during setup can end the group outright.
+          "6000",
         ],
         stdout: "null",
         stderr: "null",
@@ -398,14 +400,30 @@ Deno.test({
       const record = JSON.parse(
         await Deno.readTextFile(`${dir}/records/${token}.json`),
       );
+      // The carrier is up, with time to install its TERM handler, well
+      // before the deadline.
+      await waitFor(
+        async () =>
+          (await tokenCarriers(token)).length === 1 ? true : undefined,
+        4_000,
+        "the token carrier",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
       // Past the deadline the gate TERMs the group: the runner exits, and the
       // gate waits out its grace for the grandchild, which ignores TERM.
       await waitFor(
         async () => (await alive(record.group)) ? undefined : true,
-        10_000,
+        15_000,
         "the deadline's TERM to end the runner",
       );
-      gate.kill("SIGKILL");
+      try {
+        gate.kill("SIGKILL");
+      } catch {
+        const { code } = await gate.status;
+        throw new Error(
+          `the gate had already exited (code ${code}) before its KILL`,
+        );
+      }
       await gate.status;
       assert(await alive(pid), "the grandchild should outlive the gate");
       assert(
