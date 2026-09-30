@@ -8,16 +8,22 @@ import {
   BUILTIN_TOOLS,
   invokeCommandWithEvent,
   REDACTED,
+  RootAnchors,
 } from "../../../src/tools/mod.ts";
 import type { EventInsert } from "../../../src/store/mod.ts";
 import { toolConformance } from "../../conformance/tool.ts";
 import { defineTextStats, executeTextStats } from "./tool.ts";
 
 // The catalog line: one entry after the builtins.
-const catalog = buildToolCatalog({}, { workspaceRoot: "/example" }, [], [
-  ...BUILTIN_TOOLS,
-  () => defineTextStats(),
-]);
+const catalog = buildToolCatalog(
+  { rootAnchors: new RootAnchors() },
+  { workspaceRoot: "/example" },
+  [],
+  [
+    ...BUILTIN_TOOLS,
+    () => defineTextStats(),
+  ],
+);
 
 toolConformance({ name: "text.stats example", catalog });
 

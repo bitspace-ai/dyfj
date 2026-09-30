@@ -309,6 +309,9 @@ This section implements AGENTS.md rules 2 and 3.
   owner constructed in the composition root. Known cases:
   - the Dolt pool (moves to `DoltStore`);
   - `defaultIdeaPacketRegistry` (moves to the ideas/packets extension instance).
+  - the file tools' workspace-root anchors (move to a `RootAnchors` instance,
+    one per engine, handed to each turn through the engine's ports);
+  - the regex worker's memoized Blob URL (replaced by a constant `data:` URL).
 
 ## 6. Extension interface
 

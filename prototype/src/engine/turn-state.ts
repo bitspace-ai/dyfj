@@ -12,7 +12,7 @@
  *   first failed integrity write, so neither is ever silent.
  */
 import type { BudgetTracker, SpendBaselines } from "../budget/mod.ts";
-import type { CommandRegistry } from "../tools/mod.ts";
+import type { CommandRegistry, RootAnchors } from "../tools/mod.ts";
 import type {
   HistoryOmissionReceipt,
   WorkbenchAuthContext,
@@ -51,6 +51,8 @@ export interface NativeTurnPorts {
   fetchSpendBaselines?: (sessionId: string) => Promise<SpendBaselines>;
   /** The compressor seam for a context overflow; none when absent. */
   recoverContextOverflow?: ContextOverflowRecoverer;
+  /** The engine's workspace-root anchors, which the file tools verify against. */
+  rootAnchors: RootAnchors;
 }
 
 /** Write one event row through the store's journal. */

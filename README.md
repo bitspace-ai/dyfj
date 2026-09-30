@@ -1711,3 +1711,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-30 - The gate description covers the test lanes' deadlines, the
   runners' token carrier, own-group stop and backstop, and the gate's recovery of an orphaned
   lane group, replacing the note that the lanes had no bound yet.
+- 2026-09-30 - `specs/01-architecture.md` §5.7 lists the file tools' root
+  anchors and the regex worker's URL among the module-level state moved under
+  an owner, and `specs/bug-log.md` records the root-anchor entry as fixed.

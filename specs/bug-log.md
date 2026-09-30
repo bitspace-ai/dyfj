@@ -126,17 +126,6 @@ changes with a CHANGELOG `Fixed` entry.
   - **Suspected cause:** the budget clock starts when the match is posted, not
     when the worker is ready to match.
   - **Found during:** WO-15 (test migration of the file tools).
-- 2026-09-28 — **The file tools keep workspace-root anchors in module-level
-  mutable state.**
-  - **Location:** `prototype/src/tools/builtin/file.ts:93` (`rootAnchors`, with
-    `resetRootAnchor` as its test hook).
-  - **Symptom:** the anchors are a process-global `Map`, not state owned by an
-    object the composition root constructs; tests share it across cases and must
-    reset it by hand.
-  - **Suspected cause:** predates the doctrine; `01-architecture.md` §5.7 lists
-    the known module-level state (the Dolt pool, the idea/packet registry), and
-    this map is not on that list.
-  - **Found during:** WO-15 (moving `file-tools.ts`, unchanged).
 - 2026-09-27 — **An Anthropic forced-conclusion turn sends historical tool
   calls under their registry names, not their wire names.**
   - **Location:** `prototype/src/providers/anthropic/adapter.ts` (the
@@ -364,6 +353,23 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Fixed
 
+- 2026-09-28 — **The file tools keep workspace-root anchors in module-level
+  mutable state.**
+  - **Location:** `prototype/src/tools/builtin/file.ts:93` (`rootAnchors`, with
+    `resetRootAnchor` as its test hook).
+  - **Symptom:** the anchors are a process-global `Map`, not state owned by an
+    object the composition root constructs; tests share it across cases and must
+    reset it by hand.
+  - **Suspected cause:** predates the doctrine; `01-architecture.md` §5.7 lists
+    the known module-level state (the Dolt pool, the idea/packet registry), and
+    this map is not on that list.
+  - **Found during:** WO-15 (moving `file-tools.ts`, unchanged).
+  - **Fixed:** 2026-09-30. `RootAnchors` (`tools/builtin/root-anchors.ts`)
+    owns the anchors; the composition root builds one per engine and hands it
+    to each turn through the engine's ports, so an anchor still lasts for the
+    engine process. The file tools and their executors take a root bound to
+    those anchors, the test hook is gone, and each test file builds its own
+    `RootAnchors`.
 - 2026-09-28 — **Two ACP test files create their temp files in the working
   directory, so an interrupted run leaves them in the tree.**
   - **Location:** `prototype/src/acp-session-map.test.ts` (eleven
