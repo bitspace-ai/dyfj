@@ -1,23 +1,46 @@
-import { afterAll, describe, expect, test } from "vitest";
+// The external ACP runner's durable evidence through real Dolt: a fixture-agent
+// turn (scripts/acp-fixture-agent.ts, spawned by the runtime) journals its
+// runner, permission and tool evidence, and the session replays from the
+// isolated fixture database the integration lane starts.
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertObjectMatch,
+} from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import { buildConversationMessages } from "./context/mod.ts";
-import { fetchWorkbenchSessionEvents } from "./store/mod.ts";
+import { type DoltStore, fetchWorkbenchSessionEvents } from "./store/mod.ts";
 import {
+  type FixtureSql,
   openFixtureSql,
   openFixtureStore,
 } from "../testing/dolt/fixture-sql.ts";
 
-const sql = openFixtureSql();
-const store = openFixtureStore();
-afterAll(async () => {
-  await sql.close();
-  await store.close();
-});
+// Each test opens its own fixture handles and closes them before returning, so
+// no pooled connection outlives the test that opened it.
+async function withFixture(
+  fn: (store: DoltStore, sql: FixtureSql) => Promise<void>,
+): Promise<void> {
+  const sql = openFixtureSql();
+  const store = openFixtureStore();
+  try {
+    await fn(store, sql);
+  } finally {
+    await sql.close();
+    await store.close();
+  }
+}
+
+async function deleteSession(sql: FixtureSql, sessionId: string) {
+  await sql.query("DELETE FROM events WHERE session_id = ?", [sessionId]);
+  await sql.query("DELETE FROM sessions WHERE session_id = ?", [sessionId]);
+}
 
 describe("external ACP runner persistence (integration)", () => {
-  test(
-    "round-trips typed runner and permission evidence through Dolt",
-    async () => {
+  it("round-trips typed runner and permission evidence through Dolt", () =>
+    withFixture(async (store, sql) => {
       const result = await runExternalAgentWorkbenchRuntime({
         mode: "turn",
         prompt: "FIXTURE_PERMISSION",
@@ -31,24 +54,21 @@ describe("external ACP runner persistence (integration)", () => {
           sessionId: result.sessionId,
           events: store.events,
         });
-        expect(events.map((event) => event.eventType)).toEqual([
+        const eventTypes = events.map((event) => event.eventType);
+        assertEquals(eventTypes, [
           "session_start",
           "runner_selected",
           "agent_permission",
           "agent_response",
           "session_end",
         ]);
-        expect(events.map((event) => event.eventType)).not.toContain(
-          "provider_call",
-        );
-        expect(events.map((event) => event.eventType)).not.toContain(
-          "model_response",
-        );
+        assertFalse(eventTypes.includes("provider_call"));
+        assertFalse(eventTypes.includes("model_response"));
 
         const permission = events.find((event) =>
           event.eventType === "agent_permission"
         );
-        expect(permission).toMatchObject({
+        assertObjectMatch(permission!, {
           permissionVerdict: "denied",
           runnerKind: "external_agent",
           runnerProfile: "fixture",
@@ -58,7 +78,7 @@ describe("external ACP runner persistence (integration)", () => {
         const response = events.find((event) =>
           event.eventType === "agent_response"
         );
-        expect(response).toMatchObject({
+        assertObjectMatch(response!, {
           content: "denied",
           stopReason: "stop",
           runnerKind: "external_agent",
@@ -72,24 +92,16 @@ describe("external ACP runner persistence (integration)", () => {
           runnerCostBasis: "local_free",
           runnerEvidenceScope: "outer_only",
         });
-        expect(response?.runnerCapabilities).toContain(
-          "sessionCapabilities.close",
+        assert(
+          response?.runnerCapabilities?.includes("sessionCapabilities.close"),
         );
       } finally {
-        await sql.query("DELETE FROM events WHERE session_id = ?", [
-          result.sessionId,
-        ]);
-        await sql.query("DELETE FROM sessions WHERE session_id = ?", [
-          result.sessionId,
-        ]);
+        await deleteSession(sql, result.sessionId);
       }
-    },
-    30_000,
-  );
+    }));
 
-  test(
-    "round-trips ACP tool arguments through Dolt into reconstructed messages",
-    async () => {
+  it("round-trips ACP tool arguments through Dolt into reconstructed messages", () =>
+    withFixture(async (store, sql) => {
       const result = await runExternalAgentWorkbenchRuntime({
         mode: "turn",
         prompt: "FIXTURE_TOOL_HISTORY",
@@ -103,7 +115,7 @@ describe("external ACP runner persistence (integration)", () => {
           sessionId: result.sessionId,
           events: store.events,
         });
-        expect(events.map((event) => event.eventType)).toEqual([
+        assertEquals(events.map((event) => event.eventType), [
           "session_start",
           "runner_selected",
           "tool_call",
@@ -112,7 +124,7 @@ describe("external ACP runner persistence (integration)", () => {
         ]);
 
         const tool = events.find((event) => event.eventType === "tool_call");
-        expect(tool).toMatchObject({
+        assertObjectMatch(tool!, {
           toolName: "acp.read",
           toolCallId: "fixture-history-call",
           toolArguments: {
@@ -125,7 +137,7 @@ describe("external ACP runner persistence (integration)", () => {
           toolHistoryValid: true,
         });
 
-        expect(buildConversationMessages(events)).toEqual([
+        assertEquals(buildConversationMessages(events), [
           { role: "user", content: "FIXTURE_TOOL_HISTORY" },
           {
             role: "assistant",
@@ -149,14 +161,7 @@ describe("external ACP runner persistence (integration)", () => {
           { role: "assistant", content: "recorded" },
         ]);
       } finally {
-        await sql.query("DELETE FROM events WHERE session_id = ?", [
-          result.sessionId,
-        ]);
-        await sql.query("DELETE FROM sessions WHERE session_id = ?", [
-          result.sessionId,
-        ]);
+        await deleteSession(sql, result.sessionId);
       }
-    },
-    30_000,
-  );
+    }));
 });

@@ -6,7 +6,6 @@ import { integrationTestAssignments } from "./integration-test-assignment.ts";
 import { resolveEsbuildBinary } from "./esbuild-binary.ts";
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
-import { TEMP_ROOTS } from "./run-unit-tests.ts";
 import { fileURLToPath } from "node:url";
 import {
   UDS_TEST_SOCKET_DIR_ENV,
@@ -103,7 +102,6 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
   "",
 );
 const denoExecutable = selectedDenoExecutable();
-const tempRoots = TEMP_ROOTS.join(",");
 const abortController = new AbortController();
 let interruptedExitCode: number | undefined;
 const interrupt = (exitCode: number) => {
@@ -119,6 +117,7 @@ Deno.addSignalListener("SIGTERM", onSigterm);
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
 let mcpTestTempDir: string | undefined;
 let udsTestSocketDir: string | undefined;
+let denoTestTempDir: string | undefined;
 try {
   fixture = await startIsolatedDoltFixture({
     repoRoot,
@@ -137,41 +136,43 @@ try {
   // Deno grants Unix sockets per exact path, so the Deno.test files that bind
   // real sockets get this directory and a grant for each socket they name.
   udsTestSocketDir = await Deno.makeTempDir({ prefix: "dyfj-uds-" });
-  await runChecked(denoExecutable, [
-    "run",
-    "-P=test",
-    "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
-    `--allow-run=bash,${denoExecutable},dolt,${esbuildBinary}`,
-    "npm:vitest@3.2.6",
-    "run",
-    "--root",
-    ".",
-    "--pool=forks",
-    "--poolOptions.forks.singleFork",
-    ...integrationTestAssignments.vitest,
-  ], { cwd: prototypeRoot, env, signal: abortController.signal });
+  // The Deno.test files' own temp files (the ACP fixture's pid files and
+  // method logs, scratch operator homes, an outside workspace) go through
+  // Deno.makeTempDir/makeTempFile, which honor TMPDIR: pointing it at this
+  // directory keeps their read and write grants to it alone. Its real path is
+  // what is granted and exported: the code under test resolves real paths, and
+  // on macOS the temp root /tmp is a symlink to /private/tmp.
+  denoTestTempDir = await Deno.realPath(
+    await Deno.makeTempDir({ prefix: "dyfj-deno-test-" }),
+  );
   await runChecked(denoExecutable, [
     "test",
     // Ungranted access throws instead of prompting, as it does in CI, so a
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
     // The isolated Dolt fixture's own tests start throwaway fixtures: they
-    // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, and run
+    // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, make
+    // their temp roots under TMPDIR (the per-run directory below), and run
     // `dolt`. The secrets resolver tests run `bash` and set one ambient
     // variable (LEAKY_AMBIENT) to prove the resolver child does not inherit
-    // it. DENO_DIR: the launcher test pins its children's Deno cache.
+    // it. The ACP files read DENO_DIR for the fixture agent's cache, set and
+    // restore the representative ambient secrets they prove are not
+    // forwarded, and read the Codex profile inputs (DYFJ_NODE_PATH and the
+    // toolchain directories), which stay unset here. The launcher test pins
+    // its children's Deno cache through DENO_DIR too.
     // DYFJ_WORKBENCH_CONTEXT_TOKENS: the repo-context budget fallback case.
-    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,DYFJ_WORKBENCH_CONTEXT_TOKENS`,
-    // The temp roots are where the fixtures make their temp directories
-    // (`Deno.makeTempDir` with the system default), as the unit lane's tests
-    // do.
-    `--allow-read=.,../schema,${tempRoots},${mcpTestTempDir},${udsTestSocketDir}`,
-    `--allow-write=${tempRoots},${mcpTestTempDir},${udsTestSocketDir}`,
-    // bash, /bin/bash, /bin/sh: the launcher script, the secrets resolver and
-    // the `deno.json` task strings under test. ln: symlink fixtures
-    // (`Deno.symlink` needs unscoped read and write). /bin/ps: reaping a
-    // launcher-started runtime by socket. dolt: the fixture tests.
+    `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME,DYFJ_WORKBENCH_CONTEXT_TOKENS`,
+    `--allow-read=.,../schema,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    `--allow-write=${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
+    // bash, /bin/bash: the ACP files' process probes, symlink setup and a
+    // stdout-holding wrapper around the fixture agent, the launcher script
+    // and the secrets resolver. /bin/sh: the `deno.json` task strings under
+    // test. ln: symlink fixtures (`Deno.symlink` needs unscoped read and
+    // write). /bin/ps: reaping a launcher-started runtime by socket. dolt:
+    // the fixture tests.
     `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln`,
+    // The Codex profile builder checks directory ownership with Deno.uid().
+    "--allow-sys=uid",
     `--allow-net=${
       ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
     }`,
@@ -182,6 +183,7 @@ try {
       ...env,
       DYFJ_MCP_TEST_TEMP_DIR: mcpTestTempDir,
       [UDS_TEST_SOCKET_DIR_ENV]: udsTestSocketDir,
+      TMPDIR: denoTestTempDir,
     },
     signal: abortController.signal,
   });
@@ -204,6 +206,9 @@ try {
   }
   if (udsTestSocketDir !== undefined) {
     await Deno.remove(udsTestSocketDir, { recursive: true });
+  }
+  if (denoTestTempDir !== undefined) {
+    await Deno.remove(denoTestTempDir, { recursive: true });
   }
   Deno.removeSignalListener("SIGINT", onSigint);
   Deno.removeSignalListener("SIGTERM", onSigterm);
