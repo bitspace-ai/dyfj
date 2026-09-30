@@ -1003,10 +1003,14 @@ export function composeGateStatus(
   const anyFail = all.some((r) => r === "fail" || r === "unavailable");
   const anyInterrupted = all.some((r) => r === "interrupted");
   const anySkipped = all.some((r) => r === "skipped");
-  const result = anyFail
-    ? "fail"
-    : anyInterrupted
+  // An interrupted run is incomplete, so it reads `interrupted` even when an
+  // earlier lane failed: every lane runs past a failure, and only an
+  // interruption can leave later lanes unrun. The failed check still reads
+  // `fail` in `checks`, and the exit code is still the failure's.
+  const result = anyInterrupted
     ? "interrupted"
+    : anyFail
+    ? "fail"
     : anySkipped
     ? "fail"
     : "pass";

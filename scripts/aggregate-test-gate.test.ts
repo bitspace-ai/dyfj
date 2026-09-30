@@ -839,29 +839,34 @@ Deno.test("a lane that cannot start is reported and later lanes still run", asyn
 
 Deno.test("an interruption after a failure keeps the failure's exit code", async () => {
   const errors: string[] = [];
+  let statusLine: string | undefined;
   const abortController = new AbortController();
   const code = await runGate({
     signal: abortController.signal,
     lanes: [
       {
         label: "failing lane",
+        checkId: "demo.failing",
         command: Deno.execPath(),
         args: ["eval", "Deno.exit(9)"],
       },
       {
         // Stands in for an operator's interrupt arriving between lanes.
         label: "interrupting lane",
+        checkId: "demo.interrupting",
         command: Deno.execPath(),
         args: ["eval", "Deno.exit(0)"],
       },
       {
         label: "must not run",
+        checkId: "demo.after",
         command: Deno.execPath(),
         args: ["eval", "Deno.exit(0)"],
       },
     ],
     out: {
       log: (s) => {
+        if (s.startsWith("gate-status ")) statusLine = s;
         if (s.startsWith("✓ interrupting lane")) {
           abortController.abort("SIGINT");
         }
@@ -875,6 +880,14 @@ Deno.test("an interruption after a failure keeps the failure's exit code", async
 
   assertEquals(code, 9);
   assertStringIncludes(errors.join("\n"), "✗ 1 of 3 lanes failed:");
+  const status = JSON.parse(statusLine!.slice("gate-status ".length));
+  // The run stopped early, so it reads interrupted; the failure stays visible.
+  assertEquals(status.result, "interrupted");
+  assertEquals(status.checks, [
+    { id: "demo.after", result: "interrupted" },
+    { id: "demo.failing", result: "fail" },
+    { id: "demo.interrupting", result: "pass" },
+  ]);
 });
 
 Deno.test("aggregate gate stops its active lane on interruption", async () => {
@@ -1284,6 +1297,21 @@ Deno.test("interruption composes as interrupted, not failure", () => {
     ["test.aggregate"],
   );
   assertEquals(failed.result, "fail");
+  // A run interrupted after a failure is incomplete: it reads interrupted,
+  // and the failed check still reads fail.
+  const both = composeGateStatus(
+    [
+      { checkId: "secret.tree", result: "fail" },
+      { checkId: "test.aggregate", result: "interrupted" },
+    ],
+    "full",
+    ["secret.tree", "test.aggregate"],
+  );
+  assertEquals(both.result, "interrupted");
+  assertEquals(both.checks, [
+    { id: "secret.tree", result: "fail" },
+    { id: "test.aggregate", result: "interrupted" },
+  ]);
 });
 
 Deno.test("a missing required lane exits nonzero and claims no success", async () => {
