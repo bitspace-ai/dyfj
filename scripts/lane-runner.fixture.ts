@@ -2,8 +2,9 @@
 // (`lane-supervision.test.ts`). It is supervised the way the real runners
 // are: a lane token carrier, the backstop around its child, then a stop of its
 // own process group. The child leaves a same-group `sleep` grandchild that
-// ignores TERM and writes its pid to `<dir>/grandchild.pid`, then exits after
-// 1.5 s, or never (`hang`). After the child:
+// ignores TERM and writes its pid to `<dir>/grandchild.pid`, then exits once
+// the test creates `<dir>/release` (`exit`), never (`hang`), or after 1.5 s.
+// After the child:
 //
 // - `stall`: the runner's own work hangs without observing the backstop, so
 //   only the backstop's exit ends it (3 s after the backstop).
@@ -39,10 +40,14 @@ const program = [
   }] }).outputSync();`,
   mode === "hang"
     ? "setInterval(() => {}, 1000);"
+    : mode === "exit"
+    ? `while (!(() => { try { return Deno.statSync(${
+      JSON.stringify(`${dir}/release`)
+    }).isFile; } catch { return false; } })()) { await new Promise((resolve) => setTimeout(resolve, 50)); }`
     : "await new Promise((resolve) => setTimeout(resolve, 1500));",
 ].join("\n");
 const child = new Deno.Command(deno, {
-  args: ["eval", "--allow-run=/bin/bash", program],
+  args: ["eval", "--allow-run=/bin/bash", `--allow-read=${dir}`, program],
   stdout: "null",
   stderr: "null",
 }).spawn();

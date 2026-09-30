@@ -4,9 +4,12 @@
 //
 // Usage: gate-driver.fixture.ts <dir> <exit|hang> <deadline-ms>
 import { runGate } from "./aggregate-test-gate.ts";
+import { fileURLToPath } from "node:url";
 
 const [dir, mode, deadline] = Deno.args;
-const runner = new URL("./lane-runner.fixture.ts", import.meta.url).pathname;
+const runner = fileURLToPath(
+  new URL("./lane-runner.fixture.ts", import.meta.url),
+);
 const code = await runGate({
   lanes: [{
     label: "Stand-in test lane",

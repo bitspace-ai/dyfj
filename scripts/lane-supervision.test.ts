@@ -16,9 +16,14 @@ import {
   recoverOrphanedLaneGroups,
   runGate,
 } from "./aggregate-test-gate.ts";
+import { fileURLToPath } from "node:url";
 
-const RUNNER = new URL("./lane-runner.fixture.ts", import.meta.url).pathname;
-const DRIVER = new URL("./gate-driver.fixture.ts", import.meta.url).pathname;
+const RUNNER = fileURLToPath(
+  new URL("./lane-runner.fixture.ts", import.meta.url),
+);
+const DRIVER = fileURLToPath(
+  new URL("./gate-driver.fixture.ts", import.meta.url),
+);
 const quiet = { log: () => {}, error: () => {} };
 const posix = Deno.build.os !== "windows";
 
@@ -136,7 +141,7 @@ async function withDir(
     }
     try {
       for (const entry of Deno.readDirSync(`${dir}/records`)) {
-        tokens.add(entry.name.replace(/\.json$/, ""));
+        tokens.add(entry.name.replace(/\.json(\.partial)?$/, ""));
       }
     } catch {
       // No records.
@@ -220,6 +225,8 @@ Deno.test({
       gate.kill("SIGKILL");
       await gate.status;
       assert(await alive(pid), "the grandchild should outlive the gate");
+      // Only now may the lane's test finish.
+      await Deno.writeTextFile(`${dir}/release`, "");
       const done = await waitFor(
         () => readFile(`${dir}/runner.done`),
         15_000,
@@ -286,6 +293,7 @@ async function doubleCrashIsRecovered(
   dir: string,
   mode: RunnerMode,
   ready: () => Promise<number[]>,
+  { recordLeftPartial = false } = {},
 ): Promise<void> {
   const gate = new Deno.Command(Deno.execPath(), {
     args: [
@@ -311,6 +319,13 @@ async function doubleCrashIsRecovered(
   gate.kill("SIGKILL");
   await gate.status;
   await sh(`kill -9 ${Number(record.group)} 2>/dev/null || true`);
+  if (recordLeftPartial) {
+    // As if the gate had been killed between writing and renaming it.
+    await Deno.rename(
+      `${dir}/records/${token}.json`,
+      `${dir}/records/${token}.json.partial`,
+    );
+  }
   for (const pid of pids) {
     assert(await alive(pid), `${pid} should outlive the gate and runner`);
   }
@@ -353,6 +368,21 @@ Deno.test({
       doubleCrashIsRecovered(dir, "hang", async () => [
         await grandchildPid(dir),
       ])
+    );
+  },
+});
+
+Deno.test({
+  name: "a complete record still under its partial name is recovered",
+  ignore: !posix,
+  async fn() {
+    await withDir((dir) =>
+      doubleCrashIsRecovered(
+        dir,
+        "hang",
+        async () => [await grandchildPid(dir)],
+        { recordLeftPartial: true },
+      )
     );
   },
 });

@@ -35,7 +35,7 @@ for (const name of forwarded) {
 const supervision = laneSupervision();
 startTokenCarrier(supervision, deno);
 let code = 1;
-let backstopExpired = false;
+let backstop: ReturnType<typeof startBackstop> | undefined;
 try {
   const child = new Deno.Command(deno, {
     args: [
@@ -64,19 +64,19 @@ try {
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const backstop = startBackstop(
+  backstop = startBackstop(
     supervision,
     deno,
     () => killChild(child),
   );
   code = (await child.status).code;
-  backstop.clear();
-  backstopExpired = backstop.expired;
 } finally {
   await Deno.remove(root, { recursive: true }).catch(() => undefined);
+  // Cleared only after the cleanup above, which the backstop also bounds.
+  backstop?.clear();
 }
 await stopOwnGroup(supervision, deno);
-if (backstopExpired) {
+if (backstop?.expired) {
   console.error(
     `dyfj: test.golden passed its backstop deadline (${
       supervision!.backstopMs

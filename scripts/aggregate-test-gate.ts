@@ -376,8 +376,9 @@ async function statusOrAbort(
 //
 // Each running test lane has a record naming the gate's pid, the lane's
 // process group and the lane token, which the runner's token carrier (an idle
-// same-group `deno eval`) holds on its command line for the whole run. The gate removes it when the lane ends, so a record left behind means
-// the gate died mid-lane. At its next start the gate reads each such record.
+// same-group `deno eval`) holds on its command line for the whole run. The
+// gate removes it when the lane ends, so a record left behind means the gate
+// died mid-lane. At its next start the gate reads each such record.
 // If the recording gate is still running (a concurrent gate), the record is
 // left alone. Otherwise the gate signals the recorded group only when a live
 // member of that group still carries the lane token, so a reused process or
@@ -482,7 +483,12 @@ export async function recoverOrphanedLaneGroups(
   try {
     names = [];
     for await (const entry of Deno.readDir(dir)) {
-      if (entry.isFile && entry.name.endsWith(".json")) names.push(entry.name);
+      if (
+        entry.isFile &&
+        (entry.name.endsWith(".json") || entry.name.endsWith(".json.partial"))
+      ) {
+        names.push(entry.name);
+      }
     }
   } catch {
     return; // No records, or no access: nothing to recover.
@@ -496,6 +502,14 @@ export async function recoverOrphanedLaneGroups(
     try {
       record = parseLaneRecord(await Deno.readTextFile(path));
     } catch {
+      continue;
+    }
+    // A partial record that does not parse may still be being written: it is
+    // left alone until it is older than any write could take.
+    if (
+      record === undefined && name.endsWith(".partial") &&
+      !(await olderThan(path, PARTIAL_RECORD_MAX_AGE_MS))
+    ) {
       continue;
     }
     const verdict = record === undefined
@@ -512,6 +526,19 @@ export async function recoverOrphanedLaneGroups(
   }
 }
 
+// A partial record is complete once parsed; one that is still malformed after
+// this long was left by a gate that died mid-write.
+const PARTIAL_RECORD_MAX_AGE_MS = 60_000;
+
+async function olderThan(path: string, ageMs: number): Promise<boolean> {
+  try {
+    const mtime = (await Deno.stat(path)).mtime;
+    return mtime !== null && Date.now() - mtime.getTime() > ageMs;
+  } catch {
+    return false;
+  }
+}
+
 async function writeLaneRecord(
   dir: string | undefined,
   record: LaneRecord,
@@ -519,8 +546,9 @@ async function writeLaneRecord(
   if (dir === undefined || !laneProcessGroups) return undefined;
   const path = `${dir}/${record.token}.json`;
   // Written under another name and renamed into place, so a concurrent
-  // gate's recovery, which reads only `*.json`, never sees a partial record
-  // and drops it as malformed.
+  // gate's recovery never drops a record that is only partly written. A
+  // complete record still under that name, left by a gate killed before the
+  // rename, is recovered like any other.
   const partial = `${path}.partial`;
   try {
     await Deno.mkdir(dir, { recursive: true });
