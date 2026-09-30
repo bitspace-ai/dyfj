@@ -32,22 +32,44 @@ if (!MODES.includes(mode) || dir === undefined) {
 const deno = Deno.execPath();
 const supervision = laneSupervision();
 startTokenCarrier(supervision, deno);
-const program = [
-  `new Deno.Command("/bin/bash", { args: ["-c", ${
-    JSON.stringify(
-      `trap '' TERM; sleep 60 >/dev/null 2>&1 & echo $! > '${dir}/grandchild.pid'`,
-    )
-  }] }).outputSync();`,
-  mode === "hang"
-    ? "setInterval(() => {}, 1000);"
-    : mode === "exit"
-    ? `while (!(() => { try { return Deno.statSync(${
-      JSON.stringify(`${dir}/release`)
-    }).isFile; } catch { return false; } })()) { await new Promise((resolve) => setTimeout(resolve, 50)); }`
-    : "await new Promise((resolve) => setTimeout(resolve, 1500));",
-].join("\n");
+// The child's program is fixed text: the directory and how to finish reach
+// it as script arguments, and reach `bash` as a positional parameter.
+const CHILD_PROGRAM = `
+const [dir, finish] = Deno.args;
+new Deno.Command("/bin/bash", {
+  args: [
+    "-c",
+    "trap '' TERM; sleep 60 >/dev/null 2>&1 & echo $! > \\"$1/grandchild.pid\\"",
+    "grandchild",
+    dir,
+  ],
+}).outputSync();
+const released = () => {
+  try {
+    return Deno.statSync(dir + "/release").isFile;
+  } catch {
+    return false;
+  }
+};
+if (finish === "never") {
+  setInterval(() => {}, 1000);
+} else if (finish === "release") {
+  while (!released()) await new Promise((resolve) => setTimeout(resolve, 50));
+} else {
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+}
+`;
+const finish = mode === "hang" ? "never" : mode === "exit" ? "release" : "soon";
 const child = new Deno.Command(deno, {
-  args: ["eval", "--allow-run=/bin/bash", `--allow-read=${dir}`, program],
+  args: [
+    "eval",
+    "--allow-run=/bin/bash",
+    `--allow-read=${dir}`,
+    CHILD_PROGRAM,
+    "--",
+    dir,
+    finish,
+  ],
   stdout: "null",
   stderr: "null",
 }).spawn();
@@ -65,7 +87,12 @@ if (mode === "stall") {
 }
 if (mode === "second-step") {
   await new Deno.Command("/bin/bash", {
-    args: ["-c", `echo $$ > '${dir}/second-step.pid'; exec sleep 60`],
+    args: [
+      "-c",
+      'echo $$ > "$1/second-step.pid"; exec sleep 60',
+      "second-step",
+      dir,
+    ],
     stdout: "null",
     stderr: "null",
   }).output();
