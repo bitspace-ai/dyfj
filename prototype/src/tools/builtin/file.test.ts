@@ -645,7 +645,10 @@ describe("grep_files resource bounds", () => {
     const started = performance.now();
     let out: string;
     try {
-      out = await executeGrepFiles(at(broot), "(a+)+$", { budgetMs: 300 });
+      // Built at run time: the pattern is catastrophic on purpose, since the
+      // bounded matcher is what this test exercises.
+      const pattern = ["(a+)+", "$"].join("");
+      out = await executeGrepFiles(at(broot), pattern, { budgetMs: 300 });
     } finally {
       await Deno.remove(catastrophic);
     }

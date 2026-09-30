@@ -8,6 +8,7 @@ import {
 import { createDoltPool, DoltStore } from "../src/store/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../src/external-agent-runtime.ts";
 import { runWorkbenchRuntime, SessionOwners } from "../src/engine/mod.ts";
+import { RootAnchors } from "../src/tools/mod.ts";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
@@ -48,6 +49,8 @@ try {
   }, {
     store,
     budgetScopes: new SessionOwners(),
+    // One set of workspace-root anchors for this run, as the engine holds one.
+    rootAnchors: new RootAnchors(),
     // ...and binds the ACP runner the same way the UDS server does.
     externalAgentRunner: {
       run: (input) => runExternalAgentWorkbenchRuntime(input, { store }),

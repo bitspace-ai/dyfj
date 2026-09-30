@@ -6,6 +6,7 @@ import {
   assertExists,
   assertObjectMatch,
   assertStrictEquals,
+  assertThrows,
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "./definition.ts";
@@ -30,6 +31,14 @@ describe("buildToolCatalog", () => {
   it("registers only memory.read without a workspace root", () => {
     const registry = buildToolCatalog({}, {});
     assertEquals(registry.list().map((c) => c.id), ["memory.read"]);
+  });
+
+  it("refuses to register the file tools without root anchors", () => {
+    assertThrows(
+      () => buildToolCatalog({}, { workspaceRoot: "/work" }),
+      Error,
+      "tool catalog: the workspace file tools need root anchors",
+    );
   });
 
   it("registers the file tools when a workspace root is set", () => {

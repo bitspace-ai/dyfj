@@ -838,7 +838,8 @@ README are tracked separately in its Revision history section.
   turn, so a root pinned on its first use stays pinned for the engine's
   lifetime, as before. A tool catalog that registers the file tools without
   anchors now fails closed. The regex worker's memoized Blob URL is now a
-  constant `data:` URL. `prototype/src/` has no module-level mutable state.
+  constant `data:` URL. No runtime (non-test) module in `prototype/src/` holds
+  module-level mutable state.
 
 - **An interrupted ACP test run no longer leaves files in the working tree**:
   the ACP client, session-map and external-agent runtime tests created their
