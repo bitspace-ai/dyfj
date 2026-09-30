@@ -46,11 +46,41 @@ Section 5.
   an event through Dolt. Also holds `dyfj-repl`, an interactive REPL front-end
   that owns the terminal and is a second client of the prototype's UDS protocol;
   the agent loop stays in `prototype/`. Where stabilized components live.
-- `prototype/` - TypeScript on Deno. Real working code (Workbench CLI, the
-  JSON-RPC/UDS transport seam, an ACP client foundation, memory, budget, MCP
-  server, tests, and provider diagnostics). The active prototyping surface.
-  Components either move down into `core/` as they stabilize or stay here as
-  fast-moving prototype code.
+- `prototype/` - TypeScript on Deno. Real working code and the active
+  prototyping surface. Components either move down into `core/` as they
+  stabilize or stay here as fast-moving prototype code. `prototype/src/` is
+  organized by layer (`specs/01-architecture.md` §3); a module imports only
+  from lower layers or listed same-layer edges, which the `arch.imports` gate
+  lane enforces:
+  - L0 `kernel/`: pure shared helpers, one implementation each.
+  - L1 `contract/`: the runtime contract (turn, frame, receipt and error
+    types). L1 `config/`: the declared configuration surface and the `Env`
+    port, the only runtime reader of the environment.
+  - L2 `store/`: the store port, the only code that issues SQL, with one
+    mutation path (`journal.commit`). L2 `providers/`: model adapters behind
+    one `ProviderAdapter` interface. L2 `tools/`: the one tool shape and
+    catalog. L2 `budget/`: spend tracking and gates. L2 `context/`: what the
+    model sees on a turn. L2 `transport/`: the JSON-RPC/UDS seam.
+  - L3 `engine/`: the turn pipeline.
+  - L4 `extensions/`: ideas, packets, friction and Linear behind the Extension
+    interface.
+  - L5 `server/`: the engine's composition root and one RPC module per
+    namespace. L5 `cli/`: the `dyfj` client.
+
+  Some modules still sit at the top of `prototype/src/`, each mapped to its
+  target layer by name in `scripts/arch-layers.json`: the ACP runner
+  (`acp-client.ts`, `acp-session-map.ts`, `external-agent-runtime.ts`),
+  whose move is deferred; the interactive REPL (`cli.ts`), which the Rust
+  client in `core/dyfj-repl` replaces; the memory and external-MCP tool
+  modules; `secrets.ts`, `utils.ts` and `runtime-sigint.ts`; and four
+  diagnostics (`diagnostics` in the layer table). `prototype/mcp/` is the stdio memory MCP server over
+  the same store. `prototype/testing/` holds the shared fakes, builders,
+  conformance kits and the golden characterization suite.
+  `prototype/README.md` describes each directory in full.
+- `specs/` - the phase-1 restructuring specifications: architecture, data
+  layer, testing, PRDs, work orders, extension recipes, and the bug log.
+- `scripts/` - the repository-owned aggregate gate (`deno task test`) and its
+  policy checks.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `contracts/` - versioned semantic contract packages: JSON Schema plus
   repository-owned validators and synthetic fixtures that state domain,
@@ -1250,13 +1280,27 @@ Things that exist as boxes on a diagram.
     (grep, LSP, AST, glob)
 - **Memory abstraction.** First-class subsystem, not a bolt-on. Distinct from
   the immutable log. Queryable, evictable, scoped, explicitly reasoned about.
-- **Workbench runtime boundary.** Shared single-turn runtime invoked by the
-  `dyfj` CLI over the JSON-RPC/UDS seam — every transport runs the identical
-  turn through one shared core (the engine's turn entry,
-  `prototype/src/engine/turn.ts`), not a per-transport copy.
-  Presentation layers pass inputs and render results; the runtime owns model
-  routing, command/tool execution, session/event writes, budget tracking, and
-  receipt facts.
+- **Workbench runtime boundary.** One engine process runs every turn through
+  one pipeline. Clients reach it only over the JSON-RPC/UDS seam
+  (`prototype/src/transport/`): the `dyfj` CLI (`prototype/src/cli/`) and the
+  Rust REPL in `core/dyfj-repl`. Every transport runs the identical turn
+  through the engine's turn entry (`prototype/src/engine/turn.ts`), not a
+  per-transport copy. `prototype/src/server/main.ts` is the single
+  composition root. It builds the store, the tool catalog, the provider
+  registry, the session owners and the extensions, and wires one RPC module
+  per namespace (`server/rpc/`). A native turn runs as staged steps over an
+  engine-owned turn state: `openSession`, `buildContext`, `budgetGate`,
+  `loadTranscript`, `agentLoop`, `finalize`. Each session's turn lock, budget
+  scope and cancel signal have one writer (`SessionOwners`). A turn calls
+  back to its caller only through declared ports: the approver, the frame
+  sink and its cancellation window. Durable writes go through the store's
+  one mutation path, `journal.commit`. Optional features (ideas, packets,
+  friction, Linear) sit behind the Extension interface, and nothing below
+  `server/` and `cli/` imports them. Presentation layers pass inputs and
+  render results; the runtime owns model routing, command/tool execution,
+  session/event writes, budget tracking, and receipt facts. The layers, from
+  L0 `kernel/` up to L5 `server/` and `cli/`, and their allowed edges are in
+  `specs/01-architecture.md` §3; the `arch.imports` gate lane enforces them.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable,
   versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool
@@ -1711,3 +1755,8 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-30 - The gate description covers the test lanes' deadlines, the
   runners' token carrier, own-group stop and backstop, and the gate's recovery of an orphaned
   lane group, replacing the note that the lanes had no bound yet.
+- 2026-09-30 - Repo layout and §6.2 "Workbench runtime boundary" describe the
+  layered `prototype/src/` directory architecture: the layers and what each
+  holds, the modules not yet moved, the single composition root, the staged
+  turn pipeline, single-writer session ownership, the one store mutation path
+  and the Extension boundary. Repo layout adds `specs/` and `scripts/`.
