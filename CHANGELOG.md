@@ -193,6 +193,14 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The aggregate gate reports every failing lane.** A failing lane no longer
+  stops `deno task test` or `deno task test:fast`: every remaining lane still
+  runs, and the gate ends by listing each lane that failed (`✗ N of M lanes
+  failed:`, one lane per line) before its `gate-status` line. The exit code is
+  unchanged: it is still the first failing lane's code (124 past a deadline,
+  127 for a lane that could not start). Only an interruption stops the gate
+  early, and one that arrives after a failure keeps that failure's code.
+
 - **The isolated-Dolt integration lane runs with the op and resource
   sanitizers**, so a test there that leaks an op, a timer, a resource or a
   child process fails at that test. The two test-side leaks this found are

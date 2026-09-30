@@ -975,7 +975,10 @@ Every scan diagnostic is value-free — rule id, path, and line only, never the
 matched content — and the gate ends with one bounded machine-readable
 `gate-status` JSON line listing each check id and result; a required check that
 failed, was unavailable, or did not run can never compose into a passing status,
-and interruption is reported distinctly from failure. The `gate-status` line is
+and interruption is reported distinctly from failure. A failing lane does not
+stop the gate: every lane still runs, the gate lists each lane that failed
+before the `gate-status` line, and it exits with the first failing lane's code;
+only an interruption stops it early. The `gate-status` line is
 a bounded diagnostic of this run's checks, not an assurance receipt, and
 validating the receipt schema generates no receipt. These are pipeline assurance
 checks for this repository only: a green gate grants no Workbench runtime
