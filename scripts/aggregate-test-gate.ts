@@ -518,9 +518,14 @@ async function writeLaneRecord(
 ): Promise<string | undefined> {
   if (dir === undefined || !laneProcessGroups) return undefined;
   const path = `${dir}/${record.token}.json`;
+  // Written under another name and renamed into place, so a concurrent
+  // gate's recovery, which reads only `*.json`, never sees a partial record
+  // and drops it as malformed.
+  const partial = `${path}.partial`;
   try {
     await Deno.mkdir(dir, { recursive: true });
-    await Deno.writeTextFile(path, JSON.stringify(record));
+    await Deno.writeTextFile(partial, JSON.stringify(record));
+    await Deno.rename(partial, path);
     return path;
   } catch {
     return undefined; // Best effort: recovery is lost, the lane still runs.

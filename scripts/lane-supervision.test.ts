@@ -461,3 +461,24 @@ Deno.test({
     });
   },
 });
+
+Deno.test({
+  name: "recovery leaves a record still being written alone",
+  ignore: !posix,
+  async fn() {
+    await withDir(async (dir) => {
+      // A concurrent gate's record mid-write: empty, under its partial name.
+      await Deno.mkdir(`${dir}/records`);
+      const partial = `${dir}/records/${crypto.randomUUID()}.json.partial`;
+      await Deno.writeTextFile(partial, "");
+
+      await recoverOrphanedLaneGroups(`${dir}/records`, quiet);
+
+      assert(
+        (await readFile(partial)) === undefined &&
+          (await Deno.stat(partial)).isFile,
+        "a partial record should be left in place",
+      );
+    });
+  },
+});
