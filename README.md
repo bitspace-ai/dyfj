@@ -1704,4 +1704,4 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-30 - `specs/notes/test-supervision-evidence.md` corrects its list of
   what integration-lane sanitizers flag: the Unix-connection leaks were a product
   leak, since fixed, and the secrets-resolver timeout case, which leaks by
-  design and runs with sanitizers off, was missing.
+  design, was missing.

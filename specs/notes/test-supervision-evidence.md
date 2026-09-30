@@ -129,8 +129,8 @@ and the secrets-resolver case was missed.)
 - `src/secrets.integration.test.ts`: the resolver-timeout case leaves an output
   read pending. This is by design: on timeout the resolver stops awaiting a
   stuck child's output so it can never hold the boot, and the case's `sleep`
-  grandchild keeps the pipes open for about 5 s. That case runs with both
-  sanitizers off and a comment saying why.
+  grandchild keeps the pipes open for about 5 s. When the lane turns sanitizers
+  on, that case runs with both off and a comment saying why.
 
 The ACP client, session-map, external-agent-runtime, launcher, launch-grant,
 repo-context and `deno.json` task integration files already pass under both
