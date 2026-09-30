@@ -9,6 +9,7 @@ import {
   fastLanes,
   type GateLane,
   INHERITED_ENVIRONMENT_NAMES,
+  LANE_DEADLINE_EXIT_CODE,
   LANE_DEADLINES_MS,
   laneDeadlineMs,
   type LaneOutcome,
@@ -769,6 +770,47 @@ Deno.test("aggregate gate runs every lane and reports every failure", async () =
   if (logs.includes("✓ aggregate test gate passed")) {
     throw new Error("a failing run claimed success");
   }
+});
+
+Deno.test("a lane past its deadline is reported and later lanes still run", async () => {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const code = await runGate({
+    lanes: [
+      {
+        label: "hanging lane",
+        command: Deno.execPath(),
+        args: [
+          "eval",
+          "await new Promise((resolve) => setTimeout(resolve, 30_000))",
+        ],
+        deadlineMs: 500,
+      },
+      {
+        label: "later lane",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(0)"],
+      },
+      {
+        label: "failing lane",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(5)"],
+      },
+    ],
+    out: { log: (s) => logs.push(s), error: (s) => errors.push(s) },
+  });
+
+  // The deadline lane failed first, so its code is the gate's.
+  assertEquals(code, LANE_DEADLINE_EXIT_CODE);
+  assertStringIncludes(errors.join("\n"), "hanging lane: failure");
+  assertStringIncludes(errors.join("\n"), "s deadline");
+  assertStringIncludes(logs.join("\n"), "✓ later lane: success");
+  const summary = errors.indexOf("✗ 2 of 3 lanes failed:");
+  if (summary === -1) throw new Error("gate did not summarize its failures");
+  assertEquals(errors.slice(summary + 1, summary + 3), [
+    "  - hanging lane",
+    "  - failing lane",
+  ]);
 });
 
 Deno.test("a lane that cannot start is reported and later lanes still run", async () => {
