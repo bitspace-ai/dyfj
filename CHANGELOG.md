@@ -198,7 +198,7 @@ README are tracked separately in its Revision history section.
   unless `scripts/arch-size-exceptions.json` names it with its reason and the
   size it may not exceed. An excepted module or function may shrink but not
   grow, and an exception for one back under its limit must be removed. The
-  file starts with 21 entries: the ACP runner (deferred with its
+  file starts with 22 entries: the ACP runner (deferred with its
   restructuring), the interactive REPL (being replaced by the Rust client),
   and the file tools, web tools, idea/packet domain, OpenAI-compatible stream
   and adapter, MCP and secrets config parsers, external MCP commands and the

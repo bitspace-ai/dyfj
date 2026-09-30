@@ -13,6 +13,13 @@
     "reason": "Deferred with the ACP runner's restructuring (decision D20; WO-18 moves it to runners/acp/)."
   },
   {
+    "kind": "function",
+    "path": "prototype/src/acp-client.ts",
+    "name": "#start",
+    "lines": 221,
+    "reason": "Deferred with the ACP runner's restructuring (decision D20; WO-18 moves it to runners/acp/)."
+  },
+  {
     "kind": "module",
     "path": "prototype/src/external-agent-runtime.ts",
     "lines": 1753,

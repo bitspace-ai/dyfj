@@ -202,8 +202,11 @@ export function tokenize(source: string): Token[] {
       i = scanRegex(source, i);
       continue;
     }
-    if (isIdStart(ch)) {
+    // A private name (`#start`) is one identifier, so a private method's
+    // declaration reads like any other method's.
+    if (isIdStart(ch) || (ch === "#" && isIdStart(source[i + 1] ?? ""))) {
       const start = i;
+      if (ch === "#") i++;
       while (i < source.length && isIdPart(source[i]!)) i++;
       tokens.push({ kind: "id", value: source.slice(start, i), line });
       continue;

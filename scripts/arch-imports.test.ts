@@ -647,6 +647,23 @@ Deno.test("function spans cover declarations, methods, and arrows", () => {
   );
 });
 
+Deno.test("private methods are spans; calls to them are not", () => {
+  const spans = functionSpans([
+    "class A {",
+    "  async #start(x) {",
+    "    a();",
+    "  }",
+    "  run() {",
+    "    this.#start(1);",
+    "  }",
+    "}",
+  ].join("\n"));
+  assertEquals(
+    spans.map((s) => [s.name, s.startLine, s.endLine]),
+    [["#start", 2, 4], ["run", 5, 7]],
+  );
+});
+
 Deno.test("the size report lists long modules and long functions", () => {
   const long = `function big() {\n${"  work();\n".repeat(150)}}\n`;
   const report = sizeReport(
