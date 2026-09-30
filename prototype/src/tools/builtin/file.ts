@@ -27,6 +27,10 @@ import {
   RegexUnavailable,
 } from "../../kernel/mod.ts";
 import type { CommandDefinition } from "../definition.ts";
+import {
+  type WorkspaceRoot,
+  WorkspaceRootChangedError,
+} from "./root-anchors.ts";
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
 const DEFAULT_MAX_ENTRIES = 500;
@@ -49,14 +53,6 @@ const HARD_MAX_FILE_BYTES = 4 * 1024 * 1024;
  * knows which workspace-relative path it asked about; the class of failure is
  * the only part worth adding.
  */
-/** The anchored workspace root no longer matches what the path resolves to. */
-export class WorkspaceRootChangedError extends Error {
-  constructor() {
-    super("workspace root identity changed; refusing to proceed");
-    this.name = "WorkspaceRootChangedError";
-  }
-}
-
 export function safeErrorReason(err: unknown): string {
   if (err instanceof WorkspaceRootChangedError) {
     return "workspace root identity changed";
@@ -73,49 +69,6 @@ export function safeErrorReason(err: unknown): string {
 }
 
 /**
- * The workspace root's identity, anchored on first use and verified on every
- * subsequent one.
- *
- * Every executor used to re-canonicalize the root PATHNAME per call and trust
- * whatever it resolved to — so renaming the workspace directory away and
- * placing another directory (or a symlink) at the same path silently redefined
- * the auto-approved read boundary: the replacement became the root, and the
- * search tools would recursively enumerate and read it without a prompt. The
- * anchor pins the canonical path and, where the platform reports it, the
- * directory's (dev, ino) identity, the first time a tool touches the root;
- * every later call re-resolves and must match or fails closed with a path-free
- * error. First use is when trust begins — a replacement before any tool has
- * run is indistinguishable from configuration — and the verify-then-use gap is
- * narrowed, not closed, like every other pathname race in this file. On
- * platforms reporting null dev/ino the anchor holds the canonical path alone,
- * a weaker pin, stated rather than hidden.
- */
-const rootAnchors = new Map<
-  string,
-  { real: string; dev: number | null; ino: number | null }
->();
-
-async function verifiedRootReal(root: string): Promise<string> {
-  const key = resolve(root);
-  const real = await Deno.realPath(key);
-  const info = await Deno.lstat(real);
-  const anchor = rootAnchors.get(key);
-  if (anchor === undefined) {
-    rootAnchors.set(key, { real, dev: info.dev, ino: info.ino });
-    return real;
-  }
-  const identityHolds = anchor.dev === null || anchor.ino === null
-    ? anchor.real === real
-    : anchor.real === real && anchor.dev === info.dev &&
-      anchor.ino === info.ino;
-  if (!identityHolds) {
-    throw new WorkspaceRootChangedError();
-  }
-  return real;
-}
-
-
-/**
  * Re-verify the root anchor after a call's filesystem work, before its results
  * are returned. The entry check rejects a replacement already in place when
  * the call starts; this exit check rejects one that arrived mid-call. What
@@ -123,18 +76,15 @@ async function verifiedRootReal(root: string): Promise<string> {
  * verifications — the unavoidable pathname race, retained and stated rather
  * than claimed away. Returns an `error: …` string, or null when the root held.
  */
-async function rootStillAnchored(root: string): Promise<string | null> {
+async function rootStillAnchored(
+  root: WorkspaceRoot,
+): Promise<string | null> {
   try {
-    await verifiedRootReal(root);
+    await root.verify();
     return null;
   } catch (err) {
     return `error: ${safeErrorReason(err)}`;
   }
-}
-
-/** Test-only: forget an anchor so a temp root can be re-anchored. */
-export function resetRootAnchor(root: string): void {
-  rootAnchors.delete(resolve(root));
 }
 
 /**
@@ -163,7 +113,9 @@ export function resolveWorkspacePath(root: string, p: string): string {
   // with absolute inputs rejected above: `..` traversal resolves wherever it
   // resolves.
   if (rel.startsWith("..") || isAbsolute(rel)) {
-    throw new Error(`path escapes the workspace root: ${sanitizeOutputText(p)}`);
+    throw new Error(
+      `path escapes the workspace root: ${sanitizeOutputText(p)}`,
+    );
   }
   return abs;
 }
@@ -183,11 +135,12 @@ export function resolveWorkspacePath(root: string, p: string): string {
  * raise.
  */
 export async function executeReadFile(
-  root: string,
+  workspace: WorkspaceRoot,
   p: string,
   maxBytes = DEFAULT_MAX_BYTES,
   range: { offset?: number; limit?: number } = {},
 ): Promise<string> {
+  const root = workspace.path;
   const hasRange = range.offset !== undefined || range.limit !== undefined;
   const offset = range.offset ?? 1;
   if (hasRange && (!Number.isInteger(offset) || offset < 1)) {
@@ -207,7 +160,7 @@ export async function executeReadFile(
     return `error: ${(err as Error).message}`;
   }
   try {
-    const target = await containedRealPath(root, abs);
+    const target = await containedRealPath(workspace, abs);
     if (target === null) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
@@ -215,7 +168,7 @@ export async function executeReadFile(
     if (info.isDirectory) {
       return `error: ${sanitizeOutputText(p)} is a directory; use list_files`;
     }
-    const rootReal = await verifiedRootReal(root);
+    const rootReal = await workspace.verify();
     const read = await readContainedFile(target, HARD_MAX_FILE_BYTES, rootReal);
     if (!read.ok) {
       return `error: cannot read ${sanitizeOutputText(p)}: ${read.reason}`;
@@ -225,7 +178,7 @@ export async function executeReadFile(
     // count; placing the check any later would let an unverified root leak
     // that much.
     {
-      const rootLost = await rootStillAnchored(root);
+      const rootLost = await rootStillAnchored(workspace);
       if (rootLost !== null) return rootLost;
     }
     const full = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes);
@@ -233,9 +186,9 @@ export async function executeReadFile(
     if (hasRange) {
       const window = lineWindow(full, offset, range.limit);
       if (window === null) {
-        return `error: offset ${offset} is past end of ${sanitizeOutputText(p)} (${
-          countLines(full)
-        } lines)`;
+        return `error: offset ${offset} is past end of ${
+          sanitizeOutputText(p)
+        } (${countLines(full)} lines)`;
       }
       text = window.text;
       const more = window.totalLines - window.endLine;
@@ -250,9 +203,11 @@ export async function executeReadFile(
     }
     return text;
   } catch (err) {
-    const rootLost = await rootStillAnchored(root);
+    const rootLost = await rootStillAnchored(workspace);
     if (rootLost !== null) return rootLost;
-    return `error: cannot read ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
+    return `error: cannot read ${sanitizeOutputText(p)}: ${
+      safeErrorReason(err)
+    }`;
   }
 }
 
@@ -384,7 +339,10 @@ async function readContainedFile(
   if (before.isSymlink) return { ok: false, reason: "path is a symlink" };
   if (!before.isFile) return { ok: false, reason: "not a regular file" };
   if (before.ino === null || before.dev === null) {
-    return { ok: false, reason: "cannot verify file identity on this platform" };
+    return {
+      ok: false,
+      reason: "cannot verify file identity on this platform",
+    };
   }
   if (before.size > maxBytes) {
     return {
@@ -464,10 +422,10 @@ async function readContainedFile(
  * does not exist.
  */
 async function containedRealPath(
-  root: string,
+  workspace: WorkspaceRoot,
   abs: string,
 ): Promise<string | null> {
-  const rootReal = await verifiedRootReal(root);
+  const rootReal = await workspace.verify();
   const targetReal = await Deno.realPath(abs);
   return isWithinRoot(rootReal, targetReal) ? targetReal : null;
 }
@@ -486,10 +444,11 @@ export function isWithinRoot(rootReal: string, targetReal: string): boolean {
 
 /** List directory entries (one per line; directories suffixed with /). */
 export async function executeListFiles(
-  root: string,
+  workspace: WorkspaceRoot,
   p = ".",
   maxEntries = DEFAULT_MAX_ENTRIES,
 ): Promise<string> {
+  const root = workspace.path;
   let abs: string;
   try {
     abs = resolveWorkspacePath(root, p);
@@ -498,7 +457,7 @@ export async function executeListFiles(
     return `error: ${(err as Error).message}`;
   }
   try {
-    const target = await containedRealPath(root, abs);
+    const target = await containedRealPath(workspace, abs);
     if (target === null) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
@@ -506,7 +465,7 @@ export async function executeListFiles(
     for await (const entry of Deno.readDir(target)) {
       entries.push(entry.isDirectory ? `${entry.name}/` : entry.name);
     }
-    const rootLost = await rootStillAnchored(root);
+    const rootLost = await rootStillAnchored(workspace);
     if (rootLost !== null) return rootLost;
     if (entries.length === 0) return "(empty directory)";
     entries.sort();
@@ -518,9 +477,11 @@ export async function executeListFiles(
     }
     return entries.join("\n");
   } catch (err) {
-    const rootLost = await rootStillAnchored(root);
+    const rootLost = await rootStillAnchored(workspace);
     if (rootLost !== null) return rootLost;
-    return `error: cannot list ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
+    return `error: cannot list ${sanitizeOutputText(p)}: ${
+      safeErrorReason(err)
+    }`;
   }
 }
 
@@ -534,7 +495,7 @@ export async function executeListFiles(
  * through operator approval, so the executor itself never runs unapproved.
  */
 export async function executeWriteFile(
-  root: string,
+  workspace: WorkspaceRoot,
   p: string,
   content: string,
   // Injectable for tests: the scoped test sandbox forbids creating real symlinks
@@ -542,6 +503,7 @@ export async function executeWriteFile(
   // with a fake lstat. The real OS symlink-follow escape is Codex-PoC-verified.
   lstat: (path: string) => Promise<{ isSymlink: boolean }> = Deno.lstat,
 ): Promise<string> {
+  const root = workspace.path;
   let abs: string;
   try {
     abs = resolveWorkspacePath(root, p);
@@ -550,7 +512,7 @@ export async function executeWriteFile(
     return `error: ${(err as Error).message}`;
   }
   try {
-    const rootReal = await verifiedRootReal(root);
+    const rootReal = await workspace.verify();
     const parentReal = await Deno.realPath(dirname(abs));
     if (!isWithinRoot(rootReal, parentReal)) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
@@ -562,11 +524,15 @@ export async function executeWriteFile(
     try {
       const targetInfo = await lstat(abs);
       if (targetInfo.isSymlink) {
-        return `error: refusing to write through a symlink: ${sanitizeOutputText(p)}`;
+        return `error: refusing to write through a symlink: ${
+          sanitizeOutputText(p)
+        }`;
       }
     } catch (err) {
       if (!(err instanceof Deno.errors.NotFound)) {
-        return `error: cannot write ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
+        return `error: cannot write ${sanitizeOutputText(p)}: ${
+          safeErrorReason(err)
+        }`;
       }
       // NotFound — the target does not exist yet; the parent containment governs.
     }
@@ -575,7 +541,9 @@ export async function executeWriteFile(
     // a payload-size signal into the event log + session replay (CWE-532).
     return `wrote ${sanitizeOutputText(p)}`;
   } catch (err) {
-    return `error: cannot write ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
+    return `error: cannot write ${sanitizeOutputText(p)}: ${
+      safeErrorReason(err)
+    }`;
   }
 }
 
@@ -589,12 +557,13 @@ export async function executeWriteFile(
  * approval, so the executor never runs unapproved.
  */
 export async function executeEditFile(
-  root: string,
+  workspace: WorkspaceRoot,
   p: string,
   oldString: string,
   newString: string,
   lstat: (path: string) => Promise<{ isSymlink: boolean }> = Deno.lstat,
 ): Promise<string> {
+  const root = workspace.path;
   if (oldString === "") {
     return `error: oldString must be non-empty`;
   }
@@ -610,7 +579,7 @@ export async function executeEditFile(
   }
   let text: string;
   try {
-    const target = await containedRealPath(root, abs);
+    const target = await containedRealPath(workspace, abs);
     if (target === null) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
@@ -623,20 +592,26 @@ export async function executeEditFile(
     if (err instanceof Deno.errors.NotFound) {
       return `error: cannot edit ${sanitizeOutputText(p)}: file not found`;
     }
-    return `error: cannot read ${sanitizeOutputText(p)}: ${safeErrorReason(err)}`;
+    return `error: cannot read ${sanitizeOutputText(p)}: ${
+      safeErrorReason(err)
+    }`;
   }
   const first = text.indexOf(oldString);
   if (first === -1) {
     return `error: oldString not found in ${sanitizeOutputText(p)}`;
   }
   if (text.indexOf(oldString, first + oldString.length) !== -1) {
-    return `error: oldString is not unique in ${sanitizeOutputText(p)}; add more surrounding context`;
+    return `error: oldString is not unique in ${
+      sanitizeOutputText(p)
+    }; add more surrounding context`;
   }
   const updated = text.slice(0, first) + newString +
     text.slice(first + oldString.length);
-  const writeResult = await executeWriteFile(root, p, updated, lstat);
+  const writeResult = await executeWriteFile(workspace, p, updated, lstat);
   // executeWriteFile returns "wrote <p>" on success or "error: …" on failure.
-  return writeResult.startsWith("error:") ? writeResult : `edited ${sanitizeOutputText(p)}`;
+  return writeResult.startsWith("error:")
+    ? writeResult
+    : `edited ${sanitizeOutputText(p)}`;
 }
 
 // ── Search affordances ───────────────────────────────────────────────────────
@@ -1210,11 +1185,12 @@ export function excludedSegment(
  * with it.
  */
 async function searchRoot(
-  root: string,
+  workspace: WorkspaceRoot,
   sub: string,
 ): Promise<
   { rootReal: string; startReal: string; startSegments: string[] } | string
 > {
+  const root = workspace.path;
   // Checked before resolveWorkspacePath so the catch below — which echoes
   // `sub` for ordinary failures — never gets the chance to echo an absolute
   // path into the result and transcript.
@@ -1223,10 +1199,12 @@ async function searchRoot(
   }
   try {
     const abs = resolveWorkspacePath(root, sub);
-    const rootReal = await verifiedRootReal(root);
-    const contained = await containedRealPath(root, abs);
+    const rootReal = await workspace.verify();
+    const contained = await containedRealPath(workspace, abs);
     if (contained === null) {
-      return `error: path escapes the workspace root: ${sanitizeOutputText(sub)}`;
+      return `error: path escapes the workspace root: ${
+        sanitizeOutputText(sub)
+      }`;
     }
     const excluded = excludedSegment(rootReal, contained);
     if (excluded !== null) {
@@ -1240,7 +1218,9 @@ async function searchRoot(
     const startSegments = startRel === "" ? [] : startRel.split(sep);
     return { rootReal, startReal: contained, startSegments };
   } catch (err) {
-    return `error: cannot search ${sanitizeOutputText(sub)}: ${safeErrorReason(err)}`;
+    return `error: cannot search ${sanitizeOutputText(sub)}: ${
+      safeErrorReason(err)
+    }`;
   }
 }
 
@@ -1318,7 +1298,7 @@ export function sanitizeOutputPathField(p: string): string {
  * to the workspace root. Returns `path:line:text` rows.
  */
 export async function executeGrepFiles(
-  root: string,
+  workspace: WorkspaceRoot,
   pattern: string,
   options: {
     path?: string;
@@ -1381,7 +1361,7 @@ export async function executeGrepFiles(
   );
   const sub = options.path === undefined ? "." : options.path;
 
-  const start = await searchRoot(root, sub);
+  const start = await searchRoot(workspace, sub);
   if (typeof start === "string") {
     matcher.close();
     return start;
@@ -1443,7 +1423,9 @@ export async function executeGrepFiles(
         skippedBinary++;
         continue;
       }
-      const text = new TextDecoder("utf-8", { fatal: false }).decode(read.bytes);
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(
+        read.bytes,
+      );
 
       // Lines are walked and matched in chunks rather than split up front. A
       // 4 MiB file of newlines splits into four million strings — built, held,
@@ -1499,7 +1481,7 @@ export async function executeGrepFiles(
     matcher.close();
   }
 
-  const rootLost = await rootStillAnchored(root);
+  const rootLost = await rootStillAnchored(workspace);
   if (rootLost !== null) return rootLost;
   if (matcherError !== null) return matcherError;
   if (rows.length === 0 && budgetExhausted) {
@@ -1544,7 +1526,7 @@ export async function executeGrepFiles(
 
 /** Find workspace-relative file paths matching a glob pattern. */
 export async function executeGlobFiles(
-  root: string,
+  workspace: WorkspaceRoot,
   pattern: string,
   options: {
     path?: string;
@@ -1568,7 +1550,7 @@ export async function executeGlobFiles(
   );
   const sub = options.path === undefined ? "." : options.path;
 
-  const start = await searchRoot(root, sub);
+  const start = await searchRoot(workspace, sub);
   if (typeof start === "string") return start;
   const { rootReal, startReal, startSegments } = start;
 
@@ -1621,7 +1603,7 @@ export async function executeGlobFiles(
     resultBytes += relBytes;
     hits.push(emitted);
   }
-  const rootLost = await rootStillAnchored(root);
+  const rootLost = await rootStillAnchored(workspace);
   if (rootLost !== null) return rootLost;
   const notes: string[] = [];
   if (truncated) notes.push(`result limit ${maxResults} reached`);
@@ -1642,7 +1624,9 @@ export async function executeGlobFiles(
 
 // ── Command definitions ──────────────────────────────────────────────────────
 
-export function defineReadFile(root: string): CommandDefinition<string> {
+export function defineReadFile(
+  workspace: WorkspaceRoot,
+): CommandDefinition<string> {
   return {
     id: "read_file",
     title: "Read File",
@@ -1679,7 +1663,7 @@ export function defineReadFile(root: string): CommandDefinition<string> {
       cost: "none",
     },
     executor: (call) =>
-      executeReadFile(root, String(call.arguments.path), undefined, {
+      executeReadFile(workspace, String(call.arguments.path), undefined, {
         offset: call.arguments.offset === undefined
           ? undefined
           : Number(call.arguments.offset),
@@ -1690,7 +1674,9 @@ export function defineReadFile(root: string): CommandDefinition<string> {
   };
 }
 
-export function defineListFiles(root: string): CommandDefinition<string> {
+export function defineListFiles(
+  workspace: WorkspaceRoot,
+): CommandDefinition<string> {
   return {
     id: "list_files",
     title: "List Files",
@@ -1718,13 +1704,15 @@ export function defineListFiles(root: string): CommandDefinition<string> {
     },
     executor: (call) =>
       executeListFiles(
-        root,
+        workspace,
         call.arguments.path === undefined ? "." : String(call.arguments.path),
       ),
   };
 }
 
-export function defineGrepFiles(root: string): CommandDefinition<string> {
+export function defineGrepFiles(
+  workspace: WorkspaceRoot,
+): CommandDefinition<string> {
   return {
     id: "grep_files",
     title: "Search File Contents",
@@ -1779,7 +1767,7 @@ export function defineGrepFiles(root: string): CommandDefinition<string> {
       cost: "none",
     },
     executor: (call) =>
-      executeGrepFiles(root, String(call.arguments.pattern), {
+      executeGrepFiles(workspace, String(call.arguments.pattern), {
         path: call.arguments.path === undefined
           ? undefined
           : String(call.arguments.path),
@@ -1793,7 +1781,9 @@ export function defineGrepFiles(root: string): CommandDefinition<string> {
   };
 }
 
-export function defineGlobFiles(root: string): CommandDefinition<string> {
+export function defineGlobFiles(
+  workspace: WorkspaceRoot,
+): CommandDefinition<string> {
   return {
     id: "glob_files",
     title: "Find Files By Pattern",
@@ -1830,7 +1820,7 @@ export function defineGlobFiles(root: string): CommandDefinition<string> {
       cost: "none",
     },
     executor: (call) =>
-      executeGlobFiles(root, String(call.arguments.pattern), {
+      executeGlobFiles(workspace, String(call.arguments.pattern), {
         path: call.arguments.path === undefined
           ? undefined
           : String(call.arguments.path),
@@ -1838,7 +1828,9 @@ export function defineGlobFiles(root: string): CommandDefinition<string> {
   };
 }
 
-export function defineWriteFile(root: string): CommandDefinition<string> {
+export function defineWriteFile(
+  workspace: WorkspaceRoot,
+): CommandDefinition<string> {
   return {
     id: "write_file",
     title: "Write File",
@@ -1876,14 +1868,16 @@ export function defineWriteFile(root: string): CommandDefinition<string> {
     },
     executor: (call) =>
       executeWriteFile(
-        root,
+        workspace,
         String(call.arguments.path),
         String(call.arguments.content),
       ),
   };
 }
 
-export function defineEditFile(root: string): CommandDefinition<string> {
+export function defineEditFile(
+  workspace: WorkspaceRoot,
+): CommandDefinition<string> {
   return {
     id: "edit_file",
     title: "Edit File",
@@ -1926,7 +1920,7 @@ export function defineEditFile(root: string): CommandDefinition<string> {
     },
     executor: (call) =>
       executeEditFile(
-        root,
+        workspace,
         String(call.arguments.path),
         String(call.arguments.old_string),
         String(call.arguments.new_string),

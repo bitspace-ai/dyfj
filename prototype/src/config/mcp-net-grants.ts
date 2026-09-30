@@ -1,4 +1,4 @@
-import type { McpHttpServerConfig } from "./config/mod.ts";
+import type { McpHttpServerConfig } from "./mcp-servers.ts";
 
 // Keep launch authority derivation dependency-light: the thin CLI must not
 // import the external-tool runtime and its engine dependencies.
@@ -41,7 +41,9 @@ export function validateDoltPort(rawPort?: unknown): number {
   }
   let portNumber: number;
   if (typeof rawPort === "string") {
-    if (rawPort.length === 0 || rawPort.length > 5 || !/^[0-9]+$/.test(rawPort)) {
+    if (
+      rawPort.length === 0 || rawPort.length > 5 || !/^[0-9]+$/.test(rawPort)
+    ) {
       throw new Error(INVALID_DOLT_PORT_DIAGNOSTIC);
     }
     portNumber = Number(rawPort);

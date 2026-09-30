@@ -1733,3 +1733,6 @@ Document revisions only. Code and behavior changes are tracked in
   the gate: every lane runs, the failed lanes are listed, and the exit code is
   the first failing lane's; a run interrupted after a failure reads
   `interrupted`.
+- 2026-09-30 - `specs/01-architecture.md` §5.7 lists the file tools' root
+  anchors and the regex worker's URL among the module-level state moved under
+  an owner, and `specs/bug-log.md` records the root-anchor entry as fixed.

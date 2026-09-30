@@ -278,6 +278,7 @@ async function buildCompanionContext(
   const toolPorts: ToolCatalogPorts = {
     readMemory: (slug) => executeReadMemory(memories, slug, clearance),
     searchMemory: memoryRecall(state, input, ports),
+    rootAnchors: ports.rootAnchors,
   };
   state.commandRegistry = buildToolCatalog(
     toolPorts,

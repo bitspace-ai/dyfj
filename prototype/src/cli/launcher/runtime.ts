@@ -3,8 +3,11 @@
  * `grants.ts`, from a trusted prototype root.
  */
 
-import { processEnv, readNameserverNetGrants } from "../../config/mod.ts";
-import { mcpServerNetGrants } from "../../mcp-net-grants.ts";
+import {
+  mcpServerNetGrants,
+  processEnv,
+  readNameserverNetGrants,
+} from "../../config/mod.ts";
 import { secretsRunGrant } from "../../secrets.ts";
 import type { CliConfig } from "../args.ts";
 import { denoTurnInterruptSource } from "../io.ts";
