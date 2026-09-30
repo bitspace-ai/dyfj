@@ -178,9 +178,8 @@ export interface McpClientOptions {
 export async function createMcpClient(
   options: McpClientOptions,
 ): Promise<{ client: Client; transport: StreamableHTTPClientTransport }> {
-  // SDK imported lazily: modules that reach this one must load under the
-  // Vitest runner without pulling in the SDK. The SDK is only needed when a
-  // connection is actually made under the Deno runtime.
+  // SDK imported lazily: modules that reach this one load without pulling in
+  // the SDK, which is only needed when a connection is actually made.
   const { Client, StreamableHTTPClientTransport } = await import(
     "@modelcontextprotocol/client"
   );

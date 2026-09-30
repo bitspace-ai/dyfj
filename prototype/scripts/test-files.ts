@@ -2,28 +2,18 @@
 // test files each test lane runs. Every list is derived by walking the tree,
 // never hand-maintained, so a new module or test is covered on arrival.
 //
-// During the Vitest-to-`Deno.test` transition both frameworks share the
-// `*.test.ts` naming, so a test file's framework is read from its imports: a
-// file whose static imports reach `vitest`, directly or through a helper
-// module, belongs to the Vitest lane, anything else is a `Deno.test` file. The
-// imports come from `deno info --json` (the deno_graph parser Deno itself
-// uses), not from scanning the source text, so import-shaped text in strings,
-// template literals or comments never counts.
-// Integration files (`*.integration.test.ts`) and the golden suite
-// (`testing/golden/`) have their own lanes and are never unit tests.
-
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { selectedDenoExecutable } from "./deno-executable.ts";
+// The tier is decided by file name (`specs/03-testing.md` §3): integration
+// files (`*.integration.test.ts`) run in the integration lane, the golden suite
+// (`testing/golden/`) has its own lane, and every other `*.test.ts` is a unit
+// test.
 
 export const SOURCE_ROOTS = ["src", "mcp", "scripts", "testing"] as const;
 
-const ignoredDirectories = new Set([".git", ".vitest-tmp", "node_modules"]);
+const ignoredDirectories = new Set([".git", "node_modules"]);
 const typeScriptSourcePattern = /\.[cm]?tsx?$/;
 const declarationPattern = /\.d\.[cm]?ts$/;
 const testSourcePattern = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const integrationTestPattern = /\.integration\.(?:test|spec)\.[cm]?[jt]sx?$/;
-const vitestSpecifierPattern = /^(?:npm:)?vitest(?:@[^/]*)?(?:\/.*)?$/;
 const goldenDirectory = "testing/golden/";
 
 export function isTestSource(path: string): boolean {
@@ -39,135 +29,6 @@ export function isTypecheckSource(path: string): boolean {
     !declarationPattern.test(path) && !isTestSource(path);
 }
 
-export function isVitestSpecifier(specifier: string): boolean {
-  return vitestSpecifierPattern.test(specifier);
-}
-
-/** The subset of `deno info --json` output that classification reads. */
-export interface DenoInfoOutput {
-  modules: {
-    specifier: string;
-    error?: string;
-    dependencies?: {
-      specifier: string;
-      code?: { specifier?: string };
-      type?: { specifier?: string };
-      isDynamic?: boolean;
-    }[];
-  }[];
-}
-
-/**
- * The module URLs among `urls` whose static import graph reaches `vitest`
- * (value or type import, bare or `npm:` specifier), directly or through a
- * local helper module. A dynamic `import()` does not count. Fails closed: a
- * module missing from the graph, or one that did not parse, cannot be
- * classified and throws.
- */
-export function vitestModulesFromDenoInfo(
-  info: DenoInfoOutput,
-  urls: readonly string[],
-): Set<string> {
-  const byUrl = new Map(
-    info.modules.map((module) => [module.specifier, module]),
-  );
-  // Every module whose static imports reach `vitest`: start from the modules
-  // that import it directly and walk static import edges backwards, which
-  // also handles import cycles.
-  const importers = new Map<string, string[]>();
-  const reaching = new Set<string>();
-  for (const module of info.modules) {
-    for (const dependency of module.dependencies ?? []) {
-      if (dependency.isDynamic === true) continue;
-      if (isVitestSpecifier(dependency.specifier)) {
-        reaching.add(module.specifier);
-        continue;
-      }
-      const target = dependency.code?.specifier ?? dependency.type?.specifier;
-      if (target === undefined) continue;
-      importers.set(target, [
-        ...(importers.get(target) ?? []),
-        module.specifier,
-      ]);
-    }
-  }
-  const pending = [...reaching];
-  while (pending.length > 0) {
-    for (const importer of importers.get(pending.pop()!) ?? []) {
-      if (!reaching.has(importer)) {
-        reaching.add(importer);
-        pending.push(importer);
-      }
-    }
-  }
-  const vitest = new Set<string>();
-  for (const url of urls) {
-    const module = byUrl.get(url);
-    if (module === undefined) {
-      throw new Error(`cannot classify test file (not in graph): ${url}`);
-    }
-    if (module.error !== undefined) {
-      throw new Error(`cannot classify test file: ${module.error}`);
-    }
-    if (reaching.has(url)) vitest.add(url);
-  }
-  return vitest;
-}
-
-/**
- * A `data:` module that side-effect-imports each URL, so one `deno info` call
- * covers every file.
- */
-export function rootModule(urls: readonly string[]): string {
-  const source = urls.map((url) => `import ${JSON.stringify(url)};\n`).join("");
-  return `data:application/typescript,${encodeURIComponent(source)}`;
-}
-
-/**
- * Runs `deno info --json` over the given module URLs. Offline and
- * config-free: packages are not resolved, and a bare or `npm:` specifier is
- * still reported by name, which is all classification needs.
- */
-export function denoInfo(
-  urls: readonly string[],
-  deno: string = selectedDenoExecutable(),
-): DenoInfoOutput {
-  const output = new Deno.Command(deno, {
-    args: [
-      "info",
-      "--json",
-      "--no-remote",
-      "--no-npm",
-      "--no-config",
-      "--no-lock",
-      rootModule(urls),
-    ],
-    stdout: "piped",
-    stderr: "piped",
-  }).outputSync();
-  if (!output.success) {
-    throw new Error(
-      `deno info failed: ${new TextDecoder().decode(output.stderr).trim()}`,
-    );
-  }
-  return JSON.parse(new TextDecoder().decode(output.stdout));
-}
-
-/** The repository-relative test files among `files` that import `vitest`. */
-export function vitestTestFiles(
-  root: string,
-  files: readonly string[],
-): Set<string> {
-  if (files.length === 0) return new Set();
-  // Platform-aware: `root` may be relative, or a Windows path like `C:\\repo`.
-  const urlOf = new Map(
-    files.map((file) => [pathToFileURL(resolve(root, file)).href, file]),
-  );
-  const urls = [...urlOf.keys()];
-  const vitest = vitestModulesFromDenoInfo(denoInfo(urls), urls);
-  return new Set([...vitest].map((url) => urlOf.get(url)!));
-}
-
 export function testSourcesFromPaths(paths: readonly string[]): string[] {
   return paths.filter(isTestSource).sort();
 }
@@ -177,10 +38,14 @@ function isGoldenPath(path: string): boolean {
     path.includes(`/${goldenDirectory}`);
 }
 
-/** A `Deno.test` file that belongs in the `test.unit` lane. */
-export function isUnitTest(path: string, importsVitest: boolean): boolean {
-  return isTestSource(path) && !isIntegrationTest(path) &&
-    !isGoldenPath(path) && !importsVitest;
+/** A test file that belongs in the `test.unit` lane. */
+export function isUnitTest(path: string): boolean {
+  return isTestSource(path) && !isIntegrationTest(path) && !isGoldenPath(path);
+}
+
+/** A test file that belongs in the integration lane. */
+export function isIntegrationLaneTest(path: string): boolean {
+  return isIntegrationTest(path) && !isGoldenPath(path);
 }
 
 function walkSync(
@@ -228,18 +93,9 @@ export function discoverTestSources(root: string): string[] {
 }
 
 export function discoverUnitTests(root: string): string[] {
-  const tests = discoverTestSources(root);
-  const vitest = vitestTestFiles(root, tests);
-  return tests.filter((path) => isUnitTest(path, vitest.has(path)));
+  return discoverTestSources(root).filter(isUnitTest);
 }
 
-/**
- * Non-integration `Deno.test` files outside the golden suite are the unit
- * lane's; Vitest must not collect them. Golden files are excluded from Vitest
- * too, so this is every `*.test.ts` that does not import `vitest`.
- */
-export function discoverDenoTestSources(root: string): string[] {
-  const tests = discoverTestSources(root);
-  const vitest = vitestTestFiles(root, tests);
-  return tests.filter((path) => !vitest.has(path));
+export function discoverIntegrationTests(root: string): string[] {
+  return discoverTestSources(root).filter(isIntegrationLaneTest);
 }

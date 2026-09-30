@@ -15,8 +15,8 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url)).replace(
   "",
 );
 
-// Deno.test has no per-test timeout, so the two fixture-setup cases carry the
-// 30s bound they had under Vitest themselves: the deadline aborts setup
+// Deno.test has no per-test timeout, so the two fixture-setup cases carry a
+// 30s bound themselves: the deadline aborts setup
 // through the fixture's own signal, which fails the case instead of letting a
 // stalled `dolt` child hang the lane.
 const FIXTURE_CASE_DEADLINE_MS = 30_000;

@@ -261,15 +261,16 @@ async function stopChild(child: Child): Promise<void> {
   } catch {
     return;
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       child.status,
-      new Promise((_, reject) =>
-        setTimeout(
+      new Promise((_, reject) => {
+        timer = setTimeout(
           () => reject(new Error("shutdown timeout")),
           shutdownTimeoutMs,
-        )
-      ),
+        );
+      }),
     ]);
   } catch {
     try {
@@ -278,6 +279,9 @@ async function stopChild(child: Child): Promise<void> {
       // The process exited while the timeout elapsed.
     }
     await child.status.catch(() => undefined);
+  } finally {
+    // A child that exits in time must not leave the timeout pending.
+    clearTimeout(timer);
   }
 }
 

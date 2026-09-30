@@ -54,24 +54,6 @@ describe("addImportExtensions", () => {
     );
   });
 
-  it("covers Vitest module helpers, including a generic argument", () => {
-    const source = [
-      'vi.mock("./utils", () => ({}));',
-      "await vi.importActual<",
-      '  typeof import("./utils")',
-      '>("./utils");',
-    ].join("\n");
-    assertStrictEquals(
-      rewrite(source).source,
-      [
-        'vi.mock("./utils.ts", () => ({}));',
-        "await vi.importActual<",
-        '  typeof import("./utils.ts")',
-        '>("./utils.ts");',
-      ].join("\n"),
-    );
-  });
-
   it("leaves explicit extensions, packages, and non-import strings alone", () => {
     const source = [
       'import { a } from "./utils.ts";',

@@ -1,8 +1,7 @@
 // Typechecks a glob-derived file list (`scripts/test-files.ts`). `sources`
 // covers every non-test module under the source roots; `tests` covers every
-// test file of either framework. Both the `check` task and the aggregate gate
-// run this script, so there is no hand-maintained list to drift.
-import { assertIntegrationTestAssignments } from "./integration-test-assignment.ts";
+// test file. Both the `check` task and the aggregate gate run this script, so
+// there is no hand-maintained list to drift.
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import { discoverTestSources, discoverTypecheckSources } from "./test-files.ts";
 
@@ -17,9 +16,7 @@ export function parseTypecheckScope(args: readonly string[]): TypecheckScope {
 
 export function typecheckFiles(root: string, scope: TypecheckScope): string[] {
   if (scope === "sources") return discoverTypecheckSources(root);
-  const files = discoverTestSources(root);
-  assertIntegrationTestAssignments(files);
-  return files;
+  return discoverTestSources(root);
 }
 
 if (import.meta.main) {

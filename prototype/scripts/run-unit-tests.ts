@@ -9,6 +9,12 @@
 // them explicitly, and a test that leaks an async op, timer, or resource fails
 // at that test. A test may opt out only with a comment naming the leak and why
 // it is unavoidable (`specs/03-testing.md` §2).
+//
+// Given arguments (`deno task test:file <path>... [--filter <pattern>]`), it
+// runs those instead of the discovered files, under the same grants and
+// sanitizers, so a single unit test file can be iterated on without a full
+// typecheck. An integration file needs the integration lane's grants and
+// fixture, so it fails here on its first ungranted access.
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import { discoverUnitTests } from "./test-files.ts";
 
@@ -35,7 +41,7 @@ export function unitTestArgs(files: readonly string[]): string[] {
 
 if (import.meta.main) {
   const root = Deno.cwd();
-  const files = discoverUnitTests(root);
+  const files = Deno.args.length > 0 ? Deno.args : discoverUnitTests(root);
   if (files.length === 0) throw new Error("no unit test files found");
   const output = await new Deno.Command(selectedDenoExecutable(), {
     args: unitTestArgs(files),

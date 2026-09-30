@@ -29,14 +29,14 @@ import {
 import type { McpHttpServerConfig } from "../../config/mod.ts";
 import { ScriptedDnsResolver } from "../../../testing/fakes/scripted-dns-resolver.ts";
 
-/** Vitest `toThrow(regex)` equivalent: the thrown error's message must match. */
+/** The thrown error's message must match `pattern`. */
 function assertThrowsMatching(fn: () => unknown, pattern: RegExp): void {
   const err = assertThrows(fn);
   assert(err instanceof Error, "expected an Error to be thrown");
   assertMatch(err.message, pattern);
 }
 
-/** Vitest `rejects.toThrow(regex)` equivalent: the rejection message must match. */
+/** The rejection message must match `pattern`. */
 async function assertRejectsMatching(
   fn: () => unknown,
   pattern: RegExp,

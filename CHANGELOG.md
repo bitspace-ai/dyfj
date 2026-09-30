@@ -173,6 +173,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The isolated-Dolt integration lane runs with the op and resource
+  sanitizers**, so a test there that leaks an op, a timer, a resource or a
+  child process fails at that test. The two test-side leaks this found are
+  fixed: the isolated Dolt fixture clears its shutdown timeout once the server
+  exits, and the memory-recall UAT fixture test releases its child's pipes. The
+  secrets-resolver timeout case, where the resolver abandons a stuck child's
+  output by design, runs in a suite of its own with both sanitizers off and a
+  comment saying why.
+
+- **`deno task test` in `prototype/` is the typecheck plus `test.unit`.**
+  `deno task test:file <path>... [--filter <pattern>]` runs the named unit test
+  files under the unit lane's grants and sanitizers, without the full
+  typecheck.
+
 - **The ACP client, session-map, external-agent runtime and ACP runner tests
   run on `Deno.test` instead of Vitest**, with every case kept. Each file is
   split by tier: the pure cases stay in `acp-client.test.ts` (22),
@@ -747,6 +761,23 @@ README are tracked separately in its Revision history section.
   which the source states rather than hides.
 
 ### Removed
+
+- **Vitest is removed; `Deno.test` is the only test framework.** Gone:
+  `npm:vitest` and its locked packages, `vitest.config.ts`, the Vitest runner and
+  its process supervisor (`scripts/run-vitest.ts`,
+  `scripts/test-process-harness.ts`, `scripts/test-process-reaper.ts` and their
+  tests), the esbuild binary resolution, the `.vitest-tmp` directory, and the
+  gate's two Vitest lanes. The hand-maintained
+  `scripts/integration-test-assignment.ts` is deleted: the integration lane
+  runs every `*.integration.test.ts` it finds by name, and test files are no
+  longer classified by their imports. The ACP signal probe no longer appends a
+  `DYFJ_TEST_RUN_DIR` value to its arguments, and the config schema drops that
+  test key and the supervisor's tooling keys (`DYFJ_TEST_BOUND_SEC`,
+  `DYFJ_LOCK_TMP`, `DYFJ_LOCK_FILE`, `DYFJ_LOCK_RESULT`).
+  `scripts/add-import-extensions.ts` no longer rewrites Vitest module-helper
+  paths. The launcher tests' process-scan cleanup moves to
+  `testing/processes.ts`. The gate has no per-lane wall-clock bound until the
+  supervision that replaces the Vitest supervisor lands.
 
 - **Schema-drift fallbacks removed**: `events.bySession` (behind
   `events/query` and session history) no longer retries with NULL placeholders

@@ -417,14 +417,6 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
   },
   // ── test: set only by test harnesses ──
-  // Per-run temp directory the test supervisor passes to test processes.
-  {
-    key: "testRunDir",
-    envVar: "DYFJ_TEST_RUN_DIR",
-    domain: "test",
-    type: "string",
-    kind: "value",
-  },
   // Temp directory the isolated Dolt integration lane hands to the MCP tests.
   {
     key: "mcpTestTempDir",
@@ -439,37 +431,6 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     key: "udsTestSocketDir",
     envVar: "DYFJ_UDS_TEST_SOCKET_DIR",
     domain: "test",
-    type: "string",
-    kind: "value",
-  },
-  // ── tooling: read only by prototype/scripts (test-process-harness.ts) ──
-  // Wall-clock bound, in seconds, for a supervised Vitest run.
-  {
-    key: "testBoundSec",
-    envVar: "DYFJ_TEST_BOUND_SEC",
-    domain: "tooling",
-    type: "number",
-    kind: "value",
-  },
-  // The acquire-hold helper's temp directory, lock file and result path.
-  {
-    key: "lockTmp",
-    envVar: "DYFJ_LOCK_TMP",
-    domain: "tooling",
-    type: "string",
-    kind: "value",
-  },
-  {
-    key: "lockFile",
-    envVar: "DYFJ_LOCK_FILE",
-    domain: "tooling",
-    type: "string",
-    kind: "value",
-  },
-  {
-    key: "lockResult",
-    envVar: "DYFJ_LOCK_RESULT",
-    domain: "tooling",
     type: "string",
     kind: "value",
   },

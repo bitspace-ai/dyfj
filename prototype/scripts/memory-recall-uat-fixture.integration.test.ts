@@ -83,6 +83,9 @@ Deno.test("the executable UAT fixture serves strict modern recall", async () => 
       // The status assertion below reports an early fixture exit.
     }
     const status = await child.status;
+    // Release both pipes: stdout past the announced URL and the unread stderr.
+    await child.stdout.cancel().catch(() => {});
+    await child.stderr.cancel().catch(() => {});
     assert(status.success, "fixture did not shut down cleanly");
   }
 });

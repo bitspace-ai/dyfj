@@ -21,7 +21,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { reapPidsAndCommandsContaining } from "./test-process-harness.ts";
+import { reapPidsAndCommandsContaining } from "../testing/processes.ts";
 
 const LAUNCHER = new URL("./dyfj-launcher.sh", import.meta.url).pathname;
 const COMPILED_BIN = new URL("../dist/dyfj-bin", import.meta.url).pathname;

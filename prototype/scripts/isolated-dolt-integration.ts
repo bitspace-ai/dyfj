@@ -2,10 +2,9 @@ import {
   seedFixtureMemories,
   startIsolatedDoltFixture,
 } from "./isolated-dolt-fixture.ts";
-import { integrationTestAssignments } from "./integration-test-assignment.ts";
-import { resolveEsbuildBinary } from "./esbuild-binary.ts";
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
+import { discoverIntegrationTests } from "./test-files.ts";
 import { fileURLToPath } from "node:url";
 import {
   UDS_TEST_SOCKET_DIR_ENV,
@@ -125,12 +124,10 @@ try {
   });
   throwIfAborted(abortController.signal);
   await seedFixtureMemories(fixture.env);
-  const esbuildBinary = await resolveEsbuildBinary(prototypeRoot);
   const env = {
     ...fixture.env,
     DYFJ_ROOT: prototypeRoot,
     DENO_BIN: denoExecutable,
-    ESBUILD_BINARY_PATH: `${prototypeRoot}/${esbuildBinary}`,
   };
   mcpTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-mcp-roundtrip-" });
   // Deno grants Unix sockets per exact path, so the Deno.test files that bind
@@ -150,6 +147,10 @@ try {
     // Ungranted access throws instead of prompting, as it does in CI, so a
     // local run from a terminal never parks on a permission prompt.
     "--no-prompt",
+    // The pinned Deno runs the op and resource sanitizers only when asked. They
+    // fail the test that leaks an op, a timer, a resource or a child process.
+    "--sanitize-ops",
+    "--sanitize-resources",
     // The isolated Dolt fixture's own tests start throwaway fixtures: they
     // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, make
     // their temp roots under TMPDIR (the per-run directory below), and run
@@ -176,7 +177,8 @@ try {
     `--allow-net=${
       ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
     }`,
-    ...integrationTestAssignments.deno,
+    // Every `*.integration.test.ts`, found by name: the tier is the file name.
+    ...discoverIntegrationTests(prototypeRoot),
   ], {
     cwd: prototypeRoot,
     env: {

@@ -1,147 +1,50 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import {
-  type DenoInfoOutput,
+  discoverIntegrationTests,
   discoverTestSources,
   discoverTypecheckSources,
+  discoverUnitTests,
+  isIntegrationLaneTest,
   isTypecheckSource,
   isUnitTest,
-  isVitestSpecifier,
-  rootModule,
-  vitestModulesFromDenoInfo,
 } from "./test-files.ts";
 import { parseTypecheckScope } from "./typecheck.ts";
 import { unitTestArgs } from "./run-unit-tests.ts";
 
-// These tests run in the unit lane, which may not spawn processes, so they
-// exercise classification over recorded `deno info --json` output. The real
-// parser is exercised in `test-files.integration.test.ts`.
-
-Deno.test("isVitestSpecifier matches bare, npm: and subpath specifiers", () => {
-  for (
-    const specifier of [
-      "vitest",
-      "vitest/config",
-      "npm:vitest",
-      "npm:vitest@3.2.6",
-      "npm:vitest@3.2.6/config",
-    ]
-  ) {
-    assertEquals(isVitestSpecifier(specifier), true, specifier);
-  }
-  for (
-    const specifier of [
-      "@std/assert",
-      "vitest-extra",
-      "./vitest.ts",
-      "npm:vite",
-    ]
-  ) {
-    assertEquals(isVitestSpecifier(specifier), false, specifier);
-  }
+Deno.test("isUnitTest keeps integration and golden files out", () => {
+  assertEquals(isUnitTest("src/a.test.ts"), true);
+  assertEquals(isUnitTest("src/a.component.test.ts"), true);
+  assertEquals(isUnitTest("testing/fakes/a.test.ts"), true);
+  assertEquals(isUnitTest("src/a.integration.test.ts"), false);
+  assertEquals(isUnitTest("testing/golden/scenarios.test.ts"), false);
+  assertEquals(isUnitTest("src/a.ts"), false);
 });
 
-Deno.test("vitestModulesFromDenoInfo reads static imports only", () => {
-  const info: DenoInfoOutput = {
-    modules: [
-      {
-        specifier: "file:///p/a.test.ts",
-        dependencies: [{ specifier: "vitest" }, { specifier: "./cli.ts" }],
-      },
-      {
-        specifier: "file:///p/b.test.ts",
-        dependencies: [{ specifier: "@std/assert" }],
-      },
-      {
-        specifier: "file:///p/c.test.ts",
-        dependencies: [{ specifier: "vitest", isDynamic: true }],
-      },
-      {
-        specifier: "file:///p/d.test.ts",
-        dependencies: [{ specifier: "npm:vitest@3.2.6/config" }],
-      },
-      { specifier: "file:///p/e.test.ts" },
-    ],
-  };
-  const urls = ["a", "b", "c", "d", "e"].map((n) => `file:///p/${n}.test.ts`);
+Deno.test("isIntegrationLaneTest takes integration files outside the golden suite", () => {
+  assertEquals(isIntegrationLaneTest("src/a.integration.test.ts"), true);
+  assertEquals(isIntegrationLaneTest("scripts/a.integration.test.ts"), true);
+  assertEquals(isIntegrationLaneTest("src/a.test.ts"), false);
   assertEquals(
-    [...vitestModulesFromDenoInfo(info, urls)].sort(),
-    ["file:///p/a.test.ts", "file:///p/d.test.ts"],
+    isIntegrationLaneTest("testing/golden/a.integration.test.ts"),
+    false,
   );
+  assertEquals(isIntegrationLaneTest("src/a.integration.ts"), false);
 });
 
-Deno.test("vitestModulesFromDenoInfo follows static imports through helpers", () => {
-  const dep = (target: string, isDynamic?: boolean) => ({
-    specifier: `./${target}`,
-    code: { specifier: `file:///p/${target}` },
-    isDynamic,
-  });
-  const info: DenoInfoOutput = {
-    modules: [
-      // a.test -> helper -> vitest
-      { specifier: "file:///p/a.test.ts", dependencies: [dep("helper.ts")] },
-      {
-        specifier: "file:///p/helper.ts",
-        dependencies: [{ specifier: "vitest" }],
-      },
-      // b.test -> x <-> y (cycle), y -> vitest
-      { specifier: "file:///p/b.test.ts", dependencies: [dep("x.ts")] },
-      { specifier: "file:///p/x.ts", dependencies: [dep("y.ts")] },
-      {
-        specifier: "file:///p/y.ts",
-        dependencies: [dep("x.ts"), { specifier: "vitest" }],
-      },
-      // c.test reaches the helper only through a dynamic import
-      {
-        specifier: "file:///p/c.test.ts",
-        dependencies: [dep("helper.ts", true)],
-      },
-      // d.test -> plain module
-      { specifier: "file:///p/d.test.ts", dependencies: [dep("plain.ts")] },
-      { specifier: "file:///p/plain.ts" },
-    ],
-  };
-  const urls = ["a", "b", "c", "d"].map((n) => `file:///p/${n}.test.ts`);
+Deno.test("the prototype tree splits into unit and integration lanes", () => {
+  const unit = discoverUnitTests(".");
+  const integration = discoverIntegrationTests(".");
+  assertEquals(unit.includes("testing/fakes/map-env.test.ts"), true);
+  assertEquals(unit.some((path) => path.startsWith("testing/golden/")), false);
+  assertEquals(unit.some((path) => integration.includes(path)), false);
   assertEquals(
-    [...vitestModulesFromDenoInfo(info, urls)].sort(),
-    ["file:///p/a.test.ts", "file:///p/b.test.ts"],
+    integration.includes("scripts/isolated-dolt-fixture.integration.test.ts"),
+    true,
   );
-});
-
-Deno.test("vitestModulesFromDenoInfo fails closed on a missing or broken module", () => {
-  const info: DenoInfoOutput = {
-    modules: [{ specifier: "file:///p/broken.test.ts", error: "parse error" }],
-  };
-  assertThrows(
-    () => vitestModulesFromDenoInfo(info, ["file:///p/broken.test.ts"]),
-    Error,
-    "cannot classify",
-  );
-  assertThrows(
-    () => vitestModulesFromDenoInfo(info, ["file:///p/absent.test.ts"]),
-    Error,
-    "not in graph",
-  );
-});
-
-Deno.test("rootModule imports each URL once, in order", () => {
-  const urls = ["file:///p/a b.test.ts", "file:///p/c.test.ts"];
-  const url = rootModule(urls);
-  const prefix = "data:application/typescript,";
-  assertEquals(url.startsWith(prefix), true);
   assertEquals(
-    decodeURIComponent(url.slice(prefix.length)),
-    'import "file:///p/a b.test.ts";\nimport "file:///p/c.test.ts";\n',
+    integration.some((path) => path.startsWith("testing/golden/")),
+    false,
   );
-});
-
-Deno.test("isUnitTest keeps integration, golden and Vitest files out", () => {
-  assertEquals(isUnitTest("src/a.test.ts", false), true);
-  assertEquals(isUnitTest("src/a.component.test.ts", false), true);
-  assertEquals(isUnitTest("testing/fakes/a.test.ts", false), true);
-  assertEquals(isUnitTest("src/a.test.ts", true), false);
-  assertEquals(isUnitTest("src/a.integration.test.ts", false), false);
-  assertEquals(isUnitTest("testing/golden/scenarios.test.ts", false), false);
-  assertEquals(isUnitTest("src/a.ts", false), false);
 });
 
 Deno.test("isTypecheckSource takes modules, not tests or declarations", () => {
@@ -169,7 +72,7 @@ Deno.test("discovery walks every source root and nothing else", async () => {
         "testing/fakes/map-env.test.ts",
         "testing/golden/run.test.ts",
         "examples/outside.ts",
-        "vitest.config.ts",
+        "root-config.ts",
       ]
     ) {
       const directory = path.slice(0, path.lastIndexOf("/"));

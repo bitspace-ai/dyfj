@@ -62,7 +62,7 @@
     "entrypoints": [
       {
         "unit": "tooling",
-        "justification": "prototype/scripts holds the test runners, gate helpers and test fixtures that deno.json tasks and the aggregate gate run as their own processes (run-unit-tests, run-vitest, typecheck, deno-executable, the isolated Dolt fixture, the ACP fixture agent). They sit outside the runtime graph, no runtime module may import them, and each configures itself and its child processes from its environment."
+        "justification": "prototype/scripts holds the test runners, gate helpers and test fixtures that deno.json tasks and the aggregate gate run as their own processes (run-unit-tests, typecheck, deno-executable, the isolated Dolt fixture, the ACP fixture agent). They sit outside the runtime graph, no runtime module may import them, and each configures itself and its child processes from its environment."
       }
     ]
   },
