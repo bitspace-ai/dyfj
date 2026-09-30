@@ -193,6 +193,18 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `arch.imports` lane fails at the runtime size limits.** A runtime module
+  over 1,000 lines, or a function in one over 200 lines, now fails the gate
+  unless `scripts/arch-size-exceptions.json` names it with its reason and the
+  size it may not exceed. An excepted module or function may shrink but not
+  grow, and an exception for one back under its limit must be removed. The
+  file starts with 22 entries: the ACP runner (deferred with its
+  restructuring), the interactive REPL (being replaced by the Rust client),
+  and the file tools, web tools, idea/packet domain, OpenAI-compatible stream
+  and adapter, MCP and secrets config parsers, external MCP commands and the
+  memory MCP server, whose splits are deferred past phase 1. The 600- and
+  150-line targets stay a non-failing report.
+
 - **A Markdown-only pull request runs only the gate's policy lanes and the lanes
   that read Markdown.** When every path a pull request's release range changes
   is Markdown (deletions included; a rename to a `.md` name does not count),

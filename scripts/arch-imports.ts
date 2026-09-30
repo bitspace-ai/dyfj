@@ -46,7 +46,11 @@ import {
   type ModuleGraph,
 } from "./arch-imports-graph.ts";
 import { repoRootFromMeta } from "./scan-lib.ts";
-import { formatSizeReport, sizeReport } from "./arch-imports-size.ts";
+import {
+  formatSizeReport,
+  hardLimitViolations,
+  sizeReport,
+} from "./arch-imports-size.ts";
 import { CONFIG_SCHEMA } from "../prototype/src/config/schema.ts";
 
 // ---------------------------------------------------------------------------
@@ -671,6 +675,7 @@ const RULES_PATH = "scripts/arch-layers.json";
 const CYCLES_PATH = "scripts/arch-cycles.json";
 const BASELINE_PATH = "scripts/arch-imports-baseline.json";
 const LINT_CONFIG_PATH = "scripts/arch-imports-lint.json";
+const SIZE_EXCEPTIONS_PATH = "scripts/arch-size-exceptions.json";
 
 async function collectSources(
   root: string,
@@ -756,15 +761,27 @@ export async function main(
     exists: existsIn(root),
   });
 
-  console.log(`${LABEL}: size report (non-failing)`);
+  console.log(`${LABEL}: size report against the targets (non-failing)`);
   for (const line of formatSizeReport(sizeReport(sources))) console.log(line);
+  const sizeExceptions: unknown = JSON.parse(
+    await Deno.readTextFile(`${root}/${SIZE_EXCEPTIONS_PATH}`),
+  );
+  const sizeErrors = hardLimitViolations(
+    sources,
+    (path) => {
+      const unit = unitFor(rules, path);
+      return unit !== undefined && !unit.outside;
+    },
+    sizeExceptions,
+  );
   if (result.deepImports.length > 0) {
     console.log(`${LABEL}: deep imports bypassing mod.ts (non-failing)`);
     for (const d of result.deepImports) console.log(`  ${d}`);
   }
 
-  if (result.errors.length > 0) {
+  if (result.errors.length > 0 || sizeErrors.length > 0) {
     for (const error of result.errors) console.error(`${LABEL}: ${error}`);
+    for (const error of sizeErrors) console.error(`${LABEL}: ${error}`);
     return 1;
   }
   if (write) {
@@ -787,7 +804,10 @@ export async function main(
   }
   if (result.added.length > 0 || result.stale.length > 0) return 1;
   console.log(
-    `${LABEL}: ${countBaseline(result.current)} baselined violations, none new`,
+    `${LABEL}: ${
+      countBaseline(result.current)
+    } baselined violations, none new; ` +
+      `${(sizeExceptions as unknown[]).length} size exceptions, none exceeded`,
   );
   return 0;
 }

@@ -1078,8 +1078,15 @@ which must lie inside an import cycle, a justification, and an existing test
 file; an entry exempts its edges from the cycle and dynamic-import rules only,
 never from layer direction or the `cli/` allow-list. Deep imports that bypass a
 `mod.ts`, modules over 600 lines, and functions over 150 lines are reported
-without failing (`scripts/arch-imports-size.ts`; its function spans come from a
-small best-effort tokenizer). After an intended reduction, regenerate the
+without failing. The size limits of `specs/prd/PRD-11-runtime-decomposition.md`
+R2 fail the lane: a runtime module (any unit not marked `outside`, so not
+`prototype/scripts/` or the diagnostics) over 1,000 lines, or a function in one
+over 200 lines, unless `scripts/arch-size-exceptions.json` names it with its
+reason and the size it may not exceed. An excepted module or function may
+shrink but not grow, and an entry for one back under its limit fails the lane
+until it is removed (`scripts/arch-imports-size.ts`; its function spans come
+from a small best-effort tokenizer, and a function is matched by its file and
+reported name). After an intended reduction, regenerate the
 baseline with
 `deno run --allow-read=. --allow-run=deno --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
 
@@ -1736,3 +1743,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-30 - `specs/01-architecture.md` §5.7 lists the file tools' root
   anchors and the regex worker's URL among the module-level state moved under
   an owner, and `specs/bug-log.md` records the root-anchor entry as fixed.
+- 2026-09-30 - The `arch.imports` description and `specs/01-architecture.md` §4
+  state that the PRD-11 R2 size limits now fail the lane, with the committed
+  exceptions file and its only-shrink rule; `specs/README.md` records decision
+  D28, the phase-1 exit deferrals those exceptions and the exit audit cite.
