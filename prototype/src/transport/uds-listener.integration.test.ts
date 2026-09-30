@@ -177,6 +177,59 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name:
+    "serveUnixJsonRpc answers a request sent just before the client half-closes",
+  sanitizeOps: true,
+  sanitizeResources: true,
+  async fn() {
+    await using served = await serve("listener-half-close", {
+      late: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return "answered";
+      },
+    });
+    const conn = await Deno.connect({
+      transport: "unix",
+      path: served.server.socketPath,
+    });
+    try {
+      await conn.write(
+        new TextEncoder().encode(
+          '{"jsonrpc":"2.0","id":1,"method":"late"}\n',
+        ),
+      );
+      await conn.closeWrite();
+      // Read to end-of-file: the response arrives first, then the server
+      // closes its side.
+      const decoder = new TextDecoder();
+      const buf = new Uint8Array(4096);
+      let text = "";
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), 2_000);
+      });
+      try {
+        for (;;) {
+          const n = await Promise.race([conn.read(buf), timedOut]);
+          if (n === "timeout") throw new Error("server never closed its side");
+          if (n === null) break;
+          text += decoder.decode(buf.subarray(0, n), { stream: true });
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      assertEquals(JSON.parse(text.trim()), {
+        jsonrpc: "2.0",
+        id: 1,
+        result: "answered",
+      });
+    } finally {
+      conn.close();
+    }
+  },
+});
+
 Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () => {
   const errors: string[] = [];
   let markReported: () => void = () => {};

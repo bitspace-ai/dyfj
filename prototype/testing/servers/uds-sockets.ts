@@ -20,6 +20,7 @@ export const UDS_TEST_SOCKETS = [
   "listener-serve",
   "listener-keep-peers",
   "listener-client-eof",
+  "listener-half-close",
   "listener-live",
   "listener-stale",
   "listener-file",
