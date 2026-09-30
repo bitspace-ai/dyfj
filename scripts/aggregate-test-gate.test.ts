@@ -4,16 +4,22 @@ import { DENO_EXECUTABLE_DIAGNOSTIC } from "../prototype/scripts/deno-executable
 import {
   COMPOSED_FAIL_EXIT_CODE,
   composeGateStatus,
+  defaultLaneRecordDir,
   FAST_LANE_LABELS,
   fastLanes,
   type GateLane,
   INHERITED_ENVIRONMENT_NAMES,
+  LANE_DEADLINES_MS,
+  laneDeadlineMs,
   type LaneOutcome,
+  orphanedLaneGroup,
   parseGateArguments,
+  parseProcessList,
   productionLanes,
   REQUIRED_CHECK_IDS,
   runGate,
 } from "./aggregate-test-gate.ts";
+import { LANE_ENV_NAMES } from "../prototype/scripts/lane-supervision.ts";
 import { MANDATORY_CHECK_IDS } from "./assurance-receipt.ts";
 import { fileURLToPath } from "node:url";
 
@@ -101,12 +107,100 @@ Deno.test("aggregate lanes include the test.unit Deno.test suite", () => {
   ) => candidate.label === "Prototype unit Deno.test suite (test.unit)");
   if (!lane) throw new Error("test.unit lane is missing");
   assertEquals(lane.checkId, "test.aggregate");
-  assertEquals(lane.args, ["task", "test:unit"]);
+  // The runner itself leads the lane group, not `deno task`.
+  assertEquals(lane.args.at(-1), "scripts/run-unit-tests.ts");
+  assertEquals(lane.args.includes("task"), false);
   assertEquals(lane.cwd, "/repo/prototype");
   assertEquals(lane.env?.TMPDIR, "/tmp");
   if (!FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error("test.unit must also run in the fast subset");
   }
+});
+
+Deno.test("the three test lanes carry deadlines and grant the lane names", () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  for (
+    const [label, deadline] of [
+      ["Prototype unit Deno.test suite (test.unit)", LANE_DEADLINES_MS.unit],
+      ["Isolated Dolt integration lane", LANE_DEADLINES_MS.integration],
+      ["Golden characterization suite (test.golden)", LANE_DEADLINES_MS.golden],
+    ] as const
+  ) {
+    const lane = lanes.find((candidate) => candidate.label === label);
+    if (!lane) throw new Error(`${label} is missing`);
+    // This lane is not granted DYFJ_TEST_BOUND_SEC, so the defaults apply.
+    assertEquals(lane.deadlineMs, laneDeadlineMs(deadline, undefined));
+    const envGrant = lane.args.find((arg) => arg.startsWith("--allow-env="));
+    for (const name of LANE_ENV_NAMES) {
+      assertStringIncludes(envGrant ?? "", name);
+    }
+  }
+  // Every other lane is unsupervised.
+  assertEquals(
+    lanes.filter((lane) => lane.deadlineMs !== undefined).length,
+    3,
+  );
+});
+
+Deno.test("DYFJ_TEST_BOUND_SEC overrides a lane deadline with whole seconds", () => {
+  assertEquals(laneDeadlineMs(120_000, undefined), 120_000);
+  assertEquals(laneDeadlineMs(120_000, "30"), 30_000);
+  for (const bad of ["0", "-5", "1.5", "abc", "", "99999999"]) {
+    assertEquals(laneDeadlineMs(120_000, bad), 120_000);
+  }
+});
+
+Deno.test("lane records live under an absolute HOME only", () => {
+  assertEquals(
+    defaultLaneRecordDir("/srv/operator"),
+    "/srv/operator/.dyfj/run/gate-lanes",
+  );
+  assertEquals(defaultLaneRecordDir(undefined), undefined);
+  assertEquals(defaultLaneRecordDir("relative"), undefined);
+});
+
+Deno.test("recovery signals only a group that still carries the lane token", () => {
+  const token = "0f8b7c2e-5a41-4d7e-9c3b-2e1f0a9d8c7b";
+  const record = { gatePid: 100, group: 200, token };
+  const marker = `deno test a.test.ts -- --dyfj-lane=${token}`;
+  assertEquals(
+    orphanedLaneGroup(record, [
+      {
+        pid: 100,
+        group: 100,
+        command: "deno run scripts/aggregate-test-gate.ts",
+      },
+      { pid: 201, group: 200, command: marker },
+    ]),
+    "gate-alive",
+  );
+  assertEquals(
+    orphanedLaneGroup(record, [{ pid: 201, group: 200, command: marker }]),
+    "recover",
+  );
+  // The gate's pid reused by something else: the gate is gone.
+  assertEquals(
+    orphanedLaneGroup(record, [
+      { pid: 100, group: 100, command: "sleep 30" },
+      { pid: 201, group: 200, command: marker },
+    ]),
+    "recover",
+  );
+  // The token in another group, or the group without the token.
+  assertEquals(
+    orphanedLaneGroup(record, [
+      { pid: 301, group: 300, command: marker },
+      { pid: 201, group: 200, command: "sleep 30" },
+    ]),
+    "drop",
+  );
+  assertEquals(
+    parseProcessList("  201   200 deno test -- x\n garbage\n 5 5 sh"),
+    [
+      { pid: 201, group: 200, command: "deno test -- x" },
+      { pid: 5, group: 5, command: "sh" },
+    ],
+  );
 });
 
 Deno.test("aggregate lanes include the contract package tests", () => {

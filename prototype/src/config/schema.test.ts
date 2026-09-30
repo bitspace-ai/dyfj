@@ -75,6 +75,7 @@ import {
       s.domain === "test" || s.domain === "tooling"
     ).map((s) => s.envVar);
     assert(testKeys.some((key) => key === "DYFJ_MCP_TEST_TEMP_DIR"));
+    assert(testKeys.some((key) => key === "DYFJ_LANE_TOKEN"));
     for (const [name, profile] of Object.entries(denoJson.permissions)) {
       if (name === "test") continue;
       const granted = new Set(profile.env ?? []);

@@ -5,6 +5,12 @@ import {
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import { discoverIntegrationTests } from "./test-files.ts";
+import {
+  laneScriptArgs,
+  laneSupervision,
+  startBackstop,
+  stopOwnGroup,
+} from "./lane-supervision.ts";
 import { fileURLToPath } from "node:url";
 import {
   UDS_TEST_SOCKET_DIR_ENV,
@@ -112,6 +118,11 @@ const onSigint = () => interrupt(130);
 const onSigterm = () => interrupt(143);
 Deno.addSignalListener("SIGINT", onSigint);
 Deno.addSignalListener("SIGTERM", onSigterm);
+// Under the gate: past the backstop, stop the step in progress (its child is
+// signalled by pid) and clean up as on an interruption.
+const supervision = laneSupervision();
+const backstop = startBackstop(supervision, () => abortController.abort());
+let failure: unknown;
 
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
 let mcpTestTempDir: string | undefined;
@@ -179,6 +190,7 @@ try {
     }`,
     // Every `*.integration.test.ts`, found by name: the tier is the file name.
     ...discoverIntegrationTests(prototypeRoot),
+    ...laneScriptArgs(supervision),
   ], {
     cwd: prototypeRoot,
     env: {
@@ -200,8 +212,9 @@ try {
   );
   throwIfAborted(abortController.signal);
 } catch (error) {
-  if (!abortController.signal.aborted) throw error;
+  if (!abortController.signal.aborted) failure = error;
 } finally {
+  backstop.clear();
   await fixture?.cleanup();
   if (mcpTestTempDir !== undefined) {
     await Deno.remove(mcpTestTempDir, { recursive: true });
@@ -216,4 +229,16 @@ try {
   Deno.removeSignalListener("SIGTERM", onSigterm);
 }
 
+// Every step has ended and the fixture is stopped: a gate lane now stops its
+// own process group, so a same-group descendant does not outlive the lane.
+await stopOwnGroup(supervision, denoExecutable);
+if (backstop.expired) {
+  console.error(
+    `dyfj: the integration lane passed its backstop deadline (${
+      supervision!.backstopMs
+    } ms)`,
+  );
+  Deno.exit(1);
+}
 if (interruptedExitCode !== undefined) Deno.exit(interruptedExitCode);
+if (failure !== undefined) throw failure;

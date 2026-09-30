@@ -1010,10 +1010,22 @@ lane and permission grant. Outside Windows, each lane runs in a process group
 of its own, which the gate tears down (TERM, a short grace, then KILL) when the
 lane ends or the gate is interrupted, so a test's same-group child processes do
 not outlive its lane. Windows has no POSIX process groups, so there the gate
-signals only the lane leader and a lane's descendants are not covered. The lanes have no wall-clock bound of their own yet: a hung test runs
-until the CI job's timeout. The per-lane deadline and the runner-side cleanup
-that complete the test supervision are specified in
-`specs/notes/test-supervision-evidence.md` and not yet in place. The integration lane owns a
+signals only the lane leader and a lane's descendants are not covered. The
+three test lanes (`test.unit`, the isolated-Dolt integration lane and
+`test.golden`) are also supervised, as `specs/notes/test-supervision-evidence.md`
+decides. Each has a deadline (120 s, 900 s and 900 s; `DYFJ_TEST_BOUND_SEC`
+overrides all three in whole seconds): past it the gate tears the lane down as
+on an interruption and fails it with a message naming the deadline. The gate
+starts each test-lane runner directly as its group's leader and hands it a
+backstop 60 s past that deadline and a lane token. When all of its work is
+done, the runner stops its own process group, so a same-group descendant does
+not outlive the lane even if the gate was killed. If the gate is gone and a
+test hangs, the runner's backstop kills the child it is waiting on and then
+stops its group. The gate records each running test lane's group and token
+under `$HOME/.dyfj/run/gate-lanes/`; at its next start it stops a group left
+behind by a gate that is no longer running, but only when a live member of that
+group still carries the lane token on its command line, so a reused process or
+group id is never signalled. The integration lane owns a
 temporary Dolt repository and SQL server, with cleanup on normal completion and
 handled failure. SIGINT and SIGTERM request cooperative cancellation; the direct
 lane process receives SIGTERM followed by a bounded wait and possible SIGKILL.
@@ -1693,3 +1705,6 @@ Document revisions only. Code and behavior changes are tracked in
   framework, and the gate description drops the retired unit-suite lane and its
   supervisor, finds integration files by name with sanitizers on, and states
   that the lanes have no wall-clock bound yet.
+- 2026-09-30 - The gate description covers the test lanes' deadlines, the
+  runners' own-group stop and backstop, and the gate's recovery of an orphaned
+  lane group, replacing the note that the lanes had no bound yet.

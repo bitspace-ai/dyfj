@@ -1,4 +1,12 @@
 import { selectedDenoExecutable } from "../prototype/scripts/deno-executable.ts";
+import {
+  isLaneToken,
+  LANE_BACKSTOP_ENV,
+  LANE_DEADLINE_ENV,
+  LANE_ENV_NAMES,
+  LANE_TOKEN_ENV,
+  laneTokenArgument,
+} from "../prototype/scripts/lane-supervision.ts";
 
 export interface GateLane {
   label: string;
@@ -10,6 +18,9 @@ export interface GateLane {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
+  // A test lane: the gate stops it at this deadline, and its runner is
+  // supervised (`prototype/scripts/lane-supervision.ts`).
+  deadlineMs?: number;
 }
 
 export type LaneResult =
@@ -41,6 +52,10 @@ export interface RunGateOptions {
   successMessage?: string;
   mode?: "full" | "fast";
   requiredCheckIds?: readonly string[];
+  // Where the gate records each running test lane's process group, so a later
+  // run can recover a group left behind when the gate and its runner were both
+  // killed. Undefined keeps no records and recovers nothing.
+  laneRecordDir?: string;
 }
 
 // The stable deterministic floor: every id must be present and passing for a
@@ -95,6 +110,40 @@ const laneProcessGroups = Deno.build.os !== "windows";
 // teardown returns as soon as the group is empty, so a lane with no surviving
 // descendant waits for nothing at all.
 const laneGroupGraceMs = 2_000;
+
+// Test-lane deadlines, from measured run times (`test.unit` about 12–22 s,
+// the isolated-Dolt integration lane about 95–120 s). DYFJ_TEST_BOUND_SEC, a
+// whole number of seconds, overrides all of them. A lane past its deadline is
+// torn down like an interrupted one and fails with a message naming it.
+export const TEST_BOUND_ENV = "DYFJ_TEST_BOUND_SEC";
+export const LANE_DEADLINES_MS = {
+  unit: 120_000,
+  integration: 900_000,
+  golden: 900_000,
+} as const;
+// The runner's own backstop sits this far past the gate's deadline, so it
+// fires only when the gate is no longer there to enforce the deadline.
+export const LANE_BACKSTOP_MARGIN_MS = 60_000;
+// Exit code for a lane stopped at its deadline (as `timeout(1)` reports).
+export const LANE_DEADLINE_EXIT_CODE = 124;
+
+export function laneDeadlineMs(
+  defaultMs: number,
+  bound: string | undefined,
+): number {
+  if (bound !== undefined && /^[1-9][0-9]{0,6}$/.test(bound)) {
+    return Number(bound) * 1000;
+  }
+  return defaultMs;
+}
+
+/** The operator-scoped directory for lane records, under an absolute HOME. */
+export function defaultLaneRecordDir(
+  home: string | undefined,
+): string | undefined {
+  if (home === undefined || !home.startsWith("/")) return undefined;
+  return `${home}/.dyfj/run/gate-lanes`;
+}
 
 // Composition can detect a required gap that no lane ever reported — a
 // required check with no lane at all, so every lane exited zero and there is
@@ -278,28 +327,193 @@ async function statusOrAbort(
   child: ReturnType<Deno.Command["spawn"]>,
   group: number | undefined,
   signal: AbortSignal | undefined,
-): Promise<{ status?: Deno.CommandStatus; aborted: boolean }> {
+  deadlineMs?: number,
+): Promise<
+  { status?: Deno.CommandStatus; aborted: boolean; pastDeadline?: boolean }
+> {
   const status = child.status;
-  if (!signal) return { status: await status, aborted: false };
-  if (signal.aborted) {
+  if (signal?.aborted) {
     await stopChild(child, group);
     return { aborted: true };
   }
 
   let onAbort: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const result = await Promise.race([
     status.then((value) => ({ type: "status" as const, value })),
     new Promise<{ type: "aborted" }>((resolve) => {
+      if (!signal) return;
       onAbort = () => resolve({ type: "aborted" });
       signal.addEventListener("abort", onAbort, { once: true });
       if (signal.aborted) onAbort();
     }),
+    new Promise<{ type: "deadline" }>((resolve) => {
+      if (deadlineMs === undefined) return;
+      timer = setTimeout(() => resolve({ type: "deadline" }), deadlineMs);
+    }),
   ]);
-  if (onAbort) signal.removeEventListener("abort", onAbort);
+  if (onAbort) signal?.removeEventListener("abort", onAbort);
+  if (timer !== undefined) clearTimeout(timer);
   if (result.type === "status") return { status: result.value, aborted: false };
 
+  // Past the deadline or interrupted: the same bounded teardown either way.
   await stopChild(child, group);
-  return { aborted: true };
+  return result.type === "deadline"
+    ? { aborted: false, pastDeadline: true }
+    : { aborted: true };
+}
+
+// --- Lane records and recovery -------------------------------------------
+//
+// Each running test lane has a record naming the gate's pid, the lane's
+// process group and the lane token its runner puts on the `deno test` command
+// line. The gate removes it when the lane ends, so a record left behind means
+// the gate died mid-lane. At its next start the gate reads each such record.
+// If the recording gate is still running (a concurrent gate), the record is
+// left alone. Otherwise the gate signals the recorded group only when a live
+// member of that group still carries the lane token, so a reused process or
+// group id is never signalled; either way the record is then dropped.
+
+interface LaneRecord {
+  gatePid: number;
+  group: number;
+  token: string;
+}
+
+interface ProcessEntry {
+  pid: number;
+  group: number;
+  command: string;
+}
+
+function parseLaneRecord(text: string): LaneRecord | undefined {
+  try {
+    const value = JSON.parse(text);
+    if (
+      Number.isSafeInteger(value?.gatePid) && value.gatePid > 1 &&
+      Number.isSafeInteger(value?.group) && value.group > 1 &&
+      typeof value?.token === "string" && isLaneToken(value.token)
+    ) {
+      return { gatePid: value.gatePid, group: value.group, token: value.token };
+    }
+  } catch {
+    // Not a record.
+  }
+  return undefined;
+}
+
+// Listing processes needs a run grant the gate does not hold, so the selected
+// Deno lists them in a short-lived child, as it signals lane groups.
+const LIST_PROCESSES_PROGRAM = [
+  `const out = await new Deno.Command("ps", {`,
+  `  args: ["-A", "-o", "pid=,pgid=,command="],`,
+  `  stdout: "piped", stderr: "null",`,
+  `}).output();`,
+  `await Deno.stdout.write(out.stdout);`,
+].join("\n");
+
+export function parseProcessList(text: string): ProcessEntry[] {
+  const entries: ProcessEntry[] = [];
+  for (const line of text.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (match) {
+      entries.push({
+        pid: Number(match[1]),
+        group: Number(match[2]),
+        command: match[3],
+      });
+    }
+  }
+  return entries;
+}
+
+async function listProcesses(): Promise<ProcessEntry[] | undefined> {
+  const executable = groupSignalExecutable();
+  if (executable === undefined) return undefined;
+  try {
+    const output = await new Deno.Command(executable, {
+      args: ["eval", "--allow-run", LIST_PROCESSES_PROGRAM],
+      env: safeEnvironment(),
+      clearEnv: true,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (!output.success) return undefined;
+    return parseProcessList(new TextDecoder().decode(output.stdout));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `record` still names a live lane group this gate may stop. */
+export function orphanedLaneGroup(
+  record: LaneRecord,
+  processes: readonly ProcessEntry[],
+): "gate-alive" | "recover" | "drop" {
+  const gate = processes.find((entry) => entry.pid === record.gatePid);
+  if (gate !== undefined && gate.command.includes("aggregate-test-gate")) {
+    return "gate-alive";
+  }
+  const marker = laneTokenArgument(record.token);
+  return processes.some((entry) =>
+      entry.group === record.group && entry.command.includes(marker)
+    )
+    ? "recover"
+    : "drop";
+}
+
+export async function recoverOrphanedLaneGroups(
+  dir: string,
+  out: Pick<Console, "log" | "error">,
+): Promise<void> {
+  if (!laneProcessGroups) return;
+  let names: string[];
+  try {
+    names = [];
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.isFile && entry.name.endsWith(".json")) names.push(entry.name);
+    }
+  } catch {
+    return; // No records, or no access: nothing to recover.
+  }
+  if (names.length === 0) return;
+  const processes = await listProcesses();
+  if (processes === undefined) return;
+  for (const name of names) {
+    const path = `${dir}/${name}`;
+    let record: LaneRecord | undefined;
+    try {
+      record = parseLaneRecord(await Deno.readTextFile(path));
+    } catch {
+      continue;
+    }
+    const verdict = record === undefined
+      ? "drop"
+      : orphanedLaneGroup(record, processes);
+    if (verdict === "gate-alive") continue;
+    if (verdict === "recover") {
+      out.log(
+        "▶ stopping a test-lane process group left by an earlier gate run",
+      );
+      await tearDownLaneGroup(record!.group, laneGroupGraceMs);
+    }
+    await Deno.remove(path).catch(() => undefined);
+  }
+}
+
+async function writeLaneRecord(
+  dir: string | undefined,
+  record: LaneRecord,
+): Promise<string | undefined> {
+  if (dir === undefined || !laneProcessGroups) return undefined;
+  const path = `${dir}/${record.token}.json`;
+  try {
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeTextFile(path, JSON.stringify(record));
+    return path;
+  } catch {
+    return undefined; // Best effort: recovery is lost, the lane still runs.
+  }
 }
 
 export function productionLanes(
@@ -309,6 +523,8 @@ export function productionLanes(
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
   const binding = bindingEnvironment();
+  const laneEnv = LANE_ENV_NAMES.join(",");
+  const bound = readOptionalEnv(TEST_BOUND_ENV);
   const subjectLane = (check: string): GateLane => ({
     label: check === "subject.resolve"
       ? "Subject resolution"
@@ -442,6 +658,7 @@ export function productionLanes(
         "scripts/dependency-policy.test.ts",
         "scripts/arch-imports.test.ts",
         "scripts/git-hooks.test.ts",
+        "scripts/lane-supervision.test.ts",
       ],
       cwd: root,
       // Lane children run with a cleared environment, so the temp root the
@@ -474,9 +691,18 @@ export function productionLanes(
       checkId: "test.aggregate",
       command: denoExecutable,
       commandLabel: "deno",
-      args: ["task", "test:unit"],
+      // The runner itself, not `deno task test:unit`: it has to lead the lane
+      // group so its end-of-run group stop reaches the group and nothing else.
+      args: [
+        "run",
+        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,DENO_JOBS,${laneEnv}`,
+        "--allow-read=.",
+        `--allow-run=${denoExecutable}`,
+        "scripts/run-unit-tests.ts",
+      ],
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+      deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.unit, bound),
     },
     {
       label: "Contract closure report generation",
@@ -601,7 +827,7 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT",
+        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT,${laneEnv}`,
         // Read on the temp roots lets the lane resolve the real path of the
         // temp directory it hands the Deno.test files (macOS /tmp is a symlink).
         "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
@@ -612,6 +838,7 @@ export function productionLanes(
       ],
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+      deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.integration, bound),
     },
     // Golden characterization suite (`test.golden`): black-box snapshots of
     // the engine server and CLI over an isolated Dolt fixture. The runner
@@ -624,7 +851,7 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN",
+        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,${laneEnv}`,
         "--allow-read=.",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         `--allow-run=${denoExecutable}`,
@@ -632,6 +859,7 @@ export function productionLanes(
       ],
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+      deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.golden, bound),
     },
   ];
 }
@@ -774,6 +1002,9 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
     }
     return laneCode === 0 ? COMPOSED_FAIL_EXIT_CODE : laneCode;
   };
+  if (options.laneRecordDir !== undefined) {
+    await recoverOrphanedLaneGroups(options.laneRecordDir, out);
+  }
   for (let index = 0; index < lanes.length; index++) {
     const lane = lanes[index]!;
     const outcome = outcomes[index]!;
@@ -784,11 +1015,20 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
     const commandLabel = laneCommandLabel(lane);
     const start = performance.now();
     out.log(`▶ ${lane.label} (${commandLabel})`);
+    const token = lane.deadlineMs === undefined
+      ? undefined
+      : crypto.randomUUID();
+    const supervision: Record<string, string> = token === undefined ? {} : {
+      [LANE_DEADLINE_ENV]: String(lane.deadlineMs),
+      [LANE_BACKSTOP_ENV]: String(lane.deadlineMs! + LANE_BACKSTOP_MARGIN_MS),
+      [LANE_TOKEN_ENV]: token,
+    };
+    let recordPath: string | undefined;
     try {
       const child = new Deno.Command(lane.command, {
         args: lane.args,
         cwd: lane.cwd,
-        env: { ...safeEnvironment(), ...(lane.env ?? {}) },
+        env: { ...safeEnvironment(), ...(lane.env ?? {}), ...supervision },
         clearEnv: true,
         stdout: "inherit",
         stderr: "inherit",
@@ -797,8 +1037,29 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
         detached: laneProcessGroups,
       }).spawn();
       const group = laneProcessGroups ? child.pid : undefined;
-      const result = await statusOrAbort(child, group, options.signal);
+      if (token !== undefined && group !== undefined) {
+        recordPath = await writeLaneRecord(options.laneRecordDir, {
+          gatePid: Deno.pid,
+          group,
+          token,
+        });
+      }
+      const result = await statusOrAbort(
+        child,
+        group,
+        options.signal,
+        lane.deadlineMs,
+      );
       const elapsedMs = Math.round(performance.now() - start);
+      if (result.pastDeadline) {
+        outcome.result = "fail";
+        out.error(
+          `✗ ${lane.label}: failure (${elapsedMs}ms, stopped at its ${
+            Math.round(lane.deadlineMs! / 1000)
+          } s deadline)`,
+        );
+        return finish(LANE_DEADLINE_EXIT_CODE);
+      }
       if (result.aborted) {
         outcome.result = "interrupted";
         out.error(`✗ ${lane.label}: interrupted (${elapsedMs}ms)`);
@@ -828,6 +1089,10 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
           "command-not-runnable; check that the tool is installed and permitted)",
       );
       return finish(127);
+    } finally {
+      if (recordPath !== undefined) {
+        await Deno.remove(recordPath).catch(() => undefined);
+      }
     }
   }
   if (options.signal?.aborted) {
@@ -865,6 +1130,7 @@ if (import.meta.main) {
       successMessage: fast
         ? "✓ fast gate subset passed (not the full green bar; run `deno task test`)"
         : undefined,
+      laneRecordDir: defaultLaneRecordDir(readOptionalEnv("HOME")),
     });
   } finally {
     Deno.removeSignalListener("SIGINT", onSigint);
