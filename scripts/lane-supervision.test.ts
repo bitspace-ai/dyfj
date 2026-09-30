@@ -373,6 +373,62 @@ Deno.test({
 });
 
 Deno.test({
+  name:
+    "a gate killed between its teardown's TERM and KILL leaves a recoverable group",
+  ignore: !posix,
+  async fn() {
+    await withDir(async (dir) => {
+      const gate = new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--allow-env",
+          "--allow-read",
+          "--allow-write",
+          "--allow-run",
+          DRIVER,
+          dir,
+          "hang",
+          "1500",
+        ],
+        stdout: "null",
+        stderr: "null",
+      }).spawn();
+      const pid = await grandchildPid(dir);
+      const token = await recordedToken(dir);
+      const record = JSON.parse(
+        await Deno.readTextFile(`${dir}/records/${token}.json`),
+      );
+      // Past the deadline the gate TERMs the group: the runner exits, and the
+      // gate waits out its grace for the grandchild, which ignores TERM.
+      await waitFor(
+        async () => (await alive(record.group)) ? undefined : true,
+        10_000,
+        "the deadline's TERM to end the runner",
+      );
+      gate.kill("SIGKILL");
+      await gate.status;
+      assert(await alive(pid), "the grandchild should outlive the gate");
+      assert(
+        (await tokenCarriers(token)).length === 1,
+        "the token carrier should still hold the token",
+      );
+
+      await recoverOrphanedLaneGroups(`${dir}/records`, quiet);
+
+      await waitFor(
+        async () =>
+          (await liveGroupMembers(record.group)).length === 0
+            ? true
+            : undefined,
+        5_000,
+        "the orphaned group to be stopped",
+      );
+      assert(!(await alive(pid)), "the grandchild survived recovery");
+    });
+  },
+});
+
+Deno.test({
   name: "a complete record still under its partial name is recovered",
   ignore: !posix,
   async fn() {

@@ -197,7 +197,10 @@ What moves rather than goes:
     The runner starts a token carrier: an idle process in the lane group whose
     command line ends with the token, from the runner's start until its group
     is stopped. So the group carries its lane's token in every step of the run,
-    `deno test`, Cargo or cleanup. The gate writes a record
+    `deno test`, Cargo or cleanup. On TERM the carrier stays until nothing but
+    it and the group's leader is left, so a descendant that ignores TERM keeps
+    the token in the group until the teardown's KILL, even when the gate or
+    runner sending it is killed in between. The gate writes a record
     naming its own pid, the lane's group id and the token to an operator-scoped
     place under HOME (`$HOME/.dyfj/run/gate-lanes/`), as the Vitest lock was,
     and removes it when the lane ends.

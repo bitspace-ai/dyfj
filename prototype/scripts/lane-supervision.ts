@@ -105,11 +105,47 @@ export function laneSupervision(
   return { deadlineMs, backstopMs, token };
 }
 
-// The carrier's program. Its own text says what it is to anyone reading a
-// process list; the token follows it as a script argument.
+// The carrier's program, with the lane group's id (the runner's pid) and the
+// lane token argument as script arguments; the token trails the command line,
+// and the program's first line says what the process is to anyone reading a
+// process list. On TERM it does not exit at once: it waits until nothing but
+// itself and the group's leader is left in the group, then exits. So a
+// teardown whose TERM ends the lane's processes is not held up by the carrier,
+// while a descendant that ignores TERM keeps it, and with it the token, in the
+// group until the teardown's KILL: a supervisor killed between TERM and KILL
+// still leaves the group recoverable.
 const TOKEN_CARRIER_PROGRAM =
-  "// dyfj test-lane token carrier: idle until its lane's process group is stopped\n" +
-  "setInterval(() => {}, 2 ** 30);";
+  `// dyfj test-lane token carrier: holds its lane's token until the lane's group is empty
+const group = Number(Deno.args[0]);
+let leaving = false;
+async function othersLeft() {
+  try {
+    const out = await new Deno.Command("ps", {
+      args: ["-A", "-o", "pid=,ppid=,pgid=,stat="],
+      stdout: "piped", stderr: "null",
+    }).output();
+    if (!out.success) return true;
+    // Neither this process, its own \`ps\`, nor the group's leader counts.
+    return new TextDecoder().decode(out.stdout).split("\\n").some((line) => {
+      const [pid, ppid, pgid, stat] = line.trim().split(/\\s+/);
+      return Number(pgid) === group && Number(pid) !== Deno.pid &&
+        Number(ppid) !== Deno.pid && Number(pid) !== group &&
+        stat !== undefined && !stat.startsWith("Z");
+    });
+  } catch {
+    return true;
+  }
+}
+Deno.addSignalListener("SIGTERM", async () => {
+  if (leaving) return;
+  leaving = true;
+  while (await othersLeft()) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  Deno.exit(0);
+});
+setInterval(() => {}, 2 ** 30);
+`;
 
 /**
  * Starts the lane's token carrier in this process's group, for a gate lane
@@ -126,11 +162,15 @@ export function startTokenCarrier(
   const carrier = new Deno.Command(deno, {
     args: [
       "eval",
+      "--allow-run",
       TOKEN_CARRIER_PROGRAM,
       "--",
+      String(Deno.pid),
       laneTokenArgument(supervision.token),
     ],
     clearEnv: true,
+    // PATH, to find `ps`, when this runner may read it.
+    env: pathEnvironment(),
     stdin: "null",
     stdout: "null",
     stderr: "null",
@@ -189,45 +229,61 @@ export function killChild(child: Deno.ChildProcess): void {
   }
 }
 
-// Run by a short-lived same-group child: TERM to the group (which the child
-// and the runner ignore), then, once the other members are gone or the grace
-// has passed, KILL to each member still running, by pid, so neither the
-// runner nor the child is killed. A zombie counts as gone. While the runner
-// is alive it leads the group, so the group id cannot name another group.
-function groupStopProgram(runnerPid: number, graceMs: number): string {
-  return `
+// Run by a short-lived same-group child, with the runner's pid, the grace in
+// ms and the lane token argument as script arguments: TERM to the group (which
+// the child and the runner ignore, and which leaves the token carrier waiting
+// for this child), then, once only the carrier is left or the grace has
+// passed, KILL to each member still running, the carrier included, by pid, so
+// neither the runner nor the child is killed. A zombie counts as gone. While the runner is alive it leads the
+// group, so the group id cannot name another group.
+const GROUP_STOP_PROGRAM = `
 Deno.addSignalListener("SIGTERM", () => {});
-const group = ${runnerPid};
-const spared = new Set([${runnerPid}, Deno.pid]);
+const [runner, grace, tokenArgument] = Deno.args;
+const group = Number(runner);
+const spared = new Set([group, Deno.pid]);
 try { Deno.kill(-group, "SIGTERM"); } catch { Deno.exit(0); }
 async function members() {
   try {
     const out = await new Deno.Command("ps", {
-      args: ["-A", "-o", "pid=,pgid=,stat="], stdout: "piped", stderr: "null",
+      args: ["-A", "-ww", "-o", "pid=,ppid=,pgid=,stat=,command="],
+      stdout: "piped", stderr: "null",
     }).output();
-    return new TextDecoder().decode(out.stdout).split("\\n").flatMap((line) => {
-      const [pid, pgid, stat] = line.trim().split(/\\s+/);
+    const rows = new TextDecoder().decode(out.stdout).split("\\n").flatMap((line) => {
+      const match = line.match(/^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s+(.*)$/);
+      if (!match) return [];
+      const [, pid, ppid, pgid, stat, command] = match;
       return Number(pgid) === group && !spared.has(Number(pid)) &&
-          stat !== undefined && !stat.startsWith("Z")
-        ? [Number(pid)]
+          !stat.startsWith("Z")
+        ? [{
+          pid: Number(pid),
+          ppid: Number(ppid),
+          carrier: command.endsWith(tokenArgument),
+        }]
         : [];
     });
+    // This child's own \`ps\` is not a member to wait for, and a carrier's own
+    // \`ps\` counts as part of the carrier.
+    const carriers = new Set(rows.filter((r) => r.carrier).map((r) => r.pid));
+    return rows.flatMap((r) =>
+      r.ppid === Deno.pid
+        ? []
+        : [{ pid: r.pid, carrier: r.carrier || carriers.has(r.ppid) }]
+    );
   } catch {
     return [];
   }
 }
-const deadline = Date.now() + ${graceMs};
+const deadline = Date.now() + Number(grace);
 let left = await members();
-while (left.length > 0 && Date.now() < deadline) {
+while (left.some((m) => !m.carrier) && Date.now() < deadline) {
   await new Promise((resolve) => setTimeout(resolve, 50));
   left = await members();
 }
-for (const pid of left) {
+for (const { pid } of left) {
   try { Deno.kill(pid, "SIGKILL"); } catch { /* already gone */ }
 }
 Deno.exit(0);
 `;
-}
 
 /**
  * Stops this process's own group once the lane's work is done: TERM, which
@@ -250,7 +306,11 @@ export async function stopOwnGroup(
       args: [
         "eval",
         "--allow-run",
-        groupStopProgram(Deno.pid, GROUP_STOP_GRACE_MS),
+        GROUP_STOP_PROGRAM,
+        "--",
+        String(Deno.pid),
+        String(GROUP_STOP_GRACE_MS),
+        laneTokenArgument(supervision.token),
       ],
       clearEnv: true,
       // PATH, to find `ps`, when this runner may read it.
