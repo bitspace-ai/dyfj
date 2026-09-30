@@ -1693,4 +1693,5 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-29 - `specs/notes/test-supervision-evidence.md` records, per leak
   class, what the `Deno.test` suite catches without the Vitest supervisor, and
   the approved decision: keep the wall-clock bound, as a per-lane deadline in
-  the gate, and remove the lock, reaper and manifest sweep.
+  the gate; move the end-of-run process-group stop into each test-lane runner;
+  and remove the lock, reaper and manifest sweep.
