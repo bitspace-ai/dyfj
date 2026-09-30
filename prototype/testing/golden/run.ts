@@ -6,10 +6,21 @@
  * grants: loopback TCP, the exact Unix socket of each server profile, and
  * process spawn for the selected Deno and Dolt only. Arguments after `--`
  * reach the suite (for example `-- --update`).
+ *
+ * Under the aggregate gate it is also supervised as a test lane
+ * (`scripts/lane-supervision.ts`): a backstop deadline, a lane token carrier,
+ * and a stop of its own process group once done.
  */
 
 import { selectedDenoExecutable } from "../../scripts/deno-executable.ts";
 import { SERVER_PROFILES, socketPathFor } from "./profiles.ts";
+import {
+  killChild,
+  laneSupervision,
+  startBackstop,
+  startTokenCarrier,
+  stopOwnGroup,
+} from "../../scripts/lane-supervision.ts";
 
 const tempWrite = "/tmp,/private/tmp,/var/folders,/private/var/folders";
 const deno = selectedDenoExecutable();
@@ -21,7 +32,10 @@ for (const name of forwarded) {
   if (value !== undefined) env[name] = value;
 }
 
+const supervision = laneSupervision();
+startTokenCarrier(supervision, deno);
 let code = 1;
+let backstop: ReturnType<typeof startBackstop> | undefined;
 try {
   const child = new Deno.Command(deno, {
     args: [
@@ -50,8 +64,24 @@ try {
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
+  backstop = startBackstop(
+    supervision,
+    deno,
+    () => killChild(child),
+  );
   code = (await child.status).code;
 } finally {
   await Deno.remove(root, { recursive: true }).catch(() => undefined);
+  // Cleared only after the cleanup above, which the backstop also bounds.
+  backstop?.clear();
+}
+await stopOwnGroup(supervision, deno);
+if (backstop?.expired) {
+  console.error(
+    `dyfj: test.golden passed its backstop deadline (${
+      supervision!.backstopMs
+    } ms)`,
+  );
+  code = 1;
 }
 Deno.exit(code);

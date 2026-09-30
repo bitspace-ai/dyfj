@@ -5,6 +5,12 @@ import {
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import { discoverIntegrationTests } from "./test-files.ts";
+import {
+  laneSupervision,
+  startBackstop,
+  startTokenCarrier,
+  stopOwnGroup,
+} from "./lane-supervision.ts";
 import { fileURLToPath } from "node:url";
 import {
   UDS_TEST_SOCKET_DIR_ENV,
@@ -112,6 +118,18 @@ const onSigint = () => interrupt(130);
 const onSigterm = () => interrupt(143);
 Deno.addSignalListener("SIGINT", onSigint);
 Deno.addSignalListener("SIGTERM", onSigterm);
+// Under the gate: a token carrier for the whole run, and past the backstop,
+// stop the step in progress (its child is signalled by pid) and clean up as
+// on an interruption. A step or cleanup that does not observe the abort is
+// ended by the backstop's own exit.
+const supervision = laneSupervision();
+startTokenCarrier(supervision, denoExecutable);
+const backstop = startBackstop(
+  supervision,
+  denoExecutable,
+  () => abortController.abort(),
+);
+let failure: unknown;
 
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
 let mcpTestTempDir: string | undefined;
@@ -200,20 +218,37 @@ try {
   );
   throwIfAborted(abortController.signal);
 } catch (error) {
-  if (!abortController.signal.aborted) throw error;
+  if (!abortController.signal.aborted) failure = error;
 } finally {
-  await fixture?.cleanup();
-  if (mcpTestTempDir !== undefined) {
-    await Deno.remove(mcpTestTempDir, { recursive: true });
+  try {
+    await fixture?.cleanup();
+    if (mcpTestTempDir !== undefined) {
+      await Deno.remove(mcpTestTempDir, { recursive: true });
+    }
+    if (udsTestSocketDir !== undefined) {
+      await Deno.remove(udsTestSocketDir, { recursive: true });
+    }
+    if (denoTestTempDir !== undefined) {
+      await Deno.remove(denoTestTempDir, { recursive: true });
+    }
+    Deno.removeSignalListener("SIGINT", onSigint);
+    Deno.removeSignalListener("SIGTERM", onSigterm);
+  } finally {
+    backstop.clear();
+    // Every step has ended, and the fixture is stopped or its cleanup failed:
+    // either way a gate lane now stops its own process group, so a same-group
+    // descendant does not outlive the lane.
+    await stopOwnGroup(supervision, denoExecutable);
   }
-  if (udsTestSocketDir !== undefined) {
-    await Deno.remove(udsTestSocketDir, { recursive: true });
-  }
-  if (denoTestTempDir !== undefined) {
-    await Deno.remove(denoTestTempDir, { recursive: true });
-  }
-  Deno.removeSignalListener("SIGINT", onSigint);
-  Deno.removeSignalListener("SIGTERM", onSigterm);
 }
 
+if (backstop.expired) {
+  console.error(
+    `dyfj: the integration lane passed its backstop deadline (${
+      supervision!.backstopMs
+    } ms)`,
+  );
+  Deno.exit(1);
+}
 if (interruptedExitCode !== undefined) Deno.exit(interruptedExitCode);
+if (failure !== undefined) throw failure;

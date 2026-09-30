@@ -3,7 +3,9 @@
 Status: evidence recorded; decision approved by the maintainer on 2026-09-29.
 The end-of-run group stop in each test-lane runner (L12), saved-group recovery
 in the gate (L13) and the runner's backstop deadline were approved on
-2026-09-30. Written for WO-23 step 3 (`specs/work-orders.md`), under
+2026-09-30. All of it is applied: the Vitest removal and the change that added
+the gate's deadlines, the runner-side stop and backstop, and the gate's
+recovery. Written for WO-23 step 3 (`specs/work-orders.md`), under
 `03-testing.md` §2.
 
 ## Question
@@ -138,12 +140,12 @@ sanitizers.
 
 ## Decision
 
-| Function             | Decision                                                                          | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Lock**             | **Remove**                                                                        | The lock stopped concurrent Vitest runs from sharing state: the harness temp dir (`.vitest-tmp`), temp files created in the working tree, and the operator lock itself. None of that shared state exists on `Deno.test`. L8 shows two unit lanes and two full integration lanes of the combined migrated suite running at once with identical, correct results.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **Reaper**           | **Remove the detached reaper; keep saved-group recovery, in the gate**            | It covered a SIGKILLed supervisor leaving the run's processes alive. On `Deno.test`: same-group descendants are killed by the gate's lane-group teardown (L7, L9). The detached processes the suite starts (the ACP fixture agent and the signal probe) end themselves within 0.5 s of their parent's death (L5). Next-run recovery of a saved group covers the one case those do not: the runner killed together with the gate (L13). `03-testing.md` §2 requires that whatever guards against descendant processes remains, so it stays, with the gate in the supervisor's place (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| **Manifest sweep**   | **Remove, and enable both sanitizers on the integration lane in the same change** | The sweep's job was to detect leaked processes and fail the run. The sanitizers do that per test, attribute the leak to the test that caused it, and also cover ops, timers, handles and sockets, which the sweep never did (L1–L3). The test-side leaks above are fixed in that change; the product leak was fixed on its own first. Grandchildren are not covered by the sanitizers (L4). They are covered by lane-group teardown for same-group processes, and by the parent-death check for the only detached processes the suite starts. The sweep's production hook goes with it: `src/acp-client.ts` appends `DYFJ_TEST_RUN_DIR` to the signal probe's arguments only so the sweep's command-needle search can find it, and `testRunDir` has a config-schema entry. Removing the hook changes an internal probe's argv, nothing observable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **Wall-clock bound** | **Retain, as a per-lane deadline in the aggregate gate, with a runner backstop**  | L6 is the one class nothing else covers. A hang runs until the CI job's 60-minute timeout, fails with no lane named, and blocks every other lane's result. The bound moves from the Vitest supervisor into `scripts/aggregate-test-gate.ts`, which already owns each lane's process group. When a lane passes its deadline, the gate uses the teardown it already runs on interruption: TERM to the lane group, the remaining budget, then KILL to the leader and the group. The lane is reported as failed with a message naming it and the bound. No process is moved into a new group, so the gate still reaches every same-group descendant. A bound inside a lane's own runner would have to kill `deno test` by process group. That puts `deno test` in a group of its own, which the gate's lane-group teardown cannot reach if the runner is SIGKILLed: the gap the reaper covered (L7). The runner's backstop (see below) avoids that by killing `deno test` by pid, not by group. The lanes that get a deadline, with defaults from measured run times: `test.unit` 120 s (12–22 s locally), the isolated-Dolt integration lane 900 s (about 95–120 s) and the golden lane 900 s. `DYFJ_TEST_BOUND_SEC` stays as the override. The change that applies this adds a gate orchestration test: a lane that exceeds its deadline while holding a same-group descendant fails, and leaves no survivor. A run outside the gate, such as a direct `deno task test:unit`, has no bound. |
+| Function             | Decision                                                                          | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Lock**             | **Remove**                                                                        | The lock stopped concurrent Vitest runs from sharing state: the harness temp dir (`.vitest-tmp`), temp files created in the working tree, and the operator lock itself. None of that shared state exists on `Deno.test`. L8 shows two unit lanes and two full integration lanes of the combined migrated suite running at once with identical, correct results.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Reaper**           | **Remove the detached reaper; keep saved-group recovery, in the gate**            | It covered a SIGKILLed supervisor leaving the run's processes alive. On `Deno.test`: same-group descendants are killed by the gate's lane-group teardown (L7, L9). The detached processes the suite starts (the ACP fixture agent and the signal probe) end themselves within 0.5 s of their parent's death (L5). Next-run recovery of a saved group covers the one case those do not: the runner killed together with the gate (L13). `03-testing.md` §2 requires that whatever guards against descendant processes remains, so it stays, with the gate in the supervisor's place (see below).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Manifest sweep**   | **Remove, and enable both sanitizers on the integration lane in the same change** | The sweep's job was to detect leaked processes and fail the run. The sanitizers do that per test, attribute the leak to the test that caused it, and also cover ops, timers, handles and sockets, which the sweep never did (L1–L3). The test-side leaks above are fixed in that change; the product leak was fixed on its own first. Grandchildren are not covered by the sanitizers (L4). They are covered by lane-group teardown for same-group processes, and by the parent-death check for the only detached processes the suite starts. The sweep's production hook goes with it: `src/acp-client.ts` appends `DYFJ_TEST_RUN_DIR` to the signal probe's arguments only so the sweep's command-needle search can find it, and `testRunDir` has a config-schema entry. Removing the hook changes an internal probe's argv, nothing observable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Wall-clock bound** | **Retain, as a per-lane deadline in the aggregate gate, with a runner backstop**  | L6 is the one class nothing else covers. A hang runs until the CI job's 60-minute timeout, fails with no lane named, and blocks every other lane's result. The bound moves from the Vitest supervisor into `scripts/aggregate-test-gate.ts`, which already owns each lane's process group. When a lane passes its deadline, the gate uses the teardown it already runs on interruption: TERM to the lane group, the remaining budget, then KILL to the leader and the group. The lane is reported as failed with a message naming it and the bound. No process is moved into a new group, so the gate still reaches every same-group descendant. A bound inside a lane's own runner would have to kill `deno test` by process group. That puts `deno test` in a group of its own, which the gate's lane-group teardown cannot reach if the runner is SIGKILLed: the gap the reaper covered (L7). The runner's backstop (see below) avoids that by killing `deno test` by pid, not by group. The lanes that get a deadline, with defaults from measured run times: `test.unit` 120 s (12–22 s locally), the isolated-Dolt integration lane 900 s (about 95–120 s) and the golden lane 900 s. `DYFJ_TEST_BOUND_SEC` stays as the override. A gate orchestration test covers it: a lane that passes its deadline while holding a same-group descendant fails, and leaves no survivor. A run outside the gate, such as a direct `deno task test:unit`, has no bound. |
 
 What moves rather than goes:
 
@@ -153,7 +155,8 @@ What moves rather than goes:
 - The Vitest supervisor's end-of-run group stop moves into each test-lane
   runner: the unit, isolated-Dolt integration and golden runners. When all of
   its work is done, the runner sends TERM to its own process group, handling
-  that TERM itself so it survives to report its result. "Done" means every child
+  that TERM itself so it survives to report its result, then, after a bounded
+  wait, KILL to each member still running, by pid, so it does not kill itself. "Done" means every child
   the runner starts has exited and its own cleanup has run, not merely that
   `deno test` has exited: the integration runner goes on to run the Cargo schema
   round-trip against the same Dolt fixture, whose server is a same-group child,
@@ -169,41 +172,55 @@ What moves rather than goes:
     shell's process group, and signalling that group would reach the shell's
     other processes.
 
-  The change that applies this adds a gate orchestration test: a lane whose test
-  leaves a same-group grandchild, run with the gate SIGKILLed partway through,
+  A gate orchestration test covers it: a lane whose test leaves a same-group
+  grandchild that ignores TERM, run with the gate SIGKILLed partway through,
   leaves no survivor once the lane finishes.
 
 - Each test-lane runner also carries a backstop deadline: the lane's bound plus
   60 s. It matters only when the gate is gone (L12 during an L6 hang), because
   with the gate alive the gate's deadline fires first. When it expires, the
-  runner sends KILL by pid to the child it is waiting on (`deno test`, or the
-  integration runner's Cargo step), runs its own cleanup, then stops its own
-  group as at the end of a run, and exits failing with a message that names the
-  backstop. Killing by pid keeps every child in the lane group, so the gate's
-  teardown still reaches it. The change that applies this adds a gate
-  orchestration test: with the gate SIGKILLed during a hang, the lane ends at
-  the backstop and leaves no survivor.
+  runner stops the child it is waiting on by pid: the unit and golden runners
+  send KILL to `deno test`, and the integration runner stops its current step
+  (`deno test` or Cargo) as it does on an interruption, TERM and then KILL. It
+  then runs its own cleanup, stops its own group as at the end of a run, and
+  exits failing with a message that names the backstop. Stopping the child by
+  pid keeps every process in the lane group, so the gate's teardown still
+  reaches it. Work that does not observe the stop, such as a fixture query or a
+  cleanup step that hangs, cannot hold the runner: 30 s past the backstop it
+  stops its own group and exits failing, whatever it was waiting on. Gate
+  orchestration tests cover both: a runner with no gate above it, during a
+  hang, ends at the backstop and leaves no survivor; a runner whose own work
+  stalls past the backstop still stops its group and exits.
 - The Vitest supervisor's saved-group recovery moves into the gate, for the case
   where the gate and the runner are both SIGKILLed (L13):
-  - When a test-lane runner starts `deno test`, it writes a record naming its
-    lane, its group id and the child's pid, start time and command. The record
-    goes where the gate says in the lane's environment: an operator-scoped place
-    under HOME, as the Vitest lock was. It also names the gate process by pid
-    and start time. The gate removes the record when the lane ends.
-  - At its next start, the gate reads each record left behind whose gate is no
-    longer running, so a concurrent gate's live lanes are never touched. If the
-    recorded `deno test` is still alive with the same start time and command,
-    and is still a member of the recorded process group, the gate sends TERM to
-    the group, waits, then sends KILL. Otherwise it leaves the numeric group
-    alone and drops the record, so a reused process or group id is never
-    signalled. The membership check matters because a child that left the group
-    would leave the numeric group id free for an unrelated group to reuse. This
-    is the Vitest supervisor's recovery rule, with the gate in the supervisor's
-    place.
-  - The change that applies this adds a gate orchestration test: with the gate
-    and the runner both SIGKILLed during a hang, the next gate run stops the
-    orphaned `deno test` and its same-group grandchild. A record whose process
-    identity no longer matches is dropped without a signal.
+  - When the gate starts a test lane, it gives the runner a random lane token.
+    The runner starts a token carrier: an idle process in the lane group whose
+    command line ends with the token, from the runner's start until its group
+    is stopped. So the group carries its lane's token in every step of the run,
+    `deno test`, Cargo or cleanup. On TERM the carrier stays until nothing but
+    it and the group's leader is left, so a descendant that ignores TERM keeps
+    the token in the group until the teardown's KILL, even when the gate or
+    runner sending it is killed in between. The gate writes a record
+    naming its own pid, the lane's group id and the token to an operator-scoped
+    place under HOME (`$HOME/.dyfj/run/gate-lanes/`), as the Vitest lock was,
+    and removes it when the lane ends.
+  - At its next start, the gate reads each record left behind. A record whose
+    gate is still running (its pid is alive and is a gate) is left alone, so a
+    concurrent gate's live lanes are never touched. Otherwise, if a live member
+    of the recorded process group still carries the lane token on its command
+    line, the gate sends TERM to the group, waits, then sends KILL. If not, it
+    leaves the numeric group alone. Either way it drops the record, so a reused
+    process or group id is never signalled: the token is random per lane, so
+    only the lane's own carrier can carry it, and requiring it inside the
+    recorded group means a child that left the group cannot vouch for an
+    unrelated group that reused the id. This is the Vitest supervisor's recovery
+    rule, with the gate in the supervisor's place and the lane token in place of
+    a recorded start time.
+  - Gate orchestration tests cover it: with the gate and the runner both
+    SIGKILLed during a hang, the next gate run stops the orphaned test process
+    and its same-group grandchild; the same holds when they are killed in a
+    later step that carries no token of its own; a record whose group no longer
+    carries its token is dropped without a signal.
 
 ## Residual risk accepted
 
@@ -215,20 +232,11 @@ What moves rather than goes:
   that starts a detached process and has no parent-death check would outlive a
   SIGKILLed runner (L3, L4 `setsid`). The ACP fixture agent is the pattern to
   follow. Nothing in the suite does this today.
-- **A TERM-ignoring grandchild after a SIGKILLed gate.** The test-lane runner's
-  end-of-run group stop (see Decision) sends TERM only: the runner cannot send
-  KILL to its own group without killing itself. A same-group grandchild that
-  ignores TERM therefore outlives a lane whose gate was SIGKILLed (L12). With
-  the gate alive, its lane-group teardown still sends KILL. No test in the suite
-  leaves such a process today. The Vitest supervisor, which ran Vitest in a
-  group it did not belong to, could send KILL as well.
 - **Between a double crash and the next gate run.** With the gate and the runner
   both SIGKILLed (L13), the orphaned group runs until the next gate run recovers
-  it; a hung test runs that long. If `deno test` has already exited by then,
-  what is left in the group is not recovered, because nothing still proves the
-  group is the lane's: a grandchild `deno test` left, or, for the integration
-  runner killed during its Cargo step, the Dolt server and Cargo. The Vitest
-  supervisor's recovery had the same limit. A local Ctrl-C never leaves this
+  it; a hung test runs that long. A double crash in the brief window between
+  the runner's start and its token carrier's start leaves a group that nothing
+  proves is the lane's, so it is not recovered. A local Ctrl-C never leaves this
   state: it reaches the gate, whose interruption teardown stops every lane
   group. In CI the hosted runner is discarded when the job ends.
 - **Runs outside the gate.** A direct `deno test` run, not through the gate, has

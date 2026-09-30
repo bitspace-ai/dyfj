@@ -287,7 +287,11 @@ The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
 golden characterization lanes in addition to this prototype unit suite. The integration
 lane runs every `*.integration.test.ts` with the op and resource sanitizers enabled, so a
 test that leaks an op, a timer, a resource or a child process fails at that test; a test
-may opt out only with a comment naming the leak and why it is unavoidable. The lane owns
+may opt out only with a comment naming the leak and why it is unavoidable. Under the gate,
+the unit, integration and golden runners are supervised test lanes
+(`scripts/lane-supervision.ts`): each has a deadline, a backstop for when the gate itself
+is gone, and stops its own process group when its work is done; the root README describes
+it. A direct `deno task` run is unsupervised. The lane owns
 a temporary Dolt repository and SQL server, with cleanup on normal completion and handled
 failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane process
 receives SIGTERM followed by a bounded wait and possible SIGKILL. The prototype and root

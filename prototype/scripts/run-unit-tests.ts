@@ -17,6 +17,13 @@
 // fixture, so it fails here on its first ungranted access.
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import { discoverUnitTests, isTestSource } from "./test-files.ts";
+import {
+  killChild,
+  laneSupervision,
+  startBackstop,
+  startTokenCarrier,
+  stopOwnGroup,
+} from "./lane-supervision.ts";
 
 export const TEMP_ROOTS = [
   "/tmp",
@@ -92,7 +99,10 @@ if (import.meta.main) {
       Deno.exit(2);
     }
   }
-  const output = await new Deno.Command(selectedDenoExecutable(), {
+  const deno = selectedDenoExecutable();
+  const supervision = laneSupervision();
+  startTokenCarrier(supervision, deno);
+  const child = new Deno.Command(deno, {
     args: unitTestArgs(selection.files, selection.filter),
     cwd: root,
     clearEnv: true,
@@ -104,6 +114,22 @@ if (import.meta.main) {
     ),
     stdout: "inherit",
     stderr: "inherit",
-  }).output();
-  Deno.exit(output.code);
+  }).spawn();
+  const backstop = startBackstop(
+    supervision,
+    deno,
+    () => killChild(child),
+  );
+  const status = await child.status;
+  backstop.clear();
+  await stopOwnGroup(supervision, deno);
+  if (backstop.expired) {
+    console.error(
+      `dyfj: test.unit passed its backstop deadline (${
+        supervision!.backstopMs
+      } ms)`,
+    );
+    Deno.exit(1);
+  }
+  Deno.exit(status.code);
 }

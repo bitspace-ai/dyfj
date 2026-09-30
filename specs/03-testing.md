@@ -48,7 +48,10 @@ in the same change that lands this spec's first work order.
     former test supervisor. What remains of it (a wall-clock bound and cleanup
     of same-group descendants when a lane or the gate itself dies) was decided
     by WO-23 on evidence from the migrated suite, recorded in
-    `specs/notes/test-supervision-evidence.md`.
+    `specs/notes/test-supervision-evidence.md`. It lives in the aggregate gate
+    (per-lane deadlines, recovery of an orphaned lane group) and in the
+    test-lane runners (`prototype/scripts/lane-supervision.ts`: a backstop and
+    a stop of the runner's own process group).
   - Descendant (grandchild) processes are not covered by Deno's sanitizers.
     Whatever guards against them must remain.
 
