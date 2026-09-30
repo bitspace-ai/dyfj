@@ -180,10 +180,13 @@ What moves rather than goes:
   - At its next start, the gate reads each record left behind whose gate is no
     longer running, so a concurrent gate's live lanes are never touched. If the
     recorded `deno test` is still alive with the same start time and command,
-    the gate sends TERM to the group, waits, then sends KILL. Otherwise it
-    leaves the numeric group alone and drops the record, so a reused process or
-    group id is never signalled. This is the Vitest supervisor's recovery rule,
-    with the gate in the supervisor's place.
+    and is still a member of the recorded process group, the gate sends TERM to
+    the group, waits, then sends KILL. Otherwise it leaves the numeric group
+    alone and drops the record, so a reused process or group id is never
+    signalled. The membership check matters because a child that left the group
+    would leave the numeric group id free for an unrelated group to reuse. This
+    is the Vitest supervisor's recovery rule, with the gate in the supervisor's
+    place.
   - The change that applies this adds a gate orchestration test: with the gate
     and the runner both SIGKILLed during a hang, the next gate run stops the
     orphaned `deno test` and its same-group grandchild. A record whose process
