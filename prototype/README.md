@@ -16,7 +16,9 @@ deno task compile-cli
 ./dist/dyfj
 ```
 
-The bare `dyfj` invocation is the daily-driver path. It connects to the local
+`dyfj` is the only client entry point: the earlier standalone in-process
+workbench CLI, with its `deno task start` and `deno task workbench` tasks, is
+removed. The bare `dyfj` invocation is the daily-driver path. It connects to the local
 Unix-socket runtime and opens the streaming REPL; if no runtime answers, the
 launcher starts one in the background and waits for it. Use `dyfj exec
 "<prompt>"` for a one-shot turn, `dyfj status` to inspect the local runtime, or

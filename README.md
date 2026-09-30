@@ -67,15 +67,19 @@ Section 5.
   - L5 `server/`: the engine's composition root and one RPC module per
     namespace. L5 `cli/`: the `dyfj` client.
 
-  Some modules still sit at the top of `prototype/src/`, each mapped to its
-  target layer by name in `scripts/arch-layers.json`: the ACP runner
-  (`acp-client.ts`, `acp-session-map.ts`, `external-agent-runtime.ts`),
-  whose move is deferred; the interactive REPL (`cli.ts`), which the Rust
-  client in `core/dyfj-repl` replaces; the memory and external-MCP tool
-  modules; `secrets.ts`, `utils.ts` and `runtime-sigint.ts`; and four
-  diagnostics (`diagnostics` in the layer table). `prototype/mcp/` is the stdio memory MCP server over
-  the same store. `prototype/testing/` holds the shared fakes, builders,
-  conformance kits and the golden characterization suite.
+  Modules not yet moved sit at the top of `prototype/src/`, each mapped to
+  its target layer by name in `scripts/arch-layers.json` (`files`), which is
+  the authoritative list. Among them are:
+  - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
+    `external-agent-runtime.ts`), whose move is deferred;
+  - the interactive REPL (`cli.ts`), which the Rust client in
+    `core/dyfj-repl` replaces;
+  - the memory and external-MCP tool modules;
+  - four diagnostics.
+
+  `prototype/mcp/` is the stdio memory MCP server over the same store.
+  `prototype/testing/` holds the shared fakes, builders, conformance kits
+  and the golden characterization suite.
   `prototype/README.md` describes each directory in full.
 - `specs/` - the phase-1 restructuring specifications: architecture, data
   layer, testing, PRDs, work orders, extension recipes, and the bug log.
@@ -98,7 +102,9 @@ stance #3 below.
 ## Status
 
 Early and active. The prototype is functional - the `dyfj` CLI (REPL and
-one-shot) over a duplex JSON-RPC 2.0 Unix-socket seam (the canonical loopback
+one-shot; the earlier standalone in-process workbench CLI and its
+`deno task start` / `deno task workbench` tasks are removed) over a duplex
+JSON-RPC 2.0 Unix-socket seam (the canonical loopback
 transport), shared single-turn runtime boundary, a multi-step agent loop
 (iterating model↔tools with workspace file tools, an approval-gated `bash`
 escape hatch, and a bounded `git` tool), an operator-routed
@@ -1759,4 +1765,6 @@ Document revisions only. Code and behavior changes are tracked in
   layered `prototype/src/` directory architecture: the layers and what each
   holds, the modules not yet moved, the single composition root, the staged
   turn pipeline, single-writer session ownership, the one store mutation path
-  and the Extension boundary. Repo layout adds `specs/` and `scripts/`.
+  and the Extension boundary. Repo layout adds `specs/` and `scripts/`, and
+  Status (with `prototype/README.md`) states that the standalone workbench CLI
+  and its `start` / `workbench` tasks are removed.
