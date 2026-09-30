@@ -194,11 +194,14 @@ Deno.test({
       path: served.server.socketPath,
     });
     try {
-      await conn.write(
-        new TextEncoder().encode(
-          '{"jsonrpc":"2.0","id":1,"method":"late"}\n',
-        ),
+      // write() may send fewer bytes than asked; send the whole frame before
+      // half-closing.
+      const request = new TextEncoder().encode(
+        '{"jsonrpc":"2.0","id":1,"method":"late"}\n',
       );
+      for (let offset = 0; offset < request.length;) {
+        offset += await conn.write(request.subarray(offset));
+      }
       await conn.closeWrite();
       // Read to end-of-file: the response arrives first, then the server
       // closes its side.
