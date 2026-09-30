@@ -63,81 +63,81 @@
     "kind": "module",
     "path": "prototype/src/tools/builtin/file.ts",
     "lines": 1935,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/tools/builtin/file.ts",
     "name": "executeGrepFiles",
     "lines": 226,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "module",
     "path": "prototype/src/tools/web/web.ts",
     "lines": 1108,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/tools/web/web.ts",
     "name": "defineWebCommands",
     "lines": 421,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "module",
     "path": "prototype/src/extensions/ideas/idea-packet.ts",
     "lines": 1237,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/extensions/ideas/idea-packet.ts",
     "name": "draftWorkPacketFromContext",
     "lines": 209,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/providers/openai-compatible/stream.ts",
     "name": "readOpenAIChatStream",
     "lines": 367,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/providers/openai-compatible/adapter.ts",
     "name": "executeOpenAICompatibleTurn",
     "lines": 202,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/config/mcp-servers.ts",
     "name": "parseMcpServersConfig",
     "lines": 270,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/config/secrets-config.ts",
     "name": "parseSecretsConfig",
     "lines": 222,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/src/mcp-tools.ts",
     "name": "buildExternalMcpCommands",
     "lines": 255,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   },
   {
     "kind": "function",
     "path": "prototype/mcp/server.ts",
     "name": "createServer",
     "lines": 326,
-    "reason": "Split deferred past phase 1 at the phase-1 exit audit (specs/README.md, Phase-1 exit)."
+    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   }
 ]

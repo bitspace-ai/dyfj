@@ -553,11 +553,24 @@ function exceptionKey(kind: string, path: string, name?: string): string {
 export function hardLimitViolations(
   sources: ReadonlyMap<string, string>,
   isRuntime: (path: string) => boolean,
-  exceptions: readonly SizeException[],
+  exceptions: unknown,
 ): string[] {
   const errors: string[] = [];
   const byKey = new Map<string, SizeException>();
-  for (const entry of exceptions) {
+  if (!Array.isArray(exceptions)) {
+    errors.push("size exceptions must be a JSON array");
+    exceptions = [];
+  }
+  for (const [index, raw] of (exceptions as unknown[]).entries()) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      errors.push(`size exception #${index} is malformed: not an object`);
+      continue;
+    }
+    const entry = raw as SizeException;
+    if (typeof entry.path !== "string" || entry.path === "") {
+      errors.push(`size exception #${index} is malformed: no path`);
+      continue;
+    }
     const key = exceptionKey(entry.kind, entry.path, entry.name);
     const wellFormed = (entry.kind === "module" && entry.name === undefined) ||
       (entry.kind === "function" && typeof entry.name === "string" &&

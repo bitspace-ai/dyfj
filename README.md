@@ -1720,4 +1720,5 @@ Document revisions only. Code and behavior changes are tracked in
   lane group, replacing the note that the lanes had no bound yet.
 - 2026-09-30 - The `arch.imports` description and `specs/01-architecture.md` §4
   state that the PRD-11 R2 size limits now fail the lane, with the committed
-  exceptions file and its only-shrink rule.
+  exceptions file and its only-shrink rule; `specs/README.md` records decision
+  D28, the phase-1 exit deferrals those exceptions and the exit audit cite.

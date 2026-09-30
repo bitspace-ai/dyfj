@@ -765,6 +765,21 @@ Deno.test("a size exception without a reason, or listed twice, fails", () => {
   );
 });
 
+Deno.test("a size exceptions file that is not an array of objects fails, not throws", () => {
+  assertSome(
+    hardLimitViolations(new Map(), runtimeOnly, {}),
+    "size exceptions must be a JSON array",
+  );
+  const errors = hardLimitViolations(new Map(), runtimeOnly, [
+    null,
+    "module",
+    { kind: "module", lines: 1, reason: "no path" },
+  ]);
+  assertSome(errors, "size exception #0 is malformed: not an object");
+  assertSome(errors, "size exception #1 is malformed: not an object");
+  assertSome(errors, "size exception #2 is malformed: no path");
+});
+
 Deno.test("the committed size exceptions each carry a reason", async () => {
   const committed = JSON.parse(
     await Deno.readTextFile(

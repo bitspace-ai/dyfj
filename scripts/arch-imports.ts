@@ -49,7 +49,6 @@ import { repoRootFromMeta } from "./scan-lib.ts";
 import {
   formatSizeReport,
   hardLimitViolations,
-  type SizeException,
   sizeReport,
 } from "./arch-imports-size.ts";
 import { CONFIG_SCHEMA } from "../prototype/src/config/schema.ts";
@@ -764,9 +763,9 @@ export async function main(
 
   console.log(`${LABEL}: size report against the targets (non-failing)`);
   for (const line of formatSizeReport(sizeReport(sources))) console.log(line);
-  const sizeExceptions = JSON.parse(
+  const sizeExceptions: unknown = JSON.parse(
     await Deno.readTextFile(`${root}/${SIZE_EXCEPTIONS_PATH}`),
-  ) as SizeException[];
+  );
   const sizeErrors = hardLimitViolations(
     sources,
     (path) => {
@@ -808,7 +807,7 @@ export async function main(
     `${LABEL}: ${
       countBaseline(result.current)
     } baselined violations, none new; ` +
-      `${sizeExceptions.length} size exceptions, none exceeded`,
+      `${(sizeExceptions as unknown[]).length} size exceptions, none exceeded`,
   );
   return 0;
 }
