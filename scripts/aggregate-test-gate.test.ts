@@ -535,8 +535,17 @@ Deno.test("a Markdown-only pull request runs only the policy lanes", async () =>
   for (const id of REQUIRED_CHECK_IDS) {
     if (!ids.has(id)) throw new Error(`docs-only run does not report ${id}`);
   }
-  if (!plan.lanes.some((lane) => lane.label === "Retired-surface scan")) {
-    throw new Error("the retired-surface scan reads Markdown and must run");
+  // Lanes that read this repository's Markdown must run on a docs-only change.
+  for (
+    const reader of [
+      "Retired-surface scan",
+      "Contract closure report generation",
+      "Contract package tests",
+    ]
+  ) {
+    if (!plan.lanes.some((lane) => lane.label === reader)) {
+      throw new Error(`${reader} reads Markdown and must run`);
+    }
   }
 });
 

@@ -193,14 +193,17 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
-- **A Markdown-only pull request runs only the gate's policy lanes.** When
+- **A Markdown-only pull request runs only the gate's policy lanes and the
+  lanes that read Markdown.** When
   every path a pull request's release range changes is Markdown (deletions
   included; a rename to a `.md` name does not count), `deno task test` runs
   `subject.resolve`, `subject.digest`, the retired-surface scan, both
   public-safety tree scans, `secret.diff`, `diff.whitespace`,
   `markdown.links`, `shell.parse`, `dependency.policy` and `receipt.schema`,
-  and names each lane it skips (unit, integration, golden, schema,
-  `arch.imports`, typecheck, contract and Rust lanes) before it starts. Its
+  plus the two contract lanes, whose closure report reads `closure-claim`
+  markers in the Markdown. It names each lane it skips (unit, integration,
+  golden, schema, `arch.imports`, typecheck, orchestration and Rust lanes)
+  before it starts. Its
   `gate-status` line reports `"mode":"docs-only"` and it makes its own success
   claim, not the full green bar's. The decision is made inside the gate
   (`scripts/change-scope.ts`), not by a workflow path filter, so both CI jobs

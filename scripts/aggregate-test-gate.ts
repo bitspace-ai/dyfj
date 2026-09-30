@@ -965,12 +965,14 @@ export function fastLanes(
 }
 
 // A pull request whose release range changes Markdown files only runs these
-// policy lanes and skips the rest (`planGate`). No test reads this
-// repository's own Markdown as input, so the skipped lanes cannot change
-// result on such a change; the retired-surface scan does read Markdown and
-// stays. Together they report every required check id, so the status can
-// still compose to `pass`. The push to main runs the full gate, so anything
-// a docs-only pull request skipped is still checked there.
+// lanes and skips the rest (`planGate`): the policy lanes, which together
+// report every required check id so the status can still compose to `pass`,
+// plus every lane that reads this repository's own Markdown. The
+// retired-surface scan reads it, and both contract lanes do: the closure
+// report checks the `closure-claim` markers in `README.md`, `CHANGELOG.md`
+// and the contract package README. No skipped lane reads it, so none can
+// change result on such a change. The push to main runs the full gate, so
+// anything a docs-only pull request skipped is still checked there.
 export const DOCS_ONLY_LANE_LABELS: readonly string[] = [
   "Subject resolution",
   "Subject digest recomputation",
@@ -983,6 +985,8 @@ export const DOCS_ONLY_LANE_LABELS: readonly string[] = [
   "Changed-shell parse check",
   "Dependency policy check",
   "Receipt schema validation",
+  "Contract closure report generation",
+  "Contract package tests",
 ];
 
 export function docsOnlyLanes(
@@ -1078,7 +1082,7 @@ export async function planGate(options: PlanGateOptions): Promise<GatePlan> {
           "✓ docs-only gate passed (policy lanes only; the push to main runs the full gate)",
         skipped: {
           reason:
-            "every path this pull request changes is Markdown, so only the policy lanes run",
+            "every path this pull request changes is Markdown, so only the policy and Markdown-reading lanes run",
           labels: production
             .map((lane) => lane.label)
             .filter((label) => !DOCS_ONLY_LANE_LABELS.includes(label)),

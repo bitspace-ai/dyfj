@@ -1092,8 +1092,10 @@ included, ends in `.md`; rename detection is off, so a file renamed to a `.md`
 name does not count), the gate runs only the policy lanes — `subject.resolve`,
 `subject.digest`, the retired-surface scan, both public-safety tree scans,
 `secret.diff`, `diff.whitespace`, `markdown.links`, `shell.parse`,
-`dependency.policy` and `receipt.schema` — and names every lane it skips before
-it starts; its `gate-status` line reads `"mode":"docs-only"`. The
+`dependency.policy` and `receipt.schema` — and the two contract lanes, whose
+closure report reads the `closure-claim` markers in the Markdown. It names
+every lane it skips before it starts, and its `gate-status` line reads
+`"mode":"docs-only"`. The
 classification (`scripts/change-scope.ts`, keyed on `GITHUB_EVENT_NAME`) runs
 inside the repository-owned command rather than as a workflow path filter, so
 both jobs still report a status and the required checks can pass. A push to
