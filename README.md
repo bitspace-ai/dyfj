@@ -1006,10 +1006,11 @@ scenario writes) with the snapshots committed under
 Unix socket of each engine server they start, and cannot write the snapshot
 directory unless run with `--update`. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
-lane and permission grant. Each lane runs in a process group of its own, which
-the gate tears down (TERM, a short grace, then KILL) when the lane ends or the
-gate is interrupted, so a test's same-group child processes do not outlive its
-lane. The lanes have no wall-clock bound of their own yet: a hung test runs
+lane and permission grant. Outside Windows, each lane runs in a process group
+of its own, which the gate tears down (TERM, a short grace, then KILL) when the
+lane ends or the gate is interrupted, so a test's same-group child processes do
+not outlive its lane. Windows has no POSIX process groups, so there the gate
+signals only the lane leader and a lane's descendants are not covered. The lanes have no wall-clock bound of their own yet: a hung test runs
 until the CI job's timeout. The per-lane deadline and the runner-side cleanup
 that complete the test supervision are specified in
 `specs/notes/test-supervision-evidence.md` and not yet in place. The integration lane owns a

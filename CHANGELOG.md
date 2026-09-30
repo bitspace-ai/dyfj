@@ -185,7 +185,8 @@ README are tracked separately in its Revision history section.
 - **`deno task test` in `prototype/` is the typecheck plus `test.unit`.**
   `deno task test:file <path>... [--filter <pattern>]` runs the named unit test
   files under the unit lane's grants and sanitizers, without the full
-  typecheck.
+  typecheck. It takes only test file paths and one `--filter`, and exits 2 on
+  anything else, so it cannot run every test or change the lane's flags.
 
 - **The ACP client, session-map, external-agent runtime and ACP runner tests
   run on `Deno.test` instead of Vitest**, with every case kept. Each file is

@@ -9,7 +9,11 @@ import {
   isUnitTest,
 } from "./test-files.ts";
 import { parseTypecheckScope } from "./typecheck.ts";
-import { unitTestArgs } from "./run-unit-tests.ts";
+import {
+  parseTestFileArgs,
+  TEST_FILE_USAGE,
+  unitTestArgs,
+} from "./run-unit-tests.ts";
 
 Deno.test("isUnitTest keeps integration and golden files out", () => {
   assertEquals(isUnitTest("src/a.test.ts"), true);
@@ -122,4 +126,34 @@ Deno.test("the unit lane runs in parallel, sanitized, with no run, net or env gr
   // opts in.
   assertEquals(args.includes("--sanitize-ops"), true);
   assertEquals(args.includes("--sanitize-resources"), true);
+});
+
+Deno.test("test:file takes test paths and one optional --filter", () => {
+  assertEquals(parseTestFileArgs(["src/a.test.ts"]), {
+    files: ["src/a.test.ts"],
+  });
+  assertEquals(
+    parseTestFileArgs(["src/a.test.ts", "--filter", "x y", "src/b.test.ts"]),
+    { files: ["src/a.test.ts", "src/b.test.ts"], filter: "x y" },
+  );
+  const args = unitTestArgs(["src/a.test.ts"], "x y");
+  assertEquals(args.slice(-3), ["--filter", "x y", "src/a.test.ts"]);
+  assertEquals(args.includes("--sanitize-ops"), true);
+});
+
+Deno.test("test:file rejects anything but test paths and one --filter", () => {
+  for (
+    const args of [
+      [],
+      ["--filter", "x"],
+      ["src/a.test.ts", "--filter"],
+      ["src/a.test.ts", "--filter", "x", "--filter", "y"],
+      ["src/a.test.ts", "--no-check"],
+      ["src/a.test.ts", "--sanitize-ops=false"],
+      ["src/a.test.ts", "-A"],
+      ["src/a.ts"],
+    ]
+  ) {
+    assertThrows(() => parseTestFileArgs(args), Error, TEST_FILE_USAGE);
+  }
 });

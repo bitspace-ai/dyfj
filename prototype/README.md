@@ -225,7 +225,7 @@ deno task test:unit      # Deno.test unit lane (test.unit)
 deno task test           # checks, then test:unit
 deno task test:file <path>... [--filter <pattern>]
                          # named unit test files, no full typecheck
-                         # (requires a path; exits 2 otherwise)
+                         # (paths and one --filter only; exits 2 otherwise)
 deno task verify-workbench-events
 deno task test:golden    # golden characterization suite (needs Dolt)
 deno task test:golden --update  # rewrite snapshots (see below)
