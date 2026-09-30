@@ -875,7 +875,8 @@ describe("autostart requires an absolute private log home", () => {
     const proc = new Deno.Command(BASH, {
       args: [LAUNCHER, "sessions"],
       cwd,
-      env: { ...env, DYFJ_LAUNCHER_DRY_RUN: "" },
+      // The real Deno cache, so the fake HOME never means a cold one.
+      env: { DENO_DIR: realDenoDir(), ...env, DYFJ_LAUNCHER_DRY_RUN: "" },
       stdout: "null",
       stderr: "piped",
     });
@@ -1054,6 +1055,10 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
         args: [LAUNCHER, "--socket", sock, "sessions"],
         env: {
           HOME: home,
+          // The probe runs the client, whose Deno cache would otherwise
+          // follow the fake HOME and start empty: a slow dependency fetch
+          // could then outlast the lock's TTL before the lock is read.
+          DENO_DIR: realDenoDir(),
           DYFJ_SOCKET: sock,
           DYFJ_START_LOCK_TTL_SEC: "30",
           DYFJ_LAUNCHER_DRY_RUN: "",
@@ -1120,6 +1125,10 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
         args: [LAUNCHER, "--socket", sock, "sessions"],
         env: {
           HOME: home,
+          // The probe runs the client, whose Deno cache would otherwise
+          // follow the fake HOME and start empty: a slow dependency fetch
+          // could then outlast the lock's TTL before the lock is read.
+          DENO_DIR: realDenoDir(),
           DYFJ_SOCKET: sock,
           DYFJ_START_LOCK_TTL_SEC: "30",
           DYFJ_LAUNCHER_DRY_RUN: "",
@@ -1205,6 +1214,10 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
         args: [LAUNCHER, "--socket", sock, "sessions"],
         env: {
           HOME: home,
+          // The probe runs the client, whose Deno cache would otherwise
+          // follow the fake HOME and start empty: a slow dependency fetch
+          // could then outlast the lock's TTL before the lock is read.
+          DENO_DIR: realDenoDir(),
           DYFJ_SOCKET: sock,
           DYFJ_START_LOCK_TTL_SEC: "30",
           DYFJ_LAUNCHER_DRY_RUN: "",
