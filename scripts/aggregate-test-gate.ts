@@ -403,10 +403,12 @@ function parseLaneRecord(text: string): LaneRecord | undefined {
 }
 
 // Listing processes needs a run grant the gate does not hold, so the selected
-// Deno lists them in a short-lived child, as it signals lane groups.
+// Deno lists them in a short-lived child, as it signals lane groups. `-ww`
+// asks for unlimited width: the lane token trails the command line, and macOS
+// `ps` otherwise truncates the command column.
 const LIST_PROCESSES_PROGRAM = [
   `const out = await new Deno.Command("ps", {`,
-  `  args: ["-A", "-o", "pid=,pgid=,command="],`,
+  `  args: ["-A", "-ww", "-o", "pid=,pgid=,command="],`,
   `  stdout: "piped", stderr: "null",`,
   `}).output();`,
   `await Deno.stdout.write(out.stdout);`,

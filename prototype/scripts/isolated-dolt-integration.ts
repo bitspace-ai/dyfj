@@ -215,23 +215,27 @@ try {
   if (!abortController.signal.aborted) failure = error;
 } finally {
   backstop.clear();
-  await fixture?.cleanup();
-  if (mcpTestTempDir !== undefined) {
-    await Deno.remove(mcpTestTempDir, { recursive: true });
+  try {
+    await fixture?.cleanup();
+    if (mcpTestTempDir !== undefined) {
+      await Deno.remove(mcpTestTempDir, { recursive: true });
+    }
+    if (udsTestSocketDir !== undefined) {
+      await Deno.remove(udsTestSocketDir, { recursive: true });
+    }
+    if (denoTestTempDir !== undefined) {
+      await Deno.remove(denoTestTempDir, { recursive: true });
+    }
+    Deno.removeSignalListener("SIGINT", onSigint);
+    Deno.removeSignalListener("SIGTERM", onSigterm);
+  } finally {
+    // Every step has ended, and the fixture is stopped or its cleanup failed:
+    // either way a gate lane now stops its own process group, so a same-group
+    // descendant does not outlive the lane.
+    await stopOwnGroup(supervision, denoExecutable);
   }
-  if (udsTestSocketDir !== undefined) {
-    await Deno.remove(udsTestSocketDir, { recursive: true });
-  }
-  if (denoTestTempDir !== undefined) {
-    await Deno.remove(denoTestTempDir, { recursive: true });
-  }
-  Deno.removeSignalListener("SIGINT", onSigint);
-  Deno.removeSignalListener("SIGTERM", onSigterm);
 }
 
-// Every step has ended and the fixture is stopped: a gate lane now stops its
-// own process group, so a same-group descendant does not outlive the lane.
-await stopOwnGroup(supervision, denoExecutable);
 if (backstop.expired) {
   console.error(
     `dyfj: the integration lane passed its backstop deadline (${

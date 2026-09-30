@@ -98,7 +98,7 @@ async function withDir(run: (dir: string) => Promise<void>): Promise<void> {
     if (pid !== undefined) {
       await sh(`kill -9 ${Number(pid)} 2>/dev/null || true`);
     }
-    for (const line of (await sh("ps -A -o pid=,command=")).split("\n")) {
+    for (const line of (await sh("ps -A -ww -o pid=,command=")).split("\n")) {
       const match = line.match(/^\s*(\d+)\s+(.*)$/);
       if (match && match[2].includes(dir) && Number(match[1]) !== Deno.pid) {
         await sh(`kill -9 ${Number(match[1])} 2>/dev/null || true`);
@@ -244,7 +244,8 @@ Deno.test({
       const recordName = await waitFor(
         async () => {
           try {
-            return [...Deno.readDirSync(`${dir}/records`)][0]?.name;
+            return (await Array.fromAsync(Deno.readDir(`${dir}/records`)))[0]
+              ?.name;
           } catch {
             return undefined;
           }
@@ -263,6 +264,15 @@ Deno.test({
       assert(
         (await liveGroupMembers(record.group)).length > 0,
         "the orphaned group should still hold the test child",
+      );
+      // The token trails a command line wider than a terminal's default 80
+      // columns, which a truncating `ps` would cut off.
+      const carrier = (await sh("ps -A -ww -o command=")).split("\n")
+        .find((line) => line.includes(laneTokenArgument(record.token)));
+      assert(
+        carrier !== undefined &&
+          carrier.indexOf(laneTokenArgument(record.token)) > 80,
+        "the lane token should sit past column 80",
       );
 
       await recoverOrphanedLaneGroups(`${dir}/records`, quiet);
@@ -310,7 +320,9 @@ Deno.test({
           JSON.stringify({ gatePid: exited.pid, group: bystander.pid, token }),
         );
         assert(
-          !(await sh(`ps -A -o command=`)).includes(laneTokenArgument(token)),
+          !(await sh(`ps -A -ww -o command=`)).includes(
+            laneTokenArgument(token),
+          ),
           "no process should carry the token",
         );
 
