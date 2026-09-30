@@ -143,6 +143,40 @@ Deno.test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connect
   assertEquals(await client.peer.request("ping"), "pong");
 });
 
+Deno.test({
+  name:
+    "serveUnixJsonRpc closes its side of a connection when the client disconnects",
+  // The lane does not enable the resource sanitizer yet; this case opts in so
+  // a server-side connection left open after the client goes fails here too.
+  sanitizeOps: true,
+  sanitizeResources: true,
+  async fn() {
+    await using served = await serve("listener-client-eof", {
+      ping: () => "pong",
+    });
+    const conn = await Deno.connect({
+      transport: "unix",
+      path: served.server.socketPath,
+    });
+    try {
+      // Half-close: the server's read loop sees end-of-file, while this side
+      // can still read. The server must answer with end-of-file of its own.
+      await conn.closeWrite();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const read = await Promise.race([
+        conn.read(new Uint8Array(16)),
+        new Promise<"timeout">((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), 2_000);
+        }),
+      ]);
+      clearTimeout(timer);
+      assertEquals(read, null);
+    } finally {
+      conn.close();
+    }
+  },
+});
+
 Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () => {
   const errors: string[] = [];
   let markReported: () => void = () => {};

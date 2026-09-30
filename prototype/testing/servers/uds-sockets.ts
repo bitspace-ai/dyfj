@@ -19,6 +19,7 @@ export const UDS_TEST_SOCKETS = [
   "client-missing",
   "listener-serve",
   "listener-keep-peers",
+  "listener-client-eof",
   "listener-live",
   "listener-stale",
   "listener-file",
