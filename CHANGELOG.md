@@ -1399,6 +1399,15 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **The runtime's Unix-socket server no longer keeps a connection open after
+  its client disconnects.** Before this fix, `serve-unix` left its side of
+  every client connection open until the runtime stopped, so each `dyfj`
+  command that connected to the runtime held one file descriptor for the life
+  of the runtime. A long-running
+  runtime, or any local process able to connect to its socket, could exhaust
+  the process's descriptor limit, after which the runtime could no longer accept
+  connections or open files. The server now closes a connection once its client
+  disconnects and the requests the client already sent have been answered.
 - **A new session's first turn is serialized with later turns that name it**:
   a turn that started a new session previously ran outside that session's turn
   lock, because its session id was generated only once the turn was running. A
