@@ -1,8 +1,9 @@
 export const integrationTestAssignments = {
-  vitest: [
-    "src/acp-runner.integration.test.ts",
-  ],
+  vitest: [],
   deno: [
+    "src/acp-client.integration.test.ts",
+    "src/acp-runner.integration.test.ts",
+    "src/acp-session-map.integration.test.ts",
     "src/cli/commands/status.integration.test.ts",
     "src/cli/launcher/grants.integration.test.ts",
     "src/cli/commands/stop.integration.test.ts",
@@ -10,6 +11,7 @@ export const integrationTestAssignments = {
     "src/config/env.integration.test.ts",
     "src/context/repo-context.integration.test.ts",
     "src/engine/build-context.integration.test.ts",
+    "src/external-agent-runtime.integration.test.ts",
     "src/mcp-conformance.integration.test.ts",
     "src/mcp-tools.integration.test.ts",
     "src/memory.integration.test.ts",

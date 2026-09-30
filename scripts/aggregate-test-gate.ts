@@ -651,7 +651,9 @@ export function productionLanes(
       args: [
         "run",
         "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT",
-        "--allow-read=.,..",
+        // Read on the temp roots lets the lane resolve the real path of the
+        // temp directory it hands the Deno.test files (macOS /tmp is a symlink).
+        "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
         `--allow-run=${denoExecutable},dolt,cargo`,
         "--allow-net=127.0.0.1",
