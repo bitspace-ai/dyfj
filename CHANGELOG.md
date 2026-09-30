@@ -193,6 +193,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **A Markdown-only pull request runs only the gate's policy lanes.** When
+  every path a pull request's release range changes is Markdown (deletions
+  included; a rename to a `.md` name does not count), `deno task test` runs
+  `subject.resolve`, `subject.digest`, the retired-surface scan, both
+  public-safety tree scans, `secret.diff`, `diff.whitespace`,
+  `markdown.links`, `shell.parse`, `dependency.policy` and `receipt.schema`,
+  and names each lane it skips (unit, integration, golden, schema,
+  `arch.imports`, typecheck, contract and Rust lanes) before it starts. Its
+  `gate-status` line reports `"mode":"docs-only"` and it makes its own success
+  claim, not the full green bar's. The decision is made inside the gate
+  (`scripts/change-scope.ts`), not by a workflow path filter, so both CI jobs
+  still report a status. A push to `main`, a manual dispatch and every local
+  run keep the full gate. The `test` task now reads `GITHUB_EVENT_NAME`.
+
 - **The isolated-Dolt integration lane runs with the op and resource
   sanitizers**, so a test there that leaks an op, a timer, a resource or a
   child process fails at that test. The two test-side leaks this found are
