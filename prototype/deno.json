@@ -203,7 +203,7 @@
     "mysql2": "npm:mysql2@3.24.4",
     "mysql2/promise": "npm:mysql2@3.24.4/promise",
     "ulid": "npm:ulid@3.0.2",
-    "zod": "npm:zod@4.4.3"
+    "zod": "npm:zod@4.6.5"
   },
   "nodeModulesDir": "auto",
   "compilerOptions": {

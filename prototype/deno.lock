@@ -24,12 +24,12 @@
     "jsr:@std/testing@1.0.21": "1.0.21",
     "jsr:@std/toml@1.0.11": "1.0.11",
     "npm:@agentclientprotocol/codex-acp@1.11.0": "1.11.0",
-    "npm:@agentclientprotocol/sdk@1.4.0": "1.4.0_zod@4.4.3",
+    "npm:@agentclientprotocol/sdk@1.4.0": "1.4.0_zod@4.6.5",
     "npm:@modelcontextprotocol/client@2.1.0": "2.1.0",
     "npm:@modelcontextprotocol/server@2.0.0": "2.0.0",
     "npm:mysql2@3.24.4": "3.24.4_@types+node@26.5.1",
     "npm:ulid@3.0.2": "3.0.2",
-    "npm:zod@4.4.3": "4.4.3"
+    "npm:zod@4.6.5": "4.6.5"
   },
   "jsr": {
     "@david/console-static-text@0.3.4": {
@@ -136,7 +136,7 @@
       ],
       "bin": true
     },
-    "@agentclientprotocol/sdk@1.4.0_zod@4.4.3": {
+    "@agentclientprotocol/sdk@1.4.0_zod@4.6.5": {
       "integrity": "sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==",
       "dependencies": [
         "zod"
@@ -394,8 +394,8 @@
         "powershell-utils@0.1.0"
       ]
     },
-    "zod@4.4.3": {
-      "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="
+    "zod@4.6.5": {
+      "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="
     }
   },
   "remote": {
@@ -445,7 +445,7 @@
       "npm:@modelcontextprotocol/server@2.0.0",
       "npm:mysql2@3.24.4",
       "npm:ulid@3.0.2",
-      "npm:zod@4.4.3"
+      "npm:zod@4.6.5"
     ]
   }
 }
