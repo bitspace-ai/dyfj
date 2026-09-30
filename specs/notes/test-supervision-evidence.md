@@ -142,13 +142,16 @@ What moves rather than goes:
   tests use to clean up a runtime they started (L9), moves from
   `scripts/test-process-harness.ts` into shared test support under `testing/`.
 - The Vitest supervisor's end-of-run group stop moves into each test-lane
-  runner: the unit, isolated-Dolt integration and golden runners. When its
-  `deno test` child exits, the runner sends TERM to its own process group,
-  handling that TERM itself so it survives to report its result. This keeps L12
-  covered: if the gate is SIGKILLed, the lane still finishes and still removes
-  its same-group grandchildren. It changes no process's group, so the gate's
-  lane-group teardown and deadline still reach everything. Two conditions make
-  it safe:
+  runner: the unit, isolated-Dolt integration and golden runners. When all of
+  its work is done, the runner sends TERM to its own process group, handling
+  that TERM itself so it survives to report its result. "Done" means every child
+  the runner starts has exited and its own cleanup has run, not merely that
+  `deno test` has exited: the integration runner goes on to run the Cargo schema
+  round-trip against the same Dolt fixture, whose server is a same-group child,
+  and stops that server in its own cleanup. This keeps L12 covered: if the gate
+  is SIGKILLed, the lane still finishes and still removes its same-group
+  grandchildren. It changes no process's group, so the gate's lane-group
+  teardown and deadline still reach everything. Two conditions make it safe:
   - The runner has to be its lane group's leader, so the unit lane is started as
     its runner directly rather than through `deno task`, whose process would
     otherwise take the TERM and fail the lane.
@@ -164,12 +167,13 @@ What moves rather than goes:
 - Each test-lane runner also carries a backstop deadline: the lane's bound plus
   60 s. It matters only when the gate is gone (L12 during an L6 hang), because
   with the gate alive the gate's deadline fires first. When it expires, the
-  runner sends KILL to its `deno test` child by pid, then stops its own group as
-  at the end of a run, and exits failing with a message that names the backstop.
-  Killing by pid keeps `deno test` in the lane group, so the gate's teardown
-  still reaches it. The change that applies this adds a gate orchestration test:
-  with the gate SIGKILLed during a hang, the lane ends at the backstop and
-  leaves no survivor.
+  runner sends KILL by pid to the child it is waiting on (`deno test`, or the
+  integration runner's Cargo step), runs its own cleanup, then stops its own
+  group as at the end of a run, and exits failing with a message that names the
+  backstop. Killing by pid keeps every child in the lane group, so the gate's
+  teardown still reaches it. The change that applies this adds a gate
+  orchestration test: with the gate SIGKILLed during a hang, the lane ends at
+  the backstop and leaves no survivor.
 - The Vitest supervisor's saved-group recovery moves into the gate, for the case
   where the gate and the runner are both SIGKILLed (L13):
   - When a test-lane runner starts `deno test`, it writes a record naming its
@@ -211,12 +215,13 @@ What moves rather than goes:
   group it did not belong to, could send KILL as well.
 - **Between a double crash and the next gate run.** With the gate and the runner
   both SIGKILLed (L13), the orphaned group runs until the next gate run recovers
-  it; a hung test runs that long. If `deno test` has already exited by then, a
-  grandchild it left is not recovered, because nothing still proves the group is
-  the lane's. The Vitest supervisor's recovery had the same limit. A local
-  Ctrl-C never leaves this state: it reaches the gate, whose interruption
-  teardown stops every lane group. In CI the hosted runner is discarded when the
-  job ends.
+  it; a hung test runs that long. If `deno test` has already exited by then,
+  what is left in the group is not recovered, because nothing still proves the
+  group is the lane's: a grandchild `deno test` left, or, for the integration
+  runner killed during its Cargo step, the Dolt server and Cargo. The Vitest
+  supervisor's recovery had the same limit. A local Ctrl-C never leaves this
+  state: it reaches the gate, whose interruption teardown stops every lane
+  group. In CI the hosted runner is discarded when the job ends.
 - **Runs outside the gate.** A direct `deno test` run, not through the gate, has
   neither lane-group teardown, the wall-clock bound nor the runner's end-of-run
   group stop. A same-group grandchild survives both a normal exit of the runner
