@@ -804,6 +804,17 @@ README are tracked separately in its Revision history section.
   tests now overlay the values on the reads of their own worker only, with
   assertions unchanged. Test-only; runtime behavior is unchanged.
 
+### Security
+
+- **The runtime's Unix-socket server no longer keeps a connection open after
+  its client disconnects.** Before this fix, `serve-unix` left its side of
+  every client connection open until the runtime stopped, so each `dyfj`
+  command held one file descriptor for the life of the runtime. A long-running
+  runtime, or any local process able to connect to its socket, could exhaust
+  the process's descriptor limit, after which the runtime could no longer accept
+  connections or open files. The server now closes a connection once its client
+  disconnects and the requests the client already sent have been answered.
+
 ### Added
 
 - **Golden characterization suite and its gate lane (`test.golden`)**:
