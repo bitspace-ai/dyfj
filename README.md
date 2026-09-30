@@ -214,15 +214,13 @@ How the work actually happens, separate from what gets built.
   they're not yet ready.
 - **Fakes live at declared ports only, and are proven against the real
   thing.** A unit or component test replaces a declared port with its in-repo
-  fake; module mocking is banned, and existing Vitest tests that still mock move
-  to this shape as their modules move. Each fake that stands in for a real adapter
+  fake; module mocking is banned. Each fake that stands in for a real adapter
   passes the same conformance suite as that adapter. Real dependencies (a real
   Dolt instance, real processes, real sockets) belong to the integration tier;
   third-party network services are faked at the network boundary with loopback
   servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
-  Shared fakes live in `prototype/testing/fakes/`. New tests use `Deno.test`
-  with `@std/assert` and `@std/testing`; Vitest is being retired as tests move
-  with their modules.
+  Shared fakes live in `prototype/testing/fakes/`. Tests use `Deno.test` with
+  `@std/assert` and `@std/testing`, the only test framework.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -990,15 +988,15 @@ After the policy checks, the gate runs the retired-surface scan, the
 file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
 never hand-listed), the prototype `Deno.test` unit lane (`test.unit`: every
 non-integration, non-golden `Deno.test` file, run in parallel with the op and
-resource sanitizers enabled and no run, net, or env grant), the prototype Vitest
-unit suite (files that import `vitest`; it may only shrink), current and
+resource sanitizers enabled and no run, net, or env grant), current and
 historical schema checks, `schema.codegen` (the row types in
 `prototype/src/store/generated/rows.ts` regenerated from the DDL must match the
 committed file) and `schema.equivalence` (`current/` + `catalog/` and
 `history/` + `migrations/` must produce the same structure), non-ignored Rust
 tests using offline SQLx metadata and
-no inherited `DATABASE_URL`, an isolated-Dolt integration lane (including UDS
-and MCP round trips), and the golden characterization lane (`test.golden`). The
+no inherited `DATABASE_URL`, an isolated-Dolt integration lane (every
+`*.integration.test.ts`, found by file name, with the op and resource sanitizers
+enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
 `dyfj` CLI as child processes, and compares normalized captures (stream frames,
@@ -1008,28 +1006,14 @@ scenario writes) with the snapshots committed under
 Unix socket of each engine server they start, and cannot write the snapshot
 directory unless run with `--update`. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
-lane and permission grant. The prototype Vitest lane is exclusive and bounded:
-one operator-scoped lock (`$HOME/.dyfj/run/dyfj-vitest-run.lock`) refuses a
-second run while a prior `run-vitest` PID is still alive, including across
-checkouts. A hang fails `DYFJ_TEST_BOUND_SEC` (default 600s, or 180s when the
-args name a test file or `-t` pattern). Leftover fixture children, launcher
-supervisors, `serve-unix` processes bound to test sockets, `.vitest-tmp`
-sockets, and run-scoped `start-test-runtime-*.lock` files are reaped after the
-suite exits or the runner dies. Cleanup matches this run's tmp dir, spawn
-manifest, and explicit command needles — not matched by generic process name.
-SIGTERM/SIGINT to the supervisor, SIGKILL of Vitest, and SIGKILL of the
-supervisor (sibling reaper) are covered; SIGKILL of the supervisor and reaper
-together is recovered by the next run, which reaps the saved Vitest process
-group only when a recovering run generation is supplied and the recorded
-recovery directory, run generation, leader start time, and command still match.
-Malformed-lock recovery does not signal a saved process group because no
-generation can be recovered. A spawn-manifest PID is not kill authority unless
-that record carries matching start time, command, recovery directory, and run
-generation; incomplete records fail closed for process signaling while file
-cleanup stays run-scoped. If the saved leader is gone, that numeric group is
-left alive; descendants whose command names this run's tmp dir are still reaped
-by run-scoped discovery. Supervised runs fail closed without an absolute `HOME`
-rather than falling back to a checkout-local lock. The integration lane owns a
+lane and permission grant. Outside Windows, each lane runs in a process group
+of its own, which the gate tears down (TERM, a short grace, then KILL) when the
+lane ends or the gate is interrupted, so a test's same-group child processes do
+not outlive its lane. Windows has no POSIX process groups, so there the gate
+signals only the lane leader and a lane's descendants are not covered. The lanes have no wall-clock bound of their own yet: a hung test runs
+until the CI job's timeout. The per-lane deadline and the runner-side cleanup
+that complete the test supervision are specified in
+`specs/notes/test-supervision-evidence.md` and not yet in place. The integration lane owns a
 temporary Dolt repository and SQL server, with cleanup on normal completion and
 handled failure. SIGINT and SIGTERM request cooperative cancellation; the direct
 lane process receives SIGTERM followed by a bounded wait and possible SIGKILL.
@@ -1705,3 +1689,7 @@ Document revisions only. Code and behavior changes are tracked in
   what integration-lane sanitizers flag: the Unix-connection leaks were a product
   leak, since fixed, and the secrets-resolver timeout case, which leaks by
   design, was missing.
+- 2026-09-30 - Engineering posture names `Deno.test` as the only test
+  framework, and the gate description drops the retired unit-suite lane and its
+  supervisor, finds integration files by name with sanitizers on, and states
+  that the lanes have no wall-clock bound yet.

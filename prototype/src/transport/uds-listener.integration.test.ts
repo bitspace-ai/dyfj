@@ -146,8 +146,8 @@ Deno.test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connect
 Deno.test({
   name:
     "serveUnixJsonRpc closes its side of a connection when the client disconnects",
-  // The lane does not enable the resource sanitizer yet; this case opts in so
-  // a server-side connection left open after the client goes fails here too.
+  // The lane runs both sanitizers; this case also names them, so a server-side
+  // connection left open after the client goes fails it wherever it runs.
   sanitizeOps: true,
   sanitizeResources: true,
   async fn() {

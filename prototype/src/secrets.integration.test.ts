@@ -33,17 +33,6 @@ describe("runSecretCommand (real subprocess)", () => {
     assertFalse(res.reason.includes(pointer));
   });
 
-  it("times out without hanging on a slow resolver", async () => {
-    const res = await runSecretCommand(
-      ["bash", "-c", "sleep 5; printf LEAK"],
-      "op://v/x/credential",
-      150,
-      PATH_ENV,
-    );
-    assertStrictEquals(res.ok, false);
-    assertMatch(res.reason ?? "", /timed out/);
-  });
-
   it("returns the trimmed stdout on a clean exit", async () => {
     const res = await runSecretCommand(
       ["bash", "-c", "printf 'resolved-value\n'"],
@@ -105,5 +94,28 @@ describe("runSecretCommand — env passthrough", () => {
       { ...PATH_ENV, RESOLVER_MARKER: "from-secrets-env" },
     );
     assertEquals(res, { ok: true, value: "from-secrets-env" });
+  });
+});
+
+// The timeout case runs in a suite of its own. On timeout runSecretCommand
+// kills the resolver and stops awaiting its output by design, so a stuck
+// resolver can never hold the boot. Here the `sleep` grandchild keeps the piped
+// stdout and stderr open for about 5 s, so the abandoned output read is still
+// pending when the case ends. That is the behavior under test, so this suite
+// opts out of both sanitizers; the other suites keep them.
+describe({
+  name: "runSecretCommand (real subprocess), abandoned resolver output",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, () => {
+  it("times out without hanging on a slow resolver", async () => {
+    const res = await runSecretCommand(
+      ["bash", "-c", "sleep 5; printf LEAK"],
+      "op://v/x/credential",
+      150,
+      PATH_ENV,
+    );
+    assertStrictEquals(res.ok, false);
+    assertMatch(res.reason ?? "", /timed out/);
   });
 });

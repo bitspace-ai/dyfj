@@ -33,30 +33,24 @@ in the same change that lands this spec's first work order.
 ## 2. Framework
 
 - **Framework: `Deno.test` with `@std/assert`, `@std/testing` (bdd, mock,
-  snapshot, time).**
-  - Vitest is retired at phase-1 exit.
-  - This removes `npm:vitest` and `esbuild` resolution, and the Vitest-specific
-    permission plumbing in `scripts/run-vitest.ts`.
+  snapshot, time).** It is the only test framework.
 - **Sanitizers stay on.**
   - The pinned Deno (2.9.6) runs the op and resource sanitizers only when asked,
     so a `Deno.test` lane must pass `--sanitize-ops --sanitize-resources`.
-    `test.unit` does. The golden and `Deno.test` integration lanes do not yet;
-    they adopt the flags as their tests are brought under this rule.
+    `test.unit` and the integration lane do. The golden lane does not yet; it
+    adopts the flags as its tests are brought under this rule.
   - A test that leaks an op, resource or child process fails at the test that
     leaked it.
   - A test may disable a sanitizer only with a comment naming the leak and why
     it is unavoidable.
-- **Supervisor (`run-vitest.ts`, `test-process-harness.ts`,
-  `test-process-reaper.ts`, ~2.5k LOC)**
-  - _Working thesis, not yet verified:_ per-test sanitizers plus process-group
-    spawning in the integration tier make most of the supervisor unnecessary.
-  - What survives is decided by WO-23 on evidence from the migrated suite.
+- **Supervision.**
+  - Per-test sanitizers and a process group per gate lane replace most of the
+    former test supervisor. What remains of it (a wall-clock bound and cleanup
+    of same-group descendants when a lane or the gate itself dies) was decided
+    by WO-23 on evidence from the migrated suite, recorded in
+    `specs/notes/test-supervision-evidence.md`.
   - Descendant (grandchild) processes are not covered by Deno's sanitizers.
     Whatever guards against them must remain.
-- **Transition period.**
-  - The Vitest lane and a new `Deno.test` lane run side by side in the gate.
-  - Tests move to `Deno.test` with the module they cover (strangler).
-  - The Vitest lane may only shrink.
 
 ## 3. Tiers and layout
 

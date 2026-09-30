@@ -49,15 +49,6 @@ describe("runtime lifecycle commands", () => {
     assertArrayIncludes(parsed.permissions["test"].run as string[], [
       "/bin/bash",
     ]);
-    const vitestRunner = await Deno.readTextFile("scripts/run-vitest.ts");
-    assertStringIncludes(vitestRunner, "const run = [");
-    assertStringIncludes(vitestRunner, "denoExecutable,");
-    assertStringIncludes(vitestRunner, "`--allow-run=${run}`");
-    assertFalse(
-      vitestRunner.includes(
-        "--allow-run=bash,/bin/bash,deno,/bin/kill,/bin/sh",
-      ),
-    );
     assertArrayIncludes(parsed.permissions["serve-unix"].env as string[], [
       "NODE_V8_COVERAGE",
     ]);

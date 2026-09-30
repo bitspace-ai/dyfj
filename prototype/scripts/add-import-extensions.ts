@@ -2,8 +2,7 @@ import { dirname, join, relative } from "node:path";
 
 // Rewrites extensionless relative module specifiers to name the file they
 // resolve to, so every local import resolves without extension guessing. Covers
-// static and dynamic imports, re-exports, `typeof import(...)`, and the
-// Vitest module helpers that take a path (`vi.mock`, `vi.importActual`, ...).
+// static and dynamic imports, re-exports and `typeof import(...)`.
 // Specifiers that already carry an extension are left alone, and a file
 // containing the IGNORE_MARKER line is skipped (this script's own test
 // fixtures are import-shaped strings).
@@ -19,7 +18,6 @@ const KNOWN_EXTENSION = /\.(?:[cm]?[jt]sx?|json)$/;
 
 const SPECIFIER_PATTERNS = [
   /(\b(?:from|import)\s*\(?\s*)(["'])(\.{1,2}\/[^"'\n]*)\2/g,
-  /(\bvi\.(?:mock|doMock|unmock|doUnmock|importActual|importMock)\s*(?:<[^>]*>)?\s*\(\s*)(["'])(\.{1,2}\/[^"'\n]*)\2/g,
 ];
 
 export type ResolveCandidate = (path: string) => boolean;

@@ -218,36 +218,10 @@ describe("guardedProtocolInput", () => {
 });
 
 describe("runAcpAgent", () => {
-  it("process-group signaler eval carries the run dir as argv", () => {
+  it("process-group signaler eval carries only the probe source", () => {
     const source = processGroupSignalerEvalSource();
     assertStrictEquals(source.includes(";void "), false);
-    assertEquals(processGroupSignalerEvalArgs("/tmp/dyfj-run"), [
-      "eval",
-      source,
-      "/tmp/dyfj-run",
-    ]);
-  });
-
-  it("process-group signaler eval ignores an ungranted test-run-dir read", () => {
-    const source = processGroupSignalerEvalSource();
-    assertEquals(
-      processGroupSignalerEvalArgs(undefined, {
-        get() {
-          throw new Error(
-            'Requires env access to "DYFJ_TEST_RUN_DIR", run again with the --allow-env flag',
-          );
-        },
-      }),
-      ["eval", source],
-    );
-  });
-
-  it("process-group signaler eval omits an empty test-run-dir", () => {
-    const source = processGroupSignalerEvalSource();
-    assertEquals(processGroupSignalerEvalArgs(undefined, { get: () => "" }), [
-      "eval",
-      source,
-    ]);
+    assertEquals(processGroupSignalerEvalArgs(), ["eval", source]);
   });
 
   it("cancels a stderr drain whose producer never closes", async () => {

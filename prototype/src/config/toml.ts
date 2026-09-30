@@ -47,7 +47,7 @@ export interface LoadConfigDeps {
   parseToml?: TomlParser;
 }
 
-/** Lazy default parser: jsr import resolves under Deno, never runs under vitest. */
+/** Lazy default parser: the jsr import resolves only when a TOML file is parsed. */
 export async function defaultParseToml(
   raw: string,
 ): Promise<Record<string, unknown>> {

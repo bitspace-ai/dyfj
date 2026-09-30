@@ -1,5 +1,4 @@
 import { testSourcesFromPaths } from "../prototype/scripts/test-files.ts";
-import { assertIntegrationTestAssignments } from "../prototype/scripts/integration-test-assignment.ts";
 import { integrationChildEnvironment } from "../prototype/scripts/integration-child-environment.ts";
 import { DENO_EXECUTABLE_DIAGNOSTIC } from "../prototype/scripts/deno-executable.ts";
 import {
@@ -61,24 +60,6 @@ Deno.test("recursive test discovery includes nested test files", () => {
       "prototype/src/nested/worker.test.mts",
       "prototype/src/root.test.ts",
     ],
-  );
-});
-
-Deno.test("integration tests must have an explicit lane assignment", () => {
-  assertThrows(
-    () =>
-      assertIntegrationTestAssignments(
-        [
-          "src/assigned.integration.test.ts",
-          "src/assigned.integration.spec.tsx",
-          "src/unassigned.integration.test.ts",
-        ],
-        [
-          "src/assigned.integration.spec.tsx",
-          "src/assigned.integration.test.ts",
-        ],
-      ),
-    "missing=src/unassigned.integration.test.ts",
   );
 });
 
@@ -384,7 +365,6 @@ Deno.test("fast lanes keep the scans and exclude the heavyweight suites", () => 
   }
   for (
     const heavy of [
-      "Prototype unit Vitest suite",
       "Offline-metadata Rust tests",
       "Isolated Dolt integration lane",
       "Golden characterization suite (test.golden)",
@@ -558,7 +538,6 @@ Deno.test("aggregate lanes use one selected Deno command and grant identity", ()
   for (
     const label of [
       "Aggregate gate orchestration tests",
-      "Prototype unit Vitest suite",
       "Isolated Dolt integration lane",
       "Golden characterization suite (test.golden)",
     ]
@@ -574,57 +553,6 @@ Deno.test("aggregate lanes use one selected Deno command and grant identity", ()
       throw new Error(`${label} does not grant the selected Deno executable`);
     }
   }
-});
-
-Deno.test("process supervision tests run in an isolated Vitest process group", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
-  const unit = lanes.find((lane) =>
-    lane.label === "Prototype unit Vitest suite"
-  );
-  const processHarness = lanes.find((lane) =>
-    lane.label === "Prototype process-harness Vitest suite"
-  );
-  if (!unit || !processHarness) throw new Error("Vitest lanes are missing");
-  assertStringIncludes(
-    unit.args.join(" "),
-    "--exclude scripts/test-process-harness.test.ts",
-  );
-  assertStringIncludes(
-    processHarness.args.join(" "),
-    "run scripts/test-process-harness.test.ts",
-  );
-});
-
-Deno.test("the focused Vitest launcher runs through direct selected Deno", async () => {
-  await assertVitestLauncherRuns(Deno.execPath());
-});
-
-Deno.test({
-  name: "the focused Vitest launcher runs through symlink-selected Deno",
-  ignore: Deno.build.os === "windows",
-  async fn() {
-    const directory = await Deno.makeTempDir({
-      prefix: "dyfj-deno-authority-",
-    });
-    const selected = `${directory}/selected-runtime`;
-    try {
-      const linked = await new Deno.Command("ln", {
-        args: ["-s", Deno.execPath(), selected],
-        stdout: "null",
-        stderr: "piped",
-      }).output();
-      if (!linked.success) {
-        throw new Error(
-          `synthetic symlink setup failed (${linked.code}): ${
-            new TextDecoder().decode(linked.stderr)
-          }`,
-        );
-      }
-      await assertVitestLauncherRuns(selected);
-    } finally {
-      await Deno.remove(directory, { recursive: true });
-    }
-  },
 });
 
 Deno.test("Deno executable selector CLI has fixed success and failure output", async () => {
@@ -666,31 +594,6 @@ Deno.test("an unselected executable remains denied", () => {
   }
   throw new Error("unselected executable unexpectedly ran");
 });
-
-async function assertVitestLauncherRuns(selected: string): Promise<void> {
-  const prototypeRoot = fileURLToPath(new URL("../prototype", import.meta.url));
-  const result = await new Deno.Command(Deno.execPath(), {
-    args: [
-      "run",
-      "--allow-env",
-      "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
-      `--allow-run=${selected}`,
-      "scripts/run-vitest.ts",
-      "--version",
-    ],
-    cwd: prototypeRoot,
-    env: { DENO_BIN: selected },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (result.code !== 0) {
-    throw new Error(
-      `focused Vitest launcher failed (${result.code}): ${
-        new TextDecoder().decode(result.stderr)
-      }`,
-    );
-  }
-}
 
 Deno.test("aggregate lane children do not inherit unrelated environment", async () => {
   const sentinel = "DYFJ_AGGREGATE_SENTINEL";

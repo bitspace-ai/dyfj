@@ -1,4 +1,3 @@
-import { type Env, processEnv } from "./config/mod.ts";
 import {
   sanitizeBoundaryText,
   takeCodePointPrefix,
@@ -552,29 +551,12 @@ function cancellableStdout(stdout: Readable): ReadableStream<Uint8Array> {
   });
 }
 
-export const TEST_RUN_DIR_ENV = "DYFJ_TEST_RUN_DIR";
-
 export function processGroupSignalerEvalSource(): string {
   return "const p=Deno.ppid;setInterval(()=>{if(Deno.ppid===1||Deno.ppid!==p)Deno.exit(1)},200);setInterval(()=>{},6e4)";
 }
 
-export function processGroupSignalerEvalArgs(
-  runDir?: string,
-  env: Env = processEnv,
-): string[] {
-  let resolved = runDir;
-  if (resolved === undefined) {
-    try {
-      resolved = env.get(TEST_RUN_DIR_ENV);
-    } catch {
-      // serve-unix does not grant this test-only name. An ungranted read
-      // throws even when the variable is unset; treat that as absent.
-      resolved = undefined;
-    }
-  }
-  const args = ["eval", processGroupSignalerEvalSource()];
-  if (resolved !== undefined && resolved !== "") args.push(resolved);
-  return args;
+export function processGroupSignalerEvalArgs(): string[] {
+  return ["eval", processGroupSignalerEvalSource()];
 }
 
 export async function assertProcessGroupSignaler(

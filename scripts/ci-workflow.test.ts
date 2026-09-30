@@ -47,7 +47,6 @@ Deno.test("gate workflow does not restate lane definitions in YAML", async () =>
       "aggregate-test-gate",
       "retired-surface",
       "public-safety-scan",
-      "run-vitest",
       "cargo test",
       "validate-schema",
       "check:tests",

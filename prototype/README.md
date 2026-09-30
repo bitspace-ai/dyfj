@@ -220,28 +220,28 @@ Useful checks:
 ```sh
 deno task check          # check:sources, then check:tests
 deno task check:sources  # every non-test module under src, mcp, scripts, testing
-deno task check:tests    # every test file, both frameworks
+deno task check:tests    # every test file
 deno task test:unit      # Deno.test unit lane (test.unit)
-deno task test           # checks, test:unit, then the Vitest unit suite
-deno task test:file <path>  # run a single test file without full typecheck
-                         # (requires a path or -t pattern; exits 2 otherwise)
+deno task test           # checks, then test:unit
+deno task test:file <path>... [--filter <pattern>]
+                         # named unit test files, no full typecheck
+                         # (paths and one --filter only; exits 2 otherwise)
 deno task verify-workbench-events
 deno task test:golden    # golden characterization suite (needs Dolt)
 deno task test:golden --update  # rewrite snapshots (see below)
 (cd .. && deno task test) # repository aggregate gate
 ```
 
-Use `test:file` for tight iteration loops while developing a single Vitest test — it skips
-the full typecheck and runs only your named file. Use `test` for the gate before commit,
-which typechecks the entire codebase and runs the full suite excluding integration tests.
+Use `test:file` for tight iteration loops on a unit test file: it skips the full
+typecheck and runs only the named files, with the same grants and sanitizers as
+`test:unit`. An integration file needs the integration lane's grants and fixture, so it
+fails under `test:file` on its first ungranted access. Use `test` before commit: it
+typechecks the entire codebase and runs the unit lane.
 
-Both typecheck file lists and the `test.unit` file list are derived by walking the tree
-(`scripts/test-files.ts`); nothing is hand-listed. While the two frameworks coexist, a
-test file's framework is read from its imports, as `deno info --json` (Deno's own parser)
-reports them: a file whose static imports reach `vitest`, directly or through a helper
-module, runs under Vitest; any other `*.test.ts` is a `Deno.test` file and Vitest
-excludes it.
-`*.integration.test.ts` files and `testing/golden/` have their own lanes. `test:unit`
+Both typecheck file lists and the `test.unit` and integration file lists are derived by
+walking the tree (`scripts/test-files.ts`); nothing is hand-listed. The tier is the file
+name: `*.integration.test.ts` files run in the isolated-Dolt integration lane,
+`testing/golden/` has its own lane, and every other `*.test.ts` is a unit test. `test:unit`
 runs `deno test --parallel --sanitize-ops --sanitize-resources` (both sanitizers are
 opt-in in the pinned Deno), with read access to the prototype and
 temp roots, write access to temp roots only, and no run, net, or env grant, so unit and
@@ -284,28 +284,15 @@ phase-1 restructuring a snapshot may change only for a reason the PR states,
 as `specs/03-testing.md` §4 sets out; `--update` rewrites them.
 
 The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
-golden characterization lanes in addition to this prototype unit suite. Prototype Vitest is exclusive
-and bounded: `$HOME/.dyfj/run/dyfj-vitest-run.lock` refuses a second run while
-a prior run is alive (including across checkouts), a hang fails
-`DYFJ_TEST_BOUND_SEC` (default 600s; 180s for a named file or `-t` pattern),
-and leftover fixture/runtime processes, test sockets, and run-scoped
-`start-test-runtime-*.lock` files are reaped after exit or runner death. The
-next run recovers a saved Vitest process group only when a recovering run
-generation is supplied and the recorded recovery directory, run generation,
-leader start time, and command still match. Malformed-lock recovery does not
-signal a saved process group. A spawn-manifest PID is not kill authority
-unless that record carries matching start time, command, recovery directory,
-and run generation. If the
-saved leader is gone, that numeric group is left alive. Supervised runs fail
-closed without an absolute `HOME`. Sweeping is scoped to this run's tmp dir,
-spawn manifest, and explicit command needles. It
-owns a temporary Dolt
-repository and SQL server, with cleanup on normal completion and handled
-failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane
-process receives SIGTERM followed by a bounded wait and possible SIGKILL. The
-prototype and root test tasks resolve the selected Deno executable once per
-entrypoint and reuse that absolute command identity in nested run grants.
-The Rust tracer test retains
+golden characterization lanes in addition to this prototype unit suite. The integration
+lane runs every `*.integration.test.ts` with the op and resource sanitizers enabled, so a
+test that leaks an op, a timer, a resource or a child process fails at that test; a test
+may opt out only with a comment naming the leak and why it is unavoidable. The lane owns
+a temporary Dolt repository and SQL server, with cleanup on normal completion and handled
+failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane process
+receives SIGTERM followed by a bounded wait and possible SIGKILL. The prototype and root
+test tasks resolve the selected Deno executable once per entrypoint and reuse that
+absolute command identity in nested run grants. The Rust tracer test retains
 its manual-run `.env` loader, but the fixture's explicit `DATABASE_URL` takes
 precedence, so the lane does not use an operator database.
 

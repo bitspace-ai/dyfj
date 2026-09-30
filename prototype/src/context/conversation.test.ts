@@ -90,10 +90,7 @@ const event = (
   createdAt: "2026-06-12 10:00:00",
 });
 
-/**
- * The omission witness a projection reported, asserted present (Vitest's
- * `toMatchObject` on `undefined` failed the same way).
- */
+/** The omission witness a projection reported, asserted present. */
 function reported(
   omission: HistoryOmissionProjection | undefined,
 ): HistoryOmissionProjection {

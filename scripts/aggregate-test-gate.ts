@@ -308,10 +308,6 @@ export function productionLanes(
 ): GateLane[] {
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
-  const home = Deno.env.get("HOME");
-  const homeRun = home !== undefined && home.startsWith("/")
-    ? `,${home}/.dyfj/run`
-    : "";
   const binding = bindingEnvironment();
   const subjectLane = (check: string): GateLane => ({
     label: check === "subject.resolve"
@@ -479,51 +475,6 @@ export function productionLanes(
       command: denoExecutable,
       commandLabel: "deno",
       args: ["task", "test:unit"],
-      cwd: prototype,
-      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
-    },
-    {
-      label: "Prototype unit Vitest suite",
-      checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "--allow-env",
-        `--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders${homeRun}`,
-        `--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders${homeRun}`,
-        `--allow-run=${denoExecutable},/bin/kill,/bin/ps,/bin/bash`,
-        "scripts/run-vitest.ts",
-        "run",
-        "--root",
-        ".",
-        "--pool=threads",
-        "--exclude",
-        "**/*.integration.{test,spec}.?(c|m)[jt]s?(x)",
-        "--exclude",
-        "scripts/test-process-harness.test.ts",
-      ],
-      cwd: prototype,
-      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
-    },
-    {
-      label: "Prototype process-harness Vitest suite",
-      checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "--allow-env",
-        `--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders${homeRun}`,
-        `--allow-write=.,/tmp,/private/tmp,/var/folders,/private/var/folders${homeRun}`,
-        `--allow-run=${denoExecutable},/bin/kill,/bin/ps,/bin/bash`,
-        "scripts/run-vitest.ts",
-        "run",
-        "scripts/test-process-harness.test.ts",
-        "--root",
-        ".",
-        "--pool=threads",
-      ],
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
