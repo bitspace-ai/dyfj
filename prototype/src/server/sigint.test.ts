@@ -1,7 +1,7 @@
 import { assertStrictEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
-import { installRuntimeSigintHandler } from "./runtime-sigint.ts";
+import { installRuntimeSigintHandler } from "./sigint.ts";
 
 describe("runtime SIGINT handling", () => {
   it("an autostarted runtime ignores terminal SIGINT", async () => {

@@ -29,9 +29,15 @@ import {
   executeWriteFile,
   isWithinRoot,
   matchesGlobPath,
-  resetRootAnchor,
   resolveWorkspacePath,
 } from "./file.ts";
+import { RootAnchors } from "./root-anchors.ts";
+
+// The file tools verify each root against the anchors it is bound to. One
+// set per file keeps the old process-wide semantics; tests that move a temp
+// root away start a fresh set, as the old reset hook did.
+let anchors = new RootAnchors();
+const at = (root: string) => anchors.root(root);
 
 // ── resolveWorkspacePath (pure containment) ───────────────────────────────────
 
@@ -127,7 +133,7 @@ function useIoRoot(): void {
   afterAll(async () => {
     if (root) {
       await Deno.remove(root, { recursive: true });
-      resetRootAnchor(root);
+      anchors = new RootAnchors();
     }
   });
 }
@@ -136,28 +142,34 @@ describe("executeReadFile", () => {
   useIoRoot();
 
   it("reads a file within the workspace", async () => {
-    assertStrictEquals(await executeReadFile(root, "hello.txt"), "hello world");
+    assertStrictEquals(
+      await executeReadFile(at(root), "hello.txt"),
+      "hello world",
+    );
   });
   it("reads a nested file", async () => {
     assertStrictEquals(
-      await executeReadFile(root, "sub/nested.txt"),
+      await executeReadFile(at(root), "sub/nested.txt"),
       "nested content",
     );
   });
   it("returns an error for a traversal attempt (no read happens)", async () => {
     assertMatch(
-      await executeReadFile(root, "../../../etc/hosts"),
+      await executeReadFile(at(root), "../../../etc/hosts"),
       /^error: path escapes/,
     );
   });
   it("returns an error for a missing file", async () => {
-    assertMatch(await executeReadFile(root, "nope.txt"), /^error: cannot read/);
+    assertMatch(
+      await executeReadFile(at(root), "nope.txt"),
+      /^error: cannot read/,
+    );
   });
   it("returns an error when the path is a directory", async () => {
-    assertMatch(await executeReadFile(root, "sub"), /is a directory/);
+    assertMatch(await executeReadFile(at(root), "sub"), /is a directory/);
   });
   it("truncates oversized content at the byte cap", async () => {
-    const out = await executeReadFile(root, "hello.txt", 5);
+    const out = await executeReadFile(at(root), "hello.txt", 5);
     assertStringIncludes(out, "[truncated at 5 bytes]");
     assertStrictEquals(out.startsWith("hello"), true);
   });
@@ -167,15 +179,15 @@ describe("executeListFiles", () => {
   useIoRoot();
 
   it("lists directory entries, directories suffixed with /", async () => {
-    const out = await executeListFiles(root, ".");
+    const out = await executeListFiles(at(root), ".");
     assertStringIncludes(out, "hello.txt");
     assertStringIncludes(out, "sub/");
   });
   it("lists a subdirectory", async () => {
-    assertStrictEquals(await executeListFiles(root, "sub"), "nested.txt");
+    assertStrictEquals(await executeListFiles(at(root), "sub"), "nested.txt");
   });
   it("rejects a traversal attempt", async () => {
-    assertMatch(await executeListFiles(root, ".."), /^error: path escapes/);
+    assertMatch(await executeListFiles(at(root), ".."), /^error: path escapes/);
   });
 });
 
@@ -183,7 +195,11 @@ describe("executeWriteFile", () => {
   useIoRoot();
 
   it("writes a new file within the workspace", async () => {
-    const out = await executeWriteFile(root, "written.txt", "fresh content");
+    const out = await executeWriteFile(
+      at(root),
+      "written.txt",
+      "fresh content",
+    );
     assertStrictEquals(out, "wrote written.txt");
     assertStrictEquals(
       await Deno.readTextFile(`${root}/written.txt`),
@@ -191,12 +207,12 @@ describe("executeWriteFile", () => {
     );
   });
   it("overwrites an existing file", async () => {
-    await executeWriteFile(root, "over.txt", "first");
-    await executeWriteFile(root, "over.txt", "second");
+    await executeWriteFile(at(root), "over.txt", "first");
+    await executeWriteFile(at(root), "over.txt", "second");
     assertStrictEquals(await Deno.readTextFile(`${root}/over.txt`), "second");
   });
   it("writes into an existing subdirectory", async () => {
-    await executeWriteFile(root, "sub/new.txt", "in sub");
+    await executeWriteFile(at(root), "sub/new.txt", "in sub");
     assertStrictEquals(
       await Deno.readTextFile(`${root}/sub/new.txt`),
       "in sub",
@@ -204,19 +220,19 @@ describe("executeWriteFile", () => {
   });
   it("rejects a traversal escape (no write happens)", async () => {
     assertMatch(
-      await executeWriteFile(root, "../escape.txt", "nope"),
+      await executeWriteFile(at(root), "../escape.txt", "nope"),
       /^error: path escapes/,
     );
   });
   it("errors when the parent directory does not exist", async () => {
     assertMatch(
-      await executeWriteFile(root, "missing/deep.txt", "x"),
+      await executeWriteFile(at(root), "missing/deep.txt", "x"),
       /^error: cannot write/,
     );
   });
   it("the success result carries no payload length (no size signal)", async () => {
     assertStrictEquals(
-      await executeWriteFile(root, "sized.txt", "0123456789"),
+      await executeWriteFile(at(root), "sized.txt", "0123456789"),
       "wrote sized.txt",
     );
   });
@@ -232,7 +248,7 @@ describe("executeWriteFile symlink containment", () => {
   it("refuses to write when the target is a symlink, and writes nothing", async () => {
     const fakeSymlinkLstat = () => Promise.resolve({ isSymlink: true });
     const out = await executeWriteFile(
-      root,
+      at(root),
       "link.txt",
       "escaped",
       fakeSymlinkLstat,
@@ -250,8 +266,13 @@ describe("executeEditFile", () => {
   useIoRoot();
 
   it("replaces a unique fragment and reports the edit", async () => {
-    await executeWriteFile(root, "edit-basic.txt", "alpha beta gamma");
-    const out = await executeEditFile(root, "edit-basic.txt", "beta", "DELTA");
+    await executeWriteFile(at(root), "edit-basic.txt", "alpha beta gamma");
+    const out = await executeEditFile(
+      at(root),
+      "edit-basic.txt",
+      "beta",
+      "DELTA",
+    );
     assertStrictEquals(out, "edited edit-basic.txt");
     assertStrictEquals(
       await Deno.readTextFile(`${root}/edit-basic.txt`),
@@ -259,9 +280,9 @@ describe("executeEditFile", () => {
     );
   });
   it("errors when the old text is absent (file unchanged)", async () => {
-    await executeWriteFile(root, "edit-absent.txt", "unchanged");
+    await executeWriteFile(at(root), "edit-absent.txt", "unchanged");
     assertMatch(
-      await executeEditFile(root, "edit-absent.txt", "missing", "x"),
+      await executeEditFile(at(root), "edit-absent.txt", "missing", "x"),
       /oldString not found/,
     );
     assertStrictEquals(
@@ -270,9 +291,9 @@ describe("executeEditFile", () => {
     );
   });
   it("errors when the old text is not unique (file unchanged)", async () => {
-    await executeWriteFile(root, "edit-dup.txt", "x x x");
+    await executeWriteFile(at(root), "edit-dup.txt", "x x x");
     assertMatch(
-      await executeEditFile(root, "edit-dup.txt", "x", "y"),
+      await executeEditFile(at(root), "edit-dup.txt", "x", "y"),
       /not unique/,
     );
     assertStrictEquals(
@@ -282,28 +303,28 @@ describe("executeEditFile", () => {
   });
   it("errors for a missing file (no create)", async () => {
     assertMatch(
-      await executeEditFile(root, "edit-nope.txt", "a", "b"),
+      await executeEditFile(at(root), "edit-nope.txt", "a", "b"),
       /file not found/,
     );
   });
   it("rejects a traversal escape", async () => {
     assertMatch(
-      await executeEditFile(root, "../escape.txt", "a", "b"),
+      await executeEditFile(at(root), "../escape.txt", "a", "b"),
       /^error: path escapes/,
     );
   });
   it("rejects an empty oldString", async () => {
-    await executeWriteFile(root, "edit-empty.txt", "content");
+    await executeWriteFile(at(root), "edit-empty.txt", "content");
     assertMatch(
-      await executeEditFile(root, "edit-empty.txt", "", "x"),
+      await executeEditFile(at(root), "edit-empty.txt", "", "x"),
       /oldString must be non-empty/,
     );
   });
   it("inherits the write-back symlink guard (refuses, writes nothing)", async () => {
-    await executeWriteFile(root, "edit-link.txt", "before");
+    await executeWriteFile(at(root), "edit-link.txt", "before");
     const fakeSymlinkLstat = () => Promise.resolve({ isSymlink: true });
     const out = await executeEditFile(
-      root,
+      at(root),
       "edit-link.txt",
       "before",
       "after",
@@ -360,7 +381,7 @@ function useSearchRoot(): void {
   afterAll(async () => {
     if (sroot) {
       await Deno.remove(sroot, { recursive: true });
-      resetRootAnchor(sroot);
+      anchors = new RootAnchors();
     }
   });
 }
@@ -369,39 +390,41 @@ describe("executeGrepFiles", () => {
   useSearchRoot();
 
   it("finds matches with path:line:text rows", async () => {
-    const out = await executeGrepFiles(sroot, "needle");
+    const out = await executeGrepFiles(at(sroot), "needle");
     assertStringIncludes(out, "alpha.ts:2:needle here");
     assertStringIncludes(out, "beta.md:2:needle in markdown");
   });
   it("skips .git and binary files", async () => {
-    const out = await executeGrepFiles(sroot, "needle");
+    const out = await executeGrepFiles(at(sroot), "needle");
     assertFalse(out.includes(".git"));
     assertFalse(out.includes("binary.bin"));
   });
   it("include glob narrows the file set", async () => {
-    const out = await executeGrepFiles(sroot, "needle", { include: "**/*.ts" });
+    const out = await executeGrepFiles(at(sroot), "needle", {
+      include: "**/*.ts",
+    });
     assertStringIncludes(out, "alpha.ts");
     assertFalse(out.includes("beta.md"));
   });
   it("reports no matches distinctly from an error", async () => {
-    const out = await executeGrepFiles(sroot, "zzz-absent");
+    const out = await executeGrepFiles(at(sroot), "zzz-absent");
     assertStrictEquals(out.startsWith("(no matches)"), true);
     assertStrictEquals(out.startsWith("error:"), false);
   });
   it("rejects an invalid regex without throwing", async () => {
-    const out = await executeGrepFiles(sroot, "(unclosed");
+    const out = await executeGrepFiles(at(sroot), "(unclosed");
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "invalid pattern");
   });
   it("rejects an empty pattern", async () => {
-    assertStringIncludes(await executeGrepFiles(sroot, ""), "error:");
+    assertStringIncludes(await executeGrepFiles(at(sroot), ""), "error:");
   });
   it("refuses to search outside the workspace root", async () => {
-    const out = await executeGrepFiles(sroot, "needle", { path: "../.." });
+    const out = await executeGrepFiles(at(sroot), "needle", { path: "../.." });
     assertStrictEquals(out.startsWith("error:"), true);
   });
   it("caps matches and says so", async () => {
-    const out = await executeGrepFiles(sroot, "line", { maxMatches: 3 });
+    const out = await executeGrepFiles(at(sroot), "line", { maxMatches: 3 });
     assertStrictEquals(
       out.split("\n").filter((l) => l.includes("many.txt")).length,
       3,
@@ -414,19 +437,19 @@ describe("executeGlobFiles", () => {
   useSearchRoot();
 
   it("matches by relative path glob", async () => {
-    const out = await executeGlobFiles(sroot, "**/*.ts");
+    const out = await executeGlobFiles(at(sroot), "**/*.ts");
     assertStringIncludes(out, "alpha.ts");
     assertStringIncludes(out, "pkg/gamma.ts");
     assertFalse(out.includes("beta.md"));
   });
   it("reports no matches distinctly", async () => {
     assertStrictEquals(
-      await executeGlobFiles(sroot, "**/*.nope"),
+      await executeGlobFiles(at(sroot), "**/*.nope"),
       "(no matches)",
     );
   });
   it("refuses to search outside the workspace root", async () => {
-    const out = await executeGlobFiles(sroot, "**/*", { path: "../.." });
+    const out = await executeGlobFiles(at(sroot), "**/*", { path: "../.." });
     assertStrictEquals(out.startsWith("error:"), true);
   });
 });
@@ -439,26 +462,26 @@ describe("excluded directories cannot be searched by naming them", () => {
   useSearchRoot();
 
   it("grep_files refuses an explicit .git start", async () => {
-    const out = await executeGrepFiles(sroot, "needle", { path: ".git" });
+    const out = await executeGrepFiles(at(sroot), "needle", { path: ".git" });
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "excluded from search");
   });
   it("glob_files refuses an explicit .git start", async () => {
-    const out = await executeGlobFiles(sroot, "**/*", { path: ".git" });
+    const out = await executeGlobFiles(at(sroot), "**/*", { path: ".git" });
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "excluded from search");
   });
   it("a nested excluded directory is refused too", async () => {
     await Deno.mkdir(`${sroot}/pkg/node_modules/dep`, { recursive: true });
     await Deno.writeTextFile(`${sroot}/pkg/node_modules/dep/i.js`, "needle\n");
-    const out = await executeGlobFiles(sroot, "**/*", {
+    const out = await executeGlobFiles(at(sroot), "**/*", {
       path: "pkg/node_modules/dep",
     });
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "excluded from search");
   });
   it("a normal sibling directory still searches", async () => {
-    const out = await executeGlobFiles(sroot, "**/*.ts", { path: "pkg" });
+    const out = await executeGlobFiles(at(sroot), "**/*.ts", { path: "pkg" });
     assertStringIncludes(out, "gamma.ts");
   });
 });
@@ -467,7 +490,7 @@ describe("executeReadFile ranged reads", () => {
   useSearchRoot();
 
   it("returns a line window", async () => {
-    const out = await executeReadFile(sroot, "many.txt", undefined, {
+    const out = await executeReadFile(at(sroot), "many.txt", undefined, {
       offset: 3,
       limit: 2,
     });
@@ -476,32 +499,32 @@ describe("executeReadFile ranged reads", () => {
     assertFalse(out.includes("line 5"));
   });
   it("annotates how much remains", async () => {
-    const out = await executeReadFile(sroot, "many.txt", undefined, {
+    const out = await executeReadFile(at(sroot), "many.txt", undefined, {
       offset: 1,
       limit: 2,
     });
     assertStringIncludes(out, "lines 1-2 of 40");
   });
   it("reads to end when limit is omitted", async () => {
-    const out = await executeReadFile(sroot, "many.txt", undefined, {
+    const out = await executeReadFile(at(sroot), "many.txt", undefined, {
       offset: 39,
     });
     assertStringIncludes(out, "line 40");
   });
   it("rejects an offset past end of file", async () => {
-    const out = await executeReadFile(sroot, "many.txt", undefined, {
+    const out = await executeReadFile(at(sroot), "many.txt", undefined, {
       offset: 999,
     });
     assertStringIncludes(out, "past end");
   });
   it("rejects a non-positive offset", async () => {
-    const out = await executeReadFile(sroot, "many.txt", undefined, {
+    const out = await executeReadFile(at(sroot), "many.txt", undefined, {
       offset: 0,
     });
     assertStringIncludes(out, "error:");
   });
   it("unranged read is unchanged", async () => {
-    const out = await executeReadFile(sroot, "alpha.ts");
+    const out = await executeReadFile(at(sroot), "alpha.ts");
     assertStrictEquals(out, "const a = 1;\nneedle here\nconst b = 2;\n");
   });
   it("refuses a file over the hard read ceiling before reading it", async () => {
@@ -511,7 +534,7 @@ describe("executeReadFile ranged reads", () => {
     const f = await Deno.create(huge);
     await f.truncate(5 * 1024 * 1024);
     f.close();
-    const out = await executeReadFile(sroot, "huge.bin");
+    const out = await executeReadFile(at(sroot), "huge.bin");
     assertStrictEquals(out.startsWith("error:"), true);
     assertStringIncludes(out, "over the 4194304-byte limit");
     await Deno.remove(huge);
@@ -622,7 +645,10 @@ describe("grep_files resource bounds", () => {
     const started = performance.now();
     let out: string;
     try {
-      out = await executeGrepFiles(broot, "(a+)+$", { budgetMs: 300 });
+      // Built at run time: the pattern is catastrophic on purpose, since the
+      // bounded matcher is what this test exercises.
+      const pattern = ["(a+)+", "$"].join("");
+      out = await executeGrepFiles(at(broot), pattern, { budgetMs: 300 });
     } finally {
       await Deno.remove(catastrophic);
     }
@@ -637,7 +663,7 @@ describe("grep_files resource bounds", () => {
   it("lines over the length cap are never matched", async () => {
     // `a+!` matches the long line trivially; it is skipped for its length, so
     // the only evidence it existed is the note.
-    const out = await executeGrepFiles(broot, "a+!");
+    const out = await executeGrepFiles(at(broot), "a+!");
     assertFalse(out.includes("longline.txt"));
     assertStrictEquals(
       out === "(no matches)" || out.includes("over 4096 chars"),
@@ -648,13 +674,15 @@ describe("grep_files resource bounds", () => {
   it("directories consume the traversal budget", async () => {
     // 5 entries is fewer than the directory chain is deep, so a budget that
     // counted only files would have descended all the way to buried.txt.
-    const out = await executeGrepFiles(broot, "needle", { maxFiles: 5 });
+    const out = await executeGrepFiles(at(broot), "needle", { maxFiles: 5 });
     assertFalse(out.includes("buried.txt"));
     assertStringIncludes(out, "entry limit 5 reached");
   });
 
   it("a truncated search says so even when it found nothing", async () => {
-    const out = await executeGrepFiles(broot, "zzz-absent", { maxFiles: 5 });
+    const out = await executeGrepFiles(at(broot), "zzz-absent", {
+      maxFiles: 5,
+    });
     assertStringIncludes(out, "(no matches)");
     assertStringIncludes(out, "entry limit 5 reached");
   });
@@ -666,7 +694,9 @@ describe("grep_files resource bounds", () => {
       for (let i = 0; i < 60; i++) {
         await Deno.writeTextFile(`${flat}/f${i}.txt`, "needle\n");
       }
-      const out = await executeGlobFiles(flat, "**/*.txt", { maxFiles: 10 });
+      const out = await executeGlobFiles(at(flat), "**/*.txt", {
+        maxFiles: 10,
+      });
       assertLessOrEqual(
         out.split("\n").filter((l) => l.endsWith(".txt")).length,
         10,
@@ -679,7 +709,7 @@ describe("grep_files resource bounds", () => {
   it(
     "an over-long include glob is rejected, not silently unmatchable",
     async () => {
-      const out = await executeGrepFiles(broot, "needle", {
+      const out = await executeGrepFiles(at(broot), "needle", {
         include: "*".repeat(600),
       });
       assertStrictEquals(out.startsWith("error:"), true);
@@ -688,32 +718,34 @@ describe("grep_files resource bounds", () => {
   );
 
   it("an over-long pattern is rejected before compilation", async () => {
-    const out = await executeGrepFiles(broot, "a".repeat(2000));
+    const out = await executeGrepFiles(at(broot), "a".repeat(2000));
     assertStrictEquals(out.startsWith("error:"), true);
   });
 
   it("the walk stops at the depth cap", async () => {
     // buried.txt sits 40 directories down, past HARD_MAX_DEPTH (32), so it is
     // unreachable no matter how large the entry budget is.
-    const out = await executeGrepFiles(broot, "needle", { maxFiles: 1e9 });
+    const out = await executeGrepFiles(at(broot), "needle", { maxFiles: 1e9 });
     assertStringIncludes(out, "plain.txt");
     assertFalse(out.includes("buried.txt"));
   });
 
   it("an oversized file is skipped without being read", async () => {
-    const out = await executeGrepFiles(broot, "a+", { maxBytes: 10 });
+    const out = await executeGrepFiles(at(broot), "a+", { maxBytes: 10 });
     assertFalse(out.includes("longline.txt"));
   });
 
   it("an inflated maxMatches does not raise the ceiling", async () => {
     // Not observable in the row count on this small tree; what is observable is
     // that the note reports the clamped value, not the requested one.
-    const out = await executeGrepFiles(broot, "needle", { maxMatches: 1e9 });
+    const out = await executeGrepFiles(at(broot), "needle", {
+      maxMatches: 1e9,
+    });
     assertFalse(out.includes("1000000000"));
   });
 
   it("fails closed when the matcher cannot start", async () => {
-    const out = await executeGrepFiles(broot, "needle", {
+    const out = await executeGrepFiles(at(broot), "needle", {
       workerSpecifier: "file:///nonexistent/regex-worker.ts",
     });
     assertStrictEquals(out.startsWith("error:"), true);

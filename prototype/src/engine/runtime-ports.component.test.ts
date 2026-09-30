@@ -16,6 +16,7 @@ import {
 } from "../../testing/fakes/scripted-http-transport.ts";
 import { CeilingConfirmationStore } from "../budget/mod.ts";
 import { MemoryStore, type ModelSeed } from "../store/mod.ts";
+import { RootAnchors } from "../tools/mod.ts";
 import { runWorkbenchRuntime } from "./native-runner.ts";
 import { SessionOwners } from "./session-owner.ts";
 
@@ -75,6 +76,7 @@ async function turnWith(env: Record<string, string>) {
     }, {
       store,
       budgetScopes: new SessionOwners(new CeilingConfirmationStore(clock)),
+      rootAnchors: new RootAnchors(),
       clock,
       env: new MapEnv(env),
       http: transport.fetch,

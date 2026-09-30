@@ -12,6 +12,7 @@ import { createCommandRegistry } from "./registry.ts";
 import { evaluateCommandPolicy } from "./policy.ts";
 import { invokeCommandWithEvent } from "./invoke.ts";
 import { defineReadFile, defineWriteFile } from "./builtin/file.ts";
+import { RootAnchors } from "./builtin/root-anchors.ts";
 
 function call(
   args: Record<string, unknown> = { slug: "project_dyfj" },
@@ -33,7 +34,7 @@ describe("invalid-arguments feedback", () => {
   // must carry everything a model needs to self-correct on the next step.
   it("a read_file call with empty arguments gets corrective feedback", () => {
     const result = evaluateCommandPolicy(
-      defineReadFile("/work"),
+      defineReadFile(new RootAnchors().root("/work")),
       call({}, { commandId: "read_file" }),
     ) as { decision: string; authzBasis: string; reason: string };
 
@@ -68,7 +69,7 @@ describe("invalid-arguments feedback", () => {
 
   it("feedback names declared keys, never argument values", () => {
     const result = evaluateCommandPolicy(
-      defineWriteFile("/work"),
+      defineWriteFile(new RootAnchors().root("/work")),
       call(
         { path: "notes/friction.md", content: 12345 },
         { commandId: "write_file" },
@@ -95,7 +96,7 @@ describe("invalid-arguments feedback", () => {
     const untrustedName = ["", "Users", "example", "private"].join("/") +
       "/api-key-placeholder";
     const result = evaluateCommandPolicy(
-      defineReadFile("/work"),
+      defineReadFile(new RootAnchors().root("/work")),
       call(
         { path: "README.md", [untrustedName]: "x" },
         { commandId: "read_file" },
@@ -120,7 +121,7 @@ describe("invalid-arguments feedback", () => {
     // checks must deny and COUNT them, never name them.
     for (const inherited of ["constructor", "toString", "__proto__"]) {
       const result = evaluateCommandPolicy(
-        defineReadFile("/work"),
+        defineReadFile(new RootAnchors().root("/work")),
         call(
           { path: "README.md", [inherited]: "x" },
           { commandId: "read_file" },
@@ -142,7 +143,9 @@ describe("invalid-arguments feedback", () => {
   });
 
   it("the persisted tool_call event records the same corrective feedback", async () => {
-    const registry = createCommandRegistry([defineReadFile("/work")]);
+    const registry = createCommandRegistry([
+      defineReadFile(new RootAnchors().root("/work")),
+    ]);
     const events: EventInsert[] = [];
 
     const result = await invokeCommandWithEvent(

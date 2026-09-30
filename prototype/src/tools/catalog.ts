@@ -19,6 +19,7 @@ import {
   defineReadFile,
   defineWriteFile,
 } from "./builtin/file.ts";
+import type { RootAnchors, WorkspaceRoot } from "./builtin/root-anchors.ts";
 import { defineBash } from "./builtin/exec.ts";
 import { defineGit } from "./builtin/git.ts";
 
@@ -38,6 +39,12 @@ export interface ToolCatalogPorts {
     query: string,
     traceContext?: CommandTraceContext,
   ) => Promise<string> | string;
+  /**
+   * The engine's workspace-root anchors, which the file tools verify the root
+   * against on every call. Required whenever `workspaceRoot` is set; the
+   * composition root builds one per engine so an anchor outlives the turn.
+   */
+  rootAnchors?: RootAnchors;
 }
 
 /** Resolved settings that shape the builtin tools. */
@@ -66,17 +73,35 @@ function workspaceTool(
     workspaceRoot === undefined ? undefined : define(workspaceRoot);
 }
 
+/**
+ * A workspace file tool: present only when a workspace root is resolved, and
+ * bound to the engine's anchors for that root. Fails closed without them.
+ */
+function workspaceFileTool(
+  define: (root: WorkspaceRoot) => CommandDefinition,
+): ToolCatalogEntry {
+  return ({ workspaceRoot, rootAnchors }) => {
+    if (workspaceRoot === undefined) return undefined;
+    if (rootAnchors === undefined) {
+      throw new Error(
+        "tool catalog: the workspace file tools need root anchors",
+      );
+    }
+    return define(rootAnchors.root(workspaceRoot));
+  };
+}
+
 /** The builtin tools, in registration (and listing) order. */
 export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
   (deps) => defineMemoryRead(deps),
   ({ searchMemory }) =>
     searchMemory === undefined ? undefined : defineMemorySearch(searchMemory),
-  workspaceTool(defineReadFile),
-  workspaceTool(defineListFiles),
-  workspaceTool(defineGrepFiles),
-  workspaceTool(defineGlobFiles),
-  workspaceTool(defineWriteFile),
-  workspaceTool(defineEditFile),
+  workspaceFileTool(defineReadFile),
+  workspaceFileTool(defineListFiles),
+  workspaceFileTool(defineGrepFiles),
+  workspaceFileTool(defineGlobFiles),
+  workspaceFileTool(defineWriteFile),
+  workspaceFileTool(defineEditFile),
   workspaceTool(defineBash),
   workspaceTool(defineGit),
 ];

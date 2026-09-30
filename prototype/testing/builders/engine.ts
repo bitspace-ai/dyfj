@@ -17,6 +17,7 @@ import {
 } from "../../src/store/mod.ts";
 import { CeilingConfirmationStore } from "../../src/budget/mod.ts";
 import { SessionOwners } from "../../src/engine/mod.ts";
+import { RootAnchors } from "../../src/tools/mod.ts";
 import {
   type NativeTurnPorts,
   type NativeWorkbenchRuntimeResult,
@@ -144,6 +145,7 @@ export function enginePorts(options: EnginePortsOptions = {}): EngineFakes {
     ports: {
       store,
       budgetScopes: new SessionOwners(new CeilingConfirmationStore(clock)),
+      rootAnchors: new RootAnchors(),
       clock,
       env,
       providerIo: {},
@@ -229,6 +231,7 @@ export function engineServices(
     services: {
       store: fakes.store,
       budgetScopes: fakes.ports.budgetScopes,
+      rootAnchors: fakes.ports.rootAnchors,
       clock: fakes.clock,
       env: fakes.env,
       http: transport.fetch,

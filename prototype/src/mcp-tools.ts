@@ -17,11 +17,6 @@ import {
   type McpDiscoveryResult,
 } from "./tools/mcp/transport.ts";
 import { defineWebCommands, createWebToolsSessionState } from "./tools/web/web.ts";
-export {
-  buildDoltAllowNetGrant,
-  mcpServerNetGrants,
-  validateDoltPort,
-} from "./mcp-net-grants.ts";
 
 const MCP_REVISION = "2026-07-28";
 const DISCOVERY_TIMEOUT_MS = 5_000;

@@ -10,6 +10,7 @@ import {
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "../definition.ts";
 import { buildToolCatalog } from "../catalog.ts";
+import { RootAnchors } from "./root-anchors.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import { buildCommandToolCallEventPayload } from "../invoke.ts";
 import {
@@ -466,7 +467,9 @@ describe("buildCommandToolCallEventPayload", () => {
     // The tool's own claim is that every git call reaches an approver. That
     // holds because of the exec-class effect in its registered envelope, so
     // pin the registered definition rather than a local fixture of it.
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
     const git = registry.lookup("git")!;
     assertArrayIncludes(git.permission.effects, ["run.process"]);
     for (
@@ -489,7 +492,9 @@ describe("buildCommandToolCallEventPayload", () => {
   it("the real git command denies unrunnable calls before the approval prompt", () => {
     // Both cases must be denied by policy, not by the executor: a call that
     // can never run should not cost the operator an approval decision.
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
     const git = registry.lookup("git")!;
     for (
       const args of [
@@ -508,7 +513,9 @@ describe("buildCommandToolCallEventPayload", () => {
   });
 
   it("the real git command keeps its result out of the persisted event", () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
     const git = registry.lookup("git")!;
     assertStrictEquals(git.redactResult, true);
 

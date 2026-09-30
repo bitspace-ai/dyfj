@@ -21,6 +21,7 @@ import {
   truncateForEventColumn,
 } from "./invoke.ts";
 import { buildToolCatalog } from "./catalog.ts";
+import { RootAnchors } from "./builtin/root-anchors.ts";
 
 function readCommand(
   overrides: Partial<CommandDefinition<string>> = {},
@@ -526,7 +527,9 @@ describe("read_file → tool_call event containment", () => {
   });
 
   it("completes without throwing and records a capped event with a full-size marker", async () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: root });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: root,
+    });
     const events: EventInsert[] = [];
 
     const result = await invokeCommandWithEvent(

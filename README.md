@@ -975,7 +975,11 @@ Every scan diagnostic is value-free — rule id, path, and line only, never the
 matched content — and the gate ends with one bounded machine-readable
 `gate-status` JSON line listing each check id and result; a required check that
 failed, was unavailable, or did not run can never compose into a passing status,
-and interruption is reported distinctly from failure. The `gate-status` line is
+and interruption is reported distinctly from failure. A failing lane does not
+stop the gate: every lane still runs, the gate lists each lane that failed
+before the `gate-status` line, and it exits with the first failing lane's code;
+only an interruption stops it early, and a run it stops reads `interrupted`
+even after a failure. The `gate-status` line is
 a bounded diagnostic of this run's checks, not an assurance receipt, and
 validating the receipt schema generates no receipt. These are pipeline assurance
 checks for this repository only: a green gate grants no Workbench runtime
@@ -1093,7 +1097,21 @@ the subject/range binding described above. It can also be dispatched manually
 on any branch (`workflow_dispatch`) with the same token and no secrets; a
 manual run has no push or pull-request base, so the caller supplies the
 release-range base as the required `range_base` input. Its stable check name, `full-gate`,
-is the intended branch-protection required check. A second job,
+is the intended branch-protection required check. On a pull request whose
+release range changes Markdown files only (every changed path, deletions
+included, ends in `.md`; rename detection is off, so a file renamed to a `.md`
+name does not count), the gate runs only the policy lanes — `subject.resolve`,
+`subject.digest`, the retired-surface scan, both public-safety tree scans,
+`secret.diff`, `diff.whitespace`, `markdown.links`, `shell.parse`,
+`dependency.policy` and `receipt.schema` — and the two contract lanes, whose
+closure report reads the `closure-claim` markers in the Markdown. It names
+every lane it skips before it starts, and its `gate-status` line reads
+`"mode":"docs-only"`. The
+classification (`scripts/change-scope.ts`, keyed on `GITHUB_EVENT_NAME`) runs
+inside the repository-owned command rather than as a workflow path filter, so
+both jobs still report a status and the required checks can pass. A push to
+`main`, a manual dispatch and every local run keep the full gate, so anything a
+docs-only pull request skipped is still checked on `main`. A second job,
 `macos-portability`, runs the same command on a macOS runner so process,
 filesystem, and runtime portability are observable. The workflow pins its one
 third-party action by full commit digest (watched by Dependabot), installs Deno
@@ -1718,6 +1736,13 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-09-30 - The gate description covers the test lanes' deadlines, the
   runners' token carrier, own-group stop and backstop, and the gate's recovery of an orphaned
   lane group, replacing the note that the lanes had no bound yet.
+- 2026-09-30 - The gate description states that a failing lane no longer stops
+  the gate: every lane runs, the failed lanes are listed, and the exit code is
+  the first failing lane's; a run interrupted after a failure reads
+  `interrupted`.
+- 2026-09-30 - `specs/01-architecture.md` §5.7 lists the file tools' root
+  anchors and the regex worker's URL among the module-level state moved under
+  an owner, and `specs/bug-log.md` records the root-anchor entry as fixed.
 - 2026-09-30 - The `arch.imports` description and `specs/01-architecture.md` §4
   state that the PRD-11 R2 size limits now fail the lane, with the committed
   exceptions file and its only-shrink rule; `specs/README.md` records decision

@@ -16,6 +16,7 @@ import {
   invokeCommandWithEvent,
 } from "./invoke.ts";
 import { buildToolCatalog } from "./catalog.ts";
+import { RootAnchors } from "./builtin/root-anchors.ts";
 
 function readCommand(
   overrides: Partial<CommandDefinition<string>> = {},
@@ -169,7 +170,9 @@ describe("redactCommandArguments (sensitive tool args)", () => {
   });
 
   it("the real write_file command marks content for redaction", () => {
-    const registry = buildToolCatalog({}, { workspaceRoot: "/work" });
+    const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    });
     assertStrictEquals(
       registry.lookup("write_file")!.inputSchema.properties!.content!.redact,
       true,

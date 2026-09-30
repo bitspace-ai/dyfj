@@ -24,7 +24,11 @@ import type {
   ConfirmRunawayAnomaly,
   SpendBaselines,
 } from "../budget/mod.ts";
-import type { CommandDefinition, ConfirmToolApproval } from "../tools/mod.ts";
+import type {
+  CommandDefinition,
+  ConfirmToolApproval,
+  RootAnchors,
+} from "../tools/mod.ts";
 import type { BudgetTallyMode, Env, PermissionLevel } from "../config/mod.ts";
 import type {
   AskContextProfile,
@@ -261,6 +265,11 @@ export interface WorkbenchRuntimeServices {
    * confirmations persist for their scope periods.
    */
   budgetScopes: BudgetScopes;
+  /**
+   * The engine's workspace-root anchors, built once at the composition root
+   * so a root's anchor lasts for the engine process, not one turn.
+   */
+  rootAnchors: RootAnchors;
   externalAgentRunner?: ExternalAgentRunner;
   /** Wall clock for durations; the system clock when absent. */
   clock?: Clock;

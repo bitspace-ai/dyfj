@@ -73,3 +73,9 @@ export {
   resolveTrustWorkspaceInstructionsFromEnv,
   type RuntimeEnvDefaults,
 } from "./defaults.ts";
+export {
+  buildDoltAllowNetGrant,
+  mcpServerNetGrants,
+  validateDoltPort,
+} from "./mcp-net-grants.ts";
+export { assertSecureMemoryUrl } from "./memory-url.ts";
