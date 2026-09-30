@@ -24,6 +24,7 @@ do not amend Section 1.
 | `work-orders.md`          | Sequenced, one-PR-each instructions for agents                                                    |
 | `bug-log.md`              | Bugs found during phase 1: logged, not fixed inline                                               |
 | `recipes/`                | Step-by-step extension recipes, each validated by following it (`add-provider.md`, `add-tool.md`) |
+| `notes/`                  | Evidence behind a work order's decision (`test-supervision-evidence.md`)                          |
 
 The structure, terminology and precedence rules are in _Structure and
 terminology_ below.
