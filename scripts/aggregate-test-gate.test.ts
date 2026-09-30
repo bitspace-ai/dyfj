@@ -5,6 +5,8 @@ import {
   COMPOSED_FAIL_EXIT_CODE,
   composeGateStatus,
   defaultLaneRecordDir,
+  DOCS_ONLY_LANE_LABELS,
+  docsOnlyEligible,
   FAST_LANE_LABELS,
   fastLanes,
   type GateLane,
@@ -17,6 +19,7 @@ import {
   orphanedLaneGroup,
   parseGateArguments,
   parseProcessList,
+  planGate,
   productionLanes,
   REQUIRED_CHECK_IDS,
   runGate,
@@ -478,6 +481,174 @@ Deno.test("fast lanes keep the scans and exclude the heavyweight suites", () => 
     if (labels.includes(heavy)) {
       throw new Error(`${heavy} must not run in the fast subset`);
     }
+  }
+});
+
+const planEnv = (values: Record<string, string>) => (name: string) =>
+  values[name];
+
+const pullRequest = planEnv({
+  GITHUB_ACTIONS: "true",
+  GITHUB_EVENT_NAME: "pull_request",
+});
+
+Deno.test("a Markdown-only pull request runs only the policy lanes", async () => {
+  const plan = await planGate({
+    fast: false,
+    env: pullRequest,
+    root: "/repo",
+    denoExecutable: "/fixtures/runtime/deno",
+    changeScope: () => Promise.resolve("markdown-only"),
+  });
+  const production = productionLanes("/repo", "/fixtures/runtime/deno");
+  assertEquals(plan.mode, "docs-only");
+  assertEquals(plan.lanes.map((lane) => lane.label), [
+    ...DOCS_ONLY_LANE_LABELS,
+  ]);
+  for (const lane of plan.lanes) {
+    assertEquals(
+      lane,
+      production.find((candidate) => candidate.label === lane.label),
+    );
+  }
+  // Every lane left out is named, and together they are the whole gate.
+  assertEquals(
+    [...plan.lanes.map((lane) => lane.label), ...plan.skipped!.labels].sort(),
+    production.map((lane) => lane.label).sort(),
+  );
+  for (
+    const skipped of [
+      "Prototype unit Deno.test suite (test.unit)",
+      "Isolated Dolt integration lane",
+      "Golden characterization suite (test.golden)",
+      "Schema codegen freshness (schema.codegen)",
+      "Architecture import rules (arch.imports)",
+      "Offline-metadata Rust tests",
+    ]
+  ) {
+    if (!plan.skipped!.labels.includes(skipped)) {
+      throw new Error(`${skipped} must be skipped on a docs-only change`);
+    }
+  }
+  // The policy lanes still report every required check id.
+  assertEquals(plan.requiredCheckIds, REQUIRED_CHECK_IDS);
+  const ids = new Set(plan.lanes.map((lane) => lane.checkId));
+  for (const id of REQUIRED_CHECK_IDS) {
+    if (!ids.has(id)) throw new Error(`docs-only run does not report ${id}`);
+  }
+  // Lanes that read this repository's Markdown must run on a docs-only change.
+  for (
+    const reader of [
+      "Retired-surface scan",
+      "Contract closure report generation",
+      "Contract package tests",
+    ]
+  ) {
+    if (!plan.lanes.some((lane) => lane.label === reader)) {
+      throw new Error(`${reader} reads Markdown and must run`);
+    }
+  }
+});
+
+Deno.test("a pull request with any non-Markdown path runs the full gate", async () => {
+  const plan = await planGate({
+    fast: false,
+    env: pullRequest,
+    root: "/repo",
+    denoExecutable: "/fixtures/runtime/deno",
+    changeScope: () => Promise.resolve("other"),
+  });
+  assertEquals(plan.mode, "full");
+  assertEquals(
+    plan.lanes,
+    productionLanes("/repo", "/fixtures/runtime/deno"),
+  );
+  assertEquals(plan.skipped, undefined);
+  assertEquals(plan.requiredCheckIds, REQUIRED_CHECK_IDS);
+});
+
+Deno.test("push, dispatch and local runs keep the full gate on a Markdown-only range", async () => {
+  for (
+    const env of [
+      planEnv({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "push" }),
+      planEnv({
+        GITHUB_ACTIONS: "true",
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+      }),
+      planEnv({ GITHUB_EVENT_NAME: "pull_request" }),
+      planEnv({}),
+    ]
+  ) {
+    let asked = false;
+    const plan = await planGate({
+      fast: false,
+      env,
+      root: "/repo",
+      denoExecutable: "/fixtures/runtime/deno",
+      changeScope: () => {
+        asked = true;
+        return Promise.resolve("markdown-only");
+      },
+    });
+    assertEquals(plan.mode, "full");
+    assertEquals(plan.skipped, undefined);
+    assertEquals(
+      plan.lanes.length,
+      productionLanes("/repo", "/fixtures/runtime/deno").length,
+    );
+    if (asked) throw new Error("a non-pull-request run classified its range");
+  }
+  assertEquals(docsOnlyEligible(pullRequest), true);
+});
+
+Deno.test("the fast subset is unaffected by change scope", async () => {
+  const plan = await planGate({
+    fast: true,
+    env: pullRequest,
+    root: "/repo",
+    denoExecutable: "/fixtures/runtime/deno",
+    changeScope: () => Promise.resolve("markdown-only"),
+  });
+  assertEquals(plan.mode, "fast");
+  assertEquals(plan.lanes.map((lane) => lane.label), [...FAST_LANE_LABELS]);
+  assertEquals(plan.skipped, undefined);
+});
+
+Deno.test("a docs-only run names every lane it skips and its own claim", async () => {
+  const logs: string[] = [];
+  const code = await runGate({
+    lanes: [{
+      label: "policy lane",
+      checkId: "demo.policy",
+      command: Deno.execPath(),
+      args: ["eval", "Deno.exit(0)"],
+    }],
+    mode: "docs-only",
+    requiredCheckIds: ["demo.policy"],
+    successMessage: "✓ docs-only gate passed",
+    skipped: {
+      reason: "every path is Markdown",
+      labels: ["suite lane", "rust lane"],
+    },
+    out: { log: (message) => logs.push(message), error: () => {} },
+  });
+  assertEquals(code, 0);
+  const header = logs.indexOf("▷ every path is Markdown; skipping 2 lanes:");
+  if (header === -1) throw new Error("gate did not announce the skipped lanes");
+  assertEquals(logs.slice(header + 1, header + 3), [
+    "  - suite lane",
+    "  - rust lane",
+  ]);
+  const statusLine = logs.find((line) => line.startsWith("gate-status "));
+  assertEquals(
+    JSON.parse(statusLine!.slice("gate-status ".length)).mode,
+    "docs-only",
+  );
+  if (logs.includes("✓ aggregate test gate passed")) {
+    throw new Error("a docs-only run claimed the full green bar");
+  }
+  if (!logs.includes("✓ docs-only gate passed")) {
+    throw new Error("a docs-only run did not report its own claim");
   }
 });
 
