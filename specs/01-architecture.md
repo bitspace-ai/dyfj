@@ -135,7 +135,10 @@ Rollout:
 - **Phase-1 exit.** The baseline is empty.
 
 A companion size report (non-failing) lists modules over 600 LOC and functions
-over 150 lines. The phase-1 exit bar is in PRD-11.
+over 150 lines. The PRD-11 R2 hard limits fail the lane: a runtime module over
+1,000 LOC or a function over 200 lines, unless `scripts/arch-size-exceptions.json`
+names it with its reason and the size it may not exceed (it may shrink, not
+grow, and an entry no longer needed must be removed).
 
 ## 5. Seams
 

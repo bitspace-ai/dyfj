@@ -9,7 +9,12 @@ import {
   stronglyConnected,
 } from "./arch-imports.ts";
 import { loadModuleGraph } from "./arch-imports-graph.ts";
-import { functionSpans, sizeReport } from "./arch-imports-size.ts";
+import {
+  functionSpans,
+  hardLimitViolations,
+  type SizeException,
+  sizeReport,
+} from "./arch-imports-size.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -654,6 +659,123 @@ Deno.test("the size report lists long modules and long functions", () => {
   assertEquals(report.functions, [
     { path: "m/big.ts", name: "big", line: 1, lines: 152 },
   ]);
+});
+
+// Hard limits (PRD-11 R2): a runtime module over 1,000 lines or a function
+// over 200 fails unless an exception names it; an excepted one may only shrink.
+const bigModule = "x;\n".repeat(1001);
+const bigFunction = `function big() {\n${"  work();\n".repeat(200)}}\n`;
+const runtimeOnly = (path: string) => path.startsWith("src/");
+
+Deno.test("an unexcepted module or function over its hard limit fails", () => {
+  const errors = hardLimitViolations(
+    new Map([["src/big.ts", bigModule], ["src/fn.ts", bigFunction]]),
+    runtimeOnly,
+    [],
+  );
+  assertEquals(errors.length, 2);
+  assertSome(errors, "module src/big.ts is over the 1000-line limit (1001)");
+  assertSome(
+    errors,
+    "function src/fn.ts:1 big is over the 200-line limit (202)",
+  );
+});
+
+Deno.test("an excepted module or function passes at or under its recorded size", () => {
+  const exceptions: SizeException[] = [
+    { kind: "module", path: "src/big.ts", lines: 1001, reason: "deferred" },
+    {
+      kind: "function",
+      path: "src/fn.ts",
+      name: "big",
+      lines: 210,
+      reason: "deferred",
+    },
+  ];
+  assertEquals(
+    hardLimitViolations(
+      new Map([["src/big.ts", bigModule], ["src/fn.ts", bigFunction]]),
+      runtimeOnly,
+      exceptions,
+    ),
+    [],
+  );
+});
+
+Deno.test("an excepted module that grows past its recorded size fails", () => {
+  const errors = hardLimitViolations(
+    new Map([["src/big.ts", bigModule]]),
+    runtimeOnly,
+    [{ kind: "module", path: "src/big.ts", lines: 1000, reason: "deferred" }],
+  );
+  assertEquals(errors.length, 1);
+  assertSome(
+    errors,
+    "module src/big.ts grew past its recorded size (1001 > 1000)",
+  );
+});
+
+Deno.test("an exception for something back under its limit must be removed", () => {
+  const errors = hardLimitViolations(
+    new Map([["src/small.ts", "x;\n"]]),
+    runtimeOnly,
+    [
+      { kind: "module", path: "src/small.ts", lines: 1200, reason: "deferred" },
+      {
+        kind: "function",
+        path: "src/gone.ts",
+        name: "old",
+        lines: 300,
+        reason: "deferred",
+      },
+    ],
+  );
+  assertEquals(errors.length, 2);
+  assertSome(errors, "remove it: module src/small.ts");
+  assertSome(errors, "remove it: function src/gone.ts old");
+});
+
+Deno.test("hard limits skip modules outside the runtime", () => {
+  assertEquals(
+    hardLimitViolations(
+      new Map([["prototype/scripts/tool.ts", bigModule + bigFunction]]),
+      runtimeOnly,
+      [],
+    ),
+    [],
+  );
+});
+
+Deno.test("a size exception without a reason, or listed twice, fails", () => {
+  const errors = hardLimitViolations(
+    new Map([["src/big.ts", bigModule]]),
+    runtimeOnly,
+    [
+      { kind: "module", path: "src/big.ts", lines: 1001, reason: " " },
+      { kind: "module", path: "src/big.ts", lines: 1001, reason: "deferred" },
+      { kind: "module", path: "src/big.ts", lines: 1001, reason: "deferred" },
+      { kind: "function", path: "src/fn.ts", lines: 300, reason: "no name" },
+    ],
+  );
+  assertSome(errors, "size exception is malformed: module src/big.ts");
+  assertSome(errors, "size exception is listed twice: module src/big.ts");
+  assertSome(
+    errors,
+    "size exception is malformed: function src/fn.ts undefined",
+  );
+});
+
+Deno.test("the committed size exceptions each carry a reason", async () => {
+  const committed = JSON.parse(
+    await Deno.readTextFile(
+      fileURLToPath(new URL("./arch-size-exceptions.json", import.meta.url)),
+    ),
+  ) as SizeException[];
+  for (const entry of committed) {
+    if (entry.reason.trim() === "") {
+      throw new Error(`size exception without a reason: ${entry.path}`);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

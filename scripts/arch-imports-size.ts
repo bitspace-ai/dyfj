@@ -1,10 +1,19 @@
 /**
- * Size report for the arch.imports lane (non-failing): modules over 600 lines
- * and functions over 150 lines. Function detection is lexical and best-effort:
- * declarations, methods, and arrow functions with a block body. It uses its own
- * small tokenizer, which has the usual hand-lexer limits (regex vs. division is
- * decided from the preceding tokens); a misread only shifts a reported span,
- * and the report never fails the lane. The import graph does not use it.
+ * Size checks for the arch.imports lane (specs/prd/PRD-11 R2).
+ *
+ * - The report (non-failing) lists modules over the 600-line target and
+ *   functions over the 150-line target.
+ * - The hard limits fail the lane: a runtime module over 1,000 lines or a
+ *   function in one over 200 lines, unless `scripts/arch-size-exceptions.json`
+ *   names it with its reason. An entry records the size it may not exceed, so
+ *   an excepted module or function can shrink but not grow, and an entry for
+ *   something back under its limit fails the lane until it is removed.
+ *
+ * Function detection is lexical and best-effort: declarations, methods, and
+ * arrow functions with a block body. It uses its own small tokenizer, which has
+ * the usual hand-lexer limits (regex vs. division is decided from the
+ * preceding tokens); a misread only shifts a reported span. The import graph
+ * does not use it.
  */
 
 // ---- Tokenizer -------------------------------------------------------------
@@ -515,4 +524,99 @@ export function formatSizeReport(report: SizeReport): string[] {
       `  function over ${FUNCTION_LINE_LIMIT} lines: ${f.path}:${f.line} ${f.name} (${f.lines})`
     ),
   ];
+}
+
+export const MODULE_HARD_LIMIT = 1000;
+export const FUNCTION_HARD_LIMIT = 200;
+
+/** One entry of `scripts/arch-size-exceptions.json`. */
+export interface SizeException {
+  kind: "module" | "function";
+  path: string;
+  /** The function's reported name; functions only. */
+  name?: string;
+  /** The recorded size, which the module or function may not exceed. */
+  lines: number;
+  reason: string;
+}
+
+function exceptionKey(kind: string, path: string, name?: string): string {
+  return kind === "module" ? `module ${path}` : `function ${path} ${name}`;
+}
+
+/**
+ * Hard-limit violations over the runtime modules `isRuntime` selects: each
+ * module or function over its limit without an exception, each excepted one
+ * that grew past its recorded size, and each exception that no longer
+ * matches anything over its limit. Malformed entries are violations too.
+ */
+export function hardLimitViolations(
+  sources: ReadonlyMap<string, string>,
+  isRuntime: (path: string) => boolean,
+  exceptions: readonly SizeException[],
+): string[] {
+  const errors: string[] = [];
+  const byKey = new Map<string, SizeException>();
+  for (const entry of exceptions) {
+    const key = exceptionKey(entry.kind, entry.path, entry.name);
+    const wellFormed = (entry.kind === "module" && entry.name === undefined) ||
+      (entry.kind === "function" && typeof entry.name === "string" &&
+        entry.name !== "");
+    if (
+      !wellFormed || !Number.isSafeInteger(entry.lines) ||
+      typeof entry.reason !== "string" || entry.reason.trim() === ""
+    ) {
+      errors.push(`size exception is malformed: ${key}`);
+      continue;
+    }
+    if (byKey.has(key)) {
+      errors.push(`size exception is listed twice: ${key}`);
+      continue;
+    }
+    byKey.set(key, entry);
+  }
+  const used = new Set<string>();
+  const check = (key: string, label: string, lines: number, limit: number) => {
+    if (lines <= limit) return;
+    const entry = byKey.get(key);
+    if (entry === undefined) {
+      errors.push(
+        `${label} is over the ${limit}-line limit (${lines}); split it, or ` +
+          "add a size exception with its reason",
+      );
+      return;
+    }
+    used.add(key);
+    if (lines > entry.lines) {
+      errors.push(
+        `${label} grew past its recorded size (${lines} > ${entry.lines}); ` +
+          "an excepted size may only shrink",
+      );
+    }
+  };
+  for (const [path, source] of [...sources.entries()].sort()) {
+    if (!isRuntime(path)) continue;
+    check(
+      exceptionKey("module", path),
+      `module ${path}`,
+      countLines(source),
+      MODULE_HARD_LIMIT,
+    );
+    for (const span of functionSpans(source)) {
+      check(
+        exceptionKey("function", path, span.name),
+        `function ${path}:${span.startLine} ${span.name}`,
+        span.endLine - span.startLine + 1,
+        FUNCTION_HARD_LIMIT,
+      );
+    }
+  }
+  for (const [key] of byKey) {
+    if (!used.has(key)) {
+      errors.push(
+        `size exception no longer matches anything over its limit; remove it: ${key}`,
+      );
+    }
+  }
+  return errors;
 }
