@@ -11,6 +11,7 @@ import {
   fastLanes,
   type GateLane,
   INHERITED_ENVIRONMENT_NAMES,
+  LANE_DEADLINE_EXIT_CODE,
   LANE_DEADLINES_MS,
   laneDeadlineMs,
   type LaneOutcome,
@@ -895,7 +896,7 @@ Deno.test("aggregate lane children do not inherit unrelated environment", async 
   }
 });
 
-Deno.test("aggregate gate fails fast when a required lane fails", async () => {
+Deno.test("aggregate gate runs every lane and reports every failure", async () => {
   const logs: string[] = [];
   const errors: string[] = [];
   const lanes: GateLane[] = [
@@ -910,9 +911,14 @@ Deno.test("aggregate gate fails fast when a required lane fails", async () => {
       args: ["eval", "Deno.exit(12)"],
     },
     {
-      label: "must not run",
+      label: "later lane",
       command: Deno.execPath(),
-      args: ["eval", "console.log('ran')"],
+      args: ["eval", "Deno.exit(0)"],
+    },
+    {
+      label: "second broken lane",
+      command: Deno.execPath(),
+      args: ["eval", "Deno.exit(7)"],
     },
   ];
 
@@ -921,12 +927,138 @@ Deno.test("aggregate gate fails fast when a required lane fails", async () => {
     out: { log: (s) => logs.push(s), error: (s) => errors.push(s) },
   });
 
+  // The first failing lane's code, as a gate that stopped there would return.
   assertEquals(code, 12);
-  assertStringIncludes(logs.join("\n"), "ok lane");
+  assertStringIncludes(logs.join("\n"), "✓ later lane: success");
   assertStringIncludes(errors.join("\n"), "broken lane: failure");
-  if (logs.join("\n").includes("must not run")) {
-    throw new Error("aggregate did not fail fast");
+  assertStringIncludes(errors.join("\n"), "second broken lane: failure");
+  const summary = errors.indexOf("✗ 2 of 4 lanes failed:");
+  if (summary === -1) throw new Error("gate did not summarize its failures");
+  assertEquals(errors.slice(summary + 1, summary + 3), [
+    "  - broken lane",
+    "  - second broken lane",
+  ]);
+  if (logs.includes("✓ aggregate test gate passed")) {
+    throw new Error("a failing run claimed success");
   }
+});
+
+Deno.test("a lane past its deadline is reported and later lanes still run", async () => {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const code = await runGate({
+    lanes: [
+      {
+        label: "hanging lane",
+        command: Deno.execPath(),
+        args: [
+          "eval",
+          "await new Promise((resolve) => setTimeout(resolve, 30_000))",
+        ],
+        deadlineMs: 500,
+      },
+      {
+        label: "later lane",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(0)"],
+      },
+      {
+        label: "failing lane",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(5)"],
+      },
+    ],
+    out: { log: (s) => logs.push(s), error: (s) => errors.push(s) },
+  });
+
+  // The deadline lane failed first, so its code is the gate's.
+  assertEquals(code, LANE_DEADLINE_EXIT_CODE);
+  assertStringIncludes(errors.join("\n"), "hanging lane: failure");
+  assertStringIncludes(errors.join("\n"), "s deadline");
+  assertStringIncludes(logs.join("\n"), "✓ later lane: success");
+  const summary = errors.indexOf("✗ 2 of 3 lanes failed:");
+  if (summary === -1) throw new Error("gate did not summarize its failures");
+  assertEquals(errors.slice(summary + 1, summary + 3), [
+    "  - hanging lane",
+    "  - failing lane",
+  ]);
+});
+
+Deno.test("a lane that cannot start is reported and later lanes still run", async () => {
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const code = await runGate({
+    lanes: [
+      {
+        label: "missing tool lane",
+        command: "/nonexistent/dyfj-gate-test-tool",
+        args: [],
+      },
+      {
+        label: "failing lane",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(3)"],
+      },
+    ],
+    out: { log: (s) => logs.push(s), error: (s) => errors.push(s) },
+  });
+
+  assertEquals(code, 127);
+  assertStringIncludes(errors.join("\n"), "failing lane: failure");
+  assertStringIncludes(errors.join("\n"), "✗ 2 of 2 lanes failed:");
+});
+
+Deno.test("an interruption after a failure keeps the failure's exit code", async () => {
+  const errors: string[] = [];
+  let statusLine: string | undefined;
+  const abortController = new AbortController();
+  const code = await runGate({
+    signal: abortController.signal,
+    lanes: [
+      {
+        label: "failing lane",
+        checkId: "demo.failing",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(9)"],
+      },
+      {
+        // Stands in for an operator's interrupt arriving between lanes.
+        label: "interrupting lane",
+        checkId: "demo.interrupting",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(0)"],
+      },
+      {
+        label: "must not run",
+        checkId: "demo.after",
+        command: Deno.execPath(),
+        args: ["eval", "Deno.exit(0)"],
+      },
+    ],
+    out: {
+      log: (s) => {
+        if (s.startsWith("gate-status ")) statusLine = s;
+        if (s.startsWith("✓ interrupting lane")) {
+          abortController.abort("SIGINT");
+        }
+        if (s.includes("must not run")) {
+          throw new Error("aggregate ran a lane after interruption");
+        }
+      },
+      error: (s) => errors.push(s),
+    },
+  });
+
+  assertEquals(code, 9);
+  assertStringIncludes(errors.join("\n"), "✗ 1 of 3 lanes failed:");
+  const status = JSON.parse(statusLine!.slice("gate-status ".length));
+  // The run stopped early, so it reads interrupted; the failure stays visible.
+  assertEquals(status.result, "interrupted");
+  assertEquals(status.checks, [
+    { id: "demo.after", result: "interrupted" },
+    { id: "demo.failing", result: "fail" },
+    { id: "demo.interrupting", result: "pass" },
+  ]);
 });
 
 Deno.test("aggregate gate stops its active lane on interruption", async () => {
@@ -1336,6 +1468,21 @@ Deno.test("interruption composes as interrupted, not failure", () => {
     ["test.aggregate"],
   );
   assertEquals(failed.result, "fail");
+  // A run interrupted after a failure is incomplete: it reads interrupted,
+  // and the failed check still reads fail.
+  const both = composeGateStatus(
+    [
+      { checkId: "secret.tree", result: "fail" },
+      { checkId: "test.aggregate", result: "interrupted" },
+    ],
+    "full",
+    ["secret.tree", "test.aggregate"],
+  );
+  assertEquals(both.result, "interrupted");
+  assertEquals(both.checks, [
+    { id: "secret.tree", result: "fail" },
+    { id: "test.aggregate", result: "interrupted" },
+  ]);
 });
 
 Deno.test("a missing required lane exits nonzero and claims no success", async () => {
@@ -1557,8 +1704,8 @@ Deno.test("the gate emits a bounded machine-readable status line", async () => {
         args: ["eval", "Deno.exit(3)"],
       },
       {
-        label: "unreached lane",
-        checkId: "demo.unreached",
+        label: "lane after the failure",
+        checkId: "demo.after",
         command: Deno.execPath(),
         args: ["eval", "Deno.exit(0)"],
       },
@@ -1575,8 +1722,8 @@ Deno.test("the gate emits a bounded machine-readable status line", async () => {
   assertEquals(status.schema, "dyfj.gate.status/v1");
   assertEquals(status.result, "fail");
   assertEquals(status.checks, [
+    { id: "demo.after", result: "pass" },
     { id: "demo.fail", result: "fail" },
     { id: "demo.pass", result: "pass" },
-    { id: "demo.unreached", result: "skipped" },
   ]);
 });

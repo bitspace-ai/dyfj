@@ -1153,10 +1153,14 @@ export function composeGateStatus(
   const anyFail = all.some((r) => r === "fail" || r === "unavailable");
   const anyInterrupted = all.some((r) => r === "interrupted");
   const anySkipped = all.some((r) => r === "skipped");
-  const result = anyFail
-    ? "fail"
-    : anyInterrupted
+  // An interrupted run is incomplete, so it reads `interrupted` even when an
+  // earlier lane failed: every lane runs past a failure, and only an
+  // interruption can leave later lanes unrun. The failed check still reads
+  // `fail` in `checks`, and the exit code is still the failure's.
+  const result = anyInterrupted
     ? "interrupted"
+    : anyFail
+    ? "fail"
     : anySkipped
     ? "fail"
     : "pass";
@@ -1182,12 +1186,28 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
     checkId: lane.checkId,
     result: "skipped",
   }));
+  // A failing lane does not stop the gate: every later lane still runs, so
+  // one run reports every failure. Only interruption stops it early. The
+  // first failing lane's code is kept, so the process exit code is the one a
+  // stop-at-first-failure gate would have returned.
+  const failedLabels: string[] = [];
+  let firstFailureCode = 0;
+  const laneFailed = (label: string, code: number): void => {
+    failedLabels.push(label);
+    if (firstFailureCode === 0) firstFailureCode = code;
+  };
   // The composed status is the authority on the process result: a lane exit
   // code alone can read zero while a required check is missing, failed,
   // unavailable, or skipped. The first concrete nonzero lane code is
   // preserved when there is one; composition-only gaps fall back to the
   // deterministic codes above. Only a composed `pass` can return zero.
   const finish = (laneCode: number): number => {
+    if (failedLabels.length > 0) {
+      out.error(
+        `✗ ${failedLabels.length} of ${lanes.length} lanes failed:`,
+      );
+      for (const label of failedLabels) out.error(`  - ${label}`);
+    }
     const status = composeGateStatus(outcomes, mode, required);
     out.log(`gate-status ${JSON.stringify(status)}`);
     if (status.result === "pass") return laneCode === 0 ? 0 : laneCode;
@@ -1210,7 +1230,7 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
     const outcome = outcomes[index]!;
     if (options.signal?.aborted) {
       outcome.result = "interrupted";
-      return finish(interruptedExitCode(options.signal));
+      return finish(firstFailureCode || interruptedExitCode(options.signal));
     }
     const commandLabel = laneCommandLabel(lane);
     const start = performance.now();
@@ -1258,12 +1278,13 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
             Math.round(lane.deadlineMs! / 1000)
           } s deadline)`,
         );
-        return finish(LANE_DEADLINE_EXIT_CODE);
+        laneFailed(lane.label, LANE_DEADLINE_EXIT_CODE);
+        continue;
       }
       if (result.aborted) {
         outcome.result = "interrupted";
         out.error(`✗ ${lane.label}: interrupted (${elapsedMs}ms)`);
-        return finish(interruptedExitCode(options.signal!));
+        return finish(firstFailureCode || interruptedExitCode(options.signal!));
       }
       const status = result.status!;
       // The leader's real status is already captured above; an ordinary exit
@@ -1275,7 +1296,8 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
         out.error(
           `✗ ${lane.label}: failure (${elapsedMs}ms, exit ${status.code})`,
         );
-        return finish(status.code || 1);
+        laneFailed(lane.label, status.code || 1);
+        continue;
       }
       outcome.result = "pass";
       out.log(`✓ ${lane.label}: success (${elapsedMs}ms)`);
@@ -1288,7 +1310,7 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
         `✗ ${lane.label}: failure (${elapsedMs}ms, unavailable: ` +
           "command-not-runnable; check that the tool is installed and permitted)",
       );
-      return finish(127);
+      laneFailed(lane.label, 127);
     } finally {
       if (recordPath !== undefined) {
         await Deno.remove(recordPath).catch(() => undefined);
@@ -1297,9 +1319,9 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
   }
   if (options.signal?.aborted) {
     outcomes.push({ result: "interrupted" });
-    return finish(interruptedExitCode(options.signal));
+    return finish(firstFailureCode || interruptedExitCode(options.signal));
   }
-  const code = finish(0);
+  const code = finish(firstFailureCode);
   // The success claim is made only when the composed status itself passed.
   if (code === 0) {
     out.log(options.successMessage ?? "✓ aggregate test gate passed");

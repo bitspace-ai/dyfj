@@ -193,22 +193,31 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
-- **A Markdown-only pull request runs only the gate's policy lanes and the
-  lanes that read Markdown.** When
-  every path a pull request's release range changes is Markdown (deletions
-  included; a rename to a `.md` name does not count), `deno task test` runs
-  `subject.resolve`, `subject.digest`, the retired-surface scan, both
-  public-safety tree scans, `secret.diff`, `diff.whitespace`,
+- **A Markdown-only pull request runs only the gate's policy lanes and the lanes
+  that read Markdown.** When every path a pull request's release range changes
+  is Markdown (deletions included; a rename to a `.md` name does not count),
+  `deno task test` runs `subject.resolve`, `subject.digest`, the retired-surface
+  scan, both public-safety tree scans, `secret.diff`, `diff.whitespace`,
   `markdown.links`, `shell.parse`, `dependency.policy` and `receipt.schema`,
   plus the two contract lanes, whose closure report reads `closure-claim`
   markers in the Markdown. It names each lane it skips (unit, integration,
   golden, schema, `arch.imports`, typecheck, orchestration and Rust lanes)
-  before it starts. Its
-  `gate-status` line reports `"mode":"docs-only"` and it makes its own success
-  claim, not the full green bar's. The decision is made inside the gate
-  (`scripts/change-scope.ts`), not by a workflow path filter, so both CI jobs
-  still report a status. A push to `main`, a manual dispatch and every local
-  run keep the full gate. The `test` task now reads `GITHUB_EVENT_NAME`.
+  before it starts. Its `gate-status` line reports `"mode":"docs-only"` and it
+  makes its own success claim, not the full green bar's. The decision is made
+  inside the gate (`scripts/change-scope.ts`), not by a workflow path filter, so
+  both CI jobs still report a status. A push to `main`, a manual dispatch and
+  every local run keep the full gate. The `test` task now reads
+  `GITHUB_EVENT_NAME`.
+
+- **The aggregate gate reports every failing lane.** A failing lane no longer
+  stops `deno task test` or `deno task test:fast`: every remaining lane still
+  runs, and the gate ends by listing each lane that failed (`✗ N of M lanes
+  failed:`, one lane per line) before its `gate-status` line. The exit code is
+  unchanged: it is still the first failing lane's code (124 past a deadline,
+  127 for a lane that could not start). Only an interruption stops the gate
+  early; one that arrives after a failure keeps that failure's code, and the
+  `gate-status` result reads `interrupted` because the run is incomplete,
+  with the failed check still reading `fail`.
 
 - **The isolated-Dolt integration lane runs with the op and resource
   sanitizers**, so a test there that leaks an op, a timer, a resource or a
