@@ -113,14 +113,16 @@ const TOKEN_CARRIER_PROGRAM =
 
 /**
  * Starts the lane's token carrier in this process's group, for a gate lane
- * only. It runs until the group is stopped and does not keep this process
- * alive. `deno` is the selected Deno executable the runner may already run.
+ * only and only outside Windows, where neither the group stop nor recovery
+ * runs to end it. It runs until the group is stopped and does not keep this
+ * process alive. `deno` is the selected Deno executable the runner may
+ * already run.
  */
 export function startTokenCarrier(
   supervision: LaneSupervision | undefined,
   deno: string,
 ): void {
-  if (supervision === undefined) return;
+  if (supervision === undefined || Deno.build.os === "windows") return;
   const carrier = new Deno.Command(deno, {
     args: [
       "eval",

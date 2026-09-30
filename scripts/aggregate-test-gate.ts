@@ -375,8 +375,8 @@ async function statusOrAbort(
 // --- Lane records and recovery -------------------------------------------
 //
 // Each running test lane has a record naming the gate's pid, the lane's
-// process group and the lane token its runner puts on the `deno test` command
-// line. The gate removes it when the lane ends, so a record left behind means
+// process group and the lane token, which the runner's token carrier (an idle
+// same-group `deno eval`) holds on its command line for the whole run. The gate removes it when the lane ends, so a record left behind means
 // the gate died mid-lane. At its next start the gate reads each such record.
 // If the recording gate is still running (a concurrent gate), the record is
 // left alone. Otherwise the gate signals the recorded group only when a live
