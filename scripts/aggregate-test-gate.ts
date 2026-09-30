@@ -1079,7 +1079,7 @@ export async function planGate(options: PlanGateOptions): Promise<GatePlan> {
         mode: "docs-only",
         requiredCheckIds: REQUIRED_CHECK_IDS,
         successMessage:
-          "✓ docs-only gate passed (policy lanes only; the push to main runs the full gate)",
+          "✓ docs-only gate passed (the lanes a Markdown-only change can affect; the push to main runs the full gate)",
         skipped: {
           reason:
             "every path this pull request changes is Markdown, so only the policy and Markdown-reading lanes run",
