@@ -1806,3 +1806,6 @@ Document revisions only. Code and behavior changes are tracked in
   and the Extension boundary. Repo layout adds `specs/` and `scripts/`, and
   Status (with `prototype/README.md`) states that the standalone workbench CLI
   and its `start` / `workbench` tasks are removed.
+- 2026-10-01 - `specs/README.md` records the phase-1 exit audit: every PRD-10 to
+  PRD-14 requirement and success metric with its measured value and verdict,
+  the deferrals under D20, D23 and D28, and the findings at exit.

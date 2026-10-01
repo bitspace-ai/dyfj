@@ -179,9 +179,103 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 
 | #   | Decision | Consequence |
 | --- | -------- | ----------- |
-| D28 | **Phase 1 exits with named deferrals, not unfinished work counted as a pass.** The `arch.imports` lane enforces the PRD-11 R2 hard limits (1,000 LOC per runtime module, 200 lines per function) with a committed exceptions list: each entry names its reason and a size it may only shrink from, and an entry no longer needed fails the lane. An excepted module or function is an R2 deferral, not R2 met. Deferred past phase 1: splitting the oversized tool, web, idea/packet, provider-stream, config-parser, external-MCP and memory-MCP code not already covered by D20 (ACP) or D23 (REPL); moving the remaining top-level modules and creating `prototype/diagnostics/`; folding the per-adapter provider tests into the conformance fixtures (PRD-12 R3); conformance suites for the remaining fakes (PRD-14 R2); and moving the remaining inline test support into `prototype/testing/` (PRD-14 duplication metric). | `scripts/arch-size-exceptions.json`; the Phase-1 exit audit below will record each deferral with its measured state |
+| D28 | **Phase 1 exits with named deferrals, not unfinished work counted as a pass.** The `arch.imports` lane enforces the PRD-11 R2 hard limits (1,000 LOC per runtime module, 200 lines per function) with a committed exceptions list: each entry names its reason and a size it may only shrink from, and an entry no longer needed fails the lane. An excepted module or function is an R2 deferral, not R2 met. Deferred past phase 1: splitting the oversized tool, web, idea/packet, provider-stream, config-parser, external-MCP and memory-MCP code not already covered by D20 (ACP) or D23 (REPL); moving the remaining top-level modules and creating `prototype/diagnostics/`; folding the per-adapter provider tests into the conformance fixtures (PRD-12 R3); conformance suites for the remaining fakes (PRD-14 R2); and moving the remaining inline test support into `prototype/testing/` (PRD-14 duplication metric). | `scripts/arch-size-exceptions.json`; the Phase-1 exit audit below records each deferral with its measured state |
 
 ## Phase-1 exit
 
-Not reached. WO-24 fills this section with measured values against each PRD's
-success metrics.
+Phase 1 exits at `572ecce` (2026-09-30), measured on that tree. Each row gives
+the measured value and a verdict: **met**, **not met** or **partly met**.
+Anything not met is either deferred under a named decision (D20, D23 or D28)
+or recorded as a finding at the end; nothing is rounded up to a pass.
+
+### WO-24 acceptance
+
+| Check | Measured | Verdict |
+| ----- | -------- | ------- |
+| `arch.imports` baseline is empty | 0 entries in every category of `scripts/arch-imports-baseline.json`, down from 29 at WO-02 | Met |
+| Any remaining cycle is a named allow-list entry | `scripts/arch-cycles.json` is `[]`; the lane finds no cycle and no dynamic local import | Met (none needed) |
+| No module-level mutable state in `src/` | No runtime (non-test) module holds any. The last two, the file tools' root anchors and the regex worker's memoized URL, moved under an owner and became a constant. The one top-level `let` a scan finds is inside the regex worker's source string | Met |
+| Every PRD requirement checked or deferred | The tables below | Met |
+
+### PRD-10 Guardrails
+
+| Item | Measured | Verdict |
+| ---- | -------- | ------- |
+| R1. Golden scenarios 1–12 exist and pass | 12 snapshots; all pass; snapshots unchanged since WO-01 | Met |
+| R2. `arch.imports` lane with a baseline that fails on new violations | In the gate; ratchet baseline; stale entries also fail | Met |
+| R3. `test.unit` runs `Deno.test` files | 1,259 tests | Met |
+| R4. No `--sloppy-imports`; explicit `.ts` extensions | None in any task; no extensionless local import | Met |
+| R5. Standalone CLI and `start` / `workbench` tasks gone, and said so | Code and tasks gone; CHANGELOG `Removed`; README Status and `prototype/README.md` state it | Met |
+| R6. Docs drift corrected | Every listed item corrected; one stale leftover found at exit (see Findings) | Met |
+| Metric: golden suite deterministic over 20 runs | 20 of 20 local runs at `572ecce`, identical to the committed snapshots | Met |
+| Metric: baseline count recorded | 29 at WO-02, 0 at exit | Met |
+| Metric: gate wall-clock grows by no more than about 2 min on Linux | "Run the full deterministic gate" step, median of 5 push runs on `main`: 163 s before WO-01, 199 s at the end of WO-23 (+36 s; slowest +86 s) | Met |
+
+### PRD-11 Runtime decomposition
+
+| Item | Measured | Verdict |
+| ---- | -------- | ------- |
+| R1. `arch.imports` baseline reaches 0; only named cycles | 0; no named cycles needed | Met |
+| R1b. No module-level mutable state in `src/` | None in runtime modules | Met |
+| R2. No runtime module over 1,000 LOC, no function over 200 lines | 6 modules and 16 functions over, each in `scripts/arch-size-exceptions.json` (22 entries): 5 ACP (D20), 5 REPL (D23), 12 deferred under D28. The lane fails on anything new, on growth, and on a stale entry | Not met; deferred (D20, D23, D28) |
+| R3. `mod.ts` headers state responsibility and allowed dependencies | All 13 do | Met |
+| R4. Golden suite unchanged | Unchanged | Met |
+| R5. Tests migrate with moved modules | No Vitest or module mocks remain; moved modules' tests moved with them | Met |
+| Goal 1. Directory layout of `01-architecture.md` §3 | Layers in place and enforced; 14 top-level modules still mapped by name in `scripts/arch-layers.json` (ACP runner deferred with WO-18, the REPL under D23, the rest under D28); `prototype/diagnostics/` not created | Partly met; deferred (D20, D23, D28) |
+| Metric: median lines read to change one engine stage, < 800 | Stage file plus its direct local imports, over the seven stage modules: median 1,548 (1,255 counting value imports only). The stage files alone: median 347 | Not met by this method |
+| Metric: zero unjustified cycles and upward imports | 0 of each, enforced | Met |
+| Metric: largest runtime file ≤ 1,000 LOC (from 4,149) | 2,302 (`acp-client.ts`, D20); largest outside D20/D23: 1,929 (`tools/builtin/file.ts`, D28) | Not met; deferred |
+
+### PRD-12 Extensibility
+
+| Item | Measured | Verdict |
+| ---- | -------- | ------- |
+| R1. Test-only adapter from `add-provider.md` passes the kit, touching one directory, one registry line and fixtures | `testing/providers/synthetic/` passes the provider conformance kit | Met |
+| R2. Test-only tool from `add-tool.md`: one module and one catalog line | `testing/tools/text-stats/`; the tool conformance kit covers it | Met |
+| R3. Existing adapters pass the kit with recorded fixtures; older request and stream tests folded in | All three pass the kit; the separate per-adapter request, stream and usage tests remain beside it | Partly met; deferred (D28) |
+| R4. Nothing outside `extensions/`, `server/` and `cli/` imports an extension | Enforced by `importOnlyFrom`; no violation | Met |
+| R5. Surfaces unchanged | Golden suite unchanged | Met |
+| Metric: add an API-family adapter = one directory + one line | As R1 | Met |
+| Metric: add a tool = 1 file + 1 line | As R2 | Met |
+| Metric: registry assembly sites 3 → 1 | One builder, `buildToolCatalog`, which three callers use | Met |
+
+### PRD-13 Typed data layer
+
+| Item | Measured | Verdict |
+| ---- | -------- | ------- |
+| R1. All SQL under `src/store/`; `mysql2` only in `store/` | `mysql2` imported only by `store/dolt-pool.ts` (plus the named test-fixture tooling); SQL write literals only in the journal; both enforced | Met |
+| R2. No untyped event writes; every write through `journal.commit`; the rest listed | Events are generated `EventInsert` values; 3 unjournaled kinds (`session_insert`, `session_update`, `memory_upsert`) | Met |
+| R3. Both schema lanes green, each shown failing on a broken branch | Both in the gate and green; the demonstrations are in the WO-13 PR | Met |
+| R4. Golden suite unchanged | Unchanged | Met |
+| R5. One apply-order rule in the schema docs and README §5 | Stated in all three | Met |
+| Metric: modules issuing SQL 9 → 1 | 1 (`store/`) | Met |
+| Metric: one pool per process, owned by the composition root | One `createDoltPool` implementation; one pool per entrypoint | Met |
+| Metric: one mutation path | `journal.commit`; baseline of 3 unjournaled kinds recorded | Met |
+| Metric: an unregenerated DDL change fails the gate | `schema.codegen` | Met |
+
+### PRD-14 Test suite
+
+| Item | Measured | Verdict |
+| ---- | -------- | ------- |
+| R1. Unit and component tiers hermetic; no Vitest or module mocks | 0 Vitest or `vi.*` references; the unit lane runs with op and resource sanitizers and no run, net or env grant | Met |
+| R2. Every fake has a conformance suite against both implementations | Clock, Env, DNS resolver, HTTP transport and Store fakes do; `SequentialIds` (no port) and `FakeIo` do not, and three fakes the spec lists do not exist | Partly met; deferred (D28) |
+| R3. Tier decided by file name | The assignment list is gone; `prototype/scripts/test-files.ts` decides by name | Met |
+| R4. One glob-derived typecheck file list | `test-files.ts` feeds the typecheck, the unit runner and both gate typecheck lanes | Met; one gap in its roots (see Findings) |
+| R5. Supervisor fate decided on evidence | `specs/notes/test-supervision-evidence.md`; per-lane deadlines, runner backstop, own-group stop and saved-group recovery kept; lock, detached reaper and manifest sweep removed | Met |
+| R6. `test.unit` under 60 s on the Linux runner | Median 16.4 s over 20 CI runs at the end of WO-23; 11 s locally at exit | Met |
+| Metric: zero timeout-class failures across 20 consecutive gate runs | 20 consecutive dispatched gate runs on `main` at the exit commit (runs 504–523): 20 passed on the first attempt, 0 timeout-class failures | Met |
+| Metric: unit tier under 60 s | As R6 | Met |
+| Metric: no copies of test support outside `testing/` | No `fakeIo` or `buildClock` copies; 17 inline fake-fetch definitions and 12 inline loopback servers remain | Not met; deferred (D28) |
+
+### Findings at exit
+
+- `prototype/examples/` is outside the typecheck file list, so an example
+  can drift from an API unnoticed; review caught one such break during WO-24.
+- `prototype/VERIFICATION-2026-09-22.md` still describes the retired
+  `vitest.config.ts`.
+- `specs/03-testing.md` says the size report flags test files over 800 LOC;
+  the report excludes test files.
+- The isolated-Dolt lane's ACP test "signals a stubborn descendant that
+  remains in the ACP process group" fails in one build container on
+  unchanged code and passes on CI; its process-group assumptions depend on
+  the host.
