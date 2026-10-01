@@ -10,6 +10,43 @@ changes with a CHANGELOG `Fixed` entry.
 
 ## Open
 
+- 2026-10-01 — **The isolated-Dolt lane's ACP stubborn-descendant test fails
+  in one build container and passes on CI.**
+  - **Location:** `prototype/src/acp-client.integration.test.ts:449` ("signals
+    a stubborn descendant that remains in the ACP process group").
+  - **Symptom:** on unchanged code the test reports the descendant still alive
+    in one container environment; the same commit passes on the Linux CI
+    runner.
+  - **Suspected cause:** the test assumes host process-group and signal
+    delivery behavior (for example, how the container's init reaps or
+    reparents the descendant) that not every host provides.
+  - **Found during:** WO-24 (phase-1 exit audit).
+- 2026-10-01 — **`specs/03-testing.md` says the size report flags test files
+  over 800 LOC; the report skips test files.**
+  - **Location:** `specs/03-testing.md:70-71` against
+    `scripts/arch-layers.json:10` (`exclude` lists `.test.ts` and
+    `.fixture.ts`), which `scripts/arch-imports.ts:699` applies before sizing.
+  - **Symptom:** a test file over 800 LOC is never reported, though the spec
+    says it is.
+  - **Suspected cause:** the size report reuses the layer scan's source set,
+    which excludes tests; the spec text predates that reuse.
+  - **Found during:** WO-24 (phase-1 exit audit).
+- 2026-10-01 — **`prototype/VERIFICATION-2026-09-22.md` still describes the
+  retired `vitest.config.ts`.**
+  - **Location:** `prototype/VERIFICATION-2026-09-22.md:3`.
+  - **Symptom:** the note explains `testTimeout` and `hookTimeout` figures in a
+    Vitest config that no longer exists.
+  - **Suspected cause:** the Vitest retirement removed the config but did not
+    revisit this dated verification note.
+  - **Found during:** WO-24 (phase-1 exit audit).
+- 2026-10-01 — **`prototype/examples/` is outside the typecheck file list.**
+  - **Location:** `prototype/scripts/test-files.ts:10` (`SOURCE_ROOTS` is
+    `src`, `mcp`, `scripts` and `testing`).
+  - **Symptom:** an example can drift from the API it calls without failing
+    any gate lane; review caught one such break during WO-24.
+  - **Suspected cause:** the glob-derived file list's roots were chosen without
+    the examples directory, which no lane typechecks on its own.
+  - **Found during:** WO-24 (phase-1 exit audit).
 - 2026-09-29 — **`dyfj exec` or `dyfj ask` without a prompt reports the usage
   error, then runs a turn anyway.**
   - **Location:** `prototype/src/cli/main.ts` (`main`, which returns early on
