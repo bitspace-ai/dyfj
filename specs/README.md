@@ -269,6 +269,8 @@ or recorded as a finding at the end; nothing is rounded up to a pass.
 
 ### Findings at exit
 
+Each is recorded in `specs/bug-log.md`.
+
 - `prototype/examples/` is outside the typecheck file list, so an example
   can drift from an API unnoticed; review caught one such break during WO-24.
 - `prototype/VERIFICATION-2026-09-22.md` still describes the retired
