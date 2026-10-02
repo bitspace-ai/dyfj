@@ -40,6 +40,45 @@ describe("parseModelRegistryRows", () => {
     });
   });
 
+  it("parses catalog cache prices and omits unpriced ones", () => {
+    const [priced, unpriced] = parseModelRegistryRows([
+      {
+        slug: "deepseek/deepseek-chat",
+        display_name: "DeepSeek V3",
+        provider: "openrouter",
+        api: "openai-completions",
+        base_url: "https://openrouter.ai/api/v1",
+        tier: "1",
+        cost_input: "0.257400",
+        cost_output: "1.028700",
+        cost_cache_read: "0.025740",
+        cost_cache_write: "0.321750",
+        capabilities: '["text"]',
+      },
+      {
+        slug: "gemma4",
+        display_name: "Gemma 4 27B",
+        provider: "ollama",
+        api: "openai-completions",
+        base_url: "http://localhost:11434/v1",
+        tier: "0",
+        cost_input: "0",
+        cost_output: "0",
+        cost_cache_read: "0.000000",
+        capabilities: '["text"]',
+      },
+    ]);
+
+    assertObjectMatch(priced, {
+      costCacheRead: 0.02574,
+      costCacheWrite: 0.32175,
+    });
+    // A zero cache price is the schema default, not a price: leave it unset
+    // so metering falls back to the input rate.
+    assertStrictEquals("costCacheRead" in unpriced, false);
+    assertStrictEquals("costCacheWrite" in unpriced, false);
+  });
+
   it("accepts Dolt JSON display values for capabilities", () => {
     const parsed = parseModelRegistryRows([
       {

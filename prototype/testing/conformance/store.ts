@@ -183,6 +183,8 @@ const MODEL_FIXTURE: MemoryStoreSeed["models"] = [
     max_output_tokens: 8192,
     cost_input: 3,
     cost_output: 15.5,
+    cost_cache_read: 0.3,
+    cost_cache_write: 3.75,
     capabilities: ["text", "tools"],
     reasoning_effort_control: true,
   },
@@ -923,6 +925,8 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         tier: "0",
         cost_input: "0.000000",
         cost_output: "0.000000",
+        cost_cache_read: "0.000000",
+        cost_cache_write: "0.000000",
         capabilities: "text,code",
         context_window: "32768",
         max_output_tokens: "4096",
@@ -936,10 +940,12 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       assertEquals(
         [
           rows[2]!.cost_output,
+          rows[2]!.cost_cache_read,
+          rows[2]!.cost_cache_write,
           rows[2]!.base_url,
           rows[2]!.reasoning_effort_control,
         ],
-        ["15.500000", "", "1"],
+        ["15.500000", "0.300000", "3.750000", "", "1"],
       );
     },
     { seed: { models: MODEL_FIXTURE } },

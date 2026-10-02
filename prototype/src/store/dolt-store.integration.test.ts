@@ -47,10 +47,11 @@ async function seedRows(pool: AdminPool, seed: MemoryStoreSeed): Promise<void> {
   for (const m of seed.models ?? []) {
     await pool.query(
       "INSERT INTO models (slug, display_name, provider, api, base_url, tier, " +
-        "context_window, max_output_tokens, cost_input, cost_output, capabilities, " +
+        "context_window, max_output_tokens, cost_input, cost_output, " +
+        "cost_cache_read, cost_cache_write, capabilities, " +
         "architecture, total_params_b, active_params_b, recommended_quant, " +
         "resident_ram_gib, reasoning_effort_control, active) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         m.slug,
         m.display_name,
@@ -62,6 +63,8 @@ async function seedRows(pool: AdminPool, seed: MemoryStoreSeed): Promise<void> {
         m.max_output_tokens,
         m.cost_input ?? 0,
         m.cost_output ?? 0,
+        m.cost_cache_read ?? 0,
+        m.cost_cache_write ?? 0,
         JSON.stringify(m.capabilities),
         m.architecture ?? null,
         m.total_params_b ?? null,

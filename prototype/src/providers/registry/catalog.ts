@@ -39,6 +39,8 @@ export function parseModelRegistryRows(
       tier,
       costInput: toCatalogCost(row.cost_input),
       costOutput: toCatalogCost(row.cost_output),
+      ...optionalCatalogCost("costCacheRead", row.cost_cache_read),
+      ...optionalCatalogCost("costCacheWrite", row.cost_cache_write),
       capabilities: parseCapabilities(row.capabilities),
       contextWindow: toCatalogLimit(row.context_window),
       maxOutputTokens: toCatalogLimit(row.max_output_tokens),
@@ -108,6 +110,15 @@ function toCatalogLimit(value: string | undefined): number | undefined {
 function toCatalogCost(value: string | undefined): number {
   const cost = Number(value || "0");
   return Number.isFinite(cost) && cost >= 0 ? cost : 0;
+}
+
+/** A positive catalog price as `{ [key]: price }`; zero or absent is unpriced. */
+function optionalCatalogCost<K extends "costCacheRead" | "costCacheWrite">(
+  key: K,
+  value: string | undefined,
+): { [P in K]?: number } {
+  const cost = toCatalogCost(value);
+  return cost > 0 ? { [key]: cost } as { [P in K]?: number } : {};
 }
 
 /**

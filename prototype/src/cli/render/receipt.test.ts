@@ -197,4 +197,33 @@ describe("presentation", () => {
     );
     assertFalse((formatReceipt(result(), false)).includes("reasoning"));
   });
+  it("formatReceipt shows prompt-cache tokens only when reported", () => {
+    const cached = result({
+      tokens: {
+        input: 12,
+        output: 5,
+        cacheRead: 9_000,
+        cacheWrite: 100,
+        totalCalls: 1,
+      },
+    });
+    assertStringIncludes(
+      formatReceipt(cached, false),
+      "12→5 tok · cache 9,000 read, 100 write",
+    );
+    const readOnly = result({
+      tokens: {
+        input: 12,
+        output: 5,
+        cacheRead: 40,
+        cacheWrite: 0,
+        totalCalls: 1,
+      },
+    });
+    assertStringIncludes(
+      formatReceipt(readOnly, false),
+      "12→5 tok · cache 40 read ·",
+    );
+    assertFalse((formatReceipt(result(), false)).includes("cache"));
+  });
 });

@@ -870,6 +870,24 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Hosted OpenAI-compatible turns meter prompt-cache traffic**: on OpenAI,
+  OpenRouter and xAI the receipt reported zero cache reads and writes and
+  charged every prompt token at the full input rate, because the adapter
+  ignored `prompt_tokens_details` and the catalog's `cost_cache_read` /
+  `cost_cache_write` columns were never loaded. A turn now splits
+  `cached_tokens` (and OpenRouter's `cache_write_tokens`) out of
+  `prompt_tokens` into `cacheRead` / `cacheWrite`, so `input` counts uncached
+  tokens as it does for Anthropic, and prices each share at the row's cache
+  rate. A row without a cache price (the schema default of zero) charges cache
+  traffic at the input rate, so cost is never understated. Streaming requests
+  to these providers now send `stream_options.include_usage`, which OpenAI
+  needs before it reports usage on a stream; local servers are not sent it.
+  `models/list` rows carry `costCacheRead` / `costCacheWrite` when the
+  catalog prices them. The turn's receipt line now shows the cached share
+  beside the token counts (`12→5 tok · cache 9,000 read, 100 write`) whenever
+  a provider reported cache traffic, so the smaller uncached `input` figure is
+  never the only prompt size on screen.
+
 - **The file tools' workspace-root anchors are owned by the engine, not held
   in a process-global map.** `RootAnchors` (`tools/builtin/root-anchors.ts`)
   holds them; the composition root builds one per engine and hands it to each

@@ -174,6 +174,8 @@ export interface ModelSeed {
   max_output_tokens: number;
   cost_input?: number;
   cost_output?: number;
+  cost_cache_read?: number;
+  cost_cache_write?: number;
   capabilities: readonly string[];
   architecture?: string | null;
   total_params_b?: number | null;
@@ -306,6 +308,8 @@ export class MemoryStore implements Store {
       tier: m.tier,
       cost_input: (m.cost_input ?? 0).toFixed(6),
       cost_output: (m.cost_output ?? 0).toFixed(6),
+      cost_cache_read: (m.cost_cache_read ?? 0).toFixed(6),
+      cost_cache_write: (m.cost_cache_write ?? 0).toFixed(6),
       // The driver decodes the JSON column to an array; text is its join.
       capabilities: String([...m.capabilities]),
       context_window: m.context_window,
@@ -364,6 +368,8 @@ export class MemoryStore implements Store {
                 "tier",
                 "cost_input",
                 "cost_output",
+                "cost_cache_read",
+                "cost_cache_write",
                 "capabilities",
                 "context_window",
                 "max_output_tokens",

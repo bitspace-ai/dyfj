@@ -21,6 +21,13 @@ export interface WorkbenchModel {
   tier: 0 | 1 | 2;
   costInput: number;
   costOutput: number;
+  /**
+   * Catalog prompt-cache prices per million tokens, when the row declares
+   * them. Absent means unpriced (the schema default is zero), and metering
+   * then charges cache traffic at `costInput` so cost is never understated.
+   */
+  costCacheRead?: number;
+  costCacheWrite?: number;
   capabilities: string[];
   /**
    * Catalog limits, when the registry row declares them. `contextWindow` is
