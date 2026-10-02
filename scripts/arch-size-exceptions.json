@@ -135,7 +135,7 @@
   },
   {
     "kind": "function",
-    "path": "prototype/src/mcp-tools.ts",
+    "path": "prototype/src/tools/mcp/adapter.ts",
     "name": "buildExternalMcpCommands",
     "lines": 255,
     "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."

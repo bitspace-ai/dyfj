@@ -24,11 +24,8 @@
  *     must never carry the value into a log).
  */
 
-import {
-  type MutableEnv,
-  processEnv,
-  type SecretsConfig,
-} from "./config/mod.ts";
+import { type MutableEnv, processEnv } from "./env.ts";
+import type { SecretsConfig } from "./secrets-config.ts";
 
 export type SecretStatus = "resolved" | "already-set" | "unavailable";
 

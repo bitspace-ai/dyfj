@@ -1,7 +1,7 @@
 import {
   compareContextPayloads,
   type ContextPayloadReport,
-} from "../src/context-size-response.ts";
+} from "../diagnostics/context-size-response.ts";
 import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 
 const prompt = firstPrompt(Deno.args) ??

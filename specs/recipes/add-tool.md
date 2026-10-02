@@ -12,7 +12,7 @@ Paths below are relative to `prototype/`.
 A tool served by an MCP server needs **no code**: configure the server and the
 tool under `[[mcp.servers]]` (`mcp-servers.ts` validates it) with its effect
 (`read` or `write_external`) and approval. The external MCP adapter
-(`src/mcp-tools.ts`) derives the `CommandDefinition` from the server's
+(`src/tools/mcp/adapter.ts`) derives the `CommandDefinition` from the server's
 discovered schema, and the catalog registers it with the other configured
 external commands. A web search or fetch capability is the same, mapped through
 `capabilities.search_tool` and `capabilities.fetch_tool`.

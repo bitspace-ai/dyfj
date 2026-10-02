@@ -10,7 +10,7 @@ import { toolConformance } from "../../testing/conformance/tool.ts";
 import { parseMcpServersConfig } from "../config/mod.ts";
 import saveIssueSchema from "../extensions/linear/linear-save-issue-schema.fixture.ts";
 import { buildLinearIssueCreationCommand } from "../extensions/linear/mod.ts";
-import { buildExternalMcpCommands } from "../mcp-tools.ts";
+import { buildExternalMcpCommands } from "./mcp/adapter.ts";
 import { buildToolCatalog, RootAnchors } from "./mod.ts";
 
 const builtins = buildToolCatalog({

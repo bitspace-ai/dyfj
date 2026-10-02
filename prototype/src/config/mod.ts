@@ -3,7 +3,8 @@
  *
  * Responsibility: the env-key schema (every `DYFJ_*` key declared), the `Env`
  * port and its process adapter, the shared `.env` parser, TOML loading, and
- * secrets/MCP/budget/agent/anomaly config parsing, and the launch-resolved
+ * secrets/MCP/budget/agent/anomaly config parsing, secret-pointer resolution
+ * into the environment (`secrets.ts`), and the launch-resolved
  * nameserver net grants. Nothing else in the runtime
  * reads the process environment directly.
  *
@@ -79,3 +80,4 @@ export {
   validateDoltPort,
 } from "./mcp-net-grants.ts";
 export { assertSecureMemoryUrl } from "./memory-url.ts";
+export { resolveSecrets, secretsRunGrant } from "./secrets.ts";

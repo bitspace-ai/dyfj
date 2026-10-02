@@ -5,7 +5,7 @@
  */
 
 import type { MemoryReader, MemoryVisibility } from "../../store/mod.ts";
-import { formatUntrustedMemoryRecord, rowToMemory } from "../../memory.ts";
+import { formatUntrustedMemoryRecord, rowToMemory } from "./memory-records.ts";
 import type { CommandDefinition, CommandTraceContext } from "../definition.ts";
 
 export interface MemoryReadDependencies {

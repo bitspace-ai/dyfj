@@ -77,7 +77,7 @@ function* sourceFiles(dir: string): Generator<string> {
 if (import.meta.main) {
   const roots = Deno.args.length > 0
     ? Deno.args
-    : ["src", "mcp", "scripts", "examples", "testing"];
+    : ["src", "mcp", "scripts", "examples", "testing", "diagnostics"];
   let failed = false;
   for (const root of roots) {
     for (const file of sourceFiles(root)) {

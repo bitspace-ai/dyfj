@@ -7,8 +7,8 @@ import {
   mcpServerNetGrants,
   processEnv,
   readNameserverNetGrants,
+  secretsRunGrant,
 } from "../../config/mod.ts";
-import { secretsRunGrant } from "../../secrets.ts";
 import type { CliConfig } from "../args.ts";
 import { denoTurnInterruptSource } from "../io.ts";
 import {

@@ -28,12 +28,12 @@ import {
   buildSystemPrompt,
   loadIndexedMemories,
   loadInjectedMemories,
-} from "../memory.ts";
-import { externalMcpCommandsForTransport } from "../mcp-tools.ts";
+} from "../tools/builtin/memory-records.ts";
+import { externalMcpCommandsForTransport } from "../tools/mcp/adapter.ts";
 import {
   buildMemorySearch,
   memorySearchConfigFromEnv,
-} from "../memory-search.ts";
+} from "../tools/mcp/memory-search.ts";
 import {
   buildHistoryOmissionNotice,
   historyOmissionForDelivery,

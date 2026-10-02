@@ -7,7 +7,13 @@
 // (`testing/golden/`) has its own lane, and every other `*.test.ts` is a unit
 // test.
 
-export const SOURCE_ROOTS = ["src", "mcp", "scripts", "testing"] as const;
+export const SOURCE_ROOTS = [
+  "src",
+  "mcp",
+  "scripts",
+  "testing",
+  "diagnostics",
+] as const;
 
 const ignoredDirectories = new Set([".git", "node_modules"]);
 const typeScriptSourcePattern = /\.[cm]?tsx?$/;

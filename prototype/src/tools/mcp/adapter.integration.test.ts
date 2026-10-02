@@ -5,9 +5,9 @@ import {
   type McpHttpServerConfig,
   parseMcpServersConfig,
   parseSecretsConfig,
-} from "./config/mod.ts";
-import { buildExternalMcpCommands } from "./mcp-tools.ts";
-import { startLoopbackMcpServer } from "../testing/servers/mcp-server.ts";
+} from "../../config/mod.ts";
+import { buildExternalMcpCommands } from "./adapter.ts";
+import { startLoopbackMcpServer } from "../../../testing/servers/mcp-server.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);

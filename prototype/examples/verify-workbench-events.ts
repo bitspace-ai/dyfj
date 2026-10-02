@@ -12,7 +12,7 @@ import { RootAnchors } from "../src/tools/mod.ts";
 import {
   verifyWorkbenchEventSequence,
   type WorkbenchEventRow,
-} from "../src/workbench-events.ts";
+} from "../diagnostics/workbench-events.ts";
 
 const prompt = "Say ok.";
 // This entrypoint composes the engine itself, so it builds the store the

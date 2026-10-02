@@ -1,11 +1,11 @@
-import { generateSpanId, generateULID } from "./kernel/mod.ts";
-import { processEnv, resolvePrincipalId } from "./config/mod.ts";
+import { generateSpanId, generateULID } from "../kernel/mod.ts";
+import { processEnv, resolvePrincipalId } from "../config/mod.ts";
 import {
   type AuthnEventFields,
-  type EventInsert,
-  type Journal,
   modelSelectedEvent,
-} from "./store/mod.ts";
+} from "./events/builders.ts";
+import type { EventInsert } from "./generated/rows.ts";
+import type { Journal } from "./port.ts";
 
 // ─── Telemetry helpers ────────────────────────────────────────────────────────
 

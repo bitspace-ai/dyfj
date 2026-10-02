@@ -8,10 +8,12 @@
  * builder (`catalog.ts`). Tools live in `builtin/` (memory, file, exec, git),
  * `web/` and `mcp/`, each exporting a `define<Name>` beside its executor.
  *
+ * `mcp/` also holds the external-server adapter (`adapter.ts`), memory recall
+ * over MCP (`memory-search.ts`) and MCP trace-context and list rules
+ * (`conformance.ts`); `builtin/memory-records.ts` is the memory record format.
+ *
  * Allowed dependencies: `kernel/`, `contract/`, `config/`, and `store/` (the
- * `tool_call` event builder and the memory reader), plus the not-yet-moved
- * modules `scripts/arch-layers.json` maps into this unit (`memory.ts` for the
- * memory record format). Every tool the catalog can register passes the tool
+ * `tool_call` event builder and the memory reader). Every tool the catalog can register passes the tool
  * conformance kit (`testing/conformance/tool.ts`); adding one follows
  * `specs/recipes/add-tool.md`.
  */

@@ -5,7 +5,7 @@ import {
   compareContextPayloads,
   type ContextPayloadReport,
 } from "./context-size-response.ts";
-import type { WorkbenchModel } from "./providers/mod.ts";
+import type { WorkbenchModel } from "../src/providers/mod.ts";
 
 const models: WorkbenchModel[] = [{
   slug: "gemma4:e2b",

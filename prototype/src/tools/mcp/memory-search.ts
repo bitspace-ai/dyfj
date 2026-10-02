@@ -25,15 +25,15 @@
  * flows should use separate capability contracts.
  */
 
-import { assertSecureMemoryUrl, type Env, processEnv } from "./config/mod.ts";
+import { assertSecureMemoryUrl, type Env, processEnv } from "../../config/mod.ts";
 import {
   injectMcpTraceContext,
   type McpTraceContext,
-} from "./mcp-conformance.ts";
+} from "./conformance.ts";
 import {
   bearerAuthorizationHeader,
   createMcpClient,
-} from "./tools/mcp/transport.ts";
+} from "./transport.ts";
 
 export interface MemorySearchConfig {
   /** The external memory MCP endpoint. */
