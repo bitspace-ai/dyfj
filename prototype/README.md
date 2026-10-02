@@ -44,7 +44,9 @@ or the standing `[paid].approve_paid_default` posture. Ordinary approved calls
 inside the configured budget envelopes run without another budget prompt;
 ceiling crossings require confirmation, the runaway-anomaly hard stops remain
 separate, and non-loopback callers fail closed. Every call is receipted with
-cost and prompt-cache telemetry.
+cost and prompt-cache telemetry. On the hosted OpenAI-compatible providers the
+cached share of the prompt is reported apart from input and priced at the
+catalog's cache rates, or at the input rate when a row has no cache price.
 
 Each hosted provider fails closed without its credential. The recommended
 credential posture is to declare pointers under `[secrets.pointers]` in

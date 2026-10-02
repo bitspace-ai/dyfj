@@ -31,6 +31,14 @@ export interface OpenAIChatUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   completion_tokens_details?: { reasoning_tokens?: number };
+  /**
+   * The cache share of `prompt_tokens` (which includes it). `cache_write_tokens`
+   * is OpenRouter's field for tokens written to a provider prompt cache.
+   */
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+  };
 }
 
 export const MAX_STRUCTURED_TOOL_CALLS = 128;

@@ -20,7 +20,10 @@ export type OpenAIChatReadResult =
   | Awaited<ReturnType<typeof readOpenAIChatJson>>;
 
 export interface OpenAIChatUsageSummary {
+  /** Uncached prompt tokens; `cacheRead` and `cacheWrite` are reported apart. */
   input: number;
+  cacheRead: number;
+  cacheWrite: number;
   output: number;
   reasoning: number;
   costTotal: number;
@@ -36,8 +39,20 @@ export function openAIChatUsage(
   params: Pick<WorkbenchTurnParams, "systemPrompt" | "prompt" | "messages">,
   model: WorkbenchModel,
 ): OpenAIChatUsageSummary {
-  const input = finiteNonnegativeTokenCount(result.usage?.prompt_tokens) ??
+  const prompt = finiteNonnegativeTokenCount(result.usage?.prompt_tokens) ??
     estimateTextTokens(estimateParamsInputText(params));
+  // prompt_tokens includes cache traffic. Split it out to match the other
+  // adapters (input excludes cache), clamped so the parts never exceed it.
+  const details = result.usage?.prompt_tokens_details;
+  const cacheRead = Math.min(
+    prompt,
+    finiteNonnegativeTokenCount(details?.cached_tokens) ?? 0,
+  );
+  const cacheWrite = Math.min(
+    prompt - cacheRead,
+    finiteNonnegativeTokenCount(details?.cache_write_tokens) ?? 0,
+  );
+  const input = prompt - cacheRead - cacheWrite;
   const reportedCompletion = finiteNonnegativeTokenCount(
     result.usage?.completion_tokens,
   );
@@ -127,7 +142,10 @@ export function openAIChatUsage(
     );
     output = billableOutput - reasoning;
   }
+  // An unpriced cache rate falls back to the input rate: never understate.
   const costTotal = (input / 1_000_000) * model.costInput +
+    (cacheRead / 1_000_000) * (model.costCacheRead ?? model.costInput) +
+    (cacheWrite / 1_000_000) * (model.costCacheWrite ?? model.costInput) +
     (billableOutput / 1_000_000) * model.costOutput;
-  return { input, output, reasoning, costTotal };
+  return { input, cacheRead, cacheWrite, output, reasoning, costTotal };
 }
