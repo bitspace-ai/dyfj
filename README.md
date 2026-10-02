@@ -200,6 +200,11 @@ All five apply from Day-1.
 Working-system criterion. Cost visibility is part of the done-line itself, not a
 deferrable enhancement.
 
+Daily use is measured on one route: the native model loop with hosted
+inference over an OpenAI-compatible provider, OpenRouter by default, with the
+provider pluggable behind that adapter. External-agent (ACP) routes stay in the
+tree but are deferred from the route plan (`specs/README.md`, decision D29).
+
 ### Inter-agent contracts - Day-1 posture
 
 - **Event schema is the inter-agent contract.** Runtime events carry the audit,
@@ -1815,3 +1820,8 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - Repo layout lists only the ACP runner and the interactive REPL as
   modules not yet moved, and names `prototype/diagnostics/`; the `arch.imports`
   description no longer says that directory is yet to exist.
+- 2026-10-02 - Section 1's done-line names the one route daily use is measured
+  on, hosted inference over an OpenAI-compatible provider with OpenRouter as the
+  default, and `specs/README.md` records decision D29, which defers the
+  external-agent (ACP) routes from the route plan and supersedes that part of
+  D20.
