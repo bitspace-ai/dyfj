@@ -207,6 +207,11 @@ async fn main() -> Result<()> {
             Err(_) => break,
         };
 
+        // No SIGINT is raised while the prompt reads (rustyline clears ISIG),
+        // so one still queued was pressed during earlier work. Spend it now:
+        // left queued it would cancel this submission the moment it starts.
+        while interrupts.try_recv().is_ok() {}
+
         // The input ceiling applies before anything is sent, commands included.
         match classify(&line) {
             Submission::Empty => continue,
