@@ -64,7 +64,8 @@ export class HostedProviderCredentialMissingError extends DomainError {
         `unavailable then (a locked vault, for example), unlock it and ` +
         `restart the runtime (\`dyfj stop\`, then start it again); ` +
         `\`dyfj status\` names any pointer that failed. Otherwise set it ` +
-        `or declare it under [secrets].`,
+        `or declare it under [secrets], then restart the runtime the same ` +
+        `way: a running runtime does not reread its environment or config.`,
     );
     this.name = "HostedProviderCredentialMissingError";
   }

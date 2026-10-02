@@ -34,28 +34,41 @@ export interface RuntimeStatusPayload {
     methods?: string[];
     autostarted?: boolean;
     /** Secret pointers that failed to resolve when the runtime started. */
-    unavailableSecrets?: { envVar?: string; reason?: string }[];
+    unavailableSecrets?: UnavailableSecretEntry[];
   };
 }
 
+/** A failed pointer as `runtime/status` reports it: an env var or a name. */
+export interface UnavailableSecretEntry {
+  envVar?: string;
+  name?: string;
+  reason?: string;
+}
+
 /**
- * One line per secret pointer that failed at runtime start. A provider that
- * reads one has no credential until the runtime restarts, so the line says
- * how to recover rather than leaving it to the first turn's error.
+ * One line per secret pointer that failed at runtime start. Whatever reads one
+ * (a provider, an MCP server) has no credential until the runtime restarts, so
+ * the line says how to recover rather than leaving it to the first failure.
  */
 export function formatUnavailableSecrets(
-  secrets: readonly { envVar?: string; reason?: string }[] | undefined,
+  secrets: readonly UnavailableSecretEntry[] | undefined,
 ): string[] {
   if (!Array.isArray(secrets) || secrets.length === 0) return [];
   return [
     ...secrets.map((secret) =>
-      `secret unavailable since start: ${secret.envVar ?? "(unnamed)"} (${
+      `secret unavailable since start: ${secretLabel(secret)} (${
         secret.reason ?? "unavailable"
       })`
     ),
-    "  providers reading these have no credential; unlock the vault and " +
-    "restart the runtime (`dyfj stop`, then start it again)",
+    "  anything reading these has no credential until the runtime restarts; " +
+    "unlock the vault, then restart it (`dyfj stop`, then start it again)",
   ];
+}
+
+function secretLabel(secret: UnavailableSecretEntry): string {
+  if (secret.envVar) return secret.envVar;
+  if (secret.name) return `[secrets.named] ${secret.name}`;
+  return "(unnamed)";
 }
 
 export const LIVENESS_PROBE_TIMEOUT_MS = 5000;

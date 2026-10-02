@@ -499,7 +499,7 @@ describe("buildResolverEnv (isolated resolver environment)", () => {
 });
 
 describe("unavailableSecretPointers", () => {
-  it("keeps only the environment pointers that failed, with their reasons", () => {
+  it("keeps only the pointers that failed, environment then named, with their reasons", () => {
     assertEquals(
       unavailableSecretPointers({
         environment: [
@@ -512,10 +512,19 @@ describe("unavailableSecretPointers", () => {
           { envVar: "XAI_API_KEY", status: "already-set" },
           { envVar: "GEMINI_API_KEY", status: "unavailable" },
         ],
+        namedResolutions: [
+          { name: "memory", status: "resolved" },
+          {
+            name: "linear",
+            status: "unavailable",
+            reason: "skipped: session probe did not resolve",
+          },
+        ],
       }),
       [
         { envVar: "OPENROUTER_API_KEY", reason: "timed out" },
         { envVar: "GEMINI_API_KEY", reason: "unavailable" },
+        { name: "linear", reason: "skipped: session probe did not resolve" },
       ],
     );
   });

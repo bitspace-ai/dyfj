@@ -47,10 +47,9 @@ export interface WorkbenchDefaultTurnModel {
  * credential until the runtime restarts. Value-free: the env var name and the
  * resolver's reason only.
  */
-export interface WorkbenchUnavailableSecret {
-  envVar: string;
-  reason: string;
-}
+export type WorkbenchUnavailableSecret =
+  | { envVar: string; reason: string }
+  | { name: string; reason: string };
 
 export interface WorkbenchRuntimeStatus {
   transport: "uds";

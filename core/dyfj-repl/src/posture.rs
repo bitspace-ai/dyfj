@@ -61,16 +61,17 @@ pub fn unresolved_pointer_warnings(status: &Value) -> Vec<String> {
             let field = |key: &str, fallback: &str| {
                 visible(pointer.get(key).and_then(Value::as_str).unwrap_or(fallback))
             };
-            format!(
-                "secret unavailable since start: {} ({})",
-                field("envVar", "(unnamed)"),
-                field("reason", "unavailable")
-            )
+            let label = match (pointer.get("envVar"), pointer.get("name")) {
+                (Some(_), _) => field("envVar", "(unnamed)"),
+                (None, Some(_)) => format!("[secrets.named] {}", field("name", "(unnamed)")),
+                (None, None) => "(unnamed)".into(),
+            };
+            format!("secret unavailable since start: {label} ({})", field("reason", "unavailable"))
         })
         .collect();
     lines.push(
-        "  providers reading these have no credential; unlock the vault and restart \
-         the runtime (`dyfj stop`, then start it again)"
+        "  anything reading these has no credential until the runtime restarts; \
+         unlock the vault, then restart it (`dyfj stop`, then start it again)"
             .into(),
     );
     lines
@@ -84,13 +85,15 @@ mod tests {
     fn names_each_secret_that_failed_at_start_and_how_to_recover() {
         let status = json!({"runtime": {"unavailableSecrets": [
             {"envVar": "OPENROUTER_API_KEY", "reason": "session probe failed: timed out after 10000ms (locked or unavailable)"},
-            {"envVar": "OPENAI_API_KEY", "reason": "skipped: session probe OPENROUTER_API_KEY did not resolve"}
+            {"envVar": "OPENAI_API_KEY", "reason": "skipped: session probe OPENROUTER_API_KEY did not resolve"},
+            {"name": "linear", "reason": "skipped"}
         ]}});
         let lines = unresolved_pointer_warnings(&status);
-        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[2].contains("[secrets.named] linear (skipped)"), "{lines:?}");
         assert!(lines[0].contains("OPENROUTER_API_KEY (session probe failed"), "{lines:?}");
         assert!(lines[1].contains("OPENAI_API_KEY"), "{lines:?}");
-        assert!(lines[2].contains("restart the runtime"), "{lines:?}");
+        assert!(lines[3].contains("restart it"), "{lines:?}");
         assert!(unresolved_pointer_warnings(&json!({"runtime": {}})).is_empty());
         assert!(unresolved_pointer_warnings(&json!({"runtime": {"unavailableSecrets": []}})).is_empty());
         let hostile = json!({"runtime": {"unavailableSecrets": [{"envVar": "X\u{1b}[2J", "reason": "r"}]}});

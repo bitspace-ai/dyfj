@@ -134,6 +134,9 @@ Deno.test("runtime/status names secret pointers that failed at start", async () 
     envVar: "OPENROUTER_API_KEY",
     reason:
       "session probe failed: timed out after 10000ms (locked or unavailable)",
+  }, {
+    name: "linear",
+    reason: "skipped: session probe OPENROUTER_API_KEY did not resolve",
   }];
   const { runtime } = await callRpc(
     handlers({ unavailableSecrets: failed }),

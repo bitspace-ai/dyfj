@@ -288,12 +288,17 @@ describe("formatUnavailableSecrets", () => {
   it("names each failed pointer and says to restart after unlocking", () => {
     const lines = formatUnavailableSecrets([
       { envVar: "OPENROUTER_API_KEY", reason: "session probe failed" },
+      { name: "linear", reason: "skipped" },
     ]);
     assertEquals(
       lines[0],
       "secret unavailable since start: OPENROUTER_API_KEY (session probe failed)",
     );
-    assertStringIncludes(lines[1], "restart the runtime");
+    assertEquals(
+      lines[1],
+      "secret unavailable since start: [secrets.named] linear (skipped)",
+    );
+    assertStringIncludes(lines[2], "restart it");
   });
 
   it("prints nothing for a clean start or an older runtime", () => {

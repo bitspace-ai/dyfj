@@ -444,7 +444,8 @@ closed with a clear message at point of use; local-first inference is
 unaffected. Pointers resolve only at boot, so unlocking the vault afterwards
 does not repair a runtime that started degraded: restart it (`dyfj stop`, then
 start it again). Until then `runtime/status` lists each failed pointer as
-`unavailableSecrets` (env var name and reason, never a value), and
+`unavailableSecrets` (the env var, or the `[secrets.named]` name, and the
+reason, never a value), and
 `dyfj status` and the Rust REPL's startup lines print them with that advice.
 
 The resolver is **session-first**: the first declared pointer is resolved alone
@@ -1819,3 +1820,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - Repo layout lists only the ACP runner and the interactive REPL as
   modules not yet moved, and names `prototype/diagnostics/`; the `arch.imports`
   description no longer says that directory is yet to exist.
+- 2026-10-02 - The `[secrets]` section says how a runtime that started with a
+  pointer unavailable reports it (`runtime/status`, `dyfj status`, the Rust
+  REPL's startup lines) and that recovery is a restart.
