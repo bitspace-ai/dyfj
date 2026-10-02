@@ -19,21 +19,17 @@ import {
   SUMMARY_TRUST_POLICY,
 } from "../context/mod.ts";
 import {
+  buildMemoryContextSourceLines,
+  buildMemorySearch,
+  buildSystemPrompt,
   buildToolCatalog,
   executeReadMemory,
-  type ToolCatalogPorts,
-} from "../tools/mod.ts";
-import {
-  buildMemoryContextSourceLines,
-  buildSystemPrompt,
+  externalMcpCommandsForTransport,
   loadIndexedMemories,
   loadInjectedMemories,
-} from "../memory.ts";
-import { externalMcpCommandsForTransport } from "../mcp-tools.ts";
-import {
-  buildMemorySearch,
   memorySearchConfigFromEnv,
-} from "../memory-search.ts";
+  type ToolCatalogPorts,
+} from "../tools/mod.ts";
 import {
   buildHistoryOmissionNotice,
   historyOmissionForDelivery,

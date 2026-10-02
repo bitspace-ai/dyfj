@@ -1,6 +1,6 @@
 /**
  * The memory-recall endpoint rule, shared by the runtime's recall config
- * (`memory-search.ts`) and the launcher's net grants (`cli/launcher/`): the
+ * (`tools/mcp/memory-search.ts`) and the launcher's net grants (`cli/launcher/`): the
  * recall token and private queries never travel in cleartext.
  */
 

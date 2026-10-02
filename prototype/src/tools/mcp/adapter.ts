@@ -1,11 +1,11 @@
-import type { McpHttpServerConfig } from "./config/mod.ts";
+import type { McpHttpServerConfig } from "../../config/mod.ts";
 import type {
   CommandDefinition,
   CommandTraceContext,
   JsonSchemaObject,
-} from "./tools/mod.ts";
-import { CommandExecutionError } from "./tools/mod.ts";
-import { injectMcpTraceContext } from "./mcp-conformance.ts";
+} from "../definition.ts";
+import { CommandExecutionError } from "../definition.ts";
+import { injectMcpTraceContext } from "./conformance.ts";
 import {
   bearerAuthorizationHeader,
   boundedMcpFetch,
@@ -15,8 +15,8 @@ import {
   formatUntrustedMcpResult,
   type McpCallResult,
   type McpDiscoveryResult,
-} from "./tools/mcp/transport.ts";
-import { defineWebCommands, createWebToolsSessionState } from "./tools/web/web.ts";
+} from "./transport.ts";
+import { defineWebCommands, createWebToolsSessionState } from "../web/web.ts";
 
 const MCP_REVISION = "2026-07-28";
 const DISCOVERY_TIMEOUT_MS = 5_000;

@@ -3,7 +3,7 @@ import {
   runWorkbenchTurn,
   type WorkbenchModel,
   type WorkbenchRoutingOptions,
-} from "./providers/mod.ts";
+} from "../src/providers/mod.ts";
 
 export interface StructuredOutputResult {
   answer: string;

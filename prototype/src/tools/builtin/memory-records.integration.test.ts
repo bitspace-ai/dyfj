@@ -15,9 +15,9 @@ import {
   buildSystemPrompt,
   loadIndexedMemories,
   loadInjectedMemories,
-} from "./memory.ts";
-import { type DoltStore, MEMORY_VISIBILITY_ALL } from "./store/mod.ts";
-import { openFixtureStore } from "../testing/dolt/fixture-sql.ts";
+} from "./memory-records.ts";
+import { type DoltStore, MEMORY_VISIBILITY_ALL } from "../../store/mod.ts";
+import { openFixtureStore } from "../../../testing/dolt/fixture-sql.ts";
 
 // Each test opens its own fixture store and closes it before returning, so the
 // test sanitizers see no pooled connection outlive the test that opened it.

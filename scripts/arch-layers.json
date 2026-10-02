@@ -90,19 +90,9 @@
     ]
   },
   "files": {
-    "prototype/src/secrets.ts": "config",
-    "prototype/src/utils.ts": "store",
-    "prototype/src/mcp-tools.ts": "tools",
-    "prototype/src/mcp-conformance.ts": "tools",
-    "prototype/src/memory-search.ts": "tools",
-    "prototype/src/memory.ts": "tools",
     "prototype/src/acp-client.ts": "runners/acp",
     "prototype/src/acp-session-map.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
-    "prototype/src/cli.ts": "cli",
-    "prototype/src/model-response-modes.ts": "diagnostics",
-    "prototype/src/context-size-response.ts": "diagnostics",
-    "prototype/src/structured-output.ts": "diagnostics",
-    "prototype/src/workbench-events.ts": "diagnostics"
+    "prototype/src/cli.ts": "cli"
   }
 }

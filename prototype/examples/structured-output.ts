@@ -1,7 +1,7 @@
 import {
   compareStructuredOutputModes,
   type StructuredOutputReport,
-} from "../src/structured-output.ts";
+} from "../diagnostics/structured-output.ts";
 import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 
 const prompt = firstPrompt(Deno.args) ??

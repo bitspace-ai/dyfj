@@ -193,6 +193,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Ten top-level prototype modules moved into their layer directories.**
+  `src/secrets.ts` is now `src/config/secrets.ts`; `src/utils.ts` is
+  `src/store/model-selected-event.ts`; the external MCP adapter
+  (`src/mcp-tools.ts`), MCP trace-context rules (`src/mcp-conformance.ts`) and
+  memory recall (`src/memory-search.ts`) are under `src/tools/mcp/` as
+  `adapter.ts`, `conformance.ts` and `memory-search.ts`; and the memory record
+  format (`src/memory.ts`) is `src/tools/builtin/memory-records.ts`. Their tests
+  moved with them. Their callers outside the unit now import them through
+  `config/mod.ts`, `store/mod.ts` and `tools/mod.ts`. The four manual diagnostic helpers
+  (`model-response-modes`, `context-size-response`, `structured-output`,
+  `workbench-events`) moved to the new `prototype/diagnostics/`, outside the
+  runtime graph; the typecheck and unit-test file lists now include it.
+  `scripts/arch-layers.json` maps only the ACP runner and the interactive REPL
+  by name. No behavior changes.
+
 - **The `arch.imports` lane fails at the runtime size limits.** A runtime module
   over 1,000 lines, or a function in one over 200 lines, now fails the gate
   unless `scripts/arch-size-exceptions.json` names it with its reason and the

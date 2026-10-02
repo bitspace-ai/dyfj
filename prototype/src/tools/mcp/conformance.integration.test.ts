@@ -12,8 +12,8 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { buildMemorySearch } from "./memory-search.ts";
-import { extractMcpTraceContext } from "./mcp-conformance.ts";
-import { startLoopbackMcpServer } from "../testing/servers/mcp-server.ts";
+import { extractMcpTraceContext } from "./conformance.ts";
+import { startLoopbackMcpServer } from "../../../testing/servers/mcp-server.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);

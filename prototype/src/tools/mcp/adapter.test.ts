@@ -9,21 +9,21 @@ import {
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy } from "@std/testing/mock";
-import saveIssueSchema from "./extensions/linear/linear-save-issue-schema.fixture.ts";
-import { buildLinearIssueCreationCommand } from "./extensions/linear/mod.ts";
+import saveIssueSchema from "../../extensions/linear/linear-save-issue-schema.fixture.ts";
+import { buildLinearIssueCreationCommand } from "../../extensions/linear/mod.ts";
 import {
   mcpServerNetGrants,
   parseMcpServersConfig,
   type SecretsConfig,
-} from "./config/mod.ts";
+} from "../../config/mod.ts";
 import {
   buildExternalMcpCommands,
   externalMcpCommandsForTransport,
   requireNegotiatedMcpRevision,
   retainConfiguredMcpTools,
   sanitizeMcpInputSchema,
-} from "./mcp-tools.ts";
-import { createCommandRegistry, invokeCommandWithEvent } from "./tools/mod.ts";
+} from "./adapter.ts";
+import { createCommandRegistry, invokeCommandWithEvent } from "../mod.ts";
 
 const CONFIG_PATH = "/private/operator/.dyfj/config.toml";
 
