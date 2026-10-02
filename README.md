@@ -1825,3 +1825,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - Repo layout lists only the ACP runner and the interactive REPL as
   modules not yet moved, and names `prototype/diagnostics/`; the `arch.imports`
   description no longer says that directory is yet to exist.
+- 2026-10-02 - The Rust REPL description lists what it now covers (the per-turn
+  receipt line and the `/model`, `/fast`, `/session`, `/friction` and `/idea`
+  commands) and no longer says those stay in the TypeScript CLI.
