@@ -9,17 +9,20 @@
 //! prints to stderr, keeping stdout for answers.
 
 use crate::approval::{self, visible};
-use crate::client::{Client, Incoming};
+use crate::client::{Client, Incoming, Verdict};
 use crate::session::Session;
 use crate::terminal::Ask;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-/// The terminal side a command needs when the runtime may ask the operator
-/// something mid-request: the input reader and the runtime's message channel.
+/// The terminal side a command needs: the input reader and the runtime's
+/// message channel, for approvals raised mid-request, and the operator's
+/// Ctrl-C. A command waits on the runtime in cooked mode, as a turn does, so
+/// Ctrl-C arrives as a SIGINT; left unread, it would cancel the next turn.
 pub struct Prompter<'a> {
     pub input: &'a mpsc::Sender<Ask>,
     pub incoming: &'a mut mpsc::Receiver<Incoming>,
+    pub interrupts: &'a mut mpsc::Receiver<()>,
 }
 
 /// Matches `FRICTION_COMMAND_MAX_CHARACTERS` in the TypeScript friction
@@ -204,6 +207,25 @@ pub async fn run(
     session: &mut Session,
     prompter: Prompter<'_>,
 ) {
+    // `/friction` can raise an approval, so it handles Ctrl-C itself; see
+    // `request_answering_approvals`. Every other command only reads or writes
+    // without asking, and Ctrl-C simply abandons it.
+    if let Command::Friction {
+        severity,
+        escaped,
+        text,
+    } = &command
+    {
+        return friction(client, prompter, session, severity, *escaped, text).await;
+    }
+    let Prompter { interrupts, .. } = prompter;
+    tokio::select! {
+        _ = run_unprompted(command, client, session) => {}
+        _ = interrupts.recv() => eprintln!("\ncommand interrupted"),
+    }
+}
+
+async fn run_unprompted(command: Command, client: &Client, session: &mut Session) {
     match command {
         Command::Help => eprintln!("{HELP}"),
         Command::Usage(message) => eprintln!("{message}"),
@@ -216,11 +238,7 @@ pub async fn run(
         Command::SessionShow => session_show(session),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
-        Command::Friction {
-            severity,
-            escaped,
-            text,
-        } => friction(client, prompter, session, &severity, escaped, &text).await,
+        Command::Friction { .. } => unreachable!("dispatched by run"),
         Command::IdeaMark(label) => idea_mark(client, session, &label).await,
         Command::IdeaList => idea_list(client, session).await,
     }
@@ -276,6 +294,12 @@ fn find_row<'a>(rows: &'a [Value], slug: Option<&str>) -> Option<&'a Value> {
 /// Answer approvals the runtime raises while `method` is in flight. A
 /// `friction/post` write can need the operator's verdict before the runtime
 /// answers, and nothing else reads the channel between turns.
+///
+/// Ctrl-C does not drop the request: an approval the runtime raised after
+/// that would stay queued and be asked during the next turn, where `y` would
+/// complete the abandoned write. Approvals carry no request id to tell them
+/// apart, so instead the request is kept until the runtime settles it, and
+/// every approval it raises from then on is denied.
 async fn request_answering_approvals(
     client: &Client,
     prompter: Prompter<'_>,
@@ -284,10 +308,21 @@ async fn request_answering_approvals(
 ) -> anyhow::Result<Value> {
     let pending = client.request(method, params);
     tokio::pin!(pending);
+    let mut abandoned = false;
     loop {
         tokio::select! {
             outcome = &mut pending => return outcome,
+            Some(()) = prompter.interrupts.recv(), if !abandoned => {
+                abandoned = true;
+                eprintln!(
+                    "\ninterrupted: denying anything it asks to approve, \
+                     and waiting for the runtime to settle it"
+                );
+            }
             message = prompter.incoming.recv() => match message {
+                Some(Incoming::Approval { respond, .. }) if abandoned => {
+                    let _ = respond.send(Verdict::deny("operator interrupted the command"));
+                }
                 Some(Incoming::Approval { params, respond }) => {
                     let verdict = approval::ask(prompter.input, &params).await;
                     let _ = respond.send(verdict);
@@ -879,10 +914,28 @@ mod run_tests {
     }
 
     async fn drive(answer: Answer, session: &mut Session, commands: Vec<Command>) -> Vec<Value> {
+        drive_interrupted(answer, session, commands, false).await
+    }
+
+    /// `interrupted` queues a Ctrl-C before the commands run.
+    async fn drive_interrupted(
+        answer: Answer,
+        session: &mut Session,
+        commands: Vec<Command>,
+        interrupted: bool,
+    ) -> Vec<Value> {
         let (client, mut incoming, log, server) = fake_runtime(answer);
         let input = terminal("y");
+        let (interrupt, mut interrupts) = mpsc::channel(1);
+        if interrupted {
+            interrupt.try_send(()).unwrap();
+        }
         for command in commands {
-            let prompter = Prompter { input: &input, incoming: &mut incoming };
+            let prompter = Prompter {
+                input: &input,
+                incoming: &mut incoming,
+                interrupts: &mut interrupts,
+            };
             run(command, &client, session, prompter).await;
         }
         server.abort();
@@ -979,6 +1032,24 @@ mod run_tests {
         );
         assert_eq!(seen[1]["id"], "a1");
         assert_eq!(seen[1]["result"]["decision"], "approve");
+    }
+
+    /// Ctrl-C during `/friction` keeps the request until the runtime settles
+    /// it and denies the approval it raises afterwards, so that approval is
+    /// never left queued for the next turn to ask, where `y` would complete
+    /// the abandoned write.
+    #[tokio::test]
+    async fn an_interrupted_friction_denies_its_late_approval() {
+        let mut session = Session { id: Some("S1".into()), ..Session::default() };
+        let friction = Command::Friction {
+            severity: "minor".into(),
+            escaped: false,
+            text: "paste lost".into(),
+        };
+        let seen = drive_interrupted(catalog, &mut session, vec![friction], true).await;
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[1]["id"], "a1");
+        assert_eq!(seen[1]["result"]["decision"], "deny", "the terminal said y; Ctrl-C wins");
     }
 
     #[tokio::test]

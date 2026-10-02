@@ -179,8 +179,16 @@ async fn main() -> Result<()> {
     // turn streams no readline is active, rustyline has restored cooked mode,
     // and Ctrl-C is a real SIGINT. Each mechanism is live exactly when the
     // other is not, so they never compete for the same keypress.
-    let mut interrupts = signal(SignalKind::interrupt())
+    let mut sigint = signal(SignalKind::interrupt())
         .context("install SIGINT handler")?;
+    // Forwarded into a channel so commands can take interrupts from a test as
+    // well. Capacity one with `try_send` coalesces them as the signal does.
+    let (interrupt_tx, mut interrupts) = mpsc::channel::<()>(1);
+    tokio::spawn(async move {
+        while sigint.recv().await.is_some() {
+            let _ = interrupt_tx.try_send(());
+        }
+    });
 
     loop {
         let (respond, answer) = oneshot::channel();
@@ -217,14 +225,12 @@ async fn main() -> Result<()> {
             // `/friction` is not context for the next `/friction`: recording it
             // would post one report's text inside the next one's context.
             let records = !matches!(command, commands::Command::Friction { .. });
-            let prompter = commands::Prompter { input: &input, incoming: &mut incoming };
-            // A command waits on the runtime in cooked mode, as a turn does, so
-            // Ctrl-C is a SIGINT here too. It abandons the command; left
-            // unpolled, it would instead cancel the next turn.
-            tokio::select! {
-                _ = commands::run(command, &client, &mut session, prompter) => {}
-                _ = interrupts.recv() => eprintln!("\ncommand interrupted"),
-            }
+            let prompter = commands::Prompter {
+                input: &input,
+                incoming: &mut incoming,
+                interrupts: &mut interrupts,
+            };
+            commands::run(command, &client, &mut session, prompter).await;
             if records {
                 session.last_command = Some(line.trim().to_string());
             }
@@ -253,7 +259,7 @@ async fn run_turn(
     client: &Client,
     input: &mpsc::Sender<Ask>,
     incoming: &mut mpsc::Receiver<Incoming>,
-    interrupts: &mut tokio::signal::unix::Signal,
+    interrupts: &mut mpsc::Receiver<()>,
     prompt: &str,
     session: &mut Session,
 ) {

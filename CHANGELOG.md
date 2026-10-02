@@ -26,7 +26,8 @@ README are tracked separately in its Revision history section.
   pasted text that contains them stays prompt text and an unknown `/word` is
   sent as a prompt; the input length limit applies to them too, and Ctrl-C
   while one waits on the runtime abandons it without cancelling the next
-  turn. `/model`
+  turn (an interrupted `/friction` denies the approval its write then asks
+  for). `/model`
   refuses unknown and unroutable slugs. `/friction` posts only the
   workspace's name, never its path.
 - **Test lanes have deadlines and outlive neither a hang nor a killed gate.**
