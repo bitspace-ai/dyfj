@@ -7,12 +7,16 @@
 mod activity;
 mod approval;
 mod client;
+mod commands;
 mod posture;
+mod receipt;
+mod session;
 mod terminal;
 
 use anyhow::{Context, Result};
 use client::{Client, Incoming, StreamFrame, Verdict};
 use serde_json::{Value, json};
+use session::Session;
 use std::io::Write;
 use terminal::{Ask, ReadOutcome};
 use tokio::signal::unix::{SignalKind, signal};
@@ -79,8 +83,63 @@ fn resolve_socket_path(env: impl Fn(&str) -> Option<String>) -> Result<String> {
     Ok(format!("{base}/workbench.sock"))
 }
 
+const USAGE: &str = "\
+usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--session <id>] [--workspace <dir>]
+  --model <slug>    route every turn to this model (default: the runtime's; env DYFJ_WORKBENCH_MODEL)
+  --approve-paid    opt this session into paid inference
+  --fast            use the fast speed tier on models that support it
+  --session <id>    resume a runtime session
+  --workspace <d>   scope file tools to this directory (default: cwd; env DYFJ_WORKSPACE)";
+
+/// Build the starting session from the command line and environment.
+/// `Ok(None)` means help was asked for.
+fn parse_args(
+    args: &[String],
+    env: impl Fn(&str) -> Option<String>,
+    cwd: Option<String>,
+) -> std::result::Result<Option<Session>, String> {
+    let set = |key: &str| env(key).filter(|value| !value.is_empty());
+    let mut session = Session {
+        model: set("DYFJ_WORKBENCH_MODEL"),
+        workspace: set("DYFJ_WORKSPACE").or(cwd),
+        ..Session::default()
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let mut value = |flag: &str| {
+            iter.next()
+                .filter(|v| !v.starts_with("--"))
+                .cloned()
+                .ok_or_else(|| format!("{flag} needs a value"))
+        };
+        match arg.as_str() {
+            "-h" | "--help" => return Ok(None),
+            "--approve-paid" => session.approve_paid = true,
+            "--fast" => session.fast = Some(true),
+            "--model" => session.model = Some(value("--model")?),
+            "--workspace" => session.workspace = Some(value("--workspace")?),
+            "--session" => session.id = Some(value("--session")?),
+            other => return Err(format!("unknown argument {other}")),
+        }
+    }
+    Ok(Some(session))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
+    let mut session = match parse_args(&args, |key| std::env::var(key).ok(), cwd) {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        Err(message) => {
+            eprintln!("dyfj-repl: {message}\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
     let socket = socket_path()?;
     // Before the terminal is taken, not after: a panic during startup would
     // otherwise leave it in whatever state it had reached.
@@ -90,7 +149,7 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("no runtime at {socket}; start it with `dyfj start`"))?;
 
-    println!("dyfj — Ctrl-C cancels a turn, Ctrl-D quits");
+    println!("dyfj — Ctrl-C cancels a turn, Ctrl-D quits, /help lists commands");
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
@@ -98,8 +157,6 @@ async fn main() -> Result<()> {
         Ok(status) => println!("{}", posture::line(&status, &socket)),
         Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), &socket)),
     }
-
-    let mut session: Option<String> = None;
 
     // Ctrl-C reaches us two different ways, and the split is structural rather
     // than a choice. At the prompt rustyline holds the terminal in raw mode
@@ -126,6 +183,12 @@ async fn main() -> Result<()> {
             }
             Err(_) => break,
         };
+
+        if let Some(command) = commands::parse(&line) {
+            commands::run(command, &client, &mut session).await;
+            session.last_command = Some(line.trim().to_string());
+            continue;
+        }
 
         match classify(&line) {
             Submission::Empty => continue,
@@ -164,13 +227,10 @@ async fn run_turn(
     incoming: &mut mpsc::Receiver<Incoming>,
     interrupts: &mut tokio::signal::unix::Signal,
     prompt: &str,
-    session: &mut Option<String>,
+    session: &mut Session,
 ) {
     let turn_id = new_turn_id();
-    let mut body = json!({"prompt": prompt, "mode": "turn", "turnId": turn_id});
-    if let Some(id) = session.as_ref() {
-        body["sessionId"] = Value::String(id.clone());
-    }
+    let body = session.turn_body(prompt, &turn_id);
 
     // Acknowledge the submission before anything else. The first event of a
     // turn can be seconds away — context assembly, then a provider round trip
@@ -197,9 +257,7 @@ async fn run_turn(
 
                 match outcome {
                     Ok(result) => {
-                        if let Some(id) = result.get("sessionId").and_then(Value::as_str) {
-                            *session = Some(id.to_string());
-                        }
+                        session.record(&result);
                         // Deltas are not guaranteed. A provider whose
                         // tool-offering calls are buffered streams no text at
                         // all — verified against a live runtime on Anthropic,
@@ -215,11 +273,17 @@ async fn run_turn(
                                 }
                             }
                         }
+                        if wrote_any {
+                            println!();
+                        }
+                        eprintln!("{}", receipt::line(&result, session.spend_usd));
                     }
-                    Err(err) => eprintln!("\n{}", runtime_error("turn failed", &err.to_string())),
-                }
-                if wrote_any {
-                    println!();
+                    Err(err) => {
+                        eprintln!("\n{}", runtime_error("turn failed", &err.to_string()));
+                        if wrote_any {
+                            println!();
+                        }
+                    }
                 }
                 return;
             }
@@ -535,6 +599,76 @@ mod tests {
         assert_eq!(
             resolve_socket_path(env(&all[2..])).unwrap(),
             "/operator-home/.dyfj/run/workbench.sock"
+        );
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn arguments_set_routing_paid_consent_and_resume() {
+        let session = super::parse_args(
+            &args(&[
+                "--model",
+                "z-ai/glm-5.2",
+                "--approve-paid",
+                "--fast",
+                "--session",
+                "01J9ZQ4W8X6V5T3R2P1N0M9K8H",
+            ]),
+            env(&[]),
+            Some("/cwd".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(session.model.as_deref(), Some("z-ai/glm-5.2"));
+        assert!(session.approve_paid);
+        assert_eq!(session.fast, Some(true));
+        assert_eq!(session.id.as_deref(), Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H"));
+        assert_eq!(session.workspace.as_deref(), Some("/cwd"));
+    }
+
+    /// The same precedence the TypeScript CLI uses: a flag, then the
+    /// environment, then the directory the REPL was started in.
+    #[test]
+    fn workspace_and_model_fall_back_to_the_environment_then_cwd() {
+        let vars = [
+            ("DYFJ_WORKSPACE", "/env-ws"),
+            ("DYFJ_WORKBENCH_MODEL", "env-model"),
+        ];
+        let from_env = super::parse_args(&[], env(&vars), Some("/cwd".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(from_env.workspace.as_deref(), Some("/env-ws"));
+        assert_eq!(from_env.model.as_deref(), Some("env-model"));
+
+        let flag = super::parse_args(
+            &args(&["--workspace", "/flag"]),
+            env(&vars),
+            Some("/cwd".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(flag.workspace.as_deref(), Some("/flag"));
+
+        let bare = super::parse_args(&[], env(&[]), Some("/cwd".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(bare.workspace.as_deref(), Some("/cwd"));
+        assert_eq!(bare.model, None);
+        assert!(!bare.approve_paid, "paid consent is never implied");
+    }
+
+    #[test]
+    fn bad_arguments_are_refused() {
+        assert!(super::parse_args(&args(&["--model"]), env(&[]), None).is_err());
+        assert!(super::parse_args(&args(&["--model", "--fast"]), env(&[]), None).is_err());
+        assert!(super::parse_args(&args(&["--wat"]), env(&[]), None).is_err());
+        assert!(
+            super::parse_args(&args(&["--help"]), env(&[]), None)
+                .unwrap()
+                .is_none()
         );
     }
 

@@ -150,7 +150,10 @@ friction-checkpoint issue; `friction/post` fails at the `configuration` stage
 when the variable is unset or blank. `runtime/status` includes grouped method
 catalog metadata for client surfaces.
 A second client, the Rust REPL front-end in `core/dyfj-repl`, speaks the same
-protocol for interactive turns, approvals and `turn/cancel`; see
+protocol for interactive turns, approvals and `turn/cancel`, and for the
+`/model`, `/session`, `/friction` and `/idea` commands (`models/list`,
+`sessions/list`, `sessions/inspect`, `friction/post`, `ideas/mark`,
+`ideas/list`); see
 [`../core/README.md`](../core/README.md). The engine-free `dyfj` CLI reaches the
 read methods over it with `dyfj models` and `dyfj sessions`; after a TTY-backed
 UDS turn connects, Ctrl-C sends `turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY

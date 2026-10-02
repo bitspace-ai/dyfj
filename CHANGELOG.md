@@ -11,6 +11,17 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **The Rust REPL can be a daily driver.** `dyfj-repl` now sends the same
+  turn request as the TypeScript client: the chosen model and fast tier, the
+  per-session paid opt-in, and the workspace for a new session, set with
+  `--model`, `--fast`, `--approve-paid`, `--workspace` and `--session` (or
+  `DYFJ_WORKBENCH_MODEL` and `DYFJ_WORKSPACE`). Each turn ends with a receipt
+  line naming the model, turn and session cost, tokens, prompt-cache reads and
+  writes when reported, tool steps and the route reason. The commands
+  `/model`, `/fast`, `/session` (show, list, switch), `/friction`, `/idea mark`,
+  `/idea list` and `/help` are recognised only when typed alone on one line, so
+  pasted text that contains them stays prompt text and an unknown `/word` is
+  sent as a prompt. `/model` refuses unknown and unroutable slugs.
 - **Test lanes have deadlines and outlive neither a hang nor a killed gate.**
   The aggregate gate stops `test.unit` at 120 s and the isolated-Dolt
   integration and golden lanes at 900 s (`DYFJ_TEST_BOUND_SEC` overrides all

@@ -1,0 +1,684 @@
+//! Slash commands: model choice, session control, and in-session capture.
+//!
+//! A command is recognised only when the WHOLE input is one line that starts
+//! with a known command word. A paste is one string with newlines in it, so a
+//! pasted block whose first line reads `/model x` stays a prompt. An unknown
+//! `/word` is also sent as a prompt, as the TypeScript REPL does.
+//!
+//! Each command talks to the runtime over the same socket the turns use and
+//! prints to stderr, keeping stdout for answers.
+
+use crate::approval::visible;
+use crate::client::Client;
+use crate::session::Session;
+use serde_json::{Value, json};
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Command {
+    Help,
+    /// `/model [slug] [--approve-paid] [--fast | --no-fast]`
+    Model {
+        slug: Option<String>,
+        approve_paid: bool,
+        fast: Option<bool>,
+    },
+    /// `/fast [on|off]`; `None` toggles.
+    Fast(Option<bool>),
+    /// `/session`
+    SessionShow,
+    /// `/session list`
+    SessionList,
+    /// `/session switch <id>`
+    SessionSwitch(String),
+    /// `/friction <sev> [--escaped] <text...>`
+    Friction {
+        severity: String,
+        escaped: bool,
+        text: String,
+    },
+    /// `/idea mark [--] <label...>`
+    IdeaMark(String),
+    /// `/idea list`
+    IdeaList,
+    /// A recognised command used wrongly; the message says how to use it.
+    Usage(String),
+}
+
+const SEVERITIES: [&str; 4] = ["blocker", "major", "minor", "paper-cut"];
+
+/// The 26-character Crockford Base32 shape the runtime gives session ids
+/// (`SESSION_ID_SHAPE` in `prototype/src/contract/turn.ts`).
+fn is_session_id(id: &str) -> bool {
+    id.len() == 26
+        && id
+            .chars()
+            .all(|c| c.is_ascii_digit() || (c.is_ascii_alphabetic() && !"IiLlOoUu".contains(c)))
+}
+
+/// Parse one completed input. `None` means it is a prompt, not a command.
+pub fn parse(input: &str) -> Option<Command> {
+    let trimmed = input.trim();
+    if !trimmed.starts_with('/') || trimmed.contains('\n') {
+        return None;
+    }
+    let mut words = trimmed.split_whitespace();
+    let head = words.next()?;
+    let args: Vec<&str> = words.collect();
+    Some(match head {
+        "/help" => Command::Help,
+        "/model" => parse_model(&args),
+        "/fast" => match args.as_slice() {
+            [] => Command::Fast(None),
+            ["on"] => Command::Fast(Some(true)),
+            ["off"] => Command::Fast(Some(false)),
+            _ => Command::Usage("usage: /fast [on|off]".into()),
+        },
+        "/session" => match args.as_slice() {
+            [] => Command::SessionShow,
+            ["list"] => Command::SessionList,
+            ["switch", id] if is_session_id(id) => Command::SessionSwitch((*id).to_string()),
+            ["switch", _] => Command::Usage(
+                "session ids are 26 Crockford Base32 characters (see /session list)".into(),
+            ),
+            _ => Command::Usage("usage: /session, /session list, /session switch <id>".into()),
+        },
+        "/friction" => parse_friction(trimmed["/friction".len()..].trim()),
+        "/idea" => match args.as_slice() {
+            ["list"] => Command::IdeaList,
+            ["mark", rest @ ..] => {
+                let separated = rest.first() == Some(&"--");
+                let rest = if separated { &rest[1..] } else { rest };
+                if rest.is_empty() || (!separated && rest[0].starts_with('-')) {
+                    Command::Usage("usage: /idea mark [--] <label...>".into())
+                } else {
+                    Command::IdeaMark(strip_quotes(&rest.join(" ")))
+                }
+            }
+            _ => Command::Usage("usage: /idea mark <label...>, /idea list".into()),
+        },
+        _ => return None,
+    })
+}
+
+fn parse_model(args: &[&str]) -> Command {
+    let approve_paid = args.contains(&"--approve-paid");
+    let fast_on = args.contains(&"--fast");
+    let fast_off = args.contains(&"--no-fast");
+    if fast_on && fast_off {
+        return Command::Usage("cannot specify both --fast and --no-fast".into());
+    }
+    let rest: Vec<&str> = args
+        .iter()
+        .copied()
+        .filter(|a| !matches!(*a, "--approve-paid" | "--fast" | "--no-fast"))
+        .collect();
+    match rest.as_slice() {
+        [] => Command::Model {
+            slug: None,
+            approve_paid,
+            fast: fast_on.then_some(true).or(fast_off.then_some(false)),
+        },
+        [slug] if !slug.starts_with('-') => Command::Model {
+            slug: Some((*slug).to_string()),
+            approve_paid,
+            fast: fast_on.then_some(true).or(fast_off.then_some(false)),
+        },
+        _ => Command::Usage("usage: /model [slug] [--approve-paid] [--fast|--no-fast]".into()),
+    }
+}
+
+fn parse_friction(rest: &str) -> Command {
+    const USAGE: &str = "usage: /friction <blocker|major|minor|paper-cut> [--escaped] <text...>";
+    let (severity, remainder) = match rest.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (rest, ""),
+    };
+    if !SEVERITIES.contains(&severity) {
+        return Command::Usage(USAGE.into());
+    }
+    let (escaped, text) = match remainder.strip_prefix("--escaped") {
+        Some(after) if after.is_empty() || after.starts_with(char::is_whitespace) => {
+            (true, after.trim())
+        }
+        _ => (false, remainder),
+    };
+    if text.is_empty() || text.starts_with('-') {
+        return Command::Usage(USAGE.into());
+    }
+    Command::Friction {
+        severity: severity.into(),
+        escaped,
+        text: text.into(),
+    }
+}
+
+fn strip_quotes(label: &str) -> String {
+    let t = label.trim();
+    for q in ['"', '\''] {
+        if t.len() >= 2 && t.starts_with(q) && t.ends_with(q) {
+            return t[1..t.len() - 1].to_string();
+        }
+    }
+    t.to_string()
+}
+
+const HELP: &str = "\
+commands (type them alone on a line; inside a paste they are prompt text):
+  /model [slug] [--approve-paid] [--fast|--no-fast]   show or switch the model
+  /fast [on|off]                                       toggle the fast speed tier
+  /session | /session list | /session switch <id>     show, list or resume sessions
+  /friction <sev> [--escaped] <text...>                post a daily-driver friction
+  /idea mark <label...> | /idea list                   mark or list ideas
+  /quit, /exit, Ctrl-D                                 leave";
+
+/// Run a parsed command against the runtime.
+pub async fn run(command: Command, client: &Client, session: &mut Session) {
+    match command {
+        Command::Help => eprintln!("{HELP}"),
+        Command::Usage(message) => eprintln!("{message}"),
+        Command::Model {
+            slug,
+            approve_paid,
+            fast,
+        } => model(client, session, slug, approve_paid, fast).await,
+        Command::Fast(target) => fast_toggle(client, session, target).await,
+        Command::SessionShow => session_show(session),
+        Command::SessionList => session_list(client).await,
+        Command::SessionSwitch(id) => session_switch(client, session, id).await,
+        Command::Friction {
+            severity,
+            escaped,
+            text,
+        } => friction(client, session, &severity, escaped, &text).await,
+        Command::IdeaMark(label) => idea_mark(client, session, &label).await,
+        Command::IdeaList => idea_list(client, session).await,
+    }
+}
+
+fn error_line(context: &str, err: &anyhow::Error) {
+    eprintln!("{context}: {}", visible(&err.to_string()));
+}
+
+/// The model rows from `models/list`, or `None` after reporting why not.
+async fn list_models(client: &Client) -> Option<Vec<Value>> {
+    match client.request("models/list", json!({})).await {
+        Ok(v) => Some(
+            v.get("models")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        ),
+        Err(err) => {
+            error_line("could not list models", &err);
+            None
+        }
+    }
+}
+
+fn str_field<'a>(row: &'a Value, key: &str) -> &'a str {
+    row.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+fn fast_capable(row: Option<&Value>) -> bool {
+    row.and_then(|r| r.get("capabilities"))
+        .and_then(Value::as_array)
+        .is_some_and(|caps| caps.iter().any(|c| c.as_str() == Some("fast-speed")))
+}
+
+/// The selectable rows grouped by access modality, then the quarantined
+/// (unpriced) rows in their own section so a pricing gap stays visible.
+pub fn format_models(rows: &[Value]) -> Vec<String> {
+    const ORDER: [&str; 5] = [
+        "local",
+        "frontier-hosted",
+        "aggregator-hosted",
+        "subscription-oauth",
+        "custom-hosted",
+    ];
+    let width = rows
+        .iter()
+        .map(|r| str_field(r, "slug").len())
+        .max()
+        .unwrap_or(0);
+    let render = |r: &Value| {
+        let tier = r
+            .get("tier")
+            .and_then(Value::as_i64)
+            .map_or("?".into(), |t| t.to_string());
+        format!(
+            "    {:width$} t{tier}  {}",
+            visible(str_field(r, "slug")),
+            visible(str_field(r, "displayName")),
+        )
+    };
+    let routable = |r: &&Value| r.get("routable").and_then(Value::as_bool) != Some(false);
+    let mut out = Vec::new();
+    let mut groups: Vec<&str> = ORDER.to_vec();
+    for r in rows.iter().filter(routable) {
+        let m = str_field(r, "modality");
+        if !groups.contains(&m) {
+            groups.push(m);
+        }
+    }
+    for group in groups {
+        let members: Vec<&Value> = rows
+            .iter()
+            .filter(routable)
+            .filter(|r| str_field(r, "modality") == group)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        out.push(format!(
+            "  {}:",
+            if group.is_empty() {
+                "(unclassified)"
+            } else {
+                group
+            }
+        ));
+        out.extend(members.into_iter().map(render));
+    }
+    let quarantined: Vec<&Value> = rows.iter().filter(|r| !routable(r)).collect();
+    if !quarantined.is_empty() {
+        out.push(format!(
+            "  unavailable, not selectable ({}):",
+            quarantined.len()
+        ));
+        out.extend(
+            quarantined
+                .into_iter()
+                .map(|r| format!("{}  [not routable: unpriced]", render(r))),
+        );
+    }
+    if out.is_empty() {
+        out.push("  (none)".into());
+    }
+    out
+}
+
+/// One line saying what the next turn will run on.
+fn posture(session: &Session, rows: &[Value]) -> String {
+    let mut parts = Vec::new();
+    match &session.model {
+        Some(slug) => {
+            parts.push(visible(slug));
+            if let Some(row) = rows.iter().find(|r| str_field(r, "slug") == slug) {
+                if let Some(t) = row.get("tier").and_then(Value::as_i64) {
+                    parts.push(format!("tier {t}"));
+                }
+                match row.get("local").and_then(Value::as_bool) {
+                    Some(true) => parts.push("local".into()),
+                    Some(false) => parts.push("hosted".into()),
+                    None => {}
+                }
+            }
+        }
+        None => parts.push("runtime default model".into()),
+    }
+    if session.fast == Some(true) {
+        parts.push("fast".into());
+    }
+    parts.push(if session.approve_paid {
+        "paid approved for this session".into()
+    } else {
+        "paid per runtime posture".into()
+    });
+    format!("posture: {}", parts.join(" · "))
+}
+
+async fn model(
+    client: &Client,
+    session: &mut Session,
+    slug: Option<String>,
+    approve_paid: bool,
+    fast: Option<bool>,
+) {
+    let Some(rows) = list_models(client).await else {
+        return;
+    };
+    let target = slug.clone().or_else(|| session.model.clone());
+    let row = target
+        .as_deref()
+        .and_then(|s| rows.iter().find(|r| str_field(r, "slug") == s));
+    if let Some(slug) = &slug {
+        let Some(row) = row else {
+            eprintln!(
+                "unknown model \"{}\"; /model lists the available ones",
+                visible(slug)
+            );
+            return;
+        };
+        // Fail at selection, not at the first turn: an unpriced model cannot
+        // be routed, because its spend could not be bounded.
+        if row.get("routable").and_then(Value::as_bool) == Some(false) {
+            eprintln!("model \"{}\" is not routable: unpriced", visible(slug));
+            return;
+        }
+    }
+    if fast == Some(true) && !fast_capable(row) {
+        eprintln!("the fast speed tier is not supported by this model");
+        return;
+    }
+    if slug.is_none() && fast.is_none() && !approve_paid {
+        eprintln!("available:");
+        for line in format_models(&rows) {
+            eprintln!("{line}");
+        }
+    }
+    if let Some(slug) = slug {
+        // A fast flag carried over to a model without it would be refused.
+        if fast.is_none() && session.fast == Some(true) && !fast_capable(row) {
+            session.fast = None;
+            eprintln!(
+                "fast speed tier turned off: {} does not support it",
+                visible(&slug)
+            );
+        }
+        session.model = Some(slug);
+    }
+    if let Some(f) = fast {
+        session.fast = Some(f);
+    }
+    if approve_paid {
+        session.approve_paid = true;
+    }
+    eprintln!("{}", posture(session, &rows));
+}
+
+async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool>) {
+    let want = target.unwrap_or(session.fast != Some(true));
+    let Some(rows) = list_models(client).await else {
+        return;
+    };
+    if want {
+        let row = session
+            .model
+            .as_deref()
+            .and_then(|s| rows.iter().find(|r| str_field(r, "slug") == s));
+        if !fast_capable(row) {
+            eprintln!(
+                "the fast speed tier is not supported by the current model; pick one with /model"
+            );
+            return;
+        }
+    }
+    session.fast = Some(want);
+    eprintln!("{}", posture(session, &rows));
+}
+
+fn session_show(session: &Session) {
+    let Some(id) = &session.id else {
+        eprintln!("no session yet; send a prompt first");
+        return;
+    };
+    eprintln!("session: {}", visible(id));
+    eprintln!(
+        "turns here: {} · spend here: ${:.4}",
+        session.turns, session.spend_usd
+    );
+    eprintln!("resume later with: dyfj-repl --session {}", visible(id));
+}
+
+async fn session_list(client: &Client) {
+    let res = match client.request("sessions/list", json!({"limit": 15})).await {
+        Ok(v) => v,
+        Err(err) => return error_line("could not list sessions", &err),
+    };
+    let mut sessions: Vec<&Value> = res
+        .get("projects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.get("sessions").and_then(Value::as_array))
+        .flatten()
+        .collect();
+    let key = |s: &Value| {
+        let updated = str_field(s, "updatedAt");
+        if updated.is_empty() {
+            str_field(s, "createdAt").to_string()
+        } else {
+            updated.to_string()
+        }
+    };
+    sessions.sort_by_key(|s| std::cmp::Reverse(key(s)));
+    sessions.truncate(15);
+    if sessions.is_empty() {
+        eprintln!("no sessions found");
+        return;
+    }
+    eprintln!("recent sessions:");
+    for s in sessions {
+        let date: String = key(s).chars().take(10).collect();
+        eprintln!(
+            "  {}  {}  {}",
+            visible(str_field(s, "sessionId")),
+            visible(&date),
+            visible(str_field(s, "taskDescription"))
+        );
+    }
+    eprintln!("resume with: /session switch <id>");
+}
+
+async fn session_switch(client: &Client, session: &mut Session, id: String) {
+    let mut workspace = None;
+    match client
+        .request("sessions/inspect", json!({"sessionId": id}))
+        .await
+    {
+        Ok(v) => {
+            if v.get("exists").and_then(Value::as_bool) == Some(false) {
+                eprintln!("warning: the runtime has no session {}", visible(&id));
+            }
+            workspace = v
+                .get("workspace")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        Err(err) => error_line("could not inspect the session", &err),
+    }
+    eprintln!("switched to session: {}", visible(&id));
+    session.switch_to(id, workspace);
+}
+
+async fn friction(client: &Client, session: &Session, severity: &str, escaped: bool, text: &str) {
+    let Some(id) = &session.id else {
+        eprintln!("no session yet; send a prompt first before posting friction");
+        return;
+    };
+    // The runtime normalises the context (workspace to its basename, the
+    // command clipped); only the session's own facts are sent.
+    let mut context = json!({"sessionId": id});
+    if let Some(model) = &session.last_model {
+        context["model"] = json!(model);
+    }
+    if let Some(workspace) = &session.workspace {
+        context["workspace"] = json!(workspace);
+    }
+    if let Some(command) = &session.last_command {
+        context["command"] = json!(command);
+    }
+    let params =
+        json!({"severity": severity, "escaped": escaped, "text": text, "context": context});
+    match client.request("friction/post", params).await {
+        Ok(v) => {
+            eprintln!("{}", visible(str_field(&v, "firstLine")));
+            eprintln!("comment id: {}", visible(str_field(&v, "commentId")));
+        }
+        Err(err) => error_line("friction capture failed", &err),
+    }
+}
+
+async fn idea_mark(client: &Client, session: &Session, label: &str) {
+    let Some(id) = &session.id else {
+        eprintln!("no session yet; send a prompt first before marking ideas");
+        return;
+    };
+    match client
+        .request("ideas/mark", json!({"sessionId": id, "label": label}))
+        .await
+    {
+        Ok(v) => {
+            let idea = v.get("idea").unwrap_or(&Value::Null);
+            eprintln!(
+                "marked idea [{}]: \"{}\"",
+                visible(str_field(idea, "ideaId")),
+                visible(str_field(idea, "label"))
+            );
+        }
+        Err(err) => error_line("could not mark the idea", &err),
+    }
+}
+
+async fn idea_list(client: &Client, session: &Session) {
+    let Some(id) = &session.id else {
+        eprintln!("no session yet; send a prompt first");
+        return;
+    };
+    match client.request("ideas/list", json!({"sessionId": id})).await {
+        Ok(v) => {
+            let ideas = v
+                .get("ideas")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if ideas.is_empty() {
+                eprintln!("no ideas marked in this session");
+            }
+            for idea in ideas {
+                let date: String = str_field(&idea, "createdAt").chars().take(10).collect();
+                eprintln!(
+                    "  [{}] {} ({})",
+                    visible(str_field(&idea, "ideaId")),
+                    visible(str_field(&idea, "label")),
+                    visible(&date)
+                );
+            }
+        }
+        Err(err) => error_line("could not list ideas", &err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Command, format_models, parse};
+    use serde_json::json;
+
+    #[test]
+    fn prompts_are_not_commands() {
+        assert_eq!(parse("explain /model"), None);
+        assert_eq!(parse("/usr/bin/env is what?"), None);
+        // A paste is one string; its first line is content, not a command.
+        assert_eq!(parse("/model z-ai/glm-5.2\nand then prose"), None);
+    }
+
+    #[test]
+    fn model_takes_a_slug_and_flags_in_any_order() {
+        assert_eq!(
+            parse("/model --approve-paid z-ai/glm-5.2 --fast"),
+            Some(Command::Model {
+                slug: Some("z-ai/glm-5.2".into()),
+                approve_paid: true,
+                fast: Some(true)
+            })
+        );
+        assert_eq!(
+            parse("/model"),
+            Some(Command::Model {
+                slug: None,
+                approve_paid: false,
+                fast: None
+            })
+        );
+        assert!(matches!(
+            parse("/model --fast --no-fast"),
+            Some(Command::Usage(_))
+        ));
+        assert!(matches!(parse("/model a b"), Some(Command::Usage(_))));
+    }
+
+    #[test]
+    fn fast_and_session_subcommands() {
+        assert_eq!(parse("/fast"), Some(Command::Fast(None)));
+        assert_eq!(parse("/fast off"), Some(Command::Fast(Some(false))));
+        assert_eq!(parse("/session"), Some(Command::SessionShow));
+        assert_eq!(parse("/session list"), Some(Command::SessionList));
+        assert_eq!(
+            parse("/session switch 01J9ZQ4W8X6V5T3R2P1N0M9K8H"),
+            Some(Command::SessionSwitch("01J9ZQ4W8X6V5T3R2P1N0M9K8H".into()))
+        );
+        // I, L, O and U are not Crockford Base32.
+        assert!(matches!(
+            parse("/session switch 01J9ZQ4W8X6V5T3R2P1N0M9K8I"),
+            Some(Command::Usage(_))
+        ));
+        assert!(matches!(
+            parse("/session switch short"),
+            Some(Command::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn friction_needs_a_severity_and_text() {
+        assert_eq!(
+            parse("/friction major --escaped paste split into turns"),
+            Some(Command::Friction {
+                severity: "major".into(),
+                escaped: true,
+                text: "paste split into turns".into()
+            })
+        );
+        // An unknown option is refused rather than posted as text.
+        assert!(matches!(
+            parse("/friction paper-cut --escapedness is not a flag"),
+            Some(Command::Usage(_))
+        ));
+        assert!(matches!(
+            parse("/friction huge it broke"),
+            Some(Command::Usage(_))
+        ));
+        assert!(matches!(parse("/friction minor"), Some(Command::Usage(_))));
+        assert!(matches!(
+            parse("/friction minor --escaped"),
+            Some(Command::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn idea_mark_takes_the_rest_as_its_label() {
+        assert_eq!(
+            parse("/idea mark \"cache tokens on the turn line\""),
+            Some(Command::IdeaMark("cache tokens on the turn line".into()))
+        );
+        assert_eq!(
+            parse("/idea mark -- -leading dash"),
+            Some(Command::IdeaMark("-leading dash".into()))
+        );
+        assert_eq!(parse("/idea list"), Some(Command::IdeaList));
+        assert!(matches!(parse("/idea mark"), Some(Command::Usage(_))));
+    }
+
+    #[test]
+    fn models_group_by_modality_and_quarantine_unpriced_rows() {
+        let rows = vec![
+            json!({"slug": "z-ai/glm-5.2", "displayName": "GLM 5.2", "tier": 1, "modality": "aggregator-hosted", "routable": true}),
+            json!({"slug": "gemma4", "displayName": "Gemma 4", "tier": 0, "modality": "local", "routable": true}),
+            json!({"slug": "router-unpriced", "displayName": "X", "tier": 1, "modality": "aggregator-hosted", "routable": false}),
+        ];
+        let lines = format_models(&rows);
+        let local = lines.iter().position(|l| l == "  local:").unwrap();
+        let agg = lines
+            .iter()
+            .position(|l| l == "  aggregator-hosted:")
+            .unwrap();
+        let quarantine = lines
+            .iter()
+            .position(|l| l.starts_with("  unavailable"))
+            .unwrap();
+        assert!(local < agg && agg < quarantine, "{lines:#?}");
+        let selectable = lines[..quarantine].join("\n");
+        assert!(!selectable.contains("router-unpriced"), "{selectable}");
+        assert!(lines[quarantine + 1].contains("router-unpriced"));
+        assert!(lines[quarantine + 1].ends_with("[not routable: unpriced]"));
+    }
+}
