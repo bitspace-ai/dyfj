@@ -117,10 +117,12 @@ pub fn parse(input: &str) -> Option<Command> {
             ["mark", rest @ ..] => {
                 let separated = rest.first() == Some(&"--");
                 let rest = if separated { &rest[1..] } else { rest };
-                if rest.is_empty() || (!separated && rest[0].starts_with('-')) {
+                let label = strip_quotes(&rest.join(" "));
+                // `""` or `' '` strips to nothing, which the runtime refuses.
+                if label.trim().is_empty() || (!separated && rest[0].starts_with('-')) {
                     Command::Usage("usage: /idea mark [--] <label...>".into())
                 } else {
-                    Command::IdeaMark(strip_quotes(&rest.join(" ")))
+                    Command::IdeaMark(label)
                 }
             }
             _ => Command::Usage("usage: /idea mark <label...>, /idea list".into()),
@@ -171,7 +173,13 @@ fn parse_friction(rest: &str) -> Command {
         }
         _ => (false, remainder),
     };
-    if text.is_empty() || text.starts_with('-') {
+    // Options come before the text, as in the TypeScript client: once
+    // `--escaped` is consumed, a leading dash is report text, not an option.
+    if !escaped && text.starts_with('-') {
+        let option = text.split_whitespace().next().unwrap_or(text);
+        return Command::Usage(format!("unknown /friction option: {}", visible(option)));
+    }
+    if text.is_empty() {
         return Command::Usage(USAGE.into());
     }
     Command::Friction {
@@ -310,7 +318,11 @@ async fn request_answering_approvals(
     tokio::pin!(pending);
     let mut abandoned = false;
     loop {
+        // Biased, in this order: a settled request finishes, and an interrupt
+        // is always taken before an approval that became ready with it, so
+        // that approval is denied rather than asked.
         tokio::select! {
+            biased;
             outcome = &mut pending => return outcome,
             // Read on every press, not just the first, so a repeat is spent
             // here rather than cancelling whatever runs next.
@@ -813,6 +825,15 @@ mod tests {
             parse("/friction minor --escaped"),
             Some(Command::Usage(_))
         ));
+        // Once `--escaped` is consumed, a leading dash is report text.
+        assert_eq!(
+            parse("/friction minor --escaped - paste split"),
+            Some(Command::Friction {
+                severity: "minor".into(),
+                escaped: true,
+                text: "- paste split".into()
+            })
+        );
     }
 
     #[test]
@@ -827,6 +848,9 @@ mod tests {
         );
         assert_eq!(parse("/idea list"), Some(Command::IdeaList));
         assert!(matches!(parse("/idea mark"), Some(Command::Usage(_))));
+        // A label that strips to nothing is refused here, not by the runtime.
+        assert!(matches!(parse("/idea mark \"\""), Some(Command::Usage(_))));
+        assert!(matches!(parse("/idea mark ' '"), Some(Command::Usage(_))));
     }
 
     #[test]
