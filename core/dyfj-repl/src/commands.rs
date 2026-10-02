@@ -349,12 +349,16 @@ async fn request_answering_approvals(
     loop {
         tokio::select! {
             outcome = &mut pending => return outcome,
-            Some(()) = prompter.interrupts.recv(), if !abandoned => {
-                abandoned = true;
-                eprintln!(
-                    "\ninterrupted: denying anything it asks to approve, \
-                     and waiting for the runtime to settle it"
-                );
+            // Read on every press, not just the first, so a repeat is spent
+            // here rather than cancelling whatever runs next.
+            Some(()) = prompter.interrupts.recv() => {
+                if !abandoned {
+                    abandoned = true;
+                    eprintln!(
+                        "\ninterrupted: denying anything it asks to approve, \
+                         and waiting for the runtime to settle it"
+                    );
+                }
             }
             message = prompter.incoming.recv() => match message {
                 Some(Incoming::Approval { respond, .. }) if abandoned => {
@@ -953,20 +957,21 @@ mod run_tests {
     }
 
     async fn drive(answer: Answer, session: &mut Session, commands: Vec<Command>) -> Vec<Value> {
-        drive_interrupted(answer, session, commands, false).await
+        drive_interrupted(answer, session, commands, 0).await
     }
 
-    /// `interrupted` queues a Ctrl-C before the commands run.
+    /// `presses` queues that many Ctrl-Cs before the commands run. None may be
+    /// left over afterwards: a leftover would cancel the next turn.
     async fn drive_interrupted(
         answer: Answer,
         session: &mut Session,
         commands: Vec<Command>,
-        interrupted: bool,
+        presses: usize,
     ) -> Vec<Value> {
         let (client, mut incoming, log, server) = fake_runtime(answer);
         let input = terminal("y");
-        let (interrupt, mut interrupts) = mpsc::channel(1);
-        if interrupted {
+        let (interrupt, mut interrupts) = mpsc::channel(4);
+        for _ in 0..presses {
             interrupt.try_send(()).unwrap();
         }
         for command in commands {
@@ -977,6 +982,7 @@ mod run_tests {
             };
             run(command, &client, session, prompter).await;
         }
+        assert!(interrupts.try_recv().is_err(), "an interrupt carried over");
         server.abort();
         drop(client);
         log.lock().unwrap().clone()
@@ -1085,7 +1091,8 @@ mod run_tests {
             escaped: false,
             text: "paste lost".into(),
         };
-        let seen = drive_interrupted(catalog, &mut session, vec![friction], true).await;
+        // Pressed twice: the repeat is spent here, not on the next turn.
+        let seen = drive_interrupted(catalog, &mut session, vec![friction], 2).await;
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert_eq!(seen[1]["id"], "a1");
         assert_eq!(seen[1]["result"]["decision"], "deny", "the terminal said y; Ctrl-C wins");
