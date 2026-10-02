@@ -16,6 +16,7 @@ import type { CliConfig } from "../args.ts";
 import type { ConnectFn } from "../io.ts";
 import {
   formatRuntimeStatus,
+  formatUnavailableSecrets,
   probeRuntimeLiveness,
   runStatus,
 } from "./status.ts";
@@ -280,5 +281,38 @@ describe("probeRuntimeLiveness fallback logic", () => {
       "Internal error",
     );
     assertEquals(calls, ["runtime/liveness"]);
+  });
+});
+
+describe("formatUnavailableSecrets", () => {
+  it("names each failed pointer and says to restart after unlocking", () => {
+    const lines = formatUnavailableSecrets([
+      { envVar: "OPENROUTER_API_KEY", reason: "session probe failed" },
+    ]);
+    assertEquals(
+      lines[0],
+      "secret unavailable since start: OPENROUTER_API_KEY (session probe failed)",
+    );
+    assertStringIncludes(lines[1], "restart the runtime");
+  });
+
+  it("prints nothing for a clean start or an older runtime", () => {
+    assertEquals(formatUnavailableSecrets(undefined), []);
+    assertEquals(formatUnavailableSecrets([]), []);
+  });
+
+  it("appears in dyfj status output", () => {
+    const rendered = formatRuntimeStatus(cfg(), {
+      runtime: {
+        unavailableSecrets: [{
+          envVar: "OPENROUTER_API_KEY",
+          reason: "locked",
+        }],
+      },
+    });
+    assertStringIncludes(
+      rendered,
+      "secret unavailable since start: OPENROUTER_API_KEY (locked)",
+    );
   });
 });

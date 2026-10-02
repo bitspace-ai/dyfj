@@ -11,6 +11,13 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A runtime that started with secrets unavailable says so up front.**
+  When a declared secret pointer fails to resolve at boot (a locked vault, a
+  timed-out resolver), `runtime/status` now lists it under
+  `unavailableSecrets` with the env var name and the resolver's value-free
+  reason. `dyfj status` and the Rust REPL print one line per failed pointer at
+  startup, with the recovery: unlock the vault and restart the runtime, since
+  pointers resolve only at boot. A clean start leaves the field out.
 - **Test lanes have deadlines and outlive neither a hang nor a killed gate.**
   The aggregate gate stops `test.unit` at 120 s and the isolated-Dolt
   integration and golden lanes at 900 s (`DYFJ_TEST_BOUND_SEC` overrides all
@@ -885,6 +892,11 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The missing-credential error points at the real recovery.** A hosted turn
+  whose provider key is absent used to say to project the key with `op run` at
+  process start. It now says that secrets resolve once at runtime start, that a
+  pointer unavailable then (a locked vault, for example) needs an unlock and a
+  runtime restart, and that `dyfj status` names any pointer that failed.
 - **Hosted OpenAI-compatible turns meter prompt-cache traffic**: on OpenAI,
   OpenRouter and xAI the receipt reported zero cache reads and writes and
   charged every prompt token at the full input rate, because the adapter

@@ -48,6 +48,22 @@ export interface ResolvedSecrets {
   namedResolutions: NamedSecretResolution[];
 }
 
+/**
+ * The environment pointers that did not resolve, value-free: the env var and
+ * the resolver's reason. The runtime reports these on `runtime/status`, since
+ * a pointer that failed at start stays unresolved until the runtime restarts.
+ */
+export function unavailableSecretPointers(
+  resolved: Pick<ResolvedSecrets, "environment">,
+): { envVar: string; reason: string }[] {
+  return resolved.environment
+    .filter((secret) => secret.status === "unavailable")
+    .map((secret) => ({
+      envVar: secret.envVar,
+      reason: secret.reason ?? "unavailable",
+    }));
+}
+
 const MAX_RESOLVER_FOLLOWERS = 8;
 
 async function mapWithConcurrency<T, R>(

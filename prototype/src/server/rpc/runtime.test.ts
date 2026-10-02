@@ -127,6 +127,27 @@ Deno.test("runtime/status falls back to the loose posture fields without an engi
   });
 });
 
+// A pointer that failed at start stays failed until restart, so status names
+// it; a clean start leaves the field out rather than reporting an empty list.
+Deno.test("runtime/status names secret pointers that failed at start", async () => {
+  const failed = [{
+    envVar: "OPENROUTER_API_KEY",
+    reason:
+      "session probe failed: timed out after 10000ms (locked or unavailable)",
+  }];
+  const { runtime } = await callRpc(
+    handlers({ unavailableSecrets: failed }),
+    "runtime/status",
+  ) as { runtime: Record<string, unknown> };
+  assertEquals(runtime.unavailableSecrets, failed);
+
+  const clean = await callRpc(
+    handlers({ unavailableSecrets: [] }),
+    "runtime/status",
+  ) as { runtime: Record<string, unknown> };
+  assert(!("unavailableSecrets" in clean.runtime));
+});
+
 Deno.test("runtime/liveness returns immediately without loading models", async () => {
   let loadModelsCalled = false;
   const result = await callRpc(

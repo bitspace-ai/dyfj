@@ -15,6 +15,7 @@ import {
   type RunSecretCommand,
   type SecretCommandResult,
   secretsRunGrant,
+  unavailableSecretPointers,
 } from "./secrets.ts";
 import type { MutableEnv, SecretsConfig } from "./mod.ts";
 
@@ -494,5 +495,28 @@ describe("buildResolverEnv (isolated resolver environment)", () => {
   it("a base var absent from ambient is simply not set", () => {
     const resolverEnv = buildResolverEnv(cfg({}), fakeEnv({ PATH: "/bin" }));
     assertEquals(resolverEnv, { PATH: "/bin" });
+  });
+});
+
+describe("unavailableSecretPointers", () => {
+  it("keeps only the environment pointers that failed, with their reasons", () => {
+    assertEquals(
+      unavailableSecretPointers({
+        environment: [
+          {
+            envVar: "OPENROUTER_API_KEY",
+            status: "unavailable",
+            reason: "timed out",
+          },
+          { envVar: "OPENAI_API_KEY", status: "resolved" },
+          { envVar: "XAI_API_KEY", status: "already-set" },
+          { envVar: "GEMINI_API_KEY", status: "unavailable" },
+        ],
+      }),
+      [
+        { envVar: "OPENROUTER_API_KEY", reason: "timed out" },
+        { envVar: "GEMINI_API_KEY", reason: "unavailable" },
+      ],
+    );
   });
 });

@@ -44,9 +44,58 @@ pub fn line(status: &Value, socket: &str) -> String {
     format!("posture: {}", parts.join(" · "))
 }
 
+/// Lines naming the secret pointers that failed when the runtime started.
+/// A provider reading one has no credential until the runtime restarts, so
+/// this says so at startup instead of leaving it to the first turn's error.
+pub fn unavailable_secrets(status: &Value) -> Vec<String> {
+    let runtime = status.get("runtime").unwrap_or(status);
+    let Some(secrets) = runtime.get("unavailableSecrets").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    if secrets.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = secrets
+        .iter()
+        .map(|secret| {
+            let field = |key: &str, fallback: &str| {
+                visible(secret.get(key).and_then(Value::as_str).unwrap_or(fallback))
+            };
+            format!(
+                "secret unavailable since start: {} ({})",
+                field("envVar", "(unnamed)"),
+                field("reason", "unavailable")
+            )
+        })
+        .collect();
+    lines.push(
+        "  providers reading these have no credential; unlock the vault and restart \
+         the runtime (`dyfj stop`, then start it again)"
+            .into(),
+    );
+    lines
+}
+
 #[cfg(test)]
 mod tests {
-    use super::line;
+    use super::{line, unavailable_secrets};
+
+    #[test]
+    fn names_each_secret_that_failed_at_start_and_how_to_recover() {
+        let status = json!({"runtime": {"unavailableSecrets": [
+            {"envVar": "OPENROUTER_API_KEY", "reason": "session probe failed: timed out after 10000ms (locked or unavailable)"},
+            {"envVar": "OPENAI_API_KEY", "reason": "skipped: session probe OPENROUTER_API_KEY did not resolve"}
+        ]}});
+        let lines = unavailable_secrets(&status);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(lines[0].contains("OPENROUTER_API_KEY (session probe failed"), "{lines:?}");
+        assert!(lines[1].contains("OPENAI_API_KEY"), "{lines:?}");
+        assert!(lines[2].contains("restart the runtime"), "{lines:?}");
+        assert!(unavailable_secrets(&json!({"runtime": {}})).is_empty());
+        assert!(unavailable_secrets(&json!({"runtime": {"unavailableSecrets": []}})).is_empty());
+        let hostile = json!({"runtime": {"unavailableSecrets": [{"envVar": "X\u{1b}[2J", "reason": "r"}]}});
+        assert!(!unavailable_secrets(&hostile)[0].contains('\u{1b}'));
+    }
     use serde_json::json;
 
     #[test]
