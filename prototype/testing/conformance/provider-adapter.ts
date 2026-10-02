@@ -17,6 +17,11 @@
 // plain-text fixture: the header deadline in both request modes, and an abort
 // observed before dispatch.
 //
+// An adapter may add named `cases`: further recorded fixtures for the request
+// building and stream parsing the required cases do not pin (a request field,
+// a cache or reasoning usage figure, a frame the parser must skip). Each runs
+// through the same harness and invariants as a required case.
+//
 // Invariants the kit adds to every fixture: every scripted exchange is used;
 // every request refuses redirects (`redirect: "error"`); a streamed turn's
 // frames concatenate to its result text, so live output and the durable text
@@ -118,6 +123,8 @@ export interface ProviderKitSubject {
   name: string;
   adapter: ProviderAdapter;
   fixtures: ProviderKitFixtures;
+  /** Further recorded cases, keyed by test name. */
+  cases?: Record<string, KitFixture>;
 }
 
 interface KitRun {
@@ -376,6 +383,10 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
       "the redirect fixture must send exactly one request",
     );
   });
+
+  for (const [name, fixture] of Object.entries(subject.cases ?? {})) {
+    caseTest(name, fixture);
+  }
 
   Deno.test(label("the plain-text model passes validateBaseUrl"), () => {
     assert(adapter.validateBaseUrl(fixtures.plainText.model).ok);
