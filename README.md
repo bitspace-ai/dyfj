@@ -441,9 +441,10 @@ _non-probe_ pointer's failure leaves only its own provider unavailable, whereas
 failure of the _session probe_ (the first pending pointer) also skips every
 remaining unresolved pointer for that boot (see below). Either way it fails
 closed with a clear message at point of use; local-first inference is
-unaffected. Pointers resolve only at boot, so unlocking the vault afterwards
-does not repair a runtime that started degraded: restart it (`dyfj stop`, then
-start it again). Until then `runtime/status` lists each failed pointer as
+unaffected. Pointers resolve only at boot, so fixing the cause afterwards
+(unlocking the vault, or correcting the resolver command or pointer) does not
+repair a runtime that started degraded: restart it (`dyfj stop`, then start it
+again). Until then `runtime/status` lists each failed pointer as
 `unavailableSecrets` (the env var, or the `[secrets.named]` name, and the
 reason, never a value), and
 `dyfj status` and the Rust REPL's startup lines print them with that advice.

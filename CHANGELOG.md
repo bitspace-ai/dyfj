@@ -16,7 +16,8 @@ README are tracked separately in its Revision history section.
   timed-out resolver), `runtime/status` now lists it under
   `unavailableSecrets` with the env var (or, for a `[secrets.named]`
   credential, its name) and the resolver's value-free reason. `dyfj status` and the Rust REPL print one line per failed pointer at
-  startup, with the recovery: unlock the vault and restart the runtime, since
+  startup, with the recovery: fix what the reason names (a locked vault, a
+  failing resolver command, a bad pointer) and restart the runtime, since
   pointers resolve only at boot. A clean start leaves the field out.
 - **Test lanes have deadlines and outlive neither a hang nor a killed gate.**
   The aggregate gate stops `test.unit` at 120 s and the isolated-Dolt
@@ -895,8 +896,8 @@ README are tracked separately in its Revision history section.
 - **The missing-credential error points at the real recovery.** A hosted turn
   whose provider key is absent used to say to project the key with `op run` at
   process start. It now says that secrets resolve once at runtime start, that a
-  pointer unavailable then (a locked vault, for example) needs an unlock and a
-  runtime restart, that setting the key or declaring it under `[secrets]`
+  pointer unavailable then needs its failure fixed (a locked vault, a failing
+  resolver command, a bad pointer) and a runtime restart, that setting the key or declaring it under `[secrets]`
   needs the same restart, and that `dyfj status` names any pointer that
   failed.
 - **Hosted OpenAI-compatible turns meter prompt-cache traffic**: on OpenAI,

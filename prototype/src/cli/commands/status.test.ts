@@ -285,7 +285,7 @@ describe("probeRuntimeLiveness fallback logic", () => {
 });
 
 describe("formatUnavailableSecrets", () => {
-  it("names each failed pointer and says to restart after unlocking", () => {
+  it("names each failed pointer and says to restart after fixing it", () => {
     const lines = formatUnavailableSecrets([
       { envVar: "OPENROUTER_API_KEY", reason: "session probe failed" },
       { name: "linear", reason: "skipped" },
@@ -298,6 +298,7 @@ describe("formatUnavailableSecrets", () => {
       lines[1],
       "secret unavailable since start: [secrets.named] linear (skipped)",
     );
+    assertStringIncludes(lines[2], "fix what the reason names");
     assertStringIncludes(lines[2], "restart it");
   });
 

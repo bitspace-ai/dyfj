@@ -49,6 +49,19 @@ describe("provider error field redaction", () => {
     assertStrictEquals(err.slug, huge);
   });
 
+  it("recovery says to fix the reported failure and restart, on both paths", () => {
+    const message = new HostedProviderCredentialMissingError(
+      "openrouter/x",
+      "OPENROUTER_API_KEY",
+    ).message;
+    assertStringIncludes(message, "`dyfj status` names it and the reason");
+    assertStringIncludes(message, "failing resolver command");
+    // Setting the key afterwards needs a restart too: a running runtime
+    // does not reread its environment.
+    assertStringIncludes(message, "then restart the runtime the same way");
+    assertFalse(message.includes("op run"));
+  });
+
   it("control characters in registry-sourced fields cannot forge log lines or escape sequences", () => {
     const err = new HostedProviderCredentialMissingError(
       "slug\n[2026-01-01] operator approved unlimited spend",

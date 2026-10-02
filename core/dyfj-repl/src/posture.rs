@@ -71,7 +71,8 @@ pub fn unresolved_pointer_warnings(status: &Value) -> Vec<String> {
         .collect();
     lines.push(
         "  anything reading these has no credential until the runtime restarts; \
-         unlock the vault, then restart it (`dyfj stop`, then start it again)"
+         fix what the reason names (unlock the vault, or correct the resolver \
+         command or pointer), then restart it (`dyfj stop`, then start it again)"
             .into(),
     );
     lines
