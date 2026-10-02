@@ -21,6 +21,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
+import { startModelServer } from "../../testing/servers/model-server.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { serveWorkbenchUnix } from "./main.ts";
 import { connectUnixClient } from "../transport/mod.ts";
@@ -35,46 +36,12 @@ const MEMORY_CONTENT = "CANARY-MEMORY-CONTENT-cf9a private and load-bearing";
 const MODEL_SLUG = "canary-stub-model-cf9a";
 const STUB_REPLY = "CANARY-STUB-REPLY-cf9a the turn text itself";
 
-function sseChunk(payload: unknown): string {
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}
-
-/** Loopback stub speaking the OpenAI-compatible chat/completions wire. */
-function startStubModelServer(): { port: number; close(): Promise<void> } {
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    async (request) => {
-      const body = await request.json() as { stream?: boolean };
-      if (body.stream) {
-        const frames = [
-          sseChunk({ choices: [{ delta: { content: STUB_REPLY } }] }),
-          sseChunk({
-            choices: [{ delta: {}, finish_reason: "stop" }],
-            usage: { prompt_tokens: 7, completion_tokens: 9 },
-          }),
-          "data: [DONE]\n\n",
-        ].join("");
-        return new Response(frames, {
-          headers: { "content-type": "text/event-stream" },
-        });
-      }
-      return Response.json({
-        choices: [{
-          message: { content: STUB_REPLY },
-          finish_reason: "stop",
-        }],
-        usage: { prompt_tokens: 7, completion_tokens: 9 },
-      });
-    },
-  );
-  return {
-    port: (server.addr as Deno.NetAddr).port,
-    close: () => server.shutdown(),
-  };
-}
-
 Deno.test("a real turn keeps its canaries out of narration console methods", async () => {
-  const stub = startStubModelServer();
+  const stub = startModelServer(() => ({
+    kind: "text",
+    text: STUB_REPLY,
+    usage: { promptTokens: 7, completionTokens: 9 },
+  }));
   const sql = openFixtureSql();
   const store = openFixtureStore();
   const socketPath = udsTestSocket("server-console-canary");
@@ -90,7 +57,7 @@ Deno.test("a real turn keeps its canaries out of narration console methods", asy
         "cost_cache_read, cost_cache_write, reasoning, capabilities, active) " +
         "VALUES (?, 'Canary Stub', 'mlx-lm', 'openai-completions', ?, 0, " +
         "8192, 1024, 0, 0, 0, 0, FALSE, ?, TRUE)",
-      [MODEL_SLUG, `http://127.0.0.1:${stub.port}/v1`, '["text"]'],
+      [MODEL_SLUG, stub.baseUrl, '["text"]'],
     );
     // The turn's env-derived defaults come from an empty env, not the
     // lane's process env, which grants only the fixture's keys.
