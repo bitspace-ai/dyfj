@@ -7,7 +7,10 @@ import {
   parseSecretsConfig,
 } from "../../config/mod.ts";
 import { buildExternalMcpCommands } from "./adapter.ts";
-import { startLoopbackMcpServer } from "../../../testing/servers/mcp-server.ts";
+import {
+  startLoopbackHttp,
+  startLoopbackMcpServer,
+} from "../../../testing/servers/mcp-server.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -230,26 +233,19 @@ Deno.test("external MCP discovery and call stay strict, allowlisted, and framed"
 
 Deno.test("external MCP redirect refusal never reaches the redirect target", async () => {
   let targetRequests = 0;
-  const target = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    () => {
-      targetRequests++;
-      return new Response("unexpected");
-    },
+  const target = startLoopbackHttp(() => {
+    targetRequests++;
+    return new Response("unexpected");
+  });
+  const redirect = startLoopbackHttp(() =>
+    new Response(null, {
+      status: 307,
+      headers: { location: `${target.origin}/capture` },
+    })
   );
-  const targetPort = (target.addr as Deno.NetAddr).port;
-  const redirect = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    () =>
-      new Response(null, {
-        status: 307,
-        headers: { location: `http://127.0.0.1:${targetPort}/capture` },
-      }),
-  );
-  const redirectPort = (redirect.addr as Deno.NetAddr).port;
   try {
     const built = await buildExternalMcpCommands(
-      [fixtureConfig(`http://127.0.0.1:${redirectPort}/mcp`)],
+      [fixtureConfig(redirect.url)],
       { fixture_mcp: "fixture-secret" },
     );
     assertEquals(built.commands, []);
@@ -260,7 +256,7 @@ Deno.test("external MCP redirect refusal never reaches the redirect target", asy
     }]);
     assertEquals(targetRequests, 0);
   } finally {
-    await Promise.all([redirect.shutdown(), target.shutdown()]);
+    await Promise.all([redirect.close(), target.close()]);
   }
 });
 

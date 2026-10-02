@@ -9,6 +9,7 @@ import {
   waitForSql,
 } from "./isolated-dolt-fixture.ts";
 import { fileURLToPath } from "node:url";
+import { startMuteListener } from "../testing/servers/listeners.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url)).replace(
   /[\\\/]$/,
@@ -46,16 +47,8 @@ async function portIsClosed(port: number): Promise<boolean> {
 
 describe("isolated Dolt fixture", () => {
   it("interrupts a readiness probe stalled after TCP accept", async () => {
-    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const listener = startMuteListener({ hostname: "127.0.0.1", port: 0 });
     const port = (listener.addr as Deno.NetAddr).port;
-    const connections: Deno.Conn[] = [];
-    const acceptTask = (async () => {
-      try {
-        while (true) connections.push(await listener.accept());
-      } catch (error) {
-        if (!(error instanceof Deno.errors.BadResource)) throw error;
-      }
-    })();
     const abortController = new AbortController();
     const abortTimer = setTimeout(() => abortController.abort(), 50);
 
@@ -78,9 +71,7 @@ describe("isolated Dolt fixture", () => {
       );
     } finally {
       clearTimeout(abortTimer);
-      listener.close();
-      for (const connection of connections) connection.close();
-      await acceptTask;
+      await listener.close();
     }
   });
 

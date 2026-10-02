@@ -759,18 +759,15 @@ Deno.test(
     // fetch itself, which this exercises for real; the full SDK transport path
     // is covered by the recall tests above.
     const base = { url: "https://memory.example/mcp", tool: "search" };
-    const server = Deno.serve(
-      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-      (req) =>
-        new Response(null, {
-          status: 307,
-          headers: { location: new URL(req.url).href },
-        }),
+    const server = startLoopbackHttp((req) =>
+      new Response(null, {
+        status: 307,
+        headers: { location: new URL(req.url).href },
+      })
     );
-    const { port } = server.addr as Deno.NetAddr;
     try {
       await assertRejects(() =>
-        fetch(`http://127.0.0.1:${port}/mcp`, {
+        fetch(server.url, {
           ...recallRequestInit({
             ...base,
             token: "fixture-token",
@@ -781,7 +778,7 @@ Deno.test(
         })
       );
     } finally {
-      await server.shutdown();
+      await server.close();
     }
   },
 );

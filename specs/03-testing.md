@@ -74,8 +74,9 @@ in the same change that lands this spec's first work order.
   - `fakes/`: `MemoryStore`, `ScriptedHttpTransport`, `ManualClock`,
     `SequentialIds`, `MapEnv`, `ScriptedApprover`, `MapSecretResolver`,
     `ScriptedDnsResolver`, `FakeIo` (terminal I/O for `cli/`).
-  - `servers/`: loopback OpenAI-compatible model server, MCP HTTP server, UDS
-    peer.
+  - `servers/`: loopback OpenAI-compatible model server, MCP HTTP server,
+    scripted HTTP server, UDS peer, and raw listeners (one that never answers,
+    a stale socket file).
   - `builders/`: event, session, model-row and turn-request builders, typed
     against generated rows.
   - `conformance/`: store, provider-adapter and tool suites, and the `Env` port

@@ -15,6 +15,10 @@ import {
 } from "../../server/main.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import { udsTestSocket } from "../../../testing/servers/uds-sockets.ts";
+import {
+  fabricateStaleUdsSocket,
+  startMuteListener,
+} from "../../../testing/servers/listeners.ts";
 import type { CliConfig } from "../args.ts";
 import { runStop } from "./stop.ts";
 
@@ -120,9 +124,8 @@ describe("runStop behavior over real sockets", () => {
   it("reports not running when connection is refused by a dead listener", async () => {
     const socketPath = udsTestSocket("cli-stop-dead");
 
-    // Create a listener and immediately close it without unlinking
-    const listener = Deno.listen({ transport: "unix", path: socketPath });
-    listener.close();
+    // A socket file with nothing accepting on it: connecting is refused.
+    await fabricateStaleUdsSocket(socketPath);
 
     cleanups.push(async () => {
       try {
@@ -143,30 +146,8 @@ describe("runStop behavior over real sockets", () => {
 
   it("reports failure via io.err and returns 1 when connected to a mute socket exceeding deadline", async () => {
     const socketPath = udsTestSocket("cli-stop-mute");
-    const listener = Deno.listen({ transport: "unix", path: socketPath });
-    let serverConn: Deno.Conn | undefined;
-    (async () => {
-      try {
-        for await (const conn of listener) {
-          serverConn = conn;
-          // Hold connection open without reading or writing
-        }
-      } catch {}
-    })();
-
-    cleanups.push(async () => {
-      try {
-        listener.close();
-      } catch {}
-      if (serverConn) {
-        try {
-          serverConn.close();
-        } catch {}
-      }
-      try {
-        await Deno.remove(socketPath);
-      } catch {}
-    });
+    const listener = startMuteListener({ transport: "unix", path: socketPath });
+    cleanups.push(() => listener.close());
 
     const { io, stdout, stderr } = fakeIo();
     const exitCode = await runStop(

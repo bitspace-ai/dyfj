@@ -17,6 +17,7 @@ import {
 import { connectUnixClient } from "../../transport/mod.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import { udsTestSocket } from "../../../testing/servers/uds-sockets.ts";
+import { startMuteListener } from "../../../testing/servers/listeners.ts";
 import type { CliConfig } from "../args.ts";
 import { isTimeoutError, socketError } from "../render/errors.ts";
 import { probeRuntimeLiveness, runStatus } from "./status.ts";
@@ -66,33 +67,9 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
   it("probe times out with a bounded deadline and cleans up when connected to a mute socket", async () => {
     const socketPath = udsTestSocket("cli-status-mute");
-    // Create a raw UDS listener that accepts connections but writes nothing back
-    const listener = Deno.listen({ transport: "unix", path: socketPath });
-    const acceptedConns: Deno.Conn[] = [];
-
-    // Background accept loop
-    (async () => {
-      try {
-        for await (const conn of listener) {
-          acceptedConns.push(conn);
-          // Mute: do not write or close, just hold open until cleaned up
-        }
-      } catch {}
-    })();
-
-    cleanups.push(async () => {
-      try {
-        listener.close();
-      } catch {}
-      for (const c of acceptedConns) {
-        try {
-          c.close();
-        } catch {}
-      }
-      try {
-        await Deno.remove(socketPath);
-      } catch {}
-    });
+    // Accepts connections but never reads or writes.
+    const listener = startMuteListener({ transport: "unix", path: socketPath });
+    cleanups.push(() => listener.close());
 
     const client = await connectUnixClient(socketPath);
     cleanups.push(() => client.close());
@@ -130,30 +107,8 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
   it("connectUnixClient closes connection if abort occurs while connect is in flight", async () => {
     const socketPath = udsTestSocket("cli-connect-inflight");
-    const listener = Deno.listen({ transport: "unix", path: socketPath });
-    let serverConn: Deno.Conn | undefined;
-    const acceptedPromise = (async () => {
-      try {
-        for await (const conn of listener) {
-          serverConn = conn;
-          break;
-        }
-      } catch {}
-    })();
-
-    cleanups.push(async () => {
-      try {
-        listener.close();
-      } catch {}
-      if (serverConn) {
-        try {
-          serverConn.close();
-        } catch {}
-      }
-      try {
-        await Deno.remove(socketPath);
-      } catch {}
-    });
+    const listener = startMuteListener({ transport: "unix", path: socketPath });
+    cleanups.push(() => listener.close());
 
     const ac = new AbortController();
     const connectPromise = connectUnixClient(socketPath, {}, ac.signal);
@@ -161,11 +116,9 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     ac.abort(new DOMException("The operation was aborted", "AbortError"));
     await assertRejects(() => connectPromise);
 
-    await acceptedPromise;
-    if (serverConn) {
-      const buf = new Uint8Array(10);
-      const readResult = await serverConn.read(buf);
-      assertStrictEquals(readResult, null);
-    }
+    const serverConn = await listener.firstAccepted;
+    const buf = new Uint8Array(10);
+    const readResult = await serverConn.read(buf);
+    assertStrictEquals(readResult, null);
   });
 });
