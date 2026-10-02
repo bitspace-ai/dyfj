@@ -131,8 +131,10 @@ export function renderInlineMarkdown(text: string, color: boolean): string {
         continue;
       }
     }
-    if (text[i] === "_" && text[i + 1] !== "_" &&
-      canOpenUnderscoreEmphasis(text, i)) {
+    if (
+      text[i] === "_" && text[i + 1] !== "_" &&
+      canOpenUnderscoreEmphasis(text, i)
+    ) {
       let end = text.indexOf("_", i + 1);
       while (end !== -1) {
         if (canCloseUnderscoreEmphasis(text, end) && end > i + 1) {

@@ -883,7 +883,10 @@ README are tracked separately in its Revision history section.
   to these providers now send `stream_options.include_usage`, which OpenAI
   needs before it reports usage on a stream; local servers are not sent it.
   `models/list` rows carry `costCacheRead` / `costCacheWrite` when the
-  catalog prices them.
+  catalog prices them. The turn's receipt line now shows the cached share
+  beside the token counts (`12→5 tok · cache 9,000 read, 100 write`) whenever
+  a provider reported cache traffic, so the smaller uncached `input` figure is
+  never the only prompt size on screen.
 
 - **The file tools' workspace-root anchors are owned by the engine, not held
   in a process-global map.** `RootAnchors` (`tools/builtin/root-anchors.ts`)

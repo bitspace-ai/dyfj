@@ -95,9 +95,17 @@ export function formatReceipt(
   const reasoning = (result.tokens.reasoning ?? 0) > 0
     ? ` (+${result.tokens.reasoning} reasoning)`
     : "";
+  // `input` excludes cache traffic, so the cached share is shown beside it
+  // whenever a provider reported any.
+  const { cacheRead, cacheWrite } = result.tokens;
+  const cache = cacheRead > 0 || cacheWrite > 0
+    ? ` · cache ${formatTokenCount(cacheRead)} read${
+      cacheWrite > 0 ? `, ${formatTokenCount(cacheWrite)} write` : ""
+    }`
+    : "";
   const tokens = `${formatTokenCount(result.tokens.input)}→${
     formatTokenCount(result.tokens.output)
-  } tok${reasoning}`;
+  } tok${reasoning}${cache}`;
   const toolSteps =
     `tools ${result.agent.toolStepsUsed}/${result.agent.maxToolSteps}` +
     (result.agent.limitReached ? " (limit reached)" : "");
