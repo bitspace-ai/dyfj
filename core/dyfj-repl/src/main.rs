@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
     match client.request("runtime/status", json!({})).await {
         Ok(status) => {
             println!("{}", posture::line(&status, &socket));
-            for warning in posture::unavailable_secrets(&status) {
+            for warning in posture::unresolved_pointer_warnings(&status) {
                 eprintln!("{warning}");
             }
         }
