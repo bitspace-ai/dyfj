@@ -616,6 +616,95 @@ route_cli() {
   printf 'deno'
 }
 
+# ── Interactive REPL front-end ───────────────────────────────────────────────
+#
+# A bare interactive `dyfj` runs the Rust REPL (core/dyfj-repl) when its binary
+# is available and every argument is one it understands; anything else stays
+# on the TypeScript REPL. DYFJ_REPL=ts keeps the TypeScript REPL, DYFJ_REPL=rust
+# requires the Rust one (and skips the terminal check, for scripted use). The
+# binary is DYFJ_REPL_BIN, else core/target/release/dyfj-repl beside this
+# prototype, else dyfj-repl on PATH.
+
+rust_repl_bin() {
+  if [[ -n "${DYFJ_REPL_BIN:-}" ]]; then
+    [[ -x "$DYFJ_REPL_BIN" && ! -d "$DYFJ_REPL_BIN" ]] || return 1
+    printf '%s' "$DYFJ_REPL_BIN"
+    return 0
+  fi
+  local built
+  built="$(prototype_root)/../core/target/release/dyfj-repl"
+  if [[ -x "$built" && ! -d "$built" ]]; then
+    printf '%s' "$built"
+    return 0
+  fi
+  command -v dyfj-repl 2>/dev/null
+}
+
+# Translate CLIENT_ARGS into RUST_REPL_ARGS; fails on any argument the Rust
+# REPL does not take (a subcommand, a prompt, --tier, --hint, --runner, …).
+# --socket becomes DYFJ_SOCKET, which the Rust REPL resolves the same way.
+rust_repl_args() {
+  RUST_REPL_ARGS=()
+  RUST_REPL_SOCKET=""
+  local i=0
+  local args=(${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})
+  while [[ $i -lt ${#args[@]} ]]; do
+    case "${args[$i]}" in
+      --approve-paid|--fast)
+        RUST_REPL_ARGS+=("${args[$i]}")
+        i=$((i + 1))
+        ;;
+      --model|--session|--workspace)
+        [[ $((i + 1)) -lt ${#args[@]} ]] || return 1
+        RUST_REPL_ARGS+=("${args[$i]}" "${args[$((i + 1))]}")
+        i=$((i + 2))
+        ;;
+      --socket)
+        [[ $((i + 1)) -lt ${#args[@]} ]] || return 1
+        RUST_REPL_SOCKET="${args[$((i + 1))]}"
+        i=$((i + 2))
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done
+}
+
+# Prints the binary and returns 0 when this invocation goes to the Rust REPL.
+# Returns 2 when DYFJ_REPL=rust asked for it and an interactive session
+# cannot run there; other invocations are unaffected by DYFJ_REPL.
+rust_repl_route() {
+  local mode="${DYFJ_REPL:-auto}"
+  [[ "$mode" == "ts" ]] && return 1
+  if [[ "$mode" != "auto" && "$mode" != "rust" ]]; then
+    echo "dyfj: DYFJ_REPL must be ts, rust or unset" >&2
+    return 2
+  fi
+  local reason=""
+  local bin=""
+  # Subcommands, prompts and help are not REPL sessions, whatever DYFJ_REPL says.
+  if [[ -n "$LAUNCHER_SUBCOMMAND" || "$LAUNCHER_SAW_HELP" == "1" ||
+    "$LAUNCHER_SAW_PROMPT" == "1" || "$LAUNCHER_ARGS_INVALID" == "1" ]]; then
+    return 1
+  fi
+  if ! rust_repl_args; then
+    reason="an argument is one only the TypeScript REPL takes"
+  elif ! bin="$(rust_repl_bin)"; then
+    reason="no dyfj-repl binary (build it with: cargo build --release -p dyfj-repl)"
+  elif [[ "$mode" == "auto" && "${LAUNCHER_ON_TERMINAL:-0}" != "1" ]]; then
+    reason="not a terminal"
+  fi
+  if [[ -n "$reason" ]]; then
+    if [[ "$mode" == "rust" ]]; then
+      echo "dyfj: DYFJ_REPL=rust, but $reason" >&2
+      return 2
+    fi
+    return 1
+  fi
+  printf '%s' "$bin"
+}
+
 run_deno_cli() {
   local sock proto
   sock="$(resolve_socket_path)"
@@ -639,6 +728,20 @@ main() {
   resolve_socket_path >/dev/null
   local route autostart
   route="$(route_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})"
+  local repl_bin repl_status=0
+  # Tested here: inside the command substitution below, stdout is a pipe.
+  LAUNCHER_ON_TERMINAL=0
+  if [[ -t 0 && -t 1 ]]; then
+    LAUNCHER_ON_TERMINAL=1
+  fi
+  repl_bin="$(rust_repl_route)" || repl_status=$?
+  if [[ "$repl_status" == "2" ]]; then
+    exit 2
+  elif [[ "$repl_status" == "0" ]]; then
+    route="rust_repl"
+    # rust_repl_route ran in a subshell; rebuild its argument arrays here.
+    rust_repl_args
+  fi
   if autostart_applies ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} && client_parse_check; then
     autostart="yes"
   else
@@ -685,6 +788,12 @@ main() {
   fi
 
   case "$route" in
+    rust_repl)
+      if [[ -n "$RUST_REPL_SOCKET" ]]; then
+        DYFJ_SOCKET="$RUST_REPL_SOCKET" exec "$repl_bin" ${RUST_REPL_ARGS[@]+"${RUST_REPL_ARGS[@]}"}
+      fi
+      exec "$repl_bin" ${RUST_REPL_ARGS[@]+"${RUST_REPL_ARGS[@]}"}
+      ;;
     compiled)
       DYFJ_PROTOTYPE_ROOT="$(prototype_root)" exec "$(compiled_bin)" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
       ;;

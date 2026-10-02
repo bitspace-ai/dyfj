@@ -162,6 +162,9 @@ async fn main() -> Result<()> {
         Ok(status) => println!("{}", posture::line(&status, &socket)),
         Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), &socket)),
     }
+    if !commands::startup_model_ok(&client, &session).await {
+        std::process::exit(2);
+    }
 
     // Ctrl-C reaches us two different ways, and the split is structural rather
     // than a choice. At the prompt rustyline holds the terminal in raw mode

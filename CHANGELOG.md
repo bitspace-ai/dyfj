@@ -11,6 +11,15 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A bare `dyfj` on a terminal opens the Rust REPL.** When a `dyfj-repl`
+  binary is available (`DYFJ_REPL_BIN`, `core/target/release/dyfj-repl` or
+  `PATH`) and every argument is one it takes (`--model`, `--approve-paid`,
+  `--fast`, `--session`, `--workspace`, `--socket`), the launcher hands the
+  interactive session to it after autostart; otherwise the TypeScript REPL
+  opens as before. `DYFJ_REPL=ts` keeps the TypeScript REPL and
+  `DYFJ_REPL=rust` requires the Rust one for interactive sessions. The Rust
+  REPL also refuses an unknown or unroutable `--model` at launch, listing the
+  available models, instead of failing the first turn.
 - **The Rust REPL can be a daily driver.** `dyfj-repl` now sends the same
   turn request as the TypeScript client: the chosen model and fast tier, the
   per-session paid opt-in, and the workspace for a new session, set with

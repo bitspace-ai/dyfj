@@ -1256,7 +1256,16 @@ It resolves the socket as the runtime does (`DYFJ_SOCKET`, else
 prompt, which the TypeScript REPL cannot do. It covers turns, approvals,
 Ctrl-C cancellation, a per-turn receipt line with cost and prompt-cache tokens,
 and the daily-driver commands `/model`, `/fast`, `/session`, `/friction` and
-`/idea`. The TypeScript `dyfj` CLI remains the launcher's entry point for now.
+`/idea`, and it refuses an unknown or unroutable `--model` before the first
+prompt. A bare interactive `dyfj` opens the Rust REPL when a `dyfj-repl` binary is
+available (`DYFJ_REPL_BIN`, else `core/target/release/dyfj-repl` beside the
+prototype, else `dyfj-repl` on `PATH`; build it with
+`cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
+and every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
+`--session`, `--workspace`, `--socket`). Otherwise, and with `DYFJ_REPL=ts`,
+the TypeScript REPL opens as before. `DYFJ_REPL=rust` requires the Rust REPL
+for an interactive session and fails if it cannot run there; subcommands,
+`-p` prompts and `--help` are unaffected by `DYFJ_REPL`.
 See [`core/README.md`](core/README.md).
 
 ### MCP integration
