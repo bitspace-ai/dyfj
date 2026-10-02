@@ -20,6 +20,21 @@ httpTransportConformance({
   },
 });
 
+httpTransportConformance({
+  name: "ScriptedHttpTransport.fetchLike",
+  make(script) {
+    const fake = new ScriptedHttpTransport(
+      script.map((respond) => ({ respond })),
+    );
+    return Promise.resolve({
+      transport: (url: string, init: RequestInit) => fake.fetchLike(url, init),
+      baseUrl: "http://fake.invalid",
+      requests: (): readonly RecordedRequest[] => fake.requests,
+      close: () => Promise.resolve(),
+    });
+  },
+});
+
 Deno.test("ScriptedHttpTransport runs each exchange's request assertions", async () => {
   const fake = new ScriptedHttpTransport([{
     expect: (request) => assertEquals(request.body, "expected"),
@@ -58,4 +73,23 @@ Deno.test("ScriptedHttpTransport passes a function responder's Response through"
   const response = await fake.fetch("http://fake.invalid/", { body: "hi" });
   assertEquals(await response.text(), "echo hi");
   fake.assertDone();
+});
+
+Deno.test("ScriptedHttpTransport.fetchLike reads a Request input into the port's shape", async () => {
+  const fake = new ScriptedHttpTransport([{ respond: { body: "ok" } }]);
+  const response = await fake.fetchLike(
+    new Request("http://fake.invalid/r", {
+      method: "POST",
+      headers: { "x-fixture": "1" },
+      body: "payload",
+      redirect: "error",
+    }),
+  );
+  assertEquals(await response.text(), "ok");
+  const [request] = fake.requests;
+  assertEquals(request?.method, "POST");
+  assertEquals(request?.url, "http://fake.invalid/r");
+  assertEquals(request?.headers["x-fixture"], "1");
+  assertEquals(request?.body, "payload");
+  assertEquals(request?.redirect, "error");
 });

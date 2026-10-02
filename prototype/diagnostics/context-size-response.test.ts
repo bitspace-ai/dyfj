@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
+import { ScriptedHttpTransport } from "../testing/fakes/scripted-http-transport.ts";
 import {
   compareContextPayloads,
   type ContextPayloadReport,
@@ -30,7 +31,7 @@ describe("compareContextPayloads", () => {
         { label: "large", systemPrompt: "large context ".repeat(100) },
       ],
       now: new ManualClock({ readings: [0, 10, 30, 70, 0, 20, 80, 140] }).now,
-      fetchFn: buildFakeStreamingFetch(),
+      fetchFn: streamingTransport(2).fetchLike,
     });
 
     assertEquals(report.map(summary), [
@@ -68,17 +69,15 @@ function summary(report: ContextPayloadReport) {
   };
 }
 
-function buildFakeStreamingFetch(): typeof fetch {
-  return async () =>
-    new Response(
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode([
-            'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"completion_tokens":1}}\n\n',
-            "data: [DONE]\n\n",
-          ].join("")));
-          controller.close();
-        },
-      }),
-    );
+function streamingTransport(turns: number): ScriptedHttpTransport {
+  return new ScriptedHttpTransport(
+    Array.from({ length: turns }, () => ({
+      respond: {
+        body: [
+          'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"completion_tokens":1}}\n\n',
+          "data: [DONE]\n\n",
+        ].join(""),
+      },
+    })),
+  );
 }

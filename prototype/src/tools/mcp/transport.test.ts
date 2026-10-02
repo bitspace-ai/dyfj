@@ -4,11 +4,18 @@ import {
   boundedMcpFetch,
   formatUntrustedMcpResult,
 } from "./transport.ts";
+import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
+
+function bytesTransport(...bodies: Uint8Array[]): typeof fetch {
+  return new ScriptedHttpTransport(
+    bodies.map((body) => ({ respond: { body: [body] } })),
+  ).fetchLike;
+}
 
 Deno.test("boundedMcpFetch caps cumulative HTTP response bytes before protocol parsing", async () => {
   const under = boundedMcpFetch(
     5,
-    () => Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4, 5]))),
+    bytesTransport(new Uint8Array([1, 2, 3, 4, 5])),
   );
   assertEquals(
     (await (await under("https://mcp.example/mcp")).bytes()).length,
@@ -17,7 +24,7 @@ Deno.test("boundedMcpFetch caps cumulative HTTP response bytes before protocol p
 
   const over = boundedMcpFetch(
     5,
-    () => Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4, 5, 6]))),
+    bytesTransport(new Uint8Array([1, 2, 3, 4, 5, 6])),
   );
   const overResponse = await over("https://mcp.example/mcp");
   await assertRejects(
@@ -28,7 +35,7 @@ Deno.test("boundedMcpFetch caps cumulative HTTP response bytes before protocol p
 
   const cumulative = boundedMcpFetch(
     5,
-    () => Promise.resolve(new Response(new Uint8Array([1, 2, 3]))),
+    bytesTransport(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])),
   );
   await (await cumulative("https://mcp.example/first")).bytes();
   const second = await cumulative("https://mcp.example/second");
@@ -46,12 +53,12 @@ Deno.test("boundedMcpFetch rejects a declared length over the bound before readi
       cancelled = true;
     },
   });
+  // A function responder: the test observes the body being cancelled.
   const bounded = boundedMcpFetch(
     5,
-    () =>
-      Promise.resolve(
-        new Response(body, { headers: { "content-length": "6" } }),
-      ),
+    new ScriptedHttpTransport([{
+      respond: () => new Response(body, { headers: { "content-length": "6" } }),
+    }]).fetchLike,
   );
   await assertRejects(
     () => bounded("https://mcp.example/mcp"),

@@ -1,6 +1,7 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
+import { ScriptedHttpTransport } from "../testing/fakes/scripted-http-transport.ts";
 import {
   compareStreamingStructuredOutputModes,
   compareStructuredOutputModes,
@@ -29,7 +30,7 @@ describe("compareStructuredOutputModes", () => {
       routing: { modelId: "gemma4:e2b" },
       models,
       now: new ManualClock({ readings: [0, 10, 50, 0, 10, 40] }).now,
-      fetchFn: buildFakeStructuredOutputFetch(),
+      fetchFn: structuredOutputTransport().fetchLike,
     });
 
     assertEquals(report.map(summary), [
@@ -68,7 +69,7 @@ describe("compareStreamingStructuredOutputModes", () => {
       routing: { modelId: "gemma4:e2b" },
       models,
       now: new ManualClock({ readings: [0, 10, 30, 90, 0, 10, 40, 100] }).now,
-      fetchFn: buildFakeStreamingStructuredOutputFetch(),
+      fetchFn: streamingStructuredOutputTransport().fetchLike,
     });
 
     assertEquals(report.map(streamingSummary), [
@@ -125,57 +126,60 @@ function streamingSummary(report: StreamingStructuredOutputReport) {
   };
 }
 
-function buildFakeStructuredOutputFetch(): typeof fetch {
-  let call = 0;
-  return async (_input, init) => {
-    call += 1;
-    const body = JSON.parse(String(init?.body));
-    if (call === 1) {
-      assertStrictEquals(body.response_format, undefined);
-      return Response.json({
-        choices: [{
-          message: { content: "The answer is ok." },
-          finish_reason: "stop",
-        }],
-        usage: { prompt_tokens: 10, completion_tokens: 5 },
-      });
-    }
-
-    assertEquals(body.response_format, { type: "json_object" });
-    return Response.json({
-      choices: [{
-        message: {
-          content: JSON.stringify({ answer: "ok", confidence: "high" }),
-        },
-        finish_reason: "stop",
-      }],
-      usage: { prompt_tokens: 11, completion_tokens: 4 },
-    });
-  };
+function structuredOutputTransport(): ScriptedHttpTransport {
+  return new ScriptedHttpTransport([
+    {
+      expect: (request) =>
+        assertStrictEquals(JSON.parse(request.body).response_format, undefined),
+      respond: {
+        body: JSON.stringify({
+          choices: [{
+            message: { content: "The answer is ok." },
+            finish_reason: "stop",
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        }),
+      },
+    },
+    {
+      expect: (request) =>
+        assertEquals(JSON.parse(request.body).response_format, {
+          type: "json_object",
+        }),
+      respond: {
+        body: JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify({ answer: "ok", confidence: "high" }),
+            },
+            finish_reason: "stop",
+          }],
+          usage: { prompt_tokens: 11, completion_tokens: 4 },
+        }),
+      },
+    },
+  ]);
 }
 
-function buildFakeStreamingStructuredOutputFetch(): typeof fetch {
-  let call = 0;
-  return async () => {
-    call += 1;
-    const body = call === 1
-      ? [
-        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
-        'data: {"choices":[{"delta":{"content":" with high confidence"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3}}\n\n',
-        "data: [DONE]\n\n",
-      ].join("")
-      : [
-        'data: {"choices":[{"delta":{"content":"{\\"answer\\":"}}]}\n\n',
-        'data: {"choices":[{"delta":{"content":"\\"ok\\",\\"confidence\\":\\"high\\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4}}\n\n',
-        "data: [DONE]\n\n",
-      ].join("");
-    return new Response(
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(body));
-          controller.close();
-        },
-      }),
-    );
-  };
+function streamingStructuredOutputTransport(): ScriptedHttpTransport {
+  return new ScriptedHttpTransport([
+    {
+      respond: {
+        body: [
+          'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+          'data: {"choices":[{"delta":{"content":" with high confidence"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3}}\n\n',
+          "data: [DONE]\n\n",
+        ].join(""),
+      },
+    },
+    {
+      respond: {
+        body: [
+          'data: {"choices":[{"delta":{"content":"{\\"answer\\":"}}]}\n\n',
+          'data: {"choices":[{"delta":{"content":"\\"ok\\",\\"confidence\\":\\"high\\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":4}}\n\n',
+          "data: [DONE]\n\n",
+        ].join(""),
+      },
+    },
+  ]);
 }

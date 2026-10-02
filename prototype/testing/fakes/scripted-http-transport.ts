@@ -18,6 +18,10 @@
 // body shape the scripted vocabulary does not cover (a stream that errors with
 // a particular value, or whose cancel never settles); such a body is test data
 // and is outside what the conformance suite proves.
+//
+// `fetchLike` is the same fake behind the platform `fetch` signature, for code
+// that takes `typeof fetch` rather than the port (a URL or `Request` input is
+// read into the port's `(url, init)` shape first).
 
 import type { HttpTransport } from "../../src/providers/mod.ts";
 
@@ -173,6 +177,21 @@ export class ScriptedHttpTransport {
     return new Response(scriptedBody(respond, signal), {
       status,
       headers: respond.headers,
+    });
+  };
+
+  readonly fetchLike: typeof fetch = async (input, init) => {
+    if (!(input instanceof Request)) {
+      return await this.fetch(String(input), init ?? {});
+    }
+    const merged = new Request(input, init);
+    const body = merged.body === null ? undefined : await merged.text();
+    return await this.fetch(merged.url, {
+      method: merged.method,
+      headers: merged.headers,
+      redirect: merged.redirect,
+      signal: merged.signal,
+      ...(body === undefined ? {} : { body }),
     });
   };
 }

@@ -20,6 +20,8 @@ export type McpHandler = ReturnType<typeof createMcpHandler>;
 export interface LoopbackHttp {
   /** The server's `/mcp` endpoint. */
   url: string;
+  /** `http://127.0.0.1:<port>`, for a test that needs another path. */
+  origin: string;
   close(): Promise<void>;
 }
 
@@ -36,8 +38,10 @@ export function startLoopbackHttp(
     handler,
   );
   const { port } = server.addr as Deno.NetAddr;
+  const origin = `http://127.0.0.1:${port}`;
   return {
-    url: `http://127.0.0.1:${port}/mcp`,
+    url: `${origin}/mcp`,
+    origin,
     close: () => server.shutdown(),
   };
 }
@@ -51,6 +55,7 @@ export function startLoopbackMcpServer(
   const http = startLoopbackHttp((request) => handle(request, mcp));
   return {
     url: http.url,
+    origin: http.origin,
     close: async () => {
       await Promise.all([mcp.close(), http.close()]);
     },

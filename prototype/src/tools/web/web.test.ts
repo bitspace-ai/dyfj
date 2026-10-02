@@ -28,6 +28,7 @@ import {
 } from "./web.ts";
 import type { McpHttpServerConfig } from "../../config/mod.ts";
 import { ScriptedDnsResolver } from "../../../testing/fakes/scripted-dns-resolver.ts";
+import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 
 /** The thrown error's message must match `pattern`. */
 function assertThrowsMatching(fn: () => unknown, pattern: RegExp): void {
@@ -436,17 +437,16 @@ describe("assertPublicDnsResolution", () => {
 describe("safeFetchDocument", () => {
   it("fetches and extracts clean markdown from an HTML response", async () => {
     const dns = publicDns();
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(
-        new Response("<h1>Hello World</h1><p>Test body</p>", {
-          status: 200,
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        }),
-      );
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+        body: "<h1>Hello World</h1><p>Test body</p>",
+      },
+    }]);
 
     const doc = await safeFetchDocument(
       "https://example.com/page",
-      fakeFetch,
+      transport.fetchLike,
       false,
       dns,
     );
@@ -468,17 +468,23 @@ describe("safeFetchDocument", () => {
         bodyCancelled = true;
       },
     });
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(
+    // A function responder: the test observes the body being cancelled.
+    const transport = new ScriptedHttpTransport([{
+      respond: () =>
         new Response(fakeStream, {
           status: 200,
           headers: { "Content-Type": "image/png" },
         }),
-      );
+    }]);
 
     await assertRejectsMatching(
       () =>
-        safeFetchDocument("https://example.com/pic.png", fakeFetch, false, dns),
+        safeFetchDocument(
+          "https://example.com/pic.png",
+          transport.fetchLike,
+          false,
+          dns,
+        ),
       /Unsupported content type/,
     );
     assertStrictEquals(bodyCancelled, true);
@@ -489,17 +495,13 @@ describe("safeFetchDocument", () => {
     const dns = publicDns();
     const hugeText = "<p>" +
       "A".repeat(MAX_EXTRACTED_CHARS_PER_FETCH + 5000) + "</p>";
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(
-        new Response(hugeText, {
-          status: 200,
-          headers: { "Content-Type": "text/html" },
-        }),
-      );
+    const transport = new ScriptedHttpTransport([{
+      respond: { headers: { "Content-Type": "text/html" }, body: hugeText },
+    }]);
 
     const doc = await safeFetchDocument(
       "https://example.com/huge",
-      fakeFetch,
+      transport.fetchLike,
       false,
       dns,
     );
