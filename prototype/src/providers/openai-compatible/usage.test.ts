@@ -747,3 +747,144 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     );
   });
 });
+
+describe("runWorkbenchTurn hosted prompt-cache metering", () => {
+  const cachedModel: WorkbenchModel = {
+    slug: "z-ai/glm-5.2",
+    displayName: "GLM 5.2",
+    provider: "openrouter",
+    api: "openai-completions",
+    baseUrl: "https://openrouter.ai/api/v1",
+    tier: 1,
+    costInput: 1,
+    costOutput: 2,
+    costCacheRead: 0.1,
+    costCacheWrite: 1.25,
+    capabilities: ["text"],
+  };
+  const env = new MapEnv({ OPENROUTER_API_KEY: "sk-or-key" });
+  const getEnv = (name: string) => env.get(name);
+  const cachedUsage = {
+    prompt_tokens: 100_000,
+    completion_tokens: 1_000,
+    prompt_tokens_details: {
+      cached_tokens: 60_000,
+      cache_write_tokens: 10_000,
+    },
+  };
+
+  it("splits cached prompt tokens out of input and prices them at the catalog cache rates", async () => {
+    const transport = jsonResponse({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: cachedUsage,
+    });
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: cachedModel.slug },
+      models: [cachedModel],
+      getEnv,
+      fetchFn: transport.fetch,
+    });
+
+    transport.assertDone();
+    // prompt_tokens includes cache traffic; input is the uncached remainder.
+    assertObjectMatch(result.usage, {
+      input: 30_000,
+      cacheRead: 60_000,
+      cacheWrite: 10_000,
+      output: 1_000,
+    });
+    // 0.03M * 1 + 0.06M * 0.1 + 0.01M * 1.25 + 0.001M * 2 = 0.0505
+    assertAlmostEquals(result.usage.cost.total, 0.0505, 5e-9);
+  });
+
+  it("prices cache traffic at the input rate when the row has no cache price", async () => {
+    const transport = jsonResponse({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: cachedUsage,
+    });
+    const { costCacheRead: _r, costCacheWrite: _w, ...unpricedCache } =
+      cachedModel;
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: cachedModel.slug },
+      models: [unpricedCache],
+      getEnv,
+      fetchFn: transport.fetch,
+    });
+
+    transport.assertDone();
+    assertObjectMatch(result.usage, { cacheRead: 60_000, cacheWrite: 10_000 });
+    // Same total as an uncached call: 0.1M * 1 + 0.001M * 2 = 0.102
+    assertAlmostEquals(result.usage.cost.total, 0.102, 5e-9);
+  });
+
+  it("never reports more cache traffic than prompt tokens", async () => {
+    const transport = jsonResponse({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: {
+        prompt_tokens: 50,
+        completion_tokens: 1,
+        prompt_tokens_details: { cached_tokens: 40, cache_write_tokens: 40 },
+      },
+    });
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: cachedModel.slug },
+      models: [cachedModel],
+      getEnv,
+      fetchFn: transport.fetch,
+    });
+
+    transport.assertDone();
+    assertObjectMatch(result.usage, {
+      input: 0,
+      cacheRead: 40,
+      cacheWrite: 10,
+    });
+  });
+
+  it("carries cache tokens from the final streamed usage frame", async () => {
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: "ok" }, finish_reason: null }],
+          })
+        }\n` +
+          `data: ${
+            JSON.stringify({
+              choices: [{ delta: { content: "" }, finish_reason: "stop" }],
+              usage: cachedUsage,
+            })
+          }\n` +
+          "data: [DONE]\n",
+      },
+    }]);
+
+    const result = await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: cachedModel.slug },
+      models: [cachedModel],
+      getEnv,
+      onTextDelta: () => {},
+      fetchFn: transport.fetch,
+    });
+
+    transport.assertDone();
+    assertObjectMatch(result.usage, {
+      input: 30_000,
+      cacheRead: 60_000,
+      cacheWrite: 10_000,
+    });
+    const body = JSON.parse(transport.requests[0].body);
+    assertObjectMatch(body, { stream_options: { include_usage: true } });
+  });
+});

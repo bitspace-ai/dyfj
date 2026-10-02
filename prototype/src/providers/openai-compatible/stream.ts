@@ -328,10 +328,6 @@ export async function readOpenAIChatStream(
     }
     if (event.finishReason) finishReason = event.finishReason;
     if (event.usage) {
-      const previousPrompt = finiteNonnegativeTokenCount(usage?.prompt_tokens);
-      const incomingPrompt = finiteNonnegativeTokenCount(
-        event.usage.prompt_tokens,
-      );
       const previousCompletion = finiteNonnegativeTokenCount(
         usage?.completion_tokens,
       );
@@ -344,31 +340,7 @@ export async function readOpenAIChatStream(
       const incomingReasoning = finiteNonnegativeTokenCount(
         event.usage.completion_tokens_details?.reasoning_tokens,
       );
-      usage = {
-        ...(previousPrompt !== undefined || incomingPrompt !== undefined
-          ? {
-            prompt_tokens: Math.max(previousPrompt ?? 0, incomingPrompt ?? 0),
-          }
-          : {}),
-        ...(previousCompletion !== undefined || incomingCompletion !== undefined
-          ? {
-            completion_tokens: Math.max(
-              previousCompletion ?? 0,
-              incomingCompletion ?? 0,
-            ),
-          }
-          : {}),
-        ...(previousReasoning !== undefined || incomingReasoning !== undefined
-          ? {
-            completion_tokens_details: {
-              reasoning_tokens: Math.max(
-                previousReasoning ?? 0,
-                incomingReasoning ?? 0,
-              ),
-            },
-          }
-          : {}),
-      };
+      usage = mergeStreamUsage(usage, event.usage);
       if (
         incomingCompletion !== undefined &&
         (previousCompletion === undefined ||
@@ -484,5 +456,57 @@ export async function readOpenAIChatStream(
         : Math.round(completed - firstTokenAt),
       totalMs: Math.round(completed - requestStarted),
     },
+  };
+}
+
+/**
+ * Merge a streamed usage frame into the usage seen so far. Each count keeps
+ * the larger finite value, so a later partial frame cannot erase an earlier
+ * total; a count neither frame reports stays absent.
+ */
+export function mergeStreamUsage(
+  previous: OpenAIChatUsage | undefined,
+  incoming: OpenAIChatUsage,
+): OpenAIChatUsage {
+  const max = (a: number | undefined, b: number | undefined) => {
+    const x = finiteNonnegativeTokenCount(a);
+    const y = finiteNonnegativeTokenCount(b);
+    return x === undefined && y === undefined
+      ? undefined
+      : Math.max(x ?? 0, y ?? 0);
+  };
+  const prompt = max(previous?.prompt_tokens, incoming.prompt_tokens);
+  const completion = max(
+    previous?.completion_tokens,
+    incoming.completion_tokens,
+  );
+  const reasoning = max(
+    previous?.completion_tokens_details?.reasoning_tokens,
+    incoming.completion_tokens_details?.reasoning_tokens,
+  );
+  const cached = max(
+    previous?.prompt_tokens_details?.cached_tokens,
+    incoming.prompt_tokens_details?.cached_tokens,
+  );
+  const cacheWrite = max(
+    previous?.prompt_tokens_details?.cache_write_tokens,
+    incoming.prompt_tokens_details?.cache_write_tokens,
+  );
+  return {
+    ...(prompt !== undefined ? { prompt_tokens: prompt } : {}),
+    ...(completion !== undefined ? { completion_tokens: completion } : {}),
+    ...(reasoning !== undefined
+      ? { completion_tokens_details: { reasoning_tokens: reasoning } }
+      : {}),
+    ...(cached !== undefined || cacheWrite !== undefined
+      ? {
+        prompt_tokens_details: {
+          ...(cached !== undefined ? { cached_tokens: cached } : {}),
+          ...(cacheWrite !== undefined
+            ? { cache_write_tokens: cacheWrite }
+            : {}),
+        },
+      }
+      : {}),
   };
 }

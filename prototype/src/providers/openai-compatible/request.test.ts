@@ -29,6 +29,25 @@ describe("buildOpenAIChatRequest", () => {
     assertStrictEquals(body.stream, true);
   });
 
+  it("asks for streamed usage only when told to", () => {
+    const plain = buildOpenAIChatRequest("hosted", "system", "hello", true);
+    const metered = buildOpenAIChatRequest("hosted", "system", "hello", true, {
+      includeStreamUsage: true,
+    });
+    const unstreamed = buildOpenAIChatRequest(
+      "hosted",
+      "system",
+      "hello",
+      false,
+      { includeStreamUsage: true },
+    );
+
+    assertStrictEquals("stream_options" in plain, false);
+    assertEquals(metered.stream_options, { include_usage: true });
+    // stream_options is only valid on a streaming request.
+    assertStrictEquals("stream_options" in unstreamed, false);
+  });
+
   it("can carry an explicit completion ceiling", () => {
     const body = buildOpenAIChatRequest("hosted", "system", "hello", true, {
       maxCompletionTokens: 8192,

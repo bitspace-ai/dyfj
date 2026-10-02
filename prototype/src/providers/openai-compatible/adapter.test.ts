@@ -240,6 +240,31 @@ describe("runWorkbenchTurn streaming", () => {
     transport.assertDone();
   });
 
+  it("does not ask a local server for streamed usage", async () => {
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        body: `data: ${
+          JSON.stringify({
+            choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+          })
+        }\n` +
+          "data: [DONE]\n",
+      },
+    }]);
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      onTextDelta: () => {},
+      fetchFn: transport.fetch,
+    });
+
+    transport.assertDone();
+    const body = JSON.parse(transport.requests[0].body);
+    assertStrictEquals("stream_options" in body, false);
+  });
+
   it("trusts final provider usage over the character estimate", async () => {
     const text = "x".repeat(400);
     const transport = new ScriptedHttpTransport([{

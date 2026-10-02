@@ -74,11 +74,17 @@ export function buildOpenAIChatRequest(
     messages?: WorkbenchMessage[];
     maxCompletionTokens?: number;
     reasoningEffort?: string;
+    /**
+     * Ask a streaming response to end with a usage frame. OpenAI reports no
+     * usage on a stream without it; local servers are not sent it.
+     */
+    includeStreamUsage?: boolean;
   } = {},
 ) {
   const body: {
     model: string;
     stream: boolean;
+    stream_options?: { include_usage: true };
     messages: OpenAIWireMessage[];
     response_format?: { type: "json_object" };
     max_completion_tokens?: number;
@@ -98,6 +104,9 @@ export function buildOpenAIChatRequest(
       options.historyTools ?? options.tools,
     ),
   };
+  if (stream && options.includeStreamUsage) {
+    body.stream_options = { include_usage: true };
+  }
   if (options.jsonObject) {
     body.response_format = { type: "json_object" };
   }

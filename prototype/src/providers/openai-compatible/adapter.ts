@@ -165,6 +165,7 @@ async function executeOpenAICompatibleTurn(
             maxCompletionTokens: openAIHostedProviders.has(model.provider)
               ? requestOutputCap(model, request.maxOutputTokens)
               : request.maxOutputTokens,
+            includeStreamUsage: openAIHostedProviders.has(model.provider),
             reasoningEffort: (model.provider === "openai" &&
                 model.reasoningEffortControl &&
                 request.tools &&
@@ -289,13 +290,8 @@ async function executeOpenAICompatibleTurn(
       name: originalByWire.get(call.name) ?? call.name,
     }));
   }
-  const { input, output, reasoning, costTotal } = openAIChatUsage(
-    result,
-    generatedText,
-    request,
-    model,
-  );
-  const timings = withTimePerOutputToken(result.timings, output);
+  const metered = openAIChatUsage(result, generatedText, request, model);
+  const timings = withTimePerOutputToken(result.timings, metered.output);
   const unparsedToolCallMarkup = !result.aborted && finishReason !== "error"
     ? detectUnparsedToolCallMarkup(text)
     : undefined;
@@ -305,12 +301,12 @@ async function executeOpenAICompatibleTurn(
     model,
     selection,
     usage: {
-      input,
-      output,
-      cost: { total: costTotal },
-      cacheRead: 0,
-      cacheWrite: 0,
-      reasoning,
+      input: metered.input,
+      output: metered.output,
+      cost: { total: metered.costTotal },
+      cacheRead: metered.cacheRead,
+      cacheWrite: metered.cacheWrite,
+      reasoning: metered.reasoning,
     },
     stopReason: stopReasonWithAbort(
       result.aborted,
