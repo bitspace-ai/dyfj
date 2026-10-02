@@ -3,6 +3,7 @@ import {
   type UdsTestSocket,
   udsTestSocket,
 } from "../../testing/servers/uds-sockets.ts";
+import { fabricateStaleUdsSocket } from "../../testing/servers/listeners.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import type {
   JsonRpcRequest,
@@ -273,39 +274,9 @@ Deno.test("refuses to bind while a live runtime answers on the socket", async ()
 
 Deno.test("clears a genuinely stale socket and binds", async () => {
   const socketPath = udsTestSocket("listener-stale");
-  await removeIfPresent(socketPath);
   // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its socket
-  // file behind with nothing accepting. (A cleanly closed Deno listener
-  // removes its file, so this needs a hard-killed process.)
-  // The lane grants spawning exactly the selected Deno, passed as DENO_BIN.
-  const deno = Deno.env.get("DENO_BIN") ?? Deno.execPath();
-  const child = new Deno.Command(deno, {
-    args: [
-      "eval",
-      `Deno.listen({ transport: "unix", path: ${
-        JSON.stringify(socketPath)
-      } }); console.log("listening"); setInterval(() => {}, 1000);`,
-    ],
-    stdout: "piped",
-    stderr: "inherit",
-  }).spawn();
-  try {
-    // A pipe may split the line across reads: collect until the newline.
-    const reader = child.stdout.getReader();
-    const decoder = new TextDecoder();
-    let out = "";
-    while (!out.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      out += decoder.decode(value, { stream: true });
-    }
-    reader.releaseLock();
-    assertEquals(out.trim(), "listening");
-  } finally {
-    child.kill("SIGKILL");
-    await child.status;
-    await child.stdout.cancel().catch(() => {});
-  }
+  // file behind with nothing accepting.
+  await fabricateStaleUdsSocket(socketPath);
   assert(Deno.lstatSync(socketPath).isSocket);
 
   await assertSocketBindable(socketPath);

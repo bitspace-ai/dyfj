@@ -1,5 +1,6 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
+import { connectUdsPair } from "../../testing/servers/listeners.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
 
@@ -12,16 +13,7 @@ async function connectPair(
   clientHandlers: RpcHandlers = {},
 ) {
   const sock = udsTestSocket("peer");
-  try {
-    await Deno.remove(sock);
-  } catch {
-    // already gone
-  }
-  const listener = Deno.listen({ transport: "unix", path: sock });
-  const accepting = listener.accept();
-  const clientConn = await Deno.connect({ transport: "unix", path: sock });
-  const serverConn = await accepting;
-  listener.close();
+  const { server: serverConn, client: clientConn } = await connectUdsPair(sock);
   const server = new JsonRpcPeer(serverConn, { handlers: serverHandlers });
   const client = new JsonRpcPeer(clientConn, { handlers: clientHandlers });
   const loops = Promise.all([server.run(), client.run()]);
