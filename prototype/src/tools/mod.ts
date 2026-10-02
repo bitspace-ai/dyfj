@@ -68,3 +68,17 @@ export {
 } from "./catalog.ts";
 export { executeReadMemory } from "./builtin/memory.ts";
 export { RootAnchors } from "./builtin/root-anchors.ts";
+export {
+  buildMemoryContextSourceLines,
+  buildSystemPrompt,
+  loadIndexedMemories,
+  loadInjectedMemories,
+} from "./builtin/memory-records.ts";
+export {
+  buildExternalMcpCommands,
+  externalMcpCommandsForTransport,
+} from "./mcp/adapter.ts";
+export {
+  buildMemorySearch,
+  memorySearchConfigFromEnv,
+} from "./mcp/memory-search.ts";

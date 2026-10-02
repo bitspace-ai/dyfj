@@ -64,9 +64,12 @@ import {
   SessionOwners,
   type TurnRuntime,
 } from "../engine/mod.ts";
-import { type CommandDefinition, RootAnchors } from "../tools/mod.ts";
+import {
+  buildExternalMcpCommands,
+  type CommandDefinition,
+  RootAnchors,
+} from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
-import { buildExternalMcpCommands } from "../tools/mcp/adapter.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
 import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";

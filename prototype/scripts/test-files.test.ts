@@ -75,6 +75,8 @@ Deno.test("discovery walks every source root and nothing else", async () => {
         "testing/fakes/map-env.ts",
         "testing/fakes/map-env.test.ts",
         "testing/golden/run.test.ts",
+        "diagnostics/workbench-events.ts",
+        "diagnostics/workbench-events.test.ts",
         "examples/outside.ts",
         "root-config.ts",
       ]
@@ -86,6 +88,7 @@ Deno.test("discovery walks every source root and nothing else", async () => {
       await Deno.writeTextFile(`${root}/${path}`, "");
     }
     assertEquals(discoverTypecheckSources(root), [
+      "diagnostics/workbench-events.ts",
       "mcp/server.ts",
       "scripts/tool.ts",
       "src/cli.ts",
@@ -93,6 +96,7 @@ Deno.test("discovery walks every source root and nothing else", async () => {
       "testing/fakes/map-env.ts",
     ]);
     assertEquals(discoverTestSources(root), [
+      "diagnostics/workbench-events.test.ts",
       "src/cli.test.ts",
       "src/memory.integration.test.ts",
       "testing/fakes/map-env.test.ts",

@@ -200,9 +200,8 @@ README are tracked separately in its Revision history section.
   memory recall (`src/memory-search.ts`) are under `src/tools/mcp/` as
   `adapter.ts`, `conformance.ts` and `memory-search.ts`; and the memory record
   format (`src/memory.ts`) is `src/tools/builtin/memory-records.ts`. Their tests
-  moved with them. `resolveSecrets`, `secretsRunGrant` and
-  `writeModelSelectedEvent` are now exported through `config/mod.ts` and
-  `store/mod.ts`. The four manual diagnostic helpers
+  moved with them. Their callers outside the unit now import them through
+  `config/mod.ts`, `store/mod.ts` and `tools/mod.ts`. The four manual diagnostic helpers
   (`model-response-modes`, `context-size-response`, `structured-output`,
   `workbench-events`) moved to the new `prototype/diagnostics/`, outside the
   runtime graph; the typecheck and unit-test file lists now include it.
