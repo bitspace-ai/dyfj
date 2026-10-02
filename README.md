@@ -1828,3 +1828,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - The Rust REPL description lists what it now covers (the per-turn
   receipt line and the `/model`, `/fast`, `/session`, `/friction` and `/idea`
   commands) and no longer says those stay in the TypeScript CLI.
+- 2026-10-02 - The interactive-terminal section says a bare `dyfj` now opens the
+  Rust REPL when it can, and how `DYFJ_REPL` and `DYFJ_REPL_BIN` choose or
+  require a front end.

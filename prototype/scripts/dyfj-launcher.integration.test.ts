@@ -1302,14 +1302,57 @@ describe("interactive REPL front-end selection", () => {
 
   it("leaves subcommands and prompts alone whatever DYFJ_REPL says", async () => {
     const bin = await fakeReplBin();
-    for (const args of [["status"], ["-p", "hi"], ["--help"]]) {
-      const { code, out } = await launch(
-        { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
-        args,
-      );
-      assertStrictEquals(code, 0, args.join(" "));
-      assertNotMatch(out, /route=rust_repl/);
+    for (const mode of ["rust", "invalid"]) {
+      for (const args of [["status"], ["-p", "hi"], ["--help"]]) {
+        const { code, out } = await launch(
+          { DYFJ_REPL: mode, DYFJ_REPL_BIN: bin },
+          args,
+        );
+        assertStrictEquals(code, 0, `${mode}: ${args.join(" ")}`);
+        assertNotMatch(out, /route=rust_repl/);
+      }
     }
+  });
+
+  it("hands a REPL flag whose value starts with -- to the TypeScript REPL", async () => {
+    const bin = await fakeReplBin();
+    const { code, err } = await launch(
+      { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
+      ["--model", "--fast"],
+    );
+    assertStrictEquals(code, 2);
+    assertStringIncludes(err, "only the TypeScript REPL takes");
+  });
+
+  it("execs the Rust REPL with its flags and --socket as DYFJ_SOCKET", async () => {
+    const dir = await Deno.makeTempDir();
+    const bin = `${dir}/dyfj-repl`;
+    const record = `${dir}/record`;
+    await Deno.writeTextFile(
+      bin,
+      `#!/bin/sh\nprintf '%s\\n' "sock=$DYFJ_SOCKET" "$@" > '${record}'\n`,
+    );
+    await Deno.chmod(bin, 0o755);
+    const { code } = await launch(
+      {
+        DYFJ_LAUNCHER_DRY_RUN: "",
+        DYFJ_REPL: "rust",
+        DYFJ_REPL_BIN: bin,
+      },
+      [
+        "--no-autostart",
+        "--model",
+        "z-ai/glm-5.2",
+        "--approve-paid",
+        "--socket",
+        "/tmp/r.sock",
+      ],
+    );
+    assertStrictEquals(code, 0);
+    assertStrictEquals(
+      await Deno.readTextFile(record),
+      "sock=/tmp/r.sock\n--model\nz-ai/glm-5.2\n--approve-paid\n",
+    );
   });
 
   it("DYFJ_REPL=rust refuses a session the Rust REPL cannot take", async () => {

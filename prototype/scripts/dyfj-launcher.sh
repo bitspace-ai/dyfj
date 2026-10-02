@@ -655,7 +655,8 @@ rust_repl_args() {
         i=$((i + 1))
         ;;
       --model|--session|--workspace)
-        [[ $((i + 1)) -lt ${#args[@]} ]] || return 1
+        # The Rust REPL refuses a value that starts with --, as a missing one.
+        [[ $((i + 1)) -lt ${#args[@]} && "${args[$((i + 1))]}" != --* ]] || return 1
         RUST_REPL_ARGS+=("${args[$i]}" "${args[$((i + 1))]}")
         i=$((i + 2))
         ;;
@@ -675,6 +676,12 @@ rust_repl_args() {
 # Returns 2 when DYFJ_REPL=rust asked for it and an interactive session
 # cannot run there; other invocations are unaffected by DYFJ_REPL.
 rust_repl_route() {
+  # Subcommands, prompts and help are not REPL sessions, so DYFJ_REPL is not
+  # read for them at all, not even to check its value.
+  if [[ -n "$LAUNCHER_SUBCOMMAND" || "$LAUNCHER_SAW_HELP" == "1" ||
+    "$LAUNCHER_SAW_PROMPT" == "1" || "$LAUNCHER_ARGS_INVALID" == "1" ]]; then
+    return 1
+  fi
   local mode="${DYFJ_REPL:-auto}"
   [[ "$mode" == "ts" ]] && return 1
   if [[ "$mode" != "auto" && "$mode" != "rust" ]]; then
@@ -683,11 +690,6 @@ rust_repl_route() {
   fi
   local reason=""
   local bin=""
-  # Subcommands, prompts and help are not REPL sessions, whatever DYFJ_REPL says.
-  if [[ -n "$LAUNCHER_SUBCOMMAND" || "$LAUNCHER_SAW_HELP" == "1" ||
-    "$LAUNCHER_SAW_PROMPT" == "1" || "$LAUNCHER_ARGS_INVALID" == "1" ]]; then
-    return 1
-  fi
   if ! rust_repl_args; then
     reason="an argument is one only the TypeScript REPL takes"
   elif ! bin="$(rust_repl_bin)"; then
