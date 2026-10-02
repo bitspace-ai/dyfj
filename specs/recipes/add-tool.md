@@ -27,7 +27,7 @@ Cost: one module, one catalog line, passing the tool conformance kit. Nothing in
 ### 1. The module
 
 Create `src/tools/builtin/<name>.ts` (or add to the module of the family it
-belongs to, as the file tools share `builtin/file.ts`). It holds the executor
+belongs to, as the file tools share `builtin/file*.ts`). It holds the executor
 and, beside it, the definition:
 
 ```ts

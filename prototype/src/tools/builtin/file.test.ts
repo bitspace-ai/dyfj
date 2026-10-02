@@ -19,18 +19,15 @@ import {
   assertThrows,
 } from "@std/assert";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { isWithinRoot, resolveWorkspacePath } from "./file-access.ts";
+import { matchesGlobPath } from "./file-glob.ts";
+import { executeListFiles, executeReadFile } from "./file-read.ts";
 import {
   clampLimit,
-  executeEditFile,
   executeGlobFiles,
   executeGrepFiles,
-  executeListFiles,
-  executeReadFile,
-  executeWriteFile,
-  isWithinRoot,
-  matchesGlobPath,
-  resolveWorkspacePath,
-} from "./file.ts";
+} from "./file-search.ts";
+import { executeEditFile, executeWriteFile } from "./file-write.ts";
 import { RootAnchors } from "./root-anchors.ts";
 
 // The file tools verify each root against the anchors it is bound to. One

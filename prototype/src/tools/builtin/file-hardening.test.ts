@@ -21,20 +21,21 @@ import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { resolve as resolvePath } from "node:path";
 import {
   excludedSegment,
-  executeGlobFiles,
-  executeGrepFiles,
-  executeReadFile,
-  executeWriteFile,
-  matchesGlobPath,
-  newGlobBudget,
-  newWalkBudget,
   safeErrorReason,
   sameFileVersion,
   sanitizeOutputPathField,
   sanitizeOutputText,
   toPosixPath,
+} from "./file-access.ts";
+import { matchesGlobPath, newGlobBudget } from "./file-glob.ts";
+import { executeReadFile } from "./file-read.ts";
+import {
+  executeGlobFiles,
+  executeGrepFiles,
+  newWalkBudget,
   walkNotes,
-} from "./file.ts";
+} from "./file-search.ts";
+import { executeWriteFile } from "./file-write.ts";
 import { RootAnchors } from "./root-anchors.ts";
 
 // The file tools verify each root against the anchors it is bound to. One

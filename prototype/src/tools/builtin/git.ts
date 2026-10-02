@@ -52,7 +52,7 @@ import {
   resolveWorkspacePath,
   sanitizeOutputText,
   toPosixPath,
-} from "./file.ts";
+} from "./file-access.ts";
 
 export interface GitResult {
   code: number;

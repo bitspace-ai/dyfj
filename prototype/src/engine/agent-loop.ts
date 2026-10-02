@@ -288,7 +288,7 @@ function startCommand(
       // Agent-loop tool calls (call + result) are audit-relevant, but
       // BEST_EFFORT rather than integrity-required, unlike session_start and
       // model_response: a tool result's size is bounded only by the
-      // model-facing tool cap (tools/builtin/file.ts), not by anything this
+      // model-facing tool cap (tools/builtin/file-access.ts), not by anything this
       // loop controls, so the event copy can fail for reasons unrelated to
       // whether the tool call itself succeeded. A per-tool-call event-write
       // failure must not fail an otherwise-successful tool step or turn — the

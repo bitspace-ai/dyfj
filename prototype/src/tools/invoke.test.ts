@@ -386,7 +386,7 @@ describe("invokeCommandWithEvent", () => {
 // ── Event-copy size cap (tool-result overflow containment) ─────────────────────────────────────────────
 //
 // events.tool_result is a Dolt/MySQL TEXT column: 65,535 bytes. A tool result
-// can run right up to the model-facing 64KB cap (builtin/file.ts), which
+// can run right up to the model-facing 64KB cap (builtin/file-read.ts), which
 // overflows the column once bytes (not chars) are counted. The event copy
 // must be capped independently of, and well below, the model-facing value.
 const DOLT_TEXT_COLUMN_MAX_BYTES = 65_535;
@@ -447,7 +447,7 @@ describe("truncateForEventColumn", () => {
 
 describe("buildCommandToolCallEventPayload — event copy size cap", () => {
   it("caps a maximally-truncated read_file-sized result below the TEXT column limit", () => {
-    // Mirrors builtin/file.ts's DEFAULT_MAX_BYTES (64 * 1024 encoded bytes) plus its
+    // Mirrors builtin/file-access.ts's DEFAULT_MAX_BYTES (64 * 1024 encoded bytes) plus its
     // own truncation suffix — the exact shape that overflowed the column in
     // the original tool-result overflow defect.
     const modelFacingResult = "a".repeat(64 * 1024) +
@@ -511,13 +511,13 @@ describe("buildCommandToolCallEventPayload — event copy size cap", () => {
 // invokeCommandWithEvent: the call must resolve (not throw), the persisted
 // event's tool_result must fit the Dolt TEXT column, and the model-facing
 // result — what actually goes back on the transcript — must be untouched by
-// this change (builtin/file.ts's own truncation behavior is a non-goal here).
+// this change (builtin/file-read.ts's own truncation behavior is a non-goal here).
 describe("read_file → tool_call event containment", () => {
   let root: string;
 
   beforeAll(async () => {
     root = await Deno.makeTempDir();
-    // One character over the model-facing 64KB cap so builtin/file.ts's own
+    // One character over the model-facing 64KB cap so builtin/file-read.ts's own
     // truncation kicks in — the exact receipted trigger shape.
     await Deno.writeTextFile(`${root}/big.txt`, "a".repeat(64 * 1024 + 500));
   });
@@ -546,7 +546,7 @@ describe("read_file → tool_call event containment", () => {
       },
     );
 
-    // The model-facing result keeps builtin/file.ts's own 64KB byte cap —
+    // The model-facing result keeps builtin/file-read.ts's own 64KB byte cap —
     // unchanged by this fix (non-goal).
     assertStrictEquals(result.isError, false);
     if (!("result" in result)) throw new Error("expected an allowed result");
