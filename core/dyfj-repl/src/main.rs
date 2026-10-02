@@ -89,7 +89,7 @@ usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--session <id>] [--
   --approve-paid    opt this session into paid inference
   --fast            use the fast speed tier on models that support it
   --session <id>    resume a runtime session
-  --workspace <d>   scope file tools to this directory (default: cwd; env DYFJ_WORKSPACE)";
+  --workspace <d>   scope a new session's file tools to this directory (default: cwd; env DYFJ_WORKSPACE)";
 
 /// Build the starting session from the command line and environment.
 /// `Ok(None)` means help was asked for.
@@ -121,6 +121,11 @@ fn parse_args(
             "--session" => session.id = Some(value("--session")?),
             other => return Err(format!("unknown argument {other}")),
         }
+    }
+    // A resumed session keeps the workspace stored on its row; the runtime
+    // never moves it, so a local default here would only misreport it.
+    if session.id.is_some() {
+        session.workspace = None;
     }
     Ok(Some(session))
 }
@@ -184,12 +189,7 @@ async fn main() -> Result<()> {
             Err(_) => break,
         };
 
-        if let Some(command) = commands::parse(&line) {
-            commands::run(command, &client, &mut session).await;
-            session.last_command = Some(line.trim().to_string());
-            continue;
-        }
-
+        // The input ceiling applies before anything is sent, commands included.
         match classify(&line) {
             Submission::Empty => continue,
             Submission::Quit => break,
@@ -201,6 +201,13 @@ async fn main() -> Result<()> {
                 continue;
             }
             Submission::Prompt => {}
+        }
+
+        if let Some(command) = commands::parse(&line) {
+            let prompter = commands::Prompter { input: &input, incoming: &mut incoming };
+            commands::run(command, &client, &mut session, prompter).await;
+            session.last_command = Some(line.trim().to_string());
+            continue;
         }
 
         run_turn(
@@ -626,7 +633,8 @@ mod tests {
         assert!(session.approve_paid);
         assert_eq!(session.fast, Some(true));
         assert_eq!(session.id.as_deref(), Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H"));
-        assert_eq!(session.workspace.as_deref(), Some("/cwd"));
+        // A resumed session's workspace is the one stored on its row.
+        assert_eq!(session.workspace, None);
     }
 
     /// The same precedence the TypeScript CLI uses: a flag, then the

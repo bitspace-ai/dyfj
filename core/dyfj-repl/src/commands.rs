@@ -8,10 +8,23 @@
 //! Each command talks to the runtime over the same socket the turns use and
 //! prints to stderr, keeping stdout for answers.
 
-use crate::approval::visible;
-use crate::client::Client;
+use crate::approval::{self, visible};
+use crate::client::{Client, Incoming};
 use crate::session::Session;
+use crate::terminal::Ask;
 use serde_json::{Value, json};
+use tokio::sync::mpsc;
+
+/// The terminal side a command needs when the runtime may ask the operator
+/// something mid-request: the input reader and the runtime's message channel.
+pub struct Prompter<'a> {
+    pub input: &'a mpsc::Sender<Ask>,
+    pub incoming: &'a mut mpsc::Receiver<Incoming>,
+}
+
+/// Matches `FRICTION_COMMAND_MAX_CHARACTERS` in the TypeScript friction
+/// extension: the posted last-command context is clipped to this length.
+const FRICTION_COMMAND_MAX_CHARACTERS: usize = 120;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -172,7 +185,12 @@ commands (type them alone on a line; inside a paste they are prompt text):
   /quit, /exit, Ctrl-D                                 leave";
 
 /// Run a parsed command against the runtime.
-pub async fn run(command: Command, client: &Client, session: &mut Session) {
+pub async fn run(
+    command: Command,
+    client: &Client,
+    session: &mut Session,
+    prompter: Prompter<'_>,
+) {
     match command {
         Command::Help => eprintln!("{HELP}"),
         Command::Usage(message) => eprintln!("{message}"),
@@ -189,7 +207,7 @@ pub async fn run(command: Command, client: &Client, session: &mut Session) {
             severity,
             escaped,
             text,
-        } => friction(client, session, &severity, escaped, &text).await,
+        } => friction(client, prompter, session, &severity, escaped, &text).await,
         Command::IdeaMark(label) => idea_mark(client, session, &label).await,
         Command::IdeaList => idea_list(client, session).await,
     }
@@ -223,6 +241,81 @@ fn fast_capable(row: Option<&Value>) -> bool {
     row.and_then(|r| r.get("capabilities"))
         .and_then(Value::as_array)
         .is_some_and(|caps| caps.iter().any(|c| c.as_str() == Some("fast-speed")))
+}
+
+/// The model a turn would run on: the explicit choice, else the runtime's
+/// default turn model from `runtime/status`.
+async fn active_slug(client: &Client, session: &Session) -> Option<String> {
+    if let Some(model) = &session.model {
+        return Some(model.clone());
+    }
+    let status = client.request("runtime/status", json!({})).await.ok()?;
+    status
+        .pointer("/runtime/defaultTurnModel/slug")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn find_row<'a>(rows: &'a [Value], slug: Option<&str>) -> Option<&'a Value> {
+    slug.and_then(|s| rows.iter().find(|r| str_field(r, "slug") == s))
+}
+
+/// Answer approvals the runtime raises while `method` is in flight. A
+/// `friction/post` write can need the operator's verdict before the runtime
+/// answers, and nothing else reads the channel between turns.
+async fn request_answering_approvals(
+    client: &Client,
+    prompter: Prompter<'_>,
+    method: &str,
+    params: Value,
+) -> anyhow::Result<Value> {
+    let pending = client.request(method, params);
+    tokio::pin!(pending);
+    loop {
+        tokio::select! {
+            outcome = &mut pending => return outcome,
+            message = prompter.incoming.recv() => match message {
+                Some(Incoming::Approval { params, respond }) => {
+                    let verdict = approval::ask(prompter.input, &params).await;
+                    let _ = respond.send(verdict);
+                }
+                // No turn is running, so a stray frame has nothing to render into.
+                Some(Incoming::Stream(_)) => {}
+                None => return (&mut pending).await,
+            },
+        }
+    }
+}
+
+/// The posted friction context, normalised as the TypeScript client does:
+/// the workspace reduced to its basename and the command clipped, so an
+/// absolute path never leaves the machine.
+fn friction_context(session: &Session, id: &str) -> Value {
+    let mut context = json!({"sessionId": id});
+    if let Some(model) = &session.last_model {
+        context["model"] = json!(model);
+    }
+    if let Some(name) = session
+        .workspace
+        .as_deref()
+        .and_then(|w| std::path::Path::new(w).file_name())
+    {
+        context["workspace"] = json!(name.to_string_lossy());
+    }
+    if let Some(command) = session.last_command.as_deref().filter(|c| c.starts_with('/')) {
+        let clipped = if command.chars().count() <= FRICTION_COMMAND_MAX_CHARACTERS {
+            command.to_string()
+        } else {
+            let mut head: String = command
+                .chars()
+                .take(FRICTION_COMMAND_MAX_CHARACTERS - 1)
+                .collect();
+            head.push('…');
+            head
+        };
+        context["command"] = json!(clipped);
+    }
+    context
 }
 
 /// The selectable rows grouped by access modality, then the quarantined
@@ -337,10 +430,11 @@ async fn model(
     let Some(rows) = list_models(client).await else {
         return;
     };
-    let target = slug.clone().or_else(|| session.model.clone());
-    let row = target
-        .as_deref()
-        .and_then(|s| rows.iter().find(|r| str_field(r, "slug") == s));
+    let target = match &slug {
+        Some(s) => Some(s.clone()),
+        None => active_slug(client, session).await,
+    };
+    let row = find_row(&rows, target.as_deref());
     if let Some(slug) = &slug {
         let Some(row) = row else {
             eprintln!(
@@ -357,7 +451,10 @@ async fn model(
         }
     }
     if fast == Some(true) && !fast_capable(row) {
-        eprintln!("the fast speed tier is not supported by this model");
+        eprintln!(
+            "the fast speed tier is not supported by \"{}\"",
+            visible(target.as_deref().unwrap_or("the runtime default"))
+        );
         return;
     }
     if slug.is_none() && fast.is_none() && !approve_paid {
@@ -392,13 +489,11 @@ async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool
         return;
     };
     if want {
-        let row = session
-            .model
-            .as_deref()
-            .and_then(|s| rows.iter().find(|r| str_field(r, "slug") == s));
-        if !fast_capable(row) {
+        let active = active_slug(client, session).await;
+        if !fast_capable(find_row(&rows, active.as_deref())) {
             eprintln!(
-                "the fast speed tier is not supported by the current model; pick one with /model"
+                "the fast speed tier is not supported by \"{}\"; pick another model with /model",
+                visible(active.as_deref().unwrap_or("the runtime default"))
             );
             return;
         }
@@ -481,26 +576,22 @@ async fn session_switch(client: &Client, session: &mut Session, id: String) {
     session.switch_to(id, workspace);
 }
 
-async fn friction(client: &Client, session: &Session, severity: &str, escaped: bool, text: &str) {
+async fn friction(
+    client: &Client,
+    prompter: Prompter<'_>,
+    session: &Session,
+    severity: &str,
+    escaped: bool,
+    text: &str,
+) {
     let Some(id) = &session.id else {
         eprintln!("no session yet; send a prompt first before posting friction");
         return;
     };
-    // The runtime normalises the context (workspace to its basename, the
-    // command clipped); only the session's own facts are sent.
-    let mut context = json!({"sessionId": id});
-    if let Some(model) = &session.last_model {
-        context["model"] = json!(model);
-    }
-    if let Some(workspace) = &session.workspace {
-        context["workspace"] = json!(workspace);
-    }
-    if let Some(command) = &session.last_command {
-        context["command"] = json!(command);
-    }
+    let context = friction_context(session, id);
     let params =
         json!({"severity": severity, "escaped": escaped, "text": text, "context": context});
-    match client.request("friction/post", params).await {
+    match request_answering_approvals(client, prompter, "friction/post", params).await {
         Ok(v) => {
             eprintln!("{}", visible(str_field(&v, "firstLine")));
             eprintln!("comment id: {}", visible(str_field(&v, "commentId")));
@@ -561,7 +652,30 @@ async fn idea_list(client: &Client, session: &Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, format_models, parse};
+    use super::{Command, format_models, friction_context, parse};
+    use crate::session::Session;
+
+    /// The posted context never carries an absolute path, and a long command
+    /// is clipped as the TypeScript client clips it.
+    #[test]
+    fn friction_context_posts_the_workspace_basename_and_a_clipped_command() {
+        let session = Session {
+            workspace: Some("/work/projects/dyfj".into()),
+            last_model: Some("z-ai/glm-5.2".into()),
+            last_command: Some(format!("/idea mark {}", "x".repeat(200))),
+            ..Session::default()
+        };
+        let context = friction_context(&session, "S1");
+        assert_eq!(context["sessionId"], "S1");
+        assert_eq!(context["model"], "z-ai/glm-5.2");
+        assert_eq!(context["workspace"], "dyfj");
+        let command = context["command"].as_str().unwrap();
+        assert_eq!(command.chars().count(), 120);
+        assert!(command.ends_with('…'));
+
+        let bare = friction_context(&Session::default(), "S1");
+        assert_eq!(bare, serde_json::json!({"sessionId": "S1"}));
+    }
     use serde_json::json;
 
     #[test]
