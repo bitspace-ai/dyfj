@@ -910,11 +910,10 @@ README are tracked separately in its Revision history section.
 
 - **The missing-credential error points at the real recovery.** A hosted turn
   whose provider key is absent used to say to project the key with `op run` at
-  process start. It now says that secrets resolve once at runtime start, that a
-  pointer unavailable then needs its failure fixed (a locked vault, a failing
-  resolver command, a bad pointer) and a runtime restart, that setting the key or declaring it under `[secrets]`
-  needs the same restart, and that `dyfj status` names any pointer that
-  failed.
+  process start. It now says that secrets resolve only at runtime start: fix
+  the failure `dyfj status` reports, or set the key or declare it under
+  `[secrets]`, then restart the runtime. The message stays inside the wire
+  summary's size limit, so the restart advice is never cut off.
 - **Hosted OpenAI-compatible turns meter prompt-cache traffic**: on OpenAI,
   OpenRouter and xAI the receipt reported zero cache reads and writes and
   charged every prompt token at the full input rate, because the adapter

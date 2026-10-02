@@ -60,13 +60,9 @@ export class HostedProviderCredentialMissingError extends DomainError {
     super(
       `Hosted provider credential missing for ${errorField(slug)}: ` +
         `${errorField(envVar)} is not in the runtime's environment. ` +
-        `Secrets resolve once, when the runtime starts: if its pointer was ` +
-        `unavailable then, \`dyfj status\` names it and the reason; fix ` +
-        `that (a locked vault, a failing resolver command, a bad pointer) ` +
-        `and restart the runtime (\`dyfj stop\`, then start it again). ` +
-        `Otherwise set it ` +
-        `or declare it under [secrets], then restart the runtime the same ` +
-        `way: a running runtime does not reread its environment or config.`,
+        `Secrets resolve only at start: fix what \`dyfj status\` reports ` +
+        `for it, or set it or declare it under [secrets], then restart the ` +
+        `runtime (\`dyfj stop\`, then start it).`,
     );
     this.name = "HostedProviderCredentialMissingError";
   }
