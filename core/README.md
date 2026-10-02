@@ -35,7 +35,7 @@ Commands are recognised only when typed alone on one line, so a pasted block tha
 - `/session`, `/session list`, `/session switch <id>` show the current session, list recent ones, or resume one.
 - `/friction <blocker|major|minor|paper-cut> [--escaped] <text>` posts a friction entry with the session, model, workspace name (never its path) and last command as context (`friction/post`), answering any approval the runtime asks for the write.
 - `/idea mark <label>` and `/idea list` mark and list ideas for the current session.
-- `/help` lists them; `/quit`, `/exit` or Ctrl-D leave. Ctrl-C while a command waits on the runtime abandons that command, as it cancels a turn.
+- `/help` lists them; `/quit`, `/exit` or Ctrl-D leave. Ctrl-C while a command waits on the runtime abandons that command, as it cancels a turn; during `/friction` it denies any approval the post then asks for and waits for the runtime to settle it, so the abandoned write cannot be approved later.
 
 External-runner (ACP) receipts are named rather than rendered; that route is deferred for daily use and stays in the TypeScript client.
 
