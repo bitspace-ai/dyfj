@@ -15,13 +15,18 @@ README are tracked separately in its Revision history section.
   turn request as the TypeScript client: the chosen model and fast tier, the
   per-session paid opt-in, and the workspace for a new session, set with
   `--model`, `--fast`, `--approve-paid`, `--workspace` and `--session` (or
-  `DYFJ_WORKBENCH_MODEL` and `DYFJ_WORKSPACE`). Each turn ends with a receipt
+  `DYFJ_WORKBENCH_MODEL` and `DYFJ_WORKSPACE`); `--session` takes the id or
+  the slug `dyfj sessions` lists and refuses anything else at startup, and the
+  startup posture line names the chosen model, fast tier and paid opt-in
+  rather than the runtime's defaults. Each turn ends with a receipt
   line naming the model, turn and session cost, tokens, prompt-cache reads and
   writes when reported, tool steps and the route reason. The commands
   `/model`, `/fast`, `/session` (show, list, switch), `/friction`, `/idea mark`,
   `/idea list` and `/help` are recognised only when typed alone on one line, so
   pasted text that contains them stays prompt text and an unknown `/word` is
-  sent as a prompt; the input length limit applies to them too. `/model`
+  sent as a prompt; the input length limit applies to them too, and Ctrl-C
+  while one waits on the runtime abandons it without cancelling the next
+  turn. `/model`
   refuses unknown and unroutable slugs. `/friction` posts only the
   workspace's name, never its path.
 - **Test lanes have deadlines and outlive neither a hang nor a killed gate.**

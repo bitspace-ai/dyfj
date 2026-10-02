@@ -118,7 +118,17 @@ fn parse_args(
             "--fast" => session.fast = Some(true),
             "--model" => session.model = Some(value("--model")?),
             "--workspace" => session.workspace = Some(value("--workspace")?),
-            "--session" => session.id = Some(value("--session")?),
+            "--session" => {
+                let reference = value("--session")?;
+                let id = commands::normalize_session_ref(&reference).ok_or_else(|| {
+                    format!(
+                        "--session expects a session id or a slug as listed by \
+                         'dyfj sessions', got: {}",
+                        approval::visible(&reference)
+                    )
+                })?;
+                session.id = Some(id);
+            }
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -159,7 +169,7 @@ async fn main() -> Result<()> {
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
     match client.request("runtime/status", json!({})).await {
-        Ok(status) => println!("{}", posture::line(&status, &socket)),
+        Ok(status) => println!("{}", posture::line(&status, &session, &socket)),
         Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), &socket)),
     }
 
@@ -204,9 +214,20 @@ async fn main() -> Result<()> {
         }
 
         if let Some(command) = commands::parse(&line) {
+            // `/friction` is not context for the next `/friction`: recording it
+            // would post one report's text inside the next one's context.
+            let records = !matches!(command, commands::Command::Friction { .. });
             let prompter = commands::Prompter { input: &input, incoming: &mut incoming };
-            commands::run(command, &client, &mut session, prompter).await;
-            session.last_command = Some(line.trim().to_string());
+            // A command waits on the runtime in cooked mode, as a turn does, so
+            // Ctrl-C is a SIGINT here too. It abandons the command; left
+            // unpolled, it would instead cancel the next turn.
+            tokio::select! {
+                _ = commands::run(command, &client, &mut session, prompter) => {}
+                _ = interrupts.recv() => eprintln!("\ncommand interrupted"),
+            }
+            if records {
+                session.last_command = Some(line.trim().to_string());
+            }
             continue;
         }
 
@@ -635,6 +656,17 @@ mod tests {
         assert_eq!(session.id.as_deref(), Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H"));
         // A resumed session's workspace is the one stored on its row.
         assert_eq!(session.workspace, None);
+    }
+
+    /// A malformed id fails at startup rather than at the first turn, and the
+    /// slug `dyfj sessions` lists is accepted as the TypeScript CLI accepts it.
+    #[test]
+    fn a_session_reference_is_validated_and_canonicalised() {
+        let parse = |value: &str| super::parse_args(&args(&["--session", value]), env(&[]), None);
+        let err = parse("nope").unwrap_err();
+        assert!(err.contains("--session expects a session id"), "{err}");
+        let session = parse("workbench-01j9zq4w8x6v5t3r2p1n0m9k8h").unwrap().unwrap();
+        assert_eq!(session.id.as_deref(), Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H"));
     }
 
     /// The same precedence the TypeScript CLI uses: a flag, then the

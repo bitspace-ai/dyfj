@@ -68,6 +68,17 @@ fn is_session_id(id: &str) -> bool {
             .all(|c| c.is_ascii_digit() || (c.is_ascii_alphabetic() && !"IiLlOoUu".contains(c)))
 }
 
+/// A session reference as `--session` and `/session switch` accept it: the
+/// bare id or the `workbench-<id>` slug `dyfj sessions` lists, returned as the
+/// canonical uppercase id (`normalizeSessionRef` in the TypeScript client).
+pub fn normalize_session_ref(value: &str) -> Option<String> {
+    let candidate = match value.get(..10) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("workbench-") => &value[10..],
+        _ => value,
+    };
+    is_session_id(candidate).then(|| candidate.to_ascii_uppercase())
+}
+
 /// Parse one completed input. `None` means it is a prompt, not a command.
 pub fn parse(input: &str) -> Option<Command> {
     let trimmed = input.trim();
@@ -89,10 +100,12 @@ pub fn parse(input: &str) -> Option<Command> {
         "/session" => match args.as_slice() {
             [] => Command::SessionShow,
             ["list"] => Command::SessionList,
-            ["switch", id] if is_session_id(id) => Command::SessionSwitch((*id).to_string()),
-            ["switch", _] => Command::Usage(
-                "session ids are 26 Crockford Base32 characters (see /session list)".into(),
-            ),
+            ["switch", id] => match normalize_session_ref(id) {
+                Some(id) => Command::SessionSwitch(id),
+                None => Command::Usage(
+                    "session ids are 26 Crockford Base32 characters (see /session list)".into(),
+                ),
+            },
             _ => Command::Usage("usage: /session, /session list, /session switch <id>".into()),
         },
         "/friction" => parse_friction(trimmed["/friction".len()..].trim()),
@@ -730,6 +743,11 @@ mod tests {
             parse("/session switch short"),
             Some(Command::Usage(_))
         ));
+        // The slug `dyfj sessions` lists, in any case, resolves to the id.
+        assert_eq!(
+            parse("/session switch workbench-01j9zq4w8x6v5t3r2p1n0m9k8h"),
+            Some(Command::SessionSwitch("01J9ZQ4W8X6V5T3R2P1N0M9K8H".into()))
+        );
     }
 
     #[test]
@@ -794,5 +812,180 @@ mod tests {
         assert!(!selectable.contains("router-unpriced"), "{selectable}");
         assert!(lines[quarantine + 1].contains("router-unpriced"));
         assert!(lines[quarantine + 1].ends_with("[not routable: unpriced]"));
+    }
+}
+
+/// The command paths driven end to end against a fake runtime on the other
+/// end of a socket pair: the requests each command sends, the approvals it
+/// answers, and what it changes on the session.
+#[cfg(test)]
+mod run_tests {
+    use super::{Command, Prompter, run};
+    use crate::client::{Client, Incoming};
+    use crate::session::Session;
+    use crate::terminal::{Ask, ReadOutcome};
+    use serde_json::{Value, json};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+    use tokio::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+    use tokio::task::JoinHandle;
+
+    type Answer = fn(&str, &Value) -> Value;
+    type Log = Arc<Mutex<Vec<Value>>>;
+
+    /// A runtime that answers every request with `answer(method, params)`.
+    /// Before answering `friction/post` it asks the client for an approval,
+    /// as a Linear write can. Every request and approval answer it sees is
+    /// logged, in order. The client's reader task keeps the socket open, so the
+    /// test reads the log and aborts the server instead of waiting for EOF.
+    fn fake_runtime(answer: Answer) -> (Client, mpsc::Receiver<Incoming>, Log, JoinHandle<()>) {
+        let (client_side, server_side) = UnixStream::pair().unwrap();
+        let (client, incoming) = Client::over(client_side);
+        let log = Log::default();
+        let seen = Arc::clone(&log);
+        let server = tokio::spawn(async move {
+            let (read, mut write) = server_side.into_split();
+            let mut lines = BufReader::new(read).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let msg: Value = serde_json::from_str(&line).unwrap();
+                let method = msg["method"].as_str().unwrap_or("").to_string();
+                seen.lock().unwrap().push(msg.clone());
+                if method == "friction/post" {
+                    let ask = json!({"jsonrpc": "2.0", "id": "a1", "method": "approval",
+                        "params": {"commandId": "linear", "title": "Post a Linear comment"}});
+                    write.write_all(format!("{ask}\n").as_bytes()).await.unwrap();
+                    let verdict = lines.next_line().await.unwrap().unwrap();
+                    seen.lock().unwrap().push(serde_json::from_str(&verdict).unwrap());
+                }
+                let reply = json!({"jsonrpc": "2.0", "id": msg["id"],
+                    "result": answer(&method, &msg["params"])});
+                write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            }
+        });
+        (client, incoming, log, server)
+    }
+
+    /// A terminal that answers every question with `line`.
+    fn terminal(line: &'static str) -> mpsc::Sender<Ask> {
+        let (tx, mut rx) = mpsc::channel::<Ask>(4);
+        tokio::spawn(async move {
+            while let Some(ask) = rx.recv().await {
+                let (Ask::Prompt { respond } | Ask::Approval { respond, .. }) = ask;
+                let _ = respond.send(ReadOutcome::Line(line.into()));
+            }
+        });
+        tx
+    }
+
+    async fn drive(answer: Answer, session: &mut Session, commands: Vec<Command>) -> Vec<Value> {
+        let (client, mut incoming, log, server) = fake_runtime(answer);
+        let input = terminal("y");
+        for command in commands {
+            let prompter = Prompter { input: &input, incoming: &mut incoming };
+            run(command, &client, session, prompter).await;
+        }
+        server.abort();
+        drop(client);
+        log.lock().unwrap().clone()
+    }
+
+    fn methods(seen: &[Value]) -> Vec<&str> {
+        seen.iter().filter_map(|m| m["method"].as_str()).collect()
+    }
+
+    fn catalog(method: &str, _: &Value) -> Value {
+        match method {
+            "models/list" => json!({"models": [
+                {"slug": "local/qwen", "tier": 0, "local": true, "modality": "local"},
+                {"slug": "z-ai/glm-5.2", "tier": 2, "local": false,
+                 "modality": "aggregator-hosted", "capabilities": ["fast-speed"]},
+                {"slug": "unpriced/x", "routable": false, "modality": "aggregator-hosted"}
+            ]}),
+            "runtime/status" => json!({"runtime": {"defaultTurnModel": {"slug": "z-ai/glm-5.2"}}}),
+            "sessions/inspect" => json!({"exists": true, "workspace": "/work/projects/dyfj"}),
+            "friction/post" => json!({"firstLine": "friction posted", "commentId": "c1"}),
+            "ideas/mark" => json!({"idea": {"ideaId": "i1", "label": "x"}}),
+            _ => json!({}),
+        }
+    }
+
+    fn model(slug: &str) -> Command {
+        Command::Model { slug: Some(slug.into()), approve_paid: false, fast: None }
+    }
+
+    #[tokio::test]
+    async fn model_switches_only_to_a_known_routable_model() {
+        let mut session = Session::default();
+        drive(catalog, &mut session, vec![model("nope"), model("unpriced/x")]).await;
+        assert_eq!(session.model, None, "unknown and unpriced models are refused");
+
+        let seen = drive(catalog, &mut session, vec![model("local/qwen")]).await;
+        assert_eq!(methods(&seen), ["models/list"]);
+        assert_eq!(session.model.as_deref(), Some("local/qwen"));
+    }
+
+    /// With no explicit model, `/fast on` checks the runtime's default turn
+    /// model, which here is fast-capable.
+    #[tokio::test]
+    async fn fast_checks_the_runtime_default_when_no_model_is_chosen() {
+        let mut session = Session::default();
+        let seen = drive(catalog, &mut session, vec![Command::Fast(Some(true))]).await;
+        assert_eq!(methods(&seen), ["models/list", "runtime/status"]);
+        assert_eq!(session.fast, Some(true));
+
+        let mut local = Session { model: Some("local/qwen".into()), ..Session::default() };
+        drive(catalog, &mut local, vec![Command::Fast(Some(true))]).await;
+        assert_eq!(local.fast, None, "a model without the tier is refused");
+    }
+
+    #[tokio::test]
+    async fn session_switch_adopts_the_rows_workspace() {
+        let mut session = Session::default();
+        let id = "01J9ZQ4W8X6V5T3R2P1N0M9K8H";
+        let seen = drive(catalog, &mut session, vec![Command::SessionSwitch(id.into())]).await;
+        assert_eq!(seen[0]["params"], json!({"sessionId": id}));
+        assert_eq!(session.id.as_deref(), Some(id));
+        assert_eq!(session.workspace.as_deref(), Some("/work/projects/dyfj"));
+    }
+
+    /// The runtime asks for approval while `friction/post` is in flight; the
+    /// command answers it from the terminal instead of deadlocking.
+    #[tokio::test]
+    async fn friction_answers_the_approval_raised_mid_request() {
+        let friction = || Command::Friction {
+            severity: "minor".into(),
+            escaped: true,
+            text: "paste lost".into(),
+        };
+        let mut fresh = Session::default();
+        let seen = drive(catalog, &mut fresh, vec![friction()]).await;
+        assert!(seen.is_empty(), "nothing is posted before a session exists");
+
+        let mut session = Session {
+            id: Some("S1".into()),
+            workspace: Some("/work/projects/dyfj".into()),
+            last_command: Some("/model local/qwen".into()),
+            ..Session::default()
+        };
+        let seen = drive(catalog, &mut session, vec![friction()]).await;
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        let params = &seen[0]["params"];
+        assert_eq!(params["severity"], "minor");
+        assert_eq!(params["escaped"], true);
+        assert_eq!(
+            params["context"],
+            json!({"sessionId": "S1", "workspace": "dyfj", "command": "/model local/qwen"})
+        );
+        assert_eq!(seen[1]["id"], "a1");
+        assert_eq!(seen[1]["result"]["decision"], "approve");
+    }
+
+    #[tokio::test]
+    async fn idea_mark_posts_the_label_against_the_session() {
+        let mut session = Session { id: Some("S1".into()), ..Session::default() };
+        let seen = drive(catalog, &mut session, vec![Command::IdeaMark("x".into())]).await;
+        assert_eq!(methods(&seen), ["ideas/mark"]);
+        assert_eq!(seen[0]["params"], json!({"sessionId": "S1", "label": "x"}));
     }
 }
