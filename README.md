@@ -69,13 +69,14 @@ Section 5.
 
   Modules not yet moved sit at the top of `prototype/src/`, each mapped to
   its target layer by name in `scripts/arch-layers.json` (`files`), which is
-  the authoritative list. Among them are:
+  the authoritative list. They are:
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
     `external-agent-runtime.ts`), whose move is deferred;
   - the interactive REPL (`cli.ts`), which the Rust client in
-    `core/dyfj-repl` replaces;
-  - the memory and external-MCP tool modules;
-  - four diagnostics.
+    `core/dyfj-repl` replaces.
+
+  `prototype/diagnostics/` holds the manual diagnostic helpers, outside the
+  runtime graph.
 
   `prototype/mcp/` is the stdio memory MCP server over the same store.
   `prototype/testing/` holds the shared fakes, builders, conformance kits
@@ -1078,8 +1079,7 @@ operator's Dolt database. It requires Deno, Dolt, and the pinned Rust toolchain.
 
 `arch.imports` (`scripts/arch-imports.ts`, reported under `test.aggregate`)
 builds the module graph of every module under `prototype/src`,
-`prototype/mcp`, `prototype/scripts`, and `prototype/diagnostics` (once it
-exists) with `deno info --json` (`scripts/arch-imports-graph.ts`, offline and
+`prototype/mcp`, `prototype/scripts`, and `prototype/diagnostics` with `deno info --json` (`scripts/arch-imports-graph.ts`, offline and
 config-free): static imports, re-exports, and dynamic `import()`, with
 type-only edges (`import type`, `export type`, `typeof import()`) marked.
 Because deno's graph merges a dynamic import into a static import of the same
@@ -1813,3 +1813,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-01 - AGENTS.md drops its "Restructuring in progress" section: phase 1
   has exited (`specs/README.md`, Phase-1 exit), and `specs/` stays listed under
   Instruction Sources.
+- 2026-10-02 - Repo layout lists only the ACP runner and the interactive REPL as
+  modules not yet moved, and names `prototype/diagnostics/`; the `arch.imports`
+  description no longer says that directory is yet to exist.

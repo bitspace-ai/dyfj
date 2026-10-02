@@ -17,7 +17,7 @@ import {
   MEMORY_VISIBILITY_ALL,
   MemoryStore,
 } from "../../store/mod.ts";
-import { formatUntrustedMemoryRecord, type Memory } from "../../memory.ts";
+import { formatUntrustedMemoryRecord, type Memory } from "./memory-records.ts";
 import type { CommandCall } from "../definition.ts";
 import { buildToolCatalog } from "../catalog.ts";
 import { evaluateCommandPolicy } from "../policy.ts";

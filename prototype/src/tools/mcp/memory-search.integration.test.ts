@@ -13,7 +13,7 @@ import {
 import {
   type LoopbackHttp,
   startLoopbackHttp,
-} from "../testing/servers/mcp-server.ts";
+} from "../../../testing/servers/mcp-server.ts";
 
 const FIXTURE_TOOL = "fixture-search";
 

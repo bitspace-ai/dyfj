@@ -252,7 +252,8 @@ export function doltModelReader(pool: DoltSelect): ModelReader {
       return queryText(
         pool,
         "SELECT slug, display_name, provider, api, base_url, tier, " +
-          "cost_input, cost_output, capabilities, " +
+          "cost_input, cost_output, cost_cache_read, cost_cache_write, " +
+          "capabilities, " +
           "context_window, max_output_tokens, " +
           "architecture, total_params_b, active_params_b, recommended_quant, " +
           "resident_ram_gib, reasoning_effort_control " +

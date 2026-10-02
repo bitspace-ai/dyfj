@@ -9,8 +9,8 @@ import { dirname, join, relative } from "node:path";
 //
 // Usage: deno run --allow-read=. --allow-write=. \
 //          scripts/add-import-extensions.ts [dir ...]
-// Defaults to src, mcp, scripts, examples, testing. Exits 1 when a specifier resolves
-// to no file, after rewriting everything else.
+// Defaults to src, mcp, scripts, examples, testing, diagnostics. Exits 1 when a
+// specifier resolves to no file, after rewriting everything else.
 
 export const IGNORE_MARKER = "// add-import-extensions: ignore-file";
 
@@ -77,7 +77,7 @@ function* sourceFiles(dir: string): Generator<string> {
 if (import.meta.main) {
   const roots = Deno.args.length > 0
     ? Deno.args
-    : ["src", "mcp", "scripts", "examples", "testing"];
+    : ["src", "mcp", "scripts", "examples", "testing", "diagnostics"];
   let failed = false;
   for (const root of roots) {
     for (const file of sourceFiles(root)) {

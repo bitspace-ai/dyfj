@@ -206,6 +206,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Ten top-level prototype modules moved into their layer directories.**
+  `src/secrets.ts` is now `src/config/secrets.ts`; `src/utils.ts` is
+  `src/store/model-selected-event.ts`; the external MCP adapter
+  (`src/mcp-tools.ts`), MCP trace-context rules (`src/mcp-conformance.ts`) and
+  memory recall (`src/memory-search.ts`) are under `src/tools/mcp/` as
+  `adapter.ts`, `conformance.ts` and `memory-search.ts`; and the memory record
+  format (`src/memory.ts`) is `src/tools/builtin/memory-records.ts`. Their tests
+  moved with them. Their callers outside the unit now import them through
+  `config/mod.ts`, `store/mod.ts` and `tools/mod.ts`. The four manual diagnostic helpers
+  (`model-response-modes`, `context-size-response`, `structured-output`,
+  `workbench-events`) moved to the new `prototype/diagnostics/`, outside the
+  runtime graph; the typecheck and unit-test file lists now include it.
+  `scripts/arch-layers.json` maps only the ACP runner and the interactive REPL
+  by name. No behavior changes.
+
 - **The `arch.imports` lane fails at the runtime size limits.** A runtime module
   over 1,000 lines, or a function in one over 200 lines, now fails the gate
   unless `scripts/arch-size-exceptions.json` names it with its reason and the
@@ -882,6 +897,24 @@ README are tracked separately in its Revision history section.
   HTTP-era name: `WorkbenchHttpRuntime` is now `TurnRuntime`.
 
 ### Fixed
+
+- **Hosted OpenAI-compatible turns meter prompt-cache traffic**: on OpenAI,
+  OpenRouter and xAI the receipt reported zero cache reads and writes and
+  charged every prompt token at the full input rate, because the adapter
+  ignored `prompt_tokens_details` and the catalog's `cost_cache_read` /
+  `cost_cache_write` columns were never loaded. A turn now splits
+  `cached_tokens` (and OpenRouter's `cache_write_tokens`) out of
+  `prompt_tokens` into `cacheRead` / `cacheWrite`, so `input` counts uncached
+  tokens as it does for Anthropic, and prices each share at the row's cache
+  rate. A row without a cache price (the schema default of zero) charges cache
+  traffic at the input rate, so cost is never understated. Streaming requests
+  to these providers now send `stream_options.include_usage`, which OpenAI
+  needs before it reports usage on a stream; local servers are not sent it.
+  `models/list` rows carry `costCacheRead` / `costCacheWrite` when the
+  catalog prices them. The turn's receipt line now shows the cached share
+  beside the token counts (`12→5 tok · cache 9,000 read, 100 write`) whenever
+  a provider reported cache traffic, so the smaller uncached `input` figure is
+  never the only prompt size on screen.
 
 - **The file tools' workspace-root anchors are owned by the engine, not held
   in a process-global map.** `RootAnchors` (`tools/builtin/root-anchors.ts`)

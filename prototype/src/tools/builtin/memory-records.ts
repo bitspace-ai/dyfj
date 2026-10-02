@@ -34,7 +34,7 @@ import type {
   MemoryType,
   MemoryVisibility,
   TextRow,
-} from "./store/mod.ts";
+} from "../../store/mod.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

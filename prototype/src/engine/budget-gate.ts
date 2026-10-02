@@ -9,7 +9,6 @@
  * scoped to the session through its owner, and the same turn-scoped anomaly
  * gate.
  */
-import { writeModelSelectedEvent } from "../utils.ts";
 import { resolvePrincipalId } from "../config/mod.ts";
 import {
   createRunawayAnomalyGate,
@@ -18,6 +17,7 @@ import {
   type TurnBudgetCeilingGate,
 } from "../budget/mod.ts";
 import { estimateTextTokens, type WorkbenchModel } from "../providers/mod.ts";
+import { writeModelSelectedEvent } from "../store/mod.ts";
 import { writeMaybe } from "./event-writes.ts";
 import { confirmPaidRoute, selectModelRoute } from "./route.ts";
 import { emitRuntimeEvent } from "./runtime-events.ts";

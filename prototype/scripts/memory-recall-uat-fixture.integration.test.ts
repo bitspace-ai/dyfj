@@ -1,4 +1,4 @@
-import { buildMemorySearch } from "../src/memory-search.ts";
+import { buildMemorySearch } from "../src/tools/mod.ts";
 import { settleFixtureShutdown } from "./memory-recall-uat-fixture.ts";
 
 function assert(condition: boolean, message: string): asserts condition {

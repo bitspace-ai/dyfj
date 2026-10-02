@@ -29,6 +29,7 @@ export {
 } from "./memories.ts";
 export * from "./generated/rows.ts";
 export * from "./events/builders.ts";
+export { writeModelSelectedEvent } from "./model-selected-event.ts";
 export {
   isDeclaredMutationKind,
   type MemoryUpsertMutation,

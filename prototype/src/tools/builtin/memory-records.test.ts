@@ -1,5 +1,5 @@
 /**
- * Unit tests for src/memory.ts
+ * Unit tests for src/tools/builtin/memory-records.ts
  *
  * All tests are pure - no Dolt, no network. The I/O functions
  * (loadInjectedMemories, loadIndexedMemories) read through the store port and
@@ -29,8 +29,8 @@ import {
   type Memory,
   type MemoryIndexEntry,
   UNTRUSTED_MEMORY_INSTRUCTIONS,
-} from "./memory.ts";
-import { MEMORY_VISIBILITY_ALL, MemoryStore } from "./store/mod.ts";
+} from "./memory-records.ts";
+import { MEMORY_VISIBILITY_ALL, MemoryStore } from "../../store/mod.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 

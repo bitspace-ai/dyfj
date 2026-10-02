@@ -128,7 +128,7 @@ and the secrets-resolver case was missed.)
   stdout and stderr open. Test-side.
 - `scripts/isolated-dolt-fixture.integration.test.ts`: two timers are left
   pending by the fixture helper's shutdown timeout. Test tooling.
-- `src/secrets.integration.test.ts`: the resolver-timeout case leaves an output
+- `src/config/secrets.integration.test.ts`: the resolver-timeout case leaves an output
   read pending. This is by design: on timeout the resolver stops awaiting a
   stuck child's output so it can never hold the boot, and the case's `sleep`
   grandchild keeps the pipes open for about 5 s. With the lane's sanitizers on,

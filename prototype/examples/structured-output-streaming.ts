@@ -1,7 +1,7 @@
 import {
   compareStreamingStructuredOutputModes,
   type StreamingStructuredOutputReport,
-} from "../src/structured-output.ts";
+} from "../diagnostics/structured-output.ts";
 import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 
 const modelSlug = getArg(Deno.args, "--model") ??

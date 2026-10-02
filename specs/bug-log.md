@@ -64,7 +64,8 @@ changes with a CHANGELOG `Fixed` entry.
   - **Found during:** WO-21 (moved unchanged from `src/cli.ts`).
 - 2026-09-28 — **`model_selected` names the environment's principal, not the
   turn's.**
-  - **Location:** `prototype/src/utils.ts` (`writeModelSelectedEvent`, whose
+  - **Location:** `prototype/src/store/model-selected-event.ts`
+    (`writeModelSelectedEvent`, moved from `utils.ts`; its
     payload defaults `principal_id` to `resolvePrincipalId` over the process
     environment), called from `prototype/src/engine/budget-gate.ts`.
   - **Symptom:** every other event of a native turn carries the turn's

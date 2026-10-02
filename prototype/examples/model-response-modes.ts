@@ -1,7 +1,7 @@
 import {
   compareResponseModes,
   type ResponseModeReport,
-} from "../src/model-response-modes.ts";
+} from "../diagnostics/model-response-modes.ts";
 import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 
 const prompt = firstPrompt(Deno.args) ??

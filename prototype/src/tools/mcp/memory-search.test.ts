@@ -1,5 +1,5 @@
 /**
- * Unit tests for the recall config resolver (src/memory-search.ts).
+ * Unit tests for the recall config resolver (src/tools/mcp/memory-search.ts).
  *
  * The live transport path (buildMemorySearch → MCP client → external endpoint)
  * and the live redirect refusal are exercised by
@@ -15,7 +15,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { MapEnv } from "../testing/fakes/map-env.ts";
+import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import {
   memoryAuthHeaders,
   memorySearchConfigFromEnv,

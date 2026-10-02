@@ -54,6 +54,7 @@ import {
   type PermissionLevel,
   processEnv,
   resolveDoltConnection,
+  resolveSecrets,
   type WorkbenchConfig,
 } from "../config/mod.ts";
 import { summarizeError, type WorkbenchSessionEvent } from "../contract/mod.ts";
@@ -63,10 +64,12 @@ import {
   SessionOwners,
   type TurnRuntime,
 } from "../engine/mod.ts";
-import { type CommandDefinition, RootAnchors } from "../tools/mod.ts";
+import {
+  buildExternalMcpCommands,
+  type CommandDefinition,
+  RootAnchors,
+} from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
-import { resolveSecrets } from "../secrets.ts";
-import { buildExternalMcpCommands } from "../mcp-tools.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
 import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";
