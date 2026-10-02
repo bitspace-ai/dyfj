@@ -262,6 +262,11 @@ suite in `testing/golden/`, loopback servers in `testing/servers/`, and the port
 `MapEnv` (`Env`), `ScriptedDnsResolver` (`DnsResolver`), and `fakeIo` (the CLI's terminal `Io`). A unit test replaces a port with
 its fake; module mocking is not allowed (`specs/03-testing.md` §1). A fake's conformance
 suite lands with the port it stands in for.
+Tests do not define their own fake `fetch` or loopback server: code that takes `typeof fetch`
+is scripted through `ScriptedHttpTransport.fetchLike`, and real-socket tests use
+`testing/servers/` (`model-server.ts`, `mcp-server.ts`, `scripted-http-server.ts`, and
+`listeners.ts` for a listener that never answers, a connected Unix-socket pair, or a stale
+socket file).
 
 Deno grants Unix-socket access per exact path, not per directory, so a `Deno.test`
 integration test that binds or dials a real socket takes its path from

@@ -1,6 +1,7 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
+import { ScriptedHttpTransport } from "../testing/fakes/scripted-http-transport.ts";
 import {
   compareResponseModes,
   type ResponseModeReport,
@@ -27,7 +28,7 @@ describe("compareResponseModes", () => {
       routing: { modelId: "gemma4:e2b" },
       models,
       now: new ManualClock({ readings: [0, 30, 100, 0, 20, 40, 100] }).now,
-      fetchFn: buildFakeResponseModeFetch(),
+      fetchFn: responseModeTransport().fetchLike,
     });
 
     assertEquals(report.map(summary), [
@@ -66,32 +67,27 @@ function summary(report: ResponseModeReport) {
   };
 }
 
-function buildFakeResponseModeFetch(): typeof fetch {
-  let call = 0;
-  return async () => {
-    call += 1;
-    if (call === 1) {
-      return Response.json({
-        choices: [{
-          message: { content: "hello world" },
-          finish_reason: "stop",
-        }],
-        usage: { prompt_tokens: 10, completion_tokens: 2 },
-      });
-    }
-
-    const body = [
-      'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n',
-      'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}\n\n',
-      "data: [DONE]\n\n",
-    ].join("");
-    return new Response(
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(body));
-          controller.close();
-        },
-      }),
-    );
-  };
+function responseModeTransport(): ScriptedHttpTransport {
+  return new ScriptedHttpTransport([
+    {
+      respond: {
+        body: JSON.stringify({
+          choices: [{
+            message: { content: "hello world" },
+            finish_reason: "stop",
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 2 },
+        }),
+      },
+    },
+    {
+      respond: {
+        body: [
+          'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n',
+          'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}\n\n',
+          "data: [DONE]\n\n",
+        ].join(""),
+      },
+    },
+  ]);
 }

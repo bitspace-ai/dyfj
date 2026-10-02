@@ -212,6 +212,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Inline test support moved into `prototype/testing/`.** Tests no longer
+  define their own fake `fetch` functions or loopback servers. Code that takes
+  `typeof fetch` rather than the `HttpTransport` port (the web fetch tool, the
+  bounded MCP fetch, the diagnostics) is now tested through
+  `ScriptedHttpTransport.fetchLike`, the same scripted fake behind the platform
+  `fetch` signature, which passes the `HttpTransport` conformance suite.
+  `testing/servers/` gains `scripted-http-server.ts` (the loopback server the
+  real-`fetch` conformance run uses) and `listeners.ts` (a listener that accepts
+  and never answers, a connected Unix-socket pair, and a stale socket file left
+  by a killed listener); the canary test uses the shared loopback model server,
+  and the MCP redirect tests use the shared loopback HTTP listener. The CLI
+  `stop` test for a refused connection now runs against a genuinely stale
+  socket: before, a cleanly closed listener removed its file, so the test
+  exercised a missing socket instead. No runtime code changed.
+
 - **Ten top-level prototype modules moved into their layer directories.**
   `src/secrets.ts` is now `src/config/secrets.ts`; `src/utils.ts` is
   `src/store/model-selected-event.ts`; the external MCP adapter
