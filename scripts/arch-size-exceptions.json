@@ -65,18 +65,5 @@
     "name": "handleReplPacketCommand",
     "lines": 399,
     "reason": "Part of the interactive REPL, which the Rust client in core/dyfj-repl replaces (decision D23); not split in TypeScript."
-  },
-  {
-    "kind": "module",
-    "path": "prototype/src/extensions/ideas/idea-packet.ts",
-    "lines": 1237,
-    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
-  },
-  {
-    "kind": "function",
-    "path": "prototype/src/extensions/ideas/idea-packet.ts",
-    "name": "draftWorkPacketFromContext",
-    "lines": 209,
-    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
   }
 ]
