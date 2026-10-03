@@ -1898,4 +1898,4 @@ Document revisions only. Code and behavior changes are tracked in
   `prototype/README.md` list only the shared fakes that exist and exempt
   `SequentialIds` from a conformance suite until its port lands; PRD-14 R2
   states the exemption, and `specs/README.md` records R2 as met since exit
-  except `FakeIo`, whose suite stays deferred.
+  except `fakeIo`, whose suite stays deferred.

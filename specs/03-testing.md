@@ -72,14 +72,14 @@ in the same change that lands this spec's first work order.
 - **Shared test support** lives in `prototype/testing/`. It is not in `src/`,
   and runtime code never imports it.
   - `fakes/`: `ScriptedHttpTransport`, `ManualClock`, `SequentialIds`,
-    `MapEnv`, `ScriptedDnsResolver` and `FakeIo`. The `Store` fake,
+    `MapEnv`, `ScriptedDnsResolver` and `fakeIo`. The `Store` fake,
     `MemoryStore`, lives in `src/store/`.
     - The list names only fakes that exist. `Approver` and `FrameSink` have no
       shared fake: their tests pass small inline doubles, and a shared fake for
       either lands with its conformance suite when tests first need one.
     - `SequentialIds` is a fake that landed before its port. It needs no suite
       until an `IdSource` port exists in code.
-    - `FakeIo` stands in for the CLI's `Io` port (`src/cli/io.ts`), a client
+    - `fakeIo` stands in for the CLI's `Io` port (`src/cli/io.ts`), a client
       port outside the runtime list in `01-architecture.md` §5.6. Its real
       adapter is the process's terminal, which the unit lane cannot open, so
       it has no conformance suite yet; that suite stays deferred under D28.
