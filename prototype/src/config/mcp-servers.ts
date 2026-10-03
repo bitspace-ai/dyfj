@@ -106,6 +106,293 @@ function exactObject(
   return object;
 }
 
+function parseMcpTools(
+  rawTools: unknown[],
+  where: string,
+): McpConfiguredTool[] {
+  const toolNames = new Set<string>();
+  const tools: McpConfiguredTool[] = [];
+  for (const rawTool of rawTools) {
+    const tool = exactObject(
+      rawTool,
+      "[[mcp.servers.tools]]",
+      ["name", "effect", "approval"],
+      where,
+    );
+    if (typeof tool.name !== "string" || !MCP_TOOL_NAME.test(tool.name)) {
+      throw new Error(`config: MCP tool name is invalid in ${where}`);
+    }
+    if (toolNames.has(tool.name)) {
+      throw new Error(`config: duplicate MCP tool name in ${where}`);
+    }
+    toolNames.add(tool.name);
+    if (tool.effect !== "read" && tool.effect !== "write_external") {
+      throw new Error(
+        `config: MCP tool effect must be read or write_external in ${where}`,
+      );
+    }
+    if (tool.approval !== "allow" && tool.approval !== "ask") {
+      throw new Error(
+        `config: MCP tool approval must be allow or ask in ${where}`,
+      );
+    }
+    if (tool.effect === "write_external" && tool.approval !== "ask") {
+      throw new Error(
+        `config: MCP write_external tools must use approval ask in ${where}`,
+      );
+    }
+    tools.push({
+      name: tool.name,
+      effect: tool.effect,
+      approval: tool.approval,
+    });
+  }
+  return tools;
+}
+
+function parseMcpCapabilities(
+  rawCapabilities: unknown,
+  toolNames: ReadonlySet<string>,
+  where: string,
+): McpServerCapabilities {
+  const rawCaps = exactObject(
+    rawCapabilities,
+    "[[mcp.servers]].capabilities",
+    ["search_tool", "fetch_tool"],
+    where,
+  );
+  if (
+    rawCaps.search_tool !== undefined &&
+    (typeof rawCaps.search_tool !== "string" ||
+      !MCP_TOOL_NAME.test(rawCaps.search_tool) ||
+      !toolNames.has(rawCaps.search_tool))
+  ) {
+    throw new Error(
+      `config: MCP capabilities.search_tool must be a declared tool in ${where}`,
+    );
+  }
+  if (
+    rawCaps.fetch_tool !== undefined &&
+    (typeof rawCaps.fetch_tool !== "string" ||
+      !MCP_TOOL_NAME.test(rawCaps.fetch_tool) ||
+      !toolNames.has(rawCaps.fetch_tool))
+  ) {
+    throw new Error(
+      `config: MCP capabilities.fetch_tool must be a declared tool in ${where}`,
+    );
+  }
+  if (
+    rawCaps.search_tool === "create_issue" ||
+    rawCaps.fetch_tool === "create_issue" ||
+    rawCaps.search_tool === "save_issue" ||
+    rawCaps.fetch_tool === "save_issue"
+  ) {
+    throw new Error(
+      `config: create_issue cannot be a search or fetch capability; use linear_issue_creation (also required for save_issue) in ${where}`,
+    );
+  }
+  if (
+    rawCaps.search_tool === undefined && rawCaps.fetch_tool === undefined
+  ) {
+    throw new Error(
+      `config: MCP capabilities must declare search_tool or fetch_tool in ${where}`,
+    );
+  }
+  return {
+    ...(rawCaps.search_tool === undefined
+      ? {}
+      : { searchTool: rawCaps.search_tool }),
+    ...(rawCaps.fetch_tool === undefined
+      ? {}
+      : { fetchTool: rawCaps.fetch_tool }),
+  };
+}
+
+function parseLinearIssueCreation(
+  rawLinearIssueCreation: unknown,
+  tools: readonly McpConfiguredTool[],
+  minimumClearance: McpMinimumClearance,
+  where: string,
+): LinearIssueCreationBinding {
+  const rawBinding = exactObject(
+    rawLinearIssueCreation,
+    "[[mcp.servers]].linear_issue_creation",
+    ["team_id", "projects"],
+    where,
+  );
+  if (
+    typeof rawBinding.team_id !== "string" ||
+    !LINEAR_CONFIG_ID.test(rawBinding.team_id)
+  ) {
+    throw new Error(
+      `config: Linear issue team_id must be a stable ID in ${where}`,
+    );
+  }
+  if (
+    typeof rawBinding.projects !== "object" ||
+    rawBinding.projects === null || Array.isArray(rawBinding.projects)
+  ) {
+    throw new Error(
+      `config: Linear issue projects must be an exact-name to ID table in ${where}`,
+    );
+  }
+  const projectEntries = Object.entries(
+    rawBinding.projects as Record<string, unknown>,
+  );
+  if (
+    projectEntries.length === 0 ||
+    projectEntries.length > MAX_LINEAR_PROJECTS
+  ) {
+    throw new Error(
+      `config: Linear issue projects must contain 1-${MAX_LINEAR_PROJECTS} entries in ${where}`,
+    );
+  }
+  const projects: Record<string, string> = Object.create(null);
+  for (const [name, id] of projectEntries) {
+    if (
+      name.length === 0 || name.length > 200 || name.trim().length === 0
+    ) {
+      throw new Error(
+        `config: Linear issue project names must be 1-200 UTF-16 code units and not whitespace-only in ${where}`,
+      );
+    }
+    if (typeof id !== "string" || !LINEAR_CONFIG_ID.test(id)) {
+      throw new Error(
+        `config: Linear issue project IDs must be stable IDs in ${where}`,
+      );
+    }
+    projects[name] = id;
+  }
+  const creationTools = tools.filter((tool) =>
+    tool.name === "create_issue" || tool.name === "save_issue"
+  );
+  const createIssue = creationTools[0];
+  if (
+    creationTools.length !== 1 || createIssue === undefined ||
+    createIssue.effect !== "write_external" ||
+    createIssue.approval !== "ask"
+  ) {
+    throw new Error(
+      `config: Linear issue creation requires create_issue as write_external with approval ask, or save_issue with the same policy; configure exactly one in ${where}`,
+    );
+  }
+  if (minimumClearance !== "loopback") {
+    throw new Error(
+      `config: Linear issue creation requires minimum_clearance loopback in ${where}`,
+    );
+  }
+  return {
+    teamId: rawBinding.team_id,
+    projects,
+  };
+}
+
+/**
+ * Parse one `[[mcp.servers]]` entry. Checks run in a fixed order (identity,
+ * transport, url, clearance, auth, tools, capabilities, Linear binding), so
+ * the first error reported for a bad entry stays stable. `ids` is the set of
+ * ids already seen in this file; the caller owns it.
+ */
+function parseMcpServer(
+  rawServer: unknown,
+  ids: ReadonlySet<string>,
+  where: string,
+  secrets: SecretsConfig | null | undefined,
+): McpHttpServerConfig {
+  const server = exactObject(
+    rawServer,
+    "[[mcp.servers]]",
+    [
+      "id",
+      "transport",
+      "url",
+      "minimum_clearance",
+      "auth",
+      "tools",
+      "capabilities",
+      "linear_issue_creation",
+    ],
+    where,
+  );
+  if (typeof server.id !== "string" || !MCP_SERVER_ID.test(server.id)) {
+    throw new Error(
+      `config: MCP server id must match ${MCP_SERVER_ID} in ${where}`,
+    );
+  }
+  if (ids.has(server.id)) {
+    throw new Error(`config: duplicate MCP server id in ${where}`);
+  }
+  if (server.transport !== "streamable_http") {
+    throw new Error(
+      `config: MCP transport must be streamable_http in ${where}`,
+    );
+  }
+  const url = assertSecureMcpServerUrl(server.url, where);
+  // "remote" is reserved for a future gateway client, not a shipped remote transport.
+  if (
+    server.minimum_clearance !== "loopback" &&
+    server.minimum_clearance !== "remote"
+  ) {
+    throw new Error(
+      `config: MCP minimum_clearance must be loopback or remote in ${where}`,
+    );
+  }
+  const auth = exactObject(
+    server.auth,
+    "[[mcp.servers]].auth",
+    ["type", "secret"],
+    where,
+  );
+  if (auth.type !== "bearer") {
+    throw new Error(`config: MCP auth type must be bearer in ${where}`);
+  }
+  if (typeof auth.secret !== "string" || !MCP_SECRET_NAME.test(auth.secret)) {
+    throw new Error(
+      `config: MCP auth secret must name [secrets.named] in ${where}`,
+    );
+  }
+  if (
+    secrets !== undefined && !Object.hasOwn(secrets?.named ?? {}, auth.secret)
+  ) {
+    throw new Error(
+      `config: MCP auth secret ${auth.secret} is not declared in [secrets.named] in ${where}`,
+    );
+  }
+  if (!Array.isArray(server.tools) || server.tools.length === 0) {
+    throw new Error(
+      `config: MCP tools must be a non-empty array in ${where}`,
+    );
+  }
+  if (server.tools.length > MAX_MCP_TOOLS_PER_SERVER) {
+    throw new Error(
+      `config: MCP tools exceed ${MAX_MCP_TOOLS_PER_SERVER} entries in ${where}`,
+    );
+  }
+  const tools = parseMcpTools(server.tools, where);
+  const toolNames = new Set(tools.map((tool) => tool.name));
+  const capabilities = server.capabilities === undefined
+    ? undefined
+    : parseMcpCapabilities(server.capabilities, toolNames, where);
+  const linearIssueCreation = server.linear_issue_creation === undefined
+    ? undefined
+    : parseLinearIssueCreation(
+      server.linear_issue_creation,
+      tools,
+      server.minimum_clearance,
+      where,
+    );
+  return {
+    id: server.id,
+    transport: "streamable_http",
+    url,
+    minimumClearance: server.minimum_clearance,
+    auth: { type: "bearer", secret: auth.secret },
+    tools,
+    ...(capabilities === undefined ? {} : { capabilities }),
+    ...(linearIssueCreation === undefined ? {} : { linearIssueCreation }),
+  };
+}
+
 /** Parse the bounded HTTP-only external MCP capability declaration. */
 export function parseMcpServersConfig(
   table: Record<string, unknown> | null,
@@ -129,251 +416,9 @@ export function parseMcpServersConfig(
   const ids = new Set<string>();
   const configured: McpHttpServerConfig[] = [];
   for (const rawServer of rawServers) {
-    const server = exactObject(
-      rawServer,
-      "[[mcp.servers]]",
-      [
-        "id",
-        "transport",
-        "url",
-        "minimum_clearance",
-        "auth",
-        "tools",
-        "capabilities",
-        "linear_issue_creation",
-      ],
-      where,
-    );
-    if (typeof server.id !== "string" || !MCP_SERVER_ID.test(server.id)) {
-      throw new Error(
-        `config: MCP server id must match ${MCP_SERVER_ID} in ${where}`,
-      );
-    }
-    if (ids.has(server.id)) {
-      throw new Error(`config: duplicate MCP server id in ${where}`);
-    }
+    const server = parseMcpServer(rawServer, ids, where, secrets);
     ids.add(server.id);
-    if (server.transport !== "streamable_http") {
-      throw new Error(
-        `config: MCP transport must be streamable_http in ${where}`,
-      );
-    }
-    const url = assertSecureMcpServerUrl(server.url, where);
-    // "remote" is reserved for a future gateway client, not a shipped remote transport.
-    if (
-      server.minimum_clearance !== "loopback" &&
-      server.minimum_clearance !== "remote"
-    ) {
-      throw new Error(
-        `config: MCP minimum_clearance must be loopback or remote in ${where}`,
-      );
-    }
-    const auth = exactObject(
-      server.auth,
-      "[[mcp.servers]].auth",
-      ["type", "secret"],
-      where,
-    );
-    if (auth.type !== "bearer") {
-      throw new Error(`config: MCP auth type must be bearer in ${where}`);
-    }
-    if (typeof auth.secret !== "string" || !MCP_SECRET_NAME.test(auth.secret)) {
-      throw new Error(
-        `config: MCP auth secret must name [secrets.named] in ${where}`,
-      );
-    }
-    if (
-      secrets !== undefined && !Object.hasOwn(secrets?.named ?? {}, auth.secret)
-    ) {
-      throw new Error(
-        `config: MCP auth secret ${auth.secret} is not declared in [secrets.named] in ${where}`,
-      );
-    }
-    if (!Array.isArray(server.tools) || server.tools.length === 0) {
-      throw new Error(
-        `config: MCP tools must be a non-empty array in ${where}`,
-      );
-    }
-    if (server.tools.length > MAX_MCP_TOOLS_PER_SERVER) {
-      throw new Error(
-        `config: MCP tools exceed ${MAX_MCP_TOOLS_PER_SERVER} entries in ${where}`,
-      );
-    }
-    const toolNames = new Set<string>();
-    const tools: McpConfiguredTool[] = [];
-    for (const rawTool of server.tools) {
-      const tool = exactObject(
-        rawTool,
-        "[[mcp.servers.tools]]",
-        ["name", "effect", "approval"],
-        where,
-      );
-      if (typeof tool.name !== "string" || !MCP_TOOL_NAME.test(tool.name)) {
-        throw new Error(`config: MCP tool name is invalid in ${where}`);
-      }
-      if (toolNames.has(tool.name)) {
-        throw new Error(`config: duplicate MCP tool name in ${where}`);
-      }
-      toolNames.add(tool.name);
-      if (tool.effect !== "read" && tool.effect !== "write_external") {
-        throw new Error(
-          `config: MCP tool effect must be read or write_external in ${where}`,
-        );
-      }
-      if (tool.approval !== "allow" && tool.approval !== "ask") {
-        throw new Error(
-          `config: MCP tool approval must be allow or ask in ${where}`,
-        );
-      }
-      if (tool.effect === "write_external" && tool.approval !== "ask") {
-        throw new Error(
-          `config: MCP write_external tools must use approval ask in ${where}`,
-        );
-      }
-      tools.push({
-        name: tool.name,
-        effect: tool.effect,
-        approval: tool.approval,
-      });
-    }
-    let capabilities: McpServerCapabilities | undefined = undefined;
-    if (server.capabilities !== undefined) {
-      const rawCaps = exactObject(
-        server.capabilities,
-        "[[mcp.servers]].capabilities",
-        ["search_tool", "fetch_tool"],
-        where,
-      );
-      if (
-        rawCaps.search_tool !== undefined &&
-        (typeof rawCaps.search_tool !== "string" ||
-          !MCP_TOOL_NAME.test(rawCaps.search_tool) ||
-          !toolNames.has(rawCaps.search_tool))
-      ) {
-        throw new Error(
-          `config: MCP capabilities.search_tool must be a declared tool in ${where}`,
-        );
-      }
-      if (
-        rawCaps.fetch_tool !== undefined &&
-        (typeof rawCaps.fetch_tool !== "string" ||
-          !MCP_TOOL_NAME.test(rawCaps.fetch_tool) ||
-          !toolNames.has(rawCaps.fetch_tool))
-      ) {
-        throw new Error(
-          `config: MCP capabilities.fetch_tool must be a declared tool in ${where}`,
-        );
-      }
-      if (
-        rawCaps.search_tool === "create_issue" ||
-        rawCaps.fetch_tool === "create_issue" ||
-        rawCaps.search_tool === "save_issue" ||
-        rawCaps.fetch_tool === "save_issue"
-      ) {
-        throw new Error(
-          `config: create_issue cannot be a search or fetch capability; use linear_issue_creation (also required for save_issue) in ${where}`,
-        );
-      }
-      if (
-        rawCaps.search_tool === undefined && rawCaps.fetch_tool === undefined
-      ) {
-        throw new Error(
-          `config: MCP capabilities must declare search_tool or fetch_tool in ${where}`,
-        );
-      }
-      capabilities = {
-        ...(rawCaps.search_tool === undefined
-          ? {}
-          : { searchTool: rawCaps.search_tool }),
-        ...(rawCaps.fetch_tool === undefined
-          ? {}
-          : { fetchTool: rawCaps.fetch_tool }),
-      };
-    }
-    let linearIssueCreation: LinearIssueCreationBinding | undefined = undefined;
-    if (server.linear_issue_creation !== undefined) {
-      const rawBinding = exactObject(
-        server.linear_issue_creation,
-        "[[mcp.servers]].linear_issue_creation",
-        ["team_id", "projects"],
-        where,
-      );
-      if (
-        typeof rawBinding.team_id !== "string" ||
-        !LINEAR_CONFIG_ID.test(rawBinding.team_id)
-      ) {
-        throw new Error(
-          `config: Linear issue team_id must be a stable ID in ${where}`,
-        );
-      }
-      if (
-        typeof rawBinding.projects !== "object" ||
-        rawBinding.projects === null || Array.isArray(rawBinding.projects)
-      ) {
-        throw new Error(
-          `config: Linear issue projects must be an exact-name to ID table in ${where}`,
-        );
-      }
-      const projectEntries = Object.entries(
-        rawBinding.projects as Record<string, unknown>,
-      );
-      if (
-        projectEntries.length === 0 ||
-        projectEntries.length > MAX_LINEAR_PROJECTS
-      ) {
-        throw new Error(
-          `config: Linear issue projects must contain 1-${MAX_LINEAR_PROJECTS} entries in ${where}`,
-        );
-      }
-      const projects: Record<string, string> = Object.create(null);
-      for (const [name, id] of projectEntries) {
-        if (
-          name.length === 0 || name.length > 200 || name.trim().length === 0
-        ) {
-          throw new Error(
-            `config: Linear issue project names must be 1-200 UTF-16 code units and not whitespace-only in ${where}`,
-          );
-        }
-        if (typeof id !== "string" || !LINEAR_CONFIG_ID.test(id)) {
-          throw new Error(
-            `config: Linear issue project IDs must be stable IDs in ${where}`,
-          );
-        }
-        projects[name] = id;
-      }
-      const creationTools = tools.filter((tool) =>
-        tool.name === "create_issue" || tool.name === "save_issue"
-      );
-      const createIssue = creationTools[0];
-      if (
-        creationTools.length !== 1 || createIssue === undefined ||
-        createIssue.effect !== "write_external" ||
-        createIssue.approval !== "ask"
-      ) {
-        throw new Error(
-          `config: Linear issue creation requires create_issue as write_external with approval ask, or save_issue with the same policy; configure exactly one in ${where}`,
-        );
-      }
-      if (server.minimum_clearance !== "loopback") {
-        throw new Error(
-          `config: Linear issue creation requires minimum_clearance loopback in ${where}`,
-        );
-      }
-      linearIssueCreation = {
-        teamId: rawBinding.team_id,
-        projects,
-      };
-    }
-    configured.push({
-      id: server.id,
-      transport: "streamable_http",
-      url,
-      minimumClearance: server.minimum_clearance,
-      auth: { type: "bearer", secret: auth.secret },
-      tools,
-      ...(capabilities === undefined ? {} : { capabilities }),
-      ...(linearIssueCreation === undefined ? {} : { linearIssueCreation }),
-    });
+    configured.push(server);
   }
   return configured;
 }
