@@ -11,6 +11,29 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **The Rust REPL can be a daily driver.** `dyfj-repl` now sends the same
+  turn request as the TypeScript client: the chosen model and fast tier, the
+  per-session paid opt-in, and the workspace for a new session, set with
+  `--model`, `--fast`, `--approve-paid`, `--workspace` and `--session` (or
+  `DYFJ_WORKBENCH_MODEL` and `DYFJ_WORKSPACE`); `--session` takes the id or
+  the slug `dyfj sessions` lists and refuses anything else at startup, and the
+  startup posture line names the chosen model, fast tier and paid opt-in
+  rather than the runtime's defaults. Each turn ends with a receipt
+  line naming the model, turn and session cost, tokens, prompt-cache reads and
+  writes when reported, tool steps and the route reason. The commands
+  `/model`, `/fast`, `/session` (show, list, switch), `/friction`, `/idea mark`,
+  `/idea list` and `/help` are recognised only when typed alone on one line, so
+  pasted text that contains them stays prompt text and an unknown `/word` is
+  sent as a prompt; the input length limit applies to them too. Ctrl-C
+  while a read-only command waits on the runtime abandons it without
+  cancelling the next turn. The two writes do not return early:
+  `/friction` waits for the runtime to settle its post and denies the
+  approval it then asks for, and `/idea mark` waits for the runtime to
+  record the idea, so a retry cannot record it twice. `/friction` names a
+  slash command in its context only when it was typed just before, with no
+  turn in between. `/model` refuses unknown and unroutable slugs.
+  `/friction` posts only the workspace's name, never its path. A request
+  abandoned mid-write no longer leaves a partial frame on the connection.
 - **A runtime that started with secrets unavailable says so up front.**
   When a declared secret pointer fails to resolve at boot (a locked vault, a
   timed-out resolver), `runtime/status` now lists it under
@@ -149,8 +172,7 @@ README are tracked separately in its Revision history section.
 
   Known limits are recorded in the source where they are met, not left to be
   rediscovered: approvals and frames carry no turn id, so a delayed one from an
-  abandoned turn can appear during a later turn; a dropped write can leave a
-  partial frame; no closed state is recorded after the reader
+  abandoned turn can appear during a later turn; no closed state is recorded after the reader
   ends; one pending entry leaks per abandoned turn; and the submission ceiling
   bounds what is remembered rather than what is allocated.
 
