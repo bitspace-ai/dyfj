@@ -1864,3 +1864,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-03 - The runtime-boundary section links a headless consumer contract
   that separates existing native-turn ports from proposed host, context and
   deployment decisions; the specs index identifies it as exploratory.
+- 2026-10-03 - `specs/README.md` records, beside the phase-1 exit measures,
+  that the D28 code splits have landed: no D28 entry remains in
+  `scripts/arch-size-exceptions.json`, and PRD-11 R2 and the largest-file
+  metric are met outside the D20 and D23 exceptions.

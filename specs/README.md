@@ -184,7 +184,7 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 
 | #   | Decision | Consequence |
 | --- | -------- | ----------- |
-| D28 | **Phase 1 exits with named deferrals, not unfinished work counted as a pass.** The `arch.imports` lane enforces the PRD-11 R2 hard limits (1,000 LOC per runtime module, 200 lines per function) with a committed exceptions list: each entry names its reason and a size it may only shrink from, and an entry no longer needed fails the lane. An excepted module or function is an R2 deferral, not R2 met. Deferred past phase 1: splitting the oversized tool, web, idea/packet, provider-stream, config-parser, external-MCP and memory-MCP code not already covered by D20 (ACP) or D23 (REPL); moving the remaining top-level modules and creating `prototype/diagnostics/`; folding the per-adapter provider tests into the conformance fixtures (PRD-12 R3); conformance suites for the remaining fakes (PRD-14 R2); and moving the remaining inline test support into `prototype/testing/` (PRD-14 duplication metric). | `scripts/arch-size-exceptions.json`; the Phase-1 exit audit below records each deferral with its measured state |
+| D28 | **Phase 1 exits with named deferrals, not unfinished work counted as a pass.** The `arch.imports` lane enforces the PRD-11 R2 hard limits (1,000 LOC per runtime module, 200 lines per function) with a committed exceptions list: each entry names its reason and a size it may only shrink from, and an entry no longer needed fails the lane. An excepted module or function is an R2 deferral, not R2 met. Deferred past phase 1: splitting the oversized tool, web, idea/packet, provider-stream, config-parser, external-MCP and memory-MCP code not already covered by D20 (ACP) or D23 (REPL); moving the remaining top-level modules and creating `prototype/diagnostics/`; folding the per-adapter provider tests into the conformance fixtures (PRD-12 R3); conformance suites for the remaining fakes (PRD-14 R2); and moving the remaining inline test support into `prototype/testing/` (PRD-14 duplication metric). Since exit, the oversized-code splits have landed: no D28 entry remains in the exceptions list, and the remaining entries are D20 and D23. | `scripts/arch-size-exceptions.json`; the Phase-1 exit audit below records each deferral with its measured state |
 
 ### Daily-driver route (2026-10-02)
 
@@ -228,14 +228,14 @@ or recorded as a finding at the end; nothing is rounded up to a pass.
 | ---- | -------- | ------- |
 | R1. `arch.imports` baseline reaches 0; only named cycles | 0; no named cycles needed | Met |
 | R1b. No module-level mutable state in `src/` | None in runtime modules | Met |
-| R2. No runtime module over 1,000 LOC, no function over 200 lines | 6 modules and 16 functions over, each in `scripts/arch-size-exceptions.json` (22 entries): 5 ACP (D20), 5 REPL (D23), 12 deferred under D28. The lane fails on anything new, on growth, and on a stale entry | Not met; deferred (D20, D23, D28) |
+| R2. No runtime module over 1,000 LOC, no function over 200 lines | 6 modules and 16 functions over, each in `scripts/arch-size-exceptions.json` (22 entries): 5 ACP (D20), 5 REPL (D23), 12 deferred under D28. The lane fails on anything new, on growth, and on a stale entry. Since exit, the D28 splits have cleared their 12 entries; 10 remain, all D20 or D23 | Not met; deferred (D20, D23, D28). Since exit, met outside D20 and D23 |
 | R3. `mod.ts` headers state responsibility and allowed dependencies | All 13 do | Met |
 | R4. Golden suite unchanged | Unchanged | Met |
 | R5. Tests migrate with moved modules | No Vitest or module mocks remain; moved modules' tests moved with them | Met |
 | Goal 1. Directory layout of `01-architecture.md` §3 | Layers in place and enforced; 14 top-level modules still mapped by name in `scripts/arch-layers.json` (ACP runner deferred with WO-18, the REPL under D23, the rest under D28); `prototype/diagnostics/` not created | Partly met; deferred (D20, D23, D28) |
 | Metric: median lines read to change one engine stage, < 800 | Stage file plus its direct local imports, over the seven stage modules: median 1,548 (1,255 counting value imports only). The stage files alone: median 347 | Not met by this method |
 | Metric: zero unjustified cycles and upward imports | 0 of each, enforced | Met |
-| Metric: largest runtime file ≤ 1,000 LOC (from 4,149) | 2,302 (`acp-client.ts`, D20); largest outside D20/D23: 1,929 (`tools/builtin/file.ts`, D28) | Not met; deferred |
+| Metric: largest runtime file ≤ 1,000 LOC (from 4,149) | 2,302 (`acp-client.ts`, D20); largest outside D20/D23: 1,929 (`tools/builtin/file.ts`, D28). Since exit, largest outside D20/D23: 891 (`store/generated/rows.ts`) | Not met; deferred. Since exit, met outside D20 and D23 |
 
 ### PRD-12 Extensibility
 
