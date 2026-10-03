@@ -41,6 +41,16 @@ export interface WorkbenchDefaultTurnModel {
   reason: string;
 }
 
+/**
+ * A secret pointer that did not resolve when the runtime started. Secrets
+ * resolve once, at start, so the provider that reads it stays without its
+ * credential until the runtime restarts. Value-free: the env var name and the
+ * resolver's reason only.
+ */
+export type WorkbenchUnavailableSecret =
+  | { envVar: string; reason: string }
+  | { name: string; reason: string };
+
 export interface WorkbenchRuntimeStatus {
   transport: "uds";
   clearance: "loopback";
@@ -58,6 +68,8 @@ export interface WorkbenchRuntimeStatus {
   maxToolSteps: number;
   models: { total: number; local: number; hosted: number };
   autostarted?: boolean;
+  /** Present only when a declared secret pointer failed to resolve at start. */
+  unavailableSecrets?: WorkbenchUnavailableSecret[];
 }
 
 /** The engine posture `runtime/status` reports. */
@@ -78,6 +90,8 @@ export interface RuntimePosture {
   permissionLevel?: PermissionLevel;
   /** Whether the runtime was started via background autostart. */
   autostarted?: boolean;
+  /** Secret pointers that failed to resolve when the runtime started. */
+  unavailableSecrets?: readonly WorkbenchUnavailableSecret[];
 }
 
 export interface RuntimeHandlerDeps extends RuntimePosture {
@@ -180,6 +194,13 @@ export function runtimeStatus(
     },
     ...(options.autostarted !== undefined
       ? { autostarted: options.autostarted }
+      : {}),
+    ...(options.unavailableSecrets?.length
+      ? {
+        unavailableSecrets: options.unavailableSecrets.map((secret) => ({
+          ...secret,
+        })),
+      }
       : {}),
   };
 }
