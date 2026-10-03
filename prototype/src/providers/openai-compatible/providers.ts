@@ -5,6 +5,7 @@
  */
 
 export const openAICompatibleLocalProviders: ReadonlySet<string> = new Set([
+  "llama-cpp",
   "ollama",
   "mlx-lm",
 ]);

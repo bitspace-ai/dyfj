@@ -17,25 +17,29 @@ import { providerTestModels } from "../../../testing/builders/models.ts";
 
 const models = [...providerTestModels];
 describe("defaultLocalWorkbenchModels", () => {
-  it("provides a zero-cost Tier 0 local default", () => {
+  it("provides a zero-cost Tier 0 local default served by llama.cpp", () => {
     const defaults = defaultLocalWorkbenchModels();
 
     assertObjectMatch(defaults[0], {
-      slug: "qwen3.6:35b-a3b",
-      provider: "ollama",
+      slug: "llama-cpp/deepseek-r1-32b",
+      provider: "llama-cpp",
       api: "openai-completions",
-      baseUrl: "http://localhost:11434/v1",
+      baseUrl: "http://localhost:8080/v1",
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      architecture: "moe",
-      totalParamsB: 36.0,
-      activeParamsB: 3.0,
+      architecture: "dense",
+      totalParamsB: 32.8,
+      activeParamsB: 32.8,
       recommendedQuant: "Q4_K_M",
-      residentRamGiB: 24.0,
+      residentRamGiB: 22.0,
       reasoningEffortControl: false,
     });
-    assertArrayIncludes(defaults[0].capabilities, ["text", "code", "tools"]);
+    assertArrayIncludes(defaults[0].capabilities, [
+      "text",
+      "code",
+      "reasoning",
+    ]);
   });
 
   it("provides zero-cost Tier 0 local fallback models", () => {
@@ -107,7 +111,8 @@ describe("withDefaultLocalWorkbenchModels", () => {
       displayName: "Gemma 4 latest",
     }]);
 
-    assertEquals(merged.slice(0, 2).map((model) => model.slug), [
+    assertEquals(merged.slice(0, 3).map((model) => model.slug), [
+      "llama-cpp/deepseek-r1-32b",
       "qwen3.6:35b-a3b",
       "muse-glimmer:30b",
     ]);

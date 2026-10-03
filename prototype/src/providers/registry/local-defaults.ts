@@ -7,6 +7,26 @@ import { loadWorkbenchModels } from "./catalog.ts";
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   return [
     {
+      slug: "llama-cpp/deepseek-r1-32b",
+      displayName: "DeepSeek-R1 Distill 32B (llama.cpp)",
+      provider: "llama-cpp",
+      api: "openai-completions",
+      baseUrl: "http://localhost:8080/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: ["text", "code", "reasoning", "thinking"],
+      contextWindow: 131072,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "dense",
+      totalParamsB: 32.8,
+      activeParamsB: 32.8,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 22.0,
+      reasoningEffortControl: false,
+    },
+    {
       slug: "qwen3.6:35b-a3b",
       displayName: "Qwen3.6 35B (MoE)",
       provider: "ollama",

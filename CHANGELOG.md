@@ -11,6 +11,17 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **llama.cpp is a local provider, and its DeepSeek-R1 Distill 32B row is the
+  local default.** The `llama-cpp` provider reaches `llama-server`'s
+  OpenAI-compatible endpoint on `http://localhost:8080/v1`, and the engine's net
+  grants now allow loopback port 8080. The catalog row
+  `llama-cpp/deepseek-r1-32b` (migration `013` for existing databases) is first
+  in the local preference order, so an unconfigured bare turn now goes to
+  llama-server instead of Ollama. Ollama
+  stays supported: its `qwen3.6:35b-a3b` row is next in that order, and a bare
+  turn chooses by order rather than by which server is running, so an Ollama
+  user selects that row with `--model` or a companion default.
+
 - **A bare `dyfj` on a terminal opens the Rust REPL.** When a `dyfj-repl`
   binary is available (`DYFJ_REPL_BIN`, `core/target/release/dyfj-repl` or
   `PATH`), every argument is one it takes (`--model`, `--approve-paid`,
