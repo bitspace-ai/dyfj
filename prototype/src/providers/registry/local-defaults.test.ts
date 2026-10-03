@@ -21,24 +21,26 @@ describe("defaultLocalWorkbenchModels", () => {
     const defaults = defaultLocalWorkbenchModels();
 
     assertObjectMatch(defaults[0], {
-      slug: "llama-cpp/deepseek-r1-32b",
+      slug: "llama-cpp/qwen3.6-35b-a3b",
       provider: "llama-cpp",
       api: "openai-completions",
       baseUrl: "http://localhost:8080/v1",
       tier: 0,
       costInput: 0,
       costOutput: 0,
-      architecture: "dense",
-      totalParamsB: 32.8,
-      activeParamsB: 32.8,
-      recommendedQuant: "Q4_K_M",
-      residentRamGiB: 22.0,
+      architecture: "moe",
+      contextWindow: 32768,
+      totalParamsB: 35.0,
+      activeParamsB: 3.0,
+      recommendedQuant: "UD-Q4_K_XL",
+      residentRamGiB: 24.0,
       reasoningEffortControl: false,
     });
     assertArrayIncludes(defaults[0].capabilities, [
       "text",
       "code",
       "reasoning",
+      "tools",
     ]);
   });
 
@@ -112,7 +114,7 @@ describe("withDefaultLocalWorkbenchModels", () => {
     }]);
 
     assertEquals(merged.slice(0, 3).map((model) => model.slug), [
-      "llama-cpp/deepseek-r1-32b",
+      "llama-cpp/qwen3.6-35b-a3b",
       "qwen3.6:35b-a3b",
       "muse-glimmer:30b",
     ]);

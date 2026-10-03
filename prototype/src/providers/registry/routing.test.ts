@@ -23,10 +23,10 @@ import { providerTestModels } from "../../../testing/builders/models.ts";
 
 const models = [...providerTestModels];
 describe("selectWorkbenchModel", () => {
-  it("defaults to the local DeepSeek-R1 32B model on llama.cpp when available", () => {
+  it("defaults to the local Qwen3.6 model on llama.cpp when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
 
-    assertStrictEquals(selection.selected.slug, "llama-cpp/deepseek-r1-32b");
+    assertStrictEquals(selection.selected.slug, "llama-cpp/qwen3.6-35b-a3b");
     assertStrictEquals(selection.selected.provider, "llama-cpp");
     assertStrictEquals(selection.reason, "default");
   });
