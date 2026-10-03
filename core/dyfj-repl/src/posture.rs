@@ -44,9 +44,62 @@ pub fn line(status: &Value, socket: &str) -> String {
     format!("posture: {}", parts.join(" · "))
 }
 
+/// Lines naming the secret pointers that failed when the runtime started.
+/// A provider reading one has no credential until the runtime restarts, so
+/// this says so at startup instead of leaving it to the first turn's error.
+pub fn unresolved_pointer_warnings(status: &Value) -> Vec<String> {
+    let runtime = status.get("runtime").unwrap_or(status);
+    let Some(pointers) = runtime.get("unavailableSecrets").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    if pointers.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = pointers
+        .iter()
+        .map(|pointer| {
+            let field = |key: &str, fallback: &str| {
+                visible(pointer.get(key).and_then(Value::as_str).unwrap_or(fallback))
+            };
+            let label = match (pointer.get("envVar"), pointer.get("name")) {
+                (Some(_), _) => field("envVar", "(unnamed)"),
+                (None, Some(_)) => format!("[secrets.named] {}", field("name", "(unnamed)")),
+                (None, None) => "(unnamed)".into(),
+            };
+            format!("secret unavailable since start: {label} ({})", field("reason", "unavailable"))
+        })
+        .collect();
+    lines.push(
+        "  anything reading these has no credential until the runtime restarts; \
+         fix what the reason names (unlock the vault, or correct the resolver \
+         command or pointer), then restart it (`dyfj stop`, then start it again)"
+            .into(),
+    );
+    lines
+}
+
 #[cfg(test)]
 mod tests {
-    use super::line;
+    use super::{line, unresolved_pointer_warnings};
+
+    #[test]
+    fn names_each_secret_that_failed_at_start_and_how_to_recover() {
+        let status = json!({"runtime": {"unavailableSecrets": [
+            {"envVar": "OPENROUTER_API_KEY", "reason": "session probe failed: timed out after 10000ms (locked or unavailable)"},
+            {"envVar": "OPENAI_API_KEY", "reason": "skipped: session probe OPENROUTER_API_KEY did not resolve"},
+            {"name": "linear", "reason": "skipped"}
+        ]}});
+        let lines = unresolved_pointer_warnings(&status);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[2].contains("[secrets.named] linear (skipped)"), "{lines:?}");
+        assert!(lines[0].contains("OPENROUTER_API_KEY (session probe failed"), "{lines:?}");
+        assert!(lines[1].contains("OPENAI_API_KEY"), "{lines:?}");
+        assert!(lines[3].contains("restart it"), "{lines:?}");
+        assert!(unresolved_pointer_warnings(&json!({"runtime": {}})).is_empty());
+        assert!(unresolved_pointer_warnings(&json!({"runtime": {"unavailableSecrets": []}})).is_empty());
+        let hostile = json!({"runtime": {"unavailableSecrets": [{"envVar": "X\u{1b}[2J", "reason": "r"}]}});
+        assert!(!unresolved_pointer_warnings(&hostile)[0].contains('\u{1b}'));
+    }
     use serde_json::json;
 
     #[test]

@@ -55,6 +55,7 @@ import {
   processEnv,
   resolveDoltConnection,
   resolveSecrets,
+  unavailableSecretPointers,
   type WorkbenchConfig,
 } from "../config/mod.ts";
 import { summarizeError, type WorkbenchSessionEvent } from "../contract/mod.ts";
@@ -83,7 +84,10 @@ import {
   type Extension,
   rpcToolApprover,
 } from "./extensions.ts";
-import { buildRuntimeHandlers } from "./rpc/runtime.ts";
+import {
+  buildRuntimeHandlers,
+  type WorkbenchUnavailableSecret,
+} from "./rpc/runtime.ts";
 import { buildSurfaceHandlers } from "./rpc/surface.ts";
 import { buildModelsHandlers } from "./rpc/models.ts";
 import { buildToolsHandlers } from "./rpc/tools.ts";
@@ -134,6 +138,8 @@ export interface WorkbenchUnixServerOptions {
   onStopComplete?: (code: 0 | 1) => Promise<void> | void;
   /** Whether the runtime was started via background autostart. */
   autostarted?: boolean;
+  /** Secret pointers that failed to resolve at start, for `runtime/status`. */
+  unavailableSecrets?: readonly WorkbenchUnavailableSecret[];
   /** Boot-discovered external MCP commands available to this runtime. */
   externalMcpCommands?: readonly CommandDefinition[];
   /** Configured operator friction-checkpoint issue identifier. */
@@ -466,6 +472,7 @@ async function main(): Promise<void> {
       frictionIssueId: processEnv.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||
         undefined,
       autostarted,
+      unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       onShutdown: () => shutdown({ disconnectPeers: false }),
       onStopComplete: (code) => {
         Deno.exit(code);
