@@ -296,9 +296,10 @@ How the work actually happens, separate from what gets built.
 
 - [Deno](https://deno.com) 2.9+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
-- [Ollama](https://ollama.com) for the local default model;
-  [MLX-LM](https://github.com/ml-explore/mlx-lm) remains a supported local
-  provider, but its catalog rows ship inactive
+- [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the
+  local default model; [Ollama](https://ollama.com) and
+  [MLX-LM](https://github.com/ml-explore/mlx-lm) remain supported local
+  providers, and the MLX-LM catalog rows ship inactive
 - _(Optional, for `core/`)_ [`rustup`](https://rustup.rs/) - the toolchain pin
   in `core/rust-toolchain.toml` will install the right Rust automatically when
   you `cargo build` there.
@@ -333,18 +334,25 @@ export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
 
-The local default is the Ollama model `qwen3.6:35b-a3b`, the first active Tier 0
-row in the registry's local preference order. Pull it and keep Ollama on its
-default port:
+The local default is DeepSeek-R1 Distill 32B served by llama.cpp, catalog slug
+`llama-cpp/deepseek-r1-32b`, the first active Tier 0 row in the registry's
+local preference order. Start `llama-server` with a GGUF of that model on its
+default port, aliased to the slug:
 
 ```sh
-ollama pull qwen3.6:35b-a3b
+llama-server -m /path/to/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf \
+  --port 8080 --alias llama-cpp/deepseek-r1-32b --jinja
 ```
 
-Workbench reaches that model through Ollama's OpenAI-compatible endpoint,
-`http://localhost:11434/v1`. The catalog also carries MLX-LM Server rows
-(`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a
-row's `active` flag in the `models` table before selecting it with `--model`.
+Workbench reaches it through llama-server's OpenAI-compatible endpoint,
+`http://localhost:8080/v1`; `--jinja` applies the model's own chat template.
+Ollama stays supported: the Ollama row `qwen3.6:35b-a3b` on
+`http://localhost:11434/v1` is next in the preference order. A bare turn picks
+by that order, not by which server is running, so an Ollama user selects that
+row with `--model` or a companion default. The catalog also carries MLX-LM
+Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship
+inactive, so set a row's `active` flag in the `models` table before selecting
+it with `--model`.
 
 Workbench also carries built-in rows for the local models above and adds them
 when the catalog has no row for them. A catalog row set inactive stays out of
@@ -1219,6 +1227,14 @@ curl -sS http://127.0.0.1:18080/v1/chat/completions \
   -d '{"model":"mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
+For llama.cpp:
+
+```sh
+curl -sS http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"llama-cpp/deepseek-r1-32b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+```
+
 For Ollama:
 
 ```sh
@@ -1874,3 +1890,7 @@ Document revisions only. Code and behavior changes are tracked in
   metric are met outside the D20 and D23 exceptions.
 - 2026-10-03 - The local-default section says a catalog row set inactive stays
   out of routing even when Workbench has a built-in row for that model.
+- 2026-10-03 - The local default is now DeepSeek-R1 Distill 32B served by
+  llama.cpp's `llama-server` on port 8080; the prerequisites, run instructions
+  and provider check say how to start it, and that Ollama users select the
+  Ollama row explicitly.

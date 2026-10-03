@@ -38,6 +38,7 @@ function model(provider: string, extra: Partial<WorkbenchModel> = {}) {
 Deno.test("each production provider is served by exactly one adapter", () => {
   const registry = createProviderRegistry(PROVIDER_ADAPTERS);
   const expected: Record<string, ProviderAdapter> = {
+    "llama-cpp": openAICompatibleAdapter,
     ollama: openAICompatibleAdapter,
     "mlx-lm": openAICompatibleAdapter,
     openai: openAICompatibleAdapter,

@@ -23,12 +23,24 @@ import { providerTestModels } from "../../../testing/builders/models.ts";
 
 const models = [...providerTestModels];
 describe("selectWorkbenchModel", () => {
-  it("defaults to the local Qwen 3.6 MoE model when available", () => {
+  it("defaults to the local DeepSeek-R1 32B model on llama.cpp when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
+
+    assertStrictEquals(selection.selected.slug, "llama-cpp/deepseek-r1-32b");
+    assertStrictEquals(selection.selected.provider, "llama-cpp");
+    assertStrictEquals(selection.reason, "default");
+  });
+
+  it("falls back to the Ollama Qwen 3.6 row when the llama.cpp row is absent", () => {
+    const selection = selectWorkbenchModel(
+      defaultLocalWorkbenchModels().filter((model) =>
+        model.provider !== "llama-cpp"
+      ),
+      {},
+    );
 
     assertStrictEquals(selection.selected.slug, "qwen3.6:35b-a3b");
     assertStrictEquals(selection.selected.provider, "ollama");
-    assertStrictEquals(selection.reason, "default");
   });
 
   it("falls back to next preferred local model when primary default is not available", () => {
