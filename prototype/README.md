@@ -34,10 +34,10 @@ The local default is Qwen3.6 35B-A3B served by llama.cpp's `llama-server` (catal
 ```sh
 llama-server -m /path/to/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
   --host 127.0.0.1 --port 8080 --alias llama-cpp/qwen3.6-35b-a3b \
-  --ctx-size 32768 --parallel 1 --reasoning off
+  --ctx-size 32768 --parallel 1 --reasoning off --jinja
 ```
 
-llama.cpp applies the GGUF's Jinja chat template by default. The catalog declares the served 32K context, and the prior DeepSeek llama.cpp row remains inactive for rollback.
+`--jinja` explicitly enables the GGUF's chat template for OpenAI-style tool calls. The catalog declares the served 32K context, and the prior DeepSeek llama.cpp row remains inactive for rollback.
 
 The separate Ollama row `qwen3.6:35b-a3b` on `http://localhost:11434/v1` is next in the local preference order. A bare turn picks by that order, not by which server is running, so select the Ollama row with `--model` or a companion default when llama-server is not the one you run.
 

@@ -342,17 +342,18 @@ default port, aliased to the slug:
 ```sh
 llama-server -m /path/to/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
   --host 127.0.0.1 --port 8080 --alias llama-cpp/qwen3.6-35b-a3b \
-  --ctx-size 32768 --parallel 1 --reasoning off
+  --ctx-size 32768 --parallel 1 --reasoning off --jinja
 ```
 
 Workbench reaches it through llama-server's OpenAI-compatible endpoint,
 `http://localhost:8080/v1`. The catalog's 32K context is the served limit;
-the GGUF supports a larger native context. llama.cpp applies the GGUF's Jinja
-chat template by default. The previous DeepSeek llama.cpp row remains inactive
-for rollback. Ollama stays supported: its separate `qwen3.6:35b-a3b` row on
-`http://localhost:11434/v1` is next in the preference order. A bare turn picks
-by that order, not by which server is running, so an Ollama user selects that
-row with `--model` or a companion default. The catalog also carries MLX-LM
+the GGUF supports a larger native context. `--jinja` explicitly enables the
+GGUF's chat template for OpenAI-style tool calls. The previous DeepSeek
+llama.cpp row remains inactive for rollback. Ollama stays supported: its
+separate `qwen3.6:35b-a3b` row on `http://localhost:11434/v1` is next in the
+preference order. A bare turn picks by that order, not by which server is
+running, so an Ollama user selects that row with `--model` or a companion
+default. The catalog also carries MLX-LM
 Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship
 inactive, so set a row's `active` flag in the `models` table before selecting
 it with `--model`.
@@ -1905,3 +1906,5 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-03 - Local llama.cpp instructions now name the Qwen3.6 route, its
   served 32K context and non-thinking flag, and distinguish it from Ollama's
   separate Qwen3.6 row.
+- 2026-10-03 - The Qwen3.6 llama.cpp launch command now passes `--jinja`
+  explicitly for its documented tool-calling endpoint.
