@@ -696,8 +696,13 @@ rust_repl_route() {
   local bin=""
   if ! rust_repl_args; then
     reason="an argument is one only the TypeScript REPL takes"
+  elif [[ "${DYFJ_WORKBENCH_TIER:-}" =~ ^[012]$ ||
+    "${DYFJ_WORKBENCH_HINT:-}" =~ ^(code|chat|reasoning)$ ]]; then
+    # The TypeScript client routes on these (values it would ignore are
+    # ignored here too); the Rust REPL reads neither.
+    reason="DYFJ_WORKBENCH_TIER or DYFJ_WORKBENCH_HINT is set, and only the TypeScript REPL reads them"
   elif ! bin="$(rust_repl_bin)"; then
-    reason="no dyfj-repl binary (build it with: cargo build --release -p dyfj-repl)"
+    reason="no dyfj-repl binary (build it from core/ with: cargo build --release -p dyfj-repl)"
   fi
   if [[ -n "$reason" ]]; then
     if [[ "$mode" == "rust" ]]; then

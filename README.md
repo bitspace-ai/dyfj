@@ -1276,8 +1276,10 @@ prompt. A bare interactive `dyfj` opens the Rust REPL when a `dyfj-repl` binary 
 available (`DYFJ_REPL_BIN`, else `core/target/release/dyfj-repl` beside the
 prototype, else `dyfj-repl` on `PATH`; build it with
 `cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
-and every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
-`--session`, `--workspace`, `--socket`). Otherwise, and with `DYFJ_REPL=ts`,
+every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
+`--session`, `--workspace`, `--socket`), and neither `DYFJ_WORKBENCH_TIER` nor
+`DYFJ_WORKBENCH_HINT` is set, since only the TypeScript REPL reads them.
+Otherwise, and with `DYFJ_REPL=ts`,
 the TypeScript REPL opens as before. `DYFJ_REPL=rust` requires the Rust REPL
 for an interactive session on a terminal and fails if it cannot run there;
 piped or redirected input, subcommands, `-p` prompts and `--help` are

@@ -1289,6 +1289,8 @@ describe("interactive REPL front-end selection", () => {
         // Each case sets the routing variables it means to test.
         DYFJ_REPL: "",
         DYFJ_REPL_BIN: "",
+        DYFJ_WORKBENCH_TIER: "",
+        DYFJ_WORKBENCH_HINT: "",
         ...env,
       },
       stdout: "piped",
@@ -1391,6 +1393,40 @@ describe("interactive REPL front-end selection", () => {
       await Deno.readTextFile(record),
       "sock=/tmp/r.sock\n--model\nz-ai/glm-5.2\n--approve-paid\n",
     );
+  });
+
+  it("keeps tier and hint routing from the environment on the TypeScript REPL", async () => {
+    const bin = await fakeReplBin();
+    const routings: Record<string, string>[] = [
+      { DYFJ_WORKBENCH_TIER: "1" },
+      { DYFJ_WORKBENCH_HINT: "code" },
+    ];
+    for (const routing of routings) {
+      const auto = await launch({ DYFJ_REPL_BIN: bin, ...routing }, [], {
+        terminal: true,
+      });
+      assertStrictEquals(auto.code, 0);
+      assertNotMatch(auto.out, /route=rust_repl/);
+
+      const forced = await launch(
+        { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin, ...routing },
+        [],
+        { terminal: true },
+      );
+      assertStrictEquals(forced.code, 2);
+      assertStringIncludes(forced.out, "only the TypeScript REPL reads them");
+    }
+    // A value the TypeScript client ignores changes nothing.
+    const ignored = await launch(
+      {
+        DYFJ_REPL_BIN: bin,
+        DYFJ_WORKBENCH_TIER: "9",
+        DYFJ_WORKBENCH_HINT: "x",
+      },
+      [],
+      { terminal: true },
+    );
+    assertStringIncludes(ignored.out, "route=rust_repl");
   });
 
   it("DYFJ_REPL=rust refuses a session the Rust REPL cannot take", async () => {
