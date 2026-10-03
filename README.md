@@ -1863,7 +1863,8 @@ Document revisions only. Code and behavior changes are tracked in
   that the D28 code splits have landed: no D28 entry remains in
   `scripts/arch-size-exceptions.json`, and PRD-11 R2 and the largest-file
   metric are met outside the D20 and D23 exceptions.
-- 2026-10-03 - `specs/03-testing.md` lists only the shared fakes that exist and
-  exempts `SequentialIds` (no port yet) and `FakeIo` (terminal I/O is not a
-  port) from a conformance suite; PRD-14 R2 states the same exemptions, and
-  `specs/README.md` records R2 as met since exit.
+- 2026-10-03 - `specs/03-testing.md` and the testing section of
+  `prototype/README.md` list only the shared fakes that exist and exempt
+  `SequentialIds` from a conformance suite until its port lands; PRD-14 R2
+  states the exemption, and `specs/README.md` records R2 as met since exit
+  except `FakeIo`, whose suite stays deferred.

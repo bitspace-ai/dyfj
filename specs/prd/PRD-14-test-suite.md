@@ -46,8 +46,8 @@ states for itself:
   both rules.
 - **R2. Every fake has a conformance suite.** Each fake in `testing/fakes/` that
   replaces a real adapter runs a conformance suite against both implementations.
-  A fake whose port does not exist in code yet (`SequentialIds`) and the CLI's
-  terminal-I/O double (`FakeIo`) are exempt (`03-testing.md` §3).
+  A fake whose port does not exist in code yet (`SequentialIds`) is exempt until
+  the port lands (`03-testing.md` §3).
 - **R3. Tier is decided by file name.** The `integration-test-assignment.ts`
   list is deleted.
 - **R4. One typecheck file list.** It is derived by globbing, so the gate and

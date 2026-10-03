@@ -79,9 +79,10 @@ in the same change that lands this spec's first work order.
       either lands with its conformance suite when tests first need one.
     - `SequentialIds` is a fake that landed before its port. It needs no suite
       until an `IdSource` port exists in code.
-    - `FakeIo` records the CLI's injected `Io` (terminal I/O, in
-      `src/cli/io.ts`). Terminal I/O, like the filesystem, is not a port, so
-      `FakeIo` has no conformance suite.
+    - `FakeIo` stands in for the CLI's `Io` port (`src/cli/io.ts`), a client
+      port outside the runtime list in `01-architecture.md` §5.6. Its real
+      adapter is the process's terminal, which the unit lane cannot open, so
+      it has no conformance suite yet; that suite stays deferred under D28.
   - `servers/`: loopback OpenAI-compatible model server, MCP HTTP server,
     scripted HTTP server, UDS peer, and raw listeners (one that never answers,
     a stale socket file).
