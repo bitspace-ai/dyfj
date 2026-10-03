@@ -621,7 +621,8 @@ route_cli() {
 # A bare interactive `dyfj` runs the Rust REPL (core/dyfj-repl) when its binary
 # is available and every argument is one it understands; anything else stays
 # on the TypeScript REPL. DYFJ_REPL=ts keeps the TypeScript REPL, DYFJ_REPL=rust
-# requires the Rust one (and skips the terminal check, for scripted use). The
+# requires the Rust one for a session on a terminal. Piped or redirected input
+# is not an interactive session and always stays on the TypeScript REPL. The
 # binary is DYFJ_REPL_BIN, else core/target/release/dyfj-repl beside this
 # prototype, else dyfj-repl on PATH.
 
@@ -682,15 +683,15 @@ rust_repl_route() {
     "$LAUNCHER_SAW_PROMPT" == "1" || "$LAUNCHER_ARGS_INVALID" == "1" ]]; then
     return 1
   fi
+  # Piped or redirected input is not an interactive session either, so it
+  # stays on the TypeScript REPL without reading DYFJ_REPL.
+  [[ "${LAUNCHER_ON_TERMINAL:-0}" == "1" ]] || return 1
   local mode="${DYFJ_REPL:-auto}"
   [[ "$mode" == "ts" ]] && return 1
   if [[ "$mode" != "auto" && "$mode" != "rust" ]]; then
     echo "dyfj: DYFJ_REPL must be ts, rust or unset" >&2
     return 2
   fi
-  # Piped or redirected input is not an interactive session, so it stays on
-  # the TypeScript REPL whatever DYFJ_REPL says.
-  [[ "${LAUNCHER_ON_TERMINAL:-0}" == "1" ]] || return 1
   local reason=""
   local bin=""
   if ! rust_repl_args; then

@@ -1315,7 +1315,8 @@ describe("interactive REPL front-end selection", () => {
 
   it("keeps the TypeScript REPL off a terminal, whatever DYFJ_REPL says", async () => {
     const bin = await fakeReplBin();
-    for (const mode of ["", "rust"]) {
+    // Off a terminal DYFJ_REPL is not read, so even an invalid value passes.
+    for (const mode of ["", "rust", "invalid"]) {
       const { code, out } = await launch({
         DYFJ_REPL: mode,
         DYFJ_REPL_BIN: bin,
@@ -1323,6 +1324,13 @@ describe("interactive REPL front-end selection", () => {
       assertStrictEquals(code, 0, `DYFJ_REPL=${mode}`);
       assertNotMatch(out, /route=rust_repl/);
     }
+    const invalid = await launch(
+      { DYFJ_REPL: "invalid", DYFJ_REPL_BIN: bin },
+      [],
+      { terminal: true },
+    );
+    assertStrictEquals(invalid.code, 2);
+    assertStringIncludes(invalid.out, "DYFJ_REPL must be ts, rust or unset");
   });
 
   it("leaves subcommands and prompts alone whatever DYFJ_REPL says", async () => {
