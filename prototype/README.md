@@ -258,6 +258,9 @@ opt-in in the pinned Deno), with read access to the prototype and
 temp roots, write access to temp roots only, and no run, net, or env grant, so unit and
 component tests stay off Dolt, the network, and child processes. Write fixture output to
 `Deno.makeTempDir()`, never the working tree.
+`src/engine/headless-host.component.test.ts` uses these fakes to exercise the
+native runtime directly from two isolated host configurations and to check a
+denied mutation; it does not start the socket server or a cluster workload.
 
 Shared test support lives in `testing/` (never imported by runtime code): the golden
 suite in `testing/golden/`, loopback servers in `testing/servers/`, and the port fakes in
