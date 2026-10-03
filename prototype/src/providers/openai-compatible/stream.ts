@@ -150,18 +150,131 @@ export async function readOpenAIChatStream(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const presenter = createTextPresenter(tools, onTextDelta);
+  const toolCallAcc = createToolCallAccumulator();
   let lineFragments: string[] = [];
-  let text = "";
   let reasoningCharacters = 0;
-  let toolCallCharacters = 0;
   let finishReason: string | undefined;
-  let usage: OpenAIChatUsage | undefined;
-  let usageGeneratedCharacters: number | undefined;
-  let usageReasoningCharacters: number | undefined;
-  let usageCompletionReasoningCharacters: number | undefined;
+  let usageState: StreamUsageState = {};
   let firstTokenAt: number | undefined;
-  // Withhold a recognized offered-tool wrapper until it closes. Recoverable
-  // markup stays hidden; trailing prose resumes immediately after the close.
+  let receivedBytes = 0;
+  let receivedChunks = 0;
+  let receivedReads = 0;
+  let aborted = false;
+
+  const applyEvent = (event: OpenAIChatStreamEvent) => {
+    if (event.reasoningDelta) {
+      reasoningCharacters += event.reasoningDelta.length;
+    }
+    if (event.textDelta) {
+      firstTokenAt ??= now();
+      presenter.append(event.textDelta);
+    }
+    toolCallAcc.apply(event.toolCallDeltas ?? []);
+    if (event.finishReason) finishReason = event.finishReason;
+    if (event.usage) {
+      usageState = applyStreamUsage(usageState, event.usage, {
+        finishReason: event.finishReason,
+        generatedCharacters: presenter.text.length + toolCallAcc.characters,
+        reasoningCharacters,
+      });
+    }
+  };
+
+  const parseAndApplyStreamLine = async (line: string) => {
+    try {
+      const event = parseOpenAIChatStreamLine(line);
+      if (event && !event.done) applyEvent(event);
+    } catch (error) {
+      void reader.cancel().catch(() => {});
+      throw error;
+    }
+  };
+
+  while (true) {
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (!isAbortFromSignal(error, abortSignal)) throw error;
+      aborted = true;
+      break;
+    }
+    const { value, done } = chunk;
+    if (done) {
+      break;
+    }
+    receivedReads += 1;
+    receivedBytes += value.byteLength;
+    if (value.byteLength > 0) receivedChunks += 1;
+    if (
+      receivedBytes > MAX_OPENAI_RESPONSE_BYTES ||
+      receivedChunks > MAX_OPENAI_RESPONSE_CHUNKS ||
+      receivedReads > MAX_OPENAI_RESPONSE_READS
+    ) {
+      void reader.cancel().catch(() => {});
+      throw new DomainError("Provider response exceeded the adapter limit");
+    }
+    const parts = decoder.decode(value, { stream: true }).split("\n");
+    lineFragments.push(parts.shift() ?? "");
+    for (const part of parts) {
+      const line = lineFragments.join("");
+      lineFragments = [part];
+      await parseAndApplyStreamLine(line);
+    }
+  }
+  if (!aborted) lineFragments.push(decoder.decode());
+  const buffer = lineFragments.join("");
+  if (buffer.trim().length > 0) {
+    try {
+      await parseAndApplyStreamLine(buffer);
+    } catch (error) {
+      if (!aborted || !isIncompleteSseDataLine(buffer, error)) throw error;
+    }
+  }
+  aborted ||= abortSignal?.aborted === true;
+  const visibleText = presenter.finish(aborted);
+  const toolCalls = toolCallAcc.toolCalls();
+
+  const completed = now();
+  return {
+    text: presenter.text,
+    visibleText,
+    reasoningCharacters,
+    toolCallCharacters: toolCallAcc.characters,
+    usageGeneratedCharacters: usageState.usageGeneratedCharacters,
+    usageReasoningCharacters: usageState.usageReasoningCharacters,
+    usageCompletionReasoningCharacters:
+      usageState.usageCompletionReasoningCharacters,
+    aborted,
+    finishReason,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    usage: usageState.usage,
+    timings: {
+      responseHeadersMs: Math.round(headersReceived - requestStarted),
+      timeToFirstTokenMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(firstTokenAt - requestStarted),
+      generationMs: firstTokenAt === undefined
+        ? undefined
+        : Math.round(completed - firstTokenAt),
+      totalMs: Math.round(completed - requestStarted),
+    },
+  };
+}
+
+/**
+ * Live presentation of streamed text. Text is forwarded to `onTextDelta` as it
+ * arrives, except that a recognized offered-tool wrapper is withheld until it
+ * closes: recoverable markup stays hidden, and trailing prose resumes
+ * immediately after the close. The presenter owns all of that state; the
+ * reader only appends deltas and finishes once.
+ */
+function createTextPresenter(
+  tools: WorkbenchToolDefinition[] | undefined,
+  onTextDelta: (delta: string) => void,
+) {
+  let text = "";
   let suppressing = false;
   let sawTextToolMarkup = false;
   let textToolRecoveryDisabled = !tools || tools.length === 0;
@@ -172,11 +285,6 @@ export async function readOpenAIChatStream(
   let forwardedLength = 0;
   let forwardedText = "";
   let closingSearchFrom = 0;
-  let receivedBytes = 0;
-  let receivedChunks = 0;
-  let receivedReads = 0;
-  let structuredToolNameCharacters = 0;
-  let aborted = false;
 
   const offeredNames = tools
     ? new Set(toolWireNames(tools).map(({ wire }) => wire))
@@ -240,24 +348,16 @@ export async function readOpenAIChatStream(
     }
   };
 
-  // Tool calls arrive as deltas keyed by index; id/name land in the first
-  // fragment for that index and arguments stream as string fragments (MLX sends
-  // the whole call in one delta, hosted OpenAI fragments it — both accumulate).
-  const toolAcc = new Map<
-    number,
-    { id?: string; name?: string; args: string }
-  >();
-
-  const applyEvent = (event: OpenAIChatStreamEvent) => {
-    if (event.reasoningDelta) {
-      reasoningCharacters += event.reasoningDelta.length;
-    }
-    if (event.textDelta) {
-      firstTokenAt ??= now();
+  return {
+    /** Everything appended so far, markup included. */
+    get text(): string {
+      return text;
+    },
+    append(delta: string): void {
       if (!textToolRecoveryDisabled) {
         const functionUpdate = countNewTextToolMarkupCandidates(
           functionCandidateTail,
-          event.textDelta,
+          delta,
           TEXT_FUNCTION_MARKER,
           MAX_TEXT_TOOL_MARKUP_CANDIDATES - functionCandidates,
         );
@@ -265,14 +365,14 @@ export async function readOpenAIChatStream(
         functionCandidates += functionUpdate.count;
         const parameterUpdate = countNewTextToolMarkupCandidates(
           parameterCandidateTail,
-          event.textDelta,
+          delta,
           TEXT_PARAMETER_MARKER,
           MAX_TEXT_TOOL_MARKUP_CANDIDATES - parameterCandidates,
         );
         parameterCandidateTail = parameterUpdate.tail;
         parameterCandidates += parameterUpdate.count;
       }
-      text += event.textDelta;
+      text += delta;
       if (
         !textToolRecoveryDisabled &&
         (
@@ -289,173 +389,143 @@ export async function readOpenAIChatStream(
         suppressing = false;
       }
       forwardAvailableText();
-    }
-    for (const delta of event.toolCallDeltas ?? []) {
-      if (
-        !toolAcc.has(delta.index) &&
-        toolAcc.size >= MAX_STRUCTURED_TOOL_CALLS
-      ) {
-        throw new DomainError(
-          "Provider returned too many structured tool calls",
-        );
+    },
+    /** Flush what may still be shown and return the deliverable text. */
+    finish(aborted: boolean): string {
+      const deliverable = aborted || suppressing || sawTextToolMarkup
+        ? stripIncompleteTextToolCallSuffix(text, tools)
+        : text;
+      if (!deliverable.startsWith(forwardedText)) {
+        throw new DomainError("Provider stream presentation diverged");
       }
-      const acc = toolAcc.get(delta.index) ?? { args: "" };
-      if (delta.id) acc.id = delta.id;
-      if (delta.name) {
-        structuredToolNameCharacters += delta.name.length;
+      emitTextDelta(deliverable.slice(forwardedText.length));
+      return deliverable;
+    },
+  };
+}
+
+/**
+ * Accumulates structured tool calls. They arrive as deltas keyed by index;
+ * id/name land in the first fragment for that index and arguments stream as
+ * string fragments (MLX sends the whole call in one delta, hosted OpenAI
+ * fragments it — both accumulate).
+ */
+function createToolCallAccumulator() {
+  const toolAcc = new Map<
+    number,
+    { id?: string; name?: string; args: string }
+  >();
+  let structuredToolNameCharacters = 0;
+  let characters = 0;
+
+  return {
+    /** Name and argument characters received so far. */
+    get characters(): number {
+      return characters;
+    },
+    apply(deltas: NonNullable<OpenAIChatStreamEvent["toolCallDeltas"]>): void {
+      for (const delta of deltas) {
         if (
-          structuredToolNameCharacters >
-            MAX_STRUCTURED_TOOL_NAME_CHARACTERS
+          !toolAcc.has(delta.index) &&
+          toolAcc.size >= MAX_STRUCTURED_TOOL_CALLS
         ) {
           throw new DomainError(
             "Provider returned too many structured tool calls",
           );
         }
-        acc.name = (acc.name ?? "") + delta.name;
-        toolCallCharacters += delta.name.length;
-      }
-      if (delta.argumentsFragment) {
-        toolCallCharacters += delta.argumentsFragment.length;
-        if (
-          acc.args.length + delta.argumentsFragment.length >
-            MAX_CANONICAL_JSON_CHARACTERS
-        ) {
-          throw new DomainError("Provider returned oversized tool arguments");
+        const acc = toolAcc.get(delta.index) ?? { args: "" };
+        if (delta.id) acc.id = delta.id;
+        if (delta.name) {
+          structuredToolNameCharacters += delta.name.length;
+          if (
+            structuredToolNameCharacters >
+              MAX_STRUCTURED_TOOL_NAME_CHARACTERS
+          ) {
+            throw new DomainError(
+              "Provider returned too many structured tool calls",
+            );
+          }
+          acc.name = (acc.name ?? "") + delta.name;
+          characters += delta.name.length;
         }
-        acc.args += delta.argumentsFragment;
+        if (delta.argumentsFragment) {
+          characters += delta.argumentsFragment.length;
+          if (
+            acc.args.length + delta.argumentsFragment.length >
+              MAX_CANONICAL_JSON_CHARACTERS
+          ) {
+            throw new DomainError("Provider returned oversized tool arguments");
+          }
+          acc.args += delta.argumentsFragment;
+        }
+        toolAcc.set(delta.index, acc);
       }
-      toolAcc.set(delta.index, acc);
-    }
-    if (event.finishReason) finishReason = event.finishReason;
-    if (event.usage) {
-      const previousCompletion = finiteNonnegativeTokenCount(
-        usage?.completion_tokens,
-      );
-      const incomingCompletion = finiteNonnegativeTokenCount(
-        event.usage.completion_tokens,
-      );
-      const previousReasoning = finiteNonnegativeTokenCount(
-        usage?.completion_tokens_details?.reasoning_tokens,
-      );
-      const incomingReasoning = finiteNonnegativeTokenCount(
-        event.usage.completion_tokens_details?.reasoning_tokens,
-      );
-      usage = mergeStreamUsage(usage, event.usage);
-      if (
-        incomingCompletion !== undefined &&
-        (previousCompletion === undefined ||
-          incomingCompletion > previousCompletion ||
-          (incomingCompletion === previousCompletion &&
-            event.finishReason !== undefined))
-      ) {
-        usageGeneratedCharacters = text.length + toolCallCharacters;
-        usageCompletionReasoningCharacters = reasoningCharacters;
-      }
-      if (
-        incomingReasoning !== undefined &&
-        (previousReasoning === undefined ||
-          incomingReasoning > previousReasoning ||
-          (incomingReasoning === previousReasoning &&
-            event.finishReason !== undefined))
-      ) {
-        usageReasoningCharacters = reasoningCharacters;
-      }
-    }
-  };
-
-  const parseAndApplyStreamLine = async (line: string) => {
-    try {
-      const event = parseOpenAIChatStreamLine(line);
-      if (event && !event.done) applyEvent(event);
-    } catch (error) {
-      void reader.cancel().catch(() => {});
-      throw error;
-    }
-  };
-
-  while (true) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
-    try {
-      chunk = await reader.read();
-    } catch (error) {
-      if (!isAbortFromSignal(error, abortSignal)) throw error;
-      aborted = true;
-      break;
-    }
-    const { value, done } = chunk;
-    if (done) {
-      break;
-    }
-    receivedReads += 1;
-    receivedBytes += value.byteLength;
-    if (value.byteLength > 0) receivedChunks += 1;
-    if (
-      receivedBytes > MAX_OPENAI_RESPONSE_BYTES ||
-      receivedChunks > MAX_OPENAI_RESPONSE_CHUNKS ||
-      receivedReads > MAX_OPENAI_RESPONSE_READS
-    ) {
-      void reader.cancel().catch(() => {});
-      throw new DomainError("Provider response exceeded the adapter limit");
-    }
-    const parts = decoder.decode(value, { stream: true }).split("\n");
-    lineFragments.push(parts.shift() ?? "");
-    for (const part of parts) {
-      const line = lineFragments.join("");
-      lineFragments = [part];
-      await parseAndApplyStreamLine(line);
-    }
-  }
-  if (!aborted) lineFragments.push(decoder.decode());
-  const buffer = lineFragments.join("");
-  if (buffer.trim().length > 0) {
-    try {
-      await parseAndApplyStreamLine(buffer);
-    } catch (error) {
-      if (!aborted || !isIncompleteSseDataLine(buffer, error)) throw error;
-    }
-  }
-  aborted ||= abortSignal?.aborted === true;
-  const deliverable = aborted || suppressing || sawTextToolMarkup
-    ? stripIncompleteTextToolCallSuffix(text, tools)
-    : text;
-  if (!deliverable.startsWith(forwardedText)) {
-    throw new DomainError("Provider stream presentation diverged");
-  }
-  emitTextDelta(deliverable.slice(forwardedText.length));
-
-  const toolCalls: WorkbenchToolCall[] = [...toolAcc.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([index, acc]) => {
-      return {
-        id: acc.id ?? `tool-call-${index + 1}`,
-        name: acc.name ?? "",
-        arguments: parseToolArguments(acc.args),
-      };
-    });
-
-  const completed = now();
-  return {
-    text,
-    visibleText: deliverable,
-    reasoningCharacters,
-    toolCallCharacters,
-    usageGeneratedCharacters,
-    usageReasoningCharacters,
-    usageCompletionReasoningCharacters,
-    aborted,
-    finishReason,
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-    usage,
-    timings: {
-      responseHeadersMs: Math.round(headersReceived - requestStarted),
-      timeToFirstTokenMs: firstTokenAt === undefined
-        ? undefined
-        : Math.round(firstTokenAt - requestStarted),
-      generationMs: firstTokenAt === undefined
-        ? undefined
-        : Math.round(completed - firstTokenAt),
-      totalMs: Math.round(completed - requestStarted),
     },
+    toolCalls(): WorkbenchToolCall[] {
+      return [...toolAcc.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([index, acc]) => ({
+          id: acc.id ?? `tool-call-${index + 1}`,
+          name: acc.name ?? "",
+          arguments: parseToolArguments(acc.args),
+        }));
+    },
+  };
+}
+
+/** Usage seen so far, and the character counts it was reported against. */
+interface StreamUsageState {
+  usage?: OpenAIChatUsage;
+  usageGeneratedCharacters?: number;
+  usageReasoningCharacters?: number;
+  usageCompletionReasoningCharacters?: number;
+}
+
+/**
+ * Fold one streamed usage frame into the state. The character snapshots move
+ * only when the frame's token count grows, or holds steady on the frame that
+ * finishes the turn, so each snapshot matches the text the final count
+ * describes.
+ */
+function applyStreamUsage(
+  state: StreamUsageState,
+  incoming: OpenAIChatUsage,
+  at: {
+    finishReason?: string;
+    generatedCharacters: number;
+    reasoningCharacters: number;
+  },
+): StreamUsageState {
+  const advanced = (
+    previous: number | undefined,
+    next: number | undefined,
+  ) =>
+    next !== undefined &&
+    (previous === undefined || next > previous ||
+      (next === previous && at.finishReason !== undefined));
+  const completionAdvanced = advanced(
+    finiteNonnegativeTokenCount(state.usage?.completion_tokens),
+    finiteNonnegativeTokenCount(incoming.completion_tokens),
+  );
+  const reasoningAdvanced = advanced(
+    finiteNonnegativeTokenCount(
+      state.usage?.completion_tokens_details?.reasoning_tokens,
+    ),
+    finiteNonnegativeTokenCount(
+      incoming.completion_tokens_details?.reasoning_tokens,
+    ),
+  );
+  return {
+    usage: mergeStreamUsage(state.usage, incoming),
+    usageGeneratedCharacters: completionAdvanced
+      ? at.generatedCharacters
+      : state.usageGeneratedCharacters,
+    usageCompletionReasoningCharacters: completionAdvanced
+      ? at.reasoningCharacters
+      : state.usageCompletionReasoningCharacters,
+    usageReasoningCharacters: reasoningAdvanced
+      ? at.reasoningCharacters
+      : state.usageReasoningCharacters,
   };
 }
 

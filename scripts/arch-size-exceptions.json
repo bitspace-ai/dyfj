@@ -94,13 +94,6 @@
   },
   {
     "kind": "function",
-    "path": "prototype/src/providers/openai-compatible/stream.ts",
-    "name": "readOpenAIChatStream",
-    "lines": 367,
-    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
-  },
-  {
-    "kind": "function",
     "path": "prototype/src/config/mcp-servers.ts",
     "name": "parseMcpServersConfig",
     "lines": 270,
