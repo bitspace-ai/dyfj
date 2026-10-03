@@ -12,20 +12,24 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
-  assertPublicDnsResolution,
-  assertPublicHttpsUrl,
   createWebToolsSessionState,
-  decodeHtmlEntities,
   defineWebCommands,
-  extractReadableContentFromHtml,
-  isPrivateOrLoopbackIp,
   MAX_EXTRACTED_CHARS_PER_FETCH,
   MAX_FETCH_CALLS_PER_TURN,
   MAX_SEARCH_CALLS_PER_TURN,
   normalizeSearchResults,
   resetWebToolsTurnState,
-  safeFetchDocument,
 } from "./web.ts";
+import {
+  assertPublicDnsResolution,
+  assertPublicHttpsUrl,
+  isPrivateOrLoopbackIp,
+} from "./web-url-safety.ts";
+import {
+  decodeHtmlEntities,
+  extractReadableContentFromHtml,
+  safeFetchDocument,
+} from "./web-document.ts";
 import type { McpHttpServerConfig } from "../../config/mod.ts";
 import { ScriptedDnsResolver } from "../../../testing/fakes/scripted-dns-resolver.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
