@@ -201,9 +201,13 @@ Working-system criterion. Cost visibility is part of the done-line itself, not a
 deferrable enhancement.
 
 Daily use is measured on one route: the native model loop with hosted
-inference over an OpenAI-compatible provider, OpenRouter by default, with the
-provider pluggable behind that adapter. External-agent (ACP) routes stay in the
-tree but are deferred from the route plan (`specs/README.md`, decision D29).
+inference over an OpenAI-compatible provider, with OpenRouter as the default
+provider and others pluggable behind that adapter. The route is opt-in, not the
+runtime's bare default: an unconfigured bare turn still uses the local tier-0
+model, so the operator selects a hosted model with `DYFJ_WORKBENCH_MODEL` (or
+the configured companion default) or `--model`. External-agent (ACP) routes stay
+in the tree but are deferred from the route plan (`specs/README.md`, decision
+D29).
 
 ### Inter-agent contracts - Day-1 posture
 
@@ -1830,7 +1834,8 @@ Document revisions only. Code and behavior changes are tracked in
   pointer unavailable reports it (`runtime/status`, `dyfj status`, the Rust
   REPL's startup lines) and that recovery is a restart.
 - 2026-10-02 - Section 1's done-line names the one route daily use is measured
-  on, hosted inference over an OpenAI-compatible provider with OpenRouter as the
+  on, hosted inference over an OpenAI-compatible provider with OpenRouter as its
+  default provider, selected by configuration rather than as the bare-turn
   default, and `specs/README.md` records decision D29, which defers the
   external-agent (ACP) routes from the route plan and supersedes that part of
   D20.
