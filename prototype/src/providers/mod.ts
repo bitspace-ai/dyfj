@@ -61,6 +61,7 @@ export {
 } from "./registry/catalog.ts";
 export {
   defaultLocalWorkbenchModels,
+  loadWorkbenchModelsWithLocalDefaults,
   withDefaultLocalWorkbenchModels,
 } from "./registry/local-defaults.ts";
 export {

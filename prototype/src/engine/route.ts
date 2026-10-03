@@ -24,8 +24,8 @@ import {
 import {
   defaultLocalWorkbenchModels,
   loadWorkbenchModels,
+  loadWorkbenchModelsWithLocalDefaults,
   selectWorkbenchModel,
-  withDefaultLocalWorkbenchModels,
   type WorkbenchModel,
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
@@ -37,6 +37,7 @@ import { PaidEscalationDeclinedError } from "./errors.ts";
 /** The catalog reader route resolution loads models through. */
 export interface RouteModelReader {
   listActive(): Promise<Record<string, string>[]>;
+  listInactiveSlugs(): Promise<string[]>;
 }
 
 export type ConfirmPaidEscalation = (
@@ -188,8 +189,7 @@ async function selectedAcpRoute(
   } | null
 > {
   try {
-    const catalog = await loadWorkbenchModels(models).then(
-      withDefaultLocalWorkbenchModels,
+    const catalog = await loadWorkbenchModelsWithLocalDefaults(models).catch(
       () => defaultLocalWorkbenchModels(),
     );
     const selection = selectWorkbenchModel(
@@ -314,10 +314,9 @@ export async function selectModelRoute(
   const usesRepoAskContext = request.mode === "ask" || isNextWork;
   let catalog: WorkbenchModel[];
   try {
-    catalog = await loadWorkbenchModels(models);
-    if (usesRepoAskContext) {
-      catalog = withDefaultLocalWorkbenchModels(catalog);
-    }
+    catalog = usesRepoAskContext
+      ? await loadWorkbenchModelsWithLocalDefaults(models)
+      : await loadWorkbenchModels(models);
   } catch (err) {
     if (!usesRepoAskContext) throw err;
     // Provenance-summarized, never raw: a registry failure is typically a

@@ -382,6 +382,13 @@ export class MemoryStore implements Store {
               ])
             ),
         ),
+      listInactiveSlugs: () =>
+        Promise.resolve(
+          this.#models
+            .filter((m) => m.active !== 1)
+            .map((m) => m.slug as string)
+            .sort(compareText),
+        ),
     };
     this.prompts = {
       active: (slug) => {

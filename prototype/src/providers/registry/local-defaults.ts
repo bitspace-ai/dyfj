@@ -2,6 +2,7 @@
  * The built-in local model rows, overlaid on the catalog when it lacks them.
  */
 import type { WorkbenchModel } from "../types.ts";
+import { loadWorkbenchModels } from "./catalog.ts";
 
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   return [
@@ -176,12 +177,36 @@ export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   ];
 }
 
+/**
+ * Prepend the built-in local rows the catalog has no row for. A slug in
+ * `inactiveSlugs` has a catalog row the operator deactivated, so its built-in
+ * row is not restored.
+ */
 export function withDefaultLocalWorkbenchModels(
   models: WorkbenchModel[],
+  inactiveSlugs: readonly string[] = [],
 ): WorkbenchModel[] {
   const defaultModels = defaultLocalWorkbenchModels()
     .filter((model) =>
-      !models.some((existing) => existing.slug === model.slug)
+      !models.some((existing) => existing.slug === model.slug) &&
+      !inactiveSlugs.includes(model.slug)
     );
   return [...defaultModels, ...models];
+}
+
+/**
+ * The active catalog with the built-in local rows overlaid where the catalog
+ * has no row, active or inactive, for them.
+ */
+export async function loadWorkbenchModelsWithLocalDefaults(
+  models: {
+    listActive(): Promise<Record<string, string>[]>;
+    listInactiveSlugs(): Promise<string[]>;
+  },
+): Promise<WorkbenchModel[]> {
+  const [active, inactiveSlugs] = await Promise.all([
+    loadWorkbenchModels(models),
+    models.listInactiveSlugs(),
+  ]);
+  return withDefaultLocalWorkbenchModels(active, inactiveSlugs);
 }
