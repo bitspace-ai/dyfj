@@ -1363,6 +1363,8 @@ Things that exist as boxes on a diagram.
   session/event writes, budget tracking, and receipt facts. The layers, from
   L0 `kernel/` up to L5 `server/` and `cli/`, and their allowed edges are in
   `specs/01-architecture.md` §3; the `arch.imports` gate lane enforces them.
+  `specs/runtime-consumer-contract.md` records the existing in-process native
+  turn ports and the additional decisions a separate headless host needs.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable,
   versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool
@@ -1859,3 +1861,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - The interactive-terminal section says a bare `dyfj` now opens the
   Rust REPL when it can, and how `DYFJ_REPL` and `DYFJ_REPL_BIN` choose or
   require a front end.
+- 2026-10-03 - The runtime-boundary section links a headless consumer contract
+  that separates existing native-turn ports from proposed host, context and
+  deployment decisions.
