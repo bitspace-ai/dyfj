@@ -216,8 +216,25 @@ pub async fn run(
     prompter: Prompter<'_>,
 ) {
     // `/friction` can raise an approval, so it handles Ctrl-C itself; see
-    // `request_answering_approvals`. Every other command only reads or writes
-    // without asking, and Ctrl-C simply abandons it.
+    // `request_answering_approvals`. `/idea mark` writes: abandoning it would
+    // not stop the runtime recording the idea, and a retry would record it
+    // twice, so it waits for the answer. Every other command only reads, and
+    // Ctrl-C simply abandons it.
+    if let Command::IdeaMark(label) = &command {
+        let marking = idea_mark(client, session, label);
+        tokio::pin!(marking);
+        loop {
+            tokio::select! {
+                biased;
+                _ = &mut marking => break,
+                Some(()) = prompter.interrupts.recv() => {
+                    eprintln!("\n/idea mark is a write; waiting for the runtime to record it");
+                }
+            }
+        }
+        while prompter.interrupts.try_recv().is_ok() {}
+        return;
+    }
     if let Command::Friction {
         severity,
         escaped,
@@ -246,8 +263,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
         Command::SessionShow => session_show(session),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
-        Command::Friction { .. } => unreachable!("dispatched by run"),
-        Command::IdeaMark(label) => idea_mark(client, session, &label).await,
+        Command::Friction { .. } | Command::IdeaMark(_) => unreachable!("dispatched by run"),
         Command::IdeaList => idea_list(client, session).await,
     }
 }
@@ -1120,6 +1136,15 @@ mod run_tests {
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert_eq!(seen[1]["id"], "a1");
         assert_eq!(seen[1]["result"]["decision"], "deny", "the terminal said y; Ctrl-C wins");
+    }
+
+    /// Ctrl-C during `/idea mark` does not abandon the write: the request
+    /// still reaches the runtime and the presses are spent here.
+    #[tokio::test]
+    async fn an_interrupted_idea_mark_still_waits_for_the_runtime() {
+        let mut session = Session { id: Some("S1".into()), ..Session::default() };
+        let seen = drive_interrupted(catalog, &mut session, vec![Command::IdeaMark("x".into())], 2).await;
+        assert_eq!(methods(&seen), ["ideas/mark"]);
     }
 
     #[tokio::test]

@@ -196,16 +196,20 @@ impl Client {
         Ok(())
     }
 
-    /// Known limit: dropping the caller's future while this is suspended
-    /// inside `write_all` can leave a partial frame on the connection, and the
-    /// next write would be appended to it. Reachable today only by abandoning
-    /// a turn with a second Ctrl-C while the socket is applying backpressure.
+    /// The write runs in its own task, so a caller dropped mid-write (Ctrl-C
+    /// abandoning a command or a turn) cannot leave a partial frame on the
+    /// connection: the task finishes the frame whether or not anyone awaits it.
     async fn send(&self, frame: &Value) -> Result<()> {
         let mut line = serde_json::to_vec(frame)?;
         line.push(b'\n');
-        let mut write = self.write.lock().await;
-        write.write_all(&line).await?;
-        write.flush().await?;
+        let write = Arc::clone(&self.write);
+        tokio::spawn(async move {
+            let mut write = write.lock().await;
+            write.write_all(&line).await?;
+            write.flush().await
+        })
+        .await
+        .map_err(|err| anyhow!("send task failed: {err}"))??;
         Ok(())
     }
 }

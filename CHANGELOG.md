@@ -33,12 +33,16 @@ README are tracked separately in its Revision history section.
   `/model`, `/fast`, `/session` (show, list, switch), `/friction`, `/idea mark`,
   `/idea list` and `/help` are recognised only when typed alone on one line, so
   pasted text that contains them stays prompt text and an unknown `/word` is
-  sent as a prompt; the input length limit applies to them too, and Ctrl-C
-  while one waits on the runtime abandons it without cancelling the next
-  turn (an interrupted `/friction` denies the approval its write then asks
-  for). `/model`
-  refuses unknown and unroutable slugs. `/friction` posts only the
-  workspace's name, never its path.
+  sent as a prompt; the input length limit applies to them too. Ctrl-C
+  while a read-only command waits on the runtime abandons it without
+  cancelling the next turn. The two writes do not return early:
+  `/friction` waits for the runtime to settle its post and denies the
+  approval it then asks for, and `/idea mark` waits for the runtime to
+  record the idea, so a retry cannot record it twice. `/friction` names a
+  slash command in its context only when it was typed just before, with no
+  turn in between. `/model` refuses unknown and unroutable slugs.
+  `/friction` posts only the workspace's name, never its path. A request
+  abandoned mid-write no longer leaves a partial frame on the connection.
 - **A runtime that started with secrets unavailable says so up front.**
   When a declared secret pointer fails to resolve at boot (a locked vault, a
   timed-out resolver), `runtime/status` now lists it under
@@ -177,8 +181,7 @@ README are tracked separately in its Revision history section.
 
   Known limits are recorded in the source where they are met, not left to be
   rediscovered: approvals and frames carry no turn id, so a delayed one from an
-  abandoned turn can appear during a later turn; a dropped write can leave a
-  partial frame; no closed state is recorded after the reader
+  abandoned turn can appear during a later turn; no closed state is recorded after the reader
   ends; one pending entry leaks per abandoned turn; and the submission ceiling
   bounds what is remembered rather than what is allocated.
 
