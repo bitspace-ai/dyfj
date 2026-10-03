@@ -1894,3 +1894,8 @@ Document revisions only. Code and behavior changes are tracked in
   llama.cpp's `llama-server` on port 8080; the prerequisites, run instructions
   and provider check say how to start it, and that Ollama users select the
   Ollama row explicitly.
+- 2026-10-03 - `specs/03-testing.md` and the testing section of
+  `prototype/README.md` list only the shared fakes that exist and exempt
+  `SequentialIds` from a conformance suite until its port lands; PRD-14 R2
+  states the exemption, and `specs/README.md` records R2 as met since exit
+  except `fakeIo`, whose suite stays deferred.

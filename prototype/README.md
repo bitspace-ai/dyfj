@@ -271,10 +271,12 @@ denied mutation; it does not start the socket server or a cluster workload.
 
 Shared test support lives in `testing/` (never imported by runtime code): the golden
 suite in `testing/golden/`, loopback servers in `testing/servers/`, and the port fakes in
-`testing/fakes/`: `ManualClock` (`Clock`), `SequentialIds` (`IdSource`, ULID-shaped),
-`MapEnv` (`Env`), `ScriptedDnsResolver` (`DnsResolver`), and `fakeIo` (the CLI's terminal `Io`). A unit test replaces a port with
+`testing/fakes/`: `ScriptedHttpTransport` (`HttpTransport`), `ManualClock` (`Clock`),
+`MapEnv` (`Env`), `ScriptedDnsResolver` (`DnsResolver`), and `fakeIo` (the CLI's terminal
+`Io`), plus `SequentialIds` (ULID-shaped IDs), which landed ahead of an `IdSource` port.
+The `Store` fake, `MemoryStore`, lives in `src/store/`. A unit test replaces a port with
 its fake; module mocking is not allowed (`specs/03-testing.md` §1). A fake's conformance
-suite lands with the port it stands in for.
+suite lands with the port it stands in for; `fakeIo`'s is deferred (`specs/03-testing.md` §3).
 Tests do not define their own fake `fetch` or loopback server: code that takes `typeof fetch`
 is scripted through `ScriptedHttpTransport.fetchLike`, and real-socket tests use
 `testing/servers/` (`model-server.ts`, `mcp-server.ts`, `scripted-http-server.ts`, and

@@ -1,6 +1,8 @@
-// Test fake for the `IdSource` port: deterministic IDs in issue order.
+// Test fake for a planned `IdSource` port: deterministic IDs in issue order.
+// No such port exists in code yet; runtime code calls `generateULID` from
+// `src/kernel/` directly, and this fake's conformance suite lands with the port.
 //
-// The real adapter issues ULIDs. These IDs keep the ULID shape — 26
+// Real IDs are ULIDs. These IDs keep the ULID shape — 26
 // characters from the Crockford base-32 alphabet — so code that validates or
 // sorts ULIDs accepts them, and they sort lexically in the order issued.
 
