@@ -68,19 +68,6 @@
   },
   {
     "kind": "module",
-    "path": "prototype/src/tools/builtin/file.ts",
-    "lines": 1935,
-    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
-  },
-  {
-    "kind": "function",
-    "path": "prototype/src/tools/builtin/file.ts",
-    "name": "executeGrepFiles",
-    "lines": 226,
-    "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."
-  },
-  {
-    "kind": "module",
     "path": "prototype/src/tools/web/web.ts",
     "lines": 1108,
     "reason": "Split deferred past phase 1 (decision D28, specs/README.md)."

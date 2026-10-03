@@ -235,6 +235,16 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The workspace file tools are split by job.** `tools/builtin/file.ts` was
+  1,929 lines, past the 1,000-line module ceiling, and `executeGrepFiles` was
+  past the 200-line function ceiling; both carried size exceptions. The module
+  now holds only the six `define*` functions. The executors sit beside it:
+  `file-read.ts` (`read_file`, `list_files`), `file-write.ts` (`write_file`,
+  `edit_file`), `file-search.ts` (`grep_files`, `glob_files` and their
+  traversal), and `file-glob.ts` (the glob matcher), all over the containment,
+  verified reads and output escaping in `file-access.ts`. Grep's completeness
+  notes are built by one helper from a tally of what the call skipped. Tool
+  behavior and output are unchanged, and both size exceptions are gone.
 - **Provider request and stream tests folded into the conformance kit.** The
   kit takes named `cases` beyond its required fixtures, each a recorded
   exchange run under the same invariants. The unit tests that called the
