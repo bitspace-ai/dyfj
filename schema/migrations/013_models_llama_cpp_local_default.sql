@@ -1,7 +1,7 @@
--- Add Qwen3.6 35B served by llama.cpp's llama-server as the preferred local
--- model. It reaches llama-server's OpenAI-compatible endpoint on its default
--- port, http://localhost:8080/v1. llama-server serves the model it was started
--- with; start it with `--alias llama-cpp/qwen3.6-35b-a3b` so its model list
+-- Add DeepSeek-R1 Distill 32B served by llama.cpp's llama-server as the
+-- preferred local model. It reaches llama-server's OpenAI-compatible endpoint
+-- on its default port, http://localhost:8080/v1. llama-server serves the model it was started
+-- with; start it with `--alias llama-cpp/deepseek-r1-32b` so its model list
 -- reports this slug. Local inference is free, so every cost field is 0.
 --
 -- The Ollama rows stay as they are: Ollama remains a supported local provider,
@@ -29,25 +29,25 @@ INSERT INTO models (
     reasoning_effort_control,
     active
 ) VALUES (
-    'llama-cpp/qwen3.6-35b-a3b',
-    'Qwen3.6 35B (MoE, llama.cpp)',
+    'llama-cpp/deepseek-r1-32b',
+    'DeepSeek-R1 Distill 32B (llama.cpp)',
     'llama-cpp',
     'openai-completions',
     'http://localhost:8080/v1',
     0,
-    262144,
+    131072,
     8192,
     0.000000,
     0.000000,
     0.000000,
     0.000000,
     TRUE,
-    '["text","code","reasoning","vision","tools","long-context"]',
-    'moe',
-    36.00,
-    3.00,
+    '["text","code","reasoning","thinking"]',
+    'dense',
+    32.80,
+    32.80,
     'Q4_K_M',
-    24.00,
+    22.00,
     FALSE,
     TRUE
 )

@@ -126,8 +126,8 @@
           ],
           "defaultCompanionModel": null,
           "defaultTurnModel": {
-            "slug": "llama-cpp/qwen3.6-35b-a3b",
-            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
+            "slug": "llama-cpp/deepseek-r1-32b",
+            "displayName": "DeepSeek-R1 Distill 32B (llama.cpp)",
             "tier": 0,
             "local": true,
             "reason": "default"
@@ -281,8 +281,8 @@
           ],
           "defaultCompanionModel": null,
           "defaultTurnModel": {
-            "slug": "llama-cpp/qwen3.6-35b-a3b",
-            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
+            "slug": "llama-cpp/deepseek-r1-32b",
+            "displayName": "DeepSeek-R1 Distill 32B (llama.cpp)",
             "tier": 0,
             "local": true,
             "reason": "default"
@@ -303,8 +303,8 @@
         },
         "models": [
           {
-            "slug": "llama-cpp/qwen3.6-35b-a3b",
-            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
+            "slug": "llama-cpp/deepseek-r1-32b",
+            "displayName": "DeepSeek-R1 Distill 32B (llama.cpp)",
             "provider": "llama-cpp",
             "api": "openai-completions",
             "baseUrl": "http://localhost:8080/v1",
@@ -315,18 +315,16 @@
               "text",
               "code",
               "reasoning",
-              "vision",
-              "tools",
-              "long-context"
+              "thinking"
             ],
-            "contextWindow": 262144,
+            "contextWindow": 131072,
             "maxOutputTokens": 8192,
             "modality": "local",
-            "architecture": "moe",
-            "totalParamsB": 36,
-            "activeParamsB": 3,
+            "architecture": "dense",
+            "totalParamsB": 32.8,
+            "activeParamsB": 32.8,
             "recommendedQuant": "Q4_K_M",
-            "residentRamGiB": 24,
+            "residentRamGiB": 22,
             "reasoningEffortControl": false
           },
           {
@@ -1161,8 +1159,8 @@
       "result": {
         "models": [
           {
-            "slug": "llama-cpp/qwen3.6-35b-a3b",
-            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
+            "slug": "llama-cpp/deepseek-r1-32b",
+            "displayName": "DeepSeek-R1 Distill 32B (llama.cpp)",
             "provider": "llama-cpp",
             "api": "openai-completions",
             "baseUrl": "http://localhost:8080/v1",
@@ -1173,18 +1171,16 @@
               "text",
               "code",
               "reasoning",
-              "vision",
-              "tools",
-              "long-context"
+              "thinking"
             ],
-            "contextWindow": 262144,
+            "contextWindow": 131072,
             "maxOutputTokens": 8192,
             "modality": "local",
-            "architecture": "moe",
-            "totalParamsB": 36,
-            "activeParamsB": 3,
+            "architecture": "dense",
+            "totalParamsB": 32.8,
+            "activeParamsB": 32.8,
             "recommendedQuant": "Q4_K_M",
-            "residentRamGiB": 24,
+            "residentRamGiB": 22,
             "reasoningEffortControl": false,
             "routable": true,
             "local": true

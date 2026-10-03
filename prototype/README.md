@@ -29,12 +29,14 @@ root README's "Build the core" has the details). Use `dyfj exec
 `dyfj start` when you explicitly want to foreground the runtime. Put `dist/` on
 your `PATH` to use `dyfj` without the `./dist/` prefix.
 
-The local default is Qwen3.6 35B A3B served by llama.cpp's `llama-server` (catalog slug `llama-cpp/qwen3.6-35b-a3b`), reached through its OpenAI-compatible endpoint on `http://localhost:8080/v1`:
+The local default is DeepSeek-R1 Distill 32B served by llama.cpp's `llama-server` (catalog slug `llama-cpp/deepseek-r1-32b`), reached through its OpenAI-compatible endpoint on `http://localhost:8080/v1`:
 
 ```sh
-llama-server -m /path/to/Qwen3.6-35B-A3B-Q4_K_M.gguf \
-  --port 8080 --alias llama-cpp/qwen3.6-35b-a3b --jinja
+llama-server -m /path/to/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf \
+  --port 8080 --alias llama-cpp/deepseek-r1-32b --jinja
 ```
+
+`--jinja` applies the model's own chat template.
 
 The Ollama row `qwen3.6:35b-a3b` on `http://localhost:11434/v1` is next in the local preference order. A bare turn picks by that order, not by which server is running, so select the Ollama row with `--model` or a companion default when llama-server is not the one you run.
 
@@ -332,7 +334,7 @@ For llama.cpp:
 ```sh
 curl -sS http://127.0.0.1:8080/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"llama-cpp/qwen3.6-35b-a3b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+  -d '{"model":"llama-cpp/deepseek-r1-32b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
 For Ollama:

@@ -26,7 +26,7 @@ describe("selectWorkbenchModel", () => {
   it("defaults to the local Qwen 3.6 MoE model on llama.cpp when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
 
-    assertStrictEquals(selection.selected.slug, "llama-cpp/qwen3.6-35b-a3b");
+    assertStrictEquals(selection.selected.slug, "llama-cpp/deepseek-r1-32b");
     assertStrictEquals(selection.selected.provider, "llama-cpp");
     assertStrictEquals(selection.reason, "default");
   });

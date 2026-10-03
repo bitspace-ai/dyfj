@@ -334,19 +334,19 @@ export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
 
-The local default is Qwen3.6 35B A3B served by llama.cpp, catalog slug
-`llama-cpp/qwen3.6-35b-a3b`, the first active Tier 0 row in the registry's
+The local default is DeepSeek-R1 Distill 32B served by llama.cpp, catalog slug
+`llama-cpp/deepseek-r1-32b`, the first active Tier 0 row in the registry's
 local preference order. Start `llama-server` with a GGUF of that model on its
 default port, aliased to the slug:
 
 ```sh
-llama-server -m /path/to/Qwen3.6-35B-A3B-Q4_K_M.gguf \
-  --port 8080 --alias llama-cpp/qwen3.6-35b-a3b --jinja
+llama-server -m /path/to/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf \
+  --port 8080 --alias llama-cpp/deepseek-r1-32b --jinja
 ```
 
 Workbench reaches it through llama-server's OpenAI-compatible endpoint,
-`http://localhost:8080/v1`; `--jinja` applies the model's chat template, which
-tool calls need. Ollama stays supported: the Ollama row `qwen3.6:35b-a3b` on
+`http://localhost:8080/v1`; `--jinja` applies the model's own chat template.
+Ollama stays supported: the Ollama row `qwen3.6:35b-a3b` on
 `http://localhost:11434/v1` is next in the preference order. A bare turn picks
 by that order, not by which server is running, so an Ollama user selects that
 row with `--model` or a companion default. The catalog also carries MLX-LM
@@ -1228,7 +1228,7 @@ For llama.cpp:
 ```sh
 curl -sS http://127.0.0.1:8080/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"llama-cpp/qwen3.6-35b-a3b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+  -d '{"model":"llama-cpp/deepseek-r1-32b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
 For Ollama:
@@ -1875,7 +1875,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - The interactive-terminal section says a bare `dyfj` now opens the
   Rust REPL when it can, and how `DYFJ_REPL` and `DYFJ_REPL_BIN` choose or
   require a front end.
-- 2026-10-03 - The local default is now Qwen3.6 35B served by llama.cpp's
-  `llama-server` on port 8080; the prerequisites, run instructions and
-  provider check say how to start it, and that Ollama users select the Ollama
-  row explicitly.
+- 2026-10-03 - The local default is now DeepSeek-R1 Distill 32B served by
+  llama.cpp's `llama-server` on port 8080; the prerequisites, run instructions
+  and provider check say how to start it, and that Ollama users select the
+  Ollama row explicitly.
