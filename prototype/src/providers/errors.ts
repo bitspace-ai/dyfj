@@ -59,8 +59,10 @@ export class HostedProviderCredentialMissingError extends DomainError {
   constructor(public readonly slug: string, public readonly envVar: string) {
     super(
       `Hosted provider credential missing for ${errorField(slug)}: ` +
-        `${errorField(envVar)} is not present in the process environment. ` +
-        `Project it narrowly (e.g. op run --env-file=...) at process start.`,
+        `${errorField(envVar)} is not in the runtime's environment. ` +
+        `Secrets resolve only at start: fix what \`dyfj status\` reports ` +
+        `for it, or set it or declare it under [secrets], then restart the ` +
+        `runtime (\`dyfj stop\`, then start it).`,
     );
     this.name = "HostedProviderCredentialMissingError";
   }

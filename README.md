@@ -441,7 +441,13 @@ _non-probe_ pointer's failure leaves only its own provider unavailable, whereas
 failure of the _session probe_ (the first pending pointer) also skips every
 remaining unresolved pointer for that boot (see below). Either way it fails
 closed with a clear message at point of use; local-first inference is
-unaffected.
+unaffected. Pointers resolve only at boot, so fixing the cause afterwards
+(unlocking the vault, or correcting the resolver command or pointer) does not
+repair a runtime that started degraded: restart it (`dyfj stop`, then start it
+again). Until then `runtime/status` lists each failed pointer as
+`unavailableSecrets` (the env var, or the `[secrets.named]` name, and the
+reason, never a value), and
+`dyfj status` and the Rust REPL's startup lines print them with that advice.
 
 The resolver is **session-first**: the first declared pointer is resolved alone
 to warm the resolver command's auth session, then — _only if that probe
@@ -1816,6 +1822,9 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - Repo layout lists only the ACP runner and the interactive REPL as
   modules not yet moved, and names `prototype/diagnostics/`; the `arch.imports`
   description no longer says that directory is yet to exist.
+- 2026-10-02 - The `[secrets]` section says how a runtime that started with a
+  pointer unavailable reports it (`runtime/status`, `dyfj status`, the Rust
+  REPL's startup lines) and that recovery is a restart.
 - 2026-10-02 - The Rust REPL description lists what it now covers (the per-turn
   receipt line and the `/model`, `/fast`, `/session`, `/friction` and `/idea`
   commands) and no longer says those stay in the TypeScript CLI.

@@ -13,6 +13,7 @@ import {
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchModelNotFoundError,
 } from "./mod.ts";
+import { MAX_ERROR_SUMMARY_BYTES, summarizeError } from "../contract/mod.ts";
 
 describe("provider error field redaction", () => {
   // DomainError messages are trusted downstream (summarizeError forwards
@@ -47,6 +48,34 @@ describe("provider error field redaction", () => {
     const bytes = new TextEncoder().encode(err.message).byteLength;
     assert(bytes < 400, `expected message under 400 bytes, got ${bytes}`);
     assertStrictEquals(err.slug, huge);
+  });
+
+  it("recovery says to fix the reported failure and restart, on both paths", () => {
+    const message = new HostedProviderCredentialMissingError(
+      "openrouter/x",
+      "OPENROUTER_API_KEY",
+    ).message;
+    assertStringIncludes(message, "fix what `dyfj status` reports");
+    // Setting the key afterwards needs the restart too: a running runtime
+    // does not reread its environment.
+    assertStringIncludes(message, "or set it or declare it under [secrets], then restart");
+    assertFalse(message.includes("op run"));
+  });
+
+  it("the recovery survives the wire summary even with the largest fields", () => {
+    // Both fields at their cap: summarizeError must pass the message through
+    // whole, or the restart advice at its end is what gets cut.
+    const err = new HostedProviderCredentialMissingError(
+      "s".repeat(50_000),
+      "E".repeat(50_000),
+    );
+    const bytes = new TextEncoder().encode(err.message).byteLength;
+    assert(
+      bytes <= MAX_ERROR_SUMMARY_BYTES,
+      `expected at most ${MAX_ERROR_SUMMARY_BYTES} bytes, got ${bytes}`,
+    );
+    assertStrictEquals(summarizeError(err), err.message);
+    assertStringIncludes(err.message, "then start it).");
   });
 
   it("control characters in registry-sourced fields cannot forge log lines or escape sequences", () => {

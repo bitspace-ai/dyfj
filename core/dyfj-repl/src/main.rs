@@ -169,7 +169,12 @@ async fn main() -> Result<()> {
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
     match client.request("runtime/status", json!({})).await {
-        Ok(status) => println!("{}", posture::line(&status, &session, &socket)),
+        Ok(status) => {
+            println!("{}", posture::line(&status, &session, &socket));
+            for warning in posture::unresolved_pointer_warnings(&status) {
+                eprintln!("{warning}");
+            }
+        }
         Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), &socket)),
     }
 

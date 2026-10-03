@@ -33,7 +33,43 @@ export interface RuntimeStatusPayload {
     models?: { total?: number; local?: number; hosted?: number };
     methods?: string[];
     autostarted?: boolean;
+    /** Secret pointers that failed to resolve when the runtime started. */
+    unavailableSecrets?: UnavailableSecretEntry[];
   };
+}
+
+/** A failed pointer as `runtime/status` reports it: an env var or a name. */
+export interface UnavailableSecretEntry {
+  envVar?: string;
+  name?: string;
+  reason?: string;
+}
+
+/**
+ * One line per secret pointer that failed at runtime start. Whatever reads one
+ * (a provider, an MCP server) has no credential until the runtime restarts, so
+ * the line says how to recover rather than leaving it to the first failure.
+ */
+export function formatUnavailableSecrets(
+  secrets: readonly UnavailableSecretEntry[] | undefined,
+): string[] {
+  if (!Array.isArray(secrets) || secrets.length === 0) return [];
+  return [
+    ...secrets.map((secret) =>
+      `secret unavailable since start: ${secretLabel(secret)} (${
+        secret.reason ?? "unavailable"
+      })`
+    ),
+    "  anything reading these has no credential until the runtime restarts; " +
+    "fix what the reason names (unlock the vault, or correct the resolver " +
+    "command or pointer), then restart it (`dyfj stop`, then start it again)",
+  ];
+}
+
+function secretLabel(secret: UnavailableSecretEntry): string {
+  if (secret.envVar) return secret.envVar;
+  if (secret.name) return `[secrets.named] ${secret.name}`;
+  return "(unnamed)";
 }
 
 export const LIVENESS_PROBE_TIMEOUT_MS = 5000;
@@ -133,6 +169,7 @@ export function formatRuntimeStatus(
         }`,
       ]
       : []),
+    ...formatUnavailableSecrets(runtime.unavailableSecrets),
     `methods: ${methods.length}`,
   ].join("\n");
 }
