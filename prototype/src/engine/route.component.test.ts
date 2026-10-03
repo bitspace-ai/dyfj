@@ -82,6 +82,7 @@ function catalog(...models: ModelSeed[]): RouteModelReader {
 
 const failingCatalog: RouteModelReader = {
   listActive: () => Promise.reject(new Error("registry unavailable")),
+  listInactiveSlugs: () => Promise.reject(new Error("registry unavailable")),
 };
 
 function consent(value: PaidEscalationVerdict) {
@@ -398,4 +399,16 @@ Deno.test("selectModelRoute falls back to the static local default for an ask tu
     String(warn.calls[0].args[0]),
     "Model registry unavailable; using static local Tier 0 default",
   );
+});
+
+Deno.test("selectModelRoute does not restore a built-in default the catalog marks inactive", async () => {
+  const route = await selectModelRoute(
+    catalog(LOCAL, { ...LOCAL, slug: "qwen3.6:35b-a3b", active: false }),
+    { mode: "ask", routingOptions: {} },
+  );
+  assertEquals(
+    route.models.some((model) => model.slug === "qwen3.6:35b-a3b"),
+    false,
+  );
+  assertEquals(route.selection.selected.slug === "qwen3.6:35b-a3b", false);
 });

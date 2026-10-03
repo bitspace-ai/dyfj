@@ -37,6 +37,8 @@ ollama pull qwen3.6:35b-a3b
 
 The catalog also carries MLX-LM Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a row's `active` flag in the `models` table before selecting it with `--model`.
 
+Workbench also carries built-in rows for the local models above and adds them when the catalog has no row for them. A catalog row set inactive stays out of routing and the model picker; the built-in row does not replace it.
+
 Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use.
 
 With no configured companion default, a bare turn uses the registry's local

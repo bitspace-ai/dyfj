@@ -346,6 +346,10 @@ Workbench reaches that model through Ollama's OpenAI-compatible endpoint,
 (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a
 row's `active` flag in the `models` table before selecting it with `--model`.
 
+Workbench also carries built-in rows for the local models above and adds them
+when the catalog has no row for them. A catalog row set inactive stays out of
+routing and the model picker; the built-in row does not replace it.
+
 Agent-tool turns default to 32 steps. Every entrypoint accepts
 `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads
 `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1
@@ -1868,3 +1872,5 @@ Document revisions only. Code and behavior changes are tracked in
   that the D28 code splits have landed: no D28 entry remains in
   `scripts/arch-size-exceptions.json`, and PRD-11 R2 and the largest-file
   metric are met outside the D20 and D23 exceptions.
+- 2026-10-03 - The local-default section says a catalog row set inactive stays
+  out of routing even when Workbench has a built-in row for that model.
