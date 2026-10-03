@@ -408,7 +408,10 @@ providerAdapterConformance({
       exchanges: [{
         // stream_options is only valid on a streaming request.
         expect: (request) =>
-          assertStrictEquals("stream_options" in requestBody(request.body), false),
+          assertStrictEquals(
+            "stream_options" in requestBody(request.body),
+            false,
+          ),
         respond: reply,
       }],
       expect: { result: { text: "ok" } },
@@ -554,7 +557,11 @@ providerAdapterConformance({
       }],
       expect: { result: { text: "ok" } },
     },
-    "the stream skips non-data lines and stops at [DONE]": {
+    // The consumer does not stop reading at [DONE]; it ignores the sentinel
+    // and ends at EOF. What is observable, and pinned here, is that the
+    // sentinel is recognized rather than handed to JSON.parse, which would
+    // throw and fail the turn.
+    "the stream skips non-data lines and the [DONE] sentinel": {
       model: local,
       stream: true,
       exchanges: [{
