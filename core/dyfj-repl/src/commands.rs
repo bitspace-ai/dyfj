@@ -938,7 +938,7 @@ mod tests {
 /// answers, and what it changes on the session.
 #[cfg(test)]
 mod run_tests {
-    use super::{Command, Prompter, run};
+    use super::{Command, Prompter, run, startup_model_ok};
     use crate::client::{Client, Incoming};
     use crate::session::Session;
     use crate::terminal::{Ask, ReadOutcome};
@@ -1145,6 +1145,28 @@ mod run_tests {
         let mut session = Session { id: Some("S1".into()), ..Session::default() };
         let seen = drive_interrupted(catalog, &mut session, vec![Command::IdeaMark("x".into())], 2).await;
         assert_eq!(methods(&seen), ["ideas/mark"]);
+    }
+
+    /// `--model` is checked against `models/list` before the first prompt:
+    /// a routable slug passes, an unknown or unpriced one is refused, and
+    /// no chosen model asks the runtime nothing.
+    #[tokio::test]
+    async fn startup_checks_the_chosen_model_against_the_catalog() {
+        for (model, expected, asked) in [
+            (Some("z-ai/glm-5.2"), true, true),
+            (Some("nope/x"), false, true),
+            (Some("unpriced/x"), false, true),
+            (None, true, false),
+        ] {
+            let (client, _incoming, log, server) = fake_runtime(catalog);
+            let session = Session { model: model.map(Into::into), ..Session::default() };
+            assert_eq!(startup_model_ok(&client, &session).await, expected, "{model:?}");
+            server.abort();
+            drop(client);
+            let seen = log.lock().unwrap().clone();
+            let want: &[&str] = if asked { &["models/list"] } else { &[] };
+            assert_eq!(methods(&seen), want, "{model:?}");
+        }
     }
 
     #[tokio::test]

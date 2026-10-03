@@ -1270,8 +1270,9 @@ prototype, else `dyfj-repl` on `PATH`; build it with
 and every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
 `--session`, `--workspace`, `--socket`). Otherwise, and with `DYFJ_REPL=ts`,
 the TypeScript REPL opens as before. `DYFJ_REPL=rust` requires the Rust REPL
-for an interactive session and fails if it cannot run there; subcommands,
-`-p` prompts and `--help` are unaffected by `DYFJ_REPL`.
+for an interactive session on a terminal and fails if it cannot run there;
+piped or redirected input, subcommands, `-p` prompts and `--help` are
+unaffected by `DYFJ_REPL`.
 See [`core/README.md`](core/README.md).
 
 ### MCP integration

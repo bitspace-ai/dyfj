@@ -673,8 +673,8 @@ rust_repl_args() {
 }
 
 # Prints the binary and returns 0 when this invocation goes to the Rust REPL.
-# Returns 2 when DYFJ_REPL=rust asked for it and an interactive session
-# cannot run there; other invocations are unaffected by DYFJ_REPL.
+# Returns 2 when DYFJ_REPL=rust asked for it and an interactive session on a
+# terminal cannot run there; other invocations are unaffected by DYFJ_REPL.
 rust_repl_route() {
   # Subcommands, prompts and help are not REPL sessions, so DYFJ_REPL is not
   # read for them at all, not even to check its value.
@@ -688,14 +688,15 @@ rust_repl_route() {
     echo "dyfj: DYFJ_REPL must be ts, rust or unset" >&2
     return 2
   fi
+  # Piped or redirected input is not an interactive session, so it stays on
+  # the TypeScript REPL whatever DYFJ_REPL says.
+  [[ "${LAUNCHER_ON_TERMINAL:-0}" == "1" ]] || return 1
   local reason=""
   local bin=""
   if ! rust_repl_args; then
     reason="an argument is one only the TypeScript REPL takes"
   elif ! bin="$(rust_repl_bin)"; then
     reason="no dyfj-repl binary (build it with: cargo build --release -p dyfj-repl)"
-  elif [[ "$mode" == "auto" && "${LAUNCHER_ON_TERMINAL:-0}" != "1" ]]; then
-    reason="not a terminal"
   fi
   if [[ -n "$reason" ]]; then
     if [[ "$mode" == "rust" ]]; then

@@ -17,7 +17,8 @@ README are tracked separately in its Revision history section.
   `--fast`, `--session`, `--workspace`, `--socket`), the launcher hands the
   interactive session to it after autostart; otherwise the TypeScript REPL
   opens as before. `DYFJ_REPL=ts` keeps the TypeScript REPL and
-  `DYFJ_REPL=rust` requires the Rust one for interactive sessions. The Rust
+  `DYFJ_REPL=rust` requires the Rust one for interactive sessions on a
+  terminal; piped input stays on the TypeScript REPL either way. The Rust
   REPL also refuses an unknown or unroutable `--model` at launch, listing the
   available models, instead of failing the first turn.
 - **The Rust REPL can be a daily driver.** `dyfj-repl` now sends the same
