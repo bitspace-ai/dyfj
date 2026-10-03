@@ -117,14 +117,21 @@ A case the family does not support still gets a fixture that pins what the
 adapter does instead (for example `toolCalls: undefined` for a family that never
 returns tool calls).
 
+Request building and stream parsing the required cases do not pin (a request
+field, a message mapping, a cache or reasoning usage figure, a line the parser
+must skip) go in the same call as named `cases`: further recorded fixtures that
+run under the same invariants. Don't unit-test the request builder or the
+stream-line parser directly.
+
 The kit derives the header-deadline and pre-dispatch-abort cases itself, and
 checks on every fixture that each request refuses redirects. An adapter is
 mergeable only when the kit passes.
 
 ### 4. Unit tests and docs
 
-- Edge cases beyond the kit (limits, usage accounting across frames, request
-  shapes) go in unit tests next to the module they cover, using the scripted
-  transport and the `MapEnv` and `ManualClock` fakes.
+- Edge cases a recorded fixture cannot express (limits, a body that errors or
+  never settles, an abort that must land mid-read, accounting across retries)
+  go in unit tests next to the module they cover, driving a turn through the
+  scripted transport and the `MapEnv` and `ManualClock` fakes.
 - Add a `CHANGELOG.md` entry and update the provider list wherever the README
   describes hosted providers.
