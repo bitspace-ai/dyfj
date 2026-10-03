@@ -23,7 +23,7 @@ import { providerTestModels } from "../../../testing/builders/models.ts";
 
 const models = [...providerTestModels];
 describe("selectWorkbenchModel", () => {
-  it("defaults to the local Qwen 3.6 MoE model on llama.cpp when available", () => {
+  it("defaults to the local DeepSeek-R1 32B model on llama.cpp when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
 
     assertStrictEquals(selection.selected.slug, "llama-cpp/deepseek-r1-32b");
