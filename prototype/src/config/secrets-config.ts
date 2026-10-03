@@ -79,6 +79,177 @@ export interface SecretsConfig {
   inheritEnv: readonly string[];
 }
 
+/** `[secrets.pointers]`: declared secret env var → pointer. */
+function parseSecretPointers(
+  rawPointers: unknown,
+  where: string,
+): Record<string, string> {
+  const pointers: Record<string, string> = {};
+  if (rawPointers === undefined) return pointers;
+  if (
+    typeof rawPointers !== "object" || rawPointers === null ||
+    Array.isArray(rawPointers)
+  ) {
+    throw new Error(`config: [secrets.pointers] must be a table in ${where}`);
+  }
+  const allowed = new Set(declaredSecretEnvVars());
+  for (
+    const [envVar, ptr] of Object.entries(
+      rawPointers as Record<string, unknown>,
+    )
+  ) {
+    if (!allowed.has(envVar)) {
+      throw new Error(
+        `config: [secrets.pointers].${envVar} is not a declared secret env ` +
+          `var (expected one of: ${[...allowed].join(", ")}) in ${where}`,
+      );
+    }
+    if (typeof ptr !== "string" || ptr.length === 0) {
+      throw new Error(
+        `config: [secrets.pointers].${envVar} must be a non-empty string ` +
+          `pointer (${where})`,
+      );
+    }
+    pointers[envVar] = ptr;
+  }
+  return pointers;
+}
+
+/** `[secrets.named]`: logical secret id → pointer, bounded in count. */
+function parseNamedSecrets(
+  rawNamed: unknown,
+  where: string,
+): Record<string, string> {
+  const named: Record<string, string> = {};
+  if (rawNamed === undefined) return named;
+  if (
+    typeof rawNamed !== "object" || rawNamed === null ||
+    Array.isArray(rawNamed)
+  ) {
+    throw new Error(`config: [secrets.named] must be a table in ${where}`);
+  }
+  const entries = Object.entries(rawNamed as Record<string, unknown>);
+  if (entries.length > MAX_NAMED_SECRETS) {
+    throw new Error(
+      `config: [secrets.named] exceeds ${MAX_NAMED_SECRETS} entries in ${where}`,
+    );
+  }
+  for (const [name, pointer] of entries) {
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(name)) {
+      throw new Error(
+        `config: [secrets.named] contains an invalid logical secret name in ${where}`,
+      );
+    }
+    if (typeof pointer !== "string" || pointer.length === 0) {
+      throw new Error(
+        `config: [secrets.named].${name} must be a non-empty string pointer (${where})`,
+      );
+    }
+    named[name] = pointer;
+  }
+  return named;
+}
+
+// `[secrets.env]`: NON-secret env vars set only on the spawned resolver
+// command (never the runtime env, never as a pointer). This is the declarative
+// zero-prompt path for unattended surfaces — e.g. point the resolver at a
+// service account / disable an interactive unlock — with no vendor-specific
+// code in the engine. It is a PLAINTEXT surface: a real secret must NOT live
+// here; it belongs in the launch scope, inherited by the resolver. The engine
+// can only enforce this for names it KNOWS are secret (declared secret-pointer
+// keys, rejected below) — the docs carry the rest of the contract.
+function parseResolverEnv(
+  rawEnv: unknown,
+  where: string,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (rawEnv === undefined) return env;
+  if (
+    typeof rawEnv !== "object" || rawEnv === null || Array.isArray(rawEnv)
+  ) {
+    throw new Error(`config: [secrets.env] must be a table in ${where}`);
+  }
+  const declaredSecrets = new Set(declaredSecretEnvVars());
+  for (
+    const [name, value] of Object.entries(rawEnv as Record<string, unknown>)
+  ) {
+    if (typeof value !== "string") {
+      throw new Error(
+        `config: [secrets.env].${name} must be a string in ${where}`,
+      );
+    }
+    if (!ENV_VAR_NAME.test(name)) {
+      throw new Error(
+        `config: [secrets.env].${name} is not a valid environment variable ` +
+          `name in ${where}`,
+      );
+    }
+    if (SECRETS_ENV_DENYLIST.has(name)) {
+      throw new Error(
+        `config: [secrets.env].${name} is not allowed — it would override a ` +
+          `security-relevant inherited variable. Set it in the launch scope, ` +
+          `not the config file (${where})`,
+      );
+    }
+    if (declaredSecrets.has(name)) {
+      throw new Error(
+        `config: [secrets.env].${name} is a declared secret — put it in ` +
+          `[secrets.pointers] as a pointer, never as a plaintext value (${where})`,
+      );
+    }
+    env[name] = value;
+  }
+  return env;
+}
+
+// `[secrets].inherit_env`: names of ambient vars to forward into the resolver's
+// otherwise-isolated environment. Same denylist + declared-secret rules as
+// [secrets.env] — you can forward a launch-scope resolver secret by name, but
+// not a runtime provider key / DB password / memory token.
+function parseInheritEnv(
+  rawInherit: unknown,
+  where: string,
+): string[] {
+  const inheritEnv: string[] = [];
+  if (rawInherit === undefined) return inheritEnv;
+  if (!Array.isArray(rawInherit)) {
+    throw new Error(
+      `config: [secrets].inherit_env must be an array of strings in ${where}`,
+    );
+  }
+  const declaredSecrets = new Set(declaredSecretEnvVars());
+  for (const name of rawInherit) {
+    if (typeof name !== "string" || name.length === 0) {
+      throw new Error(
+        `config: [secrets].inherit_env entries must be non-empty strings ` +
+          `in ${where}`,
+      );
+    }
+    if (!ENV_VAR_NAME.test(name)) {
+      // Reject metacharacters (e.g. `*`) that Deno's --allow-env would treat
+      // as a wildcard granting the whole environment.
+      throw new Error(
+        `config: [secrets].inherit_env entry ${JSON.stringify(name)} is not ` +
+          `a valid environment variable name in ${where}`,
+      );
+    }
+    if (SECRETS_ENV_DENYLIST.has(name)) {
+      throw new Error(
+        `config: [secrets].inherit_env may not name ${name} — it is part of ` +
+          `the resolver's isolated base or a code-injection vector (${where})`,
+      );
+    }
+    if (declaredSecrets.has(name)) {
+      throw new Error(
+        `config: [secrets].inherit_env may not name the declared secret ` +
+          `${name} — the resolver resolves it, it must not receive it (${where})`,
+      );
+    }
+    inheritEnv.push(name);
+  }
+  return inheritEnv;
+}
+
 /**
  * Parse and validate a `[secrets]` table. Returns null when the section is
  * absent (no resolution — providers read whatever env supplies). A present but
@@ -150,160 +321,10 @@ export function parseSecretsConfig(
     timeoutMs = rawTimeout;
   }
 
-  const pointers: Record<string, string> = {};
-  const rawPointers = section["pointers"];
-  if (rawPointers !== undefined) {
-    if (
-      typeof rawPointers !== "object" || rawPointers === null ||
-      Array.isArray(rawPointers)
-    ) {
-      throw new Error(`config: [secrets.pointers] must be a table in ${where}`);
-    }
-    const allowed = new Set(declaredSecretEnvVars());
-    for (
-      const [envVar, ptr] of Object.entries(
-        rawPointers as Record<string, unknown>,
-      )
-    ) {
-      if (!allowed.has(envVar)) {
-        throw new Error(
-          `config: [secrets.pointers].${envVar} is not a declared secret env ` +
-            `var (expected one of: ${[...allowed].join(", ")}) in ${where}`,
-        );
-      }
-      if (typeof ptr !== "string" || ptr.length === 0) {
-        throw new Error(
-          `config: [secrets.pointers].${envVar} must be a non-empty string ` +
-            `pointer (${where})`,
-        );
-      }
-      pointers[envVar] = ptr;
-    }
-  }
-
-  const named: Record<string, string> = {};
-  const rawNamed = section["named"];
-  if (rawNamed !== undefined) {
-    if (
-      typeof rawNamed !== "object" || rawNamed === null ||
-      Array.isArray(rawNamed)
-    ) {
-      throw new Error(`config: [secrets.named] must be a table in ${where}`);
-    }
-    const entries = Object.entries(rawNamed as Record<string, unknown>);
-    if (entries.length > MAX_NAMED_SECRETS) {
-      throw new Error(
-        `config: [secrets.named] exceeds ${MAX_NAMED_SECRETS} entries in ${where}`,
-      );
-    }
-    for (const [name, pointer] of entries) {
-      if (!/^[a-z][a-z0-9_]{0,63}$/.test(name)) {
-        throw new Error(
-          `config: [secrets.named] contains an invalid logical secret name in ${where}`,
-        );
-      }
-      if (typeof pointer !== "string" || pointer.length === 0) {
-        throw new Error(
-          `config: [secrets.named].${name} must be a non-empty string pointer (${where})`,
-        );
-      }
-      named[name] = pointer;
-    }
-  }
-
-  // `[secrets.env]`: NON-secret env vars set only on the spawned resolver
-  // command (never the runtime env, never as a pointer). This is the declarative
-  // zero-prompt path for unattended surfaces — e.g. point the resolver at a
-  // service account / disable an interactive unlock — with no vendor-specific
-  // code in the engine. It is a PLAINTEXT surface: a real secret must NOT live
-  // here; it belongs in the launch scope, inherited by the resolver. The engine
-  // can only enforce this for names it KNOWS are secret (declared secret-pointer
-  // keys, rejected below) — the docs carry the rest of the contract.
-  const env: Record<string, string> = {};
-  const rawEnv = section["env"];
-  if (rawEnv !== undefined) {
-    if (
-      typeof rawEnv !== "object" || rawEnv === null || Array.isArray(rawEnv)
-    ) {
-      throw new Error(`config: [secrets.env] must be a table in ${where}`);
-    }
-    const declaredSecrets = new Set(declaredSecretEnvVars());
-    for (
-      const [name, value] of Object.entries(rawEnv as Record<string, unknown>)
-    ) {
-      if (typeof value !== "string") {
-        throw new Error(
-          `config: [secrets.env].${name} must be a string in ${where}`,
-        );
-      }
-      if (!ENV_VAR_NAME.test(name)) {
-        throw new Error(
-          `config: [secrets.env].${name} is not a valid environment variable ` +
-            `name in ${where}`,
-        );
-      }
-      if (SECRETS_ENV_DENYLIST.has(name)) {
-        throw new Error(
-          `config: [secrets.env].${name} is not allowed — it would override a ` +
-            `security-relevant inherited variable. Set it in the launch scope, ` +
-            `not the config file (${where})`,
-        );
-      }
-      if (declaredSecrets.has(name)) {
-        throw new Error(
-          `config: [secrets.env].${name} is a declared secret — put it in ` +
-            `[secrets.pointers] as a pointer, never as a plaintext value (${where})`,
-        );
-      }
-      env[name] = value;
-    }
-  }
-
-  // `[secrets].inherit_env`: names of ambient vars to forward into the resolver's
-  // otherwise-isolated environment. Same denylist + declared-secret rules as
-  // [secrets.env] — you can forward a launch-scope resolver secret by name, but
-  // not a runtime provider key / DB password / memory token.
-  const inheritEnv: string[] = [];
-  const rawInherit = section["inherit_env"];
-  if (rawInherit !== undefined) {
-    if (!Array.isArray(rawInherit)) {
-      throw new Error(
-        `config: [secrets].inherit_env must be an array of strings in ${where}`,
-      );
-    }
-    const declaredSecrets = new Set(declaredSecretEnvVars());
-    for (const name of rawInherit) {
-      if (typeof name !== "string" || name.length === 0) {
-        throw new Error(
-          `config: [secrets].inherit_env entries must be non-empty strings ` +
-            `in ${where}`,
-        );
-      }
-      if (!ENV_VAR_NAME.test(name)) {
-        // Reject metacharacters (e.g. `*`) that Deno's --allow-env would treat
-        // as a wildcard granting the whole environment.
-        throw new Error(
-          `config: [secrets].inherit_env entry ${
-            JSON.stringify(name)
-          } is not ` +
-            `a valid environment variable name in ${where}`,
-        );
-      }
-      if (SECRETS_ENV_DENYLIST.has(name)) {
-        throw new Error(
-          `config: [secrets].inherit_env may not name ${name} — it is part of ` +
-            `the resolver's isolated base or a code-injection vector (${where})`,
-        );
-      }
-      if (declaredSecrets.has(name)) {
-        throw new Error(
-          `config: [secrets].inherit_env may not name the declared secret ` +
-            `${name} — the resolver resolves it, it must not receive it (${where})`,
-        );
-      }
-      inheritEnv.push(name);
-    }
-  }
+  const pointers = parseSecretPointers(section["pointers"], where);
+  const named = parseNamedSecrets(section["named"], where);
+  const env = parseResolverEnv(section["env"], where);
+  const inheritEnv = parseInheritEnv(section["inherit_env"], where);
 
   return { command, timeoutMs, pointers, named, env, inheritEnv };
 }
