@@ -169,6 +169,12 @@ export interface MemoryReader {
 export interface ModelReader {
   /** Active catalog rows, by tier then slug. */
   listActive(): Promise<TextRow[]>;
+  /**
+   * Slugs of the catalog rows marked inactive, sorted. The built-in local
+   * defaults are overlaid only where the catalog has no row at all, so an
+   * operator's deactivation sticks.
+   */
+  listInactiveSlugs(): Promise<string[]>;
 }
 
 /** Reference data: companion prompts (written only by `schema/`). */

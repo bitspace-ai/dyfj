@@ -128,6 +128,17 @@ describe("withDefaultLocalWorkbenchModels", () => {
     assertStrictEquals(merged[merged.length - 1].displayName, "Gemma 4 latest");
   });
 
+  it("does not restore a built-in row the catalog lists as inactive", () => {
+    const merged = withDefaultLocalWorkbenchModels(
+      [{ ...models[0], slug: "gemma4:26b" }],
+      ["qwen3.6:35b-a3b"],
+    );
+
+    const slugs = merged.map((model) => model.slug);
+    assertStrictEquals(slugs.includes("qwen3.6:35b-a3b"), false);
+    assertArrayIncludes(slugs, ["muse-glimmer:30b"]);
+  });
+
   it("does not duplicate the default when the registry already has it", () => {
     const merged = withDefaultLocalWorkbenchModels(models);
 

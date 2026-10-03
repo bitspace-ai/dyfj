@@ -260,6 +260,13 @@ export function doltModelReader(pool: DoltSelect): ModelReader {
           "FROM models WHERE active = TRUE ORDER BY tier, slug;",
       );
     },
+    async listInactiveSlugs() {
+      const rows = await queryText(
+        pool,
+        "SELECT slug FROM models WHERE active = FALSE ORDER BY slug;",
+      );
+      return rows.map((row) => row.slug);
+    },
   };
 }
 

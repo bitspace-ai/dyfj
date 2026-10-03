@@ -354,6 +354,10 @@ Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship
 inactive, so set a row's `active` flag in the `models` table before selecting
 it with `--model`.
 
+Workbench also carries built-in rows for the local models above and adds them
+when the catalog has no row for them. A catalog row set inactive stays out of
+routing and the model picker; the built-in row does not replace it.
+
 Agent-tool turns default to 32 steps. Every entrypoint accepts
 `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads
 `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1
@@ -1379,6 +1383,8 @@ Things that exist as boxes on a diagram.
   session/event writes, budget tracking, and receipt facts. The layers, from
   L0 `kernel/` up to L5 `server/` and `cli/`, and their allowed edges are in
   `specs/01-architecture.md` §3; the `arch.imports` gate lane enforces them.
+  `specs/runtime-consumer-contract.md` records the existing in-process native
+  turn ports and the additional decisions a separate headless host needs.
 - **Tool Registry & Dynamic Dispatch.** MCP-native. Tools are discoverable,
   versioned, addressable.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool
@@ -1875,10 +1881,15 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - The interactive-terminal section says a bare `dyfj` now opens the
   Rust REPL when it can, and how `DYFJ_REPL` and `DYFJ_REPL_BIN` choose or
   require a front end.
+- 2026-10-03 - The runtime-boundary section links a headless consumer contract
+  that separates existing native-turn ports from proposed host, context and
+  deployment decisions; the specs index identifies it as exploratory.
 - 2026-10-03 - `specs/README.md` records, beside the phase-1 exit measures,
   that the D28 code splits have landed: no D28 entry remains in
   `scripts/arch-size-exceptions.json`, and PRD-11 R2 and the largest-file
   metric are met outside the D20 and D23 exceptions.
+- 2026-10-03 - The local-default section says a catalog row set inactive stays
+  out of routing even when Workbench has a built-in row for that model.
 - 2026-10-03 - The local default is now DeepSeek-R1 Distill 32B served by
   llama.cpp's `llama-server` on port 8080; the prerequisites, run instructions
   and provider check say how to start it, and that Ollama users select the
