@@ -80,4 +80,8 @@ export {
   validateDoltPort,
 } from "./mcp-net-grants.ts";
 export { assertSecureMemoryUrl } from "./memory-url.ts";
-export { resolveSecrets, secretsRunGrant } from "./secrets.ts";
+export {
+  resolveSecrets,
+  secretsRunGrant,
+  unavailableSecretPointers,
+} from "./secrets.ts";
