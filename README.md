@@ -1863,4 +1863,4 @@ Document revisions only. Code and behavior changes are tracked in
   require a front end.
 - 2026-10-03 - The runtime-boundary section links a headless consumer contract
   that separates existing native-turn ports from proposed host, context and
-  deployment decisions.
+  deployment decisions; the specs index identifies it as exploratory.

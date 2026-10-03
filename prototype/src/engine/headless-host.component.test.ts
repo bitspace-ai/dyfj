@@ -123,6 +123,8 @@ Deno.test("two headless hosts complete native turns with separate context, ident
       event.event_type === "session_start"
     );
     assert(committedStart !== undefined);
+    assertEquals(committedStart.authn_status, "authenticated");
+    assertEquals(committedStart.authn_mechanism, "api_key");
     assertEquals(committedStart.authn_issuer_ref, "fixture-headless-host");
     assertEquals(committedStart.authz_basis, "scheduled-task");
     assert(rows.some((row) => row.event_type === "provider_call"));

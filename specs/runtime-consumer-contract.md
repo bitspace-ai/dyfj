@@ -1,8 +1,9 @@
 # Native runtime consumer contract
 
-Status: exploratory contract with a runtime component test using fake
-dependencies. This records the current seam and the decisions a second host
-still needs; it does not declare a Workshop deployment or a new runtime package.
+Status: exploratory, non-normative consumer contract with a runtime component
+test using fake dependencies. This records the current seam and the decisions a
+second host still needs; it does not declare a headless deployment or a new
+runtime package. It does not amend the numbered restructuring specs.
 
 ## Boundary already present
 
@@ -58,10 +59,10 @@ persisted. Fixture authentication fields do not verify a login.
 - Decide how a headless host authenticates a bot and maps it to an allowed
   model, tools, budget and store. The engine accepts these values; it does not
   authenticate the host or schedule jobs.
-- Choose a deployment and process contract only when one actual Workshop
-  workload consumes this runtime. That may be a packaged runtime in this repo
-  with a Workshop-owned host. It need not make the local Workbench depend on a
-  cluster, and it does not require a new repository.
+- Choose a deployment and process contract only when an actual headless workload
+  consumes this runtime. That may be a packaged runtime in this repo with a host
+  owned by the deploying system. It need not make the local Workbench depend on
+  a cluster, and it does not require a new repository.
 - Settle the difference between the initiating principal and the executing agent
   before claiming complete event attribution for a headless bot.
   `model_selected` has a known principal exception, and agent-loop tool calls
