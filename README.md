@@ -1268,10 +1268,11 @@ cargo run -p dyfj-repl
 
 It resolves the socket as the runtime does (`DYFJ_SOCKET`, else
 `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`). A multi-line paste arrives as one
-prompt, which the TypeScript REPL cannot do. It covers turns, approvals and
-Ctrl-C cancellation only; model switching, session resume and the other
-interactive commands stay in the TypeScript `dyfj` CLI, which remains the entry
-point. See [`core/README.md`](core/README.md).
+prompt, which the TypeScript REPL cannot do. It covers turns, approvals,
+Ctrl-C cancellation, a per-turn receipt line with cost and prompt-cache tokens,
+and the daily-driver commands `/model`, `/fast`, `/session`, `/friction` and
+`/idea`. The TypeScript `dyfj` CLI remains the launcher's entry point for now.
+See [`core/README.md`](core/README.md).
 
 ### MCP integration
 
@@ -1833,6 +1834,9 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - The `[secrets]` section says how a runtime that started with a
   pointer unavailable reports it (`runtime/status`, `dyfj status`, the Rust
   REPL's startup lines) and that recovery is a restart.
+- 2026-10-02 - The Rust REPL description lists what it now covers (the per-turn
+  receipt line and the `/model`, `/fast`, `/session`, `/friction` and `/idea`
+  commands) and no longer says those stay in the TypeScript CLI.
 - 2026-10-02 - Section 1's done-line names the one route daily use is measured
   on, hosted inference over an OpenAI-compatible provider with OpenRouter as its
   default provider, selected by configuration rather than as the bare-turn

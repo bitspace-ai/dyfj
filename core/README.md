@@ -24,6 +24,19 @@ cargo run
 
 `cargo build` builds both members. `cargo run -p dyfj-repl` starts the REPL against a running Workbench runtime, resolving the socket the way the runtime does: `DYFJ_SOCKET`, else `$XDG_RUNTIME_DIR/dyfj/workbench.sock`, else `~/.dyfj/run/workbench.sock`.
 
+The REPL sends the same turn request as the TypeScript client: the chosen model and fast tier, the per-session paid opt-in, and the workspace when a turn starts a new session. Flags: `--model <slug>` (else `DYFJ_WORKBENCH_MODEL`, else the runtime's default), `--approve-paid`, `--fast`, `--session <id>` to resume a session (the id or the `workbench-<id>` slug `dyfj sessions` lists; anything else is refused at startup), and `--workspace <dir>` for a new session (else `DYFJ_WORKSPACE`, else the current directory; a resumed session keeps its own). The startup posture line names these choices when they differ from the runtime's defaults. Every turn ends with a receipt line: model, turn cost, running session cost, input and output tokens, prompt-cache reads and writes when the provider reported them, tool steps, and the route reason.
+
+Commands are recognised only when typed alone on one line, so a pasted block that contains `/model` stays prompt text, and an unknown `/word` is sent as a prompt:
+
+- `/model [slug] [--approve-paid] [--fast|--no-fast]` lists models grouped by route (unroutable rows marked) or switches to one, refusing unknown and unroutable slugs.
+- `/fast [on|off]` toggles the fast speed tier on models that advertise it, checking the runtime's default model when none was chosen.
+- `/session`, `/session list`, `/session switch <id>` show the current session, list recent ones, or resume one.
+- `/friction <blocker|major|minor|paper-cut> [--escaped] <text>` posts a friction entry with the session, model, workspace name (never its path) and last command as context (`friction/post`), answering any approval the runtime asks for the write.
+- `/idea mark <label>` and `/idea list` mark and list ideas for the current session.
+- `/help` lists them; `/quit`, `/exit` or Ctrl-D leave. Ctrl-C while a read-only command waits on the runtime abandons that command, as it cancels a turn. The two writes wait instead: during `/friction` it denies any approval the post then asks for and waits for the runtime to settle it, so the abandoned write cannot be approved later, and `/idea mark` waits for the runtime to record the idea, so a retry cannot record it twice. `/friction`'s context names the previous slash command only when no turn came between them.
+
+External-runner (ACP) receipts are named rather than rendered; that route is deferred for daily use and stays in the TypeScript client.
+
 `cargo run` requires `DATABASE_URL` and a running Dolt SQL server. It inserts one `session_start` event, reads it back, and prints a match result. The ignored integration tests exercise the same live-Dolt path:
 
 ```sh

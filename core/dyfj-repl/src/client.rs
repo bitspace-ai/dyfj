@@ -81,6 +81,28 @@ pub enum Incoming {
 
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>;
 
+/// Removes a request's waiter when the request future goes away, answered or
+/// not. An answered request's entry is already gone, so this is a no-op then.
+struct Waiter {
+    pending: Pending,
+    id: i64,
+}
+
+impl Drop for Waiter {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.pending.try_lock() {
+            map.remove(&self.id);
+            return;
+        }
+        let (pending, id) = (Arc::clone(&self.pending), self.id);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                pending.lock().await.remove(&id);
+            });
+        }
+    }
+}
+
 pub struct Client {
     write: Arc<Mutex<OwnedWriteHalf>>,
     pending: Pending,
@@ -94,6 +116,11 @@ impl Client {
         let stream = UnixStream::connect(socket)
             .await
             .with_context(|| format!("connect {socket}"))?;
+        Ok(Self::over(stream))
+    }
+
+    /// Start the reader task on an already-connected stream.
+    pub fn over(stream: UnixStream) -> (Self, mpsc::Receiver<Incoming>) {
         let (read, write) = stream.into_split();
         let write = Arc::new(Mutex::new(write));
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
@@ -101,7 +128,7 @@ impl Client {
 
         tokio::spawn(read_loop(read, Arc::clone(&pending), Arc::clone(&write), tx));
 
-        Ok((Self { write, pending, next_id: Arc::new(Mutex::new(1)) }, rx))
+        (Self { write, pending, next_id: Arc::new(Mutex::new(1)) }, rx)
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
@@ -112,18 +139,14 @@ impl Client {
             id
         };
         let (tx, rx) = oneshot::channel();
-        // Known limit: if this future is dropped before it resolves — which
-        // happens when the operator abandons a turn with a second Ctrl-C —
-        // the entry stays in the map until the connection closes. One stale
-        // sender per abandoned turn against a runtime that never answers.
         self.pending.lock().await.insert(id, tx);
+        // This future is dropped before it resolves when the operator abandons
+        // a turn or a command with Ctrl-C; the guard then removes the waiter so
+        // an abandoned request does not stay in the map until the connection
+        // closes.
+        let _waiter = Waiter { pending: Arc::clone(&self.pending), id };
         let frame = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
-        // A request that was never sent will never be answered, so its waiter
-        // is removed here rather than retained until the connection closes.
-        if let Err(err) = self.send(&frame).await {
-            self.pending.lock().await.remove(&id);
-            return Err(err);
-        }
+        self.send(&frame).await?;
         match rx.await {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(message)) => Err(anyhow!(message)),
@@ -173,16 +196,20 @@ impl Client {
         Ok(())
     }
 
-    /// Known limit: dropping the caller's future while this is suspended
-    /// inside `write_all` can leave a partial frame on the connection, and the
-    /// next write would be appended to it. Reachable today only by abandoning
-    /// a turn with a second Ctrl-C while the socket is applying backpressure.
+    /// The write runs in its own task, so a caller dropped mid-write (Ctrl-C
+    /// abandoning a command or a turn) cannot leave a partial frame on the
+    /// connection: the task finishes the frame whether or not anyone awaits it.
     async fn send(&self, frame: &Value) -> Result<()> {
         let mut line = serde_json::to_vec(frame)?;
         line.push(b'\n');
-        let mut write = self.write.lock().await;
-        write.write_all(&line).await?;
-        write.flush().await?;
+        let write = Arc::clone(&self.write);
+        tokio::spawn(async move {
+            let mut write = write.lock().await;
+            write.write_all(&line).await?;
+            write.flush().await
+        })
+        .await
+        .map_err(|err| anyhow!("send task failed: {err}"))??;
         Ok(())
     }
 }
@@ -369,6 +396,21 @@ mod tests {
         };
 
         assert!(client.request("runtime/status", json!({})).await.is_err());
+        assert!(client.pending.lock().await.is_empty(), "the waiter must be removed");
+    }
+
+    /// A request abandoned before the runtime answers (Ctrl-C during a turn or
+    /// a command) leaves no waiter behind either.
+    #[tokio::test]
+    async fn an_abandoned_request_removes_its_waiter() {
+        let (client_side, _server_side) = tokio::net::UnixStream::pair().unwrap();
+        let (client, _incoming) = Client::over(client_side);
+        let mut yields = 0;
+        tokio::select! {
+            biased;
+            _ = client.request("runtime/status", json!({})) => panic!("the fake runtime never answers"),
+            _ = async { while yields < 10 { yields += 1; tokio::task::yield_now().await } } => {}
+        }
         assert!(client.pending.lock().await.is_empty(), "the waiter must be removed");
     }
 
