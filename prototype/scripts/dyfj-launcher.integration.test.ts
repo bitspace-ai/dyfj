@@ -1337,9 +1337,12 @@ describe("interactive REPL front-end selection", () => {
     const bin = await fakeReplBin();
     for (const mode of ["rust", "invalid"]) {
       for (const args of [["status"], ["-p", "hi"], ["--help"]]) {
+        // On a terminal, so the exemption is what keeps these off the Rust
+        // REPL rather than the terminal check.
         const { code, out } = await launch(
           { DYFJ_REPL: mode, DYFJ_REPL_BIN: bin },
           args,
+          { terminal: true },
         );
         assertStrictEquals(code, 0, `${mode}: ${args.join(" ")}`);
         assertNotMatch(out, /route=rust_repl/);
