@@ -1253,6 +1253,210 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
   );
 });
 
+describe("interactive REPL front-end selection", () => {
+  // A stand-in for the Rust REPL: executable, never run in dry-run mode.
+  async function fakeReplBin(): Promise<string> {
+    const dir = await Deno.makeTempDir();
+    const bin = `${dir}/dyfj-repl`;
+    await Deno.writeTextFile(bin, "#!/bin/sh\nexit 0\n");
+    await Deno.chmod(bin, 0o755);
+    return bin;
+  }
+
+  // Runs the launcher under a pseudo-terminal, as an interactive session is,
+  // when `terminal` is set; otherwise its stdio are pipes. The pty joins the
+  // child's stderr to its stdout, so `out` carries both there.
+  const ON_A_PTY =
+    "import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))";
+
+  async function launch(
+    env: Record<string, string>,
+    args: string[],
+    { terminal = false } = {},
+  ): Promise<{ code: number; out: string; err: string }> {
+    const [command, commandArgs] = terminal
+      ? ["python3", ["-c", ON_A_PTY, BASH, LAUNCHER, ...args]]
+      : [BASH, [LAUNCHER, ...args]];
+    const { code, stdout, stderr } = await new Deno.Command(command, {
+      args: commandArgs,
+      stdin: "null",
+      env: {
+        DYFJ_LAUNCHER_DRY_RUN: "1",
+        DENO_DIR: realDenoDir(),
+        DYFJ_CODEX_TOOLCHAIN_PATH: "",
+        DYFJ_CODEX_RUSTUP_HOME: "",
+        HOME: FAKE_HOME,
+        // Each case sets the routing variables it means to test.
+        DYFJ_REPL: "",
+        DYFJ_REPL_BIN: "",
+        DYFJ_WORKBENCH_TIER: "",
+        DYFJ_WORKBENCH_HINT: "",
+        ...env,
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+    return { code, out: decode(stdout), err: decode(stderr) };
+  }
+
+  it("routes a bare session with REPL flags to the Rust REPL", async () => {
+    const bin = await fakeReplBin();
+    const { code, out } = await launch(
+      { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
+      ["--model", "z-ai/glm-5.2", "--approve-paid", "--socket", "/tmp/r.sock"],
+      { terminal: true },
+    );
+    assertStrictEquals(code, 0);
+    assertStringIncludes(out, "route=rust_repl");
+
+    const auto = await launch({ DYFJ_REPL_BIN: bin }, [], { terminal: true });
+    assertStrictEquals(auto.code, 0);
+    assertStringIncludes(auto.out, "route=rust_repl");
+  });
+
+  it("keeps the TypeScript REPL off a terminal, whatever DYFJ_REPL says", async () => {
+    const bin = await fakeReplBin();
+    // Off a terminal DYFJ_REPL is not read, so even an invalid value passes.
+    for (const mode of ["", "rust", "invalid"]) {
+      const { code, out } = await launch({
+        DYFJ_REPL: mode,
+        DYFJ_REPL_BIN: bin,
+      }, []);
+      assertStrictEquals(code, 0, `DYFJ_REPL=${mode}`);
+      assertNotMatch(out, /route=rust_repl/);
+    }
+    // "auto" is the internal name for unset, not an accepted value.
+    for (const mode of ["invalid", "auto"]) {
+      const invalid = await launch(
+        { DYFJ_REPL: mode, DYFJ_REPL_BIN: bin },
+        [],
+        { terminal: true },
+      );
+      assertStrictEquals(invalid.code, 2, `DYFJ_REPL=${mode}`);
+      assertStringIncludes(invalid.out, "DYFJ_REPL must be ts, rust or unset");
+    }
+  });
+
+  it("leaves subcommands and prompts alone whatever DYFJ_REPL says", async () => {
+    const bin = await fakeReplBin();
+    for (const mode of ["rust", "invalid"]) {
+      for (const args of [["status"], ["-p", "hi"], ["--help"]]) {
+        // On a terminal, so the exemption is what keeps these off the Rust
+        // REPL rather than the terminal check.
+        const { code, out } = await launch(
+          { DYFJ_REPL: mode, DYFJ_REPL_BIN: bin },
+          args,
+          { terminal: true },
+        );
+        assertStrictEquals(code, 0, `${mode}: ${args.join(" ")}`);
+        assertNotMatch(out, /route=rust_repl/);
+      }
+    }
+  });
+
+  it("hands a REPL flag whose value starts with -- to the TypeScript REPL", async () => {
+    const bin = await fakeReplBin();
+    const { code, out } = await launch(
+      { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
+      ["--model", "--fast"],
+      { terminal: true },
+    );
+    assertStrictEquals(code, 2);
+    assertStringIncludes(out, "only the TypeScript REPL takes");
+  });
+
+  it("execs the Rust REPL with its flags and --socket as DYFJ_SOCKET", async () => {
+    const dir = await Deno.makeTempDir();
+    const bin = `${dir}/dyfj-repl`;
+    const record = `${dir}/record`;
+    await Deno.writeTextFile(
+      bin,
+      `#!/bin/sh\nprintf '%s\\n' "sock=$DYFJ_SOCKET" "$@" > '${record}'\n`,
+    );
+    await Deno.chmod(bin, 0o755);
+    const { code } = await launch(
+      {
+        DYFJ_LAUNCHER_DRY_RUN: "",
+        DYFJ_REPL: "rust",
+        DYFJ_REPL_BIN: bin,
+      },
+      [
+        "--no-autostart",
+        "--model",
+        "z-ai/glm-5.2",
+        "--approve-paid",
+        "--socket",
+        "/tmp/r.sock",
+      ],
+      { terminal: true },
+    );
+    assertStrictEquals(code, 0);
+    assertStrictEquals(
+      await Deno.readTextFile(record),
+      "sock=/tmp/r.sock\n--model\nz-ai/glm-5.2\n--approve-paid\n",
+    );
+  });
+
+  it("keeps tier and hint routing from the environment on the TypeScript REPL", async () => {
+    const bin = await fakeReplBin();
+    const routings: Record<string, string>[] = [
+      { DYFJ_WORKBENCH_TIER: "1" },
+      { DYFJ_WORKBENCH_HINT: "code" },
+    ];
+    for (const routing of routings) {
+      const auto = await launch({ DYFJ_REPL_BIN: bin, ...routing }, [], {
+        terminal: true,
+      });
+      assertStrictEquals(auto.code, 0);
+      assertNotMatch(auto.out, /route=rust_repl/);
+
+      const forced = await launch(
+        { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin, ...routing },
+        [],
+        { terminal: true },
+      );
+      assertStrictEquals(forced.code, 2);
+      assertStringIncludes(forced.out, "only the TypeScript REPL reads them");
+    }
+    // A value the TypeScript client ignores changes nothing.
+    const ignored = await launch(
+      {
+        DYFJ_REPL_BIN: bin,
+        DYFJ_WORKBENCH_TIER: "9",
+        DYFJ_WORKBENCH_HINT: "x",
+      },
+      [],
+      { terminal: true },
+    );
+    assertStringIncludes(ignored.out, "route=rust_repl");
+  });
+
+  it("DYFJ_REPL=rust refuses a session the Rust REPL cannot take", async () => {
+    const bin = await fakeReplBin();
+    const tsOnly = await launch(
+      { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
+      ["--tier", "1"],
+      { terminal: true },
+    );
+    assertStrictEquals(tsOnly.code, 2);
+    assertStringIncludes(tsOnly.out, "only the TypeScript REPL takes");
+
+    const missing = await launch(
+      { DYFJ_REPL: "rust", DYFJ_REPL_BIN: "/nonexistent/dyfj-repl" },
+      [],
+      { terminal: true },
+    );
+    assertStrictEquals(missing.code, 2);
+    assertStringIncludes(missing.out, "no dyfj-repl binary");
+
+    const ts = await launch({ DYFJ_REPL: "ts", DYFJ_REPL_BIN: bin }, [], {
+      terminal: true,
+    });
+    assertNotMatch(ts.out, /route=rust_repl/);
+  });
+});
+
 describe("socket-path grant delimiter safety", () => {
   async function launchExpectingRejection(
     env: Record<string, string>,

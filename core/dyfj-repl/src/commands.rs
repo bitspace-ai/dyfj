@@ -311,6 +311,43 @@ async fn active_slug(client: &Client, session: &Session) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Why `slug` cannot be used, or `None` when it can: absent from the catalog,
+/// or present but unroutable because it is unpriced.
+pub fn model_refusal(rows: &[Value], slug: &str) -> Option<String> {
+    match find_row(rows, Some(slug)) {
+        None => Some(format!(
+            "unknown model \"{}\"; /model lists the available ones",
+            visible(slug)
+        )),
+        Some(row) if row.get("routable").and_then(Value::as_bool) == Some(false) => Some(
+            format!("model \"{}\" is not routable: unpriced", visible(slug)),
+        ),
+        Some(_) => None,
+    }
+}
+
+/// Check a `--model` choice against the runtime's catalog before the first
+/// prompt, so a bad slug is refused at launch rather than after a request
+/// has been typed. `false` means refused, with the reason and the routable
+/// models already printed. A catalog that cannot be read is not a refusal.
+pub async fn startup_model_ok(client: &Client, session: &Session) -> bool {
+    let Some(slug) = &session.model else {
+        return true;
+    };
+    let Some(rows) = list_models(client).await else {
+        return true;
+    };
+    let Some(refusal) = model_refusal(&rows, slug) else {
+        return true;
+    };
+    eprintln!("{refusal}");
+    eprintln!("available:");
+    for line in format_models(&rows) {
+        eprintln!("{line}");
+    }
+    false
+}
+
 fn find_row<'a>(rows: &'a [Value], slug: Option<&str>) -> Option<&'a Value> {
     slug.and_then(|s| rows.iter().find(|r| str_field(r, "slug") == s))
 }
@@ -515,20 +552,11 @@ async fn model(
         None => active_slug(client, session).await,
     };
     let row = find_row(&rows, target.as_deref());
-    if let Some(slug) = &slug {
-        let Some(row) = row else {
-            eprintln!(
-                "unknown model \"{}\"; /model lists the available ones",
-                visible(slug)
-            );
-            return;
-        };
-        // Fail at selection, not at the first turn: an unpriced model cannot
-        // be routed, because its spend could not be bounded.
-        if row.get("routable").and_then(Value::as_bool) == Some(false) {
-            eprintln!("model \"{}\" is not routable: unpriced", visible(slug));
-            return;
-        }
+    // Fail at selection, not at the first turn: an unpriced model cannot be
+    // routed, because its spend could not be bounded.
+    if let Some(refusal) = slug.as_deref().and_then(|s| model_refusal(&rows, s)) {
+        eprintln!("{refusal}");
+        return;
     }
     if fast == Some(true) && !fast_capable(row) {
         eprintln!(
@@ -732,7 +760,18 @@ async fn idea_list(client: &Client, session: &Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, format_models, friction_context, parse};
+    use super::{Command, format_models, friction_context, model_refusal, parse};
+
+    #[test]
+    fn a_model_is_refused_when_absent_or_unpriced() {
+        let rows = vec![
+            serde_json::json!({"slug": "z-ai/glm-5.2", "routable": true}),
+            serde_json::json!({"slug": "free/thing", "routable": false}),
+        ];
+        assert_eq!(model_refusal(&rows, "z-ai/glm-5.2"), None);
+        assert!(model_refusal(&rows, "free/thing").unwrap().contains("unpriced"));
+        assert!(model_refusal(&rows, "nope").unwrap().contains("unknown model"));
+    }
     use crate::session::Session;
 
     /// The posted context never carries an absolute path, and a long command
@@ -899,7 +938,7 @@ mod tests {
 /// answers, and what it changes on the session.
 #[cfg(test)]
 mod run_tests {
-    use super::{Command, Prompter, run};
+    use super::{Command, Prompter, run, startup_model_ok};
     use crate::client::{Client, Incoming};
     use crate::session::Session;
     use crate::terminal::{Ask, ReadOutcome};
@@ -1106,6 +1145,28 @@ mod run_tests {
         let mut session = Session { id: Some("S1".into()), ..Session::default() };
         let seen = drive_interrupted(catalog, &mut session, vec![Command::IdeaMark("x".into())], 2).await;
         assert_eq!(methods(&seen), ["ideas/mark"]);
+    }
+
+    /// `--model` is checked against `models/list` before the first prompt:
+    /// a routable slug passes, an unknown or unpriced one is refused, and
+    /// no chosen model asks the runtime nothing.
+    #[tokio::test]
+    async fn startup_checks_the_chosen_model_against_the_catalog() {
+        for (model, expected, asked) in [
+            (Some("z-ai/glm-5.2"), true, true),
+            (Some("nope/x"), false, true),
+            (Some("unpriced/x"), false, true),
+            (None, true, false),
+        ] {
+            let (client, _incoming, log, server) = fake_runtime(catalog);
+            let session = Session { model: model.map(Into::into), ..Session::default() };
+            assert_eq!(startup_model_ok(&client, &session).await, expected, "{model:?}");
+            server.abort();
+            drop(client);
+            let seen = log.lock().unwrap().clone();
+            let want: &[&str] = if asked { &["models/list"] } else { &[] };
+            assert_eq!(methods(&seen), want, "{model:?}");
+        }
     }
 
     #[tokio::test]

@@ -21,7 +21,10 @@ and `deno task workbench` tasks, is removed; turns reach the engine only over
 the Unix socket, through `dyfj` or the Rust REPL client in `../core/dyfj-repl`.
 The bare `dyfj` invocation is the daily-driver path. It connects to the local
 Unix-socket runtime and opens the streaming REPL; if no runtime answers, the
-launcher starts one in the background and waits for it. Use `dyfj exec
+launcher starts one in the background and waits for it. On a terminal the REPL
+is the Rust one in `../core/dyfj-repl` when its binary is built and the
+arguments are ones it takes; `DYFJ_REPL=ts` keeps the TypeScript REPL (the
+root README's "Build the core" has the details). Use `dyfj exec
 "<prompt>"` for a one-shot turn, `dyfj status` to inspect the local runtime, or
 `dyfj start` when you explicitly want to foreground the runtime. Put `dist/` on
 your `PATH` to use `dyfj` without the `./dist/` prefix.

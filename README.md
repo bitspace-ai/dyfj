@@ -200,6 +200,15 @@ All five apply from Day-1.
 Working-system criterion. Cost visibility is part of the done-line itself, not a
 deferrable enhancement.
 
+Daily use is measured on one route: the native model loop with hosted
+inference over an OpenAI-compatible provider, with OpenRouter as the default
+provider and others pluggable behind that adapter. The route is opt-in, not the
+runtime's bare default: an unconfigured bare turn still uses the local tier-0
+model, so the operator selects a hosted model with `DYFJ_WORKBENCH_MODEL` (or
+the configured companion default) or `--model`. External-agent (ACP) routes stay
+in the tree but are deferred from the route plan (`specs/README.md`, decision
+D29).
+
 ### Inter-agent contracts - Day-1 posture
 
 - **Event schema is the inter-agent contract.** Runtime events carry the audit,
@@ -1262,7 +1271,20 @@ It resolves the socket as the runtime does (`DYFJ_SOCKET`, else
 prompt, which the TypeScript REPL cannot do. It covers turns, approvals,
 Ctrl-C cancellation, a per-turn receipt line with cost and prompt-cache tokens,
 and the daily-driver commands `/model`, `/fast`, `/session`, `/friction` and
-`/idea`. The TypeScript `dyfj` CLI remains the launcher's entry point for now.
+`/idea`, and it refuses an unknown or unroutable `--model` before the first
+prompt. A bare interactive `dyfj` opens the Rust REPL when a `dyfj-repl` binary is
+available (`DYFJ_REPL_BIN`, else `core/target/release/dyfj-repl` beside the
+prototype, else `dyfj-repl` on `PATH`; build it with
+`cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
+every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
+`--session`, `--workspace`, `--socket`), and neither `DYFJ_WORKBENCH_TIER` nor
+`DYFJ_WORKBENCH_HINT` holds a value the TypeScript client applies (a tier of
+0, 1 or 2; a hint of `code`, `chat` or `reasoning`), since only it reads them.
+Otherwise, and with `DYFJ_REPL=ts`,
+the TypeScript REPL opens as before. `DYFJ_REPL=rust` requires the Rust REPL
+for an interactive session on a terminal and fails if it cannot run there;
+piped or redirected input, subcommands, `-p` prompts and `--help` are
+unaffected by `DYFJ_REPL`.
 See [`core/README.md`](core/README.md).
 
 ### MCP integration
@@ -1828,3 +1850,12 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - The Rust REPL description lists what it now covers (the per-turn
   receipt line and the `/model`, `/fast`, `/session`, `/friction` and `/idea`
   commands) and no longer says those stay in the TypeScript CLI.
+- 2026-10-02 - Section 1's done-line names the one route daily use is measured
+  on, hosted inference over an OpenAI-compatible provider with OpenRouter as its
+  default provider, selected by configuration rather than as the bare-turn
+  default, and `specs/README.md` records decision D29, which defers the
+  external-agent (ACP) routes from the route plan and supersedes that part of
+  D20.
+- 2026-10-02 - The interactive-terminal section says a bare `dyfj` now opens the
+  Rust REPL when it can, and how `DYFJ_REPL` and `DYFJ_REPL_BIN` choose or
+  require a front end.

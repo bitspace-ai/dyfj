@@ -11,6 +11,18 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A bare `dyfj` on a terminal opens the Rust REPL.** When a `dyfj-repl`
+  binary is available (`DYFJ_REPL_BIN`, `core/target/release/dyfj-repl` or
+  `PATH`), every argument is one it takes (`--model`, `--approve-paid`,
+  `--fast`, `--session`, `--workspace`, `--socket`) and neither
+  `DYFJ_WORKBENCH_TIER` nor `DYFJ_WORKBENCH_HINT` holds a value the
+  TypeScript client applies, the launcher hands the
+  interactive session to it after autostart; otherwise the TypeScript REPL
+  opens as before. `DYFJ_REPL=ts` keeps the TypeScript REPL and
+  `DYFJ_REPL=rust` requires the Rust one for interactive sessions on a
+  terminal; piped input stays on the TypeScript REPL either way. The Rust
+  REPL also refuses an unknown or unroutable `--model` at launch, listing the
+  available models, instead of failing the first turn.
 - **The Rust REPL can be a daily driver.** `dyfj-repl` now sends the same
   turn request as the TypeScript client: the chosen model and fast tier, the
   per-session paid opt-in, and the workspace for a new session, set with
@@ -172,9 +184,9 @@ README are tracked separately in its Revision history section.
 
   Known limits are recorded in the source where they are met, not left to be
   rediscovered: approvals and frames carry no turn id, so a delayed one from an
-  abandoned turn can appear during a later turn; no closed state is recorded after the reader
-  ends; one pending entry leaks per abandoned turn; and the submission ceiling
-  bounds what is remembered rather than what is allocated.
+  abandoned turn can appear during a later turn; no closed state is recorded
+  after the reader ends; and the submission ceiling bounds what is remembered
+  rather than what is allocated.
 
   Frames from the runtime are capped at 16 MiB, the TypeScript peer's
   ceiling; a larger one, or a stream that passes the ceiling without a newline,
