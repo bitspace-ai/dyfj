@@ -686,12 +686,18 @@ rust_repl_route() {
   # Piped or redirected input is not an interactive session either, so it
   # stays on the TypeScript REPL without reading DYFJ_REPL.
   [[ "${LAUNCHER_ON_TERMINAL:-0}" == "1" ]] || return 1
-  local mode="${DYFJ_REPL:-auto}"
-  [[ "$mode" == "ts" ]] && return 1
-  if [[ "$mode" != "auto" && "$mode" != "rust" ]]; then
-    echo "dyfj: DYFJ_REPL must be ts, rust or unset" >&2
-    return 2
-  fi
+  # Validate the raw value: "auto" is the internal name for unset, not a
+  # value an operator can pass.
+  local mode="${DYFJ_REPL:-}"
+  case "$mode" in
+    "") mode="auto" ;;
+    ts) return 1 ;;
+    rust) ;;
+    *)
+      echo "dyfj: DYFJ_REPL must be ts, rust or unset" >&2
+      return 2
+      ;;
+  esac
   local reason=""
   local bin=""
   if ! rust_repl_args; then

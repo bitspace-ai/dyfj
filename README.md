@@ -1278,7 +1278,8 @@ prototype, else `dyfj-repl` on `PATH`; build it with
 `cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
 every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
 `--session`, `--workspace`, `--socket`), and neither `DYFJ_WORKBENCH_TIER` nor
-`DYFJ_WORKBENCH_HINT` is set, since only the TypeScript REPL reads them.
+`DYFJ_WORKBENCH_HINT` holds a value the TypeScript client applies (a tier of
+0, 1 or 2; a hint of `code`, `chat` or `reasoning`), since only it reads them.
 Otherwise, and with `DYFJ_REPL=ts`,
 the TypeScript REPL opens as before. `DYFJ_REPL=rust` requires the Rust REPL
 for an interactive session on a terminal and fails if it cannot run there;
