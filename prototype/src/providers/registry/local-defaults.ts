@@ -6,6 +6,33 @@ import type { WorkbenchModel } from "../types.ts";
 export function defaultLocalWorkbenchModels(): WorkbenchModel[] {
   return [
     {
+      slug: "llama-cpp/qwen3.6-35b-a3b",
+      displayName: "Qwen3.6 35B (MoE, llama.cpp)",
+      provider: "llama-cpp",
+      api: "openai-completions",
+      baseUrl: "http://localhost:8080/v1",
+      tier: 0,
+      costInput: 0,
+      costOutput: 0,
+      capabilities: [
+        "text",
+        "code",
+        "reasoning",
+        "vision",
+        "tools",
+        "long-context",
+      ],
+      contextWindow: 262144,
+      maxOutputTokens: 8192,
+      modality: "local",
+      architecture: "moe",
+      totalParamsB: 36.0,
+      activeParamsB: 3.0,
+      recommendedQuant: "Q4_K_M",
+      residentRamGiB: 24.0,
+      reasoningEffortControl: false,
+    },
+    {
       slug: "qwen3.6:35b-a3b",
       displayName: "Qwen3.6 35B (MoE)",
       provider: "ollama",

@@ -296,9 +296,10 @@ How the work actually happens, separate from what gets built.
 
 - [Deno](https://deno.com) 2.9+
 - [Dolt](https://docs.dolthub.com/introduction/installation)
-- [Ollama](https://ollama.com) for the local default model;
-  [MLX-LM](https://github.com/ml-explore/mlx-lm) remains a supported local
-  provider, but its catalog rows ship inactive
+- [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the
+  local default model; [Ollama](https://ollama.com) and
+  [MLX-LM](https://github.com/ml-explore/mlx-lm) remain supported local
+  providers, and the MLX-LM catalog rows ship inactive
 - _(Optional, for `core/`)_ [`rustup`](https://rustup.rs/) - the toolchain pin
   in `core/rust-toolchain.toml` will install the right Rust automatically when
   you `cargo build` there.
@@ -333,18 +334,25 @@ export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
 
-The local default is the Ollama model `qwen3.6:35b-a3b`, the first active Tier 0
-row in the registry's local preference order. Pull it and keep Ollama on its
-default port:
+The local default is Qwen3.6 35B A3B served by llama.cpp, catalog slug
+`llama-cpp/qwen3.6-35b-a3b`, the first active Tier 0 row in the registry's
+local preference order. Start `llama-server` with a GGUF of that model on its
+default port, aliased to the slug:
 
 ```sh
-ollama pull qwen3.6:35b-a3b
+llama-server -m /path/to/Qwen3.6-35B-A3B-Q4_K_M.gguf \
+  --port 8080 --alias llama-cpp/qwen3.6-35b-a3b --jinja
 ```
 
-Workbench reaches that model through Ollama's OpenAI-compatible endpoint,
-`http://localhost:11434/v1`. The catalog also carries MLX-LM Server rows
-(`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a
-row's `active` flag in the `models` table before selecting it with `--model`.
+Workbench reaches it through llama-server's OpenAI-compatible endpoint,
+`http://localhost:8080/v1`; `--jinja` applies the model's chat template, which
+tool calls need. Ollama stays supported: the Ollama row `qwen3.6:35b-a3b` on
+`http://localhost:11434/v1` is next in the preference order. A bare turn picks
+by that order, not by which server is running, so an Ollama user selects that
+row with `--model` or a companion default. The catalog also carries MLX-LM
+Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship
+inactive, so set a row's `active` flag in the `models` table before selecting
+it with `--model`.
 
 Agent-tool turns default to 32 steps. Every entrypoint accepts
 `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads
@@ -1215,6 +1223,14 @@ curl -sS http://127.0.0.1:18080/v1/chat/completions \
   -d '{"model":"mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
+For llama.cpp:
+
+```sh
+curl -sS http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"llama-cpp/qwen3.6-35b-a3b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+```
+
 For Ollama:
 
 ```sh
@@ -1859,3 +1875,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-02 - The interactive-terminal section says a bare `dyfj` now opens the
   Rust REPL when it can, and how `DYFJ_REPL` and `DYFJ_REPL_BIN` choose or
   require a front end.
+- 2026-10-03 - The local default is now Qwen3.6 35B served by llama.cpp's
+  `llama-server` on port 8080; the prerequisites, run instructions and
+  provider check say how to start it, and that Ollama users select the Ollama
+  row explicitly.

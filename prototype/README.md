@@ -29,11 +29,14 @@ root README's "Build the core" has the details). Use `dyfj exec
 `dyfj start` when you explicitly want to foreground the runtime. Put `dist/` on
 your `PATH` to use `dyfj` without the `./dist/` prefix.
 
-The local default is the Ollama model `qwen3.6:35b-a3b`, reached through Ollama's OpenAI-compatible endpoint:
+The local default is Qwen3.6 35B A3B served by llama.cpp's `llama-server` (catalog slug `llama-cpp/qwen3.6-35b-a3b`), reached through its OpenAI-compatible endpoint on `http://localhost:8080/v1`:
 
 ```sh
-ollama pull qwen3.6:35b-a3b
+llama-server -m /path/to/Qwen3.6-35B-A3B-Q4_K_M.gguf \
+  --port 8080 --alias llama-cpp/qwen3.6-35b-a3b --jinja
 ```
+
+The Ollama row `qwen3.6:35b-a3b` on `http://localhost:11434/v1` is next in the local preference order. A bare turn picks by that order, not by which server is running, so select the Ollama row with `--model` or a companion default when llama-server is not the one you run.
 
 The catalog also carries MLX-LM Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a row's `active` flag in the `models` table before selecting it with `--model`.
 
@@ -322,6 +325,14 @@ For Workbench failures that look like "the model never responds", check the sele
 curl -sS http://127.0.0.1:18080/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"model":"mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+```
+
+For llama.cpp:
+
+```sh
+curl -sS http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"llama-cpp/qwen3.6-35b-a3b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
 For Ollama:

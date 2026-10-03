@@ -134,12 +134,15 @@ export function selectWorkbenchModel(
 }
 
 // One preference chain for any "pick from this set" selection, so explicit
-// tier requests honor the same local ordering (Qwen 3.6 MoE first) as the default
-// route instead of falling back to list order.
+// tier requests honor the same local ordering (Qwen 3.6 MoE on llama.cpp, then
+// on Ollama) as the default route instead of falling back to list order.
 function preferredModelFrom(
   candidates: WorkbenchModel[],
 ): WorkbenchModel | undefined {
-  return candidates.find((model) => model.slug === "qwen3.6:35b-a3b") ??
+  return candidates.find((model) =>
+    model.slug === "llama-cpp/qwen3.6-35b-a3b"
+  ) ??
+    candidates.find((model) => model.slug === "qwen3.6:35b-a3b") ??
     candidates.find((model) => model.slug === "muse-glimmer:30b") ??
     candidates.find((model) =>
       model.slug === "mistral-small:24b-instruct-2501-q4_K_M"

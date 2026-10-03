@@ -17,14 +17,14 @@ import { providerTestModels } from "../../../testing/builders/models.ts";
 
 const models = [...providerTestModels];
 describe("defaultLocalWorkbenchModels", () => {
-  it("provides a zero-cost Tier 0 local default", () => {
+  it("provides a zero-cost Tier 0 local default served by llama.cpp", () => {
     const defaults = defaultLocalWorkbenchModels();
 
     assertObjectMatch(defaults[0], {
-      slug: "qwen3.6:35b-a3b",
-      provider: "ollama",
+      slug: "llama-cpp/qwen3.6-35b-a3b",
+      provider: "llama-cpp",
       api: "openai-completions",
-      baseUrl: "http://localhost:11434/v1",
+      baseUrl: "http://localhost:8080/v1",
       tier: 0,
       costInput: 0,
       costOutput: 0,
@@ -107,7 +107,8 @@ describe("withDefaultLocalWorkbenchModels", () => {
       displayName: "Gemma 4 latest",
     }]);
 
-    assertEquals(merged.slice(0, 2).map((model) => model.slug), [
+    assertEquals(merged.slice(0, 3).map((model) => model.slug), [
+      "llama-cpp/qwen3.6-35b-a3b",
       "qwen3.6:35b-a3b",
       "muse-glimmer:30b",
     ]);

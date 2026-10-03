@@ -126,8 +126,8 @@
           ],
           "defaultCompanionModel": null,
           "defaultTurnModel": {
-            "slug": "qwen3.6:35b-a3b",
-            "displayName": "Qwen3.6 35B (MoE)",
+            "slug": "llama-cpp/qwen3.6-35b-a3b",
+            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
             "tier": 0,
             "local": true,
             "reason": "default"
@@ -140,8 +140,8 @@
           "defaultDailyBudgetUsd": 25,
           "maxToolSteps": 32,
           "models": {
-            "total": 11,
-            "local": 11,
+            "total": 12,
+            "local": 12,
             "hosted": 0
           },
           "autostarted": false
@@ -281,8 +281,8 @@
           ],
           "defaultCompanionModel": null,
           "defaultTurnModel": {
-            "slug": "qwen3.6:35b-a3b",
-            "displayName": "Qwen3.6 35B (MoE)",
+            "slug": "llama-cpp/qwen3.6-35b-a3b",
+            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
             "tier": 0,
             "local": true,
             "reason": "default"
@@ -295,13 +295,40 @@
           "defaultDailyBudgetUsd": 25,
           "maxToolSteps": 32,
           "models": {
-            "total": 11,
-            "local": 11,
+            "total": 12,
+            "local": 12,
             "hosted": 0
           },
           "autostarted": false
         },
         "models": [
+          {
+            "slug": "llama-cpp/qwen3.6-35b-a3b",
+            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
+            "provider": "llama-cpp",
+            "api": "openai-completions",
+            "baseUrl": "http://localhost:8080/v1",
+            "tier": 0,
+            "costInput": 0,
+            "costOutput": 0,
+            "capabilities": [
+              "text",
+              "code",
+              "reasoning",
+              "vision",
+              "tools",
+              "long-context"
+            ],
+            "contextWindow": 262144,
+            "maxOutputTokens": 8192,
+            "modality": "local",
+            "architecture": "moe",
+            "totalParamsB": 36,
+            "activeParamsB": 3,
+            "recommendedQuant": "Q4_K_M",
+            "residentRamGiB": 24,
+            "reasoningEffortControl": false
+          },
           {
             "slug": "qwen3.6:35b-a3b",
             "displayName": "Qwen3.6 35B (MoE)",
@@ -1133,6 +1160,35 @@
     "models/list": {
       "result": {
         "models": [
+          {
+            "slug": "llama-cpp/qwen3.6-35b-a3b",
+            "displayName": "Qwen3.6 35B (MoE, llama.cpp)",
+            "provider": "llama-cpp",
+            "api": "openai-completions",
+            "baseUrl": "http://localhost:8080/v1",
+            "tier": 0,
+            "costInput": 0,
+            "costOutput": 0,
+            "capabilities": [
+              "text",
+              "code",
+              "reasoning",
+              "vision",
+              "tools",
+              "long-context"
+            ],
+            "contextWindow": 262144,
+            "maxOutputTokens": 8192,
+            "modality": "local",
+            "architecture": "moe",
+            "totalParamsB": 36,
+            "activeParamsB": 3,
+            "recommendedQuant": "Q4_K_M",
+            "residentRamGiB": 24,
+            "reasoningEffortControl": false,
+            "routable": true,
+            "local": true
+          },
           {
             "slug": "qwen3.6:35b-a3b",
             "displayName": "Qwen3.6 35B (MoE)",
