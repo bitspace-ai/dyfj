@@ -802,6 +802,20 @@ export function productionLanes(
       cwd: root,
     },
     {
+      label: "Local model catalog data validation",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "test",
+        "--allow-read=schema",
+        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
+        "--allow-run=dolt",
+        "schema/model-catalog.test.ts",
+      ],
+      cwd: root,
+    },
+    {
       label: "Current-schema apply validation",
       checkId: "test.aggregate",
       command: denoExecutable,

@@ -334,22 +334,26 @@ export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
 
-The local default is DeepSeek-R1 Distill 32B served by llama.cpp, catalog slug
-`llama-cpp/deepseek-r1-32b`, the first active Tier 0 row in the registry's
-local preference order. Start `llama-server` with a GGUF of that model on its
+The local default is Qwen3.6 35B-A3B served by llama.cpp, catalog slug
+`llama-cpp/qwen3.6-35b-a3b`, the first active Tier 0 row in the registry's
+local preference order. Start `llama-server` with a compatible GGUF on its
 default port, aliased to the slug:
 
 ```sh
-llama-server -m /path/to/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf \
-  --port 8080 --alias llama-cpp/deepseek-r1-32b --jinja
+llama-server -m /path/to/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+  --host 127.0.0.1 --port 8080 --alias llama-cpp/qwen3.6-35b-a3b \
+  --ctx-size 32768 --parallel 1 --reasoning off --jinja
 ```
 
 Workbench reaches it through llama-server's OpenAI-compatible endpoint,
-`http://localhost:8080/v1`; `--jinja` applies the model's own chat template.
-Ollama stays supported: the Ollama row `qwen3.6:35b-a3b` on
-`http://localhost:11434/v1` is next in the preference order. A bare turn picks
-by that order, not by which server is running, so an Ollama user selects that
-row with `--model` or a companion default. The catalog also carries MLX-LM
+`http://localhost:8080/v1`. The catalog's 32K context is the served limit;
+the GGUF supports a larger native context. `--jinja` explicitly enables the
+GGUF's chat template for OpenAI-style tool calls. The previous DeepSeek
+llama.cpp row remains inactive for rollback. Ollama stays supported: its
+separate `qwen3.6:35b-a3b` row on `http://localhost:11434/v1` is next in the
+preference order. A bare turn picks by that order, not by which server is
+running, so an Ollama user selects that row with `--model` or a companion
+default. The catalog also carries MLX-LM
 Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship
 inactive, so set a row's `active` flag in the `models` table before selecting
 it with `--model`.
@@ -1232,7 +1236,7 @@ For llama.cpp:
 ```sh
 curl -sS http://127.0.0.1:8080/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"llama-cpp/deepseek-r1-32b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
+  -d '{"model":"llama-cpp/qwen3.6-35b-a3b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
 For Ollama:
@@ -1899,3 +1903,8 @@ Document revisions only. Code and behavior changes are tracked in
   `SequentialIds` from a conformance suite until its port lands; PRD-14 R2
   states the exemption, and `specs/README.md` records R2 as met since exit
   except `fakeIo`, whose suite stays deferred.
+- 2026-10-03 - Local llama.cpp instructions now name the Qwen3.6 route, its
+  served 32K context and non-thinking flag, and distinguish it from Ollama's
+  separate Qwen3.6 row.
+- 2026-10-03 - The Qwen3.6 llama.cpp launch command now passes `--jinja`
+  explicitly for its documented tool-calling endpoint.

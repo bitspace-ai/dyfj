@@ -717,8 +717,13 @@ Deno.test("aggregate lanes include the golden characterization suite", async () 
   );
 });
 
-Deno.test("aggregate lanes include the schema codegen and equivalence checks", () => {
+Deno.test("aggregate lanes include schema catalog, codegen, and equivalence checks", () => {
   const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const catalog = lanes.find((candidate) =>
+    candidate.label === "Local model catalog data validation"
+  );
+  if (!catalog) throw new Error("local model catalog lane is missing");
+  assertEquals(catalog.args.at(-1), "schema/model-catalog.test.ts");
   const codegen = lanes.find((candidate) =>
     candidate.label === "Schema codegen freshness (schema.codegen)"
   );
@@ -738,7 +743,7 @@ Deno.test("aggregate lanes include the schema codegen and equivalence checks", (
   );
   if (!equivalence) throw new Error("schema.equivalence lane is missing");
   assertEquals(equivalence.args.at(-1), "schema/equivalence.ts");
-  for (const lane of [codegen, equivalence]) {
+  for (const lane of [catalog, codegen, equivalence]) {
     assertEquals(lane.checkId, "test.aggregate");
     assertEquals(lane.cwd, "/repo");
     assertEquals(
