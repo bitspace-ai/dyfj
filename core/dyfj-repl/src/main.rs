@@ -256,6 +256,9 @@ async fn main() -> Result<()> {
             &mut session,
         )
         .await;
+        // `/friction` names only a slash command typed just before it, as the
+        // TypeScript REPL does; a turn in between ends that attribution.
+        session.last_command = None;
     }
 
     Ok(())
