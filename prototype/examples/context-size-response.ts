@@ -14,9 +14,11 @@ const baseUrl = getArg(Deno.args, "--base-url") ??
   "http://localhost:11434/v1";
 const largeRepeats = Number(getArg(Deno.args, "--large-repeats") ?? "180");
 const model = {
-  // An Ollama diagnostic: start from the built-in row for this slug, or the
-  // Ollama Qwen row, so the provider matches the Ollama base URL.
-  ...(defaultLocalWorkbenchModels().find((row) => row.slug === modelSlug) ??
+  // An Ollama diagnostic: start from the built-in Ollama row for this slug, or
+  // the Ollama Qwen row, so the provider matches the Ollama base URL.
+  ...(defaultLocalWorkbenchModels().find((row) =>
+    row.provider === "ollama" && row.slug === modelSlug
+  ) ??
     defaultLocalWorkbenchModels().find((row) =>
       row.slug === "qwen3.6:35b-a3b"
     )!),
