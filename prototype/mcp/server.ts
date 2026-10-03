@@ -50,7 +50,15 @@ function createServer(store: Store): McpServer {
     name: "dyfj-memory",
     version: "1.0.0",
   });
+  registerMemoryTools(server, store);
+  registerSessionWriteTools(server, store);
+  registerSessionReadTools(server, store);
+  return server;
+}
 
+// ── Memory tools ──────────────────────────────────────────────────────────────
+
+function registerMemoryTools(server: McpServer, store: Store): void {
   // ── Tool: read_memory ─────────────────────────────────────────────────────────
 
   server.registerTool(
@@ -133,7 +141,11 @@ function createServer(store: Store): McpServer {
       };
     },
   );
+}
 
+// ── Session tools ─────────────────────────────────────────────────────────────
+
+function registerSessionWriteTools(server: McpServer, store: Store): void {
   // ── Tool: start_session ───────────────────────────────────────────────────────
 
   server.registerTool(
@@ -268,7 +280,9 @@ function createServer(store: Store): McpServer {
       };
     },
   );
+}
 
+function registerSessionReadTools(server: McpServer, store: Store): void {
   // ── Tool: list_sessions ──────────────────────────────────────────────────────────
 
   server.registerTool(
@@ -368,8 +382,6 @@ function createServer(store: Store): McpServer {
       return { content: [{ type: "text", text: header }] };
     },
   );
-
-  return server;
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
