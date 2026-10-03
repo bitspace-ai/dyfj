@@ -223,6 +223,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Provider request and stream tests folded into the conformance kit.** The
+  kit takes named `cases` beyond its required fixtures, each a recorded
+  exchange run under the same invariants. The unit tests that called the
+  Anthropic, Gemini and OpenAI-compatible request builders and stream-line
+  parsers directly (`request.test.ts`, `stream.test.ts`,
+  `stream-line.test.ts`) are now such cases in each adapter's
+  `conformance.test.ts`, so they assert the request the adapter sends and the
+  result and frames it returns, not a helper's return value. The
+  OpenAI-compatible check that a legacy reasoning alias is not read twice is
+  now pinned through the reasoning-token estimate the turn reports. Turn-level provider tests (limits,
+  aborts, errors, usage, tool calls, text-markup recovery) already drive the
+  adapter through the scripted transport and stay as they are. The
+  `add-provider` recipe and `specs/03-testing.md` say where such cases go. No
+  runtime code changed.
+
 - **Inline test support moved into `prototype/testing/`.** Tests no longer
   define their own fake `fetch` functions or loopback servers. Code that takes
   `typeof fetch` rather than the `HttpTransport` port (the web fetch tool, the

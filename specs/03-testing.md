@@ -169,6 +169,9 @@ internal move.
     - redirect response
   - Every request an adapter sends refuses redirects.
   - The kit asserts the adapter's `ProviderTurnResult` and emitted frames.
+  - Request building and stream parsing beyond the required cases are further
+    named recorded cases run by the same kit, not unit tests of the builder
+    or parser.
   - A new adapter is mergeable only when it passes the kit.
 - **Tool**
   - Every `CommandDefinition` must meet all of the following:
