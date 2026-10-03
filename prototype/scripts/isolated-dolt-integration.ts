@@ -188,8 +188,9 @@ try {
     // and the secrets resolver. /bin/sh: the `deno.json` task strings under
     // test. ln: symlink fixtures (`Deno.symlink` needs unscoped read and
     // write). /bin/ps: reaping a launcher-started runtime by socket. dolt:
-    // the fixture tests.
-    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln`,
+    // the fixture tests. python3: a pseudo-terminal (its `pty` module) for the
+    // launcher cases that need an interactive session.
+    `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln,python3`,
     // The Codex profile builder checks directory ownership with Deno.uid().
     "--allow-sys=uid",
     `--allow-net=${

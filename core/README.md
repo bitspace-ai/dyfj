@@ -26,6 +26,8 @@ cargo run
 
 The REPL sends the same turn request as the TypeScript client: the chosen model and fast tier, the per-session paid opt-in, and the workspace when a turn starts a new session. Flags: `--model <slug>` (else `DYFJ_WORKBENCH_MODEL`, else the runtime's default), `--approve-paid`, `--fast`, `--session <id>` to resume a session (the id or the `workbench-<id>` slug `dyfj sessions` lists; anything else is refused at startup), and `--workspace <dir>` for a new session (else `DYFJ_WORKSPACE`, else the current directory; a resumed session keeps its own). The startup posture line names these choices when they differ from the runtime's defaults. Every turn ends with a receipt line: model, turn cost, running session cost, input and output tokens, prompt-cache reads and writes when the provider reported them, tool steps, and the route reason.
 
+A `--model` the runtime's catalog does not have, or cannot route because it is unpriced, is refused at launch with the available models listed, before the first prompt. A bare interactive `dyfj` starts this REPL when the binary is built (`cargo build --release -p dyfj-repl`); see the root README's "Build the core" for how the launcher picks it.
+
 Commands are recognised only when typed alone on one line, so a pasted block that contains `/model` stays prompt text, and an unknown `/word` is sent as a prompt:
 
 - `/model [slug] [--approve-paid] [--fast|--no-fast]` lists models grouped by route (unroutable rows marked) or switches to one, refusing unknown and unroutable slugs.
