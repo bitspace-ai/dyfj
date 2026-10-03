@@ -13,7 +13,12 @@ const baseUrl = getArg(Deno.args, "--base-url") ??
   Deno.env.get("DYFJ_WORKBENCH_BASE_URL") ??
   "http://localhost:11434/v1";
 const model = {
-  ...defaultLocalWorkbenchModels()[0],
+  // An Ollama diagnostic: start from the built-in row for this slug, or the
+  // Ollama Qwen row, so the provider matches the Ollama base URL.
+  ...(defaultLocalWorkbenchModels().find((row) => row.slug === modelSlug) ??
+    defaultLocalWorkbenchModels().find((row) =>
+      row.slug === "qwen3.6:35b-a3b"
+    )!),
   slug: modelSlug,
   displayName: modelSlug,
   baseUrl,
