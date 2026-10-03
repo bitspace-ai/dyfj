@@ -280,13 +280,21 @@ export function isWithinRoot(rootReal: string, targetReal: string): boolean {
 }
 
 /** Directory names outside search scope by contract; see file-search.ts. */
-export const SKIP_DIRS = new Set([
+const SKIP_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
   ".jj",
   ".hg",
   ".svn",
 ]);
+
+/**
+ * Is `name` a directory the search tools exclude by contract? The set itself
+ * stays private so no importer can widen or narrow the exclusion.
+ */
+export function isExcludedDirName(name: string): boolean {
+  return SKIP_DIRS.has(name);
+}
 
 /**
  * Backslashes rewritten to `/`. Used ONLY inside excludedSegment, whose input

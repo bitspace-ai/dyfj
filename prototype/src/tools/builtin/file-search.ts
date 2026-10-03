@@ -16,6 +16,7 @@ import {
   DEFAULT_MAX_ENTRIES,
   excludedSegment,
   HARD_MAX_FILE_BYTES,
+  isExcludedDirName,
   isWithinRoot,
   readContainedFile,
   resolveWorkspacePath,
@@ -23,7 +24,6 @@ import {
   safeErrorReason,
   sanitizeOutputPathField,
   sanitizeOutputText,
-  SKIP_DIRS,
 } from "./file-access.ts";
 import {
   type GlobBudget,
@@ -314,7 +314,7 @@ async function* walkFiles(
       continue;
     }
     if (entry.isDirectory) {
-      if (SKIP_DIRS.has(entry.name)) continue;
+      if (isExcludedDirName(entry.name)) continue;
       // DirEntry is a snapshot taken by readDir; re-check with a no-follow
       // stat, because the name may already point somewhere else by now. This
       // narrows the window before descending — it does not close it, which is
@@ -359,7 +359,7 @@ async function* walkFiles(
 /**
  * Resolve the search start, or return an `error: …` string.
  *
- * SKIP_DIRS is enforced here as well as in the walk. The walk only ever sees a
+ * SKIP_DIRS (file-access.ts) is enforced here as well as in the walk. The walk only ever sees a
  * skipped directory as a *child*, so naming one as the starting point — `path:
  * ".git"` — used to begin inside it and traverse freely, handing back exactly
  * the repository metadata the exclusion exists to withhold. The check runs on

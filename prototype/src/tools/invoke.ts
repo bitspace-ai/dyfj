@@ -114,10 +114,9 @@ export async function invokeCommand<TResult = unknown>(
 
 // events.tool_result is a Dolt/MySQL TEXT column: 65,535 BYTES, not
 // characters. A tool result can run right up to the model-facing cap
-// (builtin/file-access.ts's DEFAULT_MAX_BYTES, itself measured in characters), which
-// overflows the column once multibyte UTF-8 characters are counted in bytes —
-// before even accounting for the fact that char-count and byte-count aren't
-// the same limit. The event row is a durable audit copy, not the model's
+// (builtin/file-access.ts's DEFAULT_MAX_BYTES, 64 KiB of encoded UTF-8), which
+// already exceeds the 65,535-byte column, and truncation can append a suffix
+// on top. The event row is a durable audit copy, not the model's
 // working context, so it can be capped independently: keep a safe margin
 // under the column limit here, and let the model-facing tool result (what
 // actually goes back on the transcript) keep its own, separate limit.
