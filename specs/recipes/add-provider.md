@@ -20,7 +20,11 @@ A new provider that speaks an API family DYFJ already has needs **no code in
   (`src/providers/openai-compatible/providers.ts`): the environment variable
   that holds its key and the one https host that key may be sent to. That map is
   what admits a provider to the hosted wire path, so a catalog row alone cannot
-  send a credential anywhere new. If the provider's modality should read as
+  send a credential anywhere new. Declare that variable in `CONFIG_SCHEMA`
+  (`src/config/schema.ts`) with `kind: "secret-pointer"` and add it to the
+  `serve-unix` env profile in `deno.json`: `[secrets.pointers]` accepts only
+  declared secret pointers, and `src/config/schema.test.ts` holds the profile to
+  the schema. If the provider's modality should read as
   frontier or aggregator rather than custom, add its canonical host to
   `getModelAccessModality` (`src/providers/registry/catalog.ts`).
 - **Anthropic and Gemini families.** These adapters pin their key to one
