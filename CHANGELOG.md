@@ -967,6 +967,14 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Deactivating a built-in local model row now sticks.** Workbench overlays
+  its built-in local rows (the Ollama defaults) on the catalog when the catalog
+  lacks them, but it treated a row the operator had set inactive as missing and
+  added the built-in copy back, so ask and next-work routing, the ACP route
+  check and the model picker could still select a deactivated model. The
+  overlay now skips any slug the catalog lists as inactive; the store's model
+  reader gains `listInactiveSlugs()` for this.
+
 - **The missing-credential error points at the real recovery.** A hosted turn
   whose provider key is absent used to say to project the key with `op run` at
   process start. It now says that secrets resolve only at runtime start: fix

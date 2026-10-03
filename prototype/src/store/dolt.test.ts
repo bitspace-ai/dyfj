@@ -422,9 +422,10 @@ Deno.test("every reader query passes the read-only guard", async () => {
   await store.memories.bySlug("s", ["public"]);
   await store.memories.list(["public"], { type: "user" });
   await store.models.listActive();
+  await store.models.listInactiveSlugs();
   await store.prompts.active("companion-base");
   await store.spend.baselines(SESSION, "2026-07-06 00:00:00");
-  assertEquals(calls.length, 15);
+  assertEquals(calls.length, 16);
   for (const call of calls) assert(isReadOnlySelect(call.sql), call.sql);
 });
 

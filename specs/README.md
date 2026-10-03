@@ -14,17 +14,18 @@ do not amend Section 1.
 
 ## Reading order
 
-| File                      | Purpose                                                                                           |
-| ------------------------- | ------------------------------------------------------------------------------------------------- |
-| `00-baseline-findings.md` | Observed state at the start: defects, drift, what to keep                                         |
-| `01-architecture.md`      | Target layers, directories, seams, ports, extension interface, approved deletions                 |
-| `02-data-layer.md`        | Store port, DDL-generated types, schema equivalence                                               |
-| `03-testing.md`           | Test doctrine, tiers, golden suite, conformance kits, gate lanes                                  |
-| `prd/PRD-10…14`           | Enabler requirements: problem, goals, requirements, metrics, risks                                |
-| `work-orders.md`          | Sequenced, one-PR-each instructions for agents                                                    |
-| `bug-log.md`              | Bugs found during phase 1: logged, not fixed inline                                               |
-| `recipes/`                | Step-by-step extension recipes, each validated by following it (`add-provider.md`, `add-tool.md`) |
-| `notes/`                  | Evidence behind a work order's decision (`test-supervision-evidence.md`)                          |
+| File                           | Purpose                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `00-baseline-findings.md`      | Observed state at the start: defects, drift, what to keep                                         |
+| `01-architecture.md`           | Target layers, directories, seams, ports, extension interface, approved deletions                 |
+| `02-data-layer.md`             | Store port, DDL-generated types, schema equivalence                                               |
+| `03-testing.md`                | Test doctrine, tiers, golden suite, conformance kits, gate lanes                                  |
+| `runtime-consumer-contract.md` | Exploratory native-turn consumer contract: observed seam and open headless-host decisions         |
+| `prd/PRD-10…14`                | Enabler requirements: problem, goals, requirements, metrics, risks                                |
+| `work-orders.md`               | Sequenced, one-PR-each instructions for agents                                                    |
+| `bug-log.md`                   | Bugs found during phase 1: logged, not fixed inline                                               |
+| `recipes/`                     | Step-by-step extension recipes, each validated by following it (`add-provider.md`, `add-tool.md`) |
+| `notes/`                       | Evidence behind a work order's decision (`test-supervision-evidence.md`)                          |
 
 The structure, terminology and precedence rules are in _Structure and
 terminology_ below.
@@ -55,20 +56,24 @@ README Section 1 (Decisions)          what DYFJ is; Layer 0 stances; non-negotia
   deviate.
 - **Side log:** `bug-log.md` sits outside the chain of authority. It records
   problems found and deferred.
+- **Exploratory consumer contracts** sit outside the chain of authority. They
+  record tested current seams and open decisions, without amending Section 1,
+  the engineering doctrine, numbered specs, PRDs or work orders.
 
 ### Artifact types
 
-| Term                                                           | What it is                                                                                          | Where                   |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------- |
-| **Decision** (`D1`…)                                           | A maintainer choice and its consequence                                                             | Decision log below      |
-| **Spec** (`00`–`03`)                                           | Normative design for one concern. `00` is observed facts, not decisions                             | `0N-*.md`               |
-| **PRD**                                                        | Requirements for one workstream: problem, goals, non-goals, requirements, success metrics, risks    | `prd/PRD-NN-*.md`       |
-| **Requirement** (`R1`…)                                        | A checkable condition a PRD must meet; numbered within its PRD                                      | Inside each PRD         |
-| **Work order** (`WO-NN`)                                       | One PR: scope, steps, acceptance, stop-and-ask triggers                                             | `work-orders.md`        |
-| **Standing rules**                                             | Rules every work order inherits (behavior freeze, strangler discipline, tests move with code, etc.) | Top of `work-orders.md` |
-| **Golden scenario** (`1`–`12`)                                 | A black-box behavior snapshot that restructuring must not change                                    | `03-testing.md` §4      |
-| **Gate lane** (`arch.imports`, `test.unit`, `schema.codegen`…) | One named, machine-enforced check in the CI gate                                                    | `03-testing.md` §6      |
-| **Bug-log entry**                                              | A defect found during the work: logged, not fixed inline                                            | `bug-log.md`            |
+| Term                                                           | What it is                                                                                          | Where                          |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------ |
+| **Decision** (`D1`…)                                           | A maintainer choice and its consequence                                                             | Decision log below             |
+| **Spec** (`00`–`03`)                                           | Normative design for one concern. `00` is observed facts, not decisions                             | `0N-*.md`                      |
+| **PRD**                                                        | Requirements for one workstream: problem, goals, non-goals, requirements, success metrics, risks    | `prd/PRD-NN-*.md`              |
+| **Requirement** (`R1`…)                                        | A checkable condition a PRD must meet; numbered within its PRD                                      | Inside each PRD                |
+| **Work order** (`WO-NN`)                                       | One PR: scope, steps, acceptance, stop-and-ask triggers                                             | `work-orders.md`               |
+| **Standing rules**                                             | Rules every work order inherits (behavior freeze, strangler discipline, tests move with code, etc.) | Top of `work-orders.md`        |
+| **Golden scenario** (`1`–`12`)                                 | A black-box behavior snapshot that restructuring must not change                                    | `03-testing.md` §4             |
+| **Gate lane** (`arch.imports`, `test.unit`, `schema.codegen`…) | One named, machine-enforced check in the CI gate                                                    | `03-testing.md` §6             |
+| **Bug-log entry**                                              | A defect found during the work: logged, not fixed inline                                            | `bug-log.md`                   |
+| **Exploratory consumer contract**                              | A non-normative inventory of an existing runtime seam and unresolved host decisions                 | `runtime-consumer-contract.md` |
 
 ### Scope
 

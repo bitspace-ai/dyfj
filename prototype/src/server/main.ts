@@ -21,8 +21,7 @@
 
 import {
   defaultLocalWorkbenchModels,
-  loadWorkbenchModels,
-  withDefaultLocalWorkbenchModels,
+  loadWorkbenchModelsWithLocalDefaults,
   type WorkbenchModel,
 } from "../providers/mod.ts";
 import {
@@ -188,9 +187,7 @@ async function loadPickerModels(
   store: () => Store,
 ): Promise<WorkbenchModel[]> {
   try {
-    return withDefaultLocalWorkbenchModels(
-      await loadWorkbenchModels(store().models),
-    );
+    return await loadWorkbenchModelsWithLocalDefaults(store().models);
   } catch {
     return defaultLocalWorkbenchModels();
   }

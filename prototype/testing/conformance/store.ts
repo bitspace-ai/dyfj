@@ -951,6 +951,14 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     { seed: { models: MODEL_FIXTURE } },
   );
 
+  run(
+    "models.listInactiveSlugs returns only inactive slugs, sorted",
+    async (store) => {
+      assertEquals(await store.models.listInactiveSlugs(), ["retired"]);
+    },
+    { seed: { models: MODEL_FIXTURE } },
+  );
+
   run("prompts.active reads an active prompt by slug", async (store) => {
     assertEquals(await store.prompts.active("companion-base"), {
       content: "active prompt",
