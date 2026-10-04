@@ -8,6 +8,7 @@
 use anyhow::Result;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use std::sync::OnceLock;
 use std::sync::mpsc as std_mpsc;
 use tokio::sync::{mpsc, oneshot};
 
@@ -87,18 +88,42 @@ fn terminal_surfaces() -> (bool, bool) {
     }
 }
 
+/// The terminal settings as they were before this process started driving the
+/// terminal. Captured before rustyline is constructed, so it is the caller's
+/// state and not ours.
+struct SavedTermios(libc::termios);
+
+// SAFETY: `termios` is a plain settings struct with no interior mutability and
+// no owned resources. It is written once, before any thread could read it, and
+// only read afterwards — including from a panic hook, which is why this is a
+// `OnceLock` rather than a mutex.
+unsafe impl Sync for SavedTermios {}
+unsafe impl Send for SavedTermios {}
+
+static SAVED: OnceLock<SavedTermios> = OnceLock::new();
+
 /// Put the terminal back if we panic.
 ///
 /// rustyline restores its own termios when `readline` returns or unwinds, but
 /// a panic elsewhere while it holds the terminal leaves the operator with no
 /// echo, no line editing and a hidden cursor in the shell they return to. The
-/// hook is installed before the terminal is ever taken.
+/// hook is installed before the terminal is ever taken, and it captures the
+/// startup termios here so `restore` can replay it.
 ///
 /// This covers panics only. There is no SIGTERM handler, so a termination
-/// signal during a read exits without restoration, and the reset below
-/// re-enables three local flags rather than restoring a saved termios — any
-/// other setting a caller changed stays changed.
+/// signal during a read exits without restoration. The reset below replays the
+/// whole startup termios when it acts, so a setting the caller changed AFTER
+/// capture is overwritten rather than preserved. An ordinary exit is covered
+/// separately, by the main loop calling `restore` on its way out.
 pub fn install_panic_restore() {
+    // SAFETY: a termios read on a borrowed descriptor, which neither allocates
+    // nor retains it.
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+            let _ = SAVED.set(SavedTermios(termios));
+        }
+    }
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
@@ -106,25 +131,80 @@ pub fn install_panic_restore() {
     }));
 }
 
-/// Re-enable the terminal settings an operator notices, and show the cursor.
+/// Whether the terminal's settings have moved since they were captured.
 ///
-/// Not a full restoration: it does not replay a saved termios. Written with
-/// raw syscalls because this runs from a panic hook, where allocation and
-/// locks are the things most likely to make a bad situation worse.
-fn restore() {
-    // Disable bracketed paste and show the cursor.
-    const RESET: &[u8] = b"\x1b[?2004l\x1b[?25h";
-    // SAFETY: a write of a fixed-length constant to stdout, and a termios
-    // round-trip on stdin. Neither retains the descriptor.
-    unsafe {
-        libc::write(libc::STDOUT_FILENO, RESET.as_ptr() as *const libc::c_void, RESET.len());
+/// Every field, not just the local flags: an editor can change input flags or
+/// the VMIN/VTIME pair while leaving `c_lflag` alone, and a comparison that
+/// looked only at `c_lflag` would call that unchanged and leave it behind. On
+/// Linux that includes `c_line` (the line discipline), a field the BSD/macOS
+/// termios does not have.
+fn differs(current: &libc::termios, saved: &libc::termios) -> bool {
+    // `c_line` exists only in the Linux termios; `cfg` it out elsewhere so the
+    // comparison stays complete on Linux without breaking the macOS build.
+    #[cfg(target_os = "linux")]
+    let line_differs = current.c_line != saved.c_line;
+    #[cfg(not(target_os = "linux"))]
+    let line_differs = false;
 
-        let mut termios: libc::termios = std::mem::zeroed();
-        if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
-            // Re-enable the three the operator notices: echo, line editing,
-            // and signal generation.
-            termios.c_lflag |= libc::ECHO | libc::ICANON | libc::ISIG;
-            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios);
+    line_differs
+        || current.c_iflag != saved.c_iflag
+        || current.c_oflag != saved.c_oflag
+        || current.c_cflag != saved.c_cflag
+        || current.c_lflag != saved.c_lflag
+        || current.c_ispeed != saved.c_ispeed
+        || current.c_ospeed != saved.c_ospeed
+        || current.c_cc != saved.c_cc
+}
+
+/// Disable bracketed paste, show the cursor, and replay the termios captured
+/// at startup.
+///
+/// Two independent cleanups, because they are independent settings. Bracketed
+/// paste and cursor visibility are display modes, not part of termios, so the
+/// reset for them is written unconditionally (to a terminal) — a snapshot that
+/// is absent or unchanged says nothing about them, and the previous panic hook
+/// always wrote it. The termios replay is the conditional part: it acts only
+/// when a snapshot was captured, the current settings can be read, and they
+/// differ from it.
+///
+/// The comparison detects a difference; it does not establish who caused one.
+/// Something else sharing this terminal could have changed a setting, and
+/// replaying the snapshot would overwrite that — the trade is deliberate,
+/// because the case this exists for is the editor having left the terminal raw,
+/// the far likelier cause and the one the operator cannot recover from without
+/// `reset`.
+///
+/// Written with raw syscalls because this also runs from a panic hook, where
+/// allocation and locks are the things most likely to make a bad situation
+/// worse. That is also why a failed restore is reported with a constant write
+/// to stderr rather than a formatted message.
+pub fn restore() {
+    const RESET: &[u8] = b"\x1b[?2004l\x1b[?25h";
+    const FAILED: &[u8] = b"the terminal could not be restored; run `reset`\n";
+    // SAFETY: writes of fixed-length constants and a termios round-trip on
+    // stdin. None of these retain a descriptor.
+    unsafe {
+        // Display modes first, and regardless of the termios outcome below.
+        // Only to a terminal: `dyfj-repl > out.txt` would otherwise collect
+        // escape sequences meant for the operator's screen.
+        if libc::isatty(libc::STDOUT_FILENO) == 1 {
+            libc::write(libc::STDOUT_FILENO, RESET.as_ptr() as *const libc::c_void, RESET.len());
+        }
+
+        // Then the termios replay, only when there is a snapshot to replay, it
+        // can be compared, and it actually moved.
+        let Some(saved) = SAVED.get() else { return };
+        let mut current: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDIN_FILENO, &mut current) != 0 {
+            return;
+        }
+        if !differs(&current, &saved.0) {
+            return;
+        }
+        if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &saved.0) != 0 {
+            // Say so. Exiting quietly leaves the operator in a shell with no
+            // echo and no idea why.
+            libc::write(libc::STDERR_FILENO, FAILED.as_ptr() as *const libc::c_void, FAILED.len());
         }
     }
 }
@@ -214,7 +294,7 @@ fn read(editor: &mut DefaultEditor, prompt: &str, remember: bool) -> ReadOutcome
 
 #[cfg(test)]
 mod tests {
-    use super::approval_surface_available;
+    use super::{approval_surface_available, differs};
 
     /// Both surfaces are required, and for different reasons: input because a
     /// pipe would answer the request without an operator, output because
@@ -226,5 +306,38 @@ mod tests {
         assert!(!approval_surface_available(true, false), "redirected output");
         assert!(!approval_surface_available(false, true), "piped input");
         assert!(!approval_surface_available(false, false));
+    }
+
+    /// `differs` must notice a change in any field, not only `c_lflag`: an
+    /// editor can leave the local flags alone while changing an input flag or
+    /// the VMIN/VTIME control characters, and missing that would leave the
+    /// terminal unrestored.
+    #[test]
+    fn differs_compares_every_termios_field_not_only_the_local_flags() {
+        // SAFETY: `termios` is a plain settings struct; a zeroed value is a
+        // valid baseline for a field-by-field comparison.
+        let saved: libc::termios = unsafe { std::mem::zeroed() };
+        let unchanged = saved;
+        assert!(!differs(&unchanged, &saved), "an identical termios must not differ");
+
+        let mut input_flag = saved;
+        input_flag.c_iflag |= libc::IXON;
+        assert!(differs(&input_flag, &saved), "an input-flag change must be noticed");
+
+        let mut control = saved;
+        control.c_cc[libc::VMIN] = 1;
+        assert!(differs(&control, &saved), "a control-character change must be noticed");
+    }
+
+    /// `c_line` is Linux-only, and a change to it alone must still be noticed —
+    /// otherwise the full-snapshot contract has a hole on Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn differs_notices_a_line_discipline_change() {
+        // SAFETY: a zeroed `termios` is a valid baseline for the comparison.
+        let saved: libc::termios = unsafe { std::mem::zeroed() };
+        let mut line = saved;
+        line.c_line = 1;
+        assert!(differs(&line, &saved), "a line-discipline change must be noticed");
     }
 }

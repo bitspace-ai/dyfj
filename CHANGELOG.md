@@ -244,6 +244,17 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The Rust REPL restores the whole terminal, not a subset of its flags.** On
+  exit and on panic it now replays the termios captured before rustyline took
+  the terminal, comparing every field (including `c_line` on Linux) rather than
+  re-enabling only echo, line editing and signal generation — so an input flag
+  or a VMIN/VTIME change an editor left behind no longer survives into the
+  operator's shell. The termios replay happens only when the current settings
+  differ from the snapshot, and reports a failed restore on stderr. The
+  bracketed-paste and cursor reset is independent of termios, so it is written
+  on every restore (to a terminal), whether or not a snapshot existed or
+  changed.
+
 - **The workspace file tools are split by job.** `tools/builtin/file.ts` was
   1,929 lines, past the 1,000-line module ceiling, and `executeGrepFiles` was
   past the 200-line function ceiling; both carried size exceptions. The module
