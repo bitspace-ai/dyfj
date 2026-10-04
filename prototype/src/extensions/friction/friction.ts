@@ -64,7 +64,7 @@ export class FrictionStageError extends Error {
       | "configuration"
       | "get_issue"
       | "comment read"
-      | "create_comment",
+      | "comment write",
     public readonly publicReason: string,
   ) {
     super(`${stage} failed: ${publicReason}`);
@@ -390,11 +390,11 @@ function issueId(issue: Record<string, unknown>, fallback: string): string {
 function createdCommentId(value: unknown): string {
   let parsed: unknown;
   try {
-    parsed = unwrapMcpResult(value, "create_comment", "create_comment");
+    parsed = unwrapMcpResult(value, "comment write", "create_comment");
   } catch (error) {
     if (error instanceof FrictionStageError) {
       throw new FrictionStageError(
-        "create_comment",
+        "comment write",
         "response did not include a readable comment id",
       );
     }
@@ -416,7 +416,7 @@ function createdCommentId(value: unknown): string {
     }
   }
   throw new FrictionStageError(
-    "create_comment",
+    "comment write",
     "response did not include a comment id",
   );
 }
@@ -492,7 +492,7 @@ export async function postFriction(input: {
   } catch (error) {
     if (error instanceof FrictionStageError) throw error;
     throw new FrictionStageError(
-      "create_comment",
+      "comment write",
       error instanceof Error
         ? error.message
         : `${input.createCommentCommand.id} tool call failed`,

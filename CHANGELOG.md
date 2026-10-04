@@ -987,6 +987,10 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Friction's write-stage error no longer names a tool it may not have
+  called.** `FrictionStageError`'s stage was `"create_comment"`, but the
+  `save_comment` alias means the runtime may call either tool for the write;
+  the stage is now `"comment write"`.
 - A `/friction` that the Rust REPL rejects (no severity, or an unknown option)
   is no longer recorded as the last command, so its text no longer appears in
   the next friction's context line.

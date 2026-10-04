@@ -282,7 +282,7 @@ Deno.test("friction/post names create_comment failure", async () => {
     },
     approvingClient(),
   );
-  assertStringIncludes(error.message, "create_comment failed");
+  assertStringIncludes(error.message, "comment write failed");
 });
 
 for (
