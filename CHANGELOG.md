@@ -1044,6 +1044,16 @@ README are tracked separately in its Revision history section.
   tests now overlay the values on the reads of their own worker only, with
   assertions unchanged. Test-only; runtime behavior is unchanged.
 
+### Security
+
+- **The Rust REPL scopes a spending approval to the options it was offered.**
+  A budget-ceiling or runaway-spend approval that carries a set of scoped
+  `options` is now answered by choosing one of them, through the same consent
+  path as every other approval, instead of a bare yes/no. A `y` to such a
+  request previously sent an unrestricted `approve` — broader consent than any
+  option the request presented and than the operator was shown. An options set
+  that cannot be read in full is refused rather than falling back to yes/no.
+
 ### Added
 
 - **Golden characterization suite and its gate lane (`test.golden`)**:
