@@ -1639,6 +1639,13 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **The Rust REPL scopes a spending approval to the options it was offered.**
+  A budget-ceiling or runaway-spend approval that carries a set of scoped
+  `options` is now answered by choosing one of them, through the same consent
+  path as every other approval, instead of a bare yes/no. A `y` to such a
+  request previously sent an unrestricted `approve` — broader consent than any
+  option the request presented and than the operator was shown. An options set
+  that cannot be read in full is refused rather than falling back to yes/no.
 - **The runtime's Unix-socket server no longer keeps a connection open after
   its client disconnects.** Before this fix, `serve-unix` left its side of
   every client connection open until the runtime stopped, so each `dyfj`

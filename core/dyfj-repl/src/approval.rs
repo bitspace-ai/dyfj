@@ -178,7 +178,13 @@ async fn spending(
         println!("   {}", visible(line));
     }
     println!("   approving authorises {authorises}");
-    yes_no(input).await
+    // The ordinary consent path, NOT a bare yes/no. A spending request can
+    // carry `options` — a scoped authorisation rather than an open one — and
+    // answering `y` to those would send `decision: "approve"`, broader consent
+    // than any option the runtime offered and broader than the operator was
+    // shown. The warning changes what is printed before the question; it does
+    // not change what counts as an answer.
+    decide(input, params).await
 }
 
 fn title_of(params: &Value) -> &str {
@@ -193,6 +199,18 @@ pub async fn ask(input: &mpsc::Sender<Ask>, params: &Value) -> Verdict {
         return spending(input, params, authorises).await;
     }
 
+    println!();
+    println!("⚠  {}", describe(params));
+    decide(input, params).await
+}
+
+/// Turn the operator's answer into a verdict: an option number when the request
+/// offers choices, a yes/no when it does not, and a denial when it offers
+/// choices that cannot be read. Shared by every request kind, because what
+/// counts as consent does not depend on how the request was introduced — so a
+/// spending request that carries options is answered by choosing one, never by
+/// a bare yes.
+async fn decide(input: &mpsc::Sender<Ask>, params: &Value) -> Verdict {
     // Present and non-null is the whole test. Enumerating shapes is what let
     // an options object through on one iteration and an empty array on the
     // next: any `options` the reader cannot turn into choices is a request
@@ -202,8 +220,6 @@ pub async fn ask(input: &mpsc::Sender<Ask>, params: &Value) -> Verdict {
         .get("options")
         .is_some_and(|value| !value.is_null());
     let choices = options(params);
-    println!();
-    println!("⚠  {}", describe(params));
 
     // A request that offers options wants one of them chosen. If none could be
     // read — whatever shape the field took — falling through to a yes/no would
@@ -466,6 +482,44 @@ mod tests {
             assert_eq!(prompts, 0, "must not ask when the detail is unreadable: {params}");
             assert!(verdict.contains("deny"), "expected denial for {params}, got {verdict}");
         }
+    }
+
+    /// Answer a single prompt with `reply` and return the verdict JSON.
+    async fn answer(params: &Value, reply: &str) -> String {
+        let (tx, mut rx) = mpsc::channel(4);
+        let reply = reply.to_string();
+        tokio::spawn(async move {
+            if let Some(Ask::Approval { respond, .. }) = rx.recv().await {
+                let _ = respond.send(ReadOutcome::Line(reply));
+            }
+        });
+        serde_json::to_string(&ask(&tx, params).await).unwrap()
+    }
+
+    /// THE SPENDING BYPASS. A budget request that carries options was routed to
+    /// a bare yes/no, so `y` sent `decision: "approve"` — unrestricted consent
+    /// — instead of selecting the scoped permission on offer. The spending
+    /// warning changes what is printed, not what counts as an answer.
+    #[tokio::test]
+    async fn a_spending_request_with_options_must_be_answered_by_choosing_one() {
+        let params = json!({
+            "kind": "budget_ceiling",
+            "title": "Budget ceiling",
+            "message": "estimated $0.42 exceeds the per-call limit of $0.25",
+            "options": [
+                {"optionId": "once", "name": "Allow this call only", "kind": "allow_once"},
+                {"optionId": "session", "name": "Allow for the session", "kind": "allow_always"}
+            ]
+        });
+
+        let chosen = answer(&params, "1").await;
+        assert!(chosen.contains("select"), "expected a selection, got {chosen}");
+        assert!(chosen.contains("once"), "expected the first option, got {chosen}");
+
+        // `y` is not a choice among options, and must not become an approve.
+        let yes = answer(&params, "y").await;
+        assert!(!yes.contains("approve"), "`y` must not approve here: {yes}");
+        assert!(yes.contains("deny"), "expected a denial, got {yes}");
     }
 
     /// A tool call keeps the tool rendering; only spending requests divert.
