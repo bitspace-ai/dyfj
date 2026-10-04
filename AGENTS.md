@@ -35,12 +35,28 @@ Documentation is part of the change, not a follow-up. A commit that changes beha
 - **Docs must not lie — directly or by omission.** `README.md`, `prototype/README.md`, `mcp/README.md`, and the README's Section 1 (Decisions) are operating context: they must match the ground truth of the code. A new transport, endpoint, task, flag, env var, or architectural seam that the docs don't mention is a lie by omission. When you add or change a surface, find where the docs describe that area and bring it current in the same change; if a doc claim is now false, fix it — don't leave it.
 - **Scope honestly.** Document what is true *now*. Mark in-progress or deferred work as such rather than describing the intended end-state as if it shipped.
 - **Two trails, kept distinct.** `CHANGELOG.md` records code/behavior changes; the root README's Revision history records document-level revisions of the operating context. Update whichever the change touches; keep both current.
-- **Tracker IDs: workflow metadata only, never a substitute for the why.** Tracker IDs may appear in branch names, commit messages, and PR titles and descriptions, where the tracker's GitHub integration uses them to link work and advance status. They stay out of durable content (code, code comments, `CHANGELOG.md`, `README.md`, `specs/`, and other docs), which outlives the tracker and is read by people who cannot open it. An ID may accompany an explanation but never replace it: every commit and PR still states the *why* in public-safe prose. Anything that reaches GitHub is public, so issue titles that surface in branch names or integration comments must be public-safe, and private coordination details stay in the tracker.
+- **Tracker IDs: workflow metadata, never a substitute for the why — and never a private link.** A tracker ID (`BIT-###`) may appear anywhere it helps: branch names, commit messages, PR titles and descriptions, code comments, and other durable content, where the tracker's GitHub integration also uses it to link work and advance status. What must never reach a public artifact is a **private tracker link** — a Linear URL or any other deep link a public reader cannot open: refer to the work by its ID instead. An ID may accompany an explanation but never replace it: every commit, PR, and comment still states the *why* in public-safe prose. Anything that reaches GitHub is public, so issue titles that surface in branch names or integration comments must be public-safe, and private coordination details stay in the tracker.
 - **No AI-tool attribution in git history.** Never add `Co-authored-by` (or similar) trailers crediting a harness or model (Cursor, Composer, Claude, etc.) — a tool is not a person or a git contributor. Disable commit attribution at the harness source when the setting exists.
 
 ## Issue Tracking
 
 Maintainers coordinate work in a private tracker. Use the available tracker integration to find ready work, claim, record progress, and close issues; for non-trivial work, create or claim an issue before editing. Tracker IDs follow the scoping rule under Documentation Discipline; private coordination details stay in the tracker.
+
+## Agent skills
+
+Per-repo configuration consumed by the engineering skills (triage, to-tickets, to-spec, wayfinder, domain-modeling). Details live under `docs/agents/`.
+
+### Issue tracker
+
+Issues and the privately-tracked product roadmap live in the maintainers' private **Linear** tracker (`BIT-###`), reached through the `linear` skill — never as public GitHub issues (see **Issue Tracking** above and **Public/Private Boundary**). The committed engineering specifications under `specs/` are a separate, public artifact set (`specs/README.md`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: a root `GLOSSARY.md` and `docs/adr/`, created lazily. See `docs/agents/domain.md`.
 
 ## Instruction Sources
 

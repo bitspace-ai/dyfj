@@ -1908,3 +1908,21 @@ Document revisions only. Code and behavior changes are tracked in
   separate Qwen3.6 row.
 - 2026-10-03 - The Qwen3.6 llama.cpp launch command now passes `--jinja`
   explicitly for its documented tool-calling endpoint.
+- 2026-10-04 - AGENTS.md gains an "Agent skills" section pointing at a new
+  `docs/agents/` directory that configures the engineering skills: the private
+  Linear tracker (`BIT-###`) reached through the `linear` skill, the five
+  canonical triage labels, and single-context domain docs (`GLOSSARY.md` plus
+  `docs/adr/`).
+- 2026-10-04 - AGENTS.md tracker-ID rule loosened: a `BIT-###` ID may now appear
+  anywhere it helps, code comments and other durable content included, provided
+  it accompanies the why rather than replacing it; the one hard limit is that a
+  private tracker link (a Linear URL or other deep link a public reader cannot
+  open) never reaches a public artifact.
+- 2026-10-04 - `specs/README.md` records decision D30, which amends D18 to match
+  the loosened tracker-ID rule: a `BIT-###` ID may appear in code, docs and
+  `specs/` when it accompanies the why, and the one hard limit is that a private
+  tracker link never reaches a public artifact. Standing rule 5 in
+  `specs/work-orders.md`, which agents read before every work order, is updated
+  to match. The "Agent skills" issue-tracker wording now also distinguishes the
+  private Linear roadmap from the public engineering specifications under
+  `specs/`.
