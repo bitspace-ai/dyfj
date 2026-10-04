@@ -264,6 +264,10 @@ async fn main() -> Result<()> {
         session.last_command = None;
     }
 
+    // Ordinary exit (Ctrl-D, /quit, or a closed connection): put the terminal
+    // back the way it was before rustyline took it. The panic hook covers the
+    // abnormal paths.
+    terminal::restore();
     Ok(())
 }
 
