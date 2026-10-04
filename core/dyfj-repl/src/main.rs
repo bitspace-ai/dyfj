@@ -237,7 +237,7 @@ async fn main() -> Result<()> {
         if let Some(command) = commands::parse(&line) {
             // `/friction` is not context for the next `/friction`: recording it
             // would post one report's text inside the next one's context.
-            let records = !matches!(command, commands::Command::Friction { .. });
+            let records = commands::records_as_last_command(&line, &command);
             let prompter = commands::Prompter {
                 input: &input,
                 incoming: &mut incoming,

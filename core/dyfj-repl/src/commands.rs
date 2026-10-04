@@ -82,6 +82,13 @@ pub fn normalize_session_ref(value: &str) -> Option<String> {
     is_session_id(candidate).then(|| candidate.to_ascii_uppercase())
 }
 
+/// Return false for any command line whose first word is `/friction`,
+/// whichever command it parses as, so a rejected `/friction` is not recorded
+/// as the last command.
+pub fn records_as_last_command(line: &str, _command: &Command) -> bool {
+    line.split_whitespace().next() != Some("/friction")
+}
+
 /// Parse one completed input. `None` means it is a prompt, not a command.
 pub fn parse(input: &str) -> Option<Command> {
     let trimmed = input.trim();
@@ -760,7 +767,7 @@ async fn idea_list(client: &Client, session: &Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, format_models, friction_context, model_refusal, parse};
+    use super::{Command, format_models, friction_context, model_refusal, parse, records_as_last_command};
 
     #[test]
     fn a_model_is_refused_when_absent_or_unpriced() {
@@ -930,6 +937,26 @@ mod tests {
         assert!(!selectable.contains("router-unpriced"), "{selectable}");
         assert!(lines[quarantine + 1].contains("router-unpriced"));
         assert!(lines[quarantine + 1].ends_with("[not routable: unpriced]"));
+    }
+
+    #[test]
+    fn rejected_friction_is_not_recorded_as_last_command() {
+        // Malformed /friction — no severity — parses as Usage, but must not be
+        // recorded as the last command.
+        let line = "/friction this has no severity";
+        let command = parse(line).unwrap();
+        assert!(matches!(command, Command::Usage(_)), "expected a rejected /friction");
+        assert!(!records_as_last_command(line, &command));
+
+        // Valid /friction also returns false (it is excluded regardless).
+        let line2 = "/friction minor some text";
+        let command2 = parse(line2).unwrap();
+        assert!(!records_as_last_command(line2, &command2));
+
+        // Non-friction commands are recorded.
+        let line3 = "/model";
+        let command3 = parse(line3).unwrap();
+        assert!(records_as_last_command(line3, &command3));
     }
 }
 

@@ -976,6 +976,9 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- A `/friction` that the Rust REPL rejects (no severity, or an unknown option)
+  is no longer recorded as the last command, so its text no longer appears in
+  the next friction's context line.
 - **Deactivating a built-in local model row now sticks.** Workbench overlays
   its built-in local rows (the Ollama defaults) on the catalog when the catalog
   lacks them, but it treated a row the operator had set inactive as missing and
