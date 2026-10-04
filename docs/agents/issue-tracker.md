@@ -8,9 +8,9 @@ tracker and never land in committed artifacts. See `AGENTS.md` →
 
 ## Access route
 
-Use the `linear` skill, which selects the right access route per harness (the
-Linear MCP integration where available, otherwise the 1Password-brokered CLI
-wrapper) and encodes the house conventions for what belongs in an issue.
+Reach the tracker through the `linear` skill, which selects the right access
+route per harness and encodes the house conventions for what belongs in an
+issue.
 
 - **Find ready work / what's assigned**: query Linear via the `linear` skill.
 - **Create / claim an issue**: for non-trivial work, create or claim a `BIT-###`
@@ -29,13 +29,13 @@ Read the `BIT-###` issue via the `linear` skill.
 
 ## Boundary rules (from AGENTS.md)
 
-- **Tracker IDs are workflow metadata only.** A `BIT-###` ID may appear in branch
-  names, commit messages, and PR titles/descriptions, but never substitutes for
-  the *why* in durable content (code, comments, `CHANGELOG.md`, `README.md`,
-  `specs/`, docs). An ID may accompany an explanation, never replace it.
-- **No unfollowable private links in committed prose.** Durable content refers to
-  work by the `BIT-###` format only, never by a Linear URL or a specific private
-  issue link that a public reader cannot open.
+- **Tracker IDs are workflow metadata, never the why.** A `BIT-###` ID may appear
+  anywhere it helps — branch names, commit messages, PR titles/descriptions, code
+  comments, and other durable content — but it accompanies the *why*, never
+  replaces it.
+- **Never a private tracker link in a public artifact.** Refer to work by its
+  `BIT-###` ID, never by a Linear URL or other deep link a public reader cannot
+  open.
 - **Anything reaching GitHub is public.** Issue titles that surface in branch
   names or integration comments must be public-safe; private coordination detail
   stays in the tracker.
