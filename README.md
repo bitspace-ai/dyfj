@@ -1953,4 +1953,6 @@ Document revisions only. Code and behavior changes are tracked in
   close the loop (a real Workbench change made from inside Workbench) through
   2026-12-31, with the inside/outside boundary, the Rust REPL as the surface,
   the items deferred past the milestone, and daily use measured on the
-  operator-configured default route rather than one named hosted provider.
+  operator-configured default route rather than one named hosted provider
+  (`specs/README.md` decision D31, which supersedes that part of D29 and keeps
+  its ACP deferral).
