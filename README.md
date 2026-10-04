@@ -200,14 +200,37 @@ All five apply from Day-1.
 Working-system criterion. Cost visibility is part of the done-line itself, not a
 deferrable enhancement.
 
-Daily use is measured on one route: the native model loop with hosted
-inference over an OpenAI-compatible provider, with OpenRouter as the default
-provider and others pluggable behind that adapter. The route is opt-in, not the
-runtime's bare default: an unconfigured bare turn still uses the local tier-0
-model, so the operator selects a hosted model with `DYFJ_WORKBENCH_MODEL` (or
-the configured companion default) or `--model`. External-agent (ACP) routes stay
-in the tree but are deferred from the route plan (`specs/README.md`, decision
-D29).
+**Current milestone (through 2026-12-31): close the loop.**
+
+> _I make a real Workbench change from inside Workbench - friction captured,
+> files edited, gate run, change committed on a branch - on the configured model
+> with cost visible per turn, and each change makes the next one easier._
+
+The done-line above is the destination; this milestone is how it is reached.
+Workbench is a hobby project built from inside itself, scoped to one person's
+evenings and weekends, and the milestone is judged by whether that loop closes
+on real changes, not by feature count.
+
+What "inside Workbench" covers for this milestone: friction and idea capture,
+file edits, running the aggregate gate, and `git add` / `git commit` on a
+branch. Branch creation, push, PR, review and merge stay operator ceremony
+outside the tool. Workbench-on-Workbench code changes are the first kind of
+real work the loop must carry; writing is the second. The interactive surface
+is the Rust REPL (`core/dyfj-repl`).
+
+Deferred past this milestone, by decision rather than neglect: a desktop GUI
+surface, coordinator/worker operation (one session dispatching others), a
+second subscription-backed external-agent route, and any platform or hosted
+product scope.
+
+Daily use is measured on the operator-configured default route: the native
+model loop over whichever provider the operator has configured, hosted or
+local. A hosted frontier model is a normal choice for the loop; local inference
+remains first-class but does not gate the milestone. An unconfigured bare turn
+still uses the local default model, so the operator selects a hosted model with
+`DYFJ_WORKBENCH_MODEL` (or the configured companion default) or `--model`.
+External-agent (ACP) routes stay in the tree but are deferred from the route
+plan (`specs/README.md`, decision D29).
 
 ### Inter-agent contracts - Day-1 posture
 
@@ -1926,3 +1949,8 @@ Document revisions only. Code and behavior changes are tracked in
   to match. The "Agent skills" issue-tracker wording now also distinguishes the
   private Linear roadmap from the public engineering specifications under
   `specs/`.
+- 2026-10-04 - Section 1 gains a current milestone beneath the goal done-line:
+  close the loop (a real Workbench change made from inside Workbench) through
+  2026-12-31, with the inside/outside boundary, the Rust REPL as the surface,
+  the items deferred past the milestone, and daily use measured on the
+  operator-configured default route rather than one named hosted provider.
