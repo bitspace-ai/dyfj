@@ -196,7 +196,7 @@ Decision → spec amended → PRD scopes it → work order written → agent exe
 
 | #   | Decision | Consequence |
 | --- | -------- | ----------- |
-| D30 | **Tracker IDs allowed in durable content; only private tracker links barred.** Amends D18's "they stay out of code, docs, `CHANGELOG.md` and `specs/`": a tracker ID (`BIT-###`) may now appear anywhere it helps — code, comments, docs and `specs/` included — provided it accompanies the why rather than replacing it. D18's "allowed in branch names, commits and PRs" and "never replace the why" stand. The one hard limit is that a private tracker link — a Linear URL or other deep link a public reader cannot open — never reaches a public artifact; refer to the work by its ID instead. | AGENTS.md Documentation Discipline (tracker-ID rule); root README revision history (2026-10-04); `docs/agents/issue-tracker.md` |
+| D30 | **Tracker IDs allowed in durable content; only private tracker links barred.** Amends D18's "they stay out of code, docs, `CHANGELOG.md` and `specs/`": a tracker ID (`BIT-###`) may now appear anywhere it helps — code, comments, docs and `specs/` included — provided it accompanies the why rather than replacing it. D18's "allowed in branch names, commits and PRs" and "never replace the why" stand. The one hard limit is that a private tracker link — a Linear URL or other deep link a public reader cannot open — never reaches a public artifact; refer to the work by its ID instead. | AGENTS.md Documentation Discipline (tracker-ID rule); `specs/work-orders.md` standing rule 5; root README revision history (2026-10-04); `docs/agents/issue-tracker.md` |
 
 ## Phase-1 exit
 
