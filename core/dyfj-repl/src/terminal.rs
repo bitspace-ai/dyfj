@@ -135,9 +135,19 @@ pub fn install_panic_restore() {
 ///
 /// Every field, not just the local flags: an editor can change input flags or
 /// the VMIN/VTIME pair while leaving `c_lflag` alone, and a comparison that
-/// looked only at `c_lflag` would call that unchanged and leave it behind.
+/// looked only at `c_lflag` would call that unchanged and leave it behind. On
+/// Linux that includes `c_line` (the line discipline), a field the BSD/macOS
+/// termios does not have.
 fn differs(current: &libc::termios, saved: &libc::termios) -> bool {
-    current.c_iflag != saved.c_iflag
+    // `c_line` exists only in the Linux termios; `cfg` it out elsewhere so the
+    // comparison stays complete on Linux without breaking the macOS build.
+    #[cfg(target_os = "linux")]
+    let line_differs = current.c_line != saved.c_line;
+    #[cfg(not(target_os = "linux"))]
+    let line_differs = false;
+
+    line_differs
+        || current.c_iflag != saved.c_iflag
         || current.c_oflag != saved.c_oflag
         || current.c_cflag != saved.c_cflag
         || current.c_lflag != saved.c_lflag
@@ -146,31 +156,44 @@ fn differs(current: &libc::termios, saved: &libc::termios) -> bool {
         || current.c_cc != saved.c_cc
 }
 
-/// Replay the termios captured at startup, disable bracketed paste and show
-/// the cursor.
+/// Disable bracketed paste, show the cursor, and replay the termios captured
+/// at startup.
 ///
-/// Acts only when a snapshot was captured, the current settings can be read,
-/// and they differ from it. The comparison detects a difference; it does not
-/// establish who caused one. Something else sharing this terminal could have
-/// changed a setting, and replaying the snapshot would overwrite that — the
-/// trade is deliberate, because the case this exists for is the editor having
-/// left the terminal raw, the far likelier cause and the one the operator
-/// cannot recover from without `reset`.
+/// Two independent cleanups, because they are independent settings. Bracketed
+/// paste and cursor visibility are display modes, not part of termios, so the
+/// reset for them is written unconditionally (to a terminal) — a snapshot that
+/// is absent or unchanged says nothing about them, and the previous panic hook
+/// always wrote it. The termios replay is the conditional part: it acts only
+/// when a snapshot was captured, the current settings can be read, and they
+/// differ from it.
+///
+/// The comparison detects a difference; it does not establish who caused one.
+/// Something else sharing this terminal could have changed a setting, and
+/// replaying the snapshot would overwrite that — the trade is deliberate,
+/// because the case this exists for is the editor having left the terminal raw,
+/// the far likelier cause and the one the operator cannot recover from without
+/// `reset`.
 ///
 /// Written with raw syscalls because this also runs from a panic hook, where
 /// allocation and locks are the things most likely to make a bad situation
 /// worse. That is also why a failed restore is reported with a constant write
 /// to stderr rather than a formatted message.
-///
-/// Known limit: bracketed paste is not part of termios, so whether it is still
-/// enabled is inferred from the flags rather than observed.
 pub fn restore() {
     const RESET: &[u8] = b"\x1b[?2004l\x1b[?25h";
     const FAILED: &[u8] = b"the terminal could not be restored; run `reset`\n";
-    let Some(saved) = SAVED.get() else { return };
-    // SAFETY: a termios round-trip on stdin and writes of fixed-length
-    // constants. None of these retain a descriptor.
+    // SAFETY: writes of fixed-length constants and a termios round-trip on
+    // stdin. None of these retain a descriptor.
     unsafe {
+        // Display modes first, and regardless of the termios outcome below.
+        // Only to a terminal: `dyfj-repl > out.txt` would otherwise collect
+        // escape sequences meant for the operator's screen.
+        if libc::isatty(libc::STDOUT_FILENO) == 1 {
+            libc::write(libc::STDOUT_FILENO, RESET.as_ptr() as *const libc::c_void, RESET.len());
+        }
+
+        // Then the termios replay, only when there is a snapshot to replay, it
+        // can be compared, and it actually moved.
+        let Some(saved) = SAVED.get() else { return };
         let mut current: libc::termios = std::mem::zeroed();
         if libc::tcgetattr(libc::STDIN_FILENO, &mut current) != 0 {
             return;
@@ -182,12 +205,6 @@ pub fn restore() {
             // Say so. Exiting quietly leaves the operator in a shell with no
             // echo and no idea why.
             libc::write(libc::STDERR_FILENO, FAILED.as_ptr() as *const libc::c_void, FAILED.len());
-            return;
-        }
-        // Only to a terminal. `dyfj-repl > out.txt` would otherwise collect
-        // escape sequences meant for the operator's screen.
-        if libc::isatty(libc::STDOUT_FILENO) == 1 {
-            libc::write(libc::STDOUT_FILENO, RESET.as_ptr() as *const libc::c_void, RESET.len());
         }
     }
 }
@@ -310,5 +327,17 @@ mod tests {
         let mut control = saved;
         control.c_cc[libc::VMIN] = 1;
         assert!(differs(&control, &saved), "a control-character change must be noticed");
+    }
+
+    /// `c_line` is Linux-only, and a change to it alone must still be noticed —
+    /// otherwise the full-snapshot contract has a hole on Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn differs_notices_a_line_discipline_change() {
+        // SAFETY: a zeroed `termios` is a valid baseline for the comparison.
+        let saved: libc::termios = unsafe { std::mem::zeroed() };
+        let mut line = saved;
+        line.c_line = 1;
+        assert!(differs(&line, &saved), "a line-discipline change must be noticed");
     }
 }
