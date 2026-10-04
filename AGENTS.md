@@ -48,7 +48,7 @@ Per-repo configuration consumed by the engineering skills (triage, to-tickets, t
 
 ### Issue tracker
 
-Issues and specs live in the maintainers' private **Linear** tracker (`BIT-###`), reached through the `linear` skill — never as public GitHub issues (see **Issue Tracking** above and **Public/Private Boundary**). See `docs/agents/issue-tracker.md`.
+Issues and the privately-tracked product roadmap live in the maintainers' private **Linear** tracker (`BIT-###`), reached through the `linear` skill — never as public GitHub issues (see **Issue Tracking** above and **Public/Private Boundary**). The committed engineering specifications under `specs/` are a separate, public artifact set (`specs/README.md`). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

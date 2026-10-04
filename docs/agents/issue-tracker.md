@@ -1,10 +1,13 @@
 # Issue tracker: Linear (private)
 
-Issues and specs for this repo live in the maintainers' private **Linear**
-tracker (issue IDs are `BIT-###`), not in public GitHub issues. This repo is
-public; coordination, strategy, and unfixed security findings stay in the
-tracker and never land in committed artifacts. See `AGENTS.md` →
-**Public/Private Boundary** and **Issue Tracking**.
+Issues and the privately-tracked product roadmap for this repo live in the
+maintainers' private **Linear** tracker (issue IDs are `BIT-###`), not in public
+GitHub issues. The committed engineering specifications under `specs/` are a
+separate, public artifact set (see `specs/README.md`, which distinguishes the
+private roadmap from the public enabler specs). This repo is public;
+coordination, strategy, and unfixed security findings stay in the tracker and
+never land in committed artifacts. See `AGENTS.md` → **Public/Private Boundary**
+and **Issue Tracking**.
 
 ## Access route
 

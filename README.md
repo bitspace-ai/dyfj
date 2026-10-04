@@ -1918,3 +1918,9 @@ Document revisions only. Code and behavior changes are tracked in
   it accompanies the why rather than replacing it; the one hard limit is that a
   private tracker link (a Linear URL or other deep link a public reader cannot
   open) never reaches a public artifact.
+- 2026-10-04 - `specs/README.md` records decision D30, which amends D18 to match
+  the loosened tracker-ID rule: a `BIT-###` ID may appear in code, docs and
+  `specs/` when it accompanies the why, and the one hard limit is that a private
+  tracker link never reaches a public artifact. The "Agent skills" issue-tracker
+  wording now also distinguishes the private Linear roadmap from the public
+  engineering specifications under `specs/`.
