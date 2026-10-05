@@ -395,7 +395,7 @@ describe("postFriction", () => {
           },
         }),
       Error,
-      "create_comment failed: fixture write refused",
+      "comment write failed: fixture write refused",
     );
   });
 
