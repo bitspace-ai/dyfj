@@ -132,11 +132,22 @@ describe("executeBash", () => {
       );
     });
 
-    it("output held open after the stop is reported", async () => {
+    it("output held open after an emptied group points outside the group", async () => {
       assertStringIncludes(
         await run({ group: "stopped", exited: true, outputClosed: false }),
         "a process outside its group held the output open and may still be running",
       );
+    });
+
+    it("output held open after a survivor or an unsignallable group does not infer where the holder is", async () => {
+      for (const group of ["survived", "unavailable"] as const) {
+        const out = await run({ group, exited: true, outputClosed: false });
+        assertStringIncludes(
+          out,
+          "the output was still held open after the stop, so a process may still be running",
+        );
+        assertFalse(out.includes("outside its group"));
+      }
     });
   });
 

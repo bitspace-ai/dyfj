@@ -1004,13 +1004,15 @@ README are tracked separately in its Revision history section.
   group could not be signalled (Windows, or no signaller), when the command
   itself was still present after SIGKILL (its exit status is then unavailable),
   or when a process that left the group kept the output open and may still be
-  running. Every wait after the deadline is bounded, the signaller's and the
-  command's own exit included, so a process stuck in uninterruptible I/O cannot
-  hold the call open; a timed-out call returns within a few seconds of its
-  deadline. `git`'s old `(git killed; descendants may survive)` wording is
-  gone. A command that exits normally is not signalled, so a background process
-  whose output is redirected elsewhere still keeps running. Output is still
-  collected in full before it is clipped.
+  running (or, when the group was emptied, that a process outside it did).
+  Every wait after the deadline is bounded, the signaller's and the command's
+  own exit included, so a process stuck in uninterruptible I/O cannot hold the
+  call open: a timed-out call returns about 2.5 s after its deadline when the
+  stop goes as designed, and within about 8 s if the signalling child itself
+  hangs. `git`'s old `(git killed; descendants may survive)` wording is gone. A
+  command that exits normally is not signalled, so a background process whose
+  output is redirected elsewhere still keeps running. Output is still collected
+  in full before it is clipped.
 - **Friction's write-stage error no longer names a tool it may not have
   called.** `FrictionStageError`'s stage was `"create_comment"`, but the
   `save_comment` alias means the runtime may call either tool for the write;

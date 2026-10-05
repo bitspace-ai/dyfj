@@ -93,6 +93,9 @@ export interface BoundedOptions {
   stopGroup?: GroupStopper;
 }
 
+// With the defaults a timed-out call returns about 2.5 s after its deadline
+// when the stop goes as designed (grace, kill settle, drain), and within about
+// 8 s if the signalling child itself hangs and has to be given up on.
 const DEFAULT_GRACE_MS = 1_000;
 const DEFAULT_DRAIN_MS = 1_000;
 // After SIGKILL, how long the group may take to empty before a member that is
@@ -370,8 +373,12 @@ export function describeTimeout(
     );
   }
   if (!termination.outputClosed) {
+    // Only an emptied group proves the holder is outside it. Otherwise the
+    // holder may be the survivor, or on Windows there is no group at all.
     notes.push(
-      "a process outside its group held the output open and may still be running",
+      termination.group === "stopped"
+        ? "a process outside its group held the output open and may still be running"
+        : "the output was still held open after the stop, so a process may still be running",
     );
   }
   notes.push("output shown up to the deadline");

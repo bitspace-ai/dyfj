@@ -87,6 +87,34 @@ describe("runBounded", { ignore: !posix }, () => {
     }
   });
 
+  it("escalates to SIGKILL when the group ignores SIGTERM", async () => {
+    let pid: number | undefined;
+    try {
+      // The shell ignores TERM and its sleep inherits that disposition, so
+      // only the group SIGKILL can stop either of them.
+      const { result, elapsedMs } = await bash(
+        `trap '' TERM; sleep 10 & echo "pid=$!"; wait`,
+        { graceMs: 200 },
+      );
+      pid = pidIn(result.stdout);
+      assert(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
+      // TERM was ignored, so the stop ran the full grace before escalating.
+      assert(
+        elapsedMs >= TIMEOUT_MS + 200,
+        `returned before the grace elapsed: ${Math.round(elapsedMs)}ms`,
+      );
+      assertEquals(result.termination, {
+        group: "stopped",
+        exited: true,
+        outputClosed: true,
+      });
+      assert(pid !== undefined, `no pid in: ${result.stdout}`);
+      assertFalse(await isLive(pid), "the TERM-ignoring sleep survived");
+    } finally {
+      await forceKill(pid);
+    }
+  });
+
   it("drops output written after the deadline", async () => {
     const { result } = await bash(
       `echo before; trap 'echo trapped; exit 1' TERM; sleep 10 & wait`,
