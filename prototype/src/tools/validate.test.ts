@@ -7,10 +7,11 @@ import {
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { EventInsert } from "../store/mod.ts";
-import type { CommandCall } from "./definition.ts";
+import type { CommandCall, JsonSchemaObject } from "./definition.ts";
 import { createCommandRegistry } from "./registry.ts";
 import { evaluateCommandPolicy } from "./policy.ts";
 import { invokeCommandWithEvent } from "./invoke.ts";
+import { validateCommandArguments } from "./validate.ts";
 import { defineReadFile, defineWriteFile } from "./builtin/file.ts";
 import { RootAnchors } from "./builtin/root-anchors.ts";
 
@@ -171,6 +172,46 @@ describe("invalid-arguments feedback", () => {
     assertStringIncludes(
       reason,
       "invalid arguments for read_file: missing required argument: path",
+    );
+  });
+});
+
+describe("declared numeric bounds", () => {
+  const schema: JsonSchemaObject = {
+    type: "object",
+    properties: {
+      seconds: { type: "integer", minimum: 1, maximum: 600 },
+      ratio: { type: "number", minimum: 0 },
+    },
+    additionalProperties: false,
+  };
+
+  it("accepts values on and inside the bounds", () => {
+    for (const seconds of [1, 300, 600]) {
+      assertStrictEquals(validateCommandArguments(schema, { seconds }), null);
+    }
+    assertStrictEquals(validateCommandArguments(schema, { ratio: 0 }), null);
+  });
+
+  it("names the bound a value falls outside of", () => {
+    assertStrictEquals(
+      validateCommandArguments(schema, { seconds: 601 }),
+      "seconds must be at most 600",
+    );
+    assertStrictEquals(
+      validateCommandArguments(schema, { seconds: 0 }),
+      "seconds must be at least 1",
+    );
+    assertStrictEquals(
+      validateCommandArguments(schema, { ratio: -0.5 }),
+      "ratio must be at least 0",
+    );
+  });
+
+  it("a non-integer is reported as such before its bounds", () => {
+    assertStrictEquals(
+      validateCommandArguments(schema, { seconds: 1.5 }),
+      "seconds must be an integer",
     );
   });
 });

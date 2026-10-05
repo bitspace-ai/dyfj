@@ -235,6 +235,19 @@ describe("promptMidTurnApproval", () => {
       { decision: "approve" },
     );
   });
+  it("shows the timeout the runtime put in a bash request's title", async () => {
+    const { io, stderr } = fakeIo(["y"]);
+    await promptMidTurnApproval(io, {
+      commandId: "bash",
+      callId: "call-1",
+      title: "Run Bash Command (timeout 300 s)",
+      arguments: { command: "deno task test", timeoutSec: 300 },
+    }, true);
+    const rendered = stderr.join("\n");
+    assertStringIncludes(rendered, "approve Run Bash Command (timeout 300 s)?");
+    assertStringIncludes(rendered, "timeoutSec: 300");
+  });
+
   it("denies on anything else", async () => {
     const { io } = fakeIo(["n"]);
     assertStrictEquals(

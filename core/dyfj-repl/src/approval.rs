@@ -313,6 +313,21 @@ mod tests {
         assert!(rendered.contains(tail), "the tail of the command must be shown");
     }
 
+    /// The runtime puts the effective bash timeout in the title; the operator
+    /// approves the duration with the command, so it must be shown as sent.
+    #[test]
+    fn shows_the_timeout_carried_in_a_bash_request_title() {
+        let rendered = describe(&json!({
+            "title": "Run Bash Command (timeout 300 s)",
+            "arguments": {"command": "deno task test", "timeoutSec": 300}
+        }));
+        assert!(
+            rendered.starts_with("Run Bash Command (timeout 300 s) "),
+            "title lost: {rendered}"
+        );
+        assert!(rendered.contains("\"timeoutSec\":300"), "arguments lost: {rendered}");
+    }
+
     #[test]
     fn only_an_explicit_yes_is_consent() {
         assert!(is_yes("y"));

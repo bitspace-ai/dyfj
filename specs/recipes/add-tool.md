@@ -40,14 +40,21 @@ declares:
 
 - **Identity.** `id` is the name the model calls; it is part of the wire and of
   every `tool_call` event, so choose it once. Provider adapters make dotted ids
-  wire-safe themselves. `title` names the approval prompt; `description` is the
-  model's documentation of the tool, including what it will not do.
+  wire-safe themselves. `title` names the tool in listings and in the approval
+  prompt; when what the operator approves depends on the arguments, set
+  `approvalTitle(call)` to vary the prompt's title per call (bash names its
+  effective timeout; the arguments have validated by the time it runs).
+  `description` is the model's documentation of the tool, including what it
+  will not do.
 - **`inputSchema`.** An object schema. Declare every argument with its `type`,
   mark the required ones, and set `additionalProperties: false` unless the tool
   genuinely accepts open arguments. Validation runs before policy and before the
   executor, so the executor may convert declared arguments with `String()` and
   `Number()` without checking them again. Use `integer` rather than `number`
-  where a fraction is meaningless, and `enum` for a closed set.
+  where a fraction is meaningless, `enum` for a closed set, and inclusive
+  `minimum` and `maximum` for a bounded number; validation refuses a value
+  outside them with a reason that names the bound, and the corrective feedback
+  renders the range.
 - **`permission`.** The envelope the policy reasons about: `effects` (always
   including `emit.event`), `defaultDecision`, `resources`, and `network`,
   `filesystem` and `cost`, all declared. State the ceiling of what the executor

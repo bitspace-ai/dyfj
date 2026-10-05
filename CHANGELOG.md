@@ -11,6 +11,24 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`bash` takes a per-call `timeoutSec`, shown in the approval prompt.** The
+  agent-loop `bash` tool accepts an optional whole number of seconds before
+  the command and its whole process tree are stopped. Absent, the 120 s
+  default stands; a value above the 600 s ceiling, zero, a negative number or
+  a fraction is refused before the approval prompt with a reason that names
+  the accepted range (`timeoutSec must be at most 600`), never clamped, so the
+  model learns the limit. The approval request's title now carries the
+  effective deadline, `Run Bash Command (timeout 300 s)`, and both the Rust
+  REPL and the TypeScript client show it as sent, so the operator approves the
+  duration along with the command. The tool description states the default
+  and the ceiling, and the value is recorded on the durable `tool_call`
+  event's arguments like any other argument. For tool authors, a
+  `CommandDefinition` may now set `approvalTitle(call)` to vary the prompt's
+  title per call, and `integer` and `number` schema properties may declare
+  inclusive `minimum` and `maximum` bounds, which argument validation
+  enforces and the corrective feedback renders (`1 to 600`). The `git` tool's
+  30 s deadline is unchanged.
+
 - **llama.cpp is a local provider, with Qwen3.6 35B-A3B as its default.**
   The `llama-cpp` provider reaches `llama-server`'s OpenAI-compatible endpoint
   on `http://localhost:8080/v1`, and the engine's net grants allow loopback

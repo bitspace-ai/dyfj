@@ -154,7 +154,7 @@
         "params": {
           "commandId": "bash",
           "callId": "call_golden_1",
-          "title": "Run Bash Command",
+          "title": "Run Bash Command (timeout <DURATION>)",
           "arguments": {
             "command": "echo golden-bash-output"
           }
@@ -271,7 +271,7 @@
         "request": {
           "commandId": "bash",
           "callId": "call_golden_1",
-          "title": "Run Bash Command",
+          "title": "Run Bash Command (timeout <DURATION>)",
           "arguments": {
             "command": "echo golden-bash-output"
           }

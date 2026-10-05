@@ -755,7 +755,7 @@
           {
             "id": "bash",
             "title": "Run Bash Command",
-            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Always requires explicit operator approval before it runs — it is never auto-approved.",
+            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Always requires explicit operator approval before it runs — it is never auto-approved. The command and its whole process tree are stopped after <DURATION> by default; pass timeoutSec, up to the <DURATION> ceiling, only when a command needs longer (a full test run, for example). A larger value is refused, not clamped.",
             "inputSchema": {
               "type": "object",
               "required": [
@@ -765,6 +765,12 @@
                 "command": {
                   "type": "string",
                   "description": "The shell command to run (executed as `bash -c`)."
+                },
+                "timeoutSec": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 600,
+                  "description": "Seconds before the command and its process tree are stopped. Default 120; at most 600 (the ceiling; a larger value is refused)."
                 }
               },
               "additionalProperties": false
@@ -2080,7 +2086,7 @@
           {
             "id": "bash",
             "title": "Run Bash Command",
-            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Always requires explicit operator approval before it runs — it is never auto-approved.",
+            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Always requires explicit operator approval before it runs — it is never auto-approved. The command and its whole process tree are stopped after <DURATION> by default; pass timeoutSec, up to the <DURATION> ceiling, only when a command needs longer (a full test run, for example). A larger value is refused, not clamped.",
             "inputSchema": {
               "type": "object",
               "required": [
@@ -2090,6 +2096,12 @@
                 "command": {
                   "type": "string",
                   "description": "The shell command to run (executed as `bash -c`)."
+                },
+                "timeoutSec": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 600,
+                  "description": "Seconds before the command and its process tree are stopped. Default 120; at most 600 (the ceiling; a larger value is refused)."
                 }
               },
               "additionalProperties": false
