@@ -13,6 +13,7 @@ import { buildToolCatalog } from "../catalog.ts";
 import { RootAnchors } from "./root-anchors.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import {
+  type BashResult,
   type BashRunner,
   buildSafeBashEnv,
   defineBash,
@@ -84,6 +85,70 @@ describe("executeBash", () => {
       runner: cannedRunner("", "", 137, { timedOut: true }),
     });
     assertMatch(out, /timed out after 50ms/);
+  });
+
+  describe("timeout status line", () => {
+    const timedOut =
+      (termination: BashResult["termination"]): BashRunner => () =>
+        Promise.resolve({
+          code: 143,
+          signal: null,
+          stdout: "partial\n",
+          stderr: "",
+          timedOut: true,
+          termination,
+        });
+    const run = (termination: BashResult["termination"]) =>
+      executeBash("/work", "x", {
+        timeoutMs: 50,
+        runner: timedOut(termination),
+      });
+
+    it("a stopped group reads as a clean kill with output up to the deadline", async () => {
+      assertStrictEquals(
+        await run({ group: "stopped", exited: true, outputClosed: true }),
+        "timed out after 50ms (killed; output shown up to the deadline)\npartial",
+      );
+    });
+
+    it("a group member that outlived SIGKILL is reported", async () => {
+      assertStringIncludes(
+        await run({ group: "survived", exited: true, outputClosed: true }),
+        "a process in its group was still running after SIGKILL",
+      );
+    });
+
+    it("a group that could not be signalled says descendants may survive", async () => {
+      assertStringIncludes(
+        await run({ group: "unavailable", exited: true, outputClosed: true }),
+        "its process group could not be signalled, so descendants may survive",
+      );
+    });
+
+    it("a command still present after SIGKILL is reported with its exit status unavailable", async () => {
+      assertStringIncludes(
+        await run({ group: "survived", exited: false, outputClosed: false }),
+        "the command itself had not exited after SIGKILL, so its exit status is unavailable",
+      );
+    });
+
+    it("output held open after an emptied group points outside the group", async () => {
+      assertStringIncludes(
+        await run({ group: "stopped", exited: true, outputClosed: false }),
+        "a process outside its group held the output open and may still be running",
+      );
+    });
+
+    it("output held open after a survivor or an unsignallable group does not infer where the holder is", async () => {
+      for (const group of ["survived", "unavailable"] as const) {
+        const out = await run({ group, exited: true, outputClosed: false });
+        assertStringIncludes(
+          out,
+          "the output was still held open after the stop, so a process may still be running",
+        );
+        assertFalse(out.includes("outside its group"));
+      }
+    });
   });
 
   it("truncates output past the byte cap", async () => {

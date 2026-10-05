@@ -987,6 +987,32 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The `bash` and `git` tool timeouts now bound the call and stop the whole
+  command tree.** On timeout the tools killed only the direct child (the
+  `bash -c` shell, or `git`) and then waited for the output pipes to close.
+  Descendants inherited those pipes and kept running, so a pipeline such as
+  `deno task test | tail` ran past the 120 s cap until it finished on its own,
+  a command tree that never exits (a backgrounded `sleep`, a hung server, a
+  watch-mode test) could hang the turn indefinitely, and the result reported
+  both "killed" and the command's complete output. Both tools now start the
+  command in its own process group outside Windows; at the deadline they stop
+  the group the way the aggregate gate stops a test lane (SIGTERM, a grace of
+  about a second that ends once the group is empty, then SIGKILL), stop
+  collecting output at the deadline, and return after a bounded drain of the
+  pipes. The status line reads `timed out after <ms>ms (killed; output shown up
+  to the deadline)`, and says so when a group member outlived SIGKILL, when the
+  group could not be signalled (Windows, or no signaller), when the command
+  itself was still present after SIGKILL (its exit status is then unavailable),
+  or when a process that left the group kept the output open and may still be
+  running (or, when the group was emptied, that a process outside it did).
+  Every wait after the deadline is bounded, the signaller's and the command's
+  own exit included, so a process stuck in uninterruptible I/O cannot hold the
+  call open: a timed-out call returns about 2.5 s after its deadline when the
+  stop goes as designed, and within about 8 s if the signalling child itself
+  hangs. `git`'s old `(git killed; descendants may survive)` wording is gone. A
+  command that exits normally is not signalled, so a background process whose
+  output is redirected elsewhere still keeps running. Output is still collected
+  in full before it is clipped.
 - **Friction's write-stage error no longer names a tool it may not have
   called.** `FrictionStageError`'s stage was `"create_comment"`, but the
   `save_comment` alias means the runtime may call either tool for the write;

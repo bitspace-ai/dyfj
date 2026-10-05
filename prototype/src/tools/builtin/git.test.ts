@@ -38,6 +38,7 @@ function recordingRunner(
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
       timedOut: result.timedOut ?? false,
+      termination: result.termination,
     });
   };
   return { runner, calls };
@@ -349,7 +350,24 @@ describe("executeGit", () => {
       runner,
       timeoutMs: 50,
     });
-    assertStringIncludes(out, "timed out after 50ms (git killed");
+    assertStringIncludes(out, "timed out after 50ms (killed)");
+  });
+
+  it("a timeout that stopped git's process group says the output ends at the deadline", async () => {
+    const { runner } = recordingRunner({
+      timedOut: true,
+      code: 143,
+      termination: { group: "stopped", exited: true, outputClosed: true },
+    });
+    const out = await executeGit(ROOT, { subcommand: "status" }, {
+      runner,
+      timeoutMs: 50,
+    });
+    assertStringIncludes(
+      out,
+      "timed out after 50ms (killed; output shown up to the deadline)",
+    );
+    assertFalse(out.includes("may survive"));
   });
 
   it("a signal is reported instead of an exit code", async () => {

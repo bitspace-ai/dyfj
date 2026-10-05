@@ -13,18 +13,22 @@
  * per-call human approval is the floor. The process runner is injectable so
  * tests exercise the output/timeout/truncation logic without spawning
  * a real process.
+ *
+ * The timeout bounds the call, not just the shell: at the deadline the
+ * command's whole process group is stopped (TERM, a short grace, then KILL),
+ * output written after the deadline is dropped, and the status line says
+ * whether anything could have survived (`bounded-process.ts`).
  */
 
 import { type Env, processEnv } from "../../config/mod.ts";
 import type { CommandDefinition } from "../definition.ts";
+import {
+  type BoundedResult,
+  describeTimeout,
+  runBounded,
+} from "./bounded-process.ts";
 
-export interface BashResult {
-  code: number;
-  signal: string | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}
+export type BashResult = BoundedResult;
 
 export type BashRunner = (
   command: string,
@@ -75,40 +79,19 @@ export function buildSafeBashEnv(
   return env;
 }
 
-/** Real runner: spawn `bash -c <command>` with cwd pinned, killed on timeout. */
-const defaultRunner: BashRunner = async (command, cwd, timeoutMs) => {
-  const proc = new Deno.Command("bash", {
+/**
+ * Real runner: `bash -c <command>` with cwd pinned, bounded by the timeout. At
+ * the deadline the command's whole process group is stopped and output
+ * collection ends (`bounded-process.ts`).
+ */
+const defaultRunner: BashRunner = (command, cwd, timeoutMs) =>
+  runBounded({
+    command: "bash",
     args: ["-c", command],
     cwd,
-    clearEnv: true,
     env: buildSafeBashEnv(),
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      // already exited
-    }
-  }, timeoutMs);
-  try {
-    const out = await proc.output();
-    const dec = new TextDecoder();
-    return {
-      code: out.code,
-      signal: out.signal,
-      stdout: dec.decode(out.stdout),
-      stderr: dec.decode(out.stderr),
-      timedOut,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-};
+    timeoutMs,
+  });
 
 /**
  * Run a shell command in the workspace and return a single string carrying the
@@ -143,7 +126,7 @@ export async function executeBash(
   }
 
   const status = res.timedOut
-    ? `timed out after ${timeoutMs}ms (killed)`
+    ? describeTimeout(timeoutMs, res.termination)
     : res.signal
     ? `exit by signal ${res.signal}`
     : `exit ${res.code}`;
