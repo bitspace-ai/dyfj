@@ -67,8 +67,10 @@ describe("bash timeout against a real process tree", { ignore: !posix }, () => {
   it("stops a pipeline whose members hold the output pipe", async () => {
     let pid: number | undefined;
     try {
+      // `$!` rather than `$BASHPID`: macOS's /bin/bash is 3.2, which has no
+      // BASHPID. The subshell and its sleep both hold the pipe to `cat` open.
       const { out, elapsedMs } = await runTimed(
-        `( echo "pid=$BASHPID"; exec sleep 10 ) | cat`,
+        `( sleep 10 & echo "pid=$!"; wait ) | cat`,
       );
       pid = pidIn(out);
       assert(

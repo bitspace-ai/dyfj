@@ -20,4 +20,15 @@ describe("describeTimeout", () => {
   it("reads as a plain kill when the runner gave no termination detail", () => {
     assertStringIncludes(describeTimeout(10), "timed out after 10ms (killed)");
   });
+
+  it("says when the command's exit status is unavailable", () => {
+    assertStringIncludes(
+      describeTimeout(10, {
+        group: "survived",
+        exited: false,
+        outputClosed: false,
+      }),
+      "the command itself had not exited after SIGKILL, so its exit status is unavailable",
+    );
+  });
 });

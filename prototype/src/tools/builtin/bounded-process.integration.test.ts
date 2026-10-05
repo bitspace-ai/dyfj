@@ -77,6 +77,7 @@ describe("runBounded", { ignore: !posix }, () => {
       assertStrictEquals(result.timedOut, true);
       assertEquals(result.termination, {
         group: "stopped",
+        exited: true,
         outputClosed: true,
       });
       assert(pid !== undefined);
@@ -132,6 +133,7 @@ describe("runBounded", { ignore: !posix }, () => {
       assert(stopped !== undefined && stopped > 1);
       assertEquals(result.termination, {
         group: "unavailable",
+        exited: true,
         outputClosed: false,
       });
       // Only the shell was killed; its child is the survivor reported above.

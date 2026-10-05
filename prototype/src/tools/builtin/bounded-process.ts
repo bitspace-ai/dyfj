@@ -27,8 +27,11 @@
  *
  * The result says how the stop went, so callers report a timeout honestly: an
  * emptied group, a group member that outlived SIGKILL, a group that could not
- * be signalled (Windows, or no signaller), or output held open by a process
- * outside the group.
+ * be signalled (Windows, or no signaller), a command still present after
+ * SIGKILL (its exit status is then unavailable), or output held open by a
+ * process outside the group. Every wait after the deadline is bounded, the
+ * signaller's and the command's own exit included, so the call returns even
+ * when a process is stuck in uninterruptible I/O.
  *
  * Scope: on an ordinary exit nothing is signalled, so a background process
  * whose output is redirected elsewhere is left running, as it would be in a
@@ -53,12 +56,19 @@ export type GroupStopper = (
 
 export interface TimeoutTermination {
   group: GroupStop;
+  /**
+   * False when the command itself was still present after SIGKILL and its
+   * settle bound (uninterruptible I/O). Its exit status is then unavailable:
+   * `code` is null.
+   */
+  exited: boolean;
   /** False when the output pipes were still open after the drain bound. */
   outputClosed: boolean;
 }
 
 export interface BoundedResult {
-  code: number;
+  /** Null only on a timeout whose command had not exited (`termination.exited`). */
+  code: number | null;
   signal: string | null;
   stdout: string;
   stderr: string;
@@ -168,7 +178,9 @@ export const stopProcessGroup: GroupStopper = async (group, graceMs) => {
     } catch {
       // It exited at the bound.
     }
-    await signaller.status.catch(() => undefined);
+    // Its eventual exit is observed, not awaited: a signaller stuck in
+    // uninterruptible I/O must not hold the timeout path open.
+    signaller.status.catch(() => undefined);
     return "unavailable";
   }
   if (status.code === 0) return "stopped";
@@ -311,17 +323,25 @@ export async function runBounded(
   } catch {
     // Already exited.
   }
-  const status = await child.status;
+  // Bounded as well: a leader in uninterruptible I/O can outlive SIGKILL for
+  // as long as the I/O takes, and its status promise stays pending with it.
+  // Its exit is then observed, not awaited, and the result says so.
+  const status = await settleWithin(child.status, KILL_SETTLE_MS);
+  if (status === undefined) child.status.catch(() => undefined);
   const closed = (await settleWithin(outputClosed.then(() => true), drainMs)) ??
     false;
   if (!closed) await Promise.all([stdout.cancel(), stderr.cancel()]);
   return {
-    code: status.code,
-    signal: status.signal,
+    code: status?.code ?? null,
+    signal: status?.signal ?? null,
     stdout: stdout.text(),
     stderr: stderr.text(),
     timedOut: true,
-    termination: { group: groupStop, outputClosed: closed },
+    termination: {
+      group: groupStop,
+      exited: status !== undefined,
+      outputClosed: closed,
+    },
   };
 }
 
@@ -342,6 +362,11 @@ export function describeTimeout(
   } else if (termination.group === "unavailable") {
     notes.push(
       "its process group could not be signalled, so descendants may survive",
+    );
+  }
+  if (!termination.exited) {
+    notes.push(
+      "the command itself had not exited after SIGKILL, so its exit status is unavailable",
     );
   }
   if (!termination.outputClosed) {

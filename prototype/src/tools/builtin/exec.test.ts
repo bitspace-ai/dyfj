@@ -106,28 +106,35 @@ describe("executeBash", () => {
 
     it("a stopped group reads as a clean kill with output up to the deadline", async () => {
       assertStrictEquals(
-        await run({ group: "stopped", outputClosed: true }),
+        await run({ group: "stopped", exited: true, outputClosed: true }),
         "timed out after 50ms (killed; output shown up to the deadline)\npartial",
       );
     });
 
     it("a group member that outlived SIGKILL is reported", async () => {
       assertStringIncludes(
-        await run({ group: "survived", outputClosed: true }),
+        await run({ group: "survived", exited: true, outputClosed: true }),
         "a process in its group was still running after SIGKILL",
       );
     });
 
     it("a group that could not be signalled says descendants may survive", async () => {
       assertStringIncludes(
-        await run({ group: "unavailable", outputClosed: true }),
+        await run({ group: "unavailable", exited: true, outputClosed: true }),
         "its process group could not be signalled, so descendants may survive",
+      );
+    });
+
+    it("a command still present after SIGKILL is reported with its exit status unavailable", async () => {
+      assertStringIncludes(
+        await run({ group: "survived", exited: false, outputClosed: false }),
+        "the command itself had not exited after SIGKILL, so its exit status is unavailable",
       );
     });
 
     it("output held open after the stop is reported", async () => {
       assertStringIncludes(
-        await run({ group: "stopped", outputClosed: false }),
+        await run({ group: "stopped", exited: true, outputClosed: false }),
         "a process outside its group held the output open and may still be running",
       );
     });

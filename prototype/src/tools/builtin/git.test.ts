@@ -357,7 +357,7 @@ describe("executeGit", () => {
     const { runner } = recordingRunner({
       timedOut: true,
       code: 143,
-      termination: { group: "stopped", outputClosed: true },
+      termination: { group: "stopped", exited: true, outputClosed: true },
     });
     const out = await executeGit(ROOT, { subcommand: "status" }, {
       runner,
