@@ -13,6 +13,7 @@ import { buildToolCatalog } from "../catalog.ts";
 import { RootAnchors } from "./root-anchors.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import {
+  type BashResult,
   type BashRunner,
   buildSafeBashEnv,
   defineBash,
@@ -84,6 +85,52 @@ describe("executeBash", () => {
       runner: cannedRunner("", "", 137, { timedOut: true }),
     });
     assertMatch(out, /timed out after 50ms/);
+  });
+
+  describe("timeout status line", () => {
+    const timedOut =
+      (termination: BashResult["termination"]): BashRunner => () =>
+        Promise.resolve({
+          code: 143,
+          signal: null,
+          stdout: "partial\n",
+          stderr: "",
+          timedOut: true,
+          termination,
+        });
+    const run = (termination: BashResult["termination"]) =>
+      executeBash("/work", "x", {
+        timeoutMs: 50,
+        runner: timedOut(termination),
+      });
+
+    it("a stopped group reads as a clean kill with output up to the deadline", async () => {
+      assertStrictEquals(
+        await run({ group: "stopped", outputClosed: true }),
+        "timed out after 50ms (killed; output shown up to the deadline)\npartial",
+      );
+    });
+
+    it("a group member that outlived SIGKILL is reported", async () => {
+      assertStringIncludes(
+        await run({ group: "survived", outputClosed: true }),
+        "a process in its group was still running after SIGKILL",
+      );
+    });
+
+    it("a group that could not be signalled says descendants may survive", async () => {
+      assertStringIncludes(
+        await run({ group: "unavailable", outputClosed: true }),
+        "its process group could not be signalled, so descendants may survive",
+      );
+    });
+
+    it("output held open after the stop is reported", async () => {
+      assertStringIncludes(
+        await run({ group: "stopped", outputClosed: false }),
+        "a process outside its group held the output open and may still be running",
+      );
+    });
   });
 
   it("truncates output past the byte cap", async () => {

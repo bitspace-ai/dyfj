@@ -31,12 +31,13 @@
  * This module does not change that invariant and must not be read as sandboxed
  * execution.
  *
- * Two limits it shares with `bash`, stated rather than fixed here: output is
- * collected in full before it is clipped, so a very large diff is held in
- * memory first; and the timeout kills the git process, not any descendant it
- * spawned, so a hook's child can outlive it and keep the call pending. Both
- * deserve a process-group fix in their own change rather than a partial one
- * bolted onto this tool.
+ * It shares `bash`'s process runner (`bounded-process.ts`): at the timeout,
+ * git's whole process group, hooks and their children included, is stopped and
+ * output written after the deadline is dropped. A process that leaves the group
+ * cannot be signalled through it; the status line reports when one held the
+ * output open. One limit it also shares, stated rather than fixed here: output
+ * is collected in full before it is clipped, so a very large diff is held in
+ * memory first.
  *
  * Validation failures return an `error: …` string rather than throwing, so the
  * model sees the failure as a tool result and can correct itself within the
@@ -46,6 +47,11 @@
 
 import { relative, resolve } from "node:path";
 import { buildSafeBashEnv } from "./exec.ts";
+import {
+  type BoundedResult,
+  describeTimeout,
+  runBounded,
+} from "./bounded-process.ts";
 import { clipToUtf8Bytes } from "../../kernel/mod.ts";
 import type { CommandDefinition } from "../definition.ts";
 import {
@@ -54,13 +60,7 @@ import {
   toPosixPath,
 } from "./file-access.ts";
 
-export interface GitResult {
-  code: number;
-  signal: string | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}
+export type GitResult = BoundedResult;
 
 /** Injectable so tests exercise argv/parsing logic without spawning git. */
 export type GitRunner = (
@@ -351,12 +351,16 @@ export function buildGitArgv(root: string, args: GitArguments): GitArgvPlan {
   return { argv };
 }
 
-/** Real runner: spawn git with cwd pinned to the workspace, killed on timeout. */
-const defaultRunner: GitRunner = async (args, cwd, timeoutMs) => {
-  const proc = new Deno.Command("git", {
-    args: [...args],
+/**
+ * Real runner: git with cwd pinned to the workspace, bounded by the timeout.
+ * At the deadline git's whole process group (hooks and helpers included) is
+ * stopped and output collection ends (`bounded-process.ts`).
+ */
+const defaultRunner: GitRunner = (args, cwd, timeoutMs) =>
+  runBounded({
+    command: "git",
+    args,
     cwd,
-    clearEnv: true,
     env: {
       ...buildSafeBashEnv(),
       // Disables git's own terminal credential prompt. It does not disable
@@ -366,33 +370,8 @@ const defaultRunner: GitRunner = async (args, cwd, timeoutMs) => {
       // a stall, not a result.
       GIT_OPTIONAL_LOCKS: "0",
     },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      // already exited
-    }
-  }, timeoutMs);
-  try {
-    const out = await proc.output();
-    const dec = new TextDecoder();
-    return {
-      code: out.code,
-      signal: out.signal,
-      stdout: dec.decode(out.stdout),
-      stderr: dec.decode(out.stderr),
-      timedOut,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-};
+    timeoutMs,
+  });
 
 /**
  * Run one allowed git operation and return a single string carrying the exit
@@ -470,7 +449,7 @@ export async function executeGit(
   }
 
   const status = res.timedOut
-    ? `timed out after ${timeoutMs}ms (git killed; descendants may survive)`
+    ? describeTimeout(timeoutMs, res.termination)
     : res.signal
     ? `exit by signal ${res.signal}`
     : `exit ${res.code}`;
