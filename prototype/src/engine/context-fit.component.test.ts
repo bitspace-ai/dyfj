@@ -5,9 +5,9 @@
  * the engine's to respect — a provider that silently accepts an over-window
  * request (as the scripted transport does) must never see one.
  *
- * Covers the three causes behind BIT-565: tool results bounded only by their
- * own fixed caps, no fit check before each loop call, and a provider's
- * "context exceeded" rejection surfacing as a generic error.
+ * Covers the three causes of over-window requests: tool results bounded
+ * only by their own fixed caps, no fit check before each loop call, and a
+ * provider's "context exceeded" rejection surfacing as a generic error.
  */
 import {
   assert,

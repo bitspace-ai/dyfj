@@ -11,51 +11,50 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
-- **The agent loop no longer sends a request larger than the model's context
-  window.** On a 32K-window local model, a few `grep_files` or `read_file`
-  results, or one test run's output, grew the next request past the window
-  and the provider refused it (llama-server: `request (82366 tokens) exceeds
-  the available context size (32768 tokens)`); nothing fitted the request
-  first, and because the oversized results stayed in the session's history,
-  every later turn in that session failed the same way. Three changes, in
-  `engine/fit-request.ts` and `context/request-fit.ts`: every loop call is
-  estimated (tool definitions included) against the selected model's
-  `contextWindow` less the output cap the request transmits (a bounded
-  default when it sends none, as a local request with no cap requested
-  does), and one over that budget is
-  shrunk before it is sent (earlier turns' tool results first, oldest first,
-  to a 1 KiB prefix and a marker; then elder turns compressed through the
-  existing compressor; then the current turn's results), failing with
-  `ContextWindowOverflowError`, which names the window, only when it still
-  cannot fit (the estimate measures what the adapter sends: Gemini, which
-  carries neither history nor tools on the wire, is sized by its prompt
-  alone and never proactively compressed, and the length-recovery retries
-  are fitted the same way before they go out, shrinking only). The compression request is sized the same
-  way against the compressor's own window: an elder transcript larger than
-  it has its tool results shrunk and is compressed from its oldest turns in
-  passes, the rest kept verbatim until the next pass, so the compressor is
-  never sent the kind of request this fixes. Each tool result is bounded
-  as it is produced to its share of
-  the window left for the turn, not only to the tool's fixed cap, with a
-  marker that states how much was cut and how to get the rest (`read_file`:
-  re-read with `offset` and `limit`; search tools: narrow the query; `bash`:
-  pipe through `head`, `tail` or `grep`), and a result bounded when it was
-  produced and shrunk again later keeps reporting its original size (the
-  cut result carries its original length as engine provenance, off the
-  wire, so a result whose own text ends like the marker is never read as
-  one); and a provider's context-size
-  rejection (llama-server, OpenAI, Anthropic and Gemini bodies) is classified
-  as `ProviderContextExceededError` instead of a generic error, refitted
-  against the counts the provider reported (the budget scaled by the ratio
-  of its count to the estimate) and retried once, after which it fails as
-  context overflow. A session whose history is already over the
-  window recovers on its next turn through the same path. The durable
-  `tool_call` events are untouched: shrinking decides what the model sees,
-  not what the log keeps. Two runtime events, `toolResultTrimmed` and
-  `contextFitted`, report what was cut, and both clients show them. Golden
-  scenario 12's fixture window was raised from 2,000 to 12,000 tokens
-  (`specs/03-testing.md` §4): the old window could not hold the fixed
-  request prefix, which only the fake model server had let pass.
+- **The agent loop fits each request to the model's context window before
+  sending it, and recovers when a provider rejects one as too large.** On a
+  32K-window local model, a few `grep_files` or `read_file` results, or one
+  test run's output, grew the next request past the window, and the provider
+  refused it (llama-server: `request (82366 tokens) exceeds the available
+  context size (32768 tokens)`). Nothing fitted the request first, and the
+  oversized results stayed in the session's history, so every later turn in
+  that session failed the same way. Three changes, in `engine/fit-request.ts`
+  and `context/request-fit.ts`:
+  - Before each loop call, the engine estimates the request as its adapter
+    will send it, tool definitions included, against the model's
+    `contextWindow` less the output cap the request transmits. The estimate
+    is four characters per token with a margin. A request over that budget
+    is shrunk before it is sent: earlier turns' tool results first, oldest
+    first, to a 1 KiB prefix and a marker; then elder turns, through the
+    existing compressor; then the current turn's results. A request that
+    still does not fit by the estimate fails the turn with
+    `ContextWindowOverflowError`, which names the window, without being
+    sent. Gemini sends only the prompt, so it is sized by the prompt alone
+    and never proactively compressed. Length-recovery retries are fitted the
+    same way, by shrinking only. The compressor's own request is sized
+    against its window too: an elder transcript larger than that window is
+    compressed from its oldest turns in passes.
+  - Each tool result is bounded, as it is produced, to its share of the
+    window left for the turn, not only to the tool's fixed cap. A marker
+    states how much was cut and how to get the rest: `read_file` by
+    `offset` and `limit`, search tools by a narrower query, `bash` through
+    `head`, `tail` or `grep`, `git` by paths or a smaller `limit`. A result
+    cut more than once keeps reporting its original size.
+  - Because the estimate is not the provider's tokenizer, a provider can
+    still reject a request that passed it. That rejection (from
+    llama-server, OpenAI, Anthropic or Gemini) is now classified as
+    `ProviderContextExceededError` instead of a generic error. The request
+    is refitted against the counts the provider reported and retried once;
+    a second rejection fails the turn as context overflow.
+
+  A session whose history is already over the window recovers on its next
+  turn through the same path. The durable `tool_call` events are untouched:
+  shrinking decides what the model sees, not what the log keeps. Two
+  runtime events, `toolResultTrimmed` and `contextFitted`, report what was
+  cut, and both clients show them. Golden scenario 12's fixture window was
+  raised from 2,000 to 12,000 tokens (`specs/03-testing.md` §4): the old
+  window could not hold the fixed request prefix, which only the fake model
+  server had let pass.
 
 ### Added
 

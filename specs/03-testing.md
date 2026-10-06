@@ -142,8 +142,8 @@ internal move.
       it is sent, so a window under the prefix fails every turn before the
       model sees it. The window was raised from 2,000 to 12,000 tokens, and
       the padding sized to cross the trigger on the fourth turn, when
-      request fitting landed (BIT-565); scenarios 10 and 12 re-snapshotted
-      under that decision.
+      request fitting landed; scenarios 10 and 12 were re-snapshotted under
+      that decision.
 - **Hosted adapters are outside the golden suite** (Anthropic, OpenAI,
   OpenRouter, Gemini, xAI). Their base URLs are pinned to real HTTPS hosts. They
   are pinned instead by the provider conformance kit (§5), using recorded
