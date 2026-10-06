@@ -43,7 +43,7 @@ declares:
   wire-safe themselves. `title` names the tool in listings and in the approval
   prompt; when what the operator approves depends on the arguments, set
   `approvalTitle(call)` to vary the prompt's title per call (bash names its
-  effective timeout; the arguments have validated by the time it runs).
+  effective timeout; the arguments have been validated by the time it runs).
   `description` is the model's documentation of the tool, including what it
   will not do.
 - **`inputSchema`.** An object schema. Declare every argument with its `type`,

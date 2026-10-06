@@ -99,7 +99,7 @@ export interface CommandDefinition<TResult = unknown> {
   /**
    * The approval prompt's title for one call, when what the operator approves
    * depends on the arguments (bash shows the effective timeout). Called only
-   * after the arguments validated. Absent, the prompt shows `title`.
+   * after the arguments have been validated. Absent, the prompt shows `title`.
    */
   approvalTitle?: (call: CommandCall) => string;
   /**

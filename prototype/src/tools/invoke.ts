@@ -70,7 +70,8 @@ export async function invokeCommand<TResult = unknown>(
     // A mutation does not run until the operator approves it. The
     // verdict comes from the injected transport approver; the default denies, so
     // an unapproved or channel-less call never executes. The arguments have
-    // validated by now, so a per-call title sees only values the schema allows.
+    // been validated by now, so a per-call title sees only values the schema
+    // allows.
     const verdict = await confirmApproval({
       commandId: call.commandId,
       callId: call.callId,
