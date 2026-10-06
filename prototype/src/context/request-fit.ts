@@ -153,6 +153,9 @@ export interface TrimmedResult {
  * The marker's exact shape, anchored at the end of a result, so a result
  * trimmed once (bounded when it was produced) can be trimmed again with
  * its original size intact rather than the marker counted as payload.
+ * Consulted only for a result whose message carries `trimmedFrom`: text
+ * alone is not provenance, and a result whose own output ends like the
+ * marker is payload like any other.
  */
 const TRIM_MARKER_AT_END =
   /\n\n\[Workbench trimmed this \S+ result to fit the model's \d+-token context window: the first \d+ of (\d+) characters are shown; the rest was cut\. [^\]\n]*\]$/;
@@ -170,21 +173,23 @@ export function parseTrimmedResult(
 
 /**
  * Keep the first `keepChars` characters of a tool result, on a code-point
- * boundary, followed by the marker. A result trimmed before is cut on its
- * payload and keeps reporting its original size. Returns null when the
- * result already fits, or when the cut would save no more than the marker
- * costs, so a result is never marked as trimmed when nothing worth cutting
- * was cut.
+ * boundary, followed by the marker. A result trimmed before (`trimmedFrom`
+ * set by the engine when it cut it) is cut on its payload and keeps
+ * reporting its original size; without that provenance the whole content
+ * is payload, whatever it ends with. Returns null when the result already
+ * fits, or when the cut would save no more than the marker costs, so a
+ * result is never marked as trimmed when nothing worth cutting was cut.
  */
 export function trimToolResult(
   content: string,
   keepChars: number,
   commandId: string,
   contextWindow: number,
+  trimmedFrom?: number,
 ): TrimmedResult | null {
-  const prior = parseTrimmedResult(content);
+  const prior = trimmedFrom === undefined ? null : parseTrimmedResult(content);
   const payload = prior?.payload ?? content;
-  const totalChars = prior?.totalChars ?? content.length;
+  const totalChars = trimmedFrom ?? content.length;
   if (payload.length <= keepChars + TRIM_MARKER_ALLOWANCE_CHARS) return null;
   let cut = Math.max(0, keepChars);
   // Never split a surrogate pair: back off one unit when the cut would land
@@ -264,9 +269,14 @@ export function shrinkToolResults(
       SHRUNK_TOOL_RESULT_CHARS,
       message.name,
       contextWindow,
+      message.trimmedFrom,
     );
     if (trimmed === null) continue;
-    out[i] = { ...message, content: trimmed.content };
+    out[i] = {
+      ...message,
+      content: trimmed.content,
+      trimmedFrom: trimmed.totalChars,
+    };
     trims.push({
       index: i,
       commandId: message.name,

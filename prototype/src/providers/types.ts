@@ -135,6 +135,14 @@ export type WorkbenchMessage =
      * model reads the content as a failure to correct rather than as output.
      */
     isError?: boolean;
+    /**
+     * The result's original length in characters when the engine cut it to
+     * fit the model's context window (`content` then ends with the engine's
+     * marker). Engine provenance, never on the wire: adapters map the fields
+     * they send by name. Absent on a result the engine did not cut, so a
+     * result whose own text resembles the marker is never read as one.
+     */
+    trimmedFrom?: number;
   };
 
 export interface WorkbenchCallTimings {

@@ -455,6 +455,9 @@ export function toolStepToMessages(
       name: result.commandId,
       content: result.result,
       ...(result.isError ? { isError: true } : {}),
+      ...(result.trimmedFrom === undefined
+        ? {}
+        : { trimmedFrom: result.trimmedFrom }),
     });
   }
   return messages;

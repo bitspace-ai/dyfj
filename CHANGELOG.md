@@ -38,8 +38,10 @@ README are tracked separately in its Revision history section.
   marker that states how much was cut and how to get the rest (`read_file`:
   re-read with `offset` and `limit`; search tools: narrow the query; `bash`:
   pipe through `head`, `tail` or `grep`), and a result bounded when it was
-  produced and shrunk again later keeps reporting its original size; and a
-  provider's context-size
+  produced and shrunk again later keeps reporting its original size (the
+  cut result carries its original length as engine provenance, off the
+  wire, so a result whose own text ends like the marker is never read as
+  one); and a provider's context-size
   rejection (llama-server, OpenAI, Anthropic and Gemini bodies) is classified
   as `ProviderContextExceededError` instead of a generic error, refitted
   against the counts the provider reported and retried once, after which it

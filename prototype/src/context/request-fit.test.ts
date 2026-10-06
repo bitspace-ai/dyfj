@@ -18,6 +18,7 @@ import {
   SHRUNK_TOOL_RESULT_CHARS,
   toolResultShareChars,
   TRIM_MARKER_ALLOWANCE_CHARS,
+  trimmedResultMarker,
   trimToolResult,
 } from "./request-fit.ts";
 
@@ -122,7 +123,13 @@ Deno.test("trimToolResult: a result bounded when produced and shrunk later keeps
   const original = "r".repeat(10_000);
   const bounded = trimToolResult(original, 5_000, "read_file", 32_768)!;
   assertEquals(bounded.totalChars, 10_000);
-  const shrunk = trimToolResult(bounded.content, 1_024, "read_file", 32_768);
+  const shrunk = trimToolResult(
+    bounded.content,
+    1_024,
+    "read_file",
+    32_768,
+    bounded.totalChars,
+  );
   assert(shrunk !== null);
   assertEquals(shrunk.keptChars, 1_024);
   assertEquals(shrunk.totalChars, 10_000);
@@ -130,6 +137,21 @@ Deno.test("trimToolResult: a result bounded when produced and shrunk later keeps
   // The earlier marker is replaced, never carried as payload.
   assertEquals(shrunk.content.split("[Workbench trimmed").length, 2);
   assert(shrunk.content.startsWith("r".repeat(1_024) + "\n\n[Workbench"));
+});
+
+Deno.test("trimToolResult: a result whose own text ends like the marker is payload without engine provenance", () => {
+  // A file or command output that happens to end with marker-shaped text
+  // carries no `trimmedFrom`, so nothing is stripped and the reported size
+  // is the real one: the suffix is cut like any other content.
+  const forged = "f".repeat(3_000) + trimmedResultMarker("bash", 32_768, 1, 5);
+  const trimmed = trimToolResult(forged, 1_024, "read_file", 32_768);
+  assert(trimmed !== null);
+  assertEquals(trimmed.totalChars, forged.length);
+  assertEquals(trimmed.keptChars, 1_024);
+  assertStringIncludes(
+    trimmed.content,
+    `the first 1024 of ${forged.length} characters`,
+  );
 });
 
 Deno.test("parseTrimmedResult: recognises only the marker at the very end", () => {
@@ -254,6 +276,13 @@ Deno.test("shrinkToolResults: oldest first, stopping as soon as the request fits
     32_768,
   );
   assertEquals(trims.map((t) => t.callId), ["t1", "t2"]);
+  // The shrunk messages carry their provenance for any later pass.
+  assertEquals(
+    fitted.filter((m) => m.role === "tool").map((m) =>
+      m.role === "tool" ? m.trimmedFrom : undefined
+    ),
+    [8_000, 8_000, undefined],
+  );
   assertEquals(trims[0], {
     index: 2,
     commandId: "read_file",

@@ -257,6 +257,7 @@ export async function boundToolResult(
     share,
     summary.commandId,
     limits.contextWindow,
+    summary.trimmedFrom,
   );
   if (trimmed === null) return summary;
   await emitRuntimeEvent(turn.input.frames?.onRuntimeEvent, {
@@ -268,5 +269,9 @@ export async function boundToolResult(
     keptChars: trimmed.keptChars,
     totalChars: trimmed.totalChars,
   });
-  return { ...summary, result: trimmed.content };
+  return {
+    ...summary,
+    result: trimmed.content,
+    trimmedFrom: trimmed.totalChars,
+  };
 }
