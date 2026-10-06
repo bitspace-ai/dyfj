@@ -780,3 +780,44 @@ Deno.test("a count-less rejection of the refit retry fails with the learned wind
     errorName: "ContextWindowOverflowError",
   });
 });
+
+Deno.test("a refit retry's length stop is classified against the window the rejection taught", async () => {
+  // Catalog window 32,768; the rejection states a 20,000-token limit. The
+  // retry stops with 18,000 in + 2,000 out: exhaustion by the catalog
+  // window, overflow by the real one. The real one wins, in the event and
+  // in the error.
+  const fit = await fitTurn([
+    {
+      respond: {
+        status: 400,
+        body: JSON.stringify({
+          error: {
+            message: "request (50000 tokens) exceeds the available context " +
+              "size (20000 tokens), try increasing it",
+          },
+        }),
+      },
+    },
+    chatReply({
+      content: "cut off plan",
+      finishReason: "length",
+      usage: { prompt_tokens: 18_000, completion_tokens: 2_000 },
+      toolCalls: [READ("cut", "CHANGELOG.md")],
+    }),
+  ], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(20_000),
+  });
+  assert(fit.error instanceof ContextWindowOverflowError);
+  assertEquals(fit.error.details.contextWindow, 20_000);
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
+  assertObjectMatch(frame(fit.frames, "lengthStopDetected")!, {
+    classification: "context_overflow",
+    contextWindow: 20_000,
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "overflow_failed",
+    retriesUsed: 1,
+  });
+});

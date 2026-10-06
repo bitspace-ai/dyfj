@@ -104,7 +104,7 @@ async function recoveredCall(
     );
   } catch (err) {
     if (!(err instanceof ProviderContextExceededError)) throw err;
-    const retried = await refitRejected(
+    const { retried, contextWindow } = await refitRejected(
       turn,
       params,
       request,
@@ -112,7 +112,7 @@ async function recoveredCall(
       onProviderError,
     );
     return retried.stopReason === "length"
-      ? await settleRefitRetry(turn, retried)
+      ? await settleRefitRetry(turn, retried, contextWindow)
       : retried;
   }
   if (result.stopReason !== "length") return result;
@@ -149,7 +149,7 @@ async function refitRejected(
   request: LoopCallRequest,
   rejection: ProviderContextExceededError,
   onProviderError?: (error: unknown) => unknown,
-): Promise<LoopTurnResult> {
+): Promise<{ retried: LoopTurnResult; contextWindow: number }> {
   const loopRequest = {
     systemPrompt: params.systemPrompt,
     messages: params.messages ?? [],
@@ -186,7 +186,7 @@ async function refitRejected(
       "refitted and retrying]",
   );
   try {
-    return await observedTurn(
+    const retried = await observedTurn(
       turn,
       { ...params, messages: loopRequest.messages },
       {
@@ -198,6 +198,7 @@ async function refitRejected(
       "recovery",
       onProviderError,
     );
+    return { retried, contextWindow };
   } catch (err) {
     if (!(err instanceof ProviderContextExceededError)) throw err;
     // The retry was refused too. Fail with what this recovery learned —
@@ -219,18 +220,28 @@ async function refitRejected(
 /**
  * The refit retry length-stopped. Recovery is bounded to the one retry
  * already made, so no continuation or compression follows: the stop is
- * classified like any other (reported as `lengthStopDetected`), overflow
- * fails structured, and exhaustion delivers the truncated partial with its
- * cut-off tool plan stripped — never a plan the model did not finish.
+ * classified like any other (reported as `lengthStopDetected`) against the
+ * window the rejection taught, overflow fails structured, and exhaustion
+ * delivers the truncated partial with its cut-off tool plan stripped —
+ * never a plan the model did not finish.
  */
 async function settleRefitRetry(
   turn: RoutedTurn,
   retried: LoopTurnResult,
+  contextWindow: number,
 ): Promise<LoopTurnResult> {
-  const stop = await classifyStop(turn, retried);
+  // Classified against the window the rejection taught, not the catalog's:
+  // a stop that filled the provider's real window is overflow even where
+  // the catalog window would have read it as exhaustion.
+  const stop = await classifyStop(turn, retried, contextWindow);
   if (stop.classification === "context_overflow") {
     await stop.emitRecovery("overflow_failed", 1);
-    throw overflowError(retried, stop.promptTokens, stop.outputTokens);
+    throw overflowError(
+      retried,
+      stop.promptTokens,
+      stop.outputTokens,
+      contextWindow,
+    );
   }
   await stop.emitRecovery("still_truncated", 1);
   turn.state.session.log(
@@ -240,10 +251,14 @@ async function settleRefitRetry(
   return { ...retried, toolCalls: undefined };
 }
 
-/** Classify the stop and report it as a `lengthStopDetected` frame. */
+/**
+ * Classify the stop and report it as a `lengthStopDetected` frame, against
+ * the catalog window unless a provider rejection taught a smaller one.
+ */
 async function classifyStop(
   turn: RoutedTurn,
   result: LoopTurnResult,
+  contextWindow: number | undefined = result.model.contextWindow,
 ): Promise<LengthStop & { classification: string }> {
   const { input, state } = turn;
   const sessionId = state.session.sessionId;
@@ -263,7 +278,7 @@ async function classifyStop(
   // the model can do, and a stop at the requested cap is exhaustion.
   const outputCap = modelRequestedOutputCap(result.model);
   const classification = classifyLengthStop(
-    { contextWindow: result.model.contextWindow, maxOutputTokens: outputCap },
+    { contextWindow, maxOutputTokens: outputCap },
     { input: promptTokens, output: outputTokens },
   );
   await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
@@ -274,7 +289,7 @@ async function classifyStop(
     severity: classification === "context_overflow" ? "error" : "warn",
     inputTokens: promptTokens,
     outputTokens,
-    contextWindow: result.model.contextWindow,
+    contextWindow,
     maxOutputTokens: outputCap,
   });
   return {
@@ -436,10 +451,11 @@ function overflowError(
   result: LoopTurnResult,
   inputTokens: number,
   outputTokens: number,
+  contextWindow: number | undefined = result.model.contextWindow,
 ): ContextWindowOverflowError {
   return new ContextWindowOverflowError({
     modelSlug: result.model.slug,
-    contextWindow: result.model.contextWindow,
+    contextWindow,
     inputTokens,
     outputTokens,
   });
