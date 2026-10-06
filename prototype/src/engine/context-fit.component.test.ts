@@ -675,3 +675,65 @@ Deno.test("an adapter that sends only the prompt is never proactively compressed
     false,
   );
 });
+
+// ─── a refit retry that length-stops is settled, never executed ──────────────
+
+/** A rejection, then a retry that stops at the output limit mid tool plan. */
+function rejectThenTruncate(
+  usage: { prompt_tokens: number; completion_tokens: number },
+) {
+  return [
+    LLAMA_SERVER_REJECTION,
+    chatReply({
+      content: "cut off plan",
+      finishReason: "length",
+      usage,
+      toolCalls: [READ("cut", "CHANGELOG.md")],
+    }),
+  ];
+}
+
+Deno.test("a refit retry that hits the output cap delivers the partial with its cut-off tool plan stripped", async () => {
+  const fit = await fitTurn(
+    rejectThenTruncate({ prompt_tokens: 3_000, completion_tokens: 4_096 }),
+    {
+      prompt: "a short follow-up",
+      conversationMessages: overWindowHistory(20_000),
+    },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "cut off plan");
+  assertEquals(fit.run.transport.requests.length, 2);
+  // The cut-off plan never ran: recovery is bounded to the one retry.
+  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
+  assertObjectMatch(frame(fit.frames, "lengthStopDetected")!, {
+    classification: "output_budget_exhausted",
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "still_truncated",
+    retriesUsed: 1,
+  });
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+});
+
+Deno.test("a refit retry that still overflows the window fails structured", async () => {
+  const fit = await fitTurn(
+    rejectThenTruncate({ prompt_tokens: 32_000, completion_tokens: 500 }),
+    {
+      prompt: "a short follow-up",
+      conversationMessages: overWindowHistory(20_000),
+    },
+  );
+  assert(fit.error instanceof Error);
+  assertStringIncludes(fit.error.message, "Context window overflow");
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "overflow_failed",
+    retriesUsed: 1,
+  });
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});

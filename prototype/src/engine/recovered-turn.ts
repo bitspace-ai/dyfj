@@ -104,7 +104,16 @@ async function recoveredCall(
     );
   } catch (err) {
     if (!(err instanceof ProviderContextExceededError)) throw err;
-    return await refitRejected(turn, params, request, err, onProviderError);
+    const retried = await refitRejected(
+      turn,
+      params,
+      request,
+      err,
+      onProviderError,
+    );
+    return retried.stopReason === "length"
+      ? await settleRefitRetry(turn, retried)
+      : retried;
   }
   if (result.stopReason !== "length") return result;
   const stop = await classifyStop(turn, result);
@@ -187,6 +196,30 @@ async function refitRejected(
     "recovery",
     onProviderError,
   );
+}
+
+/**
+ * The refit retry length-stopped. Recovery is bounded to the one retry
+ * already made, so no continuation or compression follows: the stop is
+ * classified like any other (reported as `lengthStopDetected`), overflow
+ * fails structured, and exhaustion delivers the truncated partial with its
+ * cut-off tool plan stripped — never a plan the model did not finish.
+ */
+async function settleRefitRetry(
+  turn: RoutedTurn,
+  retried: LoopTurnResult,
+): Promise<LoopTurnResult> {
+  const stop = await classifyStop(turn, retried);
+  if (stop.classification === "context_overflow") {
+    await stop.emitRecovery("overflow_failed", 1);
+    throw overflowError(retried, stop.promptTokens, stop.outputTokens);
+  }
+  await stop.emitRecovery("still_truncated", 1);
+  turn.state.session.log(
+    "\n[response truncated at the output limit after the refit retry; " +
+      "not retrying further]",
+  );
+  return { ...retried, toolCalls: undefined };
 }
 
 /** Classify the stop and report it as a `lengthStopDetected` frame. */
