@@ -199,14 +199,18 @@ async function runToolStep(
   const stepResults: ToolResultSummary[] = [];
   const cancelled = () =>
     input.abortSignal?.aborted === true && result.stopReason !== "error";
+  // Sized against the request the follow-up will actually send: a step
+  // that ends tool use is followed by the forced conclusion, which carries
+  // the longer instruction and no tool definitions.
+  const next = nextRequestShape(state, allRepeats);
   const requestSoFar = () =>
     estimateRequest(turn, {
-      systemPrompt: state.systemPrompt,
+      systemPrompt: next.systemPrompt,
       messages: [
         ...messages,
         ...toolStepToMessages(result.text, requestedToolCalls, stepResults),
       ],
-      tools: state.commandTools,
+      tools: next.tools,
     });
   for (const [index, toolCall] of requestedToolCalls.entries()) {
     if (cancelled()) return "aborted";
@@ -359,8 +363,10 @@ async function followUp(
 ): Promise<LoopTurnResult> {
   const { state, input } = turn;
   const { session } = state;
-  const atCap = state.toolSteps >= session.maxToolSteps;
-  const forceConclude = atCap || step.allRepeats;
+  const { atCap, forceConclude, systemPrompt, tools } = nextRequestShape(
+    state,
+    step.allRepeats,
+  );
   if (forceConclude) {
     session.log(
       atCap
@@ -383,13 +389,6 @@ async function followUp(
     ),
   );
   if (atCap) state.toolStepLimitReached = true;
-  const systemPrompt = forceConclude
-    ? forcedConclusionSystemPrompt(
-      state.systemPrompt,
-      atCap ? "limit" : "repeated_tool_calls",
-    )
-    : state.systemPrompt;
-  const tools = forceConclude ? undefined : state.commandTools;
   await fitRequest(turn, { systemPrompt, messages, tools }, "before_send");
   const estimatedInputCount = estimateRuntimeInputCount(
     transcriptEstimateText(systemPrompt, messages),
@@ -418,6 +417,37 @@ async function followUp(
           : new ToolStepLimitConclusionError()
       : undefined,
   );
+}
+
+/**
+ * The request that follows a tool step: a forced conclusion (the longer
+ * instruction, no tool definitions) at the step cap or when the whole step
+ * repeated earlier calls, else the ordinary gather call. One decision, read
+ * both where the step's results are bounded and where the follow-up is sent,
+ * so the results are sized against the request that actually goes out.
+ */
+function nextRequestShape(
+  state: TurnState,
+  allRepeats: boolean,
+): {
+  atCap: boolean;
+  forceConclude: boolean;
+  systemPrompt: string;
+  tools: TurnState["commandTools"] | undefined;
+} {
+  const atCap = state.toolSteps >= state.session.maxToolSteps;
+  const forceConclude = atCap || allRepeats;
+  return {
+    atCap,
+    forceConclude,
+    systemPrompt: forceConclude
+      ? forcedConclusionSystemPrompt(
+        state.systemPrompt,
+        atCap ? "limit" : "repeated_tool_calls",
+      )
+      : state.systemPrompt,
+    tools: forceConclude ? undefined : state.commandTools,
+  };
 }
 
 function forcedConclusionSystemPrompt(

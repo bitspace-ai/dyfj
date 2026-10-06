@@ -861,3 +861,36 @@ Deno.test("a continuation the fit can make fit is retried even where the raw tra
     retriesUsed: 1,
   });
 });
+
+// ─── results before a forced conclusion are sized for that request ───────────
+
+Deno.test("a result before a forced conclusion is sized against the request without tool definitions", async () => {
+  // A 12,000-token window and a one-step cap: the step's follow-up is the
+  // forced conclusion, which carries no tool catalog. A 31,000-character
+  // read fits that request but not one with the catalog, so it reaches the
+  // model whole.
+  const notes = "n".repeat(30_999) + "\n";
+  const fit = await fitTurn(
+    [
+      toolReply([READ("c1", "notes.md")]),
+      chatReply({ content: "concluded" }),
+    ],
+    { maxToolSteps: 1 },
+    {
+      files: { "notes.md": notes },
+      models: [{ ...LOCAL_MODEL, context_window: 12_000 }],
+    },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "concluded");
+  assertEquals(fit.run.transport.requests.length, 2);
+  const conclusion = fit.run.transport.requests[1];
+  assertEquals(requestBody(conclusion).tools, undefined);
+  assertEquals(
+    conversation(conclusion).find((m) => m.role === "tool")?.content,
+    notes,
+  );
+  assertEquals(frame(fit.frames, "toolResultTrimmed"), undefined);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertEveryRequestFits(fit.run, 12_000);
+});
