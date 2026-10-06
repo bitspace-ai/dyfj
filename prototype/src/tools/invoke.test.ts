@@ -192,6 +192,25 @@ describe("invokeCommand approval (ask) flow", () => {
     });
   });
 
+  it("a per-call approval title replaces the static title on the request", async () => {
+    let seen: unknown;
+    const registry = createCommandRegistry([{
+      ...writeFileCommand(),
+      approvalTitle: (c) => `Write File (${c.arguments.path})`,
+    }]);
+    await invokeCommand(
+      registry,
+      call({ path: "a.txt" }, { commandId: "write_file" }),
+      (request) => {
+        seen = request;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    assertObjectMatch(seen as Record<string, unknown>, {
+      title: "Write File (a.txt)",
+    });
+  });
+
   it("an invalid-argument mutating call is denied before any approval", async () => {
     let asked = false;
     const registry = createCommandRegistry([writeFileCommand()]);

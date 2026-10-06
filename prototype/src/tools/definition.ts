@@ -39,6 +39,9 @@ export type JsonSchemaProperty = {
   additionalProperties?: boolean;
   items?: JsonSchemaProperty;
   maxItems?: number;
+  /** Inclusive bounds for `integer` and `number` properties. */
+  minimum?: number;
+  maximum?: number;
   enum?: Array<string | number | boolean | null>;
   /**
    * Mark a payload-bearing argument (e.g. write_file `content`) sensitive: it is
@@ -88,10 +91,17 @@ export interface CommandTraceContext {
 
 export interface CommandDefinition<TResult = unknown> {
   id: string;
+  /** Names the tool in listings and, unless `approvalTitle` says otherwise, in the approval prompt. */
   title: string;
   description: string;
   inputSchema: JsonSchemaObject;
   permission: PermissionEnvelope;
+  /**
+   * The approval prompt's title for one call, when what the operator approves
+   * depends on the arguments (bash shows the effective timeout). Called only
+   * after the arguments have been validated. Absent, the prompt shows `title`.
+   */
+  approvalTitle?: (call: CommandCall) => string;
   /**
    * Redact this command's RESULT from the durable tool_call event (the model
    * still receives it in-turn). Set for tools whose output can carry secrets the

@@ -19,7 +19,8 @@ function describeExpectedArguments(schema: JsonSchemaObject): string {
   const shape = properties
     .map(([name, property]) =>
       `"${name}": ${property.type} (${
-        required.has(name) ? "required" : "optional"
+        [required.has(name) ? "required" : "optional", describeBounds(property)]
+          .filter((part) => part !== "").join(", ")
       })`
     )
     .join(", ");
@@ -27,6 +28,17 @@ function describeExpectedArguments(schema: JsonSchemaObject): string {
     .filter(([, property]) => property.description)
     .map(([name, property]) => `  ${name} — ${property.description}`);
   return [`{${shape}}`, ...descriptions].join("\n");
+}
+
+/** The declared numeric range, as `1 to 600`, `at least 1` or `at most 600`. */
+function describeBounds(property: JsonSchemaProperty): string {
+  const { minimum, maximum } = property;
+  if (minimum !== undefined && maximum !== undefined) {
+    return `${minimum} to ${maximum}`;
+  }
+  if (minimum !== undefined) return `at least ${minimum}`;
+  if (maximum !== undefined) return `at most ${maximum}`;
+  return "";
 }
 
 /**
@@ -136,6 +148,20 @@ function validateCommandArgumentValue(
     !property.enum.some((candidate) => Object.is(candidate, value))
   ) {
     return `${field} must be one of the declared values`;
+  }
+  if (property.type === "integer" || property.type === "number") {
+    // The bounds are the schema's own, so naming them tells the model the
+    // accepted range without echoing the value it sent.
+    if (
+      property.minimum !== undefined && (value as number) < property.minimum
+    ) {
+      return `${field} must be at least ${property.minimum}`;
+    }
+    if (
+      property.maximum !== undefined && (value as number) > property.maximum
+    ) {
+      return `${field} must be at most ${property.maximum}`;
+    }
   }
   if (
     property.type === "string" &&

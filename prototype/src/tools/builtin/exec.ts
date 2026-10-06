@@ -17,7 +17,11 @@
  * The timeout bounds the call, not just the shell: at the deadline the
  * command's whole process group is stopped (TERM, a short grace, then KILL),
  * output written after the deadline is dropped, and the status line says
- * whether anything could have survived (`bounded-process.ts`).
+ * whether anything could have survived (`bounded-process.ts`). The deadline
+ * is 120 s unless the call asks for another with `timeoutSec`, up to a 600 s
+ * ceiling; a larger value is refused rather than clamped, so the model learns
+ * the limit, and the approval prompt names the effective timeout so the
+ * operator approves the duration along with the command.
  */
 
 import { type Env, processEnv } from "../../config/mod.ts";
@@ -36,7 +40,13 @@ export type BashRunner = (
   timeoutMs: number,
 ) => Promise<BashResult>;
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_SEC = 120;
+const DEFAULT_TIMEOUT_MS = DEFAULT_TIMEOUT_SEC * 1_000;
+/**
+ * The longest a call may ask for. The whole process group is stopped at the
+ * deadline (BIT-571), which is what makes a deadline this long safe to grant.
+ */
+export const MAX_TIMEOUT_SEC = 600;
 const DEFAULT_MAX_BYTES = 64 * 1024;
 
 // bash runs with a deliberately minimal environment. clearEnv drops the parent
@@ -122,7 +132,9 @@ export async function executeBash(
     body += (body && !body.endsWith("\n") ? "\n" : "") + res.stderr;
   }
   if (body.length > maxBytes) {
-    body = `${body.slice(0, maxBytes)}\n\n[truncated at ${maxBytes} characters]`;
+    body = `${
+      body.slice(0, maxBytes)
+    }\n\n[truncated at ${maxBytes} characters]`;
   }
 
   const status = res.timedOut
@@ -133,18 +145,62 @@ export async function executeBash(
   return `${status}\n${body}`.trimEnd();
 }
 
+// ── The per-call timeout ─────────────────────────────────────────────────────
+
+/**
+ * The deadline for one call from its `timeoutSec` argument: the default when
+ * absent, otherwise a whole number of seconds from 1 to the ceiling. Anything
+ * else is refused with a reason the model can act on. The schema's bounds
+ * refuse the same values before the approval prompt; this is the executor's
+ * own check for callers that reach it directly.
+ */
+export function resolveBashTimeoutMs(
+  timeoutSec: unknown,
+): { timeoutMs: number } | { error: string } {
+  if (timeoutSec === undefined) return { timeoutMs: DEFAULT_TIMEOUT_MS };
+  if (typeof timeoutSec !== "number" || !Number.isInteger(timeoutSec)) {
+    return { error: "timeoutSec must be a whole number of seconds" };
+  }
+  if (timeoutSec < 1) return { error: "timeoutSec must be at least 1 s" };
+  if (timeoutSec > MAX_TIMEOUT_SEC) {
+    return {
+      error:
+        `timeoutSec must be at most ${MAX_TIMEOUT_SEC} s (the ${MAX_TIMEOUT_SEC} s ceiling); ` +
+        "ask for a shorter timeout or split the command",
+    };
+  }
+  return { timeoutMs: timeoutSec * 1_000 };
+}
+
+const TITLE = "Run Bash Command";
+
+/** The approval prompt names the effective deadline, e.g. `(timeout 300 s)`. */
+function bashApprovalTitle(timeoutSec: unknown): string {
+  const resolved = resolveBashTimeoutMs(timeoutSec);
+  return "timeoutMs" in resolved
+    ? `${TITLE} (timeout ${resolved.timeoutMs / 1_000} s)`
+    : TITLE;
+}
+
 // ── Command definition ───────────────────────────────────────────────────────
 
-export function defineBash(root: string): CommandDefinition<string> {
+export function defineBash(
+  root: string,
+  opts: { runner?: BashRunner } = {},
+): CommandDefinition<string> {
   return {
     id: "bash",
-    title: "Run Bash Command",
+    title: TITLE,
     description:
       "Run a shell command via `bash -c`. The working directory is the workspace " +
       "root, but the command is NOT sandboxed — it can read and write anywhere on " +
       "the machine and reach the network, exactly as if the operator ran it. " +
       "Returns the exit status and combined stdout/stderr. Always requires " +
-      "explicit operator approval before it runs — it is never auto-approved.",
+      "explicit operator approval before it runs — it is never auto-approved. " +
+      `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
+      `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
+      "a command needs longer (a full test run, for example). A larger value is " +
+      "refused, not clamped.",
     inputSchema: {
       type: "object",
       required: ["command"],
@@ -153,9 +209,18 @@ export function defineBash(root: string): CommandDefinition<string> {
           type: "string",
           description: "The shell command to run (executed as `bash -c`).",
         },
+        timeoutSec: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_TIMEOUT_SEC,
+          description:
+            `Seconds before the command and its process tree are stopped. Default ${DEFAULT_TIMEOUT_SEC}; ` +
+            `at most ${MAX_TIMEOUT_SEC} (the ceiling; a larger value is refused).`,
+        },
       },
       additionalProperties: false,
     },
+    approvalTitle: (call) => bashApprovalTitle(call.arguments.timeoutSec),
     permission: {
       // run.process is an exec-class effect: the no-exec invariant in
       // evaluateCommandPolicy keeps it out of operator auto-approval, so bash
@@ -177,6 +242,13 @@ export function defineBash(root: string): CommandDefinition<string> {
     // bash output can carry secrets the approver can't pre-screen (env dumps,
     // file contents), so keep the raw result out of the durable event log.
     redactResult: true,
-    executor: (call) => executeBash(root, String(call.arguments.command)),
+    executor: (call) => {
+      const timeout = resolveBashTimeoutMs(call.arguments.timeoutSec);
+      if ("error" in timeout) return `error: ${timeout.error}`;
+      return executeBash(root, String(call.arguments.command), {
+        timeoutMs: timeout.timeoutMs,
+        runner: opts.runner,
+      });
+    },
   };
 }

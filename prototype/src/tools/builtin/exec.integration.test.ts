@@ -3,9 +3,15 @@
 // the agent loop runs: the deadline must bound the call, stop the whole tree,
 // and keep output written after the kill point out of the result.
 
-import { assert, assertFalse, assertMatch } from "@std/assert";
+import {
+  assert,
+  assertFalse,
+  assertMatch,
+  assertStrictEquals,
+} from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { executeBash } from "./exec.ts";
+import type { CommandCall } from "../definition.ts";
+import { defineBash, executeBash } from "./exec.ts";
 
 const posix = Deno.build.os !== "windows";
 const TIMEOUT_MS = 500;
@@ -92,5 +98,54 @@ describe("bash timeout against a real process tree", { ignore: !posix }, () => {
     assertMatch(out, /^timed out after 500ms \(killed/);
     assertMatch(out, /^before$/m);
     assertFalse(/after$/m.test(out), `post-deadline output reported: ${out}`);
+  });
+});
+
+// The requested timeout through the registered definition, as the agent loop
+// invokes it: the executor resolves `timeoutSec` and the real runner honours
+// it, for a command that finishes and for a tree that does not.
+describe("bash with a requested timeoutSec against real processes", {
+  ignore: !posix,
+}, () => {
+  const bash = defineBash(Deno.cwd());
+  const context = { authzBasis: "policy:allow:operator-approved" };
+  const call = (args: Record<string, unknown>): CommandCall => ({
+    commandId: "bash",
+    callId: "call-timeout",
+    caller: { principalId: "operator", principalType: "human" },
+    arguments: args,
+  });
+
+  it("runs a short command to its real exit code under a short requested timeout", async () => {
+    const out = await bash.executor(
+      call({ command: "echo requested; exit 3", timeoutSec: 5 }),
+      context,
+    );
+    assertStrictEquals(out, "exit 3\nrequested");
+  });
+
+  it("stops the whole tree at the requested timeout, not the default", async () => {
+    let pid: number | undefined;
+    try {
+      const start = performance.now();
+      const out = await bash.executor(
+        call({ command: `sleep 10 & echo "pid=$!"; wait`, timeoutSec: 1 }),
+        context,
+      );
+      const elapsedMs = performance.now() - start;
+      pid = pidIn(out);
+      assert(
+        elapsedMs < 1_000 + 4_000,
+        `returned after ${Math.round(elapsedMs)}ms`,
+      );
+      assertMatch(out, /^timed out after 1000ms \(killed/);
+      assert(pid !== undefined, `no pid in: ${out}`);
+      assertFalse(
+        await isLive(pid),
+        "the sleep outlived the requested timeout",
+      );
+    } finally {
+      await forceKill(pid);
+    }
   });
 });

@@ -69,11 +69,13 @@ export async function invokeCommand<TResult = unknown>(
   if (policy.decision === "ask") {
     // A mutation does not run until the operator approves it. The
     // verdict comes from the injected transport approver; the default denies, so
-    // an unapproved or channel-less call never executes.
+    // an unapproved or channel-less call never executes. The arguments have
+    // been validated by now, so a per-call title sees only values the schema
+    // allows.
     const verdict = await confirmApproval({
       commandId: call.commandId,
       callId: call.callId,
-      title: command.title,
+      title: command.approvalTitle?.(call) ?? command.title,
       arguments: call.arguments,
     });
     if (verdict.decision !== "approve") {
