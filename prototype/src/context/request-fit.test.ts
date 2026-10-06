@@ -117,6 +117,10 @@ Deno.test("trimToolResult: keeps the prefix and states what was cut, with the to
     trimToolResult("c".repeat(5_000), 1_000, "grep_files", 32_768)!.content,
     "narrower query",
   );
+  // git takes typed arguments, never a shell pipeline.
+  const git = trimToolResult("d".repeat(5_000), 1_000, "git", 32_768)!.content;
+  assertStringIncludes(git, "narrowed to specific paths");
+  assertEquals(git.includes("piped"), false);
 });
 
 Deno.test("trimToolResult: never splits a surrogate pair", () => {

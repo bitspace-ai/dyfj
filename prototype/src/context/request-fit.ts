@@ -128,9 +128,11 @@ function recoveryHint(commandId: string): string {
     case "web_search":
       return "Re-run the search with a narrower query or path.";
     case "bash":
-    case "git":
       return "Re-run the command with its output narrowed, for example piped " +
         "through head, tail or grep.";
+    case "git":
+      return "Re-run the git operation narrowed to specific paths or, for " +
+        "log, with a smaller limit.";
     default:
       return "Re-run the tool with narrower arguments.";
   }
