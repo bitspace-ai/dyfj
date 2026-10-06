@@ -34,10 +34,10 @@ export const OUTPUT_RESERVE_MAX_FRACTION = 0.25;
 export const SHRUNK_TOOL_RESULT_CHARS = 1_024;
 
 /**
- * Room the marker may take. A cut that would save less than this is not
- * made: it would replace content with a marker of the same size, and it is
- * what keeps a second pass over an already-trimmed result from re-trimming
- * it with a marker that misstates the original size.
+ * Room the marker may take. A cut of untrimmed content that would save
+ * less than this is not made: it would replace content with a marker of
+ * the same size. A result trimmed before already carries a marker the cut
+ * replaces, so the allowance does not apply to it.
  */
 export const TRIM_MARKER_ALLOWANCE_CHARS = 512;
 
@@ -201,7 +201,11 @@ export function trimToolResult(
   const prior = trimmedFrom === undefined ? null : parseTrimmedResult(content);
   const payload = prior?.payload ?? content;
   const totalChars = trimmedFrom ?? content.length;
-  if (payload.length <= keepChars + TRIM_MARKER_ALLOWANCE_CHARS) return null;
+  // The allowance pays for a marker being ADDED; a result trimmed before
+  // already carries one, which the cut replaces, so any payload over the
+  // keep is worth cutting.
+  const allowance = prior === null ? TRIM_MARKER_ALLOWANCE_CHARS : 0;
+  if (payload.length <= keepChars + allowance) return null;
   return cutResult(payload, keepChars, commandId, contextWindow, totalChars);
 }
 

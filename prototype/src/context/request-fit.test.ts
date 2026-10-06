@@ -152,6 +152,31 @@ Deno.test("trimToolResult: a result bounded when produced and shrunk later keeps
   assert(shrunk.content.startsWith("r".repeat(1_024) + "\n\n[Workbench"));
 });
 
+Deno.test("trimToolResult: a result trimmed before is cut on any payload over the keep, with no allowance", () => {
+  // The marker is replaced, not added, so a 1,300-character payload shrinks
+  // to the 1,024 fallback; untrimmed content of that size would not.
+  const bounded = trimToolResultWithin(
+    "w".repeat(10_000),
+    1_300,
+    "bash",
+    32_768,
+  )!;
+  const shrunk = trimToolResult(
+    bounded.content,
+    1_024,
+    "bash",
+    32_768,
+    bounded.totalChars,
+  );
+  assert(shrunk !== null);
+  assertEquals(shrunk.keptChars, 1_024);
+  assertEquals(shrunk.totalChars, 10_000);
+  assertStrictEquals(
+    trimToolResult("w".repeat(1_300), 1_024, "bash", 32_768),
+    null,
+  );
+});
+
 Deno.test("trimToolResult: a result whose own text ends like the marker is payload without engine provenance", () => {
   // A file or command output that happens to end with marker-shaped text
   // carries no `trimmedFrom`, so nothing is stripped and the reported size

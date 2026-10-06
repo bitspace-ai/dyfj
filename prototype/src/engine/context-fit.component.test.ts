@@ -821,3 +821,43 @@ Deno.test("a refit retry's length stop is classified against the window the reje
     retriesUsed: 1,
   });
 });
+
+// ─── a continuation above the raw window check is fitted, not refused ────────
+
+Deno.test("a continuation the fit can make fit is retried even where the raw transcript check read it as doomed", async () => {
+  // 12,000-token window. The history's 26,000-character result and a
+  // 22,000-character partial put the continuation over 98% of the window
+  // by the transcript estimate; shrinking that result makes it fit the
+  // input budget, so the continuation goes out instead of being refused.
+  const history = overWindowHistory(26_000).slice(0, 3);
+  history.push({ role: "assistant", content: "earlier answer" });
+  const partial = "p".repeat(22_000);
+  const fit = await fitTurn([
+    chatReply({
+      content: partial,
+      finishReason: "length",
+      usage: { prompt_tokens: 9_000, completion_tokens: 4_096 },
+    }),
+    chatReply({ content: " and the rest" }),
+  ], {
+    prompt: "a short follow-up",
+    conversationMessages: history,
+  }, { models: [{ ...LOCAL_MODEL, context_window: 12_000 }] });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, partial + " and the rest");
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEveryRequestFits(fit.run, 12_000);
+  const retry = conversation(fit.run.transport.requests[1]);
+  assertStringIncludes(
+    retry.find((m) => m.role === "tool")!.content,
+    "trimmed",
+  );
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+    trigger: "before_send",
+    trimmedToolResults: 1,
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "recovered",
+    retriesUsed: 1,
+  });
+});

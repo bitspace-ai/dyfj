@@ -25,7 +25,6 @@ import {
 import {
   buildContinuationMessages,
   classifyLengthStop,
-  CONTEXT_OVERFLOW_WINDOW_FRACTION,
   ContextWindowOverflowError,
   isBudgetRefusal,
 } from "../context/mod.ts";
@@ -489,31 +488,13 @@ async function continueTruncated(
     params.messages ?? [{ role: "user", content: params.prompt }],
     result.text,
   );
-  const continuationInput = estimateRuntimeInputCount(
-    transcriptEstimateText(params.systemPrompt, continuation),
-  );
-  // Feasibility pre-check: when both the output cap AND the context window
-  // bind this stop, the continuation (original transcript + partial answer +
-  // nudge) no longer fits the window, so a retry would be a doomed
-  // over-window call. Skip it and deliver the capped partial. The threshold
-  // reuses the classification's window-evidence fraction.
-  if (
-    result.model.contextWindow !== undefined &&
-    continuationInput >=
-      result.model.contextWindow * CONTEXT_OVERFLOW_WINDOW_FRACTION
-  ) {
-    await emitRecovery("retry_would_overflow", 0);
-    log(
-      "\n[response truncated at the output limit; the continuation would " +
-        "exceed the context window, so it was not retried]",
-    );
-    return { ...result, toolCalls: undefined };
-  }
-  // The continuation is sized like any other request: its tool results may
-  // be shrunk to fit the input budget (which, unlike the window check
-  // above, reserves room for the output); one that still cannot fit is the
-  // same doomed retry, skipped the same way. No compression here: the
-  // nudge is a user message no session_start backs.
+  // Feasibility: when both the output cap AND the context window bind this
+  // stop, the continuation (original transcript + partial answer + nudge)
+  // may no longer fit, and a retry would be a doomed over-window call. The
+  // continuation is sized like any other request, so its tool results may
+  // be shrunk to make it fit; one that still cannot fit is skipped and the
+  // capped partial delivered. No compression here: the nudge is a user
+  // message no session_start backs.
   try {
     await fitRequest(
       turn,
