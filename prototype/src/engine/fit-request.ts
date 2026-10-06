@@ -230,6 +230,9 @@ function overflow(
     contextWindow: limits.contextWindow,
     inputTokens,
     outputTokens: 0,
+    // Refused before sending: the limit that bound it is the input budget,
+    // not the window, and no output exists to add to the input.
+    inputBudgetTokens: limits.budgetTokens,
   });
 }
 

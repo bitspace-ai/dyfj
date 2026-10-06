@@ -505,6 +505,8 @@ Deno.test("trimming that still leaves the request over the window fails without 
   }, { models: [{ ...LOCAL_MODEL, context_window: 4_000 }] });
   assert(fit.error instanceof Error);
   assertStringIncludes(fit.error.message, "4000-token context window");
+  assertStringIncludes(fit.error.message, "input budget");
+  assertStringIncludes(fit.error.message, "it was not sent");
   assertEquals(fit.run.transport.requests.length, 0);
   assertEquals(frame(fit.frames, "contextFitted"), undefined);
   assertObjectMatch(fit.frames.at(-1)!, {

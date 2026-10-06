@@ -88,6 +88,13 @@ export interface ContextOverflowDetails {
   contextWindow?: number;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Set when the request was refused before it was sent: the input budget
+   * the estimate exceeded, the window less the room reserved for the reply.
+   * Nothing was generated, so the message names this budget rather than an
+   * input + output total that would not add up to the window.
+   */
+  inputBudgetTokens?: number;
 }
 
 /**
@@ -101,14 +108,19 @@ export function buildContextOverflowMessage(
   const windowNote = details.contextWindow !== undefined
     ? `${details.contextWindow}-token context window`
     : "context window";
+  const measure = details.inputBudgetTokens !== undefined
+    ? `(the request estimates at ~${details.inputTokens} input tokens ` +
+      `against an input budget of ${details.inputBudgetTokens}, which ` +
+      `leaves room in the window for the reply; it was not sent)`
+    : `(this turn used ~${details.inputTokens} input + ` +
+      `${details.outputTokens} output tokens)`;
   return (
     `Context window overflow: the conversation no longer fits the ` +
     // The slug is registry data riding a DomainError message that
     // summarizeError trusts downstream — bounded and control-stripped at
     // construction like every other registry-sourced error field.
     `${windowNote} of ${sanitizeBoundaryText(details.modelSlug, 120)} ` +
-    `(this turn used ~${details.inputTokens} input + ` +
-    `${details.outputTokens} output tokens). ` +
+    `${measure}. ` +
     `Options: switch to a larger-context model with /model, or start a ` +
     `fresh session.`
   );
